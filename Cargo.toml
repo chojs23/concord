@@ -4,8 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+apple-native-keyring-store = { version = "1.0.0", features = ["keychain"] }
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+futures = "0.3.31"
+keyring-core = "1.0.0"
+ratatui = "0.29.0"
 thiserror = "2.0.17"
-tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
+tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 twilight-gateway = "0.16.0"
 twilight-http = "0.16.0"
 twilight-model = "0.16.0"
