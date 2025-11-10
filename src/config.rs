@@ -6,7 +6,6 @@ use crate::{AppError, Result};
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    pub discord_token: String,
     pub default_channel_id: Option<Id<ChannelMarker>>,
     pub boot_message: Option<String>,
     pub enable_message_content: bool,
@@ -35,11 +34,6 @@ impl Config {
     where
         F: FnMut(&str) -> Option<String>,
     {
-        let discord_token = lookup("DISCORD_TOKEN")
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
-            .ok_or(AppError::MissingDiscordToken)?;
-
         let default_channel_id = lookup("DISCORD_DEFAULT_CHANNEL_ID")
             .as_deref()
             .map(str::trim)
@@ -60,7 +54,6 @@ impl Config {
             .unwrap_or(false);
 
         Ok(Self {
-            discord_token,
             default_channel_id,
             boot_message,
             enable_message_content,
@@ -96,14 +89,15 @@ mod tests {
     #[test]
     fn parses_required_and_optional_values() {
         let config = Config::from_pairs([
-            ("DISCORD_TOKEN", "token-value"),
             ("DISCORD_DEFAULT_CHANNEL_ID", "123456789"),
             ("DISCORD_BOOT_MESSAGE", "hello from startup"),
         ])
         .expect("config should parse");
 
-        assert_eq!(config.discord_token, "token-value");
-        assert_eq!(config.default_channel_id.expect("channel id").get(), 123456789);
+        assert_eq!(
+            config.default_channel_id.expect("channel id").get(),
+            123456789
+        );
         assert_eq!(config.boot_message.as_deref(), Some("hello from startup"));
         assert!(!config.enable_message_content);
     }
@@ -111,7 +105,6 @@ mod tests {
     #[test]
     fn trims_blank_optional_values() {
         let config = Config::from_pairs([
-            ("DISCORD_TOKEN", "token-value"),
             ("DISCORD_DEFAULT_CHANNEL_ID", "   "),
             ("DISCORD_BOOT_MESSAGE", "   "),
         ])
@@ -124,11 +117,8 @@ mod tests {
 
     #[test]
     fn parses_message_content_flag() {
-        let config = Config::from_pairs([
-            ("DISCORD_TOKEN", "token-value"),
-            ("DISCORD_ENABLE_MESSAGE_CONTENT", "true"),
-        ])
-        .expect("config should parse");
+        let config = Config::from_pairs([("DISCORD_ENABLE_MESSAGE_CONTENT", "true")])
+            .expect("config should parse");
 
         assert!(config.enable_message_content);
     }

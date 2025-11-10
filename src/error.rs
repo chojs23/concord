@@ -6,8 +6,14 @@ pub type Result<T> = std::result::Result<T, AppError>;
 
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("missing DISCORD_TOKEN environment variable")]
-    MissingDiscordToken,
+    #[error("login cancelled before a Discord token was saved")]
+    LoginCancelled,
+    #[error("Discord token must not be empty")]
+    EmptyDiscordToken,
+    #[error("credential storage is not supported on this platform")]
+    UnsupportedCredentialStore,
+    #[error("credential store operation failed")]
+    CredentialStore(#[from] keyring_core::Error),
     #[error("invalid DISCORD_DEFAULT_CHANNEL_ID value `{value}`")]
     InvalidChannelId {
         value: String,
@@ -24,6 +30,6 @@ pub enum AppError {
     Http(#[from] twilight_http::Error),
     #[error("failed to decode Discord response body")]
     DeserializeBody(#[from] twilight_http::response::DeserializeBodyError),
-    #[error("failed to listen for ctrl-c signal")]
-    CtrlC(#[from] std::io::Error),
+    #[error("terminal I/O failed")]
+    Io(#[from] std::io::Error),
 }
