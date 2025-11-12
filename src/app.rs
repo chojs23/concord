@@ -1,55 +1,38 @@
-use tokio::sync::broadcast;
-
-use crate::{Config, DiscordClient, Result, discord::AppEvent};
+use crate::{Config, DiscordClient, Result, discord::AppEvent, token_store, tui};
 
 pub struct App {
     config: Config,
-    client: DiscordClient,
 }
 
 impl App {
     pub fn new(config: Config) -> Self {
-        let client = DiscordClient::new(&config);
-        Self { config, client }
+        Self { config }
     }
 
     pub async fn run(self) -> Result<()> {
-        let mut events = self.client.subscribe();
-        let gateway_task = self
-            .client
-            .start_gateway(self.config.enable_message_content);
+        let resolved_token = resolve_token().await?;
+        let token = resolved_token.token;
+        let token_warnings = resolved_token.warnings;
+        let client = DiscordClient::new(token);
+        let events = client.subscribe();
+        let gateway_task = client.start_gateway(self.config.enable_message_content);
 
         let result = async {
+            for warning in token_warnings {
+                client.publish_event(AppEvent::GatewayError { message: warning });
+            }
+
             if let (Some(channel_id), Some(message)) = (
                 self.config.default_channel_id,
                 self.config.boot_message.as_deref(),
-            ) {
-                let sent = self.client.send_message(channel_id, message).await?;
-                println!(
-                    "sent startup message {} to channel {}",
-                    sent.id.get(),
-                    channel_id.get()
-                );
+            ) && let Err(error) = client.send_message(channel_id, message).await
+            {
+                client.publish_event(AppEvent::GatewayError {
+                    message: format!("startup message failed: {error}"),
+                });
             }
 
-            loop {
-                tokio::select! {
-                    event = events.recv() => match event {
-                        Ok(event) => print_event(event),
-                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            eprintln!("event stream lagged, skipped {skipped} event(s)");
-                        }
-                        Err(broadcast::error::RecvError::Closed) => break,
-                    },
-                    signal = tokio::signal::ctrl_c() => {
-                        signal?;
-                        println!("received ctrl-c, shutting down");
-                        break;
-                    }
-                }
-            }
-
-            Ok(())
+            tui::run(events).await
         }
         .await;
 
@@ -58,52 +41,44 @@ impl App {
     }
 }
 
+struct ResolvedToken {
+    token: String,
+    warnings: Vec<String>,
+}
+
+async fn resolve_token() -> Result<ResolvedToken> {
+    let mut warnings = Vec::new();
+
+    match token_store::load_token() {
+        Ok(Some(token)) => {
+            return Ok(ResolvedToken { token, warnings });
+        }
+        Ok(None) => {}
+        Err(error) => warnings.push(format!(
+            "credential store unavailable: {error}; enter a token to continue for this session"
+        )),
+    }
+
+    let login_notice = if warnings.is_empty() {
+        None
+    } else {
+        Some("Credential storage is unavailable; token may not be saved.".to_owned())
+    };
+
+    let token = tui::prompt_token(login_notice).await?;
+    if let Err(error) = token_store::save_token(&token) {
+        warnings.push(format!("token was not saved: {error}"));
+    }
+
+    Ok(ResolvedToken { token, warnings })
+}
+
 async fn shutdown_gateway(gateway_task: tokio::task::JoinHandle<()>) {
     gateway_task.abort();
 
-    if let Err(error) = gateway_task.await {
-        if !error.is_cancelled() {
-            eprintln!("gateway task ended unexpectedly: {error}");
-        }
-    }
-}
-
-fn print_event(event: AppEvent) {
-    match event {
-        AppEvent::Ready { user } => println!("gateway ready as {user}"),
-        AppEvent::MessageCreate {
-            guild_id,
-            channel_id,
-            message_id,
-            author_id,
-            author,
-            content,
-        } => {
-            println!(
-                "message create guild={} channel={} message={} author={} ({}) content={}",
-                guild_id.map(|id| id.get().to_string()).unwrap_or_else(|| "dm".to_owned()),
-                channel_id.get(),
-                message_id.get(),
-                author,
-                author_id.get(),
-                content.as_deref().unwrap_or("<unavailable>")
-            );
-        }
-        AppEvent::MessageUpdate {
-            guild_id,
-            channel_id,
-            message_id,
-            content,
-        } => {
-            println!(
-                "message update guild={} channel={} message={} content={}",
-                guild_id.map(|id| id.get().to_string()).unwrap_or_else(|| "dm".to_owned()),
-                channel_id.get(),
-                message_id.get(),
-                content.as_deref().unwrap_or("<unavailable>")
-            );
-        }
-        AppEvent::GatewayError { message } => eprintln!("gateway error: {message}"),
-        AppEvent::GatewayClosed => println!("gateway closed"),
+    if let Err(error) = gateway_task.await
+        && !error.is_cancelled()
+    {
+        eprintln!("gateway task ended unexpectedly: {error}");
     }
 }

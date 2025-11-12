@@ -7,7 +7,7 @@ use twilight_model::{
     id::{Id, marker::ChannelMarker},
 };
 
-use crate::{Config, Result};
+use crate::Result;
 
 use super::{events::AppEvent, gateway::run_gateway, rest::DiscordRest};
 
@@ -19,13 +19,13 @@ pub struct DiscordClient {
 }
 
 impl DiscordClient {
-    pub fn new(config: &Config) -> Self {
-        let http = Arc::new(HttpClient::new(config.discord_token.clone()));
+    pub fn new(token: String) -> Self {
+        let http = Arc::new(HttpClient::new(token.clone()));
         let rest = DiscordRest::new(http);
         let (events_tx, _) = broadcast::channel(512);
 
         Self {
-            token: config.discord_token.clone(),
+            token,
             rest,
             events_tx,
         }
@@ -33,6 +33,10 @@ impl DiscordClient {
 
     pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
         self.events_tx.subscribe()
+    }
+
+    pub fn publish_event(&self, event: AppEvent) {
+        let _ = self.events_tx.send(event);
     }
 
     pub fn start_gateway(&self, message_content_enabled: bool) -> JoinHandle<()> {
