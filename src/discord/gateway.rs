@@ -4,7 +4,11 @@ use twilight_model::gateway::{Intents, ShardId};
 
 use super::events::{AppEvent, map_event};
 
-pub async fn run_gateway(token: String, message_content_enabled: bool, tx: broadcast::Sender<AppEvent>) {
+pub async fn run_gateway(
+    token: String,
+    message_content_enabled: bool,
+    tx: broadcast::Sender<AppEvent>,
+) {
     let mut intents = Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::DIRECT_MESSAGES;
     if message_content_enabled {
         intents |= Intents::MESSAGE_CONTENT;

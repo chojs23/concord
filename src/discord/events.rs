@@ -1,5 +1,7 @@
 use twilight_gateway::Event;
-use twilight_model::id::{Id, marker::ChannelMarker, marker::GuildMarker, marker::MessageMarker, marker::UserMarker};
+use twilight_model::id::{
+    Id, marker::ChannelMarker, marker::GuildMarker, marker::MessageMarker, marker::UserMarker,
+};
 
 #[derive(Clone, Debug)]
 pub enum AppEvent {
