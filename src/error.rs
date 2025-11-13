@@ -10,10 +10,6 @@ pub enum AppError {
     LoginCancelled,
     #[error("Discord token must not be empty")]
     EmptyDiscordToken,
-    #[error("credential storage is not supported on this platform")]
-    UnsupportedCredentialStore,
-    #[error("credential store operation failed")]
-    CredentialStore(#[from] keyring_core::Error),
     #[error("invalid DISCORD_DEFAULT_CHANNEL_ID value `{value}`")]
     InvalidChannelId {
         value: String,

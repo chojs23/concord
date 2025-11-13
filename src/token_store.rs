@@ -1,22 +1,45 @@
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
+
 use crate::{AppError, Result};
 
-const SERVICE: &str = "discord-client-terminal";
-const ACCOUNT: &str = "discord-bot-token";
+const CONFIG_DIR: &str = ".discord-rs";
+const CREDENTIAL_FILE: &str = "credential";
 
 pub fn load_token() -> Result<Option<String>> {
-    let entry = credential_entry()?;
+    let path = credential_path()?;
 
-    match entry.get_password() {
+    match fs::read_to_string(&path) {
         Ok(token) => Ok(normalize_token(&token).ok()),
-        Err(keyring_core::Error::NoEntry) => Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
     }
 }
 
 pub fn save_token(token: &str) -> Result<()> {
     let token = normalize_token(token)?;
-    credential_entry()?.set_password(&token)?;
+    let path = credential_path()?;
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+        set_private_dir_permissions(parent)?;
+    }
+
+    write_private_file(&path, &token)?;
     Ok(())
+}
+
+fn credential_path() -> Result<PathBuf> {
+    let home = env::var_os("HOME").ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "HOME environment variable is not set",
+        )
+    })?;
+
+    Ok(PathBuf::from(home).join(CONFIG_DIR).join(CREDENTIAL_FILE))
 }
 
 fn normalize_token(token: &str) -> std::result::Result<String, AppError> {
@@ -28,19 +51,46 @@ fn normalize_token(token: &str) -> std::result::Result<String, AppError> {
     Ok(token.to_owned())
 }
 
-#[cfg(target_os = "macos")]
-fn credential_entry() -> Result<keyring_core::Entry> {
-    use std::sync::Arc;
+#[cfg(unix)]
+fn set_private_dir_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
 
-    let store: Arc<keyring_core::CredentialStore> =
-        apple_native_keyring_store::keychain::Store::new()?;
-    keyring_core::set_default_store(store);
-    keyring_core::Entry::new(SERVICE, ACCOUNT).map_err(Into::into)
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(path, permissions)?;
+    Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
-fn credential_entry() -> Result<keyring_core::Entry> {
-    Err(AppError::UnsupportedCredentialStore)
+#[cfg(not(unix))]
+fn set_private_dir_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn write_private_file(path: &Path, token: &str) -> Result<()> {
+    use std::{
+        io::Write,
+        os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    };
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(token.as_bytes())?;
+
+    let mut permissions = file.metadata()?.permissions();
+    permissions.set_mode(0o600);
+    fs::set_permissions(path, permissions)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &Path, token: &str) -> Result<()> {
+    fs::write(path, token)?;
+    Ok(())
 }
 
 #[cfg(test)]
