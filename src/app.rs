@@ -1,4 +1,10 @@
-use crate::{Config, DiscordClient, Result, discord::AppEvent, token_store, tui};
+use tokio::sync::mpsc;
+
+use crate::{
+    Config, DiscordClient, Result,
+    discord::{AppCommand, AppEvent},
+    token_store, tui,
+};
 
 pub struct App {
     config: Config,
@@ -15,7 +21,9 @@ impl App {
         let token_warnings = resolved_token.warnings;
         let client = DiscordClient::new(token);
         let events = client.subscribe();
+        let (commands_tx, commands_rx) = mpsc::channel(64);
         let gateway_task = client.start_gateway(self.config.enable_message_content);
+        let command_task = start_command_loop(client.clone(), commands_rx);
 
         let result = async {
             for warning in token_warnings {
@@ -32,13 +40,35 @@ impl App {
                 });
             }
 
-            tui::run(events).await
+            tui::run(events, commands_tx).await
         }
         .await;
 
+        command_task.abort();
         shutdown_gateway(gateway_task).await;
         result
     }
+}
+
+fn start_command_loop(
+    client: DiscordClient,
+    mut commands: mpsc::Receiver<AppCommand>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(command) = commands.recv().await {
+            match command {
+                AppCommand::SendMessage {
+                    channel_id,
+                    content,
+                } => match client.send_message(channel_id, &content).await {
+                    Ok(message) => client.publish_event(AppEvent::from_message(message)),
+                    Err(error) => client.publish_event(AppEvent::GatewayError {
+                        message: format!("send message failed: {error}"),
+                    }),
+                },
+            }
+        }
+    })
 }
 
 struct ResolvedToken {

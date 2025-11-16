@@ -8,9 +8,12 @@ use std::time::Duration;
 
 use crossterm::event::{Event as TerminalEvent, EventStream};
 use futures::StreamExt;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
-use crate::{Result, discord::AppEvent};
+use crate::{
+    Result,
+    discord::{AppCommand, AppEvent},
+};
 
 use state::DashboardState;
 
@@ -18,11 +21,14 @@ pub async fn prompt_token(notice: Option<String>) -> Result<String> {
     login::prompt_token(notice).await
 }
 
-pub async fn run(mut events: broadcast::Receiver<AppEvent>) -> Result<()> {
+pub async fn run(
+    mut events: broadcast::Receiver<AppEvent>,
+    commands: mpsc::Sender<AppCommand>,
+) -> Result<()> {
     let mut terminal = ratatui::init();
     let _restore_guard = TerminalRestoreGuard;
 
-    run_dashboard(&mut terminal, &mut events).await
+    run_dashboard(&mut terminal, &mut events, commands).await
 }
 
 struct TerminalRestoreGuard;
@@ -36,6 +42,7 @@ impl Drop for TerminalRestoreGuard {
 async fn run_dashboard(
     terminal: &mut ratatui::DefaultTerminal,
     events: &mut broadcast::Receiver<AppEvent>,
+    commands: mpsc::Sender<AppCommand>,
 ) -> Result<()> {
     let mut state = DashboardState::new(500);
     let mut terminal_events = EventStream::new();
@@ -47,7 +54,15 @@ async fn run_dashboard(
         tokio::select! {
             maybe_event = terminal_events.next() => {
                 match maybe_event {
-                    Some(Ok(TerminalEvent::Key(key))) => input::handle_key(&mut state, key),
+                    Some(Ok(TerminalEvent::Key(key))) => {
+                        if let Some(command) = input::handle_key(&mut state, key)
+                            && commands.send(command).await.is_err()
+                        {
+                            state.push_event(AppEvent::GatewayError {
+                                message: "command channel closed".to_owned(),
+                            });
+                        }
+                    }
                     Some(Ok(_)) => {}
                     Some(Err(error)) => return Err(error.into()),
                     None => state.quit(),
