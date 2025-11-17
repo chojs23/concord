@@ -17,8 +17,8 @@ use crate::{
 
 use state::DashboardState;
 
-pub async fn prompt_token(notice: Option<String>) -> Result<String> {
-    login::prompt_token(notice).await
+pub async fn prompt_login(notice: Option<String>) -> Result<String> {
+    login::prompt_login(notice).await
 }
 
 pub async fn run(

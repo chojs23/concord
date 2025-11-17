@@ -2,6 +2,7 @@ mod client;
 mod commands;
 mod events;
 mod gateway;
+pub mod qr_auth;
 mod rest;
 mod state;
 

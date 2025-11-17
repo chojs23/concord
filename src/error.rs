@@ -28,4 +28,8 @@ pub enum AppError {
     DeserializeBody(#[from] twilight_http::response::DeserializeBodyError),
     #[error("terminal I/O failed")]
     Io(#[from] std::io::Error),
+    #[error("QR login failed: {0}")]
+    QrLogin(String),
+    #[error("QR login was cancelled in the Discord mobile app")]
+    QrLoginCancelled,
 }

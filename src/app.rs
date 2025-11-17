@@ -95,7 +95,7 @@ async fn resolve_token() -> Result<ResolvedToken> {
         Some("Credential storage is unavailable; token may not be saved.".to_owned())
     };
 
-    let token = tui::prompt_token(login_notice).await?;
+    let token = tui::prompt_login(login_notice).await?;
     if let Err(error) = token_store::save_token(&token) {
         warnings.push(format!("token was not saved: {error}"));
     }
