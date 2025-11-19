@@ -9,7 +9,11 @@ pub async fn run_gateway(
     message_content_enabled: bool,
     tx: broadcast::Sender<AppEvent>,
 ) {
-    let mut intents = Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::DIRECT_MESSAGES;
+    let mut intents = Intents::GUILDS
+        | Intents::GUILD_MESSAGES
+        | Intents::DIRECT_MESSAGES
+        | Intents::GUILD_MEMBERS
+        | Intents::GUILD_PRESENCES;
     if message_content_enabled {
         intents |= Intents::MESSAGE_CONTENT;
     }

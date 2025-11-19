@@ -5,7 +5,7 @@ use twilight_model::id::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
-use super::{AppEvent, ChannelInfo};
+use super::{AppEvent, ChannelInfo, MemberInfo, PresenceStatus};
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
 
@@ -33,11 +33,20 @@ pub struct MessageState {
     pub content: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuildMemberState {
+    pub user_id: Id<UserMarker>,
+    pub display_name: String,
+    pub is_bot: bool,
+    pub status: PresenceStatus,
+}
+
 #[derive(Clone, Debug)]
 pub struct DiscordState {
     guilds: BTreeMap<Id<GuildMarker>, GuildState>,
     channels: BTreeMap<Id<ChannelMarker>, ChannelState>,
     messages: BTreeMap<Id<ChannelMarker>, VecDeque<MessageState>>,
+    members: BTreeMap<Id<GuildMarker>, BTreeMap<Id<UserMarker>, GuildMemberState>>,
     max_messages_per_channel: usize,
 }
 
@@ -53,6 +62,7 @@ impl DiscordState {
             guilds: BTreeMap::new(),
             channels: BTreeMap::new(),
             messages: BTreeMap::new(),
+            members: BTreeMap::new(),
             max_messages_per_channel,
         }
     }
@@ -63,6 +73,8 @@ impl DiscordState {
                 guild_id,
                 name,
                 channels,
+                members,
+                presences,
             } => {
                 self.guilds.insert(
                     *guild_id,
@@ -75,6 +87,21 @@ impl DiscordState {
                 for channel in channels {
                     self.upsert_channel(channel);
                 }
+
+                let entry = self.members.entry(*guild_id).or_default();
+                for member in members {
+                    upsert_member(entry, member, None);
+                }
+                for (user_id, status) in presences {
+                    if let Some(member) = entry.get_mut(user_id) {
+                        member.status = *status;
+                    }
+                }
+            }
+            AppEvent::GuildUpdate { guild_id, name } => {
+                if let Some(guild) = self.guilds.get_mut(guild_id) {
+                    guild.name = name.clone();
+                }
             }
             AppEvent::GuildDelete { guild_id } => {
                 self.guilds.remove(guild_id);
@@ -82,6 +109,7 @@ impl DiscordState {
                     .retain(|_, channel| channel.guild_id != Some(*guild_id));
                 self.messages
                     .retain(|channel_id, _| self.channels.contains_key(channel_id));
+                self.members.remove(guild_id);
             }
             AppEvent::ChannelUpsert(channel) => self.upsert_channel(channel),
             AppEvent::ChannelDelete { channel_id, .. } => {
@@ -114,6 +142,36 @@ impl DiscordState {
                 message_id,
                 ..
             } => self.delete_message(*channel_id, *message_id),
+            AppEvent::GuildMemberUpsert { guild_id, member } => {
+                let entry = self.members.entry(*guild_id).or_default();
+                let previous_status = entry.get(&member.user_id).map(|m| m.status);
+                upsert_member(entry, member, previous_status);
+            }
+            AppEvent::GuildMemberRemove { guild_id, user_id } => {
+                if let Some(entry) = self.members.get_mut(guild_id) {
+                    entry.remove(user_id);
+                }
+            }
+            AppEvent::PresenceUpdate {
+                guild_id,
+                user_id,
+                status,
+            } => {
+                let entry = self.members.entry(*guild_id).or_default();
+                if let Some(member) = entry.get_mut(user_id) {
+                    member.status = *status;
+                } else {
+                    entry.insert(
+                        *user_id,
+                        GuildMemberState {
+                            user_id: *user_id,
+                            display_name: format!("user-{}", user_id.get()),
+                            is_bot: false,
+                            status: *status,
+                        },
+                    );
+                }
+            }
             AppEvent::Ready { .. } | AppEvent::GatewayError { .. } | AppEvent::GatewayClosed => {}
         }
     }
@@ -133,6 +191,13 @@ impl DiscordState {
         self.messages
             .get(&channel_id)
             .map(|messages| messages.iter().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn members_for_guild(&self, guild_id: Id<GuildMarker>) -> Vec<&GuildMemberState> {
+        self.members
+            .get(&guild_id)
+            .map(|map| map.values().collect())
             .unwrap_or_default()
     }
 
@@ -206,11 +271,28 @@ impl DiscordState {
     }
 }
 
+fn upsert_member(
+    map: &mut BTreeMap<Id<UserMarker>, GuildMemberState>,
+    member: &MemberInfo,
+    previous_status: Option<PresenceStatus>,
+) {
+    let status = previous_status.unwrap_or(PresenceStatus::Offline);
+    map.insert(
+        member.user_id,
+        GuildMemberState {
+            user_id: member.user_id,
+            display_name: member.display_name.clone(),
+            is_bot: member.is_bot,
+            status,
+        },
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use twilight_model::id::{Id, marker::ChannelMarker};
 
-    use crate::discord::{AppEvent, ChannelInfo, DiscordState};
+    use crate::discord::{AppEvent, ChannelInfo, DiscordState, MemberInfo, PresenceStatus};
 
     #[test]
     fn applies_guild_channels_and_messages() {
@@ -229,6 +311,8 @@ mod tests {
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
             }],
+            members: Vec::new(),
+            presences: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
             guild_id: Some(guild_id),
@@ -298,5 +382,91 @@ mod tests {
         let messages = state.messages_for_channel(channel_id);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn tracks_members_and_presences() {
+        let guild_id = Id::new(1);
+        let alice = Id::new(10);
+        let bob = Id::new(20);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: Vec::new(),
+            members: vec![
+                MemberInfo {
+                    user_id: alice,
+                    display_name: "alice".to_owned(),
+                    is_bot: false,
+                },
+                MemberInfo {
+                    user_id: bob,
+                    display_name: "bob".to_owned(),
+                    is_bot: false,
+                },
+            ],
+            presences: vec![(alice, PresenceStatus::Online)],
+        });
+
+        let members = state.members_for_guild(guild_id);
+        assert_eq!(members.len(), 2);
+        let alice_state = members.iter().find(|m| m.user_id == alice).unwrap();
+        assert_eq!(alice_state.status, PresenceStatus::Online);
+        let bob_state = members.iter().find(|m| m.user_id == bob).unwrap();
+        assert_eq!(bob_state.status, PresenceStatus::Offline);
+
+        state.apply_event(&AppEvent::PresenceUpdate {
+            guild_id,
+            user_id: bob,
+            status: PresenceStatus::Idle,
+        });
+        assert_eq!(
+            state
+                .members_for_guild(guild_id)
+                .iter()
+                .find(|m| m.user_id == bob)
+                .unwrap()
+                .status,
+            PresenceStatus::Idle,
+        );
+    }
+
+    #[test]
+    fn member_upsert_preserves_existing_status() {
+        let guild_id = Id::new(1);
+        let user = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::GuildMemberUpsert {
+            guild_id,
+            member: MemberInfo {
+                user_id: user,
+                display_name: "alice".to_owned(),
+                is_bot: false,
+            },
+        });
+        state.apply_event(&AppEvent::PresenceUpdate {
+            guild_id,
+            user_id: user,
+            status: PresenceStatus::Online,
+        });
+        state.apply_event(&AppEvent::GuildMemberUpsert {
+            guild_id,
+            member: MemberInfo {
+                user_id: user,
+                display_name: "alice-renamed".to_owned(),
+                is_bot: false,
+            },
+        });
+
+        let member = state
+            .members_for_guild(guild_id)
+            .into_iter()
+            .find(|m| m.user_id == user)
+            .unwrap();
+        assert_eq!(member.display_name, "alice-renamed");
+        assert_eq!(member.status, PresenceStatus::Online);
     }
 }

@@ -3,12 +3,12 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 
 use super::{
-    format::{EventItem, truncate_text},
-    state::{DashboardState, EventFilter, FocusPane},
+    format::truncate_text,
+    state::{DashboardState, FocusPane, MemberGroup, presence_color, presence_marker},
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -17,94 +17,48 @@ const DIM: Color = Color::DarkGray;
 pub fn render(frame: &mut Frame, state: &DashboardState) {
     let [main, footer] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
-    let [body, composer] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(3)]).areas(main);
-    let [left, content] =
-        Layout::horizontal([Constraint::Length(36), Constraint::Min(0)]).areas(body);
-    let [sidebar, guilds, channels] = Layout::vertical([
-        Constraint::Length(8),
-        Constraint::Percentage(35),
-        Constraint::Min(0),
-    ])
-    .areas(left);
-    let [messages, lower] =
-        Layout::vertical([Constraint::Percentage(55), Constraint::Min(0)]).areas(content);
-    let [events, detail] =
-        Layout::horizontal([Constraint::Percentage(48), Constraint::Min(0)]).areas(lower);
 
-    render_sidebar(frame, sidebar, state);
+    let [guilds, channels, center, members] = Layout::horizontal([
+        Constraint::Length(20),
+        Constraint::Length(24),
+        Constraint::Min(40),
+        Constraint::Length(26),
+    ])
+    .areas(main);
+
+    let [messages, composer] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(3)]).areas(center);
+
     render_guilds(frame, guilds, state);
     render_channels(frame, channels, state);
     render_messages(frame, messages, state);
-    render_events(frame, events, state);
-    render_detail(frame, detail, state);
     render_composer(frame, composer, state);
-    render_footer(frame, footer);
-}
-
-fn render_sidebar(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    let status = if state.current_user().is_some() {
-        "connected"
-    } else {
-        "connecting"
-    };
-
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("Status ", Style::default().fg(DIM)),
-            Span::raw(status),
-        ]),
-        Line::from(vec![
-            Span::styled("User   ", Style::default().fg(DIM)),
-            Span::raw(state.current_user().unwrap_or("waiting for Ready")),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Events ", Style::default().fg(DIM)),
-            Span::raw(state.total_events().to_string()),
-        ]),
-        Line::from(vec![
-            Span::styled("Filter ", Style::default().fg(DIM)),
-            Span::styled(state.filter().to_string(), Style::default().fg(ACCENT)),
-        ]),
-        Line::from(vec![
-            Span::styled("Lagged ", Style::default().fg(DIM)),
-            Span::raw(state.skipped_events().to_string()),
-        ]),
-        Line::from(""),
-        filter_line("1", "all", state.filter() == EventFilter::All),
-        filter_line("2", "messages", state.filter() == EventFilter::Messages),
-        filter_line("3", "gateway", state.filter() == EventFilter::Gateway),
-        filter_line("4", "errors", state.filter() == EventFilter::Errors),
-    ];
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("Discord", state.focus() == FocusPane::Sidebar))
-            .wrap(Wrap { trim: true }),
-        area,
-    );
+    render_members(frame, members, state);
+    render_footer(frame, footer, state);
 }
 
 fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let guilds = state.guilds();
     let items: Vec<ListItem> = guilds
         .iter()
-        .map(|guild| ListItem::new(guild.name.clone()))
+        .map(|guild| {
+            ListItem::new(Line::from(Span::raw(truncate_text(
+                &guild.name,
+                area.width.saturating_sub(4) as usize,
+            ))))
+        })
         .collect();
     let mut list_state = ListState::default();
     if !items.is_empty() {
         list_state.select(Some(state.selected_guild()));
     }
 
-    frame.render_stateful_widget(
-        List::new(items)
-            .block(panel_block("Guilds", state.focus() == FocusPane::Guilds))
-            .highlight_style(selected_style())
-            .highlight_symbol("▶ "),
-        area,
-        &mut list_state,
-    );
+    let list = List::new(items)
+        .block(panel_block("Servers", state.focus() == FocusPane::Guilds))
+        .highlight_style(highlight_style())
+        .highlight_symbol("▌ ");
+
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
 
 fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
@@ -114,8 +68,10 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
         .map(|channel| {
             ListItem::new(Line::from(vec![
                 Span::styled("# ", Style::default().fg(DIM)),
-                Span::raw(channel.name.clone()),
-                Span::styled(format!(" {}", channel.kind), Style::default().fg(DIM)),
+                Span::raw(truncate_text(
+                    &channel.name,
+                    area.width.saturating_sub(6) as usize,
+                )),
             ]))
         })
         .collect();
@@ -124,115 +80,84 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
         list_state.select(Some(state.selected_channel()));
     }
 
-    frame.render_stateful_widget(
-        List::new(items)
-            .block(panel_block(
-                "Channels",
-                state.focus() == FocusPane::Channels,
-            ))
-            .highlight_style(selected_style())
-            .highlight_symbol("▶ "),
-        area,
-        &mut list_state,
-    );
+    let list = List::new(items)
+        .block(panel_block(
+            "Channels",
+            state.focus() == FocusPane::Channels,
+        ))
+        .highlight_style(highlight_style())
+        .highlight_symbol("▌ ");
+
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
 
 fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    let title_text = state
+        .selected_channel_name()
+        .map(|name| format!("#{name}"))
+        .unwrap_or_else(|| "no channel".to_owned());
+
     let messages = state.messages();
+    let max_author_width = 14usize;
+    let padding = 4usize;
+    let content_width = (area.width as usize)
+        .saturating_sub(padding)
+        .saturating_sub(max_author_width + 2);
+
     let items: Vec<ListItem> = messages
         .iter()
         .map(|message| {
-            let content = message.content.as_deref().unwrap_or("<unavailable>");
+            let author = truncate_text(&message.author, max_author_width);
+            let content = match message.content.as_deref() {
+                Some(value) if !value.is_empty() => truncate_text(value, content_width.max(8)),
+                Some(_) => "<empty message>".to_owned(),
+                None => "<message content unavailable>".to_owned(),
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(
-                    format!("{:<12}", truncate_text(&message.author, 12)),
-                    Style::default().fg(Color::Green),
+                    format!("{author:<width$} ", width = max_author_width),
+                    Style::default().fg(Color::Green).bold(),
                 ),
-                Span::raw(truncate_text(content, 120)),
+                Span::raw(content),
             ]))
         })
         .collect();
+
     let mut list_state = ListState::default();
     if !items.is_empty() {
         list_state.select(Some(state.selected_message()));
     }
 
-    frame.render_stateful_widget(
-        List::new(items)
-            .block(panel_block(
-                "Messages",
-                state.focus() == FocusPane::Messages,
-            ))
-            .highlight_style(selected_style())
-            .highlight_symbol("▶ "),
-        area,
-        &mut list_state,
-    );
-}
-
-fn render_events(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    let visible = state.visible_events();
-    let items: Vec<ListItem> = visible.iter().map(|event| event_row(event)).collect();
-    let mut list_state = ListState::default();
-
-    if !items.is_empty() {
-        list_state.select(Some(state.selected()));
-    }
-
     let list = List::new(items)
-        .block(panel_block("Events", state.focus() == FocusPane::Events))
-        .highlight_style(selected_style())
-        .highlight_symbol("▶ ");
+        .block(panel_block_owned(
+            title_text,
+            state.focus() == FocusPane::Messages,
+        ))
+        .highlight_style(highlight_style())
+        .highlight_symbol("▌ ");
 
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
-fn render_detail(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    let detail = if state.focus() == FocusPane::Messages {
-        state
-            .selected_message_item()
-            .map(|message| {
-                format!(
-                    "Message\n\nChannel: {}\nMessage: {}\nAuthor: {} ({})\n\n{}",
-                    message.channel_id.get(),
-                    message.id.get(),
-                    message.author,
-                    message.author_id.get(),
-                    message.content.as_deref().unwrap_or("<unavailable>")
-                )
-            })
-            .unwrap_or_else(|| "No message selected.".to_owned())
-    } else {
-        state
-            .selected_event()
-            .map(|event| event.detail.clone())
-            .unwrap_or_else(|| {
-                "No event selected yet. Waiting for Discord gateway events...".to_owned()
-            })
-    };
-
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        Paragraph::new(detail)
-            .block(panel_block("Detail", state.focus() == FocusPane::Detail))
-            .wrap(Wrap { trim: false }),
-        area,
-    );
-}
-
 fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    let channel = state
-        .selected_channel_id()
-        .map(|id| format!("channel {}", id.get()))
-        .unwrap_or_else(|| "no channel selected".to_owned());
     let prompt = if state.is_composing() {
         format!("> {}", state.composer_input())
+    } else if state.selected_channel_id().is_some() {
+        format!(
+            "press i to compose in #{}",
+            state.selected_channel_name().unwrap_or_default()
+        )
     } else {
-        format!("press i to compose for {channel}")
+        "select a channel to start composing".to_owned()
     };
 
     frame.render_widget(
         Paragraph::new(prompt)
+            .style(if state.is_composing() {
+                Style::default().fg(Color::White)
+            } else {
+                Style::default().fg(DIM)
+            })
             .block(panel_block(
                 "Composer",
                 state.focus() == FocusPane::Composer,
@@ -242,57 +167,124 @@ fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
     );
 }
 
-fn render_footer(frame: &mut Frame, area: Rect) {
+fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    let groups = state.members_grouped();
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let max_name_width = (area.width as usize).saturating_sub(6).max(8);
+    let mut flat_index = 0usize;
+    let selected = state.selected_member();
+    let focused = state.focus() == FocusPane::Members;
+
+    if groups.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No members loaded yet.",
+            Style::default().fg(DIM),
+        )));
+    }
+
+    for group in &groups {
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        lines.push(member_group_header(group));
+        for member in &group.entries {
+            let is_selected = focused && flat_index == selected;
+            let marker_style = Style::default().fg(presence_color(member.status));
+            let mut name_style = Style::default().fg(if member.status == crate::discord::PresenceStatus::Offline {
+                DIM
+            } else {
+                Color::White
+            });
+            if member.is_bot {
+                name_style = name_style.add_modifier(Modifier::ITALIC);
+            }
+            if is_selected {
+                name_style = name_style
+                    .bg(Color::Rgb(24, 54, 65))
+                    .add_modifier(Modifier::BOLD);
+            }
+
+            let mut display = truncate_text(&member.display_name, max_name_width);
+            if member.is_bot {
+                display = format!("{display} [bot]");
+            }
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {} ", presence_marker(member.status)), marker_style),
+                Span::styled(display, name_style),
+            ]));
+            flat_index += 1;
+        }
+    }
+
     frame.render_widget(
-        Paragraph::new(
-            "q quit | tab focus | j/k move | i compose | enter send | esc cancel | 1 all 2 msg 3 gate 4 err | c clear",
-        )
-        .style(Style::default().fg(Color::Gray))
-        .alignment(Alignment::Center),
+        Paragraph::new(lines)
+            .block(panel_block("Members", focused))
+            .wrap(Wrap { trim: false }),
         area,
     );
 }
 
-fn selected_style() -> Style {
+fn member_group_header(group: &MemberGroup<'_>) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            group.status.label().to_owned(),
+            Style::default()
+                .fg(presence_color(group.status))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" — {}", group.entries.len()),
+            Style::default().fg(DIM),
+        ),
+    ])
+}
+
+fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    let user = state.current_user().unwrap_or("connecting...");
+    let mut spans = vec![
+        Span::styled(format!(" {user} "), Style::default().fg(Color::Green).bold()),
+        Span::styled(
+            "tab focus | j/k move | i compose | enter send | esc cancel | q quit",
+            Style::default().fg(DIM),
+        ),
+    ];
+    if let Some(error) = state.last_error() {
+        spans.push(Span::raw(" | "));
+        spans.push(Span::styled(
+            format!("err: {}", truncate_text(error, 60)),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    if state.skipped_events() > 0 {
+        spans.push(Span::raw(" | "));
+        spans.push(Span::styled(
+            format!("lagged {}", state.skipped_events()),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
+        area,
+    );
+}
+
+fn highlight_style() -> Style {
     Style::default()
         .bg(Color::Rgb(24, 54, 65))
         .fg(Color::White)
         .add_modifier(Modifier::BOLD)
 }
 
-fn event_row(event: &EventItem) -> ListItem<'static> {
-    let summary = truncate_text(&event.summary, 96);
-
-    ListItem::new(Line::from(vec![
-        Span::styled(format!("#{:<4}", event.seq), Style::default().fg(DIM)),
-        Span::styled(
-            format!("{:<7}", event.label()),
-            Style::default().fg(event.color()),
-        ),
-        Span::raw(summary),
-    ]))
-}
-
-fn filter_line(key: &'static str, label: &'static str, active: bool) -> Line<'static> {
-    let style = if active {
-        Style::default()
-            .fg(Color::Green)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::Gray)
-    };
-
-    Line::from(vec![
-        Span::styled(format!("{key} "), Style::default().fg(DIM)),
-        Span::styled(label, style),
-    ])
-}
-
 fn panel_block(title: &'static str, focused: bool) -> Block<'static> {
+    panel_block_owned(title.to_owned(), focused)
+}
+
+fn panel_block_owned(title: String, focused: bool) -> Block<'static> {
     let border = if focused { ACCENT } else { Color::DarkGray };
 
     Block::default()
-        .title(title)
+        .title(format!(" {title} "))
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(border))

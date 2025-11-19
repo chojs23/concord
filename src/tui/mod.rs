@@ -44,7 +44,7 @@ async fn run_dashboard(
     events: &mut broadcast::Receiver<AppEvent>,
     commands: mpsc::Sender<AppCommand>,
 ) -> Result<()> {
-    let mut state = DashboardState::new(500);
+    let mut state = DashboardState::new();
     let mut terminal_events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(250));
 
