@@ -1,3 +1,11 @@
+use std::{
+    env,
+    fs::{File, OpenOptions},
+    io::Write,
+    path::PathBuf,
+    sync::Mutex,
+};
+
 use serde_json::Value;
 use tokio::sync::broadcast;
 use twilight_gateway::{EventTypeFlags, Shard, StreamExt, error::ReceiveMessageErrorType};
@@ -29,10 +37,12 @@ pub async fn run_gateway(
     }
 
     let mut shard = Shard::new(ShardId::ONE, token, intents);
+    let logger = DebugLogger::from_env();
 
     while let Some(item) = shard.next_event(EventTypeFlags::all()).await {
         match item {
             Ok(event) => {
+                logger.log(&format!("ok: {:?}\n", event.kind()));
                 if let Some(event) = map_event(event, message_content_enabled) {
                     let _ = tx.send(event);
                 }
@@ -42,12 +52,18 @@ pub async fn run_gateway(
                 // For events we can rebuild from raw JSON, do so. Other deserialize
                 // failures are silently dropped instead of spamming the footer.
                 if let ReceiveMessageErrorType::Deserializing { event } = error.kind() {
-                    for app_event in parse_user_account_event(event) {
+                    logger.log(&format!("deserialize fallback: {event}\n"));
+                    let mut events = parse_user_account_event(event);
+                    if events.is_empty() {
+                        logger.log("  -> no fallback events emitted\n");
+                    }
+                    for app_event in events.drain(..) {
                         let _ = tx.send(app_event);
                     }
                     continue;
                 }
 
+                logger.log(&format!("err: {error}\n"));
                 let _ = tx.send(AppEvent::GatewayError {
                     message: error.to_string(),
                 });
@@ -56,6 +72,52 @@ pub async fn run_gateway(
     }
 
     let _ = tx.send(AppEvent::GatewayClosed);
+}
+
+/// Optional debug log; activated by setting `DISCORD_DEBUG_GATEWAY=1`. Writes
+/// raw deserialize-failed payloads and event kinds to
+/// `~/.discord-rs/gateway-debug.log` so we can diagnose user-token format
+/// surprises without polluting the TUI.
+struct DebugLogger {
+    file: Option<Mutex<File>>,
+}
+
+impl DebugLogger {
+    fn from_env() -> Self {
+        if env::var("DISCORD_DEBUG_GATEWAY").ok().as_deref() != Some("1") {
+            return Self { file: None };
+        }
+
+        let Some(path) = log_path() else {
+            return Self { file: None };
+        };
+
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .ok()
+            .map(Mutex::new);
+        Self { file }
+    }
+
+    fn log(&self, message: &str) {
+        let Some(file) = self.file.as_ref() else {
+            return;
+        };
+        if let Ok(mut guard) = file.lock() {
+            let _ = guard.write_all(message.as_bytes());
+        }
+    }
+}
+
+fn log_path() -> Option<PathBuf> {
+    let home = env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".discord-rs").join("gateway-debug.log"))
 }
 
 /// Best-effort fallback that rebuilds the dashboard's domain events directly
@@ -74,7 +136,7 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
     };
 
     match event_type {
-        "READY" => parse_ready(data).into_iter().collect(),
+        "READY" => parse_ready(data),
         "GUILD_CREATE" => parse_guild_create(data).into_iter().collect(),
         "GUILD_UPDATE" => parse_guild_update(data).into_iter().collect(),
         "GUILD_DELETE" => parse_guild_delete(data).into_iter().collect(),
@@ -92,16 +154,44 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
     }
 }
 
-fn parse_ready(data: &Value) -> Option<AppEvent> {
-    let user = data.get("user")?;
-    let name = user
-        .get("global_name")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .or_else(|| user.get("username").and_then(Value::as_str))
-        .unwrap_or("unknown")
-        .to_owned();
-    Some(AppEvent::Ready { user: name })
+/// User-account READY embeds the full guild list under `d.guilds`. Bots get a
+/// stub list of unavailable guilds and a separate `GUILD_CREATE` per guild,
+/// but user accounts never send standalone GUILD_CREATEs, so we emit a
+/// synthetic GuildCreate for each entry inline.
+fn parse_ready(data: &Value) -> Vec<AppEvent> {
+    let mut events = Vec::new();
+
+    if let Some(user) = data.get("user") {
+        let name = user
+            .get("global_name")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .or_else(|| user.get("username").and_then(Value::as_str))
+            .unwrap_or("unknown")
+            .to_owned();
+        events.push(AppEvent::Ready { user: name });
+    }
+
+    if let Some(guilds) = data.get("guilds").and_then(Value::as_array) {
+        for guild in guilds {
+            if let Some(event) = parse_guild_create(guild) {
+                events.push(event);
+            }
+        }
+    }
+
+    // User-account READY also lists DM and group-DM channels under
+    // `private_channels`. They have no `guild_id` and never come through
+    // `GUILD_CREATE`, so we surface them as standalone channel upserts.
+    if let Some(privates) = data.get("private_channels").and_then(Value::as_array) {
+        for channel in privates {
+            if let Some(info) = parse_channel_info(channel, None) {
+                events.push(AppEvent::ChannelUpsert(info));
+            }
+        }
+    }
+
+    events
 }
 
 fn parse_guild_create(data: &Value) -> Option<AppEvent> {
@@ -257,22 +347,64 @@ fn parse_channel_info(value: &Value, default_guild: Option<Id<GuildMarker>>) -> 
         .get("guild_id")
         .and_then(parse_id::<GuildMarker>)
         .or(default_guild);
-    let name = value
+
+    // Map Discord channel type integers to friendlier strings. DMs and
+    // group-DMs are special-cased so the dashboard can render them with
+    // a dedicated prefix.
+    let kind = match value.get("type").and_then(Value::as_u64) {
+        Some(0) => "text".to_owned(),
+        Some(1) => "dm".to_owned(),
+        Some(2) => "voice".to_owned(),
+        Some(3) => "group-dm".to_owned(),
+        Some(4) => "category".to_owned(),
+        Some(5) => "announcement".to_owned(),
+        Some(10..=12) => "thread".to_owned(),
+        Some(13) => "stage".to_owned(),
+        Some(15) => "forum".to_owned(),
+        Some(other) => format!("type-{other}"),
+        None => "channel".to_owned(),
+    };
+
+    let explicit_name = value
         .get("name")
         .and_then(Value::as_str)
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("channel-{}", channel_id.get()));
-    let kind = value
-        .get("type")
-        .and_then(Value::as_u64)
-        .map(|value| format!("type-{value}"))
-        .unwrap_or_else(|| "channel".to_owned());
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let name = explicit_name.unwrap_or_else(|| {
+        if matches!(kind.as_str(), "dm" | "group-dm") {
+            recipient_label(value).unwrap_or_else(|| format!("dm-{}", channel_id.get()))
+        } else {
+            format!("channel-{}", channel_id.get())
+        }
+    });
+
     Some(ChannelInfo {
         guild_id,
         channel_id,
         name,
         kind,
     })
+}
+
+/// For DM channels, derive a display label from the recipients' names.
+/// Skips the local user when present so 1-on-1 DMs read as just the peer.
+fn recipient_label(value: &Value) -> Option<String> {
+    let recipients = value.get("recipients")?.as_array()?;
+    let names: Vec<String> = recipients
+        .iter()
+        .filter_map(|recipient| {
+            let global = recipient
+                .get("global_name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty());
+            let username = recipient.get("username").and_then(Value::as_str);
+            global.or(username).map(str::to_owned)
+        })
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    Some(names.join(", "))
 }
 
 fn parse_member_info(value: &Value) -> Option<MemberInfo> {
