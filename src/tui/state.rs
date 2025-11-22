@@ -36,7 +36,11 @@ impl DashboardState {
         Self {
             discord: DiscordState::default(),
             focus: FocusPane::Messages,
-            selected_guild: 0,
+            // Index 0 is the virtual "Direct Messages" entry. Start on the
+            // first real guild when one exists; the bounds clamp inside
+            // `selected_guild()` falls back to the DM entry while the guild
+            // list is still empty.
+            selected_guild: 1,
             selected_channel: 0,
             selected_message: 0,
             selected_member: 0,
@@ -103,22 +107,36 @@ impl DashboardState {
         &self.composer_input
     }
 
-    pub fn guilds(&self) -> Vec<&GuildState> {
-        self.discord.guilds()
+    /// The guild pane shows a virtual "Direct Messages" entry at index 0,
+    /// followed by the user's real guilds. This helper returns the labels in
+    /// display order.
+    pub fn guild_pane_entries(&self) -> Vec<GuildPaneEntry<'_>> {
+        let mut entries: Vec<GuildPaneEntry<'_>> = vec![GuildPaneEntry::DirectMessages];
+        entries.extend(self.discord.guilds().into_iter().map(GuildPaneEntry::Guild));
+        entries
+    }
+
+    pub fn is_dm_selected(&self) -> bool {
+        self.selected_guild() == 0
     }
 
     pub fn selected_guild(&self) -> usize {
         self.selected_guild
-            .min(self.guilds().len().saturating_sub(1))
+            .min(self.guild_pane_entries().len().saturating_sub(1))
     }
 
     pub fn selected_guild_id(&self) -> Option<Id<GuildMarker>> {
-        self.guilds()
-            .get(self.selected_guild())
-            .map(|guild| guild.id)
+        if self.is_dm_selected() {
+            return None;
+        }
+        // Index 0 is the DM virtual entry, so real guilds shift by one.
+        let real_index = self.selected_guild().saturating_sub(1);
+        self.discord.guilds().get(real_index).map(|guild| guild.id)
     }
 
     pub fn channels(&self) -> Vec<&ChannelState> {
+        // `channels_for_guild(None)` returns DM/group-DM channels, which is
+        // exactly what we want when the DM entry is selected.
         self.discord.channels_for_guild(self.selected_guild_id())
     }
 
@@ -131,12 +149,6 @@ impl DashboardState {
         self.channels()
             .get(self.selected_channel())
             .map(|channel| channel.id)
-    }
-
-    pub fn selected_channel_name(&self) -> Option<String> {
-        self.channels()
-            .get(self.selected_channel())
-            .map(|channel| channel.name.clone())
     }
 
     pub fn messages(&self) -> Vec<&MessageState> {
@@ -200,7 +212,7 @@ impl DashboardState {
                 self.selected_guild = self
                     .selected_guild
                     .saturating_add(1)
-                    .min(self.guilds().len().saturating_sub(1));
+                    .min(self.guild_pane_entries().len().saturating_sub(1));
                 self.selected_channel = 0;
                 self.selected_message = self.messages().len().saturating_sub(1);
                 self.selected_member = 0;
@@ -263,7 +275,7 @@ impl DashboardState {
     pub fn jump_bottom(&mut self) {
         match self.focus {
             FocusPane::Guilds => {
-                self.selected_guild = self.guilds().len().saturating_sub(1);
+                self.selected_guild = self.guild_pane_entries().len().saturating_sub(1);
             }
             FocusPane::Channels => {
                 self.selected_channel = self.channels().len().saturating_sub(1);
@@ -339,6 +351,21 @@ impl Default for DashboardState {
 pub struct MemberGroup<'a> {
     pub status: PresenceStatus,
     pub entries: Vec<&'a GuildMemberState>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum GuildPaneEntry<'a> {
+    DirectMessages,
+    Guild(&'a GuildState),
+}
+
+impl GuildPaneEntry<'_> {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::DirectMessages => "Direct Messages",
+            Self::Guild(state) => state.name.as_str(),
+        }
+    }
 }
 
 pub fn presence_color(status: PresenceStatus) -> Color {

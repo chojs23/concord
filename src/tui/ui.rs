@@ -8,7 +8,9 @@ use ratatui::{
 
 use super::{
     format::truncate_text,
-    state::{DashboardState, FocusPane, MemberGroup, presence_color, presence_marker},
+    state::{
+        DashboardState, FocusPane, GuildPaneEntry, MemberGroup, presence_color, presence_marker,
+    },
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -38,16 +40,23 @@ pub fn render(frame: &mut Frame, state: &DashboardState) {
 }
 
 fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    let guilds = state.guilds();
-    let items: Vec<ListItem> = guilds
+    let entries = state.guild_pane_entries();
+    let max_width = area.width.saturating_sub(4) as usize;
+    let items: Vec<ListItem> = entries
         .iter()
-        .map(|guild| {
-            ListItem::new(Line::from(Span::raw(truncate_text(
-                &guild.name,
-                area.width.saturating_sub(4) as usize,
-            ))))
+        .map(|entry| match entry {
+            GuildPaneEntry::DirectMessages => ListItem::new(Line::from(Span::styled(
+                truncate_text(entry.label(), max_width),
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ))),
+            GuildPaneEntry::Guild(_) => {
+                ListItem::new(Line::from(Span::raw(truncate_text(entry.label(), max_width))))
+            }
         })
         .collect();
+
     let mut list_state = ListState::default();
     if !items.is_empty() {
         list_state.select(Some(state.selected_guild()));
@@ -63,15 +72,14 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
 
 fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let channels = state.channels();
+    let max_width = area.width.saturating_sub(6) as usize;
     let items: Vec<ListItem> = channels
         .iter()
         .map(|channel| {
+            let prefix = channel_prefix(&channel.kind);
             ListItem::new(Line::from(vec![
-                Span::styled("# ", Style::default().fg(DIM)),
-                Span::raw(truncate_text(
-                    &channel.name,
-                    area.width.saturating_sub(6) as usize,
-                )),
+                Span::styled(prefix, Style::default().fg(DIM)),
+                Span::raw(truncate_text(&channel.name, max_width)),
             ]))
         })
         .collect();
@@ -93,8 +101,13 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
 
 fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let title_text = state
-        .selected_channel_name()
-        .map(|name| format!("#{name}"))
+        .channels()
+        .get(state.selected_channel())
+        .map(|channel| match channel.kind.as_str() {
+            "dm" => format!("@{}", channel.name),
+            "group-dm" => channel.name.clone(),
+            _ => format!("#{}", channel.name),
+        })
         .unwrap_or_else(|| "no channel".to_owned());
 
     let messages = state.messages();
@@ -142,11 +155,13 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
 fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let prompt = if state.is_composing() {
         format!("> {}", state.composer_input())
-    } else if state.selected_channel_id().is_some() {
-        format!(
-            "press i to compose in #{}",
-            state.selected_channel_name().unwrap_or_default()
-        )
+    } else if let Some(channel) = state.channels().get(state.selected_channel()).copied() {
+        let label = match channel.kind.as_str() {
+            "dm" => format!("@{}", channel.name),
+            "group-dm" => channel.name.clone(),
+            _ => format!("#{}", channel.name),
+        };
+        format!("press i to compose in {label}")
     } else {
         "select a channel to start composing".to_owned()
     };
@@ -267,6 +282,17 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
         Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
         area,
     );
+}
+
+fn channel_prefix(kind: &str) -> &'static str {
+    match kind {
+        "dm" => "@ ",
+        "group-dm" => "● ",
+        "voice" => "🔊 ",
+        "category" => "▾ ",
+        "thread" => "» ",
+        _ => "# ",
+    }
 }
 
 fn highlight_style() -> Style {
