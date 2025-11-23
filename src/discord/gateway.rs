@@ -18,7 +18,7 @@ use twilight_model::{
 };
 
 use super::{
-    ChannelInfo, MemberInfo, PresenceStatus,
+    ChannelInfo, GuildFolder, MemberInfo, PresenceStatus,
     events::{AppEvent, map_event},
 };
 
@@ -191,7 +191,49 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
         }
     }
 
+    // Guild folder ordering and grouping live in the legacy `user_settings`
+    // payload (the modern `user_settings_proto` blob is base64+protobuf and is
+    // skipped for now). When present, every guild appears in some folder —
+    // either an explicit one or a single-guild "container" with `id == null`.
+    if let Some(folders) = data
+        .get("user_settings")
+        .and_then(|settings| settings.get("guild_folders"))
+        .and_then(Value::as_array)
+    {
+        let folders: Vec<GuildFolder> = folders.iter().filter_map(parse_guild_folder).collect();
+        if !folders.is_empty() {
+            events.push(AppEvent::GuildFoldersUpdate { folders });
+        }
+    }
+
     events
+}
+
+fn parse_guild_folder(value: &Value) -> Option<GuildFolder> {
+    let guild_ids: Vec<Id<GuildMarker>> = value
+        .get("guild_ids")?
+        .as_array()?
+        .iter()
+        .filter_map(parse_id::<GuildMarker>)
+        .collect();
+    if guild_ids.is_empty() {
+        return None;
+    }
+
+    let id = value.get("id").and_then(Value::as_u64);
+    let name = value
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let color = value.get("color").and_then(Value::as_u64).map(|c| c as u32);
+
+    Some(GuildFolder {
+        id,
+        name,
+        color,
+        guild_ids,
+    })
 }
 
 fn parse_guild_create(data: &Value) -> Option<AppEvent> {

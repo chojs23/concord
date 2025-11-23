@@ -5,7 +5,7 @@ use twilight_model::id::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
-use super::{AppEvent, ChannelInfo, MemberInfo, PresenceStatus};
+use super::{AppEvent, ChannelInfo, GuildFolder, MemberInfo, PresenceStatus};
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
 
@@ -47,6 +47,9 @@ pub struct DiscordState {
     channels: BTreeMap<Id<ChannelMarker>, ChannelState>,
     messages: BTreeMap<Id<ChannelMarker>, VecDeque<MessageState>>,
     members: BTreeMap<Id<GuildMarker>, BTreeMap<Id<UserMarker>, GuildMemberState>>,
+    /// User's `guild_folders` setting in display order. Empty until READY
+    /// delivers it; the dashboard falls back to a flat guild list.
+    guild_folders: Vec<GuildFolder>,
     max_messages_per_channel: usize,
 }
 
@@ -63,6 +66,7 @@ impl DiscordState {
             channels: BTreeMap::new(),
             messages: BTreeMap::new(),
             members: BTreeMap::new(),
+            guild_folders: Vec::new(),
             max_messages_per_channel,
         }
     }
@@ -172,8 +176,15 @@ impl DiscordState {
                     );
                 }
             }
+            AppEvent::GuildFoldersUpdate { folders } => {
+                self.guild_folders = folders.clone();
+            }
             AppEvent::Ready { .. } | AppEvent::GatewayError { .. } | AppEvent::GatewayClosed => {}
         }
+    }
+
+    pub fn guild_folders(&self) -> &[GuildFolder] {
+        &self.guild_folders
     }
 
     pub fn guilds(&self) -> Vec<&GuildState> {

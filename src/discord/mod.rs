@@ -8,5 +8,5 @@ mod state;
 
 pub use client::DiscordClient;
 pub use commands::AppCommand;
-pub use events::{AppEvent, ChannelInfo, MemberInfo, PresenceStatus};
+pub use events::{AppEvent, ChannelInfo, GuildFolder, MemberInfo, PresenceStatus};
 pub use state::{ChannelState, DiscordState, GuildMemberState, GuildState, MessageState};

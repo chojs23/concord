@@ -1,9 +1,11 @@
+use std::collections::{HashMap, HashSet};
+
 use ratatui::style::Color;
 use twilight_model::id::{Id, marker::ChannelMarker, marker::GuildMarker};
 
 use crate::discord::{
-    AppCommand, AppEvent, ChannelState, DiscordState, GuildMemberState, GuildState, MessageState,
-    PresenceStatus,
+    AppCommand, AppEvent, ChannelState, DiscordState, GuildFolder, GuildMemberState, GuildState,
+    MessageState, PresenceStatus,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,6 +31,9 @@ pub struct DashboardState {
     last_error: Option<String>,
     skipped_events: u64,
     should_quit: bool,
+    /// Folder IDs the user has collapsed in the guild pane. Single-guild
+    /// "folders" (id = None) are never collapsible since they have no header.
+    collapsed_folders: HashSet<u64>,
 }
 
 impl DashboardState {
@@ -50,6 +55,7 @@ impl DashboardState {
             last_error: None,
             skipped_events: 0,
             should_quit: false,
+            collapsed_folders: HashSet::new(),
         }
     }
 
@@ -107,17 +113,76 @@ impl DashboardState {
         &self.composer_input
     }
 
-    /// The guild pane shows a virtual "Direct Messages" entry at index 0,
-    /// followed by the user's real guilds. This helper returns the labels in
-    /// display order.
+    /// Builds the guild pane in display order: a virtual "Direct Messages"
+    /// row, then each `guild_folders` entry expanded into either a single
+    /// guild row (`id == None`, one member) or a folder header followed by
+    /// indented children. Collapsed folders hide their children. Guilds that
+    /// the user is in but the folder list omits get appended at the bottom.
     pub fn guild_pane_entries(&self) -> Vec<GuildPaneEntry<'_>> {
         let mut entries: Vec<GuildPaneEntry<'_>> = vec![GuildPaneEntry::DirectMessages];
-        entries.extend(self.discord.guilds().into_iter().map(GuildPaneEntry::Guild));
-        entries
-    }
+        let by_id: HashMap<Id<GuildMarker>, &GuildState> = self
+            .discord
+            .guilds()
+            .into_iter()
+            .map(|guild| (guild.id, guild))
+            .collect();
+        let mut placed: HashSet<Id<GuildMarker>> = HashSet::new();
+        let folders = self.discord.guild_folders();
 
-    pub fn is_dm_selected(&self) -> bool {
-        self.selected_guild() == 0
+        if folders.is_empty() {
+            for guild in by_id.values() {
+                entries.push(GuildPaneEntry::Guild {
+                    state: guild,
+                    in_folder: false,
+                });
+            }
+            return entries;
+        }
+
+        for folder in folders {
+            let is_single_container = folder.id.is_none() && folder.guild_ids.len() == 1;
+            if is_single_container {
+                if let Some(guild) = by_id.get(&folder.guild_ids[0]) {
+                    entries.push(GuildPaneEntry::Guild {
+                        state: guild,
+                        in_folder: false,
+                    });
+                    placed.insert(folder.guild_ids[0]);
+                }
+                continue;
+            }
+
+            let collapsed = folder
+                .id
+                .is_some_and(|id| self.collapsed_folders.contains(&id));
+            entries.push(GuildPaneEntry::FolderHeader { folder, collapsed });
+
+            // Always mark children as placed even when collapsed so we don't
+            // duplicate them in the trailing "ungrouped" loop.
+            for guild_id in &folder.guild_ids {
+                placed.insert(*guild_id);
+                if collapsed {
+                    continue;
+                }
+                if let Some(guild) = by_id.get(guild_id) {
+                    entries.push(GuildPaneEntry::Guild {
+                        state: guild,
+                        in_folder: true,
+                    });
+                }
+            }
+        }
+
+        for guild in by_id.values() {
+            if !placed.contains(&guild.id) {
+                entries.push(GuildPaneEntry::Guild {
+                    state: guild,
+                    in_folder: false,
+                });
+            }
+        }
+
+        entries
     }
 
     pub fn selected_guild(&self) -> usize {
@@ -126,12 +191,27 @@ impl DashboardState {
     }
 
     pub fn selected_guild_id(&self) -> Option<Id<GuildMarker>> {
-        if self.is_dm_selected() {
-            return None;
+        let entries = self.guild_pane_entries();
+        match entries.get(self.selected_guild())? {
+            GuildPaneEntry::Guild { state, .. } => Some(state.id),
+            // DirectMessages and FolderHeader have no associated guild — the
+            // channels pane treats them as "no guild selected".
+            GuildPaneEntry::DirectMessages | GuildPaneEntry::FolderHeader { .. } => None,
         }
-        // Index 0 is the DM virtual entry, so real guilds shift by one.
-        let real_index = self.selected_guild().saturating_sub(1);
-        self.discord.guilds().get(real_index).map(|guild| guild.id)
+    }
+
+    /// Toggles the collapse state of the folder under the selection. Does
+    /// nothing if the cursor isn't on a folder header.
+    pub fn toggle_selected_folder(&mut self) {
+        let folder_id = match self.guild_pane_entries().get(self.selected_guild()) {
+            Some(GuildPaneEntry::FolderHeader { folder, .. }) => folder.id,
+            _ => None,
+        };
+        if let Some(id) = folder_id
+            && !self.collapsed_folders.insert(id)
+        {
+            self.collapsed_folders.remove(&id);
+        }
     }
 
     pub fn channels(&self) -> Vec<&ChannelState> {
@@ -356,15 +436,38 @@ pub struct MemberGroup<'a> {
 #[derive(Debug, Clone, Copy)]
 pub enum GuildPaneEntry<'a> {
     DirectMessages,
-    Guild(&'a GuildState),
+    FolderHeader {
+        folder: &'a GuildFolder,
+        collapsed: bool,
+    },
+    Guild {
+        state: &'a GuildState,
+        in_folder: bool,
+    },
 }
 
 impl GuildPaneEntry<'_> {
     pub fn label(&self) -> &str {
         match self {
             Self::DirectMessages => "Direct Messages",
-            Self::Guild(state) => state.name.as_str(),
+            Self::FolderHeader { folder, .. } => folder.name.as_deref().unwrap_or("Folder"),
+            Self::Guild { state, .. } => state.name.as_str(),
         }
+    }
+}
+
+/// Convert a Discord folder color (24-bit RGB integer) to a ratatui color.
+/// Falls back to a neutral cyan when the color is missing or zero so
+/// uncolored folders still read as folder headers.
+pub fn folder_color(color: Option<u32>) -> Color {
+    match color {
+        Some(value) if value != 0 => {
+            let r = ((value >> 16) & 0xFF) as u8;
+            let g = ((value >> 8) & 0xFF) as u8;
+            let b = (value & 0xFF) as u8;
+            Color::Rgb(r, g, b)
+        }
+        _ => Color::Cyan,
     }
 }
 

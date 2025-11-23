@@ -9,7 +9,8 @@ use ratatui::{
 use super::{
     format::truncate_text,
     state::{
-        DashboardState, FocusPane, GuildPaneEntry, MemberGroup, presence_color, presence_marker,
+        DashboardState, FocusPane, GuildPaneEntry, MemberGroup, folder_color, presence_color,
+        presence_marker,
     },
 };
 
@@ -51,8 +52,26 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
                     .fg(Color::Magenta)
                     .add_modifier(Modifier::BOLD),
             ))),
-            GuildPaneEntry::Guild(_) => {
-                ListItem::new(Line::from(Span::raw(truncate_text(entry.label(), max_width))))
+            GuildPaneEntry::FolderHeader { folder, collapsed } => {
+                let arrow = if *collapsed { "▶ " } else { "▼ " };
+                let color = folder_color(folder.color);
+                let label = folder.name.as_deref().unwrap_or("Folder");
+                let label_width = max_width.saturating_sub(arrow.chars().count());
+                ListItem::new(Line::from(vec![
+                    Span::styled(arrow, Style::default().fg(color)),
+                    Span::styled(
+                        truncate_text(label, label_width),
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                    ),
+                ]))
+            }
+            GuildPaneEntry::Guild { state, in_folder } => {
+                let prefix = if *in_folder { "  " } else { "" };
+                let label_width = max_width.saturating_sub(prefix.chars().count());
+                ListItem::new(Line::from(vec![
+                    Span::raw(prefix),
+                    Span::raw(truncate_text(state.name.as_str(), label_width)),
+                ]))
             }
         })
         .collect();

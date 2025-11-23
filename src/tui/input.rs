@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::discord::AppCommand;
 
-use super::state::DashboardState;
+use super::state::{DashboardState, FocusPane};
 
 pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     if key.kind != KeyEventKind::Press {
@@ -22,6 +22,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('g') => state.jump_top(),
         KeyCode::Char('G') => state.jump_bottom(),
         KeyCode::Tab => state.cycle_focus(),
+        // Enter on a folder header in the guild pane toggles its collapse
+        // state. Anywhere else it's a no-op (composer Enter is handled by the
+        // composer-specific branch above).
+        KeyCode::Enter if state.focus() == FocusPane::Guilds => state.toggle_selected_folder(),
         _ => {}
     }
 
