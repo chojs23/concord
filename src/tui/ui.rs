@@ -54,22 +54,28 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
             ))),
             GuildPaneEntry::FolderHeader { folder, collapsed } => {
                 let arrow = if *collapsed { "▶ " } else { "▼ " };
+                let icon = if *collapsed { "📁" } else { "📂" };
                 let color = folder_color(folder.color);
-                let label = folder.name.as_deref().unwrap_or("Folder");
+                let label = folder.name.as_deref().unwrap_or_default();
+                let title = if label.is_empty() {
+                    icon.to_owned()
+                } else {
+                    format!("{icon} {label}")
+                };
                 let label_width = max_width.saturating_sub(arrow.chars().count());
                 ListItem::new(Line::from(vec![
                     Span::styled(arrow, Style::default().fg(color)),
                     Span::styled(
-                        truncate_text(label, label_width),
+                        truncate_text(&title, label_width),
                         Style::default().fg(color).add_modifier(Modifier::BOLD),
                     ),
                 ]))
             }
-            GuildPaneEntry::Guild { state, in_folder } => {
-                let prefix = if *in_folder { "  " } else { "" };
+            GuildPaneEntry::Guild { state, branch } => {
+                let prefix = branch.prefix();
                 let label_width = max_width.saturating_sub(prefix.chars().count());
                 ListItem::new(Line::from(vec![
-                    Span::raw(prefix),
+                    Span::styled(prefix, Style::default().fg(DIM)),
                     Span::raw(truncate_text(state.name.as_str(), label_width)),
                 ]))
             }

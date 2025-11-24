@@ -133,7 +133,7 @@ impl DashboardState {
             for guild in by_id.values() {
                 entries.push(GuildPaneEntry::Guild {
                     state: guild,
-                    in_folder: false,
+                    branch: GuildBranch::None,
                 });
             }
             return entries;
@@ -145,7 +145,7 @@ impl DashboardState {
                 if let Some(guild) = by_id.get(&folder.guild_ids[0]) {
                     entries.push(GuildPaneEntry::Guild {
                         state: guild,
-                        in_folder: false,
+                        branch: GuildBranch::None,
                     });
                     placed.insert(folder.guild_ids[0]);
                 }
@@ -161,15 +161,28 @@ impl DashboardState {
             // duplicate them in the trailing "ungrouped" loop.
             for guild_id in &folder.guild_ids {
                 placed.insert(*guild_id);
-                if collapsed {
-                    continue;
-                }
-                if let Some(guild) = by_id.get(guild_id) {
-                    entries.push(GuildPaneEntry::Guild {
-                        state: guild,
-                        in_folder: true,
-                    });
-                }
+            }
+
+            if collapsed {
+                continue;
+            }
+
+            let child_guilds: Vec<&GuildState> = folder
+                .guild_ids
+                .iter()
+                .filter_map(|guild_id| by_id.get(guild_id).copied())
+                .collect();
+            let last_child_index = child_guilds.len().saturating_sub(1);
+            for (index, guild) in child_guilds.into_iter().enumerate() {
+                let branch = if index == last_child_index {
+                    GuildBranch::Last
+                } else {
+                    GuildBranch::Middle
+                };
+                entries.push(GuildPaneEntry::Guild {
+                    state: guild,
+                    branch,
+                });
             }
         }
 
@@ -177,7 +190,7 @@ impl DashboardState {
             if !placed.contains(&guild.id) {
                 entries.push(GuildPaneEntry::Guild {
                     state: guild,
-                    in_folder: false,
+                    branch: GuildBranch::None,
                 });
             }
         }
@@ -442,8 +455,25 @@ pub enum GuildPaneEntry<'a> {
     },
     Guild {
         state: &'a GuildState,
-        in_folder: bool,
+        branch: GuildBranch,
     },
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum GuildBranch {
+    None,
+    Middle,
+    Last,
+}
+
+impl GuildBranch {
+    pub fn prefix(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Middle => "├ ",
+            Self::Last => "└ ",
+        }
+    }
 }
 
 impl GuildPaneEntry<'_> {
@@ -493,8 +523,8 @@ pub fn presence_marker(status: PresenceStatus) -> char {
 mod tests {
     use twilight_model::id::{Id, marker::ChannelMarker, marker::UserMarker};
 
-    use super::DashboardState;
-    use crate::discord::{AppEvent, ChannelInfo, MemberInfo, PresenceStatus};
+    use super::{DashboardState, GuildBranch, GuildPaneEntry};
+    use crate::discord::{AppEvent, ChannelInfo, GuildFolder, MemberInfo, PresenceStatus};
 
     #[test]
     fn tracks_current_user_from_ready() {
@@ -591,5 +621,51 @@ mod tests {
         }
 
         assert_eq!(state.selected_message(), 2);
+    }
+
+    #[test]
+    fn folder_children_use_middle_and_last_branches() {
+        let state = state_with_folder(Some(42));
+
+        let entries = state.guild_pane_entries();
+        assert!(matches!(
+            entries[2],
+            GuildPaneEntry::Guild {
+                branch: GuildBranch::Middle,
+                ..
+            }
+        ));
+        assert!(matches!(
+            entries[3],
+            GuildPaneEntry::Guild {
+                branch: GuildBranch::Last,
+                ..
+            }
+        ));
+    }
+
+    fn state_with_folder(folder_id: Option<u64>) -> DashboardState {
+        let first_guild = Id::new(1);
+        let second_guild = Id::new(2);
+        let mut state = DashboardState::new();
+
+        for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
+            state.push_event(AppEvent::GuildCreate {
+                guild_id,
+                name: name.to_owned(),
+                channels: Vec::new(),
+                members: Vec::new(),
+                presences: Vec::new(),
+            });
+        }
+        state.push_event(AppEvent::GuildFoldersUpdate {
+            folders: vec![GuildFolder {
+                id: folder_id,
+                name: Some("folder".to_owned()),
+                color: None,
+                guild_ids: vec![first_guild, second_guild],
+            }],
+        });
+        state
     }
 }
