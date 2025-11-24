@@ -282,9 +282,12 @@ fn member_group_header(group: &MemberGroup<'_>) -> Line<'static> {
 fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let user = state.current_user().unwrap_or("connecting...");
     let mut spans = vec![
-        Span::styled(format!(" {user} "), Style::default().fg(Color::Green).bold()),
         Span::styled(
-            "tab focus | j/k move | i compose | enter send | esc cancel | q quit",
+            format!(" {user} "),
+            Style::default().fg(Color::Green).bold(),
+        ),
+        Span::styled(
+            "tab focus | j/k move | enter/space folder | ←/→ close/open | i compose | esc cancel | q quit",
             Style::default().fg(DIM),
         ),
     ];

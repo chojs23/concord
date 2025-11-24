@@ -33,7 +33,13 @@ pub struct DashboardState {
     should_quit: bool,
     /// Folder IDs the user has collapsed in the guild pane. Single-guild
     /// "folders" (id = None) are never collapsible since they have no header.
-    collapsed_folders: HashSet<u64>,
+    collapsed_folders: HashSet<FolderKey>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum FolderKey {
+    Id(u64),
+    Guilds(Vec<Id<GuildMarker>>),
 }
 
 impl DashboardState {
@@ -152,9 +158,10 @@ impl DashboardState {
                 continue;
             }
 
-            let collapsed = folder
-                .id
-                .is_some_and(|id| self.collapsed_folders.contains(&id));
+            let folder_key = Self::folder_key(folder);
+            let collapsed = folder_key
+                .as_ref()
+                .is_some_and(|key| self.collapsed_folders.contains(key));
             entries.push(GuildPaneEntry::FolderHeader { folder, collapsed });
 
             // Always mark children as placed even when collapsed so we don't
@@ -216,14 +223,50 @@ impl DashboardState {
     /// Toggles the collapse state of the folder under the selection. Does
     /// nothing if the cursor isn't on a folder header.
     pub fn toggle_selected_folder(&mut self) {
-        let folder_id = match self.guild_pane_entries().get(self.selected_guild()) {
-            Some(GuildPaneEntry::FolderHeader { folder, .. }) => folder.id,
-            _ => None,
-        };
-        if let Some(id) = folder_id
-            && !self.collapsed_folders.insert(id)
+        let folder_key = self.selected_folder_key();
+        if let Some(key) = folder_key
+            && !self.collapsed_folders.insert(key.clone())
         {
-            self.collapsed_folders.remove(&id);
+            self.collapsed_folders.remove(&key);
+        }
+    }
+
+    pub fn open_selected_folder(&mut self) {
+        if let Some(key) = self.selected_folder_key() {
+            self.collapsed_folders.remove(&key);
+        }
+    }
+
+    pub fn close_selected_folder(&mut self) {
+        if let Some(key) = self.selected_folder_key() {
+            self.collapsed_folders.insert(key);
+        }
+    }
+
+    fn selected_folder_key(&self) -> Option<FolderKey> {
+        let entries = self.guild_pane_entries();
+        let selected = self.selected_guild();
+        match entries.get(selected) {
+            Some(GuildPaneEntry::FolderHeader { folder, .. }) => Self::folder_key(folder),
+            Some(GuildPaneEntry::Guild { branch, .. }) if branch.is_folder_child() => entries
+                .get(..selected)?
+                .iter()
+                .rev()
+                .find_map(|entry| match entry {
+                    GuildPaneEntry::FolderHeader { folder, .. } => Self::folder_key(folder),
+                    _ => None,
+                }),
+            _ => None,
+        }
+    }
+
+    fn folder_key(folder: &GuildFolder) -> Option<FolderKey> {
+        if let Some(id) = folder.id {
+            Some(FolderKey::Id(id))
+        } else if folder.guild_ids.len() > 1 {
+            Some(FolderKey::Guilds(folder.guild_ids.clone()))
+        } else {
+            None
         }
     }
 
@@ -474,6 +517,10 @@ impl GuildBranch {
             Self::Last => "└ ",
         }
     }
+
+    fn is_folder_child(self) -> bool {
+        !matches!(self, Self::None)
+    }
 }
 
 impl GuildPaneEntry<'_> {
@@ -624,6 +671,34 @@ mod tests {
     }
 
     #[test]
+    fn selected_folder_can_be_closed_and_opened() {
+        let mut state = state_with_folder(Some(42));
+
+        assert_eq!(state.guild_pane_entries().len(), 4);
+        state.close_selected_folder();
+        let closed_entries = state.guild_pane_entries();
+        assert_eq!(closed_entries.len(), 2);
+        assert!(matches!(
+            closed_entries[1],
+            GuildPaneEntry::FolderHeader {
+                collapsed: true,
+                ..
+            }
+        ));
+
+        state.open_selected_folder();
+        let open_entries = state.guild_pane_entries();
+        assert_eq!(open_entries.len(), 4);
+        assert!(matches!(
+            open_entries[1],
+            GuildPaneEntry::FolderHeader {
+                collapsed: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn folder_children_use_middle_and_last_branches() {
         let state = state_with_folder(Some(42));
 
@@ -639,6 +714,39 @@ mod tests {
             entries[3],
             GuildPaneEntry::Guild {
                 branch: GuildBranch::Last,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn folder_without_id_can_be_closed() {
+        let mut state = state_with_folder(None);
+
+        state.close_selected_folder();
+        let entries = state.guild_pane_entries();
+        assert_eq!(entries.len(), 2);
+        assert!(matches!(
+            entries[1],
+            GuildPaneEntry::FolderHeader {
+                collapsed: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn selected_folder_child_can_close_parent() {
+        let mut state = state_with_folder(Some(42));
+        state.selected_guild = 2;
+
+        state.toggle_selected_folder();
+        let entries = state.guild_pane_entries();
+        assert_eq!(entries.len(), 2);
+        assert!(matches!(
+            entries[1],
+            GuildPaneEntry::FolderHeader {
+                collapsed: true,
                 ..
             }
         ));
