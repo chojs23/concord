@@ -19,8 +19,16 @@ pub struct GuildState {
 pub struct ChannelState {
     pub id: Id<ChannelMarker>,
     pub guild_id: Option<Id<GuildMarker>>,
+    pub parent_id: Option<Id<ChannelMarker>>,
+    pub position: Option<i32>,
     pub name: String,
     pub kind: String,
+}
+
+impl ChannelState {
+    pub fn is_category(&self) -> bool {
+        matches!(self.kind.as_str(), "category" | "GuildCategory")
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -235,6 +243,8 @@ impl DiscordState {
             ChannelState {
                 id: channel.channel_id,
                 guild_id: channel.guild_id,
+                parent_id: channel.parent_id,
+                position: channel.position,
                 name: channel.name.clone(),
                 kind: channel.kind.clone(),
             },
@@ -319,6 +329,8 @@ mod tests {
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
+                parent_id: None,
+                position: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
             }],
@@ -337,6 +349,27 @@ mod tests {
         assert_eq!(state.guilds().len(), 1);
         assert_eq!(state.channels_for_guild(Some(guild_id)).len(), 1);
         assert_eq!(state.messages_for_channel(channel_id).len(), 1);
+    }
+
+    #[test]
+    fn stores_channel_parent_and_position() {
+        let guild_id = Id::new(1);
+        let category_id = Id::new(2);
+        let channel_id = Id::new(3);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id,
+            parent_id: Some(category_id),
+            position: Some(7),
+            name: "general".to_owned(),
+            kind: "text".to_owned(),
+        }));
+
+        let channel = state.channel(channel_id).unwrap();
+        assert_eq!(channel.parent_id, Some(category_id));
+        assert_eq!(channel.position, Some(7));
     }
 
     #[test]

@@ -39,6 +39,8 @@ impl PresenceStatus {
 pub struct ChannelInfo {
     pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,
+    pub parent_id: Option<Id<ChannelMarker>>,
+    pub position: Option<i32>,
     pub name: String,
     pub kind: String,
 }
@@ -214,6 +216,8 @@ fn channel_info(channel: &Channel) -> ChannelInfo {
     ChannelInfo {
         guild_id: channel.guild_id,
         channel_id: channel.id,
+        parent_id: channel.parent_id,
+        position: channel.position,
         name: channel
             .name
             .clone()

@@ -383,12 +383,20 @@ fn parse_presence_update(data: &Value) -> Option<AppEvent> {
     })
 }
 
-fn parse_channel_info(value: &Value, default_guild: Option<Id<GuildMarker>>) -> Option<ChannelInfo> {
+fn parse_channel_info(
+    value: &Value,
+    default_guild: Option<Id<GuildMarker>>,
+) -> Option<ChannelInfo> {
     let channel_id = parse_id::<ChannelMarker>(value.get("id")?)?;
     let guild_id = value
         .get("guild_id")
         .and_then(parse_id::<GuildMarker>)
         .or(default_guild);
+    let parent_id = value.get("parent_id").and_then(parse_id::<ChannelMarker>);
+    let position = value
+        .get("position")
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok());
 
     // Map Discord channel type integers to friendlier strings. DMs and
     // group-DMs are special-cased so the dashboard can render them with
@@ -423,6 +431,8 @@ fn parse_channel_info(value: &Value, default_guild: Option<Id<GuildMarker>>) -> 
     Some(ChannelInfo {
         guild_id,
         channel_id,
+        parent_id,
+        position,
         name,
         kind,
     })
