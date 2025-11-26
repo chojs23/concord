@@ -21,6 +21,8 @@ pub enum FocusPane {
 pub struct DashboardState {
     discord: DiscordState,
     focus: FocusPane,
+    active_guild_id: Option<Id<GuildMarker>>,
+    active_channel_id: Option<Id<ChannelMarker>>,
     selected_guild: usize,
     selected_channel: usize,
     selected_message: usize,
@@ -48,6 +50,8 @@ impl DashboardState {
         Self {
             discord: DiscordState::default(),
             focus: FocusPane::Messages,
+            active_guild_id: None,
+            active_channel_id: None,
             // Index 0 is the virtual "Direct Messages" entry. Start on the
             // first real guild when one exists; the bounds clamp inside
             // `selected_guild()` falls back to the DM entry while the guild
@@ -78,6 +82,7 @@ impl DashboardState {
         }
         self.discord.apply_event(&event);
         self.clamp_selection_indices();
+        self.clamp_active_selection();
         // Prefer to keep the message viewport on the latest message.
         let messages_len = self.messages().len();
         if messages_len > 0 {
@@ -213,13 +218,7 @@ impl DashboardState {
     }
 
     pub fn selected_guild_id(&self) -> Option<Id<GuildMarker>> {
-        let entries = self.guild_pane_entries();
-        match entries.get(self.selected_guild())? {
-            GuildPaneEntry::Guild { state, .. } => Some(state.id),
-            // DirectMessages and FolderHeader have no associated guild — the
-            // channels pane treats them as "no guild selected".
-            GuildPaneEntry::DirectMessages | GuildPaneEntry::FolderHeader { .. } => None,
-        }
+        self.active_guild_id
     }
 
     /// Toggles the collapse state of the folder under the selection. Does
@@ -243,6 +242,23 @@ impl DashboardState {
         if let Some(key) = self.selected_folder_key() {
             self.collapsed_folders.insert(key);
         }
+    }
+
+    pub fn confirm_selected_guild(&mut self) {
+        match self.guild_pane_entries().get(self.selected_guild()) {
+            Some(GuildPaneEntry::DirectMessages) => self.activate_guild(None),
+            Some(GuildPaneEntry::Guild { state, .. }) => self.activate_guild(Some(state.id)),
+            Some(GuildPaneEntry::FolderHeader { .. }) => self.toggle_selected_folder(),
+            None => {}
+        }
+    }
+
+    fn activate_guild(&mut self, guild_id: Option<Id<GuildMarker>>) {
+        self.active_guild_id = guild_id;
+        self.selected_channel = 0;
+        self.active_channel_id = self.first_selectable_channel_id();
+        self.selected_message = self.messages().len().saturating_sub(1);
+        self.selected_member = 0;
     }
 
     fn selected_folder_key(&self) -> Option<FolderKey> {
@@ -356,14 +372,12 @@ impl DashboardState {
     }
 
     pub fn selected_channel_id(&self) -> Option<Id<ChannelMarker>> {
-        self.selected_channel_state().map(|channel| channel.id)
+        self.active_channel_id
     }
 
     pub fn selected_channel_state(&self) -> Option<&ChannelState> {
-        match self.channel_pane_entries().get(self.selected_channel())? {
-            ChannelPaneEntry::Channel { state, .. } => Some(state),
-            ChannelPaneEntry::CategoryHeader { .. } => None,
-        }
+        self.active_channel_id
+            .and_then(|channel_id| self.discord.channel(channel_id))
     }
 
     pub fn toggle_selected_channel_category(&mut self) {
@@ -385,6 +399,21 @@ impl DashboardState {
         if let Some(category_id) = self.selected_channel_category_id() {
             self.collapsed_channel_categories.insert(category_id);
         }
+    }
+
+    pub fn confirm_selected_channel(&mut self) {
+        match self.channel_pane_entries().get(self.selected_channel()) {
+            Some(ChannelPaneEntry::CategoryHeader { .. }) => {
+                self.toggle_selected_channel_category()
+            }
+            Some(ChannelPaneEntry::Channel { state, .. }) => self.activate_channel(state.id),
+            None => {}
+        }
+    }
+
+    fn activate_channel(&mut self, channel_id: Id<ChannelMarker>) {
+        self.active_channel_id = Some(channel_id);
+        self.selected_message = self.messages().len().saturating_sub(1);
     }
 
     fn selected_channel_category_id(&self) -> Option<Id<ChannelMarker>> {
@@ -466,16 +495,12 @@ impl DashboardState {
                     .selected_guild
                     .saturating_add(1)
                     .min(self.guild_pane_entries().len().saturating_sub(1));
-                self.selected_channel = 0;
-                self.selected_message = self.messages().len().saturating_sub(1);
-                self.selected_member = 0;
             }
             FocusPane::Channels => {
                 self.selected_channel = self
                     .selected_channel
                     .saturating_add(1)
                     .min(self.channel_pane_entries().len().saturating_sub(1));
-                self.selected_message = self.messages().len().saturating_sub(1);
             }
             FocusPane::Messages => {
                 self.selected_message = self
@@ -497,13 +522,9 @@ impl DashboardState {
         match self.focus {
             FocusPane::Guilds => {
                 self.selected_guild = self.selected_guild.saturating_sub(1);
-                self.selected_channel = 0;
-                self.selected_message = self.messages().len().saturating_sub(1);
-                self.selected_member = 0;
             }
             FocusPane::Channels => {
                 self.selected_channel = self.selected_channel.saturating_sub(1);
-                self.selected_message = self.messages().len().saturating_sub(1);
             }
             FocusPane::Messages => {
                 self.selected_message = self.selected_message.saturating_sub(1);
@@ -591,6 +612,36 @@ impl DashboardState {
         self.selected_channel = self.selected_channel();
         self.selected_message = self.selected_message();
         self.selected_member = self.selected_member();
+    }
+
+    fn clamp_active_selection(&mut self) {
+        if self.active_guild_id.is_some_and(|guild_id| {
+            !self
+                .discord
+                .guilds()
+                .iter()
+                .any(|guild| guild.id == guild_id)
+        }) {
+            self.active_guild_id = None;
+        }
+
+        let active_channel_is_valid = self
+            .active_channel_id
+            .and_then(|channel_id| self.discord.channel(channel_id))
+            .is_some_and(|channel| {
+                channel.guild_id == self.active_guild_id && !channel.is_category()
+            });
+        if !active_channel_is_valid {
+            self.active_channel_id = self.first_selectable_channel_id();
+        }
+    }
+
+    fn first_selectable_channel_id(&self) -> Option<Id<ChannelMarker>> {
+        self.channels()
+            .into_iter()
+            .filter(|channel| !channel.is_category())
+            .min_by_key(|channel| (channel.position.unwrap_or(i32::MAX), channel.id))
+            .map(|channel| channel.id)
     }
 }
 
@@ -724,7 +775,9 @@ fn sort_channels(channels: &mut [&ChannelState]) {
 mod tests {
     use twilight_model::id::{Id, marker::ChannelMarker, marker::UserMarker};
 
-    use super::{ChannelBranch, ChannelPaneEntry, DashboardState, GuildBranch, GuildPaneEntry};
+    use super::{
+        ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildBranch, GuildPaneEntry,
+    };
     use crate::discord::{AppEvent, ChannelInfo, GuildFolder, MemberInfo, PresenceStatus};
 
     #[test]
@@ -780,6 +833,7 @@ mod tests {
                 (bob, PresenceStatus::Online),
             ],
         });
+        state.confirm_selected_guild();
 
         let groups = state.members_grouped();
         assert_eq!(groups.len(), 1);
@@ -814,6 +868,7 @@ mod tests {
             members: Vec::new(),
             presences: Vec::new(),
         });
+        state.confirm_selected_guild();
         for id in 1..=3u64 {
             state.push_event(AppEvent::MessageCreate {
                 guild_id: Some(guild_id),
@@ -861,7 +916,7 @@ mod tests {
         let mut state = state_with_channel_tree();
 
         assert_eq!(state.channel_pane_entries().len(), 3);
-        assert_eq!(state.selected_channel_id(), None);
+        assert!(state.selected_channel_id().is_some());
 
         state.close_selected_channel_category();
         let closed_entries = state.channel_pane_entries();
@@ -893,6 +948,41 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn moving_guild_cursor_does_not_activate_guild() {
+        let mut state = state_with_two_guilds();
+        focus_guilds(&mut state);
+
+        state.confirm_selected_guild();
+        let active_guild = state.selected_guild_id();
+        assert!(active_guild.is_some());
+
+        state.move_down();
+        assert_eq!(state.selected_guild, 2);
+        assert_eq!(state.selected_guild_id(), active_guild);
+
+        state.confirm_selected_guild();
+        assert_ne!(state.selected_guild_id(), active_guild);
+    }
+
+    #[test]
+    fn moving_channel_cursor_does_not_activate_channel() {
+        let mut state = state_with_channel_tree();
+        let general_id = Id::new(11);
+        let random_id = Id::new(12);
+        focus_channels(&mut state);
+
+        assert_eq!(state.selected_channel_id(), Some(general_id));
+
+        state.move_down();
+        state.move_down();
+        assert_eq!(state.selected_channel, 2);
+        assert_eq!(state.selected_channel_id(), Some(general_id));
+
+        state.confirm_selected_channel();
+        assert_eq!(state.selected_channel_id(), Some(random_id));
     }
 
     #[test]
@@ -1041,6 +1131,51 @@ mod tests {
             members: Vec::new(),
             presences: Vec::new(),
         });
+        state.confirm_selected_guild();
         state
+    }
+
+    fn state_with_two_guilds() -> DashboardState {
+        let mut state = DashboardState::new();
+        let first_guild = Id::new(1);
+        let second_guild = Id::new(2);
+        for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
+            state.push_event(AppEvent::GuildCreate {
+                guild_id,
+                name: name.to_owned(),
+                channels: Vec::new(),
+                members: Vec::new(),
+                presences: Vec::new(),
+            });
+        }
+        state.push_event(AppEvent::GuildFoldersUpdate {
+            folders: vec![
+                GuildFolder {
+                    id: None,
+                    name: None,
+                    color: None,
+                    guild_ids: vec![first_guild],
+                },
+                GuildFolder {
+                    id: None,
+                    name: None,
+                    color: None,
+                    guild_ids: vec![second_guild],
+                },
+            ],
+        });
+        state
+    }
+
+    fn focus_guilds(state: &mut DashboardState) {
+        while state.focus() != FocusPane::Guilds {
+            state.cycle_focus();
+        }
+    }
+
+    fn focus_channels(state: &mut DashboardState) {
+        while state.focus() != FocusPane::Channels {
+            state.cycle_focus();
+        }
     }
 }

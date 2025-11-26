@@ -25,10 +25,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         // Tree headers act like a small tree: Enter/Space toggles, Right
         // opens, and Left closes. Anywhere else these keys are no-ops.
         KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Guilds => {
-            state.toggle_selected_folder()
+            state.confirm_selected_guild()
         }
         KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Channels => {
-            state.toggle_selected_channel_category()
+            state.confirm_selected_channel()
         }
         KeyCode::Right if state.focus() == FocusPane::Guilds => state.open_selected_folder(),
         KeyCode::Left if state.focus() == FocusPane::Guilds => state.close_selected_folder(),
@@ -114,6 +114,30 @@ mod tests {
         assert_selected_channel_category_collapsed(&state, false);
     }
 
+    #[test]
+    fn movement_waits_for_enter_to_activate_channel() {
+        let mut state = state_with_channel_tree();
+        focus_channels(&mut state);
+
+        assert_eq!(state.selected_channel_id(), Some(Id::new(11)));
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(state.selected_channel_id(), Some(Id::new(11)));
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        assert_eq!(state.selected_channel_id(), Some(Id::new(11)));
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
+    }
+
     fn state_with_folder() -> DashboardState {
         let first_guild = Id::new(1);
         let second_guild = Id::new(2);
@@ -171,6 +195,7 @@ mod tests {
         let guild_id = Id::new(1);
         let category_id = Id::new(10);
         let general_id = Id::new(11);
+        let random_id = Id::new(12);
         let mut state = DashboardState::new();
 
         state.push_event(AppEvent::GuildCreate {
@@ -193,10 +218,19 @@ mod tests {
                     name: "general".to_owned(),
                     kind: "text".to_owned(),
                 },
+                ChannelInfo {
+                    guild_id: Some(guild_id),
+                    channel_id: random_id,
+                    parent_id: Some(category_id),
+                    position: Some(1),
+                    name: "random".to_owned(),
+                    kind: "text".to_owned(),
+                },
             ],
             members: Vec::new(),
             presences: Vec::new(),
         });
+        state.confirm_selected_guild();
         state
     }
 }
