@@ -22,13 +22,22 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('g') => state.jump_top(),
         KeyCode::Char('G') => state.jump_bottom(),
         KeyCode::Tab => state.cycle_focus(),
-        // Folder headers act like a small tree: Enter/Space toggles, Right
+        // Tree headers act like a small tree: Enter/Space toggles, Right
         // opens, and Left closes. Anywhere else these keys are no-ops.
         KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Guilds => {
             state.toggle_selected_folder()
         }
+        KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Channels => {
+            state.toggle_selected_channel_category()
+        }
         KeyCode::Right if state.focus() == FocusPane::Guilds => state.open_selected_folder(),
         KeyCode::Left if state.focus() == FocusPane::Guilds => state.close_selected_folder(),
+        KeyCode::Right if state.focus() == FocusPane::Channels => {
+            state.open_selected_channel_category()
+        }
+        KeyCode::Left if state.focus() == FocusPane::Channels => {
+            state.close_selected_channel_category()
+        }
         _ => {}
     }
 
@@ -65,8 +74,8 @@ mod tests {
 
     use super::handle_key;
     use crate::{
-        discord::{AppEvent, GuildFolder},
-        tui::state::{DashboardState, FocusPane, GuildPaneEntry},
+        discord::{AppEvent, ChannelInfo, GuildFolder},
+        tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry},
     };
 
     #[test]
@@ -85,6 +94,24 @@ mod tests {
             KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
         );
         assert_selected_folder_collapsed(&state, false);
+    }
+
+    #[test]
+    fn enter_and_space_toggle_selected_channel_category() {
+        let mut state = state_with_channel_tree();
+        focus_channels(&mut state);
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        assert_selected_channel_category_collapsed(&state, true);
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        );
+        assert_selected_channel_category_collapsed(&state, false);
     }
 
     fn state_with_folder() -> DashboardState {
@@ -118,11 +145,58 @@ mod tests {
         }
     }
 
+    fn focus_channels(state: &mut DashboardState) {
+        while state.focus() != FocusPane::Channels {
+            state.cycle_focus();
+        }
+    }
+
     fn assert_selected_folder_collapsed(state: &DashboardState, expected: bool) {
         let entries = state.guild_pane_entries();
         assert!(matches!(
             entries[1],
             GuildPaneEntry::FolderHeader { collapsed, .. } if collapsed == expected
         ));
+    }
+
+    fn assert_selected_channel_category_collapsed(state: &DashboardState, expected: bool) {
+        let entries = state.channel_pane_entries();
+        assert!(matches!(
+            entries[0],
+            ChannelPaneEntry::CategoryHeader { collapsed, .. } if collapsed == expected
+        ));
+    }
+
+    fn state_with_channel_tree() -> DashboardState {
+        let guild_id = Id::new(1);
+        let category_id = Id::new(10);
+        let general_id = Id::new(11);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![
+                ChannelInfo {
+                    guild_id: Some(guild_id),
+                    channel_id: category_id,
+                    parent_id: None,
+                    position: Some(0),
+                    name: "Text Channels".to_owned(),
+                    kind: "category".to_owned(),
+                },
+                ChannelInfo {
+                    guild_id: Some(guild_id),
+                    channel_id: general_id,
+                    parent_id: Some(category_id),
+                    position: Some(0),
+                    name: "general".to_owned(),
+                    kind: "text".to_owned(),
+                },
+            ],
+            members: Vec::new(),
+            presences: Vec::new(),
+        });
+        state
     }
 }

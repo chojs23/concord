@@ -9,8 +9,8 @@ use ratatui::{
 use super::{
     format::truncate_text,
     state::{
-        DashboardState, FocusPane, GuildPaneEntry, MemberGroup, folder_color, presence_color,
-        presence_marker,
+        ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MemberGroup, folder_color,
+        presence_color, presence_marker,
     },
 };
 
@@ -96,16 +96,34 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
 }
 
 fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    let channels = state.channels();
+    let entries = state.channel_pane_entries();
     let max_width = area.width.saturating_sub(6) as usize;
-    let items: Vec<ListItem> = channels
+    let items: Vec<ListItem> = entries
         .iter()
-        .map(|channel| {
-            let prefix = channel_prefix(&channel.kind);
-            ListItem::new(Line::from(vec![
-                Span::styled(prefix, Style::default().fg(DIM)),
-                Span::raw(truncate_text(&channel.name, max_width)),
-            ]))
+        .map(|entry| match entry {
+            ChannelPaneEntry::CategoryHeader { state, collapsed } => {
+                let arrow = if *collapsed { "▶ " } else { "▼ " };
+                let label_width = max_width.saturating_sub(arrow.chars().count());
+                ListItem::new(Line::from(vec![
+                    Span::styled(arrow, Style::default().fg(ACCENT)),
+                    Span::styled(
+                        truncate_text(&state.name, label_width),
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    ),
+                ]))
+            }
+            ChannelPaneEntry::Channel { state, branch } => {
+                let branch_prefix = branch.prefix();
+                let channel_prefix = channel_prefix(&state.kind);
+                let label_width = max_width
+                    .saturating_sub(branch_prefix.chars().count())
+                    .saturating_sub(channel_prefix.chars().count());
+                ListItem::new(Line::from(vec![
+                    Span::styled(branch_prefix, Style::default().fg(DIM)),
+                    Span::styled(channel_prefix, Style::default().fg(DIM)),
+                    Span::raw(truncate_text(&state.name, label_width)),
+                ]))
+            }
         })
         .collect();
     let mut list_state = ListState::default();
@@ -126,11 +144,10 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
 
 fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let title_text = state
-        .channels()
-        .get(state.selected_channel())
+        .selected_channel_state()
         .map(|channel| match channel.kind.as_str() {
-            "dm" => format!("@{}", channel.name),
-            "group-dm" => channel.name.clone(),
+            "dm" | "Private" => format!("@{}", channel.name),
+            "group-dm" | "Group" => channel.name.clone(),
             _ => format!("#{}", channel.name),
         })
         .unwrap_or_else(|| "no channel".to_owned());
@@ -180,10 +197,10 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
 fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let prompt = if state.is_composing() {
         format!("> {}", state.composer_input())
-    } else if let Some(channel) = state.channels().get(state.selected_channel()).copied() {
+    } else if let Some(channel) = state.selected_channel_state() {
         let label = match channel.kind.as_str() {
-            "dm" => format!("@{}", channel.name),
-            "group-dm" => channel.name.clone(),
+            "dm" | "Private" => format!("@{}", channel.name),
+            "group-dm" | "Group" => channel.name.clone(),
             _ => format!("#{}", channel.name),
         };
         format!("press i to compose in {label}")
@@ -287,7 +304,7 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
             Style::default().fg(Color::Green).bold(),
         ),
         Span::styled(
-            "tab focus | j/k move | enter/space folder | ←/→ close/open | i compose | esc cancel | q quit",
+            "tab focus | j/k move | enter/space tree | ←/→ close/open | i compose | esc cancel | q quit",
             Style::default().fg(DIM),
         ),
     ];
@@ -314,11 +331,11 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
 
 fn channel_prefix(kind: &str) -> &'static str {
     match kind {
-        "dm" => "@ ",
-        "group-dm" => "● ",
-        "voice" => "🔊 ",
-        "category" => "▾ ",
-        "thread" => "» ",
+        "dm" | "Private" => "@ ",
+        "group-dm" | "Group" => "● ",
+        "voice" | "GuildVoice" => "🔊 ",
+        "category" | "GuildCategory" => "▾ ",
+        "thread" | "GuildPublicThread" | "GuildPrivateThread" | "GuildNewsThread" => "» ",
         _ => "# ",
     }
 }

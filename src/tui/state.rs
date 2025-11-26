@@ -34,6 +34,7 @@ pub struct DashboardState {
     /// Folder IDs the user has collapsed in the guild pane. Single-guild
     /// "folders" (id = None) are never collapsible since they have no header.
     collapsed_folders: HashSet<FolderKey>,
+    collapsed_channel_categories: HashSet<Id<ChannelMarker>>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -62,6 +63,7 @@ impl DashboardState {
             skipped_events: 0,
             should_quit: false,
             collapsed_folders: HashSet::new(),
+            collapsed_channel_categories: HashSet::new(),
         }
     }
 
@@ -276,15 +278,130 @@ impl DashboardState {
         self.discord.channels_for_guild(self.selected_guild_id())
     }
 
+    pub fn channel_pane_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
+        let channels = self.channels();
+        if self.selected_guild_id().is_none() {
+            return channels
+                .into_iter()
+                .map(|state| ChannelPaneEntry::Channel {
+                    state,
+                    branch: ChannelBranch::None,
+                })
+                .collect();
+        }
+
+        let category_ids: HashSet<Id<ChannelMarker>> = channels
+            .iter()
+            .filter(|channel| channel.is_category())
+            .map(|channel| channel.id)
+            .collect();
+
+        let mut roots: Vec<&ChannelState> = channels
+            .iter()
+            .copied()
+            .filter(|channel| {
+                channel.is_category()
+                    || channel
+                        .parent_id
+                        .is_none_or(|parent_id| !category_ids.contains(&parent_id))
+            })
+            .collect();
+        sort_channels(&mut roots);
+
+        let mut entries = Vec::new();
+        for root in roots {
+            if !root.is_category() {
+                entries.push(ChannelPaneEntry::Channel {
+                    state: root,
+                    branch: ChannelBranch::None,
+                });
+                continue;
+            }
+
+            let collapsed = self.collapsed_channel_categories.contains(&root.id);
+            entries.push(ChannelPaneEntry::CategoryHeader {
+                state: root,
+                collapsed,
+            });
+            if collapsed {
+                continue;
+            }
+
+            let mut children: Vec<&ChannelState> = channels
+                .iter()
+                .copied()
+                .filter(|channel| !channel.is_category() && channel.parent_id == Some(root.id))
+                .collect();
+            sort_channels(&mut children);
+            let last_child_index = children.len().saturating_sub(1);
+            for (index, child) in children.into_iter().enumerate() {
+                let branch = if index == last_child_index {
+                    ChannelBranch::Last
+                } else {
+                    ChannelBranch::Middle
+                };
+                entries.push(ChannelPaneEntry::Channel {
+                    state: child,
+                    branch,
+                });
+            }
+        }
+
+        entries
+    }
+
     pub fn selected_channel(&self) -> usize {
         self.selected_channel
-            .min(self.channels().len().saturating_sub(1))
+            .min(self.channel_pane_entries().len().saturating_sub(1))
     }
 
     pub fn selected_channel_id(&self) -> Option<Id<ChannelMarker>> {
-        self.channels()
-            .get(self.selected_channel())
-            .map(|channel| channel.id)
+        self.selected_channel_state().map(|channel| channel.id)
+    }
+
+    pub fn selected_channel_state(&self) -> Option<&ChannelState> {
+        match self.channel_pane_entries().get(self.selected_channel())? {
+            ChannelPaneEntry::Channel { state, .. } => Some(state),
+            ChannelPaneEntry::CategoryHeader { .. } => None,
+        }
+    }
+
+    pub fn toggle_selected_channel_category(&mut self) {
+        let Some(category_id) = self.selected_channel_category_id() else {
+            return;
+        };
+        if !self.collapsed_channel_categories.insert(category_id) {
+            self.collapsed_channel_categories.remove(&category_id);
+        }
+    }
+
+    pub fn open_selected_channel_category(&mut self) {
+        if let Some(category_id) = self.selected_channel_category_id() {
+            self.collapsed_channel_categories.remove(&category_id);
+        }
+    }
+
+    pub fn close_selected_channel_category(&mut self) {
+        if let Some(category_id) = self.selected_channel_category_id() {
+            self.collapsed_channel_categories.insert(category_id);
+        }
+    }
+
+    fn selected_channel_category_id(&self) -> Option<Id<ChannelMarker>> {
+        let entries = self.channel_pane_entries();
+        let selected = self.selected_channel();
+        match entries.get(selected) {
+            Some(ChannelPaneEntry::CategoryHeader { state, .. }) => Some(state.id),
+            Some(ChannelPaneEntry::Channel { branch, .. }) if branch.is_category_child() => entries
+                .get(..selected)?
+                .iter()
+                .rev()
+                .find_map(|entry| match entry {
+                    ChannelPaneEntry::CategoryHeader { state, .. } => Some(state.id),
+                    _ => None,
+                }),
+            _ => None,
+        }
     }
 
     pub fn messages(&self) -> Vec<&MessageState> {
@@ -357,7 +474,7 @@ impl DashboardState {
                 self.selected_channel = self
                     .selected_channel
                     .saturating_add(1)
-                    .min(self.channels().len().saturating_sub(1));
+                    .min(self.channel_pane_entries().len().saturating_sub(1));
                 self.selected_message = self.messages().len().saturating_sub(1);
             }
             FocusPane::Messages => {
@@ -414,7 +531,7 @@ impl DashboardState {
                 self.selected_guild = self.guild_pane_entries().len().saturating_sub(1);
             }
             FocusPane::Channels => {
-                self.selected_channel = self.channels().len().saturating_sub(1);
+                self.selected_channel = self.channel_pane_entries().len().saturating_sub(1);
             }
             FocusPane::Messages => {
                 self.selected_message = self.messages().len().saturating_sub(1);
@@ -487,6 +604,39 @@ impl Default for DashboardState {
 pub struct MemberGroup<'a> {
     pub status: PresenceStatus,
     pub entries: Vec<&'a GuildMemberState>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ChannelPaneEntry<'a> {
+    CategoryHeader {
+        state: &'a ChannelState,
+        collapsed: bool,
+    },
+    Channel {
+        state: &'a ChannelState,
+        branch: ChannelBranch,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ChannelBranch {
+    None,
+    Middle,
+    Last,
+}
+
+impl ChannelBranch {
+    pub fn prefix(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Middle => "├ ",
+            Self::Last => "└ ",
+        }
+    }
+
+    fn is_category_child(self) -> bool {
+        !matches!(self, Self::None)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -566,11 +716,15 @@ pub fn presence_marker(status: PresenceStatus) -> char {
     }
 }
 
+fn sort_channels(channels: &mut [&ChannelState]) {
+    channels.sort_by_key(|channel| (channel.position.unwrap_or(i32::MAX), channel.id));
+}
+
 #[cfg(test)]
 mod tests {
     use twilight_model::id::{Id, marker::ChannelMarker, marker::UserMarker};
 
-    use super::{DashboardState, GuildBranch, GuildPaneEntry};
+    use super::{ChannelBranch, ChannelPaneEntry, DashboardState, GuildBranch, GuildPaneEntry};
     use crate::discord::{AppEvent, ChannelInfo, GuildFolder, MemberInfo, PresenceStatus};
 
     #[test]
@@ -604,6 +758,8 @@ mod tests {
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id: Id::new(2),
+                parent_id: None,
+                position: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
             }],
@@ -650,6 +806,8 @@ mod tests {
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
+                parent_id: None,
+                position: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
             }],
@@ -668,6 +826,73 @@ mod tests {
         }
 
         assert_eq!(state.selected_message(), 2);
+    }
+
+    #[test]
+    fn channel_tree_groups_category_children() {
+        let state = state_with_channel_tree();
+        let entries = state.channel_pane_entries();
+
+        assert!(matches!(
+            entries[0],
+            ChannelPaneEntry::CategoryHeader {
+                collapsed: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            entries[1],
+            ChannelPaneEntry::Channel {
+                branch: ChannelBranch::Middle,
+                ..
+            }
+        ));
+        assert!(matches!(
+            entries[2],
+            ChannelPaneEntry::Channel {
+                branch: ChannelBranch::Last,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn selected_channel_category_can_be_closed_and_opened() {
+        let mut state = state_with_channel_tree();
+
+        assert_eq!(state.channel_pane_entries().len(), 3);
+        assert_eq!(state.selected_channel_id(), None);
+
+        state.close_selected_channel_category();
+        let closed_entries = state.channel_pane_entries();
+        assert_eq!(closed_entries.len(), 1);
+        assert!(matches!(
+            closed_entries[0],
+            ChannelPaneEntry::CategoryHeader {
+                collapsed: true,
+                ..
+            }
+        ));
+
+        state.open_selected_channel_category();
+        assert_eq!(state.channel_pane_entries().len(), 3);
+    }
+
+    #[test]
+    fn selected_channel_child_can_close_parent_category() {
+        let mut state = state_with_channel_tree();
+        state.selected_channel = 1;
+
+        state.toggle_selected_channel_category();
+        let entries = state.channel_pane_entries();
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(
+            entries[0],
+            ChannelPaneEntry::CategoryHeader {
+                collapsed: true,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -773,6 +998,48 @@ mod tests {
                 color: None,
                 guild_ids: vec![first_guild, second_guild],
             }],
+        });
+        state
+    }
+
+    fn state_with_channel_tree() -> DashboardState {
+        let guild_id = Id::new(1);
+        let category_id = Id::new(10);
+        let general_id = Id::new(11);
+        let random_id = Id::new(12);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![
+                ChannelInfo {
+                    guild_id: Some(guild_id),
+                    channel_id: category_id,
+                    parent_id: None,
+                    position: Some(0),
+                    name: "Text Channels".to_owned(),
+                    kind: "category".to_owned(),
+                },
+                ChannelInfo {
+                    guild_id: Some(guild_id),
+                    channel_id: general_id,
+                    parent_id: Some(category_id),
+                    position: Some(0),
+                    name: "general".to_owned(),
+                    kind: "text".to_owned(),
+                },
+                ChannelInfo {
+                    guild_id: Some(guild_id),
+                    channel_id: random_id,
+                    parent_id: Some(category_id),
+                    position: Some(1),
+                    name: "random".to_owned(),
+                    kind: "text".to_owned(),
+                },
+            ],
+            members: Vec::new(),
+            presences: Vec::new(),
         });
         state
     }
