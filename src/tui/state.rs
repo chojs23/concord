@@ -295,9 +295,8 @@ impl DashboardState {
     }
 
     pub fn channel_pane_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
-        let mut channels = self.channels();
+        let channels = self.channels();
         if self.selected_guild_id().is_none() {
-            self.sort_direct_message_channels(&mut channels);
             return channels
                 .into_iter()
                 .map(|state| ChannelPaneEntry::Channel {
@@ -638,36 +637,11 @@ impl DashboardState {
     }
 
     fn first_selectable_channel_id(&self) -> Option<Id<ChannelMarker>> {
-        let mut channels = self.channels();
-        if self.selected_guild_id().is_none() {
-            self.sort_direct_message_channels(&mut channels);
-            return channels
-                .into_iter()
-                .find(|channel| !channel.is_category())
-                .map(|channel| channel.id);
-        }
-
-        channels
+        self.channels()
             .into_iter()
             .filter(|channel| !channel.is_category())
             .min_by_key(|channel| (channel.position.unwrap_or(i32::MAX), channel.id))
             .map(|channel| channel.id)
-    }
-
-    fn sort_direct_message_channels(&self, channels: &mut [&ChannelState]) {
-        channels.sort_by(|left, right| {
-            self.latest_message_id(right.id)
-                .cmp(&self.latest_message_id(left.id))
-                .then_with(|| right.id.cmp(&left.id))
-        });
-    }
-
-    fn latest_message_id(&self, channel_id: Id<ChannelMarker>) -> Option<u64> {
-        self.discord
-            .messages_for_channel(channel_id)
-            .into_iter()
-            .map(|message| message.id.get())
-            .max()
     }
 }
 
@@ -1012,60 +986,6 @@ mod tests {
     }
 
     #[test]
-    fn direct_messages_are_sorted_by_latest_message() {
-        let mut state = state_with_direct_messages();
-        let old_dm = Id::new(10);
-        let new_dm = Id::new(20);
-
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: None,
-            channel_id: old_dm,
-            message_id: Id::new(100),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            content: Some("old".to_owned()),
-        });
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: None,
-            channel_id: new_dm,
-            message_id: Id::new(200),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            content: Some("new".to_owned()),
-        });
-
-        assert_eq!(channel_entry_names(&state), vec!["new", "old", "empty"]);
-    }
-
-    #[test]
-    fn direct_message_activation_defaults_to_latest_message() {
-        let mut state = state_with_direct_messages();
-        let old_dm = Id::new(10);
-        let new_dm = Id::new(20);
-
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: None,
-            channel_id: old_dm,
-            message_id: Id::new(100),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            content: Some("old".to_owned()),
-        });
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: None,
-            channel_id: new_dm,
-            message_id: Id::new(200),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            content: Some("new".to_owned()),
-        });
-
-        state.confirm_selected_guild();
-
-        assert_eq!(state.selected_channel_id(), Some(new_dm));
-    }
-
-    #[test]
     fn selected_folder_can_be_closed_and_opened() {
         let mut state = state_with_folder(Some(42));
 
@@ -1245,36 +1165,6 @@ mod tests {
             ],
         });
         state
-    }
-
-    fn state_with_direct_messages() -> DashboardState {
-        let mut state = DashboardState::new();
-        for (channel_id, name) in [
-            (Id::new(10), "old"),
-            (Id::new(20), "new"),
-            (Id::new(30), "empty"),
-        ] {
-            state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-                guild_id: None,
-                channel_id,
-                parent_id: None,
-                position: None,
-                name: name.to_owned(),
-                kind: "dm".to_owned(),
-            }));
-        }
-        state
-    }
-
-    fn channel_entry_names(state: &DashboardState) -> Vec<&str> {
-        state
-            .channel_pane_entries()
-            .into_iter()
-            .filter_map(|entry| match entry {
-                ChannelPaneEntry::Channel { state, .. } => Some(state.name.as_str()),
-                ChannelPaneEntry::CategoryHeader { .. } => None,
-            })
-            .collect()
     }
 
     fn focus_guilds(state: &mut DashboardState) {
