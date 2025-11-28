@@ -5,7 +5,7 @@ use twilight_model::id::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
-use super::{AppEvent, ChannelInfo, GuildFolder, MemberInfo, PresenceStatus};
+use super::{AppEvent, ChannelInfo, GuildFolder, MemberInfo, MessageInfo, PresenceStatus};
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
 
@@ -143,6 +143,10 @@ impl DiscordState {
                 author: author.clone(),
                 content: content.clone(),
             }),
+            AppEvent::MessageHistoryLoaded {
+                channel_id,
+                messages,
+            } => self.merge_message_history(*channel_id, messages),
             AppEvent::MessageUpdate {
                 guild_id,
                 channel_id,
@@ -270,6 +274,39 @@ impl DiscordState {
         }
     }
 
+    fn merge_message_history(&mut self, channel_id: Id<ChannelMarker>, history: &[MessageInfo]) {
+        let messages = self.messages.entry(channel_id).or_default();
+        let mut by_id: BTreeMap<Id<MessageMarker>, MessageState> = messages
+            .drain(..)
+            .map(|message| (message.id, message))
+            .collect();
+
+        for message in history {
+            if message.channel_id != channel_id {
+                continue;
+            }
+
+            let incoming = MessageState {
+                id: message.message_id,
+                guild_id: message.guild_id,
+                channel_id: message.channel_id,
+                author_id: message.author_id,
+                author: message.author.clone(),
+                content: message.content.clone(),
+            };
+
+            by_id
+                .entry(incoming.id)
+                .and_modify(|existing| merge_message(existing, &incoming))
+                .or_insert(incoming);
+        }
+
+        *messages = by_id.into_values().collect();
+        while messages.len() > self.max_messages_per_channel {
+            messages.pop_front();
+        }
+    }
+
     fn update_message(
         &mut self,
         _guild_id: Option<Id<GuildMarker>>,
@@ -288,6 +325,24 @@ impl DiscordState {
     fn delete_message(&mut self, channel_id: Id<ChannelMarker>, message_id: Id<MessageMarker>) {
         if let Some(messages) = self.messages.get_mut(&channel_id) {
             messages.retain(|message| message.id != message_id);
+        }
+    }
+}
+
+fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
+    existing.guild_id = incoming.guild_id;
+    existing.channel_id = incoming.channel_id;
+    existing.author_id = incoming.author_id;
+    existing.author = incoming.author.clone();
+
+    if let Some(content) = &incoming.content {
+        let existing_is_empty = existing
+            .content
+            .as_deref()
+            .map(str::is_empty)
+            .unwrap_or(true);
+        if !content.is_empty() || existing_is_empty {
+            existing.content = Some(content.clone());
         }
     }
 }
@@ -313,7 +368,9 @@ fn upsert_member(
 mod tests {
     use twilight_model::id::{Id, marker::ChannelMarker};
 
-    use crate::discord::{AppEvent, ChannelInfo, DiscordState, MemberInfo, PresenceStatus};
+    use crate::discord::{
+        AppEvent, ChannelInfo, DiscordState, MemberInfo, MessageInfo, PresenceStatus,
+    };
 
     #[test]
     fn applies_guild_channels_and_messages() {
@@ -429,6 +486,87 @@ mod tests {
     }
 
     #[test]
+    fn merges_history_in_chronological_order() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(30),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some("live".to_owned()),
+        });
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            messages: vec![
+                message_info(channel_id, 20, "history 20"),
+                message_info(channel_id, 10, "history 10"),
+            ],
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.id.get())
+                .collect::<Vec<_>>(),
+            vec![10, 20, 30]
+        );
+    }
+
+    #[test]
+    fn history_dedupes_and_preserves_known_content() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(20),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some("known".to_owned()),
+        });
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            messages: vec![MessageInfo {
+                content: Some(String::new()),
+                ..message_info(channel_id, 20, "")
+            }],
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content.as_deref(), Some("known"));
+    }
+
+    #[test]
+    fn history_respects_message_limit_after_merge() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::new(2);
+
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            messages: vec![
+                message_info(channel_id, 10, "old"),
+                message_info(channel_id, 20, "middle"),
+                message_info(channel_id, 30, "new"),
+            ],
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.id.get())
+                .collect::<Vec<_>>(),
+            vec![20, 30]
+        );
+    }
+
+    #[test]
     fn tracks_members_and_presences() {
         let guild_id = Id::new(1);
         let alice = Id::new(10);
@@ -512,5 +650,16 @@ mod tests {
             .unwrap();
         assert_eq!(member.display_name, "alice-renamed");
         assert_eq!(member.status, PresenceStatus::Online);
+    }
+
+    fn message_info(channel_id: Id<ChannelMarker>, message_id: u64, content: &str) -> MessageInfo {
+        MessageInfo {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(message_id),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some(content.to_owned()),
+        }
     }
 }

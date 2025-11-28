@@ -33,6 +33,16 @@ impl DiscordRest {
 
         response.model().await.map_err(Into::into)
     }
+
+    pub async fn load_message_history(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        limit: u16,
+    ) -> Result<Vec<Message>> {
+        let response = self.http.channel_messages(channel_id).limit(limit).await?;
+
+        response.models().await.map_err(Into::into)
+    }
 }
 
 pub fn validate_message_content(content: &str) -> Result<()> {

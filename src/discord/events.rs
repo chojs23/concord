@@ -64,6 +64,16 @@ pub struct GuildFolder {
     pub guild_ids: Vec<Id<GuildMarker>>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageInfo {
+    pub guild_id: Option<Id<GuildMarker>>,
+    pub channel_id: Id<ChannelMarker>,
+    pub message_id: Id<MessageMarker>,
+    pub author_id: Id<UserMarker>,
+    pub author: String,
+    pub content: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub enum AppEvent {
     Ready {
@@ -95,6 +105,10 @@ pub enum AppEvent {
         author_id: Id<UserMarker>,
         author: String,
         content: Option<String>,
+    },
+    MessageHistoryLoaded {
+        channel_id: Id<ChannelMarker>,
+        messages: Vec<MessageInfo>,
     },
     MessageUpdate {
         guild_id: Option<Id<GuildMarker>>,
@@ -131,7 +145,21 @@ pub enum AppEvent {
 
 impl AppEvent {
     pub fn from_message(message: Message) -> Self {
+        let message = MessageInfo::from_message(message);
         Self::MessageCreate {
+            guild_id: message.guild_id,
+            channel_id: message.channel_id,
+            message_id: message.message_id,
+            author_id: message.author_id,
+            author: message.author,
+            content: message.content,
+        }
+    }
+}
+
+impl MessageInfo {
+    pub fn from_message(message: Message) -> Self {
+        Self {
             guild_id: message.guild_id,
             channel_id: message.channel_id,
             message_id: message.id,
@@ -276,7 +304,11 @@ fn display_name(nick: Option<&str>, user: &TwilightUser) -> String {
     if let Some(nick) = nick.filter(|value| !value.is_empty()) {
         return nick.to_owned();
     }
-    if let Some(global) = user.global_name.as_deref().filter(|value| !value.is_empty()) {
+    if let Some(global) = user
+        .global_name
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
         return global.to_owned();
     }
     user.name.clone()

@@ -2,9 +2,11 @@ use tokio::sync::mpsc;
 
 use crate::{
     Config, DiscordClient, Result,
-    discord::{AppCommand, AppEvent},
+    discord::{AppCommand, AppEvent, MessageInfo},
     token_store, tui,
 };
+
+const MESSAGE_HISTORY_LIMIT: u16 = 50;
 
 pub struct App {
     config: Config,
@@ -57,6 +59,23 @@ fn start_command_loop(
     tokio::spawn(async move {
         while let Some(command) = commands.recv().await {
             match command {
+                AppCommand::LoadMessageHistory { channel_id } => {
+                    match client
+                        .load_message_history(channel_id, MESSAGE_HISTORY_LIMIT)
+                        .await
+                    {
+                        Ok(messages) => client.publish_event(AppEvent::MessageHistoryLoaded {
+                            channel_id,
+                            messages: messages
+                                .into_iter()
+                                .map(MessageInfo::from_message)
+                                .collect(),
+                        }),
+                        Err(error) => client.publish_event(AppEvent::GatewayError {
+                            message: format!("load message history failed: {error}"),
+                        }),
+                    }
+                }
                 AppCommand::SendMessage {
                     channel_id,
                     content,
