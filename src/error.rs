@@ -10,6 +10,11 @@ pub enum AppError {
     LoginCancelled,
     #[error("Discord token must not be empty")]
     EmptyDiscordToken,
+    #[error("Discord token is not a valid HTTP authorization header")]
+    InvalidDiscordTokenHeader {
+        #[source]
+        source: reqwest::header::InvalidHeaderValue,
+    },
     #[error("invalid DISCORD_DEFAULT_CHANNEL_ID value `{value}`")]
     InvalidChannelId {
         value: String,

@@ -21,7 +21,7 @@ impl App {
         let resolved_token = resolve_token().await?;
         let token = resolved_token.token;
         let token_warnings = resolved_token.warnings;
-        let client = DiscordClient::new(token);
+        let client = DiscordClient::new(token)?;
         let events = client.subscribe();
         let (commands_tx, commands_rx) = mpsc::channel(64);
         let gateway_task = client.start_gateway(self.config.enable_message_content);

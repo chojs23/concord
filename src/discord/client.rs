@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use tokio::{sync::broadcast, task::JoinHandle};
 use twilight_http::Client as HttpClient;
 use twilight_model::{
@@ -7,7 +8,7 @@ use twilight_model::{
     id::{Id, marker::ChannelMarker},
 };
 
-use crate::Result;
+use crate::{AppError, Result};
 
 use super::{events::AppEvent, gateway::run_gateway, rest::DiscordRest};
 
@@ -19,16 +20,16 @@ pub struct DiscordClient {
 }
 
 impl DiscordClient {
-    pub fn new(token: String) -> Self {
-        let http = Arc::new(HttpClient::new(token.clone()));
+    pub fn new(token: String) -> Result<Self> {
+        let http = Arc::new(http_client_for_token(&token)?);
         let rest = DiscordRest::new(http);
         let (events_tx, _) = broadcast::channel(512);
 
-        Self {
+        Ok(Self {
             token,
             rest,
             events_tx,
-        }
+        })
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
@@ -54,5 +55,39 @@ impl DiscordClient {
         content: &str,
     ) -> Result<Message> {
         self.rest.send_message(channel_id, content).await
+    }
+
+    pub async fn load_message_history(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        limit: u16,
+    ) -> Result<Vec<Message>> {
+        self.rest.load_message_history(channel_id, limit).await
+    }
+}
+
+fn http_client_for_token(token: &str) -> Result<HttpClient> {
+    let mut headers = HeaderMap::new();
+    let value = HeaderValue::from_str(token).map_err(|source| {
+        AppError::InvalidDiscordTokenHeader { source }
+    })?;
+    headers.insert(AUTHORIZATION, value);
+
+    Ok(HttpClient::builder().default_headers(headers).build())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::http_client_for_token;
+
+    #[tokio::test]
+    async fn builds_http_client_with_raw_user_token() {
+        http_client_for_token("raw-user-token").expect("raw user token must be accepted");
+    }
+
+    #[tokio::test]
+    async fn rejects_tokens_that_are_invalid_http_header_values() {
+        http_client_for_token("invalid\nuser-token")
+            .expect_err("newlines are not valid authorization header values");
     }
 }
