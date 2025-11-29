@@ -7,6 +7,7 @@ use crate::discord::{
     AppCommand, AppEvent, ChannelState, DiscordState, GuildFolder, GuildMemberState, GuildState,
     MessageState, PresenceStatus,
 };
+use crate::logging;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FocusPane {
@@ -74,7 +75,10 @@ impl DashboardState {
     pub fn push_event(&mut self, event: AppEvent) {
         match &event {
             AppEvent::Ready { user } => self.current_user = Some(user.clone()),
-            AppEvent::GatewayError { message } => self.last_error = Some(message.clone()),
+            AppEvent::GatewayError { message } => {
+                logging::error("app_event", message);
+                self.last_error = Some(message.clone());
+            }
             AppEvent::GatewayClosed => {
                 self.last_error = Some("gateway closed".to_owned());
             }

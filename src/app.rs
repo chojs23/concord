@@ -1,9 +1,11 @@
+use std::time::Instant;
+
 use tokio::sync::mpsc;
 
 use crate::{
     Config, DiscordClient, Result,
     discord::{AppCommand, AppEvent, MessageInfo},
-    token_store, tui,
+    logging, token_store, tui,
 };
 
 const MESSAGE_HISTORY_LIMIT: u16 = 50;
@@ -29,6 +31,7 @@ impl App {
 
         let result = async {
             for warning in token_warnings {
+                logging::error("app", &warning);
                 client.publish_event(AppEvent::GatewayError { message: warning });
             }
 
@@ -37,6 +40,7 @@ impl App {
                 self.config.boot_message.as_deref(),
             ) && let Err(error) = client.send_message(channel_id, message).await
             {
+                logging::error("app", format!("startup message failed: {error}"));
                 client.publish_event(AppEvent::GatewayError {
                     message: format!("startup message failed: {error}"),
                 });
@@ -60,20 +64,39 @@ fn start_command_loop(
         while let Some(command) = commands.recv().await {
             match command {
                 AppCommand::LoadMessageHistory { channel_id } => {
+                    let started = Instant::now();
                     match client
                         .load_message_history(channel_id, MESSAGE_HISTORY_LIMIT)
                         .await
                     {
-                        Ok(messages) => client.publish_event(AppEvent::MessageHistoryLoaded {
-                            channel_id,
-                            messages: messages
-                                .into_iter()
-                                .map(MessageInfo::from_message)
-                                .collect(),
-                        }),
-                        Err(error) => client.publish_event(AppEvent::GatewayError {
-                            message: format!("load message history failed: {error}"),
-                        }),
+                        Ok(messages) => {
+                            logging::timing(
+                                "history",
+                                format!("channel={} messages={}", channel_id.get(), messages.len()),
+                                started.elapsed(),
+                            );
+                            client.publish_event(AppEvent::MessageHistoryLoaded {
+                                channel_id,
+                                messages: messages
+                                    .into_iter()
+                                    .map(MessageInfo::from_message)
+                                    .collect(),
+                            });
+                        }
+                        Err(error) => {
+                            logging::timing(
+                                "history",
+                                format!("channel={} messages=0", channel_id.get()),
+                                started.elapsed(),
+                            );
+                            logging::error(
+                                "history",
+                                format!("load message history failed: {error}"),
+                            );
+                            client.publish_event(AppEvent::GatewayError {
+                                message: format!("load message history failed: {error}"),
+                            });
+                        }
                     }
                 }
                 AppCommand::SendMessage {
@@ -81,9 +104,12 @@ fn start_command_loop(
                     content,
                 } => match client.send_message(channel_id, &content).await {
                     Ok(message) => client.publish_event(AppEvent::from_message(message)),
-                    Err(error) => client.publish_event(AppEvent::GatewayError {
-                        message: format!("send message failed: {error}"),
-                    }),
+                    Err(error) => {
+                        logging::error("app", format!("send message failed: {error}"));
+                        client.publish_event(AppEvent::GatewayError {
+                            message: format!("send message failed: {error}"),
+                        });
+                    }
                 },
             }
         }
@@ -128,6 +154,6 @@ async fn shutdown_gateway(gateway_task: tokio::task::JoinHandle<()>) {
     if let Err(error) = gateway_task.await
         && !error.is_cancelled()
     {
-        eprintln!("gateway task ended unexpectedly: {error}");
+        logging::error("app", format!("gateway task ended unexpectedly: {error}"));
     }
 }

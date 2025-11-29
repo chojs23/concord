@@ -1,9 +1,5 @@
 use std::{
-    env,
-    fs::{File, OpenOptions},
-    io::Write,
-    path::PathBuf,
-    sync::Mutex,
+    time::{Duration, Instant},
 };
 
 use serde_json::Value;
@@ -21,28 +17,21 @@ use super::{
     ChannelInfo, GuildFolder, MemberInfo, PresenceStatus,
     events::{AppEvent, map_event},
 };
+use crate::logging;
 
 pub async fn run_gateway(
     token: String,
     message_content_enabled: bool,
     tx: broadcast::Sender<AppEvent>,
 ) {
-    let mut intents = Intents::GUILDS
-        | Intents::GUILD_MESSAGES
-        | Intents::DIRECT_MESSAGES
-        | Intents::GUILD_MEMBERS
-        | Intents::GUILD_PRESENCES;
-    if message_content_enabled {
-        intents |= Intents::MESSAGE_CONTENT;
-    }
+    let intents = gateway_intents(message_content_enabled);
 
     let mut shard = Shard::new(ShardId::ONE, token, intents);
-    let logger = DebugLogger::from_env();
 
     while let Some(item) = shard.next_event(EventTypeFlags::all()).await {
         match item {
             Ok(event) => {
-                logger.log(&format!("ok: {:?}\n", event.kind()));
+                logging::debug("gateway", format!("ok: {:?}", event.kind()));
                 if let Some(event) = map_event(event, message_content_enabled) {
                     let _ = tx.send(event);
                 }
@@ -52,10 +41,12 @@ pub async fn run_gateway(
                 // For events we can rebuild from raw JSON, do so. Other deserialize
                 // failures are silently dropped instead of spamming the footer.
                 if let ReceiveMessageErrorType::Deserializing { event } = error.kind() {
-                    logger.log(&format!("deserialize fallback: {event}\n"));
+                    logging::debug("gateway", format!("deserialize fallback: {event}"));
+                    let started = Instant::now();
                     let mut events = parse_user_account_event(event);
+                    logging::timing("gateway", "fallback total", started.elapsed());
                     if events.is_empty() {
-                        logger.log("  -> no fallback events emitted\n");
+                        logging::debug("gateway", "fallback emitted no app events");
                     }
                     for app_event in events.drain(..) {
                         let _ = tx.send(app_event);
@@ -63,7 +54,7 @@ pub async fn run_gateway(
                     continue;
                 }
 
-                logger.log(&format!("err: {error}\n"));
+                logging::error("gateway", error.to_string());
                 let _ = tx.send(AppEvent::GatewayError {
                     message: error.to_string(),
                 });
@@ -74,50 +65,16 @@ pub async fn run_gateway(
     let _ = tx.send(AppEvent::GatewayClosed);
 }
 
-/// Optional debug log; activated by setting `DISCORD_DEBUG_GATEWAY=1`. Writes
-/// raw deserialize-failed payloads and event kinds to
-/// `~/.discord-rs/gateway-debug.log` so we can diagnose user-token format
-/// surprises without polluting the TUI.
-struct DebugLogger {
-    file: Option<Mutex<File>>,
-}
-
-impl DebugLogger {
-    fn from_env() -> Self {
-        if env::var("DISCORD_DEBUG_GATEWAY").ok().as_deref() != Some("1") {
-            return Self { file: None };
-        }
-
-        let Some(path) = log_path() else {
-            return Self { file: None };
-        };
-
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .ok()
-            .map(Mutex::new);
-        Self { file }
+fn gateway_intents(message_content_enabled: bool) -> Intents {
+    let mut intents = Intents::GUILDS
+        | Intents::GUILD_MESSAGES
+        | Intents::DIRECT_MESSAGES
+        | Intents::GUILD_MEMBERS;
+    if message_content_enabled {
+        intents |= Intents::MESSAGE_CONTENT;
     }
 
-    fn log(&self, message: &str) {
-        let Some(file) = self.file.as_ref() else {
-            return;
-        };
-        if let Ok(mut guard) = file.lock() {
-            let _ = guard.write_all(message.as_bytes());
-        }
-    }
-}
-
-fn log_path() -> Option<PathBuf> {
-    let home = env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".discord-rs").join("gateway-debug.log"))
+    intents
 }
 
 /// Best-effort fallback that rebuilds the dashboard's domain events directly
@@ -137,7 +94,12 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
 
     match event_type {
         "READY" => parse_ready(data),
-        "GUILD_CREATE" => parse_guild_create(data).into_iter().collect(),
+        "GUILD_CREATE" => {
+            let started = Instant::now();
+            let result = parse_guild_create(data).into_iter().collect();
+            logging::timing("gateway", "fallback guild_create parse", started.elapsed());
+            result
+        }
         "GUILD_UPDATE" => parse_guild_update(data).into_iter().collect(),
         "GUILD_DELETE" => parse_guild_delete(data).into_iter().collect(),
         "CHANNEL_CREATE" | "CHANNEL_UPDATE" => parse_channel_upsert(data).into_iter().collect(),
@@ -159,8 +121,11 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
 /// but user accounts never send standalone GUILD_CREATEs, so we emit a
 /// synthetic GuildCreate for each entry inline.
 fn parse_ready(data: &Value) -> Vec<AppEvent> {
+    let total_started = Instant::now();
     let mut events = Vec::new();
+    let mut stats = ReadyTimingStats::default();
 
+    let user_started = Instant::now();
     if let Some(user) = data.get("user") {
         let name = user
             .get("global_name")
@@ -171,42 +136,109 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
             .to_owned();
         events.push(AppEvent::Ready { user: name });
     }
+    stats.user = user_started.elapsed();
 
+    let guilds_started = Instant::now();
     if let Some(guilds) = data.get("guilds").and_then(Value::as_array) {
+        stats.guilds = guilds.len();
         for guild in guilds {
+            stats.guild_channels += guild
+                .get("channels")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or_default();
+            stats.guild_members += guild
+                .get("members")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or_default();
+            stats.guild_presences += guild
+                .get("presences")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or_default();
             if let Some(event) = parse_guild_create(guild) {
                 events.push(event);
             }
         }
     }
+    stats.guilds_duration = guilds_started.elapsed();
 
     // User-account READY also lists DM and group-DM channels under
     // `private_channels`. They have no `guild_id` and never come through
     // `GUILD_CREATE`, so we surface them as standalone channel upserts.
+    let private_channels_started = Instant::now();
     if let Some(privates) = data.get("private_channels").and_then(Value::as_array) {
+        stats.private_channels = privates.len();
         for channel in privates {
             if let Some(info) = parse_channel_info(channel, None) {
                 events.push(AppEvent::ChannelUpsert(info));
             }
         }
     }
+    stats.private_channels_duration = private_channels_started.elapsed();
 
     // Guild folder ordering and grouping live in the legacy `user_settings`
     // payload (the modern `user_settings_proto` blob is base64+protobuf and is
     // skipped for now). When present, every guild appears in some folder —
     // either an explicit one or a single-guild "container" with `id == null`.
+    let folders_started = Instant::now();
     if let Some(folders) = data
         .get("user_settings")
         .and_then(|settings| settings.get("guild_folders"))
         .and_then(Value::as_array)
     {
         let folders: Vec<GuildFolder> = folders.iter().filter_map(parse_guild_folder).collect();
+        stats.folders = folders.len();
         if !folders.is_empty() {
             events.push(AppEvent::GuildFoldersUpdate { folders });
         }
     }
+    stats.folders_duration = folders_started.elapsed();
+    stats.total = total_started.elapsed();
+
+    log_ready_stats(&stats);
 
     events
+}
+
+#[derive(Default)]
+struct ReadyTimingStats {
+    guilds: usize,
+    guild_channels: usize,
+    guild_members: usize,
+    guild_presences: usize,
+    private_channels: usize,
+    folders: usize,
+    user: Duration,
+    guilds_duration: Duration,
+    private_channels_duration: Duration,
+    folders_duration: Duration,
+    total: Duration,
+}
+
+fn log_ready_stats(stats: &ReadyTimingStats) {
+    logging::timing(
+        "gateway",
+        format!(
+            "ready user={:.2}ms guilds={:.2}ms private_channels={:.2}ms folders={:.2}ms counts guilds={} channels={} members={} presences={} private_channels={} folders={}",
+            ms(stats.user),
+            ms(stats.guilds_duration),
+            ms(stats.private_channels_duration),
+            ms(stats.folders_duration),
+            stats.guilds,
+            stats.guild_channels,
+            stats.guild_members,
+            stats.guild_presences,
+            stats.private_channels,
+            stats.folders,
+        ),
+        stats.total,
+    );
+}
+
+fn ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1_000.0
 }
 
 fn parse_guild_folder(value: &Value) -> Option<GuildFolder> {
@@ -509,4 +541,31 @@ fn parse_status(value: &str) -> PresenceStatus {
 
 fn parse_id<M>(value: &Value) -> Option<Id<M>> {
     value.as_str()?.parse::<u64>().ok().map(Id::new)
+}
+
+#[cfg(test)]
+mod tests {
+    use twilight_model::gateway::Intents;
+
+    use super::gateway_intents;
+
+    #[test]
+    fn startup_intents_skip_presence_updates() {
+        let intents = gateway_intents(false);
+
+        assert!(intents.contains(Intents::GUILDS));
+        assert!(intents.contains(Intents::GUILD_MESSAGES));
+        assert!(intents.contains(Intents::DIRECT_MESSAGES));
+        assert!(intents.contains(Intents::GUILD_MEMBERS));
+        assert!(!intents.contains(Intents::GUILD_PRESENCES));
+        assert!(!intents.contains(Intents::MESSAGE_CONTENT));
+    }
+
+    #[test]
+    fn startup_intents_keep_message_content_optional() {
+        let intents = gateway_intents(true);
+
+        assert!(intents.contains(Intents::MESSAGE_CONTENT));
+        assert!(!intents.contains(Intents::GUILD_PRESENCES));
+    }
 }
