@@ -429,6 +429,9 @@ fn parse_channel_info(
         .get("position")
         .and_then(Value::as_i64)
         .and_then(|value| i32::try_from(value).ok());
+    let last_message_id = value
+        .get("last_message_id")
+        .and_then(parse_id::<MessageMarker>);
 
     // Map Discord channel type integers to friendlier strings. DMs and
     // group-DMs are special-cased so the dashboard can render them with
@@ -465,6 +468,7 @@ fn parse_channel_info(
         channel_id,
         parent_id,
         position,
+        last_message_id,
         name,
         kind,
     })
@@ -545,9 +549,10 @@ fn parse_id<M>(value: &Value) -> Option<Id<M>> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
     use twilight_model::gateway::Intents;
 
-    use super::gateway_intents;
+    use super::{gateway_intents, parse_channel_info};
 
     #[test]
     fn startup_intents_skip_presence_updates() {
@@ -567,5 +572,21 @@ mod tests {
 
         assert!(intents.contains(Intents::MESSAGE_CONTENT));
         assert!(!intents.contains(Intents::GUILD_PRESENCES));
+    }
+
+    #[test]
+    fn channel_parser_keeps_last_message_id() {
+        let channel = parse_channel_info(
+            &json!({
+                "id": "10",
+                "type": 1,
+                "last_message_id": "99",
+                "recipients": [{ "username": "neo" }]
+            }),
+            None,
+        )
+        .expect("dm channel should parse");
+
+        assert_eq!(channel.last_message_id.map(|id| id.get()), Some(99));
     }
 }

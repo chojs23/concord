@@ -21,6 +21,7 @@ pub struct ChannelState {
     pub guild_id: Option<Id<GuildMarker>>,
     pub parent_id: Option<Id<ChannelMarker>>,
     pub position: Option<i32>,
+    pub last_message_id: Option<Id<MessageMarker>>,
     pub name: String,
     pub kind: String,
 }
@@ -242,6 +243,12 @@ impl DiscordState {
     }
 
     fn upsert_channel(&mut self, channel: &ChannelInfo) {
+        let last_message_id = self
+            .channels
+            .get(&channel.channel_id)
+            .and_then(|existing| existing.last_message_id)
+            .max(channel.last_message_id);
+
         self.channels.insert(
             channel.channel_id,
             ChannelState {
@@ -249,6 +256,7 @@ impl DiscordState {
                 guild_id: channel.guild_id,
                 parent_id: channel.parent_id,
                 position: channel.position,
+                last_message_id,
                 name: channel.name.clone(),
                 kind: channel.kind.clone(),
             },
@@ -256,6 +264,8 @@ impl DiscordState {
     }
 
     fn upsert_message(&mut self, message: MessageState) {
+        let channel_id = message.channel_id;
+        let message_id = message.id;
         let messages = self.messages.entry(message.channel_id).or_default();
         if let Some(existing) = messages.iter_mut().find(|item| item.id == message.id) {
             existing.guild_id = message.guild_id;
@@ -272,6 +282,7 @@ impl DiscordState {
         while messages.len() > self.max_messages_per_channel {
             messages.pop_front();
         }
+        self.record_channel_message_id(channel_id, message_id);
     }
 
     fn merge_message_history(&mut self, channel_id: Id<ChannelMarker>, history: &[MessageInfo]) {
@@ -304,6 +315,19 @@ impl DiscordState {
         *messages = by_id.into_values().collect();
         while messages.len() > self.max_messages_per_channel {
             messages.pop_front();
+        }
+        if let Some(last_message_id) = messages.back().map(|message| message.id) {
+            self.record_channel_message_id(channel_id, last_message_id);
+        }
+    }
+
+    fn record_channel_message_id(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    ) {
+        if let Some(channel) = self.channels.get_mut(&channel_id) {
+            channel.last_message_id = channel.last_message_id.max(Some(message_id));
         }
     }
 
@@ -388,6 +412,7 @@ mod tests {
                 channel_id,
                 parent_id: None,
                 position: None,
+                last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
             }],
@@ -420,6 +445,7 @@ mod tests {
             channel_id,
             parent_id: Some(category_id),
             position: Some(7),
+            last_message_id: Some(Id::new(9)),
             name: "general".to_owned(),
             kind: "text".to_owned(),
         }));
@@ -427,6 +453,7 @@ mod tests {
         let channel = state.channel(channel_id).unwrap();
         assert_eq!(channel.parent_id, Some(category_id));
         assert_eq!(channel.position, Some(7));
+        assert_eq!(channel.last_message_id, Some(Id::new(9)));
     }
 
     #[test]
@@ -564,6 +591,109 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![20, 30]
         );
+    }
+
+    #[test]
+    fn live_messages_update_channel_last_message_id() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: Some(Id::new(20)),
+            name: "neo".to_owned(),
+            kind: "dm".to_owned(),
+        }));
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(30),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some("new".to_owned()),
+        });
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(10),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some("old".to_owned()),
+        });
+
+        assert_eq!(
+            state.channel(channel_id).and_then(|channel| channel.last_message_id),
+            Some(Id::new(30))
+        );
+    }
+
+    #[test]
+    fn history_updates_channel_last_message_id() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: Some(Id::new(20)),
+            name: "neo".to_owned(),
+            kind: "dm".to_owned(),
+        }));
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            messages: vec![
+                message_info(channel_id, 10, "old"),
+                message_info(channel_id, 40, "new"),
+            ],
+        });
+
+        assert_eq!(
+            state.channel(channel_id).and_then(|channel| channel.last_message_id),
+            Some(Id::new(40))
+        );
+    }
+
+    #[test]
+    fn channel_upsert_does_not_regress_last_message_id() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: Some(Id::new(30)),
+            name: "neo".to_owned(),
+            kind: "dm".to_owned(),
+        }));
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "neo renamed".to_owned(),
+            kind: "dm".to_owned(),
+        }));
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: Some(Id::new(20)),
+            name: "neo renamed again".to_owned(),
+            kind: "dm".to_owned(),
+        }));
+
+        let channel = state.channel(channel_id).unwrap();
+        assert_eq!(channel.name, "neo renamed again");
+        assert_eq!(channel.last_message_id, Some(Id::new(30)));
     }
 
     #[test]

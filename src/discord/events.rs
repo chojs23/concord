@@ -41,6 +41,7 @@ pub struct ChannelInfo {
     pub channel_id: Id<ChannelMarker>,
     pub parent_id: Option<Id<ChannelMarker>>,
     pub position: Option<i32>,
+    pub last_message_id: Option<Id<MessageMarker>>,
     pub name: String,
     pub kind: String,
 }
@@ -246,6 +247,7 @@ fn channel_info(channel: &Channel) -> ChannelInfo {
         channel_id: channel.id,
         parent_id: channel.parent_id,
         position: channel.position,
+        last_message_id: channel.last_message_id.map(|id| Id::new(id.get())),
         name: channel
             .name
             .clone()

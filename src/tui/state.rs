@@ -299,8 +299,9 @@ impl DashboardState {
     }
 
     pub fn channel_pane_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
-        let channels = self.channels();
+        let mut channels = self.channels();
         if self.selected_guild_id().is_none() {
+            sort_direct_message_channels(&mut channels);
             return channels
                 .into_iter()
                 .map(|state| ChannelPaneEntry::Channel {
@@ -641,7 +642,16 @@ impl DashboardState {
     }
 
     fn first_selectable_channel_id(&self) -> Option<Id<ChannelMarker>> {
-        self.channels()
+        let mut channels = self.channels();
+        if self.selected_guild_id().is_none() {
+            sort_direct_message_channels(&mut channels);
+            return channels
+                .into_iter()
+                .find(|channel| !channel.is_category())
+                .map(|channel| channel.id);
+        }
+
+        channels
             .into_iter()
             .filter(|channel| !channel.is_category())
             .min_by_key(|channel| (channel.position.unwrap_or(i32::MAX), channel.id))
@@ -775,6 +785,15 @@ fn sort_channels(channels: &mut [&ChannelState]) {
     channels.sort_by_key(|channel| (channel.position.unwrap_or(i32::MAX), channel.id));
 }
 
+fn sort_direct_message_channels(channels: &mut [&ChannelState]) {
+    channels.sort_by(|left, right| {
+        right
+            .last_message_id
+            .cmp(&left.last_message_id)
+            .then_with(|| right.id.cmp(&left.id))
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use twilight_model::id::{Id, marker::ChannelMarker, marker::UserMarker};
@@ -817,6 +836,7 @@ mod tests {
                 channel_id: Id::new(2),
                 parent_id: None,
                 position: None,
+                last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
             }],
@@ -866,6 +886,7 @@ mod tests {
                 channel_id,
                 parent_id: None,
                 position: None,
+                last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
             }],
@@ -885,6 +906,40 @@ mod tests {
         }
 
         assert_eq!(state.selected_message(), 2);
+    }
+
+    #[test]
+    fn direct_messages_are_sorted_by_latest_message_id() {
+        let state = state_with_direct_messages();
+
+        assert_eq!(channel_entry_names(&state), vec!["new", "old", "empty"]);
+    }
+
+    #[test]
+    fn direct_message_activation_defaults_to_latest_message() {
+        let mut state = state_with_direct_messages();
+
+        state.confirm_selected_guild();
+
+        assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
+    }
+
+    #[test]
+    fn direct_message_sorting_uses_channel_id_fallback() {
+        let mut state = DashboardState::new();
+        for (channel_id, name) in [(Id::new(10), "older-id"), (Id::new(30), "newer-id")] {
+            state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+                guild_id: None,
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: name.to_owned(),
+                kind: "dm".to_owned(),
+            }));
+        }
+
+        assert_eq!(channel_entry_names(&state), vec!["newer-id", "older-id"]);
     }
 
     #[test]
@@ -1112,6 +1167,7 @@ mod tests {
                     channel_id: category_id,
                     parent_id: None,
                     position: Some(0),
+                    last_message_id: None,
                     name: "Text Channels".to_owned(),
                     kind: "category".to_owned(),
                 },
@@ -1120,6 +1176,7 @@ mod tests {
                     channel_id: general_id,
                     parent_id: Some(category_id),
                     position: Some(0),
+                    last_message_id: None,
                     name: "general".to_owned(),
                     kind: "text".to_owned(),
                 },
@@ -1128,6 +1185,7 @@ mod tests {
                     channel_id: random_id,
                     parent_id: Some(category_id),
                     position: Some(1),
+                    last_message_id: None,
                     name: "random".to_owned(),
                     kind: "text".to_owned(),
                 },
@@ -1137,6 +1195,37 @@ mod tests {
         });
         state.confirm_selected_guild();
         state
+    }
+
+    fn state_with_direct_messages() -> DashboardState {
+        let mut state = DashboardState::new();
+        for (channel_id, name, last_message_id) in [
+            (Id::new(10), "old", Some(Id::new(100))),
+            (Id::new(20), "new", Some(Id::new(200))),
+            (Id::new(30), "empty", None),
+        ] {
+            state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+                guild_id: None,
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id,
+                name: name.to_owned(),
+                kind: "dm".to_owned(),
+            }));
+        }
+        state
+    }
+
+    fn channel_entry_names(state: &DashboardState) -> Vec<&str> {
+        state
+            .channel_pane_entries()
+            .into_iter()
+            .filter_map(|entry| match entry {
+                ChannelPaneEntry::Channel { state, .. } => Some(state.name.as_str()),
+                ChannelPaneEntry::CategoryHeader { .. } => None,
+            })
+            .collect()
     }
 
     fn state_with_two_guilds() -> DashboardState {
