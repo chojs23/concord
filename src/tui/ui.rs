@@ -179,9 +179,7 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
         .collect();
 
     let mut list_state = ListState::default();
-    if !items.is_empty() {
-        list_state.select(Some(state.selected_message()));
-    }
+    list_state.select(state.focused_message_selection());
 
     let list = List::new(items)
         .block(panel_block_owned(

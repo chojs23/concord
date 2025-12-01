@@ -50,7 +50,7 @@ impl DashboardState {
     pub fn new() -> Self {
         Self {
             discord: DiscordState::default(),
-            focus: FocusPane::Messages,
+            focus: FocusPane::Guilds,
             active_guild_id: None,
             active_channel_id: None,
             // Index 0 is the virtual "Direct Messages" entry. Start on the
@@ -449,6 +449,14 @@ impl DashboardState {
             .min(self.messages().len().saturating_sub(1))
     }
 
+    pub fn focused_message_selection(&self) -> Option<usize> {
+        if self.focus == FocusPane::Messages && !self.messages().is_empty() {
+            Some(self.selected_message())
+        } else {
+            None
+        }
+    }
+
     pub fn members_grouped(&self) -> Vec<MemberGroup<'_>> {
         let Some(guild_id) = self.selected_guild_id() else {
             return Vec::new();
@@ -819,6 +827,56 @@ mod tests {
             message: "boom".to_owned(),
         });
         assert_eq!(state.last_error(), Some("boom"));
+    }
+
+    #[test]
+    fn dashboard_starts_without_message_focus() {
+        let state = DashboardState::new();
+
+        assert_eq!(state.focus(), FocusPane::Guilds);
+        assert_eq!(state.focused_message_selection(), None);
+    }
+
+    #[test]
+    fn loaded_messages_are_unselected_until_message_pane_is_focused() {
+        let guild_id = Id::new(1);
+        let channel_id: Id<ChannelMarker> = Id::new(2);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+        });
+        state.confirm_selected_guild();
+        for id in 1..=2u64 {
+            state.push_event(AppEvent::MessageCreate {
+                guild_id: Some(guild_id),
+                channel_id,
+                message_id: Id::new(id),
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                content: Some(format!("msg {id}")),
+            });
+        }
+
+        assert_eq!(state.selected_message(), 1);
+        assert_eq!(state.focused_message_selection(), None);
+
+        while state.focus() != FocusPane::Messages {
+            state.cycle_focus();
+        }
+        assert_eq!(state.focused_message_selection(), Some(1));
     }
 
     #[test]
