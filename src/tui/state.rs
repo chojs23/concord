@@ -260,8 +260,8 @@ impl DashboardState {
     fn activate_guild(&mut self, guild_id: Option<Id<GuildMarker>>) {
         self.active_guild_id = guild_id;
         self.selected_channel = 0;
-        self.active_channel_id = self.first_selectable_channel_id();
-        self.selected_message = self.messages().len().saturating_sub(1);
+        self.active_channel_id = None;
+        self.selected_message = 0;
         self.selected_member = 0;
     }
 
@@ -644,27 +644,11 @@ impl DashboardState {
             .is_some_and(|channel| {
                 channel.guild_id == self.active_guild_id && !channel.is_category()
             });
-        if !active_channel_is_valid {
-            self.active_channel_id = self.first_selectable_channel_id();
+        if self.active_channel_id.is_some() && !active_channel_is_valid {
+            self.active_channel_id = None;
         }
     }
 
-    fn first_selectable_channel_id(&self) -> Option<Id<ChannelMarker>> {
-        let mut channels = self.channels();
-        if self.selected_guild_id().is_none() {
-            sort_direct_message_channels(&mut channels);
-            return channels
-                .into_iter()
-                .find(|channel| !channel.is_category())
-                .map(|channel| channel.id);
-        }
-
-        channels
-            .into_iter()
-            .filter(|channel| !channel.is_category())
-            .min_by_key(|channel| (channel.position.unwrap_or(i32::MAX), channel.id))
-            .map(|channel| channel.id)
-    }
 }
 
 impl Default for DashboardState {
@@ -859,6 +843,7 @@ mod tests {
             presences: Vec::new(),
         });
         state.confirm_selected_guild();
+        state.confirm_selected_channel();
         for id in 1..=2u64 {
             state.push_event(AppEvent::MessageCreate {
                 guild_id: Some(guild_id),
@@ -877,6 +862,34 @@ mod tests {
             state.cycle_focus();
         }
         assert_eq!(state.focused_message_selection(), Some(1));
+    }
+
+    #[test]
+    fn startup_events_do_not_auto_open_direct_messages() {
+        let channel_id: Id<ChannelMarker> = Id::new(20);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: Some(Id::new(30)),
+            name: "neo".to_owned(),
+            kind: "dm".to_owned(),
+        }));
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(30),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some("hello".to_owned()),
+        });
+
+        assert_eq!(state.selected_channel_id(), None);
+        assert_eq!(state.selected_channel_state(), None);
+        assert!(state.messages().is_empty());
     }
 
     #[test]
@@ -952,6 +965,7 @@ mod tests {
             presences: Vec::new(),
         });
         state.confirm_selected_guild();
+        state.confirm_selected_channel();
         for id in 1..=3u64 {
             state.push_event(AppEvent::MessageCreate {
                 guild_id: Some(guild_id),
@@ -974,11 +988,13 @@ mod tests {
     }
 
     #[test]
-    fn direct_message_activation_defaults_to_latest_message() {
+    fn direct_message_selection_waits_for_channel_confirmation() {
         let mut state = state_with_direct_messages();
 
         state.confirm_selected_guild();
+        assert_eq!(state.selected_channel_id(), None);
 
+        state.confirm_selected_channel();
         assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
     }
 
@@ -1033,7 +1049,7 @@ mod tests {
         let mut state = state_with_channel_tree();
 
         assert_eq!(state.channel_pane_entries().len(), 3);
-        assert!(state.selected_channel_id().is_some());
+        assert_eq!(state.selected_channel_id(), None);
 
         state.close_selected_channel_category();
         let closed_entries = state.channel_pane_entries();
@@ -1087,16 +1103,15 @@ mod tests {
     #[test]
     fn moving_channel_cursor_does_not_activate_channel() {
         let mut state = state_with_channel_tree();
-        let general_id = Id::new(11);
         let random_id = Id::new(12);
         focus_channels(&mut state);
 
-        assert_eq!(state.selected_channel_id(), Some(general_id));
+        assert_eq!(state.selected_channel_id(), None);
 
         state.move_down();
         state.move_down();
         assert_eq!(state.selected_channel, 2);
-        assert_eq!(state.selected_channel_id(), Some(general_id));
+        assert_eq!(state.selected_channel_id(), None);
 
         state.confirm_selected_channel();
         assert_eq!(state.selected_channel_id(), Some(random_id));

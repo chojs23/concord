@@ -119,10 +119,10 @@ mod tests {
         let mut state = state_with_channel_tree();
         focus_channels(&mut state);
 
-        assert_eq!(state.selected_channel_id(), Some(Id::new(11)));
+        assert_eq!(state.selected_channel_id(), None);
 
         handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(state.selected_channel_id(), Some(Id::new(11)));
+        assert_eq!(state.selected_channel_id(), None);
 
         handle_key(
             &mut state,
