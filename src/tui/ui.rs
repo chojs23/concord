@@ -17,7 +17,7 @@ use super::{
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
 
-pub fn render(frame: &mut Frame, state: &DashboardState) {
+pub fn render(frame: &mut Frame, state: &mut DashboardState) {
     let [main, footer] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
 
@@ -142,7 +142,8 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
-fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
+fn render_messages(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
+    state.set_message_view_height(area.height as usize);
     let title_text = state
         .selected_channel_state()
         .map(|channel| match channel.kind.as_str() {
@@ -152,7 +153,7 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
         })
         .unwrap_or_else(|| "no channel".to_owned());
 
-    let messages = state.messages();
+    let messages = state.visible_messages();
     let max_author_width = 14usize;
     let padding = 4usize;
     let content_width = (area.width as usize)

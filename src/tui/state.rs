@@ -1,13 +1,15 @@
 use std::collections::{HashMap, HashSet};
 
 use ratatui::style::Color;
-use twilight_model::id::{Id, marker::ChannelMarker, marker::GuildMarker};
+use twilight_model::id::{Id, marker::ChannelMarker, marker::GuildMarker, marker::MessageMarker};
 
 use crate::discord::{
     AppCommand, AppEvent, ChannelState, DiscordState, GuildFolder, GuildMemberState, GuildState,
     MessageState, PresenceStatus,
 };
 use crate::logging;
+
+const MESSAGE_SCROLL_OFF: usize = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FocusPane {
@@ -27,6 +29,9 @@ pub struct DashboardState {
     selected_guild: usize,
     selected_channel: usize,
     selected_message: usize,
+    message_scroll: usize,
+    message_auto_follow: bool,
+    message_view_height: usize,
     selected_member: usize,
     composer_input: String,
     composer_active: bool,
@@ -60,6 +65,9 @@ impl DashboardState {
             selected_guild: 1,
             selected_channel: 0,
             selected_message: 0,
+            message_scroll: 0,
+            message_auto_follow: true,
+            message_view_height: 1,
             selected_member: 0,
             composer_input: String::new(),
             composer_active: false,
@@ -73,6 +81,13 @@ impl DashboardState {
     }
 
     pub fn push_event(&mut self, event: AppEvent) {
+        let selected_message_id = (!self.message_auto_follow)
+            .then(|| self.messages().get(self.selected_message()).map(|message| message.id))
+            .flatten();
+        let scroll_message_id = (!self.message_auto_follow)
+            .then(|| self.messages().get(self.message_scroll).map(|message| message.id))
+            .flatten();
+
         match &event {
             AppEvent::Ready { user } => self.current_user = Some(user.clone()),
             AppEvent::GatewayError { message } => {
@@ -87,11 +102,12 @@ impl DashboardState {
         self.discord.apply_event(&event);
         self.clamp_selection_indices();
         self.clamp_active_selection();
-        // Prefer to keep the message viewport on the latest message.
-        let messages_len = self.messages().len();
-        if messages_len > 0 {
-            self.selected_message = messages_len - 1;
+        if self.message_auto_follow {
+            self.follow_latest_message();
+        } else {
+            self.restore_message_position(selected_message_id, scroll_message_id);
         }
+        self.clamp_message_viewport();
     }
 
     pub fn record_lag(&mut self, skipped: u64) {
@@ -262,6 +278,8 @@ impl DashboardState {
         self.selected_channel = 0;
         self.active_channel_id = None;
         self.selected_message = 0;
+        self.message_scroll = 0;
+        self.message_auto_follow = true;
         self.selected_member = 0;
     }
 
@@ -418,7 +436,9 @@ impl DashboardState {
 
     fn activate_channel(&mut self, channel_id: Id<ChannelMarker>) {
         self.active_channel_id = Some(channel_id);
+        self.message_auto_follow = true;
         self.selected_message = self.messages().len().saturating_sub(1);
+        self.clamp_message_viewport();
     }
 
     fn selected_channel_category_id(&self) -> Option<Id<ChannelMarker>> {
@@ -449,9 +469,32 @@ impl DashboardState {
             .min(self.messages().len().saturating_sub(1))
     }
 
+    #[cfg(test)]
+    pub fn message_scroll(&self) -> usize {
+        self.message_scroll
+    }
+
+    #[cfg(test)]
+    pub fn message_auto_follow(&self) -> bool {
+        self.message_auto_follow
+    }
+
+    pub fn visible_messages(&self) -> Vec<&MessageState> {
+        self.messages()
+            .into_iter()
+            .skip(self.message_scroll)
+            .take(self.message_content_height())
+            .collect()
+    }
+
+    pub fn set_message_view_height(&mut self, height: usize) {
+        self.message_view_height = height;
+        self.clamp_message_viewport();
+    }
+
     pub fn focused_message_selection(&self) -> Option<usize> {
         if self.focus == FocusPane::Messages && !self.messages().is_empty() {
-            Some(self.selected_message())
+            Some(self.selected_message().saturating_sub(self.message_scroll))
         } else {
             None
         }
@@ -520,6 +563,7 @@ impl DashboardState {
                     .selected_message
                     .saturating_add(1)
                     .min(self.messages().len().saturating_sub(1));
+                self.clamp_message_viewport();
             }
             FocusPane::Members => {
                 self.selected_member = self
@@ -540,7 +584,9 @@ impl DashboardState {
                 self.selected_channel = self.selected_channel.saturating_sub(1);
             }
             FocusPane::Messages => {
+                self.message_auto_follow = false;
                 self.selected_message = self.selected_message.saturating_sub(1);
+                self.clamp_message_viewport();
             }
             FocusPane::Members => {
                 self.selected_member = self.selected_member.saturating_sub(1);
@@ -553,7 +599,11 @@ impl DashboardState {
         match self.focus {
             FocusPane::Guilds => self.selected_guild = 0,
             FocusPane::Channels => self.selected_channel = 0,
-            FocusPane::Messages => self.selected_message = 0,
+            FocusPane::Messages => {
+                self.message_auto_follow = false;
+                self.selected_message = 0;
+                self.clamp_message_viewport();
+            }
             FocusPane::Members => self.selected_member = 0,
             FocusPane::Composer => {}
         }
@@ -569,12 +619,45 @@ impl DashboardState {
             }
             FocusPane::Messages => {
                 self.selected_message = self.messages().len().saturating_sub(1);
+                self.clamp_message_viewport();
             }
             FocusPane::Members => {
                 self.selected_member = self.flattened_members().len().saturating_sub(1);
             }
             FocusPane::Composer => {}
         }
+    }
+
+    pub fn half_page_down(&mut self) {
+        if self.focus == FocusPane::Messages {
+            let distance = self.message_content_height() / 2;
+            self.selected_message = self
+                .selected_message
+                .saturating_add(distance.max(1))
+                .min(self.messages().len().saturating_sub(1));
+            self.clamp_message_viewport();
+        }
+    }
+
+    pub fn half_page_up(&mut self) {
+        if self.focus == FocusPane::Messages {
+            self.message_auto_follow = false;
+            let distance = self.message_content_height() / 2;
+            self.selected_message = self.selected_message.saturating_sub(distance.max(1));
+            self.clamp_message_viewport();
+        }
+    }
+
+    pub fn toggle_message_auto_follow(&mut self) {
+        if self.focus != FocusPane::Messages {
+            return;
+        }
+
+        self.message_auto_follow = !self.message_auto_follow;
+        if self.message_auto_follow {
+            self.follow_latest_message();
+        }
+        self.clamp_message_viewport();
     }
 
     pub fn cycle_focus(&mut self) {
@@ -625,6 +708,7 @@ impl DashboardState {
         self.selected_channel = self.selected_channel();
         self.selected_message = self.selected_message();
         self.selected_member = self.selected_member();
+        self.clamp_message_viewport();
     }
 
     fn clamp_active_selection(&mut self) {
@@ -647,6 +731,68 @@ impl DashboardState {
         if self.active_channel_id.is_some() && !active_channel_is_valid {
             self.active_channel_id = None;
         }
+    }
+
+    fn follow_latest_message(&mut self) {
+        self.selected_message = self.messages().len().saturating_sub(1);
+    }
+
+    fn restore_message_position(
+        &mut self,
+        selected_message_id: Option<Id<MessageMarker>>,
+        scroll_message_id: Option<Id<MessageMarker>>,
+    ) {
+        let message_ids: Vec<_> = self.messages().into_iter().map(|message| message.id).collect();
+        if let Some(message_id) = selected_message_id
+            && let Some(index) = message_ids.iter().position(|id| *id == message_id)
+        {
+            self.selected_message = index;
+        }
+        if let Some(message_id) = scroll_message_id
+            && let Some(index) = message_ids.iter().position(|id| *id == message_id)
+        {
+            self.message_scroll = index;
+        }
+    }
+
+    fn clamp_message_viewport(&mut self) {
+        let messages_len = self.messages().len();
+        if messages_len == 0 {
+            self.selected_message = 0;
+            self.message_scroll = 0;
+            return;
+        }
+
+        self.selected_message = self.selected_message.min(messages_len - 1);
+
+        let content_height = self.message_content_height();
+        let max_scroll = messages_len.saturating_sub(content_height);
+        self.message_scroll = self.message_scroll.min(max_scroll);
+        let scrolloff = MESSAGE_SCROLL_OFF.min(content_height.saturating_sub(1) / 2);
+
+        let lower_bound = self
+            .message_scroll
+            .saturating_add(content_height)
+            .saturating_sub(1)
+            .saturating_sub(scrolloff);
+        if self.selected_message > lower_bound {
+            self.message_scroll = self
+                .selected_message
+                .saturating_sub(content_height)
+                .saturating_add(1)
+                .saturating_add(scrolloff);
+        }
+
+        let upper_bound = self.message_scroll.saturating_add(scrolloff);
+        if self.selected_message < upper_bound {
+            self.message_scroll = self.selected_message.saturating_sub(scrolloff);
+        }
+
+        self.message_scroll = self.message_scroll.min(max_scroll);
+    }
+
+    fn message_content_height(&self) -> usize {
+        self.message_view_height.saturating_sub(3).max(1)
     }
 
 }
@@ -793,7 +939,9 @@ mod tests {
     use super::{
         ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildBranch, GuildPaneEntry,
     };
-    use crate::discord::{AppEvent, ChannelInfo, GuildFolder, MemberInfo, PresenceStatus};
+    use crate::discord::{
+        AppEvent, ChannelInfo, GuildFolder, MemberInfo, MessageInfo, PresenceStatus,
+    };
 
     #[test]
     fn tracks_current_user_from_ready() {
@@ -861,7 +1009,7 @@ mod tests {
         while state.focus() != FocusPane::Messages {
             state.cycle_focus();
         }
-        assert_eq!(state.focused_message_selection(), Some(1));
+        assert_eq!(state.focused_message_selection(), Some(0));
     }
 
     #[test]
@@ -978,6 +1126,131 @@ mod tests {
         }
 
         assert_eq!(state.selected_message(), 2);
+    }
+
+    #[test]
+    fn message_scroll_preserves_position_when_not_following() {
+        let mut state = state_with_messages(5);
+        focus_messages(&mut state);
+        state.set_message_view_height(6);
+
+        assert_eq!(state.selected_message(), 4);
+        assert!(state.message_auto_follow());
+
+        state.move_up();
+        assert_eq!(state.selected_message(), 3);
+        assert!(!state.message_auto_follow());
+
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(6),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some("msg 6".to_owned()),
+        });
+
+        assert_eq!(state.selected_message(), 3);
+        assert_eq!(state.messages()[state.selected_message()].id, Id::new(4));
+        assert!(!state.message_auto_follow());
+    }
+
+    #[test]
+    fn message_auto_follow_can_jump_back_to_latest() {
+        let mut state = state_with_messages(5);
+        focus_messages(&mut state);
+        state.set_message_view_height(6);
+
+        state.move_up();
+        assert!(!state.message_auto_follow());
+
+        state.toggle_message_auto_follow();
+
+        assert!(state.message_auto_follow());
+        assert_eq!(state.selected_message(), 4);
+    }
+
+    #[test]
+    fn message_scroll_uses_lazyagent_scrolloff() {
+        let mut state = state_with_messages(8);
+        focus_messages(&mut state);
+        state.set_message_view_height(7);
+
+        assert_eq!(state.message_scroll(), 4);
+
+        state.move_up();
+        state.move_up();
+        assert_eq!(state.selected_message(), 5);
+        assert_eq!(state.message_scroll(), 4);
+
+        state.move_up();
+        assert_eq!(state.selected_message(), 4);
+        assert_eq!(state.message_scroll(), 3);
+    }
+
+    #[test]
+    fn message_half_page_up_disables_follow() {
+        let mut state = state_with_messages(10);
+        focus_messages(&mut state);
+        state.set_message_view_height(9);
+
+        state.half_page_up();
+
+        assert_eq!(state.selected_message(), 6);
+        assert!(!state.message_auto_follow());
+    }
+
+    #[test]
+    fn message_jump_bottom_does_not_enable_auto_follow() {
+        let mut state = state_with_messages(10);
+        focus_messages(&mut state);
+        state.set_message_view_height(9);
+
+        state.move_up();
+        assert!(!state.message_auto_follow());
+
+        state.jump_bottom();
+
+        assert_eq!(state.selected_message(), 9);
+        assert!(!state.message_auto_follow());
+    }
+
+    #[test]
+    fn message_half_page_down_keeps_follow_state() {
+        let mut state = state_with_messages(10);
+        focus_messages(&mut state);
+        state.set_message_view_height(9);
+
+        state.half_page_down();
+        assert!(state.message_auto_follow());
+
+        state.move_up();
+        assert!(!state.message_auto_follow());
+
+        state.half_page_down();
+        assert!(!state.message_auto_follow());
+    }
+
+    #[test]
+    fn history_load_preserves_manual_scroll_position_by_message_id() {
+        let channel_id: Id<ChannelMarker> = Id::new(2);
+        let mut state = state_with_message_ids([10, 11, 12, 13, 14]);
+        focus_messages(&mut state);
+        state.set_message_view_height(7);
+        state.move_up();
+        state.move_up();
+
+        let selected_id = state.messages()[state.selected_message()].id;
+        let scroll_id = state.messages()[state.message_scroll()].id;
+
+        state.push_event(AppEvent::MessageHistoryLoaded {
+            channel_id,
+            messages: vec![message_info(channel_id, 5)],
+        });
+
+        assert_eq!(state.messages()[state.selected_message()].id, selected_id);
+        assert_eq!(state.messages()[state.message_scroll()].id, scroll_id);
+        assert!(!state.message_auto_follow());
     }
 
     #[test]
@@ -1290,6 +1563,56 @@ mod tests {
         state
     }
 
+    fn state_with_messages(count: u64) -> DashboardState {
+        state_with_message_ids(1..=count)
+    }
+
+    fn state_with_message_ids(message_ids: impl IntoIterator<Item = u64>) -> DashboardState {
+        let guild_id = Id::new(1);
+        let channel_id: Id<ChannelMarker> = Id::new(2);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        for id in message_ids {
+            state.push_event(AppEvent::MessageCreate {
+                guild_id: Some(guild_id),
+                channel_id,
+                message_id: Id::new(id),
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                content: Some(format!("msg {id}")),
+            });
+        }
+        state
+    }
+
+    fn message_info(channel_id: Id<ChannelMarker>, message_id: u64) -> MessageInfo {
+        MessageInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id,
+            message_id: Id::new(message_id),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some(format!("msg {message_id}")),
+        }
+    }
+
     fn channel_entry_names(state: &DashboardState) -> Vec<&str> {
         state
             .channel_pane_entries()
@@ -1341,6 +1664,12 @@ mod tests {
 
     fn focus_channels(state: &mut DashboardState) {
         while state.focus() != FocusPane::Channels {
+            state.cycle_focus();
+        }
+    }
+
+    fn focus_messages(state: &mut DashboardState) {
+        while state.focus() != FocusPane::Messages {
             state.cycle_focus();
         }
     }

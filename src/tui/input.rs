@@ -19,8 +19,17 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('i') => state.start_composer(),
         KeyCode::Char('j') | KeyCode::Down => state.move_down(),
         KeyCode::Char('k') | KeyCode::Up => state.move_up(),
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.half_page_down()
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => state.half_page_up(),
+        KeyCode::PageDown => state.half_page_down(),
+        KeyCode::PageUp => state.half_page_up(),
+        KeyCode::Char('F') => state.toggle_message_auto_follow(),
         KeyCode::Char('g') => state.jump_top(),
+        KeyCode::Home => state.jump_top(),
         KeyCode::Char('G') => state.jump_bottom(),
+        KeyCode::End => state.jump_bottom(),
         KeyCode::Tab => state.cycle_focus(),
         // Tree headers act like a small tree: Enter/Space toggles, Right
         // opens, and Left closes. Anywhere else these keys are no-ops.
@@ -138,6 +147,35 @@ mod tests {
         assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
     }
 
+    #[test]
+    fn message_keys_match_lazyagent_scroll_controls() {
+        let mut state = state_with_messages(10);
+        focus_messages(&mut state);
+        state.set_message_view_height(9);
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(state.selected_message(), 6);
+        assert!(!state.message_auto_follow());
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Char('F'), KeyModifiers::NONE));
+        assert_eq!(state.selected_message(), 9);
+        assert!(state.message_auto_follow());
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        assert_eq!(state.selected_message(), 6);
+        assert!(!state.message_auto_follow());
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(state.selected_message(), 9);
+        assert!(!state.message_auto_follow());
+    }
+
     fn state_with_folder() -> DashboardState {
         let first_guild = Id::new(1);
         let second_guild = Id::new(2);
@@ -235,5 +273,46 @@ mod tests {
         });
         state.confirm_selected_guild();
         state
+    }
+
+    fn state_with_messages(count: u64) -> DashboardState {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        for id in 1..=count {
+            state.push_event(AppEvent::MessageCreate {
+                guild_id: Some(guild_id),
+                channel_id,
+                message_id: Id::new(id),
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                content: Some(format!("msg {id}")),
+            });
+        }
+        state
+    }
+
+    fn focus_messages(state: &mut DashboardState) {
+        while state.focus() != FocusPane::Messages {
+            state.cycle_focus();
+        }
     }
 }
