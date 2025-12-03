@@ -9,7 +9,7 @@ use crate::discord::{
 };
 use crate::logging;
 
-const MESSAGE_SCROLL_OFF: usize = 3;
+const SCROLL_OFF: usize = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FocusPane {
@@ -27,12 +27,18 @@ pub struct DashboardState {
     active_guild_id: Option<Id<GuildMarker>>,
     active_channel_id: Option<Id<ChannelMarker>>,
     selected_guild: usize,
+    guild_scroll: usize,
+    guild_view_height: usize,
     selected_channel: usize,
+    channel_scroll: usize,
+    channel_view_height: usize,
     selected_message: usize,
     message_scroll: usize,
     message_auto_follow: bool,
     message_view_height: usize,
     selected_member: usize,
+    member_scroll: usize,
+    member_view_height: usize,
     composer_input: String,
     composer_active: bool,
     current_user: Option<String>,
@@ -63,12 +69,18 @@ impl DashboardState {
             // `selected_guild()` falls back to the DM entry while the guild
             // list is still empty.
             selected_guild: 1,
+            guild_scroll: 0,
+            guild_view_height: 1,
             selected_channel: 0,
+            channel_scroll: 0,
+            channel_view_height: 1,
             selected_message: 0,
             message_scroll: 0,
             message_auto_follow: true,
             message_view_height: 1,
             selected_member: 0,
+            member_scroll: 0,
+            member_view_height: 1,
             composer_input: String::new(),
             composer_active: false,
             current_user: None,
@@ -107,6 +119,7 @@ impl DashboardState {
         } else {
             self.restore_message_position(selected_message_id, scroll_message_id);
         }
+        self.clamp_list_viewports();
         self.clamp_message_viewport();
     }
 
@@ -237,6 +250,32 @@ impl DashboardState {
             .min(self.guild_pane_entries().len().saturating_sub(1))
     }
 
+    #[cfg(test)]
+    pub fn guild_scroll(&self) -> usize {
+        self.guild_scroll
+    }
+
+    pub fn visible_guild_pane_entries(&self) -> Vec<GuildPaneEntry<'_>> {
+        self.guild_pane_entries()
+            .into_iter()
+            .skip(self.guild_scroll)
+            .take(pane_content_height(self.guild_view_height))
+            .collect()
+    }
+
+    pub fn focused_guild_selection(&self) -> Option<usize> {
+        if self.focus == FocusPane::Guilds && !self.guild_pane_entries().is_empty() {
+            Some(self.selected_guild().saturating_sub(self.guild_scroll))
+        } else {
+            None
+        }
+    }
+
+    pub fn set_guild_view_height(&mut self, height: usize) {
+        self.guild_view_height = height;
+        self.clamp_guild_viewport();
+    }
+
     pub fn selected_guild_id(&self) -> Option<Id<GuildMarker>> {
         self.active_guild_id
     }
@@ -276,6 +315,7 @@ impl DashboardState {
     fn activate_guild(&mut self, guild_id: Option<Id<GuildMarker>>) {
         self.active_guild_id = guild_id;
         self.selected_channel = 0;
+        self.channel_scroll = 0;
         self.active_channel_id = None;
         self.selected_message = 0;
         self.message_scroll = 0;
@@ -392,6 +432,32 @@ impl DashboardState {
     pub fn selected_channel(&self) -> usize {
         self.selected_channel
             .min(self.channel_pane_entries().len().saturating_sub(1))
+    }
+
+    #[cfg(test)]
+    pub fn channel_scroll(&self) -> usize {
+        self.channel_scroll
+    }
+
+    pub fn visible_channel_pane_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
+        self.channel_pane_entries()
+            .into_iter()
+            .skip(self.channel_scroll)
+            .take(pane_content_height(self.channel_view_height))
+            .collect()
+    }
+
+    pub fn focused_channel_selection(&self) -> Option<usize> {
+        if self.focus == FocusPane::Channels && !self.channel_pane_entries().is_empty() {
+            Some(self.selected_channel().saturating_sub(self.channel_scroll))
+        } else {
+            None
+        }
+    }
+
+    pub fn set_channel_view_height(&mut self, height: usize) {
+        self.channel_view_height = height;
+        self.clamp_channel_viewport();
     }
 
     pub fn selected_channel_id(&self) -> Option<Id<ChannelMarker>> {
@@ -544,6 +610,32 @@ impl DashboardState {
             .min(self.flattened_members().len().saturating_sub(1))
     }
 
+    pub fn focused_member_selection_line(&self) -> Option<usize> {
+        if self.focus == FocusPane::Members && !self.flattened_members().is_empty() {
+            Some(self.selected_member_line().saturating_sub(self.member_scroll))
+        } else {
+            None
+        }
+    }
+
+    pub fn member_scroll(&self) -> usize {
+        self.member_scroll
+    }
+
+    pub fn member_content_height(&self) -> usize {
+        pane_content_height(self.member_view_height)
+    }
+
+    #[cfg(test)]
+    pub fn selected_member_line_for_test(&self) -> usize {
+        self.selected_member_line()
+    }
+
+    pub fn set_member_view_height(&mut self, height: usize) {
+        self.member_view_height = height;
+        self.clamp_member_viewport();
+    }
+
     pub fn move_down(&mut self) {
         match self.focus {
             FocusPane::Guilds => {
@@ -551,12 +643,14 @@ impl DashboardState {
                     .selected_guild
                     .saturating_add(1)
                     .min(self.guild_pane_entries().len().saturating_sub(1));
+                self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 self.selected_channel = self
                     .selected_channel
                     .saturating_add(1)
                     .min(self.channel_pane_entries().len().saturating_sub(1));
+                self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
                 self.selected_message = self
@@ -570,6 +664,7 @@ impl DashboardState {
                     .selected_member
                     .saturating_add(1)
                     .min(self.flattened_members().len().saturating_sub(1));
+                self.clamp_member_viewport();
             }
             FocusPane::Composer => {}
         }
@@ -579,9 +674,11 @@ impl DashboardState {
         match self.focus {
             FocusPane::Guilds => {
                 self.selected_guild = self.selected_guild.saturating_sub(1);
+                self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 self.selected_channel = self.selected_channel.saturating_sub(1);
+                self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
                 self.message_auto_follow = false;
@@ -590,6 +687,7 @@ impl DashboardState {
             }
             FocusPane::Members => {
                 self.selected_member = self.selected_member.saturating_sub(1);
+                self.clamp_member_viewport();
             }
             FocusPane::Composer => {}
         }
@@ -597,14 +695,23 @@ impl DashboardState {
 
     pub fn jump_top(&mut self) {
         match self.focus {
-            FocusPane::Guilds => self.selected_guild = 0,
-            FocusPane::Channels => self.selected_channel = 0,
+            FocusPane::Guilds => {
+                self.selected_guild = 0;
+                self.clamp_guild_viewport();
+            }
+            FocusPane::Channels => {
+                self.selected_channel = 0;
+                self.clamp_channel_viewport();
+            }
             FocusPane::Messages => {
                 self.message_auto_follow = false;
                 self.selected_message = 0;
                 self.clamp_message_viewport();
             }
-            FocusPane::Members => self.selected_member = 0,
+            FocusPane::Members => {
+                self.selected_member = 0;
+                self.clamp_member_viewport();
+            }
             FocusPane::Composer => {}
         }
     }
@@ -613,9 +720,11 @@ impl DashboardState {
         match self.focus {
             FocusPane::Guilds => {
                 self.selected_guild = self.guild_pane_entries().len().saturating_sub(1);
+                self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 self.selected_channel = self.channel_pane_entries().len().saturating_sub(1);
+                self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
                 self.selected_message = self.messages().len().saturating_sub(1);
@@ -623,28 +732,75 @@ impl DashboardState {
             }
             FocusPane::Members => {
                 self.selected_member = self.flattened_members().len().saturating_sub(1);
+                self.clamp_member_viewport();
             }
             FocusPane::Composer => {}
         }
     }
 
     pub fn half_page_down(&mut self) {
-        if self.focus == FocusPane::Messages {
-            let distance = self.message_content_height() / 2;
-            self.selected_message = self
-                .selected_message
-                .saturating_add(distance.max(1))
-                .min(self.messages().len().saturating_sub(1));
-            self.clamp_message_viewport();
+        match self.focus {
+            FocusPane::Guilds => {
+                let distance = pane_content_height(self.guild_view_height) / 2;
+                self.selected_guild = self
+                    .selected_guild
+                    .saturating_add(distance.max(1))
+                    .min(self.guild_pane_entries().len().saturating_sub(1));
+                self.clamp_guild_viewport();
+            }
+            FocusPane::Channels => {
+                let distance = pane_content_height(self.channel_view_height) / 2;
+                self.selected_channel = self
+                    .selected_channel
+                    .saturating_add(distance.max(1))
+                    .min(self.channel_pane_entries().len().saturating_sub(1));
+                self.clamp_channel_viewport();
+            }
+            FocusPane::Messages => {
+                let distance = self.message_content_height() / 2;
+                self.selected_message = self
+                    .selected_message
+                    .saturating_add(distance.max(1))
+                    .min(self.messages().len().saturating_sub(1));
+                self.clamp_message_viewport();
+            }
+            FocusPane::Members => {
+                let distance = pane_content_height(self.member_view_height) / 2;
+                self.select_member_near_line(
+                    self.selected_member_line().saturating_add(distance.max(1)),
+                );
+                self.clamp_member_viewport();
+            }
+            FocusPane::Composer => {}
         }
     }
 
     pub fn half_page_up(&mut self) {
-        if self.focus == FocusPane::Messages {
-            self.message_auto_follow = false;
-            let distance = self.message_content_height() / 2;
-            self.selected_message = self.selected_message.saturating_sub(distance.max(1));
-            self.clamp_message_viewport();
+        match self.focus {
+            FocusPane::Guilds => {
+                let distance = pane_content_height(self.guild_view_height) / 2;
+                self.selected_guild = self.selected_guild.saturating_sub(distance.max(1));
+                self.clamp_guild_viewport();
+            }
+            FocusPane::Channels => {
+                let distance = pane_content_height(self.channel_view_height) / 2;
+                self.selected_channel = self.selected_channel.saturating_sub(distance.max(1));
+                self.clamp_channel_viewport();
+            }
+            FocusPane::Messages => {
+                self.message_auto_follow = false;
+                let distance = self.message_content_height() / 2;
+                self.selected_message = self.selected_message.saturating_sub(distance.max(1));
+                self.clamp_message_viewport();
+            }
+            FocusPane::Members => {
+                let distance = pane_content_height(self.member_view_height) / 2;
+                self.select_member_near_line(
+                    self.selected_member_line().saturating_sub(distance.max(1)),
+                );
+                self.clamp_member_viewport();
+            }
+            FocusPane::Composer => {}
         }
     }
 
@@ -708,6 +864,7 @@ impl DashboardState {
         self.selected_channel = self.selected_channel();
         self.selected_message = self.selected_message();
         self.selected_member = self.selected_member();
+        self.clamp_list_viewports();
         self.clamp_message_viewport();
     }
 
@@ -731,6 +888,115 @@ impl DashboardState {
         if self.active_channel_id.is_some() && !active_channel_is_valid {
             self.active_channel_id = None;
         }
+    }
+
+    fn clamp_list_viewports(&mut self) {
+        self.clamp_guild_viewport();
+        self.clamp_channel_viewport();
+        self.clamp_member_viewport();
+    }
+
+    fn clamp_guild_viewport(&mut self) {
+        let entries_len = self.guild_pane_entries().len();
+        self.selected_guild = self.selected_guild.min(entries_len.saturating_sub(1));
+        self.guild_scroll = clamp_list_scroll(
+            self.selected_guild,
+            self.guild_scroll,
+            pane_content_height(self.guild_view_height),
+            entries_len,
+        );
+    }
+
+    fn clamp_channel_viewport(&mut self) {
+        let entries_len = self.channel_pane_entries().len();
+        self.selected_channel = self.selected_channel.min(entries_len.saturating_sub(1));
+        self.channel_scroll = clamp_list_scroll(
+            self.selected_channel,
+            self.channel_scroll,
+            pane_content_height(self.channel_view_height),
+            entries_len,
+        );
+    }
+
+    fn clamp_member_viewport(&mut self) {
+        let members_len = self.flattened_members().len();
+        if members_len == 0 {
+            self.selected_member = 0;
+            self.member_scroll = 0;
+            return;
+        }
+
+        self.selected_member = self.selected_member.min(members_len - 1);
+        self.member_scroll = clamp_list_scroll(
+            self.selected_member_line(),
+            self.member_scroll,
+            pane_content_height(self.member_view_height),
+            self.member_line_count(),
+        );
+    }
+
+    fn selected_member_line(&self) -> usize {
+        let selected_member = self.selected_member();
+        let mut member_index = 0usize;
+        let mut line_index = 0usize;
+        for group in self.members_grouped() {
+            if line_index > 0 {
+                line_index += 1;
+            }
+            line_index += 1;
+            for _member in group.entries {
+                if member_index == selected_member {
+                    return line_index;
+                }
+                member_index += 1;
+                line_index += 1;
+            }
+        }
+        0
+    }
+
+    fn select_member_near_line(&mut self, target_line: usize) {
+        let mut last_member = None;
+        for (member_index, line_index) in self.member_line_indices() {
+            if line_index >= target_line {
+                self.selected_member = member_index;
+                return;
+            }
+            last_member = Some(member_index);
+        }
+
+        if let Some(member_index) = last_member {
+            self.selected_member = member_index;
+        }
+    }
+
+    fn member_line_indices(&self) -> Vec<(usize, usize)> {
+        let mut indices = Vec::new();
+        let mut member_index = 0usize;
+        let mut line_index = 0usize;
+        for group in self.members_grouped() {
+            if line_index > 0 {
+                line_index += 1;
+            }
+            line_index += 1;
+            for _member in group.entries {
+                indices.push((member_index, line_index));
+                member_index += 1;
+                line_index += 1;
+            }
+        }
+        indices
+    }
+
+    fn member_line_count(&self) -> usize {
+        let mut lines = 0usize;
+        for group in self.members_grouped() {
+            if lines > 0 {
+                lines += 1;
+            }
+            lines += 1 + group.entries.len();
+        }
+        lines
     }
 
     fn follow_latest_message(&mut self) {
@@ -768,7 +1034,7 @@ impl DashboardState {
         let content_height = self.message_content_height();
         let max_scroll = messages_len.saturating_sub(content_height);
         self.message_scroll = self.message_scroll.min(max_scroll);
-        let scrolloff = MESSAGE_SCROLL_OFF.min(content_height.saturating_sub(1) / 2);
+        let scrolloff = SCROLL_OFF.min(content_height.saturating_sub(1) / 2);
 
         let lower_bound = self
             .message_scroll
@@ -792,9 +1058,41 @@ impl DashboardState {
     }
 
     fn message_content_height(&self) -> usize {
-        self.message_view_height.saturating_sub(3).max(1)
+        pane_content_height(self.message_view_height)
     }
 
+}
+
+fn pane_content_height(height: usize) -> usize {
+    height.saturating_sub(3).max(1)
+}
+
+fn clamp_list_scroll(cursor: usize, mut scroll: usize, height: usize, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+
+    let max_scroll = len.saturating_sub(height);
+    scroll = scroll.min(max_scroll);
+    let scrolloff = SCROLL_OFF.min(height.saturating_sub(1) / 2);
+
+    let lower_bound = scroll
+        .saturating_add(height)
+        .saturating_sub(1)
+        .saturating_sub(scrolloff);
+    if cursor > lower_bound {
+        scroll = cursor
+            .saturating_sub(height)
+            .saturating_add(1)
+            .saturating_add(scrolloff);
+    }
+
+    let upper_bound = scroll.saturating_add(scrolloff);
+    if cursor < upper_bound {
+        scroll = cursor.saturating_sub(scrolloff);
+    }
+
+    scroll.min(max_scroll)
 }
 
 impl Default for DashboardState {
@@ -1171,7 +1469,7 @@ mod tests {
     }
 
     #[test]
-    fn message_scroll_uses_lazyagent_scrolloff() {
+    fn message_scroll_uses_scrolloff() {
         let mut state = state_with_messages(8);
         focus_messages(&mut state);
         state.set_message_view_height(7);
@@ -1186,6 +1484,105 @@ mod tests {
         state.move_up();
         assert_eq!(state.selected_message(), 4);
         assert_eq!(state.message_scroll(), 3);
+    }
+
+    #[test]
+    fn guild_scroll_uses_scrolloff() {
+        let mut state = state_with_many_guilds(8);
+        focus_guilds(&mut state);
+        state.set_guild_view_height(7);
+
+        state.jump_bottom();
+        assert_eq!(state.selected_guild(), 8);
+        assert_eq!(state.guild_scroll(), 5);
+
+        state.move_up();
+        state.move_up();
+        assert_eq!(state.selected_guild(), 6);
+        assert_eq!(state.guild_scroll(), 5);
+
+        state.move_up();
+        assert_eq!(state.selected_guild(), 5);
+        assert_eq!(state.guild_scroll(), 4);
+    }
+
+    #[test]
+    fn channel_scroll_uses_scrolloff() {
+        let mut state = state_with_many_channels(8);
+        focus_channels(&mut state);
+        state.set_channel_view_height(7);
+
+        state.jump_bottom();
+        assert_eq!(state.selected_channel(), 7);
+        assert_eq!(state.channel_scroll(), 4);
+
+        state.move_up();
+        state.move_up();
+        assert_eq!(state.selected_channel(), 5);
+        assert_eq!(state.channel_scroll(), 4);
+
+        state.move_up();
+        assert_eq!(state.selected_channel(), 4);
+        assert_eq!(state.channel_scroll(), 3);
+    }
+
+    #[test]
+    fn member_scroll_uses_scrolloff() {
+        let mut state = state_with_members(8);
+        focus_members(&mut state);
+        state.set_member_view_height(7);
+
+        state.jump_bottom();
+        assert_eq!(state.selected_member(), 7);
+        assert_eq!(state.member_scroll(), 5);
+
+        state.move_up();
+        state.move_up();
+        assert_eq!(state.selected_member(), 5);
+        assert_eq!(state.member_scroll(), 5);
+
+        state.move_up();
+        assert_eq!(state.selected_member(), 4);
+        assert_eq!(state.member_scroll(), 4);
+    }
+
+    #[test]
+    fn member_half_page_scrolls_by_rendered_lines() {
+        let mut state = state_with_grouped_members();
+        focus_members(&mut state);
+        state.set_member_view_height(9);
+
+        assert_eq!(state.selected_member(), 0);
+        assert_eq!(state.selected_member_line_for_test(), 1);
+
+        state.half_page_down();
+        assert_eq!(state.selected_member(), 2);
+        assert_eq!(state.selected_member_line_for_test(), 5);
+
+        state.half_page_up();
+        assert_eq!(state.selected_member(), 1);
+        assert_eq!(state.selected_member_line_for_test(), 2);
+    }
+
+    #[test]
+    fn half_page_scrolls_all_list_panes() {
+        let mut guild_state = state_with_many_guilds(8);
+        focus_guilds(&mut guild_state);
+        guild_state.set_guild_view_height(9);
+        guild_state.half_page_down();
+        assert_eq!(guild_state.selected_guild(), 4);
+
+        let mut channel_state = state_with_many_channels(8);
+        focus_channels(&mut channel_state);
+        channel_state.set_channel_view_height(9);
+        channel_state.half_page_down();
+        assert_eq!(channel_state.selected_channel(), 3);
+
+        let mut member_state = state_with_members(8);
+        focus_members(&mut member_state);
+        member_state.set_member_view_height(9);
+        member_state.half_page_down();
+        assert_eq!(member_state.selected_member(), 3);
     }
 
     #[test]
@@ -1497,6 +1894,116 @@ mod tests {
         state
     }
 
+    fn state_with_many_guilds(count: u64) -> DashboardState {
+        let mut state = DashboardState::new();
+        for id in 1..=count {
+            state.push_event(AppEvent::GuildCreate {
+                guild_id: Id::new(id),
+                name: format!("guild {id}"),
+                channels: Vec::new(),
+                members: Vec::new(),
+                presences: Vec::new(),
+            });
+        }
+        state
+    }
+
+    fn state_with_many_channels(count: u64) -> DashboardState {
+        let guild_id = Id::new(1);
+        let mut state = DashboardState::new();
+        let channels = (1..=count)
+            .map(|id| ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: Id::new(id),
+                parent_id: None,
+                position: Some(id as i32),
+                last_message_id: None,
+                name: format!("channel {id}"),
+                kind: "text".to_owned(),
+            })
+            .collect();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels,
+            members: Vec::new(),
+            presences: Vec::new(),
+        });
+        state.confirm_selected_guild();
+        state
+    }
+
+    fn state_with_members(count: u64) -> DashboardState {
+        let guild_id = Id::new(1);
+        let channel_id: Id<ChannelMarker> = Id::new(2);
+        let mut state = DashboardState::new();
+        let members = (1..=count)
+            .map(|id| MemberInfo {
+                user_id: Id::new(id),
+                display_name: format!("member {id}"),
+                is_bot: false,
+            })
+            .collect();
+        let presences = (1..=count)
+            .map(|id| (Id::new(id), PresenceStatus::Online))
+            .collect();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            }],
+            members,
+            presences,
+        });
+        state.confirm_selected_guild();
+        state
+    }
+
+    fn state_with_grouped_members() -> DashboardState {
+        let guild_id = Id::new(1);
+        let channel_id: Id<ChannelMarker> = Id::new(2);
+        let mut state = DashboardState::new();
+        let members = (1..=4)
+            .map(|id| MemberInfo {
+                user_id: Id::new(id),
+                display_name: format!("member {id}"),
+                is_bot: false,
+            })
+            .collect();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            }],
+            members,
+            presences: vec![
+                (Id::new(1), PresenceStatus::Online),
+                (Id::new(2), PresenceStatus::Online),
+                (Id::new(3), PresenceStatus::Offline),
+                (Id::new(4), PresenceStatus::Offline),
+            ],
+        });
+        state.confirm_selected_guild();
+        state
+    }
+
     fn state_with_channel_tree() -> DashboardState {
         let guild_id = Id::new(1);
         let category_id = Id::new(10);
@@ -1664,6 +2171,12 @@ mod tests {
 
     fn focus_channels(state: &mut DashboardState) {
         while state.focus() != FocusPane::Channels {
+            state.cycle_focus();
+        }
+    }
+
+    fn focus_members(state: &mut DashboardState) {
+        while state.focus() != FocusPane::Members {
             state.cycle_focus();
         }
     }

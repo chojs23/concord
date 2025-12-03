@@ -148,7 +148,7 @@ mod tests {
     }
 
     #[test]
-    fn message_keys_match_lazyagent_scroll_controls() {
+    fn message_keys_use_scroll_controls() {
         let mut state = state_with_messages(10);
         focus_messages(&mut state);
         state.set_message_view_height(9);
@@ -174,6 +174,19 @@ mod tests {
         );
         assert_eq!(state.selected_message(), 9);
         assert!(!state.message_auto_follow());
+    }
+
+    #[test]
+    fn page_keys_scroll_non_message_panes() {
+        let mut state = state_with_channel_tree();
+        focus_channels(&mut state);
+        state.set_channel_view_height(9);
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(state.selected_channel(), 2);
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        assert_eq!(state.selected_channel(), 0);
     }
 
     fn state_with_folder() -> DashboardState {

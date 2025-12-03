@@ -40,8 +40,9 @@ pub fn render(frame: &mut Frame, state: &mut DashboardState) {
     render_footer(frame, footer, state);
 }
 
-fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    let entries = state.guild_pane_entries();
+fn render_guilds(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
+    state.set_guild_view_height(area.height as usize);
+    let entries = state.visible_guild_pane_entries();
     let max_width = area.width.saturating_sub(4) as usize;
     let items: Vec<ListItem> = entries
         .iter()
@@ -83,9 +84,7 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
         .collect();
 
     let mut list_state = ListState::default();
-    if !items.is_empty() {
-        list_state.select(Some(state.selected_guild()));
-    }
+    list_state.select(state.focused_guild_selection());
 
     let list = List::new(items)
         .block(panel_block("Servers", state.focus() == FocusPane::Guilds))
@@ -95,8 +94,9 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
-fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    let entries = state.channel_pane_entries();
+fn render_channels(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
+    state.set_channel_view_height(area.height as usize);
+    let entries = state.visible_channel_pane_entries();
     let max_width = area.width.saturating_sub(6) as usize;
     let items: Vec<ListItem> = entries
         .iter()
@@ -127,9 +127,7 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
         })
         .collect();
     let mut list_state = ListState::default();
-    if !items.is_empty() {
-        list_state.select(Some(state.selected_channel()));
-    }
+    list_state.select(state.focused_channel_selection());
 
     let list = List::new(items)
         .block(panel_block(
@@ -223,13 +221,16 @@ fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
     );
 }
 
-fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
+fn render_members(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
+    state.set_member_view_height(area.height as usize);
     let groups = state.members_grouped();
     let mut lines: Vec<Line<'static>> = Vec::new();
     let max_name_width = (area.width as usize).saturating_sub(6).max(8);
-    let mut flat_index = 0usize;
-    let selected = state.selected_member();
+    let selected_line = state
+        .focused_member_selection_line()
+        .map(|line| line + state.member_scroll());
     let focused = state.focus() == FocusPane::Members;
+    let mut line_index = 0usize;
 
     if groups.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -241,10 +242,12 @@ fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
     for group in &groups {
         if !lines.is_empty() {
             lines.push(Line::from(""));
+            line_index += 1;
         }
         lines.push(member_group_header(group));
+        line_index += 1;
         for member in &group.entries {
-            let is_selected = focused && flat_index == selected;
+            let is_selected = focused && selected_line == Some(line_index);
             let marker_style = Style::default().fg(presence_color(member.status));
             let mut name_style = Style::default().fg(if member.status == crate::discord::PresenceStatus::Offline {
                 DIM
@@ -268,9 +271,15 @@ fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
                 Span::styled(format!(" {} ", presence_marker(member.status)), marker_style),
                 Span::styled(display, name_style),
             ]));
-            flat_index += 1;
+            line_index += 1;
         }
     }
+
+    let lines: Vec<_> = lines
+        .into_iter()
+        .skip(state.member_scroll())
+        .take(state.member_content_height())
+        .collect();
 
     frame.render_widget(
         Paragraph::new(lines)
