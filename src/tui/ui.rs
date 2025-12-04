@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap},
 };
 
 use super::{
@@ -44,9 +44,11 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
     state.set_guild_view_height(area.height as usize);
     let entries = state.visible_guild_pane_entries();
     let max_width = area.width.saturating_sub(4) as usize;
+    let selected = state.focused_guild_selection();
     let items: Vec<ListItem> = entries
         .iter()
-        .map(|entry| match entry {
+        .enumerate()
+        .map(|(index, entry)| styled_list_item(match entry {
             GuildPaneEntry::DirectMessages => ListItem::new(Line::from(Span::styled(
                 truncate_text(entry.label(), max_width),
                 Style::default()
@@ -80,27 +82,25 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
                     Span::raw(truncate_text(state.name.as_str(), label_width)),
                 ]))
             }
-        })
+        }, selected == Some(index)))
         .collect();
-
-    let mut list_state = ListState::default();
-    list_state.select(state.focused_guild_selection());
 
     let list = List::new(items)
         .block(panel_block("Servers", state.focus() == FocusPane::Guilds))
-        .highlight_style(highlight_style())
-        .highlight_symbol("▌ ");
+        .highlight_style(highlight_style());
 
-    frame.render_stateful_widget(list, area, &mut list_state);
+    frame.render_widget(list, area);
 }
 
 fn render_channels(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
     state.set_channel_view_height(area.height as usize);
     let entries = state.visible_channel_pane_entries();
     let max_width = area.width.saturating_sub(6) as usize;
+    let selected = state.focused_channel_selection();
     let items: Vec<ListItem> = entries
         .iter()
-        .map(|entry| match entry {
+        .enumerate()
+        .map(|(index, entry)| styled_list_item(match entry {
             ChannelPaneEntry::CategoryHeader { state, collapsed } => {
                 let arrow = if *collapsed { "▶ " } else { "▼ " };
                 let label_width = max_width.saturating_sub(arrow.chars().count());
@@ -124,20 +124,17 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
                     Span::raw(truncate_text(&state.name, label_width)),
                 ]))
             }
-        })
+        }, selected == Some(index)))
         .collect();
-    let mut list_state = ListState::default();
-    list_state.select(state.focused_channel_selection());
 
     let list = List::new(items)
         .block(panel_block(
             "Channels",
             state.focus() == FocusPane::Channels,
         ))
-        .highlight_style(highlight_style())
-        .highlight_symbol("▌ ");
+        .highlight_style(highlight_style());
 
-    frame.render_stateful_widget(list, area, &mut list_state);
+    frame.render_widget(list, area);
 }
 
 fn render_messages(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
@@ -152,6 +149,7 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
         .unwrap_or_else(|| "no channel".to_owned());
 
     let messages = state.visible_messages();
+    let selected = state.focused_message_selection();
     let max_author_width = 14usize;
     let padding = 4usize;
     let content_width = (area.width as usize)
@@ -160,35 +158,43 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
 
     let items: Vec<ListItem> = messages
         .iter()
-        .map(|message| {
+        .enumerate()
+        .map(|(index, message)| {
             let author = truncate_text(&message.author, max_author_width);
             let content = match message.content.as_deref() {
                 Some(value) if !value.is_empty() => truncate_text(value, content_width.max(8)),
                 Some(_) => "<empty message>".to_owned(),
                 None => "<message content unavailable>".to_owned(),
             };
-            ListItem::new(Line::from(vec![
-                Span::styled(
-                    format!("{author:<width$} ", width = max_author_width),
-                    Style::default().fg(Color::Green).bold(),
-                ),
-                Span::raw(content),
-            ]))
+            styled_list_item(
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{author:<width$} ", width = max_author_width),
+                        Style::default().fg(Color::Green).bold(),
+                    ),
+                    Span::raw(content),
+                ])),
+                selected == Some(index),
+            )
         })
         .collect();
-
-    let mut list_state = ListState::default();
-    list_state.select(state.focused_message_selection());
 
     let list = List::new(items)
         .block(panel_block_owned(
             title_text,
             state.focus() == FocusPane::Messages,
         ))
-        .highlight_style(highlight_style())
-        .highlight_symbol("▌ ");
+        .highlight_style(highlight_style());
 
-    frame.render_stateful_widget(list, area, &mut list_state);
+    frame.render_widget(list, area);
+}
+
+fn styled_list_item<'a>(item: ListItem<'a>, selected: bool) -> ListItem<'a> {
+    if selected {
+        item.style(highlight_style())
+    } else {
+        item
+    }
 }
 
 fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {

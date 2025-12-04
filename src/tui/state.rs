@@ -1030,31 +1030,12 @@ impl DashboardState {
         }
 
         self.selected_message = self.selected_message.min(messages_len - 1);
-
-        let content_height = self.message_content_height();
-        let max_scroll = messages_len.saturating_sub(content_height);
-        self.message_scroll = self.message_scroll.min(max_scroll);
-        let scrolloff = SCROLL_OFF.min(content_height.saturating_sub(1) / 2);
-
-        let lower_bound = self
-            .message_scroll
-            .saturating_add(content_height)
-            .saturating_sub(1)
-            .saturating_sub(scrolloff);
-        if self.selected_message > lower_bound {
-            self.message_scroll = self
-                .selected_message
-                .saturating_sub(content_height)
-                .saturating_add(1)
-                .saturating_add(scrolloff);
-        }
-
-        let upper_bound = self.message_scroll.saturating_add(scrolloff);
-        if self.selected_message < upper_bound {
-            self.message_scroll = self.selected_message.saturating_sub(scrolloff);
-        }
-
-        self.message_scroll = self.message_scroll.min(max_scroll);
+        self.message_scroll = clamp_list_scroll(
+            self.selected_message,
+            self.message_scroll,
+            self.message_content_height(),
+            messages_len,
+        );
     }
 
     fn message_content_height(&self) -> usize {
@@ -1484,6 +1465,20 @@ mod tests {
         state.move_up();
         assert_eq!(state.selected_message(), 4);
         assert_eq!(state.message_scroll(), 3);
+    }
+
+    #[test]
+    fn shared_scroll_helper_moves_one_row_near_bottom() {
+        let mut scroll = 0usize;
+
+        for cursor in 0..20 {
+            let next_scroll = super::clamp_list_scroll(cursor, scroll, 7, 20);
+            assert!(
+                next_scroll <= scroll.saturating_add(1),
+                "cursor {cursor} moved scroll from {scroll} to {next_scroll}",
+            );
+            scroll = next_scroll;
+        }
     }
 
     #[test]
