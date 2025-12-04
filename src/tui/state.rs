@@ -1045,7 +1045,7 @@ impl DashboardState {
 }
 
 fn pane_content_height(height: usize) -> usize {
-    height.saturating_sub(3).max(1)
+    height.max(1)
 }
 
 fn clamp_list_scroll(cursor: usize, mut scroll: usize, height: usize, len: usize) -> usize {
@@ -1063,9 +1063,9 @@ fn clamp_list_scroll(cursor: usize, mut scroll: usize, height: usize, len: usize
         .saturating_sub(scrolloff);
     if cursor > lower_bound {
         scroll = cursor
-            .saturating_sub(height)
             .saturating_add(1)
-            .saturating_add(scrolloff);
+            .saturating_add(scrolloff)
+            .saturating_sub(height);
     }
 
     let upper_bound = scroll.saturating_add(scrolloff);
@@ -1451,20 +1451,29 @@ mod tests {
 
     #[test]
     fn message_scroll_uses_scrolloff() {
-        let mut state = state_with_messages(8);
+        let mut state = state_with_messages(12);
         focus_messages(&mut state);
         state.set_message_view_height(7);
 
-        assert_eq!(state.message_scroll(), 4);
+        assert_eq!(state.message_scroll(), 5);
 
         state.move_up();
         state.move_up();
-        assert_eq!(state.selected_message(), 5);
-        assert_eq!(state.message_scroll(), 4);
+        assert_eq!(state.selected_message(), 9);
+        assert_eq!(state.message_scroll(), 5);
 
         state.move_up();
-        assert_eq!(state.selected_message(), 4);
-        assert_eq!(state.message_scroll(), 3);
+        assert_eq!(state.selected_message(), 8);
+        assert_eq!(state.message_scroll(), 5);
+    }
+
+    #[test]
+    fn shared_scroll_helper_keeps_three_rows_below_cursor_when_scrolling_starts() {
+        let height = 10;
+        let scroll = super::clamp_list_scroll(7, 0, height, 20);
+
+        assert_eq!(scroll, 1);
+        assert_eq!(height - 1 - (7 - scroll), 3);
     }
 
     #[test]
@@ -1489,16 +1498,16 @@ mod tests {
 
         state.jump_bottom();
         assert_eq!(state.selected_guild(), 8);
-        assert_eq!(state.guild_scroll(), 5);
+        assert_eq!(state.guild_scroll(), 2);
 
         state.move_up();
         state.move_up();
         assert_eq!(state.selected_guild(), 6);
-        assert_eq!(state.guild_scroll(), 5);
+        assert_eq!(state.guild_scroll(), 2);
 
         state.move_up();
         assert_eq!(state.selected_guild(), 5);
-        assert_eq!(state.guild_scroll(), 4);
+        assert_eq!(state.guild_scroll(), 2);
     }
 
     #[test]
@@ -1509,16 +1518,16 @@ mod tests {
 
         state.jump_bottom();
         assert_eq!(state.selected_channel(), 7);
-        assert_eq!(state.channel_scroll(), 4);
+        assert_eq!(state.channel_scroll(), 1);
 
         state.move_up();
         state.move_up();
         assert_eq!(state.selected_channel(), 5);
-        assert_eq!(state.channel_scroll(), 4);
+        assert_eq!(state.channel_scroll(), 1);
 
         state.move_up();
         assert_eq!(state.selected_channel(), 4);
-        assert_eq!(state.channel_scroll(), 3);
+        assert_eq!(state.channel_scroll(), 1);
     }
 
     #[test]
@@ -1529,16 +1538,16 @@ mod tests {
 
         state.jump_bottom();
         assert_eq!(state.selected_member(), 7);
-        assert_eq!(state.member_scroll(), 5);
+        assert_eq!(state.member_scroll(), 2);
 
         state.move_up();
         state.move_up();
         assert_eq!(state.selected_member(), 5);
-        assert_eq!(state.member_scroll(), 5);
+        assert_eq!(state.member_scroll(), 2);
 
         state.move_up();
         assert_eq!(state.selected_member(), 4);
-        assert_eq!(state.member_scroll(), 4);
+        assert_eq!(state.member_scroll(), 2);
     }
 
     #[test]
@@ -1555,8 +1564,8 @@ mod tests {
         assert_eq!(state.selected_member_line_for_test(), 5);
 
         state.half_page_up();
-        assert_eq!(state.selected_member(), 1);
-        assert_eq!(state.selected_member_line_for_test(), 2);
+        assert_eq!(state.selected_member(), 0);
+        assert_eq!(state.selected_member_line_for_test(), 1);
     }
 
     #[test]
@@ -1565,19 +1574,19 @@ mod tests {
         focus_guilds(&mut guild_state);
         guild_state.set_guild_view_height(9);
         guild_state.half_page_down();
-        assert_eq!(guild_state.selected_guild(), 4);
+        assert_eq!(guild_state.selected_guild(), 5);
 
         let mut channel_state = state_with_many_channels(8);
         focus_channels(&mut channel_state);
         channel_state.set_channel_view_height(9);
         channel_state.half_page_down();
-        assert_eq!(channel_state.selected_channel(), 3);
+        assert_eq!(channel_state.selected_channel(), 4);
 
         let mut member_state = state_with_members(8);
         focus_members(&mut member_state);
         member_state.set_member_view_height(9);
         member_state.half_page_down();
-        assert_eq!(member_state.selected_member(), 3);
+        assert_eq!(member_state.selected_member(), 4);
     }
 
     #[test]
@@ -1588,7 +1597,7 @@ mod tests {
 
         state.half_page_up();
 
-        assert_eq!(state.selected_message(), 6);
+        assert_eq!(state.selected_message(), 5);
         assert!(!state.message_auto_follow());
     }
 
@@ -1628,7 +1637,7 @@ mod tests {
         let channel_id: Id<ChannelMarker> = Id::new(2);
         let mut state = state_with_message_ids([10, 11, 12, 13, 14]);
         focus_messages(&mut state);
-        state.set_message_view_height(7);
+        state.set_message_view_height(3);
         state.move_up();
         state.move_up();
 

@@ -157,7 +157,7 @@ mod tests {
             &mut state,
             KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
         );
-        assert_eq!(state.selected_message(), 6);
+        assert_eq!(state.selected_message(), 5);
         assert!(!state.message_auto_follow());
 
         handle_key(&mut state, KeyEvent::new(KeyCode::Char('F'), KeyModifiers::NONE));
@@ -165,7 +165,7 @@ mod tests {
         assert!(state.message_auto_follow());
 
         handle_key(&mut state, KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
-        assert_eq!(state.selected_message(), 6);
+        assert_eq!(state.selected_message(), 5);
         assert!(!state.message_auto_follow());
 
         handle_key(

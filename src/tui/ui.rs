@@ -41,7 +41,7 @@ pub fn render(frame: &mut Frame, state: &mut DashboardState) {
 }
 
 fn render_guilds(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
-    state.set_guild_view_height(area.height as usize);
+    state.set_guild_view_height(panel_content_height(area));
     let entries = state.visible_guild_pane_entries();
     let max_width = area.width.saturating_sub(4) as usize;
     let selected = state.focused_guild_selection();
@@ -93,7 +93,7 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
 }
 
 fn render_channels(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
-    state.set_channel_view_height(area.height as usize);
+    state.set_channel_view_height(panel_content_height(area));
     let entries = state.visible_channel_pane_entries();
     let max_width = area.width.saturating_sub(6) as usize;
     let selected = state.focused_channel_selection();
@@ -138,7 +138,7 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
 }
 
 fn render_messages(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
-    state.set_message_view_height(area.height as usize);
+    state.set_message_view_height(panel_content_height(area));
     let title_text = state
         .selected_channel_state()
         .map(|channel| match channel.kind.as_str() {
@@ -228,7 +228,7 @@ fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
 }
 
 fn render_members(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
-    state.set_member_view_height(area.height as usize);
+    state.set_member_view_height(panel_content_height(area));
     let groups = state.members_grouped();
     let mut lines: Vec<Line<'static>> = Vec::new();
     let max_name_width = (area.width as usize).saturating_sub(6).max(8);
@@ -308,6 +308,10 @@ fn member_group_header(group: &MemberGroup<'_>) -> Line<'static> {
             Style::default().fg(DIM),
         ),
     ])
+}
+
+fn panel_content_height(area: Rect) -> usize {
+    area.height.saturating_sub(2).max(1) as usize
 }
 
 fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
