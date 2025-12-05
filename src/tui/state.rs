@@ -106,6 +106,7 @@ impl DashboardState {
         let scroll_message_id = (!self.message_auto_follow)
             .then(|| self.messages().get(self.message_scroll).map(|message| message.id))
             .flatten();
+        let channel_cursor_id = self.selected_channel_cursor_id();
 
         match &event {
             AppEvent::Ready { user } => self.current_user = Some(user.clone()),
@@ -119,8 +120,9 @@ impl DashboardState {
             _ => {}
         }
         self.discord.apply_event(&event);
-        self.clamp_selection_indices();
         self.clamp_active_selection();
+        self.restore_channel_cursor(channel_cursor_id);
+        self.clamp_selection_indices();
         if self.message_auto_follow {
             self.follow_latest_message();
         } else {
@@ -450,6 +452,13 @@ impl DashboardState {
             .min(self.channel_pane_entries().len().saturating_sub(1))
     }
 
+    fn selected_channel_cursor_id(&self) -> Option<Id<ChannelMarker>> {
+        match self.channel_pane_entries().get(self.selected_channel()) {
+            Some(ChannelPaneEntry::Channel { state, .. }) => Some(state.id),
+            Some(ChannelPaneEntry::CategoryHeader { .. }) | None => None,
+        }
+    }
+
     #[cfg(test)]
     pub fn channel_scroll(&self) -> usize {
         self.channel_scroll
@@ -474,6 +483,17 @@ impl DashboardState {
     pub fn set_channel_view_height(&mut self, height: usize) {
         self.channel_view_height = height;
         self.clamp_channel_viewport();
+    }
+
+    fn restore_channel_cursor(&mut self, channel_id: Option<Id<ChannelMarker>>) {
+        let Some(channel_id) = channel_id else {
+            return;
+        };
+        if let Some(index) = self.channel_pane_entries().iter().position(|entry| {
+            matches!(entry, ChannelPaneEntry::Channel { state, .. } if state.id == channel_id)
+        }) {
+            self.selected_channel = index;
+        }
     }
 
     pub fn selected_channel_id(&self) -> Option<Id<ChannelMarker>> {
@@ -1711,6 +1731,29 @@ mod tests {
         state.confirm_selected_guild();
 
         assert_eq!(channel_entry_names(&state), vec!["newer-id", "older-id"]);
+    }
+
+    #[test]
+    fn direct_message_cursor_stays_on_same_channel_after_recency_sort() {
+        let mut state = state_with_direct_messages();
+        state.confirm_selected_guild();
+        focus_channels(&mut state);
+        state.move_down();
+
+        assert_eq!(state.selected_channel(), 1);
+        assert_eq!(channel_entry_names(&state), vec!["new", "old", "empty"]);
+
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id: Id::new(30),
+            message_id: Id::new(300),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some("new empty dm".to_owned()),
+        });
+
+        assert_eq!(channel_entry_names(&state), vec!["empty", "new", "old"]);
+        assert_eq!(state.selected_channel(), 2);
     }
 
     #[test]
