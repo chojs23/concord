@@ -20,11 +20,18 @@ pub enum FocusPane {
     Members,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ActiveGuildScope {
+    Unset,
+    DirectMessages,
+    Guild(Id<GuildMarker>),
+}
+
 #[derive(Debug)]
 pub struct DashboardState {
     discord: DiscordState,
     focus: FocusPane,
-    active_guild_id: Option<Id<GuildMarker>>,
+    active_guild: ActiveGuildScope,
     active_channel_id: Option<Id<ChannelMarker>>,
     selected_guild: usize,
     guild_scroll: usize,
@@ -62,7 +69,7 @@ impl DashboardState {
         Self {
             discord: DiscordState::default(),
             focus: FocusPane::Guilds,
-            active_guild_id: None,
+            active_guild: ActiveGuildScope::Unset,
             active_channel_id: None,
             // Index 0 is the virtual "Direct Messages" entry. Start on the
             // first real guild when one exists; the bounds clamp inside
@@ -277,7 +284,10 @@ impl DashboardState {
     }
 
     pub fn selected_guild_id(&self) -> Option<Id<GuildMarker>> {
-        self.active_guild_id
+        match self.active_guild {
+            ActiveGuildScope::Guild(guild_id) => Some(guild_id),
+            ActiveGuildScope::Unset | ActiveGuildScope::DirectMessages => None,
+        }
     }
 
     /// Toggles the collapse state of the folder under the selection. Does
@@ -305,15 +315,19 @@ impl DashboardState {
 
     pub fn confirm_selected_guild(&mut self) {
         match self.guild_pane_entries().get(self.selected_guild()) {
-            Some(GuildPaneEntry::DirectMessages) => self.activate_guild(None),
-            Some(GuildPaneEntry::Guild { state, .. }) => self.activate_guild(Some(state.id)),
+            Some(GuildPaneEntry::DirectMessages) => {
+                self.activate_guild(ActiveGuildScope::DirectMessages)
+            }
+            Some(GuildPaneEntry::Guild { state, .. }) => {
+                self.activate_guild(ActiveGuildScope::Guild(state.id))
+            }
             Some(GuildPaneEntry::FolderHeader { .. }) => self.toggle_selected_folder(),
             None => {}
         }
     }
 
-    fn activate_guild(&mut self, guild_id: Option<Id<GuildMarker>>) {
-        self.active_guild_id = guild_id;
+    fn activate_guild(&mut self, scope: ActiveGuildScope) {
+        self.active_guild = scope;
         self.selected_channel = 0;
         self.channel_scroll = 0;
         self.active_channel_id = None;
@@ -351,14 +365,16 @@ impl DashboardState {
     }
 
     pub fn channels(&self) -> Vec<&ChannelState> {
-        // `channels_for_guild(None)` returns DM/group-DM channels, which is
-        // exactly what we want when the DM entry is selected.
-        self.discord.channels_for_guild(self.selected_guild_id())
+        match self.active_guild {
+            ActiveGuildScope::Unset => Vec::new(),
+            ActiveGuildScope::DirectMessages => self.discord.channels_for_guild(None),
+            ActiveGuildScope::Guild(guild_id) => self.discord.channels_for_guild(Some(guild_id)),
+        }
     }
 
     pub fn channel_pane_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
         let mut channels = self.channels();
-        if self.selected_guild_id().is_none() {
+        if self.active_guild == ActiveGuildScope::DirectMessages {
             sort_direct_message_channels(&mut channels);
             return channels
                 .into_iter()
@@ -869,21 +885,25 @@ impl DashboardState {
     }
 
     fn clamp_active_selection(&mut self) {
-        if self.active_guild_id.is_some_and(|guild_id| {
-            !self
+        if let ActiveGuildScope::Guild(guild_id) = self.active_guild
+            && !self
                 .discord
                 .guilds()
                 .iter()
                 .any(|guild| guild.id == guild_id)
-        }) {
-            self.active_guild_id = None;
+        {
+            self.active_guild = ActiveGuildScope::Unset;
         }
 
         let active_channel_is_valid = self
             .active_channel_id
             .and_then(|channel_id| self.discord.channel(channel_id))
-            .is_some_and(|channel| {
-                channel.guild_id == self.active_guild_id && !channel.is_category()
+            .is_some_and(|channel| match self.active_guild {
+                ActiveGuildScope::Unset => false,
+                ActiveGuildScope::DirectMessages => channel.guild_id.is_none() && !channel.is_category(),
+                ActiveGuildScope::Guild(guild_id) => {
+                    channel.guild_id == Some(guild_id) && !channel.is_category()
+                }
             });
         if self.active_channel_id.is_some() && !active_channel_is_valid {
             self.active_channel_id = None;
@@ -1316,6 +1336,7 @@ mod tests {
 
         assert_eq!(state.selected_channel_id(), None);
         assert_eq!(state.selected_channel_state(), None);
+        assert!(state.channel_pane_entries().is_empty());
         assert!(state.messages().is_empty());
     }
 
@@ -1656,7 +1677,8 @@ mod tests {
 
     #[test]
     fn direct_messages_are_sorted_by_latest_message_id() {
-        let state = state_with_direct_messages();
+        let mut state = state_with_direct_messages();
+        state.confirm_selected_guild();
 
         assert_eq!(channel_entry_names(&state), vec!["new", "old", "empty"]);
     }
@@ -1686,6 +1708,7 @@ mod tests {
                 kind: "dm".to_owned(),
             }));
         }
+        state.confirm_selected_guild();
 
         assert_eq!(channel_entry_names(&state), vec!["newer-id", "older-id"]);
     }
