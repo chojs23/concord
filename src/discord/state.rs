@@ -148,6 +148,7 @@ impl DiscordState {
                 channel_id,
                 messages,
             } => self.merge_message_history(*channel_id, messages),
+            AppEvent::MessageHistoryLoadFailed { .. } => {}
             AppEvent::MessageUpdate {
                 guild_id,
                 channel_id,

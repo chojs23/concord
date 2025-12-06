@@ -114,6 +114,10 @@ impl DashboardState {
                 logging::error("app_event", message);
                 self.last_error = Some(message.clone());
             }
+            AppEvent::MessageHistoryLoadFailed { message, .. } => {
+                logging::error("history", message);
+                self.last_error = Some(message.clone());
+            }
             AppEvent::GatewayClosed => {
                 self.last_error = Some("gateway closed".to_owned());
             }

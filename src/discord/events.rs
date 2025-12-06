@@ -111,6 +111,10 @@ pub enum AppEvent {
         channel_id: Id<ChannelMarker>,
         messages: Vec<MessageInfo>,
     },
+    MessageHistoryLoadFailed {
+        channel_id: Id<ChannelMarker>,
+        message: String,
+    },
     MessageUpdate {
         guild_id: Option<Id<GuildMarker>>,
         channel_id: Id<ChannelMarker>,

@@ -84,17 +84,16 @@ fn start_command_loop(
                             });
                         }
                         Err(error) => {
+                            let message = format!("load message history failed: {error}");
                             logging::timing(
                                 "history",
                                 format!("channel={} messages=0", channel_id.get()),
                                 started.elapsed(),
                             );
-                            logging::error(
-                                "history",
-                                format!("load message history failed: {error}"),
-                            );
-                            client.publish_event(AppEvent::GatewayError {
-                                message: format!("load message history failed: {error}"),
+                            logging::error("history", &message);
+                            client.publish_event(AppEvent::MessageHistoryLoadFailed {
+                                channel_id,
+                                message,
                             });
                         }
                     }

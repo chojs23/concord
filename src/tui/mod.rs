@@ -4,7 +4,7 @@ mod login;
 mod state;
 mod ui;
 
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use crossterm::event::{Event as TerminalEvent, EventStream};
 use futures::StreamExt;
@@ -48,7 +48,8 @@ async fn run_dashboard(
 ) -> Result<()> {
     let mut state = DashboardState::new();
     let mut terminal_events = EventStream::new();
-    let mut history_requested = HashSet::new();
+    let mut history_requests = HashMap::new();
+    let mut last_history_channel = None;
     let mut tick = tokio::time::interval(Duration::from_millis(250));
 
     while !state.should_quit() {
@@ -74,7 +75,10 @@ async fn run_dashboard(
             }
             event = events.recv() => {
                 match event {
-                    Ok(event) => state.push_event(event),
+                    Ok(event) => {
+                        record_history_event(&event, &mut history_requests);
+                        state.push_event(event);
+                    }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => state.record_lag(skipped),
                     Err(broadcast::error::RecvError::Closed) => {
                         state.push_event(AppEvent::GatewayClosed);
@@ -86,12 +90,17 @@ async fn run_dashboard(
         }
 
         if let Some(channel_id) =
-            next_history_request(state.selected_channel_id(), &mut history_requested)
+            next_history_request(
+                state.selected_channel_id(),
+                &mut history_requests,
+                &mut last_history_channel,
+            )
             && commands
                 .send(AppCommand::LoadMessageHistory { channel_id })
                 .await
                 .is_err()
         {
+            history_requests.insert(channel_id, HistoryRequestState::Failed);
             logging::error("tui", "command channel closed");
             state.push_event(AppEvent::GatewayError {
                 message: "command channel closed".to_owned(),
@@ -102,12 +111,51 @@ async fn run_dashboard(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HistoryRequestState {
+    Requested,
+    Loaded,
+    Failed,
+}
+
+fn record_history_event(
+    event: &AppEvent,
+    requests: &mut HashMap<Id<ChannelMarker>, HistoryRequestState>,
+) {
+    match event {
+        AppEvent::MessageHistoryLoaded { channel_id, .. } => {
+            requests.insert(*channel_id, HistoryRequestState::Loaded);
+        }
+        AppEvent::MessageHistoryLoadFailed { channel_id, .. } => {
+            requests.insert(*channel_id, HistoryRequestState::Failed);
+        }
+        _ => {}
+    }
+}
+
 fn next_history_request(
     channel_id: Option<Id<ChannelMarker>>,
-    requested: &mut HashSet<Id<ChannelMarker>>,
+    requests: &mut HashMap<Id<ChannelMarker>, HistoryRequestState>,
+    last_channel: &mut Option<Id<ChannelMarker>>,
 ) -> Option<Id<ChannelMarker>> {
-    let channel_id = channel_id?;
-    requested.insert(channel_id).then_some(channel_id)
+    let Some(channel_id) = channel_id else {
+        *last_channel = None;
+        return None;
+    };
+    let channel_changed = *last_channel != Some(channel_id);
+    *last_channel = Some(channel_id);
+
+    match requests.get(&channel_id).copied() {
+        None => {
+            requests.insert(channel_id, HistoryRequestState::Requested);
+            Some(channel_id)
+        }
+        Some(HistoryRequestState::Failed) if channel_changed => {
+            requests.insert(channel_id, HistoryRequestState::Requested);
+            Some(channel_id)
+        }
+        Some(HistoryRequestState::Requested | HistoryRequestState::Loaded | HistoryRequestState::Failed) => None,
+    }
 }
 
 #[cfg(test)]
@@ -116,19 +164,49 @@ mod tests {
 
     #[test]
     fn history_request_is_sent_once_per_channel() {
-        let mut requested = HashSet::new();
+        let mut requests = HashMap::new();
+        let mut last_channel = None;
         let first = Id::new(1);
         let second = Id::new(2);
 
-        assert_eq!(next_history_request(None, &mut requested), None);
+        assert_eq!(next_history_request(None, &mut requests, &mut last_channel), None);
         assert_eq!(
-            next_history_request(Some(first), &mut requested),
+            next_history_request(Some(first), &mut requests, &mut last_channel),
             Some(first)
         );
-        assert_eq!(next_history_request(Some(first), &mut requested), None);
+        assert_eq!(next_history_request(Some(first), &mut requests, &mut last_channel), None);
         assert_eq!(
-            next_history_request(Some(second), &mut requested),
+            next_history_request(Some(second), &mut requests, &mut last_channel),
             Some(second)
+        );
+    }
+
+    #[test]
+    fn history_request_retries_failed_channel_after_reselect() {
+        let mut requests = HashMap::new();
+        let mut last_channel = None;
+        let first = Id::new(1);
+        let second = Id::new(2);
+
+        assert_eq!(
+            next_history_request(Some(first), &mut requests, &mut last_channel),
+            Some(first)
+        );
+        record_history_event(
+            &AppEvent::MessageHistoryLoadFailed {
+                channel_id: first,
+                message: "temporary failure".to_owned(),
+            },
+            &mut requests,
+        );
+        assert_eq!(next_history_request(Some(first), &mut requests, &mut last_channel), None);
+        assert_eq!(
+            next_history_request(Some(second), &mut requests, &mut last_channel),
+            Some(second)
+        );
+        assert_eq!(
+            next_history_request(Some(first), &mut requests, &mut last_channel),
+            Some(first)
         );
     }
 }
