@@ -189,6 +189,25 @@ mod tests {
         assert_eq!(state.selected_channel(), 0);
     }
 
+    #[test]
+    fn composer_requires_selected_channel() {
+        let mut state = DashboardState::new();
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert!(!state.is_composing());
+
+        let mut state = state_with_channel_tree();
+        focus_channels(&mut state);
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert!(state.is_composing());
+    }
+
     fn state_with_folder() -> DashboardState {
         let first_guild = Id::new(1);
         let second_guild = Id::new(2);

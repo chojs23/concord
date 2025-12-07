@@ -867,6 +867,9 @@ impl DashboardState {
     }
 
     pub fn start_composer(&mut self) {
+        if self.selected_channel_id().is_none() {
+            return;
+        }
         self.composer_active = true;
         self.focus = FocusPane::Composer;
     }
