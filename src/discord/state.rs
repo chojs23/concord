@@ -35,9 +35,7 @@ impl ChannelState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageState {
     pub id: Id<MessageMarker>,
-    pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,
-    pub author_id: Id<UserMarker>,
     pub author: String,
     pub content: Option<String>,
 }
@@ -130,17 +128,14 @@ impl DiscordState {
                 self.messages.remove(channel_id);
             }
             AppEvent::MessageCreate {
-                guild_id,
                 channel_id,
                 message_id,
-                author_id,
                 author,
                 content,
+                ..
             } => self.upsert_message(MessageState {
                 id: *message_id,
-                guild_id: *guild_id,
                 channel_id: *channel_id,
-                author_id: *author_id,
                 author: author.clone(),
                 content: content.clone(),
             }),
@@ -230,19 +225,6 @@ impl DiscordState {
         self.channels.get(&channel_id)
     }
 
-    pub fn first_guild_id(&self) -> Option<Id<GuildMarker>> {
-        self.guilds.keys().next().copied()
-    }
-
-    pub fn first_channel_id_for_guild(
-        &self,
-        guild_id: Option<Id<GuildMarker>>,
-    ) -> Option<Id<ChannelMarker>> {
-        self.channels_for_guild(guild_id)
-            .first()
-            .map(|channel| channel.id)
-    }
-
     fn upsert_channel(&mut self, channel: &ChannelInfo) {
         let last_message_id = self
             .channels
@@ -269,9 +251,7 @@ impl DiscordState {
         let message_id = message.id;
         let messages = self.messages.entry(message.channel_id).or_default();
         if let Some(existing) = messages.iter_mut().find(|item| item.id == message.id) {
-            existing.guild_id = message.guild_id;
             existing.channel_id = message.channel_id;
-            existing.author_id = message.author_id;
             existing.author = message.author;
             if message.content.is_some() {
                 existing.content = message.content;
@@ -300,9 +280,7 @@ impl DiscordState {
 
             let incoming = MessageState {
                 id: message.message_id,
-                guild_id: message.guild_id,
                 channel_id: message.channel_id,
-                author_id: message.author_id,
                 author: message.author.clone(),
                 content: message.content.clone(),
             };
@@ -355,9 +333,7 @@ impl DiscordState {
 }
 
 fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
-    existing.guild_id = incoming.guild_id;
     existing.channel_id = incoming.channel_id;
-    existing.author_id = incoming.author_id;
     existing.author = incoming.author.clone();
 
     if let Some(content) = &incoming.content {
