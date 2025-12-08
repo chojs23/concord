@@ -17,9 +17,38 @@ use super::{
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
 
-pub fn render(frame: &mut Frame, state: &mut DashboardState) {
+#[derive(Clone, Copy)]
+struct DashboardAreas {
+    guilds: Rect,
+    channels: Rect,
+    messages: Rect,
+    composer: Rect,
+    members: Rect,
+    footer: Rect,
+}
+
+pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
+    let areas = dashboard_areas(area);
+    state.set_guild_view_height(panel_content_height(areas.guilds, "Servers"));
+    state.set_channel_view_height(panel_content_height(areas.channels, "Channels"));
+    state.set_message_view_height(panel_content_height(areas.messages, "Messages"));
+    state.set_member_view_height(panel_content_height(areas.members, "Members"));
+}
+
+pub fn render(frame: &mut Frame, state: &DashboardState) {
+    let areas = dashboard_areas(frame.area());
+
+    render_guilds(frame, areas.guilds, state);
+    render_channels(frame, areas.channels, state);
+    render_messages(frame, areas.messages, state);
+    render_composer(frame, areas.composer, state);
+    render_members(frame, areas.members, state);
+    render_footer(frame, areas.footer, state);
+}
+
+fn dashboard_areas(area: Rect) -> DashboardAreas {
     let [main, footer] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
+        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
 
     let [guilds, channels, center, members] = Layout::horizontal([
         Constraint::Length(20),
@@ -32,16 +61,17 @@ pub fn render(frame: &mut Frame, state: &mut DashboardState) {
     let [messages, composer] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(3)]).areas(center);
 
-    render_guilds(frame, guilds, state);
-    render_channels(frame, channels, state);
-    render_messages(frame, messages, state);
-    render_composer(frame, composer, state);
-    render_members(frame, members, state);
-    render_footer(frame, footer, state);
+    DashboardAreas {
+        guilds,
+        channels,
+        messages,
+        composer,
+        members,
+        footer,
+    }
 }
 
-fn render_guilds(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
-    state.set_guild_view_height(panel_content_height(area));
+fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let entries = state.visible_guild_pane_entries();
     let max_width = area.width.saturating_sub(4) as usize;
     let selected = state.focused_guild_selection();
@@ -92,8 +122,7 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
     frame.render_widget(list, area);
 }
 
-fn render_channels(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
-    state.set_channel_view_height(panel_content_height(area));
+fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let entries = state.visible_channel_pane_entries();
     let max_width = area.width.saturating_sub(6) as usize;
     let selected = state.focused_channel_selection();
@@ -137,8 +166,7 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
     frame.render_widget(list, area);
 }
 
-fn render_messages(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
-    state.set_message_view_height(panel_content_height(area));
+fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let title_text = state
         .selected_channel_state()
         .map(|channel| match channel.kind.as_str() {
@@ -227,8 +255,7 @@ fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
     );
 }
 
-fn render_members(frame: &mut Frame, area: Rect, state: &mut DashboardState) {
-    state.set_member_view_height(panel_content_height(area));
+fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let groups = state.members_grouped();
     let mut lines: Vec<Line<'static>> = Vec::new();
     let max_name_width = (area.width as usize).saturating_sub(6).max(8);
@@ -310,8 +337,8 @@ fn member_group_header(group: &MemberGroup<'_>) -> Line<'static> {
     ])
 }
 
-fn panel_content_height(area: Rect) -> usize {
-    area.height.saturating_sub(2).max(1) as usize
+fn panel_content_height(area: Rect, title: &'static str) -> usize {
+    panel_block(title, false).inner(area).height.max(1) as usize
 }
 
 fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {

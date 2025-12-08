@@ -53,7 +53,10 @@ async fn run_dashboard(
     let mut tick = tokio::time::interval(Duration::from_millis(250));
 
     while !state.should_quit() {
-        terminal.draw(|frame| ui::render(frame, &mut state))?;
+        terminal.draw(|frame| {
+            ui::sync_view_heights(frame.area(), &mut state);
+            ui::render(frame, &state);
+        })?;
 
         tokio::select! {
             maybe_event = terminal_events.next() => {
