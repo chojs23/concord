@@ -234,9 +234,9 @@ fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
             "group-dm" | "Group" => channel.name.clone(),
             _ => format!("#{}", channel.name),
         };
-        format!("press i to compose in {label}")
+        format!("press i to write in {label}")
     } else {
-        "select a channel to start composing".to_owned()
+        "select a channel to write a message".to_owned()
     };
 
     frame.render_widget(
@@ -247,7 +247,7 @@ fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
                 Style::default().fg(DIM)
             })
             .block(panel_block(
-                "Composer",
+                "Message Input",
                 state.focus() == FocusPane::Composer,
             ))
             .wrap(Wrap { trim: false }),
@@ -349,7 +349,7 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
             Style::default().fg(Color::Green).bold(),
         ),
         Span::styled(
-            "tab focus | j/k move | enter/space tree | ←/→ close/open | i compose | esc cancel | q quit",
+            "tab focus | j/k move | enter/space tree | ←/→ close/open | i write | esc cancel | q quit",
             Style::default().fg(DIM),
         ),
     ];
