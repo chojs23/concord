@@ -73,46 +73,57 @@ fn dashboard_areas(area: Rect) -> DashboardAreas {
 
 fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let entries = state.visible_guild_pane_entries();
-    let max_width = area.width.saturating_sub(4) as usize;
+    let max_width = area.width.saturating_sub(6) as usize;
     let selected = state.focused_guild_selection();
     let items: Vec<ListItem> = entries
         .iter()
         .enumerate()
-        .map(|(index, entry)| styled_list_item(match entry {
-            GuildPaneEntry::DirectMessages => ListItem::new(Line::from(Span::styled(
-                truncate_text(entry.label(), max_width),
-                Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-            ))),
-            GuildPaneEntry::FolderHeader { folder, collapsed } => {
-                let arrow = if *collapsed { "▶ " } else { "▼ " };
-                let icon = if *collapsed { "📁" } else { "📂" };
-                let color = folder_color(folder.color);
-                let label = folder.name.as_deref().unwrap_or_default();
-                let title = if label.is_empty() {
-                    icon.to_owned()
-                } else {
-                    format!("{icon} {label}")
-                };
-                let label_width = max_width.saturating_sub(arrow.chars().count());
-                ListItem::new(Line::from(vec![
-                    Span::styled(arrow, Style::default().fg(color)),
-                    Span::styled(
-                        truncate_text(&title, label_width),
-                        Style::default().fg(color).add_modifier(Modifier::BOLD),
-                    ),
-                ]))
-            }
-            GuildPaneEntry::Guild { state, branch } => {
-                let prefix = branch.prefix();
-                let label_width = max_width.saturating_sub(prefix.chars().count());
-                ListItem::new(Line::from(vec![
-                    Span::styled(prefix, Style::default().fg(DIM)),
-                    Span::raw(truncate_text(state.name.as_str(), label_width)),
-                ]))
-            }
-        }, selected == Some(index)))
+        .map(|(index, entry)| {
+            let is_selected = selected == Some(index);
+            styled_list_item(
+                match entry {
+                    GuildPaneEntry::DirectMessages => ListItem::new(Line::from(vec![
+                        selection_marker(is_selected),
+                        Span::styled(
+                            truncate_text(entry.label(), max_width),
+                            Style::default()
+                                .fg(Color::Magenta)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ])),
+                    GuildPaneEntry::FolderHeader { folder, collapsed } => {
+                        let arrow = if *collapsed { "▶ " } else { "▼ " };
+                        let icon = if *collapsed { "📁" } else { "📂" };
+                        let color = folder_color(folder.color);
+                        let label = folder.name.as_deref().unwrap_or_default();
+                        let title = if label.is_empty() {
+                            icon.to_owned()
+                        } else {
+                            format!("{icon} {label}")
+                        };
+                        let label_width = max_width.saturating_sub(arrow.chars().count());
+                        ListItem::new(Line::from(vec![
+                            selection_marker(is_selected),
+                            Span::styled(arrow, Style::default().fg(color)),
+                            Span::styled(
+                                truncate_text(&title, label_width),
+                                Style::default().fg(color).add_modifier(Modifier::BOLD),
+                            ),
+                        ]))
+                    }
+                    GuildPaneEntry::Guild { state, branch } => {
+                        let prefix = branch.prefix();
+                        let label_width = max_width.saturating_sub(prefix.chars().count());
+                        ListItem::new(Line::from(vec![
+                            selection_marker(is_selected),
+                            Span::styled(prefix, Style::default().fg(DIM)),
+                            Span::raw(truncate_text(state.name.as_str(), label_width)),
+                        ]))
+                    }
+                },
+                is_selected,
+            )
+        })
         .collect();
 
     let list = List::new(items)
@@ -124,36 +135,44 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
 
 fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let entries = state.visible_channel_pane_entries();
-    let max_width = area.width.saturating_sub(6) as usize;
+    let max_width = area.width.saturating_sub(8) as usize;
     let selected = state.focused_channel_selection();
     let items: Vec<ListItem> = entries
         .iter()
         .enumerate()
-        .map(|(index, entry)| styled_list_item(match entry {
-            ChannelPaneEntry::CategoryHeader { state, collapsed } => {
-                let arrow = if *collapsed { "▶ " } else { "▼ " };
-                let label_width = max_width.saturating_sub(arrow.chars().count());
-                ListItem::new(Line::from(vec![
-                    Span::styled(arrow, Style::default().fg(ACCENT)),
-                    Span::styled(
-                        truncate_text(&state.name, label_width),
-                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-                    ),
-                ]))
-            }
-            ChannelPaneEntry::Channel { state, branch } => {
-                let branch_prefix = branch.prefix();
-                let channel_prefix = channel_prefix(&state.kind);
-                let label_width = max_width
-                    .saturating_sub(branch_prefix.chars().count())
-                    .saturating_sub(channel_prefix.chars().count());
-                ListItem::new(Line::from(vec![
-                    Span::styled(branch_prefix, Style::default().fg(DIM)),
-                    Span::styled(channel_prefix, Style::default().fg(DIM)),
-                    Span::raw(truncate_text(&state.name, label_width)),
-                ]))
-            }
-        }, selected == Some(index)))
+        .map(|(index, entry)| {
+            let is_selected = selected == Some(index);
+            styled_list_item(
+                match entry {
+                    ChannelPaneEntry::CategoryHeader { state, collapsed } => {
+                        let arrow = if *collapsed { "▶ " } else { "▼ " };
+                        let label_width = max_width.saturating_sub(arrow.chars().count());
+                        ListItem::new(Line::from(vec![
+                            selection_marker(is_selected),
+                            Span::styled(arrow, Style::default().fg(ACCENT)),
+                            Span::styled(
+                                truncate_text(&state.name, label_width),
+                                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                            ),
+                        ]))
+                    }
+                    ChannelPaneEntry::Channel { state, branch } => {
+                        let branch_prefix = branch.prefix();
+                        let channel_prefix = channel_prefix(&state.kind);
+                        let label_width = max_width
+                            .saturating_sub(branch_prefix.chars().count())
+                            .saturating_sub(channel_prefix.chars().count());
+                        ListItem::new(Line::from(vec![
+                            selection_marker(is_selected),
+                            Span::styled(branch_prefix, Style::default().fg(DIM)),
+                            Span::styled(channel_prefix, Style::default().fg(DIM)),
+                            Span::raw(truncate_text(&state.name, label_width)),
+                        ]))
+                    }
+                },
+                is_selected,
+            )
+        })
         .collect();
 
     let list = List::new(items)
@@ -222,6 +241,17 @@ fn styled_list_item<'a>(item: ListItem<'a>, selected: bool) -> ListItem<'a> {
         item.style(highlight_style())
     } else {
         item
+    }
+}
+
+fn selection_marker(selected: bool) -> Span<'static> {
+    if selected {
+        Span::styled(
+            "▸ ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw("  ")
     }
 }
 
