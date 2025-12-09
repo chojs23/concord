@@ -73,17 +73,19 @@ fn dashboard_areas(area: Rect) -> DashboardAreas {
 
 fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let entries = state.visible_guild_pane_entries();
-    let max_width = area.width.saturating_sub(6) as usize;
+    let max_width = area.width.saturating_sub(8) as usize;
     let selected = state.focused_guild_selection();
     let items: Vec<ListItem> = entries
         .iter()
         .enumerate()
         .map(|(index, entry)| {
             let is_selected = selected == Some(index);
+            let is_active = state.is_active_guild_entry(entry);
             styled_list_item(
                 match entry {
                     GuildPaneEntry::DirectMessages => ListItem::new(Line::from(vec![
                         selection_marker(is_selected),
+                        active_guild_marker(is_active),
                         Span::styled(
                             truncate_text(entry.label(), max_width),
                             Style::default()
@@ -104,6 +106,7 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
                         let label_width = max_width.saturating_sub(arrow.chars().count());
                         ListItem::new(Line::from(vec![
                             selection_marker(is_selected),
+                            active_guild_marker(false),
                             Span::styled(arrow, Style::default().fg(color)),
                             Span::styled(
                                 truncate_text(&title, label_width),
@@ -116,6 +119,7 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
                         let label_width = max_width.saturating_sub(prefix.chars().count());
                         ListItem::new(Line::from(vec![
                             selection_marker(is_selected),
+                            active_guild_marker(is_active),
                             Span::styled(prefix, Style::default().fg(DIM)),
                             Span::raw(truncate_text(state.name.as_str(), label_width)),
                         ]))
@@ -249,6 +253,19 @@ fn selection_marker(selected: bool) -> Span<'static> {
         Span::styled(
             "▸ ",
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw("  ")
+    }
+}
+
+fn active_guild_marker(active: bool) -> Span<'static> {
+    if active {
+        Span::styled(
+            "● ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         Span::raw("  ")

@@ -296,6 +296,18 @@ impl DashboardState {
         }
     }
 
+    pub fn is_active_guild_entry(&self, entry: &GuildPaneEntry<'_>) -> bool {
+        match (self.active_guild, entry) {
+            (ActiveGuildScope::DirectMessages, GuildPaneEntry::DirectMessages) => true,
+            (ActiveGuildScope::Guild(active_id), GuildPaneEntry::Guild { state, .. }) => {
+                state.id == active_id
+            }
+            (ActiveGuildScope::Unset, _)
+            | (ActiveGuildScope::DirectMessages, _)
+            | (ActiveGuildScope::Guild(_), _) => false,
+        }
+    }
+
     /// Toggles the collapse state of the folder under the selection. Does
     /// nothing if the cursor isn't on a folder header.
     pub fn toggle_selected_folder(&mut self) {
@@ -1088,7 +1100,6 @@ impl DashboardState {
     fn message_content_height(&self) -> usize {
         pane_content_height(self.message_view_height)
     }
-
 }
 
 fn pane_content_height(height: usize) -> usize {
@@ -1845,6 +1856,39 @@ mod tests {
 
         state.confirm_selected_guild();
         assert_ne!(state.selected_guild_id(), active_guild);
+    }
+
+    #[test]
+    fn active_guild_entry_tracks_confirmed_guild() {
+        let mut state = state_with_two_guilds();
+        focus_guilds(&mut state);
+
+        {
+            let entries = state.guild_pane_entries();
+            assert!(!state.is_active_guild_entry(&entries[0]));
+            assert!(!state.is_active_guild_entry(&entries[1]));
+            assert!(!state.is_active_guild_entry(&entries[2]));
+        }
+
+        state.confirm_selected_guild();
+        {
+            let entries = state.guild_pane_entries();
+            assert!(!state.is_active_guild_entry(&entries[0]));
+            assert!(state.is_active_guild_entry(&entries[1]));
+            assert!(!state.is_active_guild_entry(&entries[2]));
+        }
+
+        state.move_down();
+        {
+            let entries = state.guild_pane_entries();
+            assert!(state.is_active_guild_entry(&entries[1]));
+            assert!(!state.is_active_guild_entry(&entries[2]));
+        }
+
+        state.confirm_selected_guild();
+        let entries = state.guild_pane_entries();
+        assert!(!state.is_active_guild_entry(&entries[1]));
+        assert!(state.is_active_guild_entry(&entries[2]));
     }
 
     #[test]
