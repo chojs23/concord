@@ -521,6 +521,13 @@ impl DashboardState {
             .and_then(|channel_id| self.discord.channel(channel_id))
     }
 
+    pub fn is_active_channel_entry(&self, entry: &ChannelPaneEntry<'_>) -> bool {
+        matches!(
+            entry,
+            ChannelPaneEntry::Channel { state, .. } if Some(state.id) == self.active_channel_id
+        )
+    }
+
     pub fn toggle_selected_channel_category(&mut self) {
         let Some(category_id) = self.selected_channel_category_id() else {
             return;
@@ -1906,6 +1913,40 @@ mod tests {
 
         state.confirm_selected_channel();
         assert_eq!(state.selected_channel_id(), Some(random_id));
+    }
+
+    #[test]
+    fn active_channel_entry_tracks_confirmed_channel() {
+        let mut state = state_with_channel_tree();
+        focus_channels(&mut state);
+
+        {
+            let entries = state.channel_pane_entries();
+            assert!(!state.is_active_channel_entry(&entries[0]));
+            assert!(!state.is_active_channel_entry(&entries[1]));
+            assert!(!state.is_active_channel_entry(&entries[2]));
+        }
+
+        state.move_down();
+        state.confirm_selected_channel();
+        {
+            let entries = state.channel_pane_entries();
+            assert!(!state.is_active_channel_entry(&entries[0]));
+            assert!(state.is_active_channel_entry(&entries[1]));
+            assert!(!state.is_active_channel_entry(&entries[2]));
+        }
+
+        state.move_down();
+        {
+            let entries = state.channel_pane_entries();
+            assert!(state.is_active_channel_entry(&entries[1]));
+            assert!(!state.is_active_channel_entry(&entries[2]));
+        }
+
+        state.confirm_selected_channel();
+        let entries = state.channel_pane_entries();
+        assert!(!state.is_active_channel_entry(&entries[1]));
+        assert!(state.is_active_channel_entry(&entries[2]));
     }
 
     #[test]

@@ -73,7 +73,7 @@ fn dashboard_areas(area: Rect) -> DashboardAreas {
 
 fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let entries = state.visible_guild_pane_entries();
-    let max_width = area.width.saturating_sub(8) as usize;
+    let max_width = area.width.saturating_sub(6) as usize;
     let selected = state.focused_guild_selection();
     let items: Vec<ListItem> = entries
         .iter()
@@ -85,12 +85,14 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
                 match entry {
                     GuildPaneEntry::DirectMessages => ListItem::new(Line::from(vec![
                         selection_marker(is_selected),
-                        active_guild_marker(is_active),
                         Span::styled(
                             truncate_text(entry.label(), max_width),
-                            Style::default()
-                                .fg(Color::Magenta)
-                                .add_modifier(Modifier::BOLD),
+                            active_text_style(
+                                is_active,
+                                Style::default()
+                                    .fg(Color::Magenta)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
                         ),
                     ])),
                     GuildPaneEntry::FolderHeader { folder, collapsed } => {
@@ -106,7 +108,6 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
                         let label_width = max_width.saturating_sub(arrow.chars().count());
                         ListItem::new(Line::from(vec![
                             selection_marker(is_selected),
-                            active_guild_marker(false),
                             Span::styled(arrow, Style::default().fg(color)),
                             Span::styled(
                                 truncate_text(&title, label_width),
@@ -119,9 +120,11 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
                         let label_width = max_width.saturating_sub(prefix.chars().count());
                         ListItem::new(Line::from(vec![
                             selection_marker(is_selected),
-                            active_guild_marker(is_active),
                             Span::styled(prefix, Style::default().fg(DIM)),
-                            Span::raw(truncate_text(state.name.as_str(), label_width)),
+                            Span::styled(
+                                truncate_text(state.name.as_str(), label_width),
+                                active_text_style(is_active, Style::default()),
+                            ),
                         ]))
                     }
                 },
@@ -146,6 +149,7 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
         .enumerate()
         .map(|(index, entry)| {
             let is_selected = selected == Some(index);
+            let is_active = state.is_active_channel_entry(entry);
             styled_list_item(
                 match entry {
                     ChannelPaneEntry::CategoryHeader { state, collapsed } => {
@@ -170,7 +174,10 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
                             selection_marker(is_selected),
                             Span::styled(branch_prefix, Style::default().fg(DIM)),
                             Span::styled(channel_prefix, Style::default().fg(DIM)),
-                            Span::raw(truncate_text(&state.name, label_width)),
+                            Span::styled(
+                                truncate_text(&state.name, label_width),
+                                active_text_style(is_active, Style::default()),
+                            ),
                         ]))
                     }
                 },
@@ -259,16 +266,11 @@ fn selection_marker(selected: bool) -> Span<'static> {
     }
 }
 
-fn active_guild_marker(active: bool) -> Span<'static> {
+fn active_text_style(active: bool, style: Style) -> Style {
     if active {
-        Span::styled(
-            "● ",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        )
+        style.fg(Color::Green).add_modifier(Modifier::BOLD)
     } else {
-        Span::raw("  ")
+        style
     }
 }
 
