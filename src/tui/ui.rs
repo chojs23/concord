@@ -16,7 +16,7 @@ use super::{
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
-const MESSAGE_INPUT_HEIGHT: u16 = 3;
+const MIN_MESSAGE_INPUT_HEIGHT: u16 = 3;
 
 #[derive(Clone, Copy)]
 struct DashboardAreas {
@@ -31,7 +31,7 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
     let areas = dashboard_areas(area);
     state.set_guild_view_height(panel_content_height(areas.guilds, "Servers"));
     state.set_channel_view_height(panel_content_height(areas.channels, "Channels"));
-    state.set_message_view_height(message_list_area(areas.messages).height as usize);
+    state.set_message_view_height(message_list_area(areas.messages, state).height as usize);
     state.set_member_view_height(panel_content_height(areas.members, "Members"));
 }
 
@@ -205,9 +205,7 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let [message_area, composer_area] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(MESSAGE_INPUT_HEIGHT)])
-            .areas(inner);
+    let [message_area, composer_area] = message_and_composer_areas(inner, state);
 
     let messages = state.visible_messages();
     let selected = state.focused_message_selection();
@@ -458,12 +456,40 @@ fn panel_block_owned(title: String, focused: bool) -> Block<'static> {
         .title_style(Style::default().fg(Color::White).bold())
 }
 
-fn message_list_area(area: Rect) -> Rect {
+fn message_list_area(area: Rect, state: &DashboardState) -> Rect {
     let inner = Block::default().borders(Borders::ALL).inner(area);
-    let [messages, _composer] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(MESSAGE_INPUT_HEIGHT)])
-            .areas(inner);
+    let [messages, _composer] = message_and_composer_areas(inner, state);
     messages
+}
+
+fn message_and_composer_areas(area: Rect, state: &DashboardState) -> [Rect; 2] {
+    Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(composer_height(area, state)),
+    ])
+    .areas(area)
+}
+
+fn composer_height(area: Rect, state: &DashboardState) -> u16 {
+    let content_lines = if state.is_composing() || !state.composer_input().is_empty() {
+        composer_prompt_line_count(state.composer_input(), area.width)
+    } else {
+        1
+    };
+    MIN_MESSAGE_INPUT_HEIGHT.max(content_lines.saturating_add(1))
+}
+
+fn composer_prompt_line_count(input: &str, width: u16) -> u16 {
+    let width = usize::from(width.max(1));
+    let prompt = format!("> {input}");
+    prompt
+        .split('\n')
+        .map(|line| {
+            let width_lines = line.chars().count().div_ceil(width);
+            width_lines.max(1) as u16
+        })
+        .sum::<u16>()
+        .max(1)
 }
 
 #[cfg(test)]
@@ -480,5 +506,31 @@ mod tests {
         sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
 
         assert_eq!(state.message_view_height(), 14);
+    }
+
+    #[test]
+    fn sync_view_heights_reserves_multiline_message_input_inside_messages_pane() {
+        let mut state = DashboardState::new();
+        state.push_composer_char('a');
+        state.push_composer_char('\n');
+        state.push_composer_char('b');
+        state.push_composer_char('\n');
+        state.push_composer_char('c');
+
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
+
+        assert_eq!(state.message_view_height(), 13);
+    }
+
+    #[test]
+    fn composer_height_accounts_for_soft_wrapping() {
+        let mut state = DashboardState::new();
+        for _ in 0..100 {
+            state.push_composer_char('x');
+        }
+
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
+
+        assert!(state.message_view_height() < 14);
     }
 }

@@ -59,6 +59,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
 
 fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match key.code {
+        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            state.push_composer_char('\n');
+            None
+        }
         KeyCode::Enter => state.submit_composer(),
         KeyCode::Esc => {
             state.cancel_composer();
@@ -263,6 +267,78 @@ mod tests {
 
         assert_eq!(state.focus(), FocusPane::Messages);
         assert_eq!(state.composer_input(), "4");
+    }
+
+    #[test]
+    fn shift_enter_inserts_newline_while_composing() {
+        let mut state = state_with_channel_tree();
+        focus_channels(&mut state);
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+        );
+
+        assert!(state.is_composing());
+        assert_eq!(state.composer_input(), "h\ni");
+    }
+
+    #[test]
+    fn enter_submits_multiline_composer() {
+        let mut state = state_with_channel_tree();
+        focus_channels(&mut state);
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+        );
+
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert!(!state.is_composing());
+        assert_eq!(state.composer_input(), "");
+        assert_eq!(
+            command,
+            Some(crate::discord::AppCommand::SendMessage {
+                channel_id: Id::new(11),
+                content: "h\ni".to_owned(),
+            })
+        );
     }
 
     fn state_with_folder() -> DashboardState {
