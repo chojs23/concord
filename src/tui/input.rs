@@ -17,6 +17,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('q') => state.quit(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
         KeyCode::Char('i') => state.start_composer(),
+        KeyCode::Char('1') => state.focus_pane(FocusPane::Guilds),
+        KeyCode::Char('2') => state.focus_pane(FocusPane::Channels),
+        KeyCode::Char('3') => state.focus_pane(FocusPane::Messages),
+        KeyCode::Char('4') => state.focus_pane(FocusPane::Members),
         KeyCode::Char('j') | KeyCode::Down => state.move_down(),
         KeyCode::Char('k') | KeyCode::Up => state.move_up(),
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -206,6 +210,59 @@ mod tests {
 
         handle_key(&mut state, KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
         assert!(state.is_composing());
+        assert_eq!(state.focus(), FocusPane::Messages);
+    }
+
+    #[test]
+    fn number_keys_focus_top_level_panes() {
+        let mut state = DashboardState::new();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE),
+        );
+        assert_eq!(state.focus(), FocusPane::Channels);
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE),
+        );
+        assert_eq!(state.focus(), FocusPane::Messages);
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE),
+        );
+        assert_eq!(state.focus(), FocusPane::Members);
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+        );
+        assert_eq!(state.focus(), FocusPane::Guilds);
+    }
+
+    #[test]
+    fn number_keys_type_digits_while_composing() {
+        let mut state = state_with_channel_tree();
+        focus_channels(&mut state);
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+        );
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE),
+        );
+
+        assert_eq!(state.focus(), FocusPane::Messages);
+        assert_eq!(state.composer_input(), "4");
     }
 
     fn state_with_folder() -> DashboardState {

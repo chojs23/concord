@@ -16,7 +16,6 @@ pub enum FocusPane {
     Guilds,
     Channels,
     Messages,
-    Composer,
     Members,
 }
 
@@ -604,6 +603,11 @@ impl DashboardState {
         self.message_auto_follow
     }
 
+    #[cfg(test)]
+    pub fn message_view_height(&self) -> usize {
+        self.message_view_height
+    }
+
     pub fn visible_messages(&self) -> Vec<&MessageState> {
         self.messages()
             .into_iter()
@@ -725,7 +729,6 @@ impl DashboardState {
                     .min(self.flattened_members().len().saturating_sub(1));
                 self.clamp_member_viewport();
             }
-            FocusPane::Composer => {}
         }
     }
 
@@ -748,7 +751,6 @@ impl DashboardState {
                 self.selected_member = self.selected_member.saturating_sub(1);
                 self.clamp_member_viewport();
             }
-            FocusPane::Composer => {}
         }
     }
 
@@ -771,7 +773,6 @@ impl DashboardState {
                 self.selected_member = 0;
                 self.clamp_member_viewport();
             }
-            FocusPane::Composer => {}
         }
     }
 
@@ -793,7 +794,6 @@ impl DashboardState {
                 self.selected_member = self.flattened_members().len().saturating_sub(1);
                 self.clamp_member_viewport();
             }
-            FocusPane::Composer => {}
         }
     }
 
@@ -830,7 +830,6 @@ impl DashboardState {
                 );
                 self.clamp_member_viewport();
             }
-            FocusPane::Composer => {}
         }
     }
 
@@ -859,7 +858,6 @@ impl DashboardState {
                 );
                 self.clamp_member_viewport();
             }
-            FocusPane::Composer => {}
         }
     }
 
@@ -879,10 +877,13 @@ impl DashboardState {
         self.focus = match self.focus {
             FocusPane::Guilds => FocusPane::Channels,
             FocusPane::Channels => FocusPane::Messages,
-            FocusPane::Messages => FocusPane::Composer,
-            FocusPane::Composer => FocusPane::Members,
+            FocusPane::Messages => FocusPane::Members,
             FocusPane::Members => FocusPane::Guilds,
         };
+    }
+
+    pub fn focus_pane(&mut self, pane: FocusPane) {
+        self.focus = pane;
     }
 
     pub fn start_composer(&mut self) {
@@ -890,7 +891,7 @@ impl DashboardState {
             return;
         }
         self.composer_active = true;
-        self.focus = FocusPane::Composer;
+        self.focus = FocusPane::Messages;
     }
 
     pub fn cancel_composer(&mut self) {
@@ -1311,6 +1312,21 @@ mod tests {
 
         assert_eq!(state.focus(), FocusPane::Guilds);
         assert_eq!(state.focused_message_selection(), None);
+    }
+
+    #[test]
+    fn cycle_focus_uses_four_top_level_panes() {
+        let mut state = DashboardState::new();
+
+        assert_eq!(state.focus(), FocusPane::Guilds);
+        state.cycle_focus();
+        assert_eq!(state.focus(), FocusPane::Channels);
+        state.cycle_focus();
+        assert_eq!(state.focus(), FocusPane::Messages);
+        state.cycle_focus();
+        assert_eq!(state.focus(), FocusPane::Members);
+        state.cycle_focus();
+        assert_eq!(state.focus(), FocusPane::Guilds);
     }
 
     #[test]

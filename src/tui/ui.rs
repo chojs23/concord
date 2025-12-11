@@ -16,13 +16,13 @@ use super::{
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
+const MESSAGE_INPUT_HEIGHT: u16 = 3;
 
 #[derive(Clone, Copy)]
 struct DashboardAreas {
     guilds: Rect,
     channels: Rect,
     messages: Rect,
-    composer: Rect,
     members: Rect,
     footer: Rect,
 }
@@ -31,7 +31,7 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
     let areas = dashboard_areas(area);
     state.set_guild_view_height(panel_content_height(areas.guilds, "Servers"));
     state.set_channel_view_height(panel_content_height(areas.channels, "Channels"));
-    state.set_message_view_height(panel_content_height(areas.messages, "Messages"));
+    state.set_message_view_height(message_list_area(areas.messages).height as usize);
     state.set_member_view_height(panel_content_height(areas.members, "Members"));
 }
 
@@ -41,7 +41,6 @@ pub fn render(frame: &mut Frame, state: &DashboardState) {
     render_guilds(frame, areas.guilds, state);
     render_channels(frame, areas.channels, state);
     render_messages(frame, areas.messages, state);
-    render_composer(frame, areas.composer, state);
     render_members(frame, areas.members, state);
     render_footer(frame, areas.footer, state);
 }
@@ -58,14 +57,10 @@ fn dashboard_areas(area: Rect) -> DashboardAreas {
     ])
     .areas(main);
 
-    let [messages, composer] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(3)]).areas(center);
-
     DashboardAreas {
         guilds,
         channels,
-        messages,
-        composer,
+        messages: center,
         members,
         footer,
     }
@@ -206,11 +201,19 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
         })
         .unwrap_or_else(|| "no channel".to_owned());
 
+    let block = panel_block_owned(title_text, state.focus() == FocusPane::Messages);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [message_area, composer_area] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(MESSAGE_INPUT_HEIGHT)])
+            .areas(inner);
+
     let messages = state.visible_messages();
     let selected = state.focused_message_selection();
     let max_author_width = 14usize;
     let padding = 4usize;
-    let content_width = (area.width as usize)
+    let content_width = (message_area.width as usize)
         .saturating_sub(padding)
         .saturating_sub(max_author_width + 2);
 
@@ -237,14 +240,10 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
         })
         .collect();
 
-    let list = List::new(items)
-        .block(panel_block_owned(
-            title_text,
-            state.focus() == FocusPane::Messages,
-        ))
-        .highlight_style(highlight_style());
+    let list = List::new(items).highlight_style(highlight_style());
 
-    frame.render_widget(list, area);
+    frame.render_widget(list, message_area);
+    render_composer(frame, composer_area, state);
 }
 
 fn styled_list_item<'a>(item: ListItem<'a>, selected: bool) -> ListItem<'a> {
@@ -295,10 +294,13 @@ fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
             } else {
                 Style::default().fg(DIM)
             })
-            .block(panel_block(
-                "Message Input",
-                state.focus() == FocusPane::Composer,
-            ))
+            .block(
+                Block::default()
+                    .title(" Message Input ")
+                    .borders(Borders::TOP)
+                    .border_style(Style::default().fg(DIM))
+                    .title_style(Style::default().fg(Color::White).bold()),
+            )
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -398,7 +400,7 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
             Style::default().fg(Color::Green).bold(),
         ),
         Span::styled(
-            "tab focus | j/k move | enter/space tree | ←/→ close/open | i write | esc cancel | q quit",
+            "tab/1-4 focus | j/k move | enter/space tree | ←/→ close/open | i write | esc cancel | q quit",
             Style::default().fg(DIM),
         ),
     ];
@@ -454,4 +456,29 @@ fn panel_block_owned(title: String, focused: bool) -> Block<'static> {
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(border))
         .title_style(Style::default().fg(Color::White).bold())
+}
+
+fn message_list_area(area: Rect) -> Rect {
+    let inner = Block::default().borders(Borders::ALL).inner(area);
+    let [messages, _composer] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(MESSAGE_INPUT_HEIGHT)])
+            .areas(inner);
+    messages
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::layout::Rect;
+
+    use super::sync_view_heights;
+    use crate::tui::state::DashboardState;
+
+    #[test]
+    fn sync_view_heights_reserves_message_input_inside_messages_pane() {
+        let mut state = DashboardState::new();
+
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
+
+        assert_eq!(state.message_view_height(), 14);
+    }
 }
