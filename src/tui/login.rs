@@ -18,7 +18,13 @@ use super::TerminalRestoreGuard;
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     let mut terminal = ratatui::init();
-    let _restore_guard = TerminalRestoreGuard;
+    let _restore_guard = match TerminalRestoreGuard::new() {
+        Ok(guard) => guard,
+        Err(error) => {
+            ratatui::restore();
+            return Err(error);
+        }
+    };
     let mut state = LoginState::new(notice);
     let mut events = EventStream::new();
     let mut qr_handle: Option<QrHandle> = None;

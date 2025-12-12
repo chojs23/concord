@@ -4,9 +4,15 @@ mod login;
 mod state;
 mod ui;
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, io::stdout, time::Duration};
 
-use crossterm::event::{Event as TerminalEvent, EventStream};
+use crossterm::{
+    event::{
+        Event as TerminalEvent, EventStream, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
+    execute,
+};
 use futures::StreamExt;
 use tokio::sync::{broadcast, mpsc};
 use twilight_model::id::{Id, marker::ChannelMarker};
@@ -28,15 +34,38 @@ pub async fn run(
     commands: mpsc::Sender<AppCommand>,
 ) -> Result<()> {
     let mut terminal = ratatui::init();
-    let _restore_guard = TerminalRestoreGuard;
+    let _restore_guard = match TerminalRestoreGuard::new() {
+        Ok(guard) => guard,
+        Err(error) => {
+            ratatui::restore();
+            return Err(error);
+        }
+    };
 
     run_dashboard(&mut terminal, &mut events, commands).await
 }
 
-struct TerminalRestoreGuard;
+pub(super) struct TerminalRestoreGuard {
+    keyboard_enhancement_enabled: bool,
+}
+
+impl TerminalRestoreGuard {
+    pub(super) fn new() -> Result<Self> {
+        execute!(
+            stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )?;
+        Ok(Self {
+            keyboard_enhancement_enabled: true,
+        })
+    }
+}
 
 impl Drop for TerminalRestoreGuard {
     fn drop(&mut self) {
+        if self.keyboard_enhancement_enabled {
+            let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
+        }
         ratatui::restore();
     }
 }
