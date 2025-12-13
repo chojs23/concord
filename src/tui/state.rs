@@ -100,10 +100,18 @@ impl DashboardState {
 
     pub fn push_event(&mut self, event: AppEvent) {
         let selected_message_id = (!self.message_auto_follow)
-            .then(|| self.messages().get(self.selected_message()).map(|message| message.id))
+            .then(|| {
+                self.messages()
+                    .get(self.selected_message())
+                    .map(|message| message.id)
+            })
             .flatten();
         let scroll_message_id = (!self.message_auto_follow)
-            .then(|| self.messages().get(self.message_scroll).map(|message| message.id))
+            .then(|| {
+                self.messages()
+                    .get(self.message_scroll)
+                    .map(|message| message.id)
+            })
             .flatten();
         let channel_cursor_id = self.selected_channel_cursor_id();
 
@@ -675,7 +683,10 @@ impl DashboardState {
 
     pub fn focused_member_selection_line(&self) -> Option<usize> {
         if self.focus == FocusPane::Members && !self.flattened_members().is_empty() {
-            Some(self.selected_member_line().saturating_sub(self.member_scroll))
+            Some(
+                self.selected_member_line()
+                    .saturating_sub(self.member_scroll),
+            )
         } else {
             None
         }
@@ -947,7 +958,9 @@ impl DashboardState {
             .and_then(|channel_id| self.discord.channel(channel_id))
             .is_some_and(|channel| match self.active_guild {
                 ActiveGuildScope::Unset => false,
-                ActiveGuildScope::DirectMessages => channel.guild_id.is_none() && !channel.is_category(),
+                ActiveGuildScope::DirectMessages => {
+                    channel.guild_id.is_none() && !channel.is_category()
+                }
                 ActiveGuildScope::Guild(guild_id) => {
                     channel.guild_id == Some(guild_id) && !channel.is_category()
                 }
@@ -1075,7 +1088,11 @@ impl DashboardState {
         selected_message_id: Option<Id<MessageMarker>>,
         scroll_message_id: Option<Id<MessageMarker>>,
     ) {
-        let message_ids: Vec<_> = self.messages().into_iter().map(|message| message.id).collect();
+        let message_ids: Vec<_> = self
+            .messages()
+            .into_iter()
+            .map(|message| message.id)
+            .collect();
         if let Some(message_id) = selected_message_id
             && let Some(index) = message_ids.iter().position(|id| *id == message_id)
         {
@@ -1360,6 +1377,7 @@ mod tests {
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
                 content: Some(format!("msg {id}")),
+                attachments: Vec::new(),
             });
         }
 
@@ -1393,6 +1411,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             content: Some("hello".to_owned()),
+            attachments: Vec::new(),
         });
 
         assert_eq!(state.selected_channel_id(), None);
@@ -1483,6 +1502,7 @@ mod tests {
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
                 content: Some(format!("msg {id}")),
+                attachments: Vec::new(),
             });
         }
 
@@ -1509,6 +1529,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             content: Some("msg 6".to_owned()),
+            attachments: Vec::new(),
         });
 
         assert_eq!(state.selected_message(), 3);
@@ -1791,6 +1812,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             content: Some("new empty dm".to_owned()),
+            attachments: Vec::new(),
         });
 
         assert_eq!(channel_entry_names(&state), vec!["empty", "new", "old"]);
@@ -2282,6 +2304,7 @@ mod tests {
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
                 content: Some(format!("msg {id}")),
+                attachments: Vec::new(),
             });
         }
         state
@@ -2295,6 +2318,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             content: Some(format!("msg {message_id}")),
+            attachments: Vec::new(),
         }
     }
 

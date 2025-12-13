@@ -1,6 +1,4 @@
-use std::{
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tokio::sync::broadcast;
@@ -9,13 +7,13 @@ use twilight_model::{
     gateway::{Intents, ShardId},
     id::{
         Id,
-        marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+        marker::{AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker, UserMarker},
     },
 };
 
 use super::{
-    ChannelInfo, GuildFolder, MemberInfo, PresenceStatus,
-    events::{AppEvent, map_event},
+    AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, PresenceStatus,
+    events::{AppEvent, AttachmentUpdate, map_event},
 };
 use crate::logging;
 
@@ -354,6 +352,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         .get("content")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let attachments = parse_attachments(data.get("attachments"));
 
     Some(AppEvent::MessageCreate {
         guild_id,
@@ -362,6 +361,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         author_id,
         author: author_name,
         content,
+        attachments,
     })
 }
 
@@ -373,11 +373,17 @@ fn parse_message_update(data: &Value) -> Option<AppEvent> {
         .get("content")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let attachments = if data.get("attachments").is_some() {
+        AttachmentUpdate::Replace(parse_attachments(data.get("attachments")))
+    } else {
+        AttachmentUpdate::Unchanged
+    };
     Some(AppEvent::MessageUpdate {
         guild_id,
         channel_id,
         message_id,
         content,
+        attachments,
     })
 }
 
@@ -396,6 +402,40 @@ fn parse_member_upsert(data: &Value) -> Option<AppEvent> {
     let guild_id = parse_id::<GuildMarker>(data.get("guild_id")?)?;
     let member = parse_member_info(data)?;
     Some(AppEvent::GuildMemberUpsert { guild_id, member })
+}
+
+fn parse_attachments(value: Option<&Value>) -> Vec<AttachmentInfo> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(parse_attachment).collect())
+        .unwrap_or_default()
+}
+
+fn parse_attachment(value: &Value) -> Option<AttachmentInfo> {
+    Some(AttachmentInfo {
+        id: parse_id::<AttachmentMarker>(value.get("id")?)?,
+        filename: value.get("filename")?.as_str()?.to_owned(),
+        url: value.get("url")?.as_str()?.to_owned(),
+        proxy_url: value
+            .get("proxy_url")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        content_type: value
+            .get("content_type")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        size: value
+            .get("size")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+        width: value.get("width").and_then(Value::as_u64),
+        height: value.get("height").and_then(Value::as_u64),
+        description: value
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    })
 }
 
 fn parse_member_remove(data: &Value) -> Option<AppEvent> {
@@ -512,10 +552,7 @@ fn parse_member_info(value: &Value) -> Option<MemberInfo> {
         .or(username)
         .unwrap_or("unknown")
         .to_owned();
-    let is_bot = user
-        .get("bot")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let is_bot = user.get("bot").and_then(Value::as_bool).unwrap_or(false);
     Some(MemberInfo {
         user_id,
         display_name,
@@ -552,7 +589,8 @@ mod tests {
     use serde_json::json;
     use twilight_model::gateway::Intents;
 
-    use super::{gateway_intents, parse_channel_info};
+    use super::{gateway_intents, parse_channel_info, parse_message_create, parse_message_update};
+    use crate::discord::{AppEvent, AttachmentUpdate};
 
     #[test]
     fn startup_intents_skip_presence_updates() {
@@ -588,5 +626,67 @@ mod tests {
         .expect("dm channel should parse");
 
         assert_eq!(channel.last_message_id.map(|id| id.get()), Some(99));
+    }
+
+    #[test]
+    fn message_update_parser_without_attachments_does_not_clear_cached_attachments() {
+        let event = parse_message_update(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "content": "edited"
+        }))
+        .expect("message update should parse");
+
+        let AppEvent::MessageUpdate { attachments, .. } = event else {
+            panic!("expected message update event");
+        };
+        assert!(matches!(attachments, AttachmentUpdate::Unchanged));
+    }
+
+    #[test]
+    fn message_update_parser_empty_attachments_clears_cached_attachments() {
+        let event = parse_message_update(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "content": "edited",
+            "attachments": []
+        }))
+        .expect("message update should parse");
+
+        let AppEvent::MessageUpdate { attachments, .. } = event else {
+            panic!("expected message update event");
+        };
+        assert!(matches!(attachments, AttachmentUpdate::Replace(values) if values.is_empty()));
+    }
+
+    #[test]
+    fn message_create_parser_keeps_image_attachments() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "content": "",
+            "attachments": [{
+                "id": "40",
+                "filename": "cat.png",
+                "url": "https://cdn.discordapp.com/cat.png",
+                "proxy_url": "https://media.discordapp.net/cat.png",
+                "content_type": "image/png",
+                "size": 2048,
+                "width": 640,
+                "height": 480,
+                "description": "cat"
+            }]
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { attachments, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].filename, "cat.png");
+        assert_eq!(attachments[0].content_type.as_deref(), Some("image/png"));
+        assert_eq!(attachments[0].width, Some(640));
+        assert_eq!(attachments[0].height, Some(480));
     }
 }

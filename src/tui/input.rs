@@ -168,11 +168,17 @@ mod tests {
         assert_eq!(state.selected_message(), 5);
         assert!(!state.message_auto_follow());
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Char('F'), KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('F'), KeyModifiers::NONE),
+        );
         assert_eq!(state.selected_message(), 9);
         assert!(state.message_auto_follow());
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+        );
         assert_eq!(state.selected_message(), 5);
         assert!(!state.message_auto_follow());
 
@@ -190,10 +196,16 @@ mod tests {
         focus_channels(&mut state);
         state.set_channel_view_height(9);
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        );
         assert_eq!(state.selected_channel(), 2);
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+        );
         assert_eq!(state.selected_channel(), 0);
     }
 
@@ -201,7 +213,10 @@ mod tests {
     fn composer_requires_selected_channel() {
         let mut state = DashboardState::new();
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+        );
         assert!(!state.is_composing());
 
         let mut state = state_with_channel_tree();
@@ -212,7 +227,10 @@ mod tests {
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         );
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+        );
         assert!(state.is_composing());
         assert_eq!(state.focus(), FocusPane::Messages);
     }
@@ -470,6 +488,7 @@ mod tests {
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
                 content: Some(format!("msg {id}")),
+                attachments: Vec::new(),
             });
         }
         state

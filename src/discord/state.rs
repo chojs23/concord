@@ -5,7 +5,10 @@ use twilight_model::id::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
-use super::{AppEvent, ChannelInfo, GuildFolder, MemberInfo, MessageInfo, PresenceStatus};
+use super::{
+    AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
+    PresenceStatus,
+};
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
 
@@ -38,6 +41,7 @@ pub struct MessageState {
     pub channel_id: Id<ChannelMarker>,
     pub author: String,
     pub content: Option<String>,
+    pub attachments: Vec<AttachmentInfo>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -132,12 +136,14 @@ impl DiscordState {
                 message_id,
                 author,
                 content,
+                attachments,
                 ..
             } => self.upsert_message(MessageState {
                 id: *message_id,
                 channel_id: *channel_id,
                 author: author.clone(),
                 content: content.clone(),
+                attachments: attachments.clone(),
             }),
             AppEvent::MessageHistoryLoaded {
                 channel_id,
@@ -149,7 +155,14 @@ impl DiscordState {
                 channel_id,
                 message_id,
                 content,
-            } => self.update_message(*guild_id, *channel_id, *message_id, content.clone()),
+                attachments,
+            } => self.update_message(
+                *guild_id,
+                *channel_id,
+                *message_id,
+                content.clone(),
+                attachments.clone(),
+            ),
             AppEvent::MessageDelete {
                 channel_id,
                 message_id,
@@ -256,6 +269,9 @@ impl DiscordState {
             if message.content.is_some() {
                 existing.content = message.content;
             }
+            if !message.attachments.is_empty() || existing.attachments.is_empty() {
+                existing.attachments = message.attachments;
+            }
         } else {
             messages.push_back(message);
         }
@@ -283,6 +299,7 @@ impl DiscordState {
                 channel_id: message.channel_id,
                 author: message.author.clone(),
                 content: message.content.clone(),
+                attachments: message.attachments.clone(),
             };
 
             by_id
@@ -316,12 +333,17 @@ impl DiscordState {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
         content: Option<String>,
+        attachments: AttachmentUpdate,
     ) {
         let messages = self.messages.entry(channel_id).or_default();
-        if let Some(content) = content
-            && let Some(existing) = messages.iter_mut().find(|item| item.id == message_id)
-        {
-            existing.content = Some(content);
+        if let Some(existing) = messages.iter_mut().find(|item| item.id == message_id) {
+            if let Some(content) = content {
+                existing.content = Some(content);
+            }
+            match attachments {
+                AttachmentUpdate::Replace(attachments) => existing.attachments = attachments,
+                AttachmentUpdate::Unchanged => {}
+            }
         }
     }
 
@@ -345,6 +367,9 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
         if !content.is_empty() || existing_is_empty {
             existing.content = Some(content.clone());
         }
+    }
+    if !incoming.attachments.is_empty() || existing.attachments.is_empty() {
+        existing.attachments = incoming.attachments.clone();
     }
 }
 
@@ -370,7 +395,8 @@ mod tests {
     use twilight_model::id::{Id, marker::ChannelMarker};
 
     use crate::discord::{
-        AppEvent, ChannelInfo, DiscordState, MemberInfo, MessageInfo, PresenceStatus,
+        AppEvent, AttachmentUpdate, ChannelInfo, DiscordState, MemberInfo, MessageInfo,
+        PresenceStatus,
     };
 
     #[test]
@@ -403,6 +429,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             content: Some("hello".to_owned()),
+            attachments: Vec::new(),
         });
 
         assert_eq!(state.guilds().len(), 1);
@@ -446,6 +473,7 @@ mod tests {
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
                 content: Some(format!("message {id}")),
+                attachments: Vec::new(),
             });
         }
 
@@ -468,6 +496,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             content: Some("hello".to_owned()),
+            attachments: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
             guild_id: None,
@@ -476,12 +505,14 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             content: None,
+            attachments: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageUpdate {
             guild_id: None,
             channel_id,
             message_id,
             content: None,
+            attachments: AttachmentUpdate::Unchanged,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -501,6 +532,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             content: Some("live".to_owned()),
+            attachments: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
@@ -532,6 +564,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             content: Some("known".to_owned()),
+            attachments: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
@@ -544,6 +577,88 @@ mod tests {
         let messages = state.messages_for_channel(channel_id);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content.as_deref(), Some("known"));
+    }
+
+    #[test]
+    fn stores_and_merges_message_attachments() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(20),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some(String::new()),
+            attachments: vec![attachment_info(1, "cat.png", "image/png")],
+        });
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            messages: vec![MessageInfo {
+                content: Some(String::new()),
+                attachments: Vec::new(),
+                ..message_info(channel_id, 20, "")
+            }],
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].attachments.len(), 1);
+        assert_eq!(messages[0].attachments[0].filename, "cat.png");
+    }
+
+    #[test]
+    fn message_update_without_attachments_payload_keeps_cached_attachments() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(20),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some(String::new()),
+            attachments: vec![attachment_info(1, "cat.png", "image/png")],
+        });
+        state.apply_event(&AppEvent::MessageUpdate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(20),
+            content: None,
+            attachments: AttachmentUpdate::Unchanged,
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages[0].attachments.len(), 1);
+        assert_eq!(messages[0].attachments[0].filename, "cat.png");
+    }
+
+    #[test]
+    fn message_update_can_clear_attachments_when_payload_includes_them() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(20),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some(String::new()),
+            attachments: vec![attachment_info(1, "cat.png", "image/png")],
+        });
+        state.apply_event(&AppEvent::MessageUpdate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(20),
+            content: None,
+            attachments: AttachmentUpdate::Replace(Vec::new()),
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert!(messages[0].attachments.is_empty());
     }
 
     #[test]
@@ -591,6 +706,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             content: Some("new".to_owned()),
+            attachments: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
             guild_id: None,
@@ -599,10 +715,13 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             content: Some("old".to_owned()),
+            attachments: Vec::new(),
         });
 
         assert_eq!(
-            state.channel(channel_id).and_then(|channel| channel.last_message_id),
+            state
+                .channel(channel_id)
+                .and_then(|channel| channel.last_message_id),
             Some(Id::new(30))
         );
     }
@@ -630,7 +749,9 @@ mod tests {
         });
 
         assert_eq!(
-            state.channel(channel_id).and_then(|channel| channel.last_message_id),
+            state
+                .channel(channel_id)
+                .and_then(|channel| channel.last_message_id),
             Some(Id::new(40))
         );
     }
@@ -767,6 +888,25 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             content: Some(content.to_owned()),
+            attachments: Vec::new(),
+        }
+    }
+
+    fn attachment_info(
+        id: u64,
+        filename: &str,
+        content_type: &str,
+    ) -> crate::discord::AttachmentInfo {
+        crate::discord::AttachmentInfo {
+            id: Id::new(id),
+            filename: filename.to_owned(),
+            url: format!("https://cdn.discordapp.com/{filename}"),
+            proxy_url: format!("https://media.discordapp.net/{filename}"),
+            content_type: Some(content_type.to_owned()),
+            size: 1000,
+            width: Some(100),
+            height: Some(100),
+            description: None,
         }
     }
 }

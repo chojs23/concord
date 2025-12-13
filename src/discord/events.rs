@@ -1,6 +1,6 @@
 use twilight_gateway::Event;
 use twilight_model::{
-    channel::{Channel, Message},
+    channel::{Attachment, Channel, Message},
     gateway::{
         payload::incoming::{
             GuildCreate as GuildCreatePayload, MemberAdd, MemberUpdate,
@@ -11,7 +11,7 @@ use twilight_model::{
     guild::Member as TwilightMember,
     id::{
         Id,
-        marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+        marker::{AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker, UserMarker},
     },
     user::User as TwilightUser,
 };
@@ -66,6 +66,19 @@ pub struct GuildFolder {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttachmentInfo {
+    pub id: Id<AttachmentMarker>,
+    pub filename: String,
+    pub url: String,
+    pub proxy_url: String,
+    pub content_type: Option<String>,
+    pub size: u64,
+    pub width: Option<u64>,
+    pub height: Option<u64>,
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageInfo {
     pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,
@@ -73,6 +86,13 @@ pub struct MessageInfo {
     pub author_id: Id<UserMarker>,
     pub author: String,
     pub content: Option<String>,
+    pub attachments: Vec<AttachmentInfo>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AttachmentUpdate {
+    Unchanged,
+    Replace(Vec<AttachmentInfo>),
 }
 
 #[derive(Clone, Debug)]
@@ -106,6 +126,7 @@ pub enum AppEvent {
         author_id: Id<UserMarker>,
         author: String,
         content: Option<String>,
+        attachments: Vec<AttachmentInfo>,
     },
     MessageHistoryLoaded {
         channel_id: Id<ChannelMarker>,
@@ -120,6 +141,7 @@ pub enum AppEvent {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
         content: Option<String>,
+        attachments: AttachmentUpdate,
     },
     MessageDelete {
         guild_id: Option<Id<GuildMarker>>,
@@ -158,6 +180,23 @@ impl AppEvent {
             author_id: message.author_id,
             author: message.author,
             content: message.content,
+            attachments: message.attachments,
+        }
+    }
+}
+
+impl AttachmentInfo {
+    pub fn from_attachment(attachment: Attachment) -> Self {
+        Self {
+            id: attachment.id,
+            filename: attachment.filename,
+            url: attachment.url,
+            proxy_url: attachment.proxy_url,
+            content_type: attachment.content_type,
+            size: attachment.size,
+            width: attachment.width,
+            height: attachment.height,
+            description: attachment.description,
         }
     }
 }
@@ -171,6 +210,11 @@ impl MessageInfo {
             author_id: message.author.id,
             author: message.author.name,
             content: Some(message.content),
+            attachments: message
+                .attachments
+                .into_iter()
+                .map(AttachmentInfo::from_attachment)
+                .collect(),
         }
     }
 }
@@ -199,12 +243,19 @@ pub fn map_event(event: Event, message_content_enabled: bool) -> Option<AppEvent
             author_id: message.author.id,
             author: message.author.name.clone(),
             content: map_message_content(&message.content, message_content_enabled),
+            attachments: message
+                .attachments
+                .clone()
+                .into_iter()
+                .map(AttachmentInfo::from_attachment)
+                .collect(),
         }),
         Event::MessageUpdate(message) => Some(AppEvent::MessageUpdate {
             guild_id: message.guild_id,
             channel_id: message.channel_id,
             message_id: message.id,
             content: map_message_content(&message.content, message_content_enabled),
+            attachments: map_attachment_update(message.attachments.clone()),
         }),
         Event::MessageDelete(message) => Some(AppEvent::MessageDelete {
             guild_id: message.guild_id,
@@ -219,6 +270,19 @@ pub fn map_event(event: Event, message_content_enabled: bool) -> Option<AppEvent
         }),
         Event::PresenceUpdate(presence) => Some(presence_update(&presence)),
         _ => None,
+    }
+}
+
+fn map_attachment_update(attachments: Vec<Attachment>) -> AttachmentUpdate {
+    if attachments.is_empty() {
+        AttachmentUpdate::Unchanged
+    } else {
+        AttachmentUpdate::Replace(
+            attachments
+                .into_iter()
+                .map(AttachmentInfo::from_attachment)
+                .collect(),
+        )
     }
 }
 
