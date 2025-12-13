@@ -13,6 +13,7 @@ use super::{
         presence_color, presence_marker,
     },
 };
+use crate::discord::{AttachmentInfo, MessageState};
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
@@ -46,8 +47,7 @@ pub fn render(frame: &mut Frame, state: &DashboardState) {
 }
 
 fn dashboard_areas(area: Rect) -> DashboardAreas {
-    let [main, footer] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
+    let [main, footer] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
 
     let [guilds, channels, center, members] = Layout::horizontal([
         Constraint::Length(20),
@@ -220,11 +220,7 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
         .enumerate()
         .map(|(index, message)| {
             let author = truncate_text(&message.author, max_author_width);
-            let content = match message.content.as_deref() {
-                Some(value) if !value.is_empty() => truncate_text(value, content_width.max(8)),
-                Some(_) => "<empty message>".to_owned(),
-                None => "<message content unavailable>".to_owned(),
-            };
+            let content = format_message_content(message, content_width.max(8));
             styled_list_item(
                 ListItem::new(Line::from(vec![
                     Span::styled(
@@ -242,6 +238,53 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
 
     frame.render_widget(list, message_area);
     render_composer(frame, composer_area, state);
+}
+
+fn format_message_content(message: &MessageState, width: usize) -> String {
+    let attachment_summary =
+        (!message.attachments.is_empty()).then(|| format_attachment_summary(&message.attachments));
+    let content = match (message.content.as_deref(), attachment_summary.as_deref()) {
+        (Some(value), Some(attachments)) if !value.is_empty() => format!("{value} {attachments}"),
+        (Some(value), None) if !value.is_empty() => value.to_owned(),
+        (_, Some(attachments)) => attachments.to_owned(),
+        (Some(_), None) => "<empty message>".to_owned(),
+        (None, None) => "<message content unavailable>".to_owned(),
+    };
+
+    truncate_text(&content, width)
+}
+
+fn format_attachment_summary(attachments: &[AttachmentInfo]) -> String {
+    attachments
+        .iter()
+        .map(format_attachment)
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn format_attachment(attachment: &AttachmentInfo) -> String {
+    let kind = if is_image_attachment(attachment) {
+        "image"
+    } else {
+        "file"
+    };
+    let dimensions = match (attachment.width, attachment.height) {
+        (Some(width), Some(height)) => format!(" {width}x{height}"),
+        _ => String::new(),
+    };
+
+    format!(
+        "[{kind}: {}]{} {}",
+        attachment.filename, dimensions, attachment.url
+    )
+}
+
+fn is_image_attachment(attachment: &AttachmentInfo) -> bool {
+    attachment
+        .content_type
+        .as_deref()
+        .is_some_and(|content_type| content_type.starts_with("image/"))
+        || attachment.width.is_some() && attachment.height.is_some()
 }
 
 fn styled_list_item<'a>(item: ListItem<'a>, selected: bool) -> ListItem<'a> {
@@ -331,11 +374,13 @@ fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
         for member in &group.entries {
             let is_selected = focused && selected_line == Some(line_index);
             let marker_style = Style::default().fg(presence_color(member.status));
-            let mut name_style = Style::default().fg(if member.status == crate::discord::PresenceStatus::Offline {
-                DIM
-            } else {
-                Color::White
-            });
+            let mut name_style = Style::default().fg(
+                if member.status == crate::discord::PresenceStatus::Offline {
+                    DIM
+                } else {
+                    Color::White
+                },
+            );
             if member.is_bot {
                 name_style = name_style.add_modifier(Modifier::ITALIC);
             }
@@ -350,7 +395,10 @@ fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
                 display = format!("{display} [bot]");
             }
             lines.push(Line::from(vec![
-                Span::styled(format!(" {} ", presence_marker(member.status)), marker_style),
+                Span::styled(
+                    format!(" {} ", presence_marker(member.status)),
+                    marker_style,
+                ),
                 Span::styled(display, name_style),
             ]));
             line_index += 1;
@@ -495,9 +543,13 @@ fn composer_prompt_line_count(input: &str, width: u16) -> u16 {
 #[cfg(test)]
 mod tests {
     use ratatui::layout::Rect;
+    use twilight_model::id::Id;
 
-    use super::sync_view_heights;
-    use crate::tui::state::DashboardState;
+    use super::{format_message_content, sync_view_heights};
+    use crate::{
+        discord::{AttachmentInfo, MessageState},
+        tui::state::DashboardState,
+    };
 
     #[test]
     fn sync_view_heights_reserves_message_input_inside_messages_pane() {
@@ -532,5 +584,52 @@ mod tests {
         sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
 
         assert!(state.message_view_height() < 14);
+    }
+
+    #[test]
+    fn image_attachment_replaces_empty_message_placeholder() {
+        let message = message_with_attachment(Some(String::new()), image_attachment());
+
+        assert_eq!(
+            format_message_content(&message, 200),
+            "[image: cat.png] 640x480 https://cdn.discordapp.com/cat.png"
+        );
+    }
+
+    #[test]
+    fn attachment_summary_is_appended_to_text_content() {
+        let message = message_with_attachment(Some("look".to_owned()), image_attachment());
+
+        assert_eq!(
+            format_message_content(&message, 200),
+            "look [image: cat.png] 640x480 https://cdn.discordapp.com/cat.png"
+        );
+    }
+
+    fn message_with_attachment(
+        content: Option<String>,
+        attachment: AttachmentInfo,
+    ) -> MessageState {
+        MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            content,
+            attachments: vec![attachment],
+        }
+    }
+
+    fn image_attachment() -> AttachmentInfo {
+        AttachmentInfo {
+            id: Id::new(3),
+            filename: "cat.png".to_owned(),
+            url: "https://cdn.discordapp.com/cat.png".to_owned(),
+            proxy_url: "https://media.discordapp.net/cat.png".to_owned(),
+            content_type: Some("image/png".to_owned()),
+            size: 2048,
+            width: Some(640),
+            height: Some(480),
+            description: None,
+        }
     }
 }
