@@ -412,15 +412,22 @@ fn parse_attachments(value: Option<&Value>) -> Vec<AttachmentInfo> {
 }
 
 fn parse_attachment(value: &Value) -> Option<AttachmentInfo> {
+    let url = value
+        .get("url")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("proxy_url").and_then(Value::as_str))?
+        .to_owned();
+    let proxy_url = value
+        .get("proxy_url")
+        .and_then(Value::as_str)
+        .unwrap_or(url.as_str())
+        .to_owned();
+
     Some(AttachmentInfo {
         id: parse_id::<AttachmentMarker>(value.get("id")?)?,
         filename: value.get("filename")?.as_str()?.to_owned(),
-        url: value.get("url")?.as_str()?.to_owned(),
-        proxy_url: value
-            .get("proxy_url")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
+        url,
+        proxy_url,
         content_type: value
             .get("content_type")
             .and_then(Value::as_str)
@@ -688,5 +695,32 @@ mod tests {
         assert_eq!(attachments[0].content_type.as_deref(), Some("image/png"));
         assert_eq!(attachments[0].width, Some(640));
         assert_eq!(attachments[0].height, Some(480));
+    }
+
+    #[test]
+    fn message_create_parser_uses_proxy_url_when_url_is_missing() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "content": "",
+            "attachments": [{
+                "id": "40",
+                "filename": "cat.png",
+                "proxy_url": "https://media.discordapp.net/cat.png",
+                "content_type": "image/png"
+            }]
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { attachments, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].url, "https://media.discordapp.net/cat.png");
+        assert_eq!(
+            attachments[0].proxy_url,
+            "https://media.discordapp.net/cat.png"
+        );
     }
 }
