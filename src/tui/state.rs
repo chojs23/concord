@@ -637,6 +637,18 @@ impl DashboardState {
         }
     }
 
+    pub fn selected_message_attachment_url(&self) -> Option<&str> {
+        let channel_id = self.selected_channel_id()?;
+        let messages = self.discord.messages_for_channel(channel_id);
+        let message = messages.get(self.selected_message())?;
+        let attachment = message.attachments.first()?;
+        if attachment.url.is_empty() {
+            (!attachment.proxy_url.is_empty()).then_some(attachment.proxy_url.as_str())
+        } else {
+            Some(attachment.url.as_str())
+        }
+    }
+
     pub fn members_grouped(&self) -> Vec<MemberGroup<'_>> {
         let Some(guild_id) = self.selected_guild_id() else {
             return Vec::new();
@@ -1302,7 +1314,8 @@ mod tests {
         ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildBranch, GuildPaneEntry,
     };
     use crate::discord::{
-        AppEvent, ChannelInfo, GuildFolder, MemberInfo, MessageInfo, PresenceStatus,
+        AppEvent, AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
+        PresenceStatus,
     };
 
     #[test]
@@ -1550,6 +1563,17 @@ mod tests {
 
         assert!(state.message_auto_follow());
         assert_eq!(state.selected_message(), 4);
+    }
+
+    #[test]
+    fn selected_message_attachment_url_uses_proxy_when_url_is_empty() {
+        let mut state = state_with_proxy_only_attachment_message();
+        focus_messages(&mut state);
+
+        assert_eq!(
+            state.selected_message_attachment_url(),
+            Some("https://media.discordapp.net/cat.png")
+        );
     }
 
     #[test]
@@ -2307,6 +2331,50 @@ mod tests {
                 attachments: Vec::new(),
             });
         }
+        state
+    }
+
+    fn state_with_proxy_only_attachment_message() -> DashboardState {
+        let guild_id = Id::new(1);
+        let channel_id: Id<ChannelMarker> = Id::new(2);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(guild_id),
+            channel_id,
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some(String::new()),
+            attachments: vec![AttachmentInfo {
+                id: Id::new(3),
+                filename: "cat.png".to_owned(),
+                url: String::new(),
+                proxy_url: "https://media.discordapp.net/cat.png".to_owned(),
+                content_type: Some("image/png".to_owned()),
+                size: 2048,
+                width: Some(640),
+                height: Some(480),
+                description: None,
+            }],
+        });
         state
     }
 

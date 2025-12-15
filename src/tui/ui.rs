@@ -274,8 +274,8 @@ fn format_attachment(attachment: &AttachmentInfo) -> String {
     };
 
     format!(
-        "[{kind}: {}]{} {}",
-        attachment.filename, dimensions, attachment.url
+        "[{kind}: {}]{} (press o to open)",
+        attachment.filename, dimensions
     )
 }
 
@@ -446,7 +446,7 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
             Style::default().fg(Color::Green).bold(),
         ),
         Span::styled(
-            "tab/1-4 focus | j/k move | enter/space tree | ←/→ close/open | i write | esc cancel | q quit",
+            "tab/1-4 focus | j/k move | o open attachment | enter/space tree | ←/→ close/open | i write | esc cancel | q quit",
             Style::default().fg(DIM),
         ),
     ];
@@ -592,7 +592,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "[image: cat.png] 640x480 https://cdn.discordapp.com/cat.png"
+            "[image: cat.png] 640x480 (press o to open)"
         );
     }
 
@@ -602,7 +602,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "look [image: cat.png] 640x480 https://cdn.discordapp.com/cat.png"
+            "look [image: cat.png] 640x480 (press o to open)"
         );
     }
 

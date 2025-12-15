@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{io, process::Command, time::Instant};
 
 use tokio::sync::mpsc;
 
@@ -110,9 +110,51 @@ fn start_command_loop(
                         });
                     }
                 },
+                AppCommand::OpenUrl { url } => {
+                    if let Err(error) = open_url(&url) {
+                        logging::error("app", format!("open attachment failed: {error}"));
+                        client.publish_event(AppEvent::GatewayError {
+                            message: format!("open attachment failed: {error}"),
+                        });
+                    }
+                }
             }
         }
     })
+}
+
+fn open_url(url: &str) -> io::Result<()> {
+    let status = open_url_command(url).status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "open command exited with status {status}"
+        )))
+    }
+}
+
+fn open_url_command(url: &str) -> Command {
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    }
 }
 
 struct ResolvedToken {

@@ -9,4 +9,7 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         content: String,
     },
+    OpenUrl {
+        url: String,
+    },
 }
