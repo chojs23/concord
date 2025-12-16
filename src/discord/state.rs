@@ -201,7 +201,11 @@ impl DiscordState {
             AppEvent::GuildFoldersUpdate { folders } => {
                 self.guild_folders = folders.clone();
             }
-            AppEvent::Ready { .. } | AppEvent::GatewayError { .. } | AppEvent::GatewayClosed => {}
+            AppEvent::Ready { .. }
+            | AppEvent::GatewayError { .. }
+            | AppEvent::AttachmentPreviewLoaded { .. }
+            | AppEvent::AttachmentPreviewLoadFailed { .. }
+            | AppEvent::GatewayClosed => {}
         }
     }
 

@@ -5,6 +5,9 @@ pub enum AppCommand {
     LoadMessageHistory {
         channel_id: Id<ChannelMarker>,
     },
+    LoadAttachmentPreview {
+        url: String,
+    },
     SendMessage {
         channel_id: Id<ChannelMarker>,
         content: String,

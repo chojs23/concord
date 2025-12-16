@@ -167,6 +167,14 @@ pub enum AppEvent {
     GatewayError {
         message: String,
     },
+    AttachmentPreviewLoaded {
+        url: String,
+        bytes: Vec<u8>,
+    },
+    AttachmentPreviewLoadFailed {
+        url: String,
+        message: String,
+    },
     GatewayClosed,
 }
 
@@ -186,6 +194,21 @@ impl AppEvent {
 }
 
 impl AttachmentInfo {
+    pub fn preferred_url(&self) -> Option<&str> {
+        if self.url.is_empty() {
+            (!self.proxy_url.is_empty()).then_some(self.proxy_url.as_str())
+        } else {
+            Some(self.url.as_str())
+        }
+    }
+
+    pub fn is_image(&self) -> bool {
+        self.content_type
+            .as_deref()
+            .is_some_and(|content_type| content_type.starts_with("image/"))
+            || self.width.is_some() && self.height.is_some()
+    }
+
     pub fn from_attachment(attachment: Attachment) -> Self {
         Self {
             id: attachment.id,

@@ -9,6 +9,7 @@ use crate::{
 };
 
 const MESSAGE_HISTORY_LIMIT: u16 = 50;
+const MAX_ATTACHMENT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
 
 pub struct App {
     config: Config,
@@ -98,6 +99,20 @@ fn start_command_loop(
                         }
                     }
                 }
+                AppCommand::LoadAttachmentPreview { url } => {
+                    match fetch_attachment_preview(&url).await {
+                        Ok(bytes) => {
+                            client.publish_event(AppEvent::AttachmentPreviewLoaded { url, bytes })
+                        }
+                        Err(message) => {
+                            logging::error("preview", &message);
+                            client.publish_event(AppEvent::AttachmentPreviewLoadFailed {
+                                url,
+                                message,
+                            });
+                        }
+                    }
+                }
                 AppCommand::SendMessage {
                     channel_id,
                     content,
@@ -121,6 +136,36 @@ fn start_command_loop(
             }
         }
     })
+}
+
+async fn fetch_attachment_preview(url: &str) -> std::result::Result<Vec<u8>, String> {
+    let response = reqwest::get(url)
+        .await
+        .map_err(|error| format!("download image preview failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("download image preview failed: {error}"))?;
+
+    if let Some(length) = response.content_length()
+        && length > MAX_ATTACHMENT_PREVIEW_BYTES as u64
+    {
+        return Err(format!(
+            "image preview is too large: {length} bytes (max {MAX_ATTACHMENT_PREVIEW_BYTES})"
+        ));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| format!("read image preview failed: {error}"))?;
+
+    if bytes.len() > MAX_ATTACHMENT_PREVIEW_BYTES {
+        return Err(format!(
+            "image preview is too large: {} bytes (max {MAX_ATTACHMENT_PREVIEW_BYTES})",
+            bytes.len()
+        ));
+    }
+
+    Ok(bytes.to_vec())
 }
 
 fn open_url(url: &str) -> io::Result<()> {
