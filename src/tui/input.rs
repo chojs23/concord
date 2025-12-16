@@ -29,13 +29,6 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => state.half_page_up(),
         KeyCode::PageDown => state.half_page_down(),
         KeyCode::PageUp => state.half_page_up(),
-        KeyCode::Char('o') if state.focus() == FocusPane::Messages => {
-            return state
-                .selected_message_attachment_url()
-                .map(|url| AppCommand::OpenUrl {
-                    url: url.to_owned(),
-                });
-        }
         KeyCode::Char('F') => state.toggle_message_auto_follow(),
         KeyCode::Char('g') => state.jump_top(),
         KeyCode::Home => state.jump_top(),
@@ -98,7 +91,7 @@ mod tests {
 
     use super::handle_key;
     use crate::{
-        discord::{AppCommand, AppEvent, AttachmentInfo, ChannelInfo, GuildFolder},
+        discord::{AppEvent, ChannelInfo, GuildFolder},
         tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry},
     };
 
@@ -367,8 +360,8 @@ mod tests {
     }
 
     #[test]
-    fn o_opens_selected_message_attachment() {
-        let mut state = state_with_attachment_message();
+    fn o_key_is_reserved_for_future_attachment_actions() {
+        let mut state = state_with_messages(1);
         focus_messages(&mut state);
 
         let command = handle_key(
@@ -376,12 +369,7 @@ mod tests {
             KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
         );
 
-        assert_eq!(
-            command,
-            Some(AppCommand::OpenUrl {
-                url: "https://cdn.discordapp.com/cat.png".to_owned(),
-            })
-        );
+        assert_eq!(command, None);
     }
 
     fn state_with_folder() -> DashboardState {
@@ -516,50 +504,6 @@ mod tests {
                 attachments: Vec::new(),
             });
         }
-        state
-    }
-
-    fn state_with_attachment_message() -> DashboardState {
-        let guild_id = Id::new(1);
-        let channel_id = Id::new(2);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id,
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-            }],
-            members: Vec::new(),
-            presences: Vec::new(),
-        });
-        state.confirm_selected_guild();
-        state.confirm_selected_channel();
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(guild_id),
-            channel_id,
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            content: Some(String::new()),
-            attachments: vec![AttachmentInfo {
-                id: Id::new(3),
-                filename: "cat.png".to_owned(),
-                url: "https://cdn.discordapp.com/cat.png".to_owned(),
-                proxy_url: "https://media.discordapp.net/cat.png".to_owned(),
-                content_type: Some("image/png".to_owned()),
-                size: 2048,
-                width: Some(640),
-                height: Some(480),
-                description: None,
-            }],
-        });
         state
     }
 
