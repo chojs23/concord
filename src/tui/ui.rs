@@ -5,6 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap},
 };
+use ratatui_image::{Resize, StatefulImage, protocol::StatefulProtocol};
 
 use super::{
     format::truncate_text,
@@ -18,6 +19,28 @@ use crate::discord::{AttachmentInfo, MessageState};
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
 const MIN_MESSAGE_INPUT_HEIGHT: u16 = 3;
+const IMAGE_PREVIEW_HEIGHT: u16 = 10;
+
+pub enum ImagePreview<'a> {
+    None,
+    Loading {
+        filename: &'a str,
+    },
+    Failed {
+        filename: &'a str,
+        message: &'a str,
+    },
+    Ready {
+        filename: &'a str,
+        protocol: &'a mut StatefulProtocol,
+    },
+}
+
+impl ImagePreview<'_> {
+    fn is_visible(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
 
 #[derive(Clone, Copy)]
 struct DashboardAreas {
@@ -28,20 +51,28 @@ struct DashboardAreas {
     footer: Rect,
 }
 
-pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
+struct MessageAreas {
+    list: Rect,
+    preview: Option<Rect>,
+    composer: Rect,
+}
+
+pub fn sync_view_heights(area: Rect, state: &mut DashboardState, image_preview_visible: bool) {
     let areas = dashboard_areas(area);
     state.set_guild_view_height(panel_content_height(areas.guilds, "Servers"));
     state.set_channel_view_height(panel_content_height(areas.channels, "Channels"));
-    state.set_message_view_height(message_list_area(areas.messages, state).height as usize);
+    state.set_message_view_height(
+        message_list_area(areas.messages, state, image_preview_visible).height as usize,
+    );
     state.set_member_view_height(panel_content_height(areas.members, "Members"));
 }
 
-pub fn render(frame: &mut Frame, state: &DashboardState) {
+pub fn render(frame: &mut Frame, state: &DashboardState, image_preview: ImagePreview<'_>) {
     let areas = dashboard_areas(frame.area());
 
     render_guilds(frame, areas.guilds, state);
     render_channels(frame, areas.channels, state);
-    render_messages(frame, areas.messages, state);
+    render_messages(frame, areas.messages, state, image_preview);
     render_members(frame, areas.members, state);
     render_footer(frame, areas.footer, state);
 }
@@ -191,7 +222,12 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
     frame.render_widget(list, area);
 }
 
-fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
+fn render_messages(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+    image_preview: ImagePreview<'_>,
+) {
     let title_text = state
         .selected_channel_state()
         .map(|channel| match channel.kind.as_str() {
@@ -205,13 +241,13 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let [message_area, composer_area] = message_and_composer_areas(inner, state);
+    let message_areas = message_areas(inner, state, image_preview.is_visible());
 
     let messages = state.visible_messages();
     let selected = state.focused_message_selection();
     let max_author_width = 14usize;
     let padding = 4usize;
-    let content_width = (message_area.width as usize)
+    let content_width = (message_areas.list.width as usize)
         .saturating_sub(padding)
         .saturating_sub(max_author_width + 2);
 
@@ -236,8 +272,45 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &DashboardState) {
 
     let list = List::new(items).highlight_style(highlight_style());
 
-    frame.render_widget(list, message_area);
-    render_composer(frame, composer_area, state);
+    frame.render_widget(list, message_areas.list);
+    if let Some(preview_area) = message_areas.preview {
+        render_image_preview(frame, preview_area, image_preview);
+    }
+    render_composer(frame, message_areas.composer, state);
+}
+
+fn render_image_preview(frame: &mut Frame, area: Rect, image_preview: ImagePreview<'_>) {
+    let title = match &image_preview {
+        ImagePreview::Ready { filename, .. } => format!(" Image Preview: {filename} "),
+        _ => " Image Preview ".to_owned(),
+    };
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(DIM))
+        .title_style(Style::default().fg(Color::White).bold());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    match image_preview {
+        ImagePreview::None => {}
+        ImagePreview::Loading { filename } => frame.render_widget(
+            Paragraph::new(format!("loading {filename}..."))
+                .style(Style::default().fg(DIM))
+                .wrap(Wrap { trim: false }),
+            inner,
+        ),
+        ImagePreview::Failed { filename, message } => frame.render_widget(
+            Paragraph::new(format!("{filename}: {message}"))
+                .style(Style::default().fg(Color::Yellow))
+                .wrap(Wrap { trim: false }),
+            inner,
+        ),
+        ImagePreview::Ready { protocol, .. } => {
+            let widget = StatefulImage::new().resize(Resize::Fit(None));
+            frame.render_stateful_widget(widget, inner, protocol);
+        }
+    }
 }
 
 fn format_message_content(message: &MessageState, width: usize) -> String {
@@ -273,18 +346,11 @@ fn format_attachment(attachment: &AttachmentInfo) -> String {
         _ => String::new(),
     };
 
-    format!(
-        "[{kind}: {}]{} (press o to open)",
-        attachment.filename, dimensions
-    )
+    format!("[{kind}: {}]{}", attachment.filename, dimensions)
 }
 
 fn is_image_attachment(attachment: &AttachmentInfo) -> bool {
-    attachment
-        .content_type
-        .as_deref()
-        .is_some_and(|content_type| content_type.starts_with("image/"))
-        || attachment.width.is_some() && attachment.height.is_some()
+    attachment.is_image()
 }
 
 fn styled_list_item<'a>(item: ListItem<'a>, selected: bool) -> ListItem<'a> {
@@ -446,7 +512,7 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
             Style::default().fg(Color::Green).bold(),
         ),
         Span::styled(
-            "tab/1-4 focus | j/k move | o open attachment | enter/space tree | ←/→ close/open | i write | esc cancel | q quit",
+            "tab/1-4 focus | j/k move | enter/space tree | ←/→ close/open | i write | esc cancel | q quit",
             Style::default().fg(DIM),
         ),
     ];
@@ -504,18 +570,49 @@ fn panel_block_owned(title: String, focused: bool) -> Block<'static> {
         .title_style(Style::default().fg(Color::White).bold())
 }
 
-fn message_list_area(area: Rect, state: &DashboardState) -> Rect {
+fn message_list_area(area: Rect, state: &DashboardState, image_preview_visible: bool) -> Rect {
     let inner = Block::default().borders(Borders::ALL).inner(area);
-    let [messages, _composer] = message_and_composer_areas(inner, state);
-    messages
+    message_areas(inner, state, image_preview_visible).list
 }
 
-fn message_and_composer_areas(area: Rect, state: &DashboardState) -> [Rect; 2] {
-    Layout::vertical([
+fn message_areas(area: Rect, state: &DashboardState, image_preview_visible: bool) -> MessageAreas {
+    let composer_height = composer_height(area, state);
+    let preview_height = if image_preview_visible {
+        image_preview_height(area, composer_height)
+    } else {
+        0
+    };
+
+    if preview_height == 0 {
+        let [list, composer] =
+            Layout::vertical([Constraint::Min(0), Constraint::Length(composer_height)]).areas(area);
+        return MessageAreas {
+            list,
+            preview: None,
+            composer,
+        };
+    }
+
+    let [list, preview, composer] = Layout::vertical([
         Constraint::Min(0),
-        Constraint::Length(composer_height(area, state)),
+        Constraint::Length(preview_height),
+        Constraint::Length(composer_height),
     ])
-    .areas(area)
+    .areas(area);
+    MessageAreas {
+        list,
+        preview: Some(preview),
+        composer,
+    }
+}
+
+fn image_preview_height(area: Rect, composer_height: u16) -> u16 {
+    let available = area.height.saturating_sub(composer_height);
+    if available < 5 {
+        0
+    } else {
+        IMAGE_PREVIEW_HEIGHT.min(available.saturating_sub(1)).max(3)
+    }
 }
 
 fn composer_height(area: Rect, state: &DashboardState) -> u16 {
@@ -555,7 +652,7 @@ mod tests {
     fn sync_view_heights_reserves_message_input_inside_messages_pane() {
         let mut state = DashboardState::new();
 
-        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, false);
 
         assert_eq!(state.message_view_height(), 14);
     }
@@ -569,7 +666,7 @@ mod tests {
         state.push_composer_char('\n');
         state.push_composer_char('c');
 
-        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, false);
 
         assert_eq!(state.message_view_height(), 13);
     }
@@ -581,7 +678,7 @@ mod tests {
             state.push_composer_char('x');
         }
 
-        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, false);
 
         assert!(state.message_view_height() < 14);
     }
@@ -592,7 +689,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "[image: cat.png] 640x480 (press o to open)"
+            "[image: cat.png] 640x480"
         );
     }
 
@@ -602,8 +699,17 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "look [image: cat.png] 640x480 (press o to open)"
+            "look [image: cat.png] 640x480"
         );
+    }
+
+    #[test]
+    fn sync_view_heights_reserves_inline_image_preview_area() {
+        let mut state = DashboardState::new();
+
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, true);
+
+        assert_eq!(state.message_view_height(), 4);
     }
 
     fn message_with_attachment(

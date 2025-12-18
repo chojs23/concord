@@ -7,9 +7,11 @@ edition = "2024"
 base64 = "0.22.1"
 crossterm = { version = "0.29.0", features = ["event-stream"] }
 futures = "0.3.31"
+image = "0.25.9"
 qrcode = { version = "0.14.1", default-features = false }
 rand = "0.8.5"
 ratatui = "0.29.0"
+ratatui-image = { version = "8.0.2", default-features = false, features = ["crossterm", "image-defaults"] }
 reqwest = { version = "0.12.24", default-features = false, features = ["rustls-tls-webpki-roots-no-provider", "json", "charset", "http2"] }
 rsa = "0.9.9"
 rustls = { version = "0.23.35", default-features = false, features = ["ring", "std"] }

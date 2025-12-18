@@ -637,16 +637,32 @@ impl DashboardState {
         }
     }
 
+    #[allow(dead_code)]
     pub fn selected_message_attachment_url(&self) -> Option<&str> {
+        self.selected_message_attachment()
+            .and_then(|attachment| attachment.preferred_url())
+    }
+
+    pub fn selected_message_image_attachment(&self) -> Option<&crate::discord::AttachmentInfo> {
+        self.selected_message_attachment_matching(|attachment| attachment.is_image())
+    }
+
+    #[allow(dead_code)]
+    fn selected_message_attachment(&self) -> Option<&crate::discord::AttachmentInfo> {
+        self.selected_message_attachment_matching(|_| true)
+    }
+
+    fn selected_message_attachment_matching(
+        &self,
+        predicate: impl Fn(&crate::discord::AttachmentInfo) -> bool,
+    ) -> Option<&crate::discord::AttachmentInfo> {
         let channel_id = self.selected_channel_id()?;
         let messages = self.discord.messages_for_channel(channel_id);
         let message = messages.get(self.selected_message())?;
-        let attachment = message.attachments.first()?;
-        if attachment.url.is_empty() {
-            (!attachment.proxy_url.is_empty()).then_some(attachment.proxy_url.as_str())
-        } else {
-            Some(attachment.url.as_str())
-        }
+        message
+            .attachments
+            .iter()
+            .find(|attachment| predicate(attachment))
     }
 
     pub fn members_grouped(&self) -> Vec<MemberGroup<'_>> {
@@ -1314,8 +1330,7 @@ mod tests {
         ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildBranch, GuildPaneEntry,
     };
     use crate::discord::{
-        AppEvent, AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
-        PresenceStatus,
+        AppEvent, AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageInfo, PresenceStatus,
     };
 
     #[test]
