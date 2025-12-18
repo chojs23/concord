@@ -21,25 +21,15 @@ const DIM: Color = Color::DarkGray;
 const MIN_MESSAGE_INPUT_HEIGHT: u16 = 3;
 const IMAGE_PREVIEW_HEIGHT: u16 = 10;
 
-pub enum ImagePreview<'a> {
-    None,
-    Loading {
-        filename: &'a str,
-    },
-    Failed {
-        filename: &'a str,
-        message: &'a str,
-    },
-    Ready {
-        filename: &'a str,
-        protocol: &'a mut StatefulProtocol,
-    },
+pub struct ImagePreview<'a> {
+    pub message_index: usize,
+    pub state: ImagePreviewState<'a>,
 }
 
-impl ImagePreview<'_> {
-    fn is_visible(&self) -> bool {
-        !matches!(self, Self::None)
-    }
+pub enum ImagePreviewState<'a> {
+    Loading { filename: String },
+    Failed { filename: String, message: String },
+    Ready { protocol: &'a mut StatefulProtocol },
 }
 
 #[derive(Clone, Copy)]
@@ -53,26 +43,25 @@ struct DashboardAreas {
 
 struct MessageAreas {
     list: Rect,
-    preview: Option<Rect>,
     composer: Rect,
 }
 
-pub fn sync_view_heights(area: Rect, state: &mut DashboardState, image_preview_visible: bool) {
+pub fn sync_view_heights(area: Rect, state: &mut DashboardState, image_preview_count: usize) {
     let areas = dashboard_areas(area);
     state.set_guild_view_height(panel_content_height(areas.guilds, "Servers"));
     state.set_channel_view_height(panel_content_height(areas.channels, "Channels"));
     state.set_message_view_height(
-        message_list_area(areas.messages, state, image_preview_visible).height as usize,
+        message_list_area(areas.messages, state, image_preview_count).height as usize,
     );
     state.set_member_view_height(panel_content_height(areas.members, "Members"));
 }
 
-pub fn render(frame: &mut Frame, state: &DashboardState, image_preview: ImagePreview<'_>) {
+pub fn render(frame: &mut Frame, state: &DashboardState, image_previews: Vec<ImagePreview<'_>>) {
     let areas = dashboard_areas(frame.area());
 
     render_guilds(frame, areas.guilds, state);
     render_channels(frame, areas.channels, state);
-    render_messages(frame, areas.messages, state, image_preview);
+    render_messages(frame, areas.messages, state, image_previews);
     render_members(frame, areas.members, state);
     render_footer(frame, areas.footer, state);
 }
@@ -226,7 +215,7 @@ fn render_messages(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
-    image_preview: ImagePreview<'_>,
+    image_previews: Vec<ImagePreview<'_>>,
 ) {
     let title_text = state
         .selected_channel_state()
@@ -241,7 +230,9 @@ fn render_messages(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let message_areas = message_areas(inner, state, image_preview.is_visible());
+    let message_areas = message_areas(inner, state);
+    let preview_height =
+        inline_image_preview_height(message_areas.list, !image_previews.is_empty());
 
     let messages = state.visible_messages();
     let selected = state.focused_message_selection();
@@ -254,10 +245,10 @@ fn render_messages(
     let items: Vec<ListItem> = messages
         .iter()
         .enumerate()
-        .map(|(index, message)| {
+        .flat_map(|(index, message)| {
             let author = truncate_text(&message.author, max_author_width);
             let content = format_message_content(message, content_width.max(8));
-            styled_list_item(
+            let mut items = vec![styled_list_item(
                 ListItem::new(Line::from(vec![
                     Span::styled(
                         format!("{author:<width$} ", width = max_author_width),
@@ -266,51 +257,57 @@ fn render_messages(
                     Span::raw(content),
                 ])),
                 selected == Some(index),
-            )
+            )];
+            if image_previews
+                .iter()
+                .any(|preview| preview.message_index == index)
+                && preview_height > 0
+            {
+                items.push(image_preview_spacer(preview_height));
+            }
+            items
         })
         .collect();
 
     let list = List::new(items).highlight_style(highlight_style());
 
     frame.render_widget(list, message_areas.list);
-    if let Some(preview_area) = message_areas.preview {
-        render_image_preview(frame, preview_area, image_preview);
+    for (preview_offset, image_preview) in image_previews.into_iter().enumerate() {
+        let row =
+            inline_image_preview_row(image_preview.message_index, preview_height, preview_offset);
+        if let Some(preview_area) =
+            inline_image_preview_area(message_areas.list, row, preview_height)
+        {
+            render_image_preview(frame, preview_area, image_preview.state);
+        }
     }
     render_composer(frame, message_areas.composer, state);
 }
 
-fn render_image_preview(frame: &mut Frame, area: Rect, image_preview: ImagePreview<'_>) {
-    let title = match &image_preview {
-        ImagePreview::Ready { filename, .. } => format!(" Image Preview: {filename} "),
-        _ => " Image Preview ".to_owned(),
-    };
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(DIM))
-        .title_style(Style::default().fg(Color::White).bold());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
+fn render_image_preview(frame: &mut Frame, area: Rect, image_preview: ImagePreviewState<'_>) {
     match image_preview {
-        ImagePreview::None => {}
-        ImagePreview::Loading { filename } => frame.render_widget(
+        ImagePreviewState::Loading { filename } => frame.render_widget(
             Paragraph::new(format!("loading {filename}..."))
                 .style(Style::default().fg(DIM))
                 .wrap(Wrap { trim: false }),
-            inner,
+            area,
         ),
-        ImagePreview::Failed { filename, message } => frame.render_widget(
+        ImagePreviewState::Failed { filename, message } => frame.render_widget(
             Paragraph::new(format!("{filename}: {message}"))
                 .style(Style::default().fg(Color::Yellow))
                 .wrap(Wrap { trim: false }),
-            inner,
+            area,
         ),
-        ImagePreview::Ready { protocol, .. } => {
+        ImagePreviewState::Ready { protocol, .. } => {
             let widget = StatefulImage::new().resize(Resize::Fit(None));
-            frame.render_stateful_widget(widget, inner, protocol);
+            frame.render_stateful_widget(widget, area, protocol);
         }
     }
+}
+
+fn image_preview_spacer(height: u16) -> ListItem<'static> {
+    let lines = (0..height).map(|_| Line::from("")).collect::<Vec<_>>();
+    ListItem::new(lines)
 }
 
 fn format_message_content(message: &MessageState, width: usize) -> String {
@@ -570,49 +567,66 @@ fn panel_block_owned(title: String, focused: bool) -> Block<'static> {
         .title_style(Style::default().fg(Color::White).bold())
 }
 
-fn message_list_area(area: Rect, state: &DashboardState, image_preview_visible: bool) -> Rect {
+fn message_list_area(area: Rect, state: &DashboardState, image_preview_count: usize) -> Rect {
     let inner = Block::default().borders(Borders::ALL).inner(area);
-    message_areas(inner, state, image_preview_visible).list
+    let list = message_areas(inner, state).list;
+    let preview_height = inline_image_preview_height(list, image_preview_count > 0);
+    Rect {
+        height: list
+            .height
+            .saturating_sub(inline_image_preview_rows(
+                preview_height,
+                image_preview_count,
+            ))
+            .max(1),
+        ..list
+    }
 }
 
-fn message_areas(area: Rect, state: &DashboardState, image_preview_visible: bool) -> MessageAreas {
+fn message_areas(area: Rect, state: &DashboardState) -> MessageAreas {
     let composer_height = composer_height(area, state);
-    let preview_height = if image_preview_visible {
-        image_preview_height(area, composer_height)
-    } else {
+    let [list, composer] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(composer_height)]).areas(area);
+    MessageAreas { list, composer }
+}
+
+fn inline_image_preview_height(area: Rect, visible: bool) -> u16 {
+    if !visible || area.height < 5 {
         0
-    };
-
-    if preview_height == 0 {
-        let [list, composer] =
-            Layout::vertical([Constraint::Min(0), Constraint::Length(composer_height)]).areas(area);
-        return MessageAreas {
-            list,
-            preview: None,
-            composer,
-        };
-    }
-
-    let [list, preview, composer] = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(preview_height),
-        Constraint::Length(composer_height),
-    ])
-    .areas(area);
-    MessageAreas {
-        list,
-        preview: Some(preview),
-        composer,
+    } else {
+        IMAGE_PREVIEW_HEIGHT
+            .min(area.height.saturating_sub(1))
+            .max(3)
     }
 }
 
-fn image_preview_height(area: Rect, composer_height: u16) -> u16 {
-    let available = area.height.saturating_sub(composer_height);
-    if available < 5 {
-        0
-    } else {
-        IMAGE_PREVIEW_HEIGHT.min(available.saturating_sub(1)).max(3)
+fn inline_image_preview_rows(preview_height: u16, preview_count: usize) -> u16 {
+    let count = u16::try_from(preview_count).unwrap_or(u16::MAX);
+    preview_height.saturating_mul(count)
+}
+
+fn inline_image_preview_row(
+    message_index: usize,
+    preview_height: u16,
+    previous_previews: usize,
+) -> usize {
+    message_index.saturating_add(usize::from(preview_height).saturating_mul(previous_previews))
+}
+
+fn inline_image_preview_area(list: Rect, row: usize, preview_height: u16) -> Option<Rect> {
+    let row = u16::try_from(row).ok()?;
+    if preview_height == 0 || row.saturating_add(1) >= list.height {
+        return None;
     }
+
+    let author_offset = 15u16.min(list.width.saturating_sub(1));
+    let height = preview_height.min(list.height.saturating_sub(row).saturating_sub(1));
+    (height > 0).then_some(Rect {
+        x: list.x.saturating_add(author_offset),
+        y: list.y.saturating_add(row).saturating_add(1),
+        width: list.width.saturating_sub(author_offset),
+        height,
+    })
 }
 
 fn composer_height(area: Rect, state: &DashboardState) -> u16 {
@@ -642,7 +656,10 @@ mod tests {
     use ratatui::layout::Rect;
     use twilight_model::id::Id;
 
-    use super::{format_message_content, sync_view_heights};
+    use super::{
+        format_message_content, inline_image_preview_area, inline_image_preview_row,
+        sync_view_heights,
+    };
     use crate::{
         discord::{AttachmentInfo, MessageState},
         tui::state::DashboardState,
@@ -652,7 +669,7 @@ mod tests {
     fn sync_view_heights_reserves_message_input_inside_messages_pane() {
         let mut state = DashboardState::new();
 
-        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, false);
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, 0);
 
         assert_eq!(state.message_view_height(), 14);
     }
@@ -666,7 +683,7 @@ mod tests {
         state.push_composer_char('\n');
         state.push_composer_char('c');
 
-        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, false);
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, 0);
 
         assert_eq!(state.message_view_height(), 13);
     }
@@ -678,7 +695,7 @@ mod tests {
             state.push_composer_char('x');
         }
 
-        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, false);
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, 0);
 
         assert!(state.message_view_height() < 14);
     }
@@ -704,12 +721,43 @@ mod tests {
     }
 
     #[test]
-    fn sync_view_heights_reserves_inline_image_preview_area() {
+    fn sync_view_heights_reserves_inline_image_preview_rows() {
         let mut state = DashboardState::new();
 
-        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, true);
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, 1);
 
         assert_eq!(state.message_view_height(), 4);
+    }
+
+    #[test]
+    fn sync_view_heights_reserves_multiple_inline_image_preview_rows() {
+        let mut state = DashboardState::new();
+
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, 2);
+
+        assert_eq!(state.message_view_height(), 1);
+    }
+
+    #[test]
+    fn inline_image_preview_slot_follows_image_message_content() {
+        let area = Rect::new(10, 5, 80, 12);
+
+        assert_eq!(
+            inline_image_preview_area(area, 2, 4),
+            Some(Rect::new(25, 8, 65, 4))
+        );
+    }
+
+    #[test]
+    fn later_image_preview_slot_accounts_for_prior_preview_rows() {
+        let area = Rect::new(10, 5, 80, 18);
+        let row = inline_image_preview_row(2, 4, 1);
+
+        assert_eq!(row, 6);
+        assert_eq!(
+            inline_image_preview_area(area, row, 4),
+            Some(Rect::new(25, 12, 65, 4))
+        );
     }
 
     fn message_with_attachment(

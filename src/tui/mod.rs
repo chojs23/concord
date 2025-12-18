@@ -4,7 +4,11 @@ mod login;
 mod state;
 mod ui;
 
-use std::{collections::HashMap, io::stdout, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    io::stdout,
+    time::Duration,
+};
 
 use crossterm::{
     event::{
@@ -16,6 +20,7 @@ use crossterm::{
 use futures::StreamExt;
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
 use tokio::sync::{broadcast, mpsc};
+use twilight_model::id::marker::MessageMarker;
 use twilight_model::id::{Id, marker::ChannelMarker};
 
 use crate::{
@@ -25,7 +30,7 @@ use crate::{
 };
 
 use state::DashboardState;
-use ui::ImagePreview;
+use ui::{ImagePreview, ImagePreviewState};
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
@@ -86,10 +91,14 @@ async fn run_dashboard(
 
     while !state.should_quit() {
         terminal.draw(|frame| {
-            let image_preview_visible = image_previews.is_visible(&state);
-            ui::sync_view_heights(frame.area(), &mut state, image_preview_visible);
-            let image_preview = image_previews.render_state(&state);
-            ui::render(frame, &state, image_preview);
+            let image_preview_count = image_previews.visible_count(&state);
+            ui::sync_view_heights(frame.area(), &mut state, image_preview_count);
+            let adjusted_image_preview_count = image_previews.visible_count(&state);
+            if adjusted_image_preview_count != image_preview_count {
+                ui::sync_view_heights(frame.area(), &mut state, adjusted_image_preview_count);
+            }
+            let image_previews = image_previews.render_state(&state);
+            ui::render(frame, &state, image_previews);
         })?;
 
         tokio::select! {
@@ -143,13 +152,14 @@ async fn run_dashboard(
             });
         }
 
-        if let Some(command) = image_previews.next_request(&state)
-            && commands.send(command).await.is_err()
-        {
-            logging::error("tui", "command channel closed");
-            state.push_event(AppEvent::GatewayError {
-                message: "command channel closed".to_owned(),
-            });
+        for command in image_previews.next_requests(&state) {
+            if commands.send(command).await.is_err() {
+                logging::error("tui", "command channel closed");
+                state.push_event(AppEvent::GatewayError {
+                    message: "command channel closed".to_owned(),
+                });
+                break;
+            }
         }
     }
 
@@ -157,13 +167,21 @@ async fn run_dashboard(
 }
 
 struct ImagePreviewTarget {
+    message_index: usize,
+    message_id: Id<MessageMarker>,
     url: String,
     filename: String,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ImagePreviewKey {
+    message_id: Id<MessageMarker>,
+    url: String,
+}
+
 struct ImagePreviewCache {
     picker: Option<Picker>,
-    entries: HashMap<String, ImagePreviewEntry>,
+    entries: HashMap<ImagePreviewKey, ImagePreviewEntry>,
 }
 
 enum ImagePreviewEntry {
@@ -199,42 +217,78 @@ impl ImagePreviewCache {
         }
     }
 
-    fn is_visible(&self, state: &DashboardState) -> bool {
-        selected_image_preview_target(state).is_some()
+    fn visible_count(&self, state: &DashboardState) -> usize {
+        visible_image_preview_targets(state).len()
     }
 
-    fn render_state(&mut self, state: &DashboardState) -> ImagePreview<'_> {
-        let Some(target) = selected_image_preview_target(state) else {
-            return ImagePreview::None;
-        };
+    fn render_state(&mut self, state: &DashboardState) -> Vec<ImagePreview<'_>> {
+        let targets = visible_image_preview_targets(state);
+        let target_by_key = targets
+            .iter()
+            .map(|target| (target.key(), target.message_index))
+            .collect::<HashMap<_, _>>();
+        let mut rendered_keys = HashSet::new();
+        let mut previews = Vec::new();
 
-        match self.entries.get_mut(&target.url) {
-            Some(ImagePreviewEntry::Loading { filename }) => ImagePreview::Loading { filename },
-            Some(ImagePreviewEntry::Ready { filename, protocol }) => ImagePreview::Ready {
-                filename,
-                protocol: protocol.as_mut(),
-            },
-            Some(ImagePreviewEntry::Failed { filename, message }) => {
-                ImagePreview::Failed { filename, message }
+        for (key, entry) in &mut self.entries {
+            let Some(message_index) = target_by_key.get(key).copied() else {
+                continue;
+            };
+            rendered_keys.insert(key.clone());
+            let state = match entry {
+                ImagePreviewEntry::Loading { filename } => ImagePreviewState::Loading {
+                    filename: filename.clone(),
+                },
+                ImagePreviewEntry::Ready { protocol, .. } => ImagePreviewState::Ready {
+                    protocol: protocol.as_mut(),
+                },
+                ImagePreviewEntry::Failed { filename, message } => ImagePreviewState::Failed {
+                    filename: filename.clone(),
+                    message: message.clone(),
+                },
+            };
+            previews.push(ImagePreview {
+                message_index,
+                state,
+            });
+        }
+
+        for target in targets {
+            if !rendered_keys.contains(&target.key()) {
+                previews.push(ImagePreview {
+                    message_index: target.message_index,
+                    state: ImagePreviewState::Loading {
+                        filename: target.filename,
+                    },
+                });
             }
-            None => ImagePreview::Loading { filename: "image" },
         }
+
+        previews.sort_by_key(|preview| preview.message_index);
+        previews
     }
 
-    fn next_request(&mut self, state: &DashboardState) -> Option<AppCommand> {
-        let target = selected_image_preview_target(state)?;
-        if self.entries.contains_key(&target.url) {
-            return None;
-        }
+    fn next_requests(&mut self, state: &DashboardState) -> Vec<AppCommand> {
+        let mut commands = Vec::new();
+        let mut requested_urls = HashSet::new();
+        for target in visible_image_preview_targets(state) {
+            let key = target.key();
+            if self.entries.contains_key(&key) {
+                continue;
+            }
 
-        let url = target.url;
-        self.entries.insert(
-            url.clone(),
-            ImagePreviewEntry::Loading {
-                filename: target.filename,
-            },
-        );
-        Some(AppCommand::LoadAttachmentPreview { url })
+            let url = target.url.clone();
+            self.entries.insert(
+                key,
+                ImagePreviewEntry::Loading {
+                    filename: target.filename,
+                },
+            );
+            if requested_urls.insert(url.clone()) {
+                commands.push(AppCommand::LoadAttachmentPreview { url });
+            }
+        }
+        commands
     }
 
     fn record_event(&mut self, event: &AppEvent) {
@@ -248,57 +302,86 @@ impl ImagePreviewCache {
     }
 
     fn store_loaded(&mut self, url: &str, bytes: &[u8]) {
-        let filename = self
-            .entries
-            .get(url)
-            .map(ImagePreviewEntry::filename)
-            .unwrap_or("image")
-            .to_owned();
+        let keys = self.keys_for_url(url);
+        if keys.is_empty() {
+            return;
+        }
 
         let Some(picker) = &self.picker else {
-            self.entries.insert(
-                url.to_owned(),
-                ImagePreviewEntry::Failed {
-                    filename,
-                    message: "inline preview unavailable in this terminal".to_owned(),
-                },
-            );
-            return;
-        };
-
-        match image::load_from_memory(bytes) {
-            Ok(image) => {
+            for key in keys {
+                let filename = self.filename_for_key(&key);
                 self.entries.insert(
-                    url.to_owned(),
-                    ImagePreviewEntry::Ready {
+                    key,
+                    ImagePreviewEntry::Failed {
                         filename,
-                        protocol: Box::new(picker.new_resize_protocol(image)),
+                        message: "inline preview unavailable in this terminal".to_owned(),
                     },
                 );
             }
-            Err(error) => {
-                self.entries.insert(
-                    url.to_owned(),
-                    ImagePreviewEntry::Failed {
-                        filename,
-                        message: format!("decode failed: {error}"),
-                    },
-                );
+            return;
+        };
+
+        for key in keys {
+            let filename = self.filename_for_key(&key);
+            match image::load_from_memory(bytes) {
+                Ok(image) => {
+                    self.entries.insert(
+                        key,
+                        ImagePreviewEntry::Ready {
+                            filename,
+                            protocol: Box::new(picker.new_resize_protocol(image)),
+                        },
+                    );
+                }
+                Err(error) => {
+                    self.entries.insert(
+                        key,
+                        ImagePreviewEntry::Failed {
+                            filename,
+                            message: format!("decode failed: {error}"),
+                        },
+                    );
+                }
             }
         }
     }
 
     fn store_failed(&mut self, url: &str, message: String) {
-        let filename = self
-            .entries
-            .get(url)
+        for key in self.keys_for_url(url) {
+            let filename = self.filename_for_key(&key);
+            self.entries.insert(
+                key,
+                ImagePreviewEntry::Failed {
+                    filename,
+                    message: message.clone(),
+                },
+            );
+        }
+    }
+
+    fn keys_for_url(&self, url: &str) -> Vec<ImagePreviewKey> {
+        self.entries
+            .keys()
+            .filter(|key| key.url == url)
+            .cloned()
+            .collect()
+    }
+
+    fn filename_for_key(&self, key: &ImagePreviewKey) -> String {
+        self.entries
+            .get(key)
             .map(ImagePreviewEntry::filename)
             .unwrap_or("image")
-            .to_owned();
-        self.entries.insert(
-            url.to_owned(),
-            ImagePreviewEntry::Failed { filename, message },
-        );
+            .to_owned()
+    }
+}
+
+impl ImagePreviewTarget {
+    fn key(&self) -> ImagePreviewKey {
+        ImagePreviewKey {
+            message_id: self.message_id,
+            url: self.url.clone(),
+        }
     }
 }
 
@@ -312,13 +395,25 @@ impl ImagePreviewEntry {
     }
 }
 
-fn selected_image_preview_target(state: &DashboardState) -> Option<ImagePreviewTarget> {
-    let attachment = state.selected_message_image_attachment()?;
-    let url = attachment.preferred_url()?.to_owned();
-    Some(ImagePreviewTarget {
-        url,
-        filename: attachment.filename.clone(),
-    })
+fn visible_image_preview_targets(state: &DashboardState) -> Vec<ImagePreviewTarget> {
+    state
+        .visible_messages()
+        .into_iter()
+        .enumerate()
+        .filter_map(|(message_index, message)| {
+            let attachment = message
+                .attachments
+                .iter()
+                .find(|attachment| attachment.is_image())?;
+            let url = attachment.preferred_url()?.to_owned();
+            Some(ImagePreviewTarget {
+                message_index,
+                message_id: message.id,
+                url,
+                filename: attachment.filename.clone(),
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

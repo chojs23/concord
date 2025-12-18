@@ -643,10 +643,6 @@ impl DashboardState {
             .and_then(|attachment| attachment.preferred_url())
     }
 
-    pub fn selected_message_image_attachment(&self) -> Option<&crate::discord::AttachmentInfo> {
-        self.selected_message_attachment_matching(|attachment| attachment.is_image())
-    }
-
     #[allow(dead_code)]
     fn selected_message_attachment(&self) -> Option<&crate::discord::AttachmentInfo> {
         self.selected_message_attachment_matching(|_| true)
