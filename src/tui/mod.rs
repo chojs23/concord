@@ -7,13 +7,12 @@ mod ui;
 use std::{
     collections::{HashMap, HashSet},
     io::stdout,
-    time::Duration,
 };
 
 use crossterm::{
     event::{
-        Event as TerminalEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        Event as TerminalEvent, EventStream, KeyEventKind, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
 };
@@ -32,9 +31,7 @@ use crate::{
 use state::DashboardState;
 use ui::{ImagePreview, ImagePreviewState};
 
-const IMAGE_SCROLL_IDLE_DELAY: Duration = Duration::from_millis(150);
 const MAX_INLINE_IMAGE_PREVIEWS: usize = 3;
-const UI_IDLE_TICK: Duration = Duration::from_millis(50);
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
@@ -91,14 +88,10 @@ async fn run_dashboard(
     let mut terminal_events = EventStream::new();
     let mut history_requests = HashMap::new();
     let mut last_history_channel = None;
-    let mut tick = tokio::time::interval(UI_IDLE_TICK);
     let mut dirty = true;
-    let mut image_render_after = std::time::Instant::now();
-    let mut image_render_pending = false;
 
     while !state.should_quit() {
         if dirty {
-            let render_images = std::time::Instant::now() >= image_render_after;
             terminal.draw(|frame| {
                 let targets = visible_image_preview_targets(&state);
                 ui::sync_view_heights(frame.area(), &mut state, targets.len());
@@ -106,7 +99,7 @@ async fn run_dashboard(
                 if adjusted_targets.len() != targets.len() {
                     ui::sync_view_heights(frame.area(), &mut state, adjusted_targets.len());
                 }
-                let image_previews = image_previews.render_state(&adjusted_targets, render_images);
+                let image_previews = image_previews.render_state(&adjusted_targets);
                 ui::render(frame, &state, image_previews);
             })?;
             dirty = false;
@@ -116,10 +109,6 @@ async fn run_dashboard(
             maybe_event = terminal_events.next() => {
                 match maybe_event {
                     Some(Ok(TerminalEvent::Key(key))) => {
-                        if message_scroll_key(&state, key) {
-                            image_render_after = std::time::Instant::now() + IMAGE_SCROLL_IDLE_DELAY;
-                            image_render_pending = true;
-                        }
                         if let Some(command) = input::handle_key(&mut state, key)
                             && commands.send(command).await.is_err()
                         {
@@ -158,12 +147,6 @@ async fn run_dashboard(
                         state.quit();
                         dirty = true;
                     }
-                }
-            }
-            _ = tick.tick() => {
-                if image_render_pending && std::time::Instant::now() >= image_render_after {
-                    image_render_pending = false;
-                    dirty = true;
                 }
             }
         }
@@ -253,11 +236,7 @@ impl ImagePreviewCache {
         }
     }
 
-    fn render_state(
-        &mut self,
-        targets: &[ImagePreviewTarget],
-        render_images: bool,
-    ) -> Vec<ImagePreview<'_>> {
+    fn render_state(&mut self, targets: &[ImagePreviewTarget]) -> Vec<ImagePreview<'_>> {
         let target_by_key = targets
             .iter()
             .map(|target| (target.key(), target.message_index))
@@ -274,13 +253,8 @@ impl ImagePreviewCache {
                 ImagePreviewEntry::Loading { filename } => ImagePreviewState::Loading {
                     filename: filename.clone(),
                 },
-                ImagePreviewEntry::Ready { protocol, .. } if render_images => {
-                    ImagePreviewState::Ready {
-                        protocol: protocol.as_mut(),
-                    }
-                }
-                ImagePreviewEntry::Ready { filename, .. } => ImagePreviewState::Deferred {
-                    filename: filename.clone(),
+                ImagePreviewEntry::Ready { protocol, .. } => ImagePreviewState::Ready {
+                    protocol: protocol.as_mut(),
                 },
                 ImagePreviewEntry::Failed { filename, message } => ImagePreviewState::Failed {
                     filename: filename.clone(),
@@ -457,27 +431,6 @@ fn visible_image_preview_targets(state: &DashboardState) -> Vec<ImagePreviewTarg
         .collect()
 }
 
-fn message_scroll_key(state: &DashboardState, key: KeyEvent) -> bool {
-    if key.kind != KeyEventKind::Press || state.focus() != state::FocusPane::Messages {
-        return false;
-    }
-
-    match key.code {
-        KeyCode::Char('j')
-        | KeyCode::Down
-        | KeyCode::Char('k')
-        | KeyCode::Up
-        | KeyCode::PageDown
-        | KeyCode::PageUp
-        | KeyCode::Char('g')
-        | KeyCode::Home
-        | KeyCode::Char('G')
-        | KeyCode::End => true,
-        KeyCode::Char('d') | KeyCode::Char('u') => key.modifiers.contains(KeyModifiers::CONTROL),
-        _ => false,
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum HistoryRequestState {
     Requested,
@@ -532,31 +485,6 @@ fn next_history_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn message_scroll_key_only_matches_message_navigation() {
-        let mut state = DashboardState::new();
-        state.focus_pane(state::FocusPane::Messages);
-
-        assert!(message_scroll_key(
-            &state,
-            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
-        ));
-        assert!(message_scroll_key(
-            &state,
-            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)
-        ));
-        assert!(!message_scroll_key(
-            &state,
-            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE)
-        ));
-
-        state.focus_pane(state::FocusPane::Channels);
-        assert!(!message_scroll_key(
-            &state,
-            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
-        ));
-    }
 
     #[test]
     fn history_request_is_sent_once_per_channel() {

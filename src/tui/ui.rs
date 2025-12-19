@@ -28,7 +28,6 @@ pub struct ImagePreview<'a> {
 
 pub enum ImagePreviewState<'a> {
     Loading { filename: String },
-    Deferred { filename: String },
     Failed { filename: String, message: String },
     Ready { protocol: &'a mut StatefulProtocol },
 }
@@ -289,12 +288,6 @@ fn render_image_preview(frame: &mut Frame, area: Rect, image_preview: ImagePrevi
     match image_preview {
         ImagePreviewState::Loading { filename } => frame.render_widget(
             Paragraph::new(format!("loading {filename}..."))
-                .style(Style::default().fg(DIM))
-                .wrap(Wrap { trim: false }),
-            area,
-        ),
-        ImagePreviewState::Deferred { filename } => frame.render_widget(
-            Paragraph::new(format!("image preview paused: {filename}"))
                 .style(Style::default().fg(DIM))
                 .wrap(Wrap { trim: false }),
             area,
