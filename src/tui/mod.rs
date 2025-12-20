@@ -91,13 +91,9 @@ async fn run_dashboard(
     while !state.should_quit() {
         if dirty {
             terminal.draw(|frame| {
+                ui::sync_view_heights(frame.area(), &mut state);
                 let targets = visible_image_preview_targets(&state);
-                ui::sync_view_heights(frame.area(), &mut state, targets.len());
-                let adjusted_targets = visible_image_preview_targets(&state);
-                if adjusted_targets.len() != targets.len() {
-                    ui::sync_view_heights(frame.area(), &mut state, adjusted_targets.len());
-                }
-                let image_previews = image_previews.render_state(&adjusted_targets);
+                let image_previews = image_previews.render_state(&targets);
                 ui::render(frame, &state, image_previews);
             })?;
             dirty = false;

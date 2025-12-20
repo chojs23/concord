@@ -46,13 +46,11 @@ struct MessageAreas {
     composer: Rect,
 }
 
-pub fn sync_view_heights(area: Rect, state: &mut DashboardState, image_preview_count: usize) {
+pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
     let areas = dashboard_areas(area);
     state.set_guild_view_height(panel_content_height(areas.guilds, "Servers"));
     state.set_channel_view_height(panel_content_height(areas.channels, "Channels"));
-    state.set_message_view_height(
-        message_list_area(areas.messages, state, image_preview_count).height as usize,
-    );
+    state.set_message_view_height(message_list_area(areas.messages, state).height as usize);
     state.set_member_view_height(panel_content_height(areas.members, "Members"));
 }
 
@@ -567,20 +565,9 @@ fn panel_block_owned(title: String, focused: bool) -> Block<'static> {
         .title_style(Style::default().fg(Color::White).bold())
 }
 
-fn message_list_area(area: Rect, state: &DashboardState, image_preview_count: usize) -> Rect {
+fn message_list_area(area: Rect, state: &DashboardState) -> Rect {
     let inner = Block::default().borders(Borders::ALL).inner(area);
-    let list = message_areas(inner, state).list;
-    let preview_height = inline_image_preview_height(list, image_preview_count > 0);
-    Rect {
-        height: list
-            .height
-            .saturating_sub(inline_image_preview_rows(
-                preview_height,
-                image_preview_count,
-            ))
-            .max(1),
-        ..list
-    }
+    message_areas(inner, state).list
 }
 
 fn message_areas(area: Rect, state: &DashboardState) -> MessageAreas {
@@ -598,11 +585,6 @@ fn inline_image_preview_height(area: Rect, visible: bool) -> u16 {
             .min(area.height.saturating_sub(1))
             .max(3)
     }
-}
-
-fn inline_image_preview_rows(preview_height: u16, preview_count: usize) -> u16 {
-    let count = u16::try_from(preview_count).unwrap_or(u16::MAX);
-    preview_height.saturating_mul(count)
 }
 
 fn inline_image_preview_row(
@@ -669,7 +651,7 @@ mod tests {
     fn sync_view_heights_reserves_message_input_inside_messages_pane() {
         let mut state = DashboardState::new();
 
-        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, 0);
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
 
         assert_eq!(state.message_view_height(), 14);
     }
@@ -683,7 +665,7 @@ mod tests {
         state.push_composer_char('\n');
         state.push_composer_char('c');
 
-        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, 0);
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
 
         assert_eq!(state.message_view_height(), 13);
     }
@@ -695,7 +677,7 @@ mod tests {
             state.push_composer_char('x');
         }
 
-        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, 0);
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
 
         assert!(state.message_view_height() < 14);
     }
@@ -721,21 +703,12 @@ mod tests {
     }
 
     #[test]
-    fn sync_view_heights_reserves_inline_image_preview_rows() {
+    fn message_preview_rows_do_not_shrink_message_viewport() {
         let mut state = DashboardState::new();
 
-        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, 1);
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
 
-        assert_eq!(state.message_view_height(), 4);
-    }
-
-    #[test]
-    fn sync_view_heights_reserves_multiple_inline_image_preview_rows() {
-        let mut state = DashboardState::new();
-
-        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state, 2);
-
-        assert_eq!(state.message_view_height(), 1);
+        assert_eq!(state.message_view_height(), 14);
     }
 
     #[test]
