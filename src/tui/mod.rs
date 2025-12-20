@@ -31,8 +31,6 @@ use crate::{
 use state::DashboardState;
 use ui::{ImagePreview, ImagePreviewState};
 
-const MAX_INLINE_IMAGE_PREVIEWS: usize = 3;
-
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
 }
@@ -427,7 +425,6 @@ fn visible_image_preview_targets(state: &DashboardState) -> Vec<ImagePreviewTarg
                 filename: attachment.filename.clone(),
             })
         })
-        .take(MAX_INLINE_IMAGE_PREVIEWS)
         .collect()
 }
 
