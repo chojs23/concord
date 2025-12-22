@@ -102,6 +102,18 @@ async fn run_dashboard(
                 ui::render(frame, &state, image_previews);
             })?;
             dirty = false;
+
+            for command in image_previews.next_requests(&image_targets) {
+                if commands.send(command).await.is_err() {
+                    logging::error("tui", "command channel closed");
+                    state.push_event(AppEvent::GatewayError {
+                        message: "command channel closed".to_owned(),
+                    });
+                    dirty = true;
+                    break;
+                }
+                dirty = true;
+            }
         }
 
         tokio::select! {
@@ -164,22 +176,6 @@ async fn run_dashboard(
             state.push_event(AppEvent::GatewayError {
                 message: "command channel closed".to_owned(),
             });
-            dirty = true;
-        }
-
-        if dirty {
-            continue;
-        }
-
-        for command in image_previews.next_requests(&image_targets) {
-            if commands.send(command).await.is_err() {
-                logging::error("tui", "command channel closed");
-                state.push_event(AppEvent::GatewayError {
-                    message: "command channel closed".to_owned(),
-                });
-                dirty = true;
-                break;
-            }
             dirty = true;
         }
     }
@@ -597,6 +593,29 @@ mod tests {
         assert_eq!(target_message_ids(&targets), vec![Id::new(6)]);
     }
 
+    #[test]
+    fn image_preview_request_is_created_for_draw_target() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+        };
+        let target = image_preview_target(1);
+
+        assert!(cache.entries.is_empty());
+        assert_eq!(cache.render_state(std::slice::from_ref(&target)).len(), 1);
+        assert!(cache.entries.is_empty());
+
+        let requests = cache.next_requests(std::slice::from_ref(&target));
+
+        assert_eq!(
+            requests,
+            vec![AppCommand::LoadAttachmentPreview {
+                url: target.url.clone()
+            }]
+        );
+        assert_eq!(cache.entries.len(), 1);
+    }
+
     fn state_with_image_messages(count: u64, image_message_ids: &[u64]) -> DashboardState {
         let guild_id = Id::new(1);
         let channel_id = Id::new(2);
@@ -641,6 +660,15 @@ mod tests {
 
     fn target_message_ids(targets: &[ImagePreviewTarget]) -> Vec<Id<MessageMarker>> {
         targets.iter().map(|target| target.message_id).collect()
+    }
+
+    fn image_preview_target(id: u64) -> ImagePreviewTarget {
+        ImagePreviewTarget {
+            message_index: 0,
+            message_id: Id::new(id),
+            url: format!("https://cdn.discordapp.com/image-{id}.png"),
+            filename: format!("image-{id}.png"),
+        }
     }
 
     fn image_attachment(id: u64) -> AttachmentInfo {

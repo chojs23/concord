@@ -1,6 +1,7 @@
 use std::{io, process::Command, time::Instant};
 
 use tokio::sync::mpsc;
+use tokio::time::{Duration, timeout};
 
 use crate::{
     Config, DiscordClient, Result,
@@ -10,6 +11,7 @@ use crate::{
 
 const MESSAGE_HISTORY_LIMIT: u16 = 50;
 const MAX_ATTACHMENT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
+const ATTACHMENT_PREVIEW_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct App {
     config: Config,
@@ -100,17 +102,27 @@ fn start_command_loop(
                     }
                 }
                 AppCommand::LoadAttachmentPreview { url } => {
-                    match fetch_attachment_preview(&url).await {
-                        Ok(bytes) => {
-                            client.publish_event(AppEvent::AttachmentPreviewLoaded { url, bytes })
-                        }
-                        Err(message) => {
+                    match timeout(ATTACHMENT_PREVIEW_TIMEOUT, fetch_attachment_preview(&url)).await
+                    {
+                        Err(_) => {
+                            let message = "download image preview timed out".to_owned();
                             logging::error("preview", &message);
                             client.publish_event(AppEvent::AttachmentPreviewLoadFailed {
                                 url,
                                 message,
                             });
                         }
+                        Ok(bytes) => match bytes {
+                            Ok(bytes) => client
+                                .publish_event(AppEvent::AttachmentPreviewLoaded { url, bytes }),
+                            Err(message) => {
+                                logging::error("preview", &message);
+                                client.publish_event(AppEvent::AttachmentPreviewLoadFailed {
+                                    url,
+                                    message,
+                                });
+                            }
+                        },
                     }
                 }
                 AppCommand::SendMessage {
