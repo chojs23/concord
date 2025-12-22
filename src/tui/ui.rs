@@ -26,6 +26,12 @@ pub struct ImagePreview<'a> {
     pub state: ImagePreviewState<'a>,
 }
 
+#[derive(Clone, Copy)]
+pub struct ImagePreviewLayout {
+    pub list_height: usize,
+    pub preview_height: u16,
+}
+
 pub enum ImagePreviewState<'a> {
     Loading { filename: String },
     Failed { filename: String, message: String },
@@ -52,6 +58,15 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
     state.set_channel_view_height(panel_content_height(areas.channels, "Channels"));
     state.set_message_view_height(message_list_area(areas.messages, state).height as usize);
     state.set_member_view_height(panel_content_height(areas.members, "Members"));
+}
+
+pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewLayout {
+    let areas = dashboard_areas(area);
+    let list = message_list_area(areas.messages, state);
+    ImagePreviewLayout {
+        list_height: list.height as usize,
+        preview_height: inline_image_preview_height(list, true),
+    }
 }
 
 pub fn render(frame: &mut Frame, state: &DashboardState, image_previews: Vec<ImagePreview<'_>>) {

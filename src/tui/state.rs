@@ -629,6 +629,32 @@ impl DashboardState {
         self.clamp_message_viewport();
     }
 
+    pub fn clamp_message_viewport_for_image_previews(&mut self, preview_height: usize) {
+        self.clamp_message_viewport();
+        if preview_height == 0 || self.messages().is_empty() {
+            return;
+        }
+
+        let height = self.message_content_height();
+        let scrolloff = SCROLL_OFF.min(height.saturating_sub(1) / 2);
+        let lower_bound = height.saturating_sub(1).saturating_sub(scrolloff);
+
+        for _ in 0..self.messages().len() {
+            let selected_row = self.selected_message_rendered_row(preview_height);
+            if selected_row > lower_bound && self.message_scroll < self.selected_message {
+                self.message_scroll = self.message_scroll.saturating_add(1);
+                continue;
+            }
+
+            if selected_row < scrolloff && self.message_scroll > 0 {
+                self.message_scroll = self.message_scroll.saturating_sub(1);
+                continue;
+            }
+
+            break;
+        }
+    }
+
     pub fn focused_message_selection(&self) -> Option<usize> {
         if self.focus == FocusPane::Messages && !self.messages().is_empty() {
             Some(self.selected_message().saturating_sub(self.message_scroll))
@@ -1149,6 +1175,21 @@ impl DashboardState {
     fn message_content_height(&self) -> usize {
         pane_content_height(self.message_view_height)
     }
+
+    fn selected_message_rendered_row(&self, preview_height: usize) -> usize {
+        let messages = self.messages();
+        messages
+            .iter()
+            .skip(self.message_scroll)
+            .take(self.selected_message.saturating_sub(self.message_scroll))
+            .map(|message| {
+                1 + preview_height
+                    * usize::from(message.attachments.iter().any(|attachment| {
+                        attachment.is_image() && attachment.preferred_url().is_some()
+                    }))
+            })
+            .sum()
+    }
 }
 
 fn pane_content_height(height: usize) -> usize {
@@ -1574,6 +1615,20 @@ mod tests {
 
         assert!(state.message_auto_follow());
         assert_eq!(state.selected_message(), 4);
+    }
+
+    #[test]
+    fn image_preview_rows_advance_message_scroll_when_selection_would_be_clipped() {
+        let mut state = state_with_image_messages(6, &[1]);
+        focus_messages(&mut state);
+        state.set_message_view_height(6);
+
+        assert_eq!(state.message_scroll(), 0);
+
+        state.clamp_message_viewport_for_image_previews(3);
+
+        assert!(state.message_scroll() > 0);
+        assert!(state.selected_message_rendered_row(3) < state.message_view_height());
     }
 
     #[test]
@@ -2309,7 +2364,18 @@ mod tests {
         state_with_message_ids(1..=count)
     }
 
+    fn state_with_image_messages(count: u64, image_message_ids: &[u64]) -> DashboardState {
+        state_with_messages_matching(1..=count, |id| image_message_ids.contains(&id))
+    }
+
     fn state_with_message_ids(message_ids: impl IntoIterator<Item = u64>) -> DashboardState {
+        state_with_messages_matching(message_ids, |_| false)
+    }
+
+    fn state_with_messages_matching(
+        message_ids: impl IntoIterator<Item = u64>,
+        has_image: impl Fn(u64) -> bool,
+    ) -> DashboardState {
         let guild_id = Id::new(1);
         let channel_id: Id<ChannelMarker> = Id::new(2);
         let mut state = DashboardState::new();
@@ -2339,10 +2405,27 @@ mod tests {
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
                 content: Some(format!("msg {id}")),
-                attachments: Vec::new(),
+                attachments: has_image(id)
+                    .then(|| image_attachment(id))
+                    .into_iter()
+                    .collect(),
             });
         }
         state
+    }
+
+    fn image_attachment(id: u64) -> AttachmentInfo {
+        AttachmentInfo {
+            id: Id::new(id),
+            filename: format!("image-{id}.png"),
+            url: format!("https://cdn.discordapp.com/image-{id}.png"),
+            proxy_url: format!("https://media.discordapp.net/image-{id}.png"),
+            content_type: Some("image/png".to_owned()),
+            size: 2048,
+            width: Some(640),
+            height: Some(480),
+            description: None,
+        }
     }
 
     fn state_with_proxy_only_attachment_message() -> DashboardState {

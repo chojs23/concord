@@ -29,7 +29,7 @@ use crate::{
 };
 
 use state::DashboardState;
-use ui::{ImagePreview, ImagePreviewState};
+use ui::{ImagePreview, ImagePreviewLayout, ImagePreviewState};
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
@@ -86,14 +86,19 @@ async fn run_dashboard(
     let mut terminal_events = EventStream::new();
     let mut history_requests = HashMap::new();
     let mut last_history_channel = None;
+    let mut image_targets = Vec::new();
     let mut dirty = true;
 
     while !state.should_quit() {
         if dirty {
             terminal.draw(|frame| {
                 ui::sync_view_heights(frame.area(), &mut state);
-                let targets = visible_image_preview_targets(&state);
-                let image_previews = image_previews.render_state(&targets);
+                let preview_layout = ui::image_preview_layout(frame.area(), &state);
+                state.clamp_message_viewport_for_image_previews(usize::from(
+                    preview_layout.preview_height,
+                ));
+                image_targets = visible_image_preview_targets(&state, preview_layout);
+                let image_previews = image_previews.render_state(&image_targets);
                 ui::render(frame, &state, image_previews);
             })?;
             dirty = false;
@@ -162,8 +167,11 @@ async fn run_dashboard(
             dirty = true;
         }
 
-        let targets = visible_image_preview_targets(&state);
-        for command in image_previews.next_requests(&targets) {
+        if dirty {
+            continue;
+        }
+
+        for command in image_previews.next_requests(&image_targets) {
             if commands.send(command).await.is_err() {
                 logging::error("tui", "command channel closed");
                 state.push_event(AppEvent::GatewayError {
@@ -403,25 +411,44 @@ impl ImagePreviewEntry {
     }
 }
 
-fn visible_image_preview_targets(state: &DashboardState) -> Vec<ImagePreviewTarget> {
-    state
-        .visible_messages()
-        .into_iter()
-        .enumerate()
-        .filter_map(|(message_index, message)| {
-            let attachment = message
-                .attachments
-                .iter()
-                .find(|attachment| attachment.is_image())?;
-            let url = attachment.preferred_url()?.to_owned();
-            Some(ImagePreviewTarget {
+fn visible_image_preview_targets(
+    state: &DashboardState,
+    layout: ImagePreviewLayout,
+) -> Vec<ImagePreviewTarget> {
+    let mut rendered_rows = 0usize;
+    let mut targets = Vec::new();
+    let preview_height = usize::from(layout.preview_height);
+
+    for (message_index, message) in state.visible_messages().into_iter().enumerate() {
+        if rendered_rows >= layout.list_height {
+            break;
+        }
+
+        rendered_rows = rendered_rows.saturating_add(1);
+
+        let Some(attachment) = message
+            .attachments
+            .iter()
+            .find(|attachment| attachment.is_image())
+        else {
+            continue;
+        };
+        if preview_height == 0 || rendered_rows >= layout.list_height {
+            continue;
+        }
+
+        if let Some(url) = attachment.preferred_url() {
+            targets.push(ImagePreviewTarget {
                 message_index,
                 message_id: message.id,
-                url,
+                url: url.to_owned(),
                 filename: attachment.filename.clone(),
-            })
-        })
-        .collect()
+            });
+            rendered_rows = rendered_rows.saturating_add(preview_height);
+        }
+    }
+
+    targets
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -477,6 +504,8 @@ fn next_history_request(
 
 #[cfg(test)]
 mod tests {
+    use crate::discord::{AttachmentInfo, ChannelInfo};
+
     use super::*;
 
     #[test]
@@ -534,5 +563,97 @@ mod tests {
             next_history_request(Some(first), &mut requests, &mut last_channel),
             Some(first)
         );
+    }
+
+    #[test]
+    fn image_preview_targets_stop_at_rendered_row_budget() {
+        let mut state = state_with_image_messages(6, &[1, 3, 6]);
+        state.set_message_view_height(6);
+
+        let targets = visible_image_preview_targets(
+            &state,
+            ImagePreviewLayout {
+                list_height: 6,
+                preview_height: 3,
+            },
+        );
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
+    }
+
+    #[test]
+    fn image_preview_targets_follow_the_scrolled_message_window() {
+        let mut state = state_with_image_messages(8, &[1, 6]);
+        state.set_message_view_height(6);
+
+        let targets = visible_image_preview_targets(
+            &state,
+            ImagePreviewLayout {
+                list_height: 6,
+                preview_height: 3,
+            },
+        );
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(6)]);
+    }
+
+    fn state_with_image_messages(count: u64, image_message_ids: &[u64]) -> DashboardState {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+
+        for id in 1..=count {
+            state.push_event(AppEvent::MessageCreate {
+                guild_id: Some(guild_id),
+                channel_id,
+                message_id: Id::new(id),
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                content: Some(format!("msg {id}")),
+                attachments: image_message_ids
+                    .contains(&id)
+                    .then(|| image_attachment(id))
+                    .into_iter()
+                    .collect(),
+            });
+        }
+
+        state
+    }
+
+    fn target_message_ids(targets: &[ImagePreviewTarget]) -> Vec<Id<MessageMarker>> {
+        targets.iter().map(|target| target.message_id).collect()
+    }
+
+    fn image_attachment(id: u64) -> AttachmentInfo {
+        AttachmentInfo {
+            id: Id::new(id),
+            filename: format!("image-{id}.png"),
+            url: format!("https://cdn.discordapp.com/image-{id}.png"),
+            proxy_url: format!("https://media.discordapp.net/image-{id}.png"),
+            content_type: Some("image/png".to_owned()),
+            size: 2048,
+            width: Some(640),
+            height: Some(480),
+            description: None,
+        }
     }
 }
