@@ -20,6 +20,7 @@ const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
 const MIN_MESSAGE_INPUT_HEIGHT: u16 = 3;
 const IMAGE_PREVIEW_HEIGHT: u16 = 10;
+const IMAGE_PREVIEW_WIDTH: u16 = 72;
 
 pub struct ImagePreview<'a> {
     pub message_index: usize,
@@ -610,7 +611,9 @@ fn inline_image_preview_height(area: Rect, visible: bool) -> u16 {
 }
 
 fn inline_image_preview_width(area: Rect) -> u16 {
-    area.width.saturating_sub(inline_image_author_offset(area))
+    area.width
+        .saturating_sub(inline_image_author_offset(area))
+        .min(IMAGE_PREVIEW_WIDTH)
 }
 
 fn inline_image_author_offset(area: Rect) -> u16 {

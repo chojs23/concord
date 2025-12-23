@@ -475,7 +475,7 @@ fn image_preview_height_for_dimensions(
     }
 
     let rows = (u128::from(preview_width) * u128::from(image_height))
-        .div_ceil(u128::from(image_width) * 2);
+        .div_ceil(u128::from(image_width) * 3);
     let rows = u16::try_from(rows).unwrap_or(u16::MAX);
 
     rows.clamp(3.min(max_preview_height), max_preview_height)
@@ -658,8 +658,16 @@ mod tests {
         let square = image_preview_height_for_dimensions(60, 10, Some(800), Some(800));
 
         assert!(wide < square);
-        assert_eq!(wide, 8);
+        assert_eq!(wide, 5);
         assert_eq!(square, 10);
+    }
+
+    #[test]
+    fn screenshot_like_wide_image_uses_compact_preview_height() {
+        assert_eq!(
+            image_preview_height_for_dimensions(72, 10, Some(481), Some(160)),
+            8
+        );
     }
 
     #[test]
