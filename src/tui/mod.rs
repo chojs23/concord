@@ -94,9 +94,10 @@ async fn run_dashboard(
             terminal.draw(|frame| {
                 ui::sync_view_heights(frame.area(), &mut state);
                 let preview_layout = ui::image_preview_layout(frame.area(), &state);
-                state.clamp_message_viewport_for_image_previews(usize::from(
-                    preview_layout.preview_height,
-                ));
+                state.clamp_message_viewport_for_image_previews(
+                    preview_layout.preview_width,
+                    preview_layout.max_preview_height,
+                );
                 image_targets = visible_image_preview_targets(&state, preview_layout);
                 let image_previews = image_previews.render_state(&image_targets);
                 ui::render(frame, &state, image_previews);
@@ -185,6 +186,7 @@ async fn run_dashboard(
 
 struct ImagePreviewTarget {
     message_index: usize,
+    preview_height: u16,
     message_id: Id<MessageMarker>,
     url: String,
     filename: String,
@@ -237,13 +239,13 @@ impl ImagePreviewCache {
     fn render_state(&mut self, targets: &[ImagePreviewTarget]) -> Vec<ImagePreview<'_>> {
         let target_by_key = targets
             .iter()
-            .map(|target| (target.key(), target.message_index))
+            .map(|target| (target.key(), (target.message_index, target.preview_height)))
             .collect::<HashMap<_, _>>();
         let mut rendered_keys = HashSet::new();
         let mut previews = Vec::new();
 
         for (key, entry) in &mut self.entries {
-            let Some(message_index) = target_by_key.get(key).copied() else {
+            let Some((message_index, preview_height)) = target_by_key.get(key).copied() else {
                 continue;
             };
             rendered_keys.insert(key.clone());
@@ -261,6 +263,7 @@ impl ImagePreviewCache {
             };
             previews.push(ImagePreview {
                 message_index,
+                preview_height,
                 state,
             });
         }
@@ -269,6 +272,7 @@ impl ImagePreviewCache {
             if !rendered_keys.contains(&target.key()) {
                 previews.push(ImagePreview {
                     message_index: target.message_index,
+                    preview_height: target.preview_height,
                     state: ImagePreviewState::Loading {
                         filename: target.filename.clone(),
                     },
@@ -413,7 +417,6 @@ fn visible_image_preview_targets(
 ) -> Vec<ImagePreviewTarget> {
     let mut rendered_rows = 0usize;
     let mut targets = Vec::new();
-    let preview_height = usize::from(layout.preview_height);
 
     for (message_index, message) in state.visible_messages().into_iter().enumerate() {
         if rendered_rows >= layout.list_height {
@@ -422,29 +425,60 @@ fn visible_image_preview_targets(
 
         rendered_rows = rendered_rows.saturating_add(1);
 
-        let Some(attachment) = message
-            .attachments
-            .iter()
-            .find(|attachment| attachment.is_image())
-        else {
+        let Some((attachment, url)) = message.attachments.iter().find_map(|attachment| {
+            attachment
+                .is_image()
+                .then(|| attachment.preferred_url().map(|url| (attachment, url)))
+                .flatten()
+        }) else {
             continue;
         };
+
+        let preview_height = image_preview_height_for_dimensions(
+            layout.preview_width,
+            layout.max_preview_height,
+            attachment.width,
+            attachment.height,
+        );
         if preview_height == 0 || rendered_rows >= layout.list_height {
             continue;
         }
 
-        if let Some(url) = attachment.preferred_url() {
-            targets.push(ImagePreviewTarget {
-                message_index,
-                message_id: message.id,
-                url: url.to_owned(),
-                filename: attachment.filename.clone(),
-            });
-            rendered_rows = rendered_rows.saturating_add(preview_height);
-        }
+        targets.push(ImagePreviewTarget {
+            message_index,
+            preview_height,
+            message_id: message.id,
+            url: url.to_owned(),
+            filename: attachment.filename.clone(),
+        });
+        rendered_rows = rendered_rows.saturating_add(preview_height as usize);
     }
 
     targets
+}
+
+fn image_preview_height_for_dimensions(
+    preview_width: u16,
+    max_preview_height: u16,
+    image_width: Option<u64>,
+    image_height: Option<u64>,
+) -> u16 {
+    if preview_width == 0 || max_preview_height == 0 {
+        return 0;
+    }
+
+    let (Some(image_width), Some(image_height)) = (image_width, image_height) else {
+        return max_preview_height;
+    };
+    if image_width == 0 || image_height == 0 {
+        return max_preview_height;
+    }
+
+    let rows = (u128::from(preview_width) * u128::from(image_height))
+        .div_ceil(u128::from(image_width) * 2);
+    let rows = u16::try_from(rows).unwrap_or(u16::MAX);
+
+    rows.clamp(3.min(max_preview_height), max_preview_height)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -570,7 +604,8 @@ mod tests {
             &state,
             ImagePreviewLayout {
                 list_height: 6,
-                preview_height: 3,
+                preview_width: 16,
+                max_preview_height: 3,
             },
         );
 
@@ -586,7 +621,8 @@ mod tests {
             &state,
             ImagePreviewLayout {
                 list_height: 6,
-                preview_height: 3,
+                preview_width: 16,
+                max_preview_height: 3,
             },
         );
 
@@ -614,6 +650,21 @@ mod tests {
             }]
         );
         assert_eq!(cache.entries.len(), 1);
+    }
+
+    #[test]
+    fn wide_image_preview_height_is_shorter_than_square_image() {
+        let wide = image_preview_height_for_dimensions(60, 10, Some(2400), Some(600));
+        let square = image_preview_height_for_dimensions(60, 10, Some(800), Some(800));
+
+        assert!(wide < square);
+        assert_eq!(wide, 8);
+        assert_eq!(square, 10);
+    }
+
+    #[test]
+    fn image_preview_height_falls_back_to_max_without_dimensions() {
+        assert_eq!(image_preview_height_for_dimensions(60, 10, None, None), 10);
     }
 
     fn state_with_image_messages(count: u64, image_message_ids: &[u64]) -> DashboardState {
@@ -665,6 +716,7 @@ mod tests {
     fn image_preview_target(id: u64) -> ImagePreviewTarget {
         ImagePreviewTarget {
             message_index: 0,
+            preview_height: 3,
             message_id: Id::new(id),
             url: format!("https://cdn.discordapp.com/image-{id}.png"),
             filename: format!("image-{id}.png"),

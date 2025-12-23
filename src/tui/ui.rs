@@ -23,13 +23,15 @@ const IMAGE_PREVIEW_HEIGHT: u16 = 10;
 
 pub struct ImagePreview<'a> {
     pub message_index: usize,
+    pub preview_height: u16,
     pub state: ImagePreviewState<'a>,
 }
 
 #[derive(Clone, Copy)]
 pub struct ImagePreviewLayout {
     pub list_height: usize,
-    pub preview_height: u16,
+    pub preview_width: u16,
+    pub max_preview_height: u16,
 }
 
 pub enum ImagePreviewState<'a> {
@@ -65,7 +67,8 @@ pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewL
     let list = message_list_area(areas.messages, state);
     ImagePreviewLayout {
         list_height: list.height as usize,
-        preview_height: inline_image_preview_height(list, true),
+        preview_width: inline_image_preview_width(list),
+        max_preview_height: inline_image_preview_height(list, true),
     }
 }
 
@@ -244,9 +247,6 @@ fn render_messages(
     frame.render_widget(block, area);
 
     let message_areas = message_areas(inner, state);
-    let preview_height =
-        inline_image_preview_height(message_areas.list, !image_previews.is_empty());
-
     let messages = state.visible_messages();
     let selected = state.focused_message_selection();
     let max_author_width = 14usize;
@@ -273,9 +273,14 @@ fn render_messages(
             )];
             if image_previews
                 .iter()
-                .any(|preview| preview.message_index == index)
-                && preview_height > 0
+                .find(|preview| preview.message_index == index)
+                .is_some_and(|preview| preview.preview_height > 0)
             {
+                let preview_height = image_previews
+                    .iter()
+                    .find(|preview| preview.message_index == index)
+                    .map(|preview| preview.preview_height)
+                    .unwrap_or(0);
                 items.push(image_preview_spacer(preview_height));
             }
             items
@@ -285,14 +290,16 @@ fn render_messages(
     let list = List::new(items).highlight_style(highlight_style());
 
     frame.render_widget(list, message_areas.list);
-    for (preview_offset, image_preview) in image_previews.into_iter().enumerate() {
-        let row =
-            inline_image_preview_row(image_preview.message_index, preview_height, preview_offset);
+    let mut previous_preview_rows = 0usize;
+    for image_preview in image_previews.into_iter() {
+        let row = inline_image_preview_row(image_preview.message_index, previous_preview_rows);
         if let Some(preview_area) =
-            inline_image_preview_area(message_areas.list, row, preview_height)
+            inline_image_preview_area(message_areas.list, row, image_preview.preview_height)
         {
             render_image_preview(frame, preview_area, image_preview.state);
         }
+        previous_preview_rows =
+            previous_preview_rows.saturating_add(image_preview.preview_height as usize);
     }
     render_composer(frame, message_areas.composer, state);
 }
@@ -602,12 +609,16 @@ fn inline_image_preview_height(area: Rect, visible: bool) -> u16 {
     }
 }
 
-fn inline_image_preview_row(
-    message_index: usize,
-    preview_height: u16,
-    previous_previews: usize,
-) -> usize {
-    message_index.saturating_add(usize::from(preview_height).saturating_mul(previous_previews))
+fn inline_image_preview_width(area: Rect) -> u16 {
+    area.width.saturating_sub(inline_image_author_offset(area))
+}
+
+fn inline_image_author_offset(area: Rect) -> u16 {
+    15u16.min(area.width.saturating_sub(1))
+}
+
+fn inline_image_preview_row(message_index: usize, previous_preview_rows: usize) -> usize {
+    message_index.saturating_add(previous_preview_rows)
 }
 
 fn inline_image_preview_area(list: Rect, row: usize, preview_height: u16) -> Option<Rect> {
@@ -616,7 +627,7 @@ fn inline_image_preview_area(list: Rect, row: usize, preview_height: u16) -> Opt
         return None;
     }
 
-    let author_offset = 15u16.min(list.width.saturating_sub(1));
+    let author_offset = inline_image_author_offset(list);
     let height = preview_height.min(list.height.saturating_sub(row).saturating_sub(1));
     (height > 0).then_some(Rect {
         x: list.x.saturating_add(author_offset),
@@ -739,7 +750,7 @@ mod tests {
     #[test]
     fn later_image_preview_slot_accounts_for_prior_preview_rows() {
         let area = Rect::new(10, 5, 80, 18);
-        let row = inline_image_preview_row(2, 4, 1);
+        let row = inline_image_preview_row(2, 4);
 
         assert_eq!(row, 6);
         assert_eq!(

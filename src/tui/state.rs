@@ -629,9 +629,13 @@ impl DashboardState {
         self.clamp_message_viewport();
     }
 
-    pub fn clamp_message_viewport_for_image_previews(&mut self, preview_height: usize) {
+    pub fn clamp_message_viewport_for_image_previews(
+        &mut self,
+        preview_width: u16,
+        max_preview_height: u16,
+    ) {
         self.clamp_message_viewport();
-        if preview_height == 0 || self.messages().is_empty() {
+        if preview_width == 0 || max_preview_height == 0 || self.messages().is_empty() {
             return;
         }
 
@@ -640,7 +644,8 @@ impl DashboardState {
         let lower_bound = height.saturating_sub(1).saturating_sub(scrolloff);
 
         for _ in 0..self.messages().len() {
-            let selected_row = self.selected_message_rendered_row(preview_height);
+            let selected_row =
+                self.selected_message_rendered_row(preview_width, max_preview_height);
             if selected_row > lower_bound && self.message_scroll < self.selected_message {
                 self.message_scroll = self.message_scroll.saturating_add(1);
                 continue;
@@ -1176,17 +1181,29 @@ impl DashboardState {
         pane_content_height(self.message_view_height)
     }
 
-    fn selected_message_rendered_row(&self, preview_height: usize) -> usize {
+    fn selected_message_rendered_row(&self, preview_width: u16, max_preview_height: u16) -> usize {
         let messages = self.messages();
         messages
             .iter()
             .skip(self.message_scroll)
             .take(self.selected_message.saturating_sub(self.message_scroll))
             .map(|message| {
-                1 + preview_height
-                    * usize::from(message.attachments.iter().any(|attachment| {
+                let preview_height = message
+                    .attachments
+                    .iter()
+                    .find(|attachment| {
                         attachment.is_image() && attachment.preferred_url().is_some()
-                    }))
+                    })
+                    .map(|attachment| {
+                        super::image_preview_height_for_dimensions(
+                            preview_width,
+                            max_preview_height,
+                            attachment.width,
+                            attachment.height,
+                        )
+                    })
+                    .unwrap_or(0);
+                1 + usize::from(preview_height)
             })
             .sum()
     }
@@ -1625,10 +1642,10 @@ mod tests {
 
         assert_eq!(state.message_scroll(), 0);
 
-        state.clamp_message_viewport_for_image_previews(3);
+        state.clamp_message_viewport_for_image_previews(16, 3);
 
         assert!(state.message_scroll() > 0);
-        assert!(state.selected_message_rendered_row(3) < state.message_view_height());
+        assert!(state.selected_message_rendered_row(16, 3) < state.message_view_height());
     }
 
     #[test]
