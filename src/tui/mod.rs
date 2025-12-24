@@ -442,7 +442,10 @@ fn visible_image_preview_targets(
             attachment.width,
             attachment.height,
         );
-        if preview_height == 0 || rendered_rows >= layout.list_height {
+        if preview_height == 0
+            || rendered_rows >= layout.list_height
+            || rendered_rows.saturating_add(preview_height as usize) > layout.list_height
+        {
             continue;
         }
 
@@ -618,6 +621,23 @@ mod tests {
     }
 
     #[test]
+    fn image_preview_targets_skip_preview_that_would_be_clipped() {
+        let mut state = state_with_image_messages(2, &[1, 2]);
+        state.set_message_view_height(5);
+
+        let targets = visible_image_preview_targets(
+            &state,
+            ImagePreviewLayout {
+                list_height: 5,
+                preview_width: 16,
+                max_preview_height: 3,
+            },
+        );
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
+    }
+
+    #[test]
     fn image_preview_targets_follow_the_scrolled_message_window() {
         let mut state = state_with_image_messages(8, &[1, 6]);
         state.set_message_view_height(6);
@@ -625,7 +645,7 @@ mod tests {
         let targets = visible_image_preview_targets(
             &state,
             ImagePreviewLayout {
-                list_height: 6,
+                list_height: 7,
                 preview_width: 16,
                 max_preview_height: 3,
             },
