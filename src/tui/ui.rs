@@ -259,32 +259,12 @@ fn render_messages(
     let items: Vec<ListItem> = messages
         .iter()
         .enumerate()
-        .flat_map(|(index, message)| {
+        .map(|(index, message)| {
             let author = truncate_text(&message.author, max_author_width);
             let content = format_message_content(message, content_width.max(8));
-            let mut items = vec![styled_list_item(
-                ListItem::new(Line::from(vec![
-                    Span::styled(
-                        format!("{author:<width$} ", width = max_author_width),
-                        Style::default().fg(Color::Green).bold(),
-                    ),
-                    Span::raw(content),
-                ])),
-                selected == Some(index),
-            )];
-            if image_previews
-                .iter()
-                .find(|preview| preview.message_index == index)
-                .is_some_and(|preview| preview.preview_height > 0)
-            {
-                let preview_height = image_previews
-                    .iter()
-                    .find(|preview| preview.message_index == index)
-                    .map(|preview| preview.preview_height)
-                    .unwrap_or(0);
-                items.push(image_preview_spacer(preview_height));
-            }
-            items
+            let preview_height = preview_height_for_message(&image_previews, index);
+            let lines = message_item_lines(author, content, max_author_width, preview_height);
+            styled_list_item(ListItem::new(lines), selected == Some(index))
         })
         .collect();
 
@@ -326,9 +306,33 @@ fn render_image_preview(frame: &mut Frame, area: Rect, image_preview: ImagePrevi
     }
 }
 
-fn image_preview_spacer(height: u16) -> ListItem<'static> {
-    let lines = (0..height).map(|_| Line::from("")).collect::<Vec<_>>();
-    ListItem::new(lines)
+fn preview_height_for_message(image_previews: &[ImagePreview<'_>], message_index: usize) -> u16 {
+    image_previews
+        .iter()
+        .find(|preview| preview.message_index == message_index)
+        .map(|preview| preview.preview_height)
+        .unwrap_or(0)
+}
+
+fn message_item_lines(
+    author: String,
+    content: String,
+    max_author_width: usize,
+    preview_height: u16,
+) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            format!("{author:<width$} ", width = max_author_width),
+            Style::default().fg(Color::Green).bold(),
+        ),
+        Span::raw(content),
+    ])];
+    lines.extend(image_preview_spacer_lines(preview_height));
+    lines
+}
+
+fn image_preview_spacer_lines(height: u16) -> Vec<Line<'static>> {
+    (0..height).map(|_| Line::from("")).collect()
 }
 
 fn format_message_content(message: &MessageState, width: usize) -> String {
@@ -669,7 +673,7 @@ mod tests {
 
     use super::{
         format_message_content, inline_image_preview_area, inline_image_preview_row,
-        sync_view_heights,
+        message_item_lines, sync_view_heights,
     };
     use crate::{
         discord::{AttachmentInfo, MessageState},
@@ -729,6 +733,20 @@ mod tests {
             format_message_content(&message, 200),
             "look [image: cat.png] 640x480"
         );
+    }
+
+    #[test]
+    fn image_preview_rows_are_part_of_the_message_item() {
+        let lines = message_item_lines("neo".to_owned(), "look".to_owned(), 14, 3);
+
+        assert_eq!(lines.len(), 4);
+    }
+
+    #[test]
+    fn text_only_message_item_has_one_row() {
+        let lines = message_item_lines("neo".to_owned(), "look".to_owned(), 14, 0);
+
+        assert_eq!(lines.len(), 1);
     }
 
     #[test]
