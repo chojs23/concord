@@ -31,6 +31,8 @@ use crate::{
 use state::DashboardState;
 use ui::{ImagePreview, ImagePreviewLayout, ImagePreviewState};
 
+const IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
+
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
 }
@@ -474,6 +476,9 @@ fn image_preview_height_for_dimensions(
         return max_preview_height;
     }
 
+    let source_width_columns = image_width.div_ceil(IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN);
+    let preview_width = preview_width.min(u16::try_from(source_width_columns).unwrap_or(u16::MAX));
+
     let rows = (u128::from(preview_width) * u128::from(image_height))
         .div_ceil(u128::from(image_width) * 3);
     let rows = u16::try_from(rows).unwrap_or(u16::MAX);
@@ -666,13 +671,53 @@ mod tests {
     fn screenshot_like_wide_image_uses_compact_preview_height() {
         assert_eq!(
             image_preview_height_for_dimensions(72, 10, Some(481), Some(160)),
-            8
+            6
+        );
+    }
+
+    #[test]
+    fn small_image_preview_height_does_not_upscale_to_full_width() {
+        assert_eq!(
+            image_preview_height_for_dimensions(72, 10, Some(100), Some(100)),
+            4
+        );
+    }
+
+    #[test]
+    fn tiny_image_preview_height_stays_compact_but_visible() {
+        assert_eq!(
+            image_preview_height_for_dimensions(72, 10, Some(32), Some(32)),
+            3
+        );
+    }
+
+    #[test]
+    fn small_wide_image_preview_height_stays_compact() {
+        assert_eq!(
+            image_preview_height_for_dimensions(72, 10, Some(100), Some(40)),
+            3
+        );
+    }
+
+    #[test]
+    fn medium_small_square_image_preview_height_stays_below_max() {
+        assert_eq!(
+            image_preview_height_for_dimensions(72, 10, Some(128), Some(128)),
+            5
         );
     }
 
     #[test]
     fn image_preview_height_falls_back_to_max_without_dimensions() {
         assert_eq!(image_preview_height_for_dimensions(60, 10, None, None), 10);
+    }
+
+    #[test]
+    fn image_preview_height_falls_back_to_max_with_zero_dimensions() {
+        assert_eq!(
+            image_preview_height_for_dimensions(60, 10, Some(0), Some(100)),
+            10
+        );
     }
 
     fn state_with_image_messages(count: u64, image_message_ids: &[u64]) -> DashboardState {
