@@ -655,6 +655,31 @@ mod tests {
     }
 
     #[test]
+    fn image_preview_targets_include_image_messages_in_scrolloff_context() {
+        let mut state = state_with_image_messages(8, &[5, 6, 7]);
+        focus_messages(&mut state);
+        state.set_message_view_height(14);
+        while state.selected_message() > 3 {
+            state.move_up();
+        }
+        state.clamp_message_viewport_for_image_previews(16, 3);
+
+        let targets = visible_image_preview_targets(
+            &state,
+            ImagePreviewLayout {
+                list_height: 14,
+                preview_width: 16,
+                max_preview_height: 3,
+            },
+        );
+
+        assert_eq!(
+            target_message_ids(&targets),
+            vec![Id::new(5), Id::new(6), Id::new(7)]
+        );
+    }
+
+    #[test]
     fn image_preview_request_is_created_for_draw_target() {
         let mut cache = ImagePreviewCache {
             picker: None,
@@ -807,6 +832,12 @@ mod tests {
             width: Some(640),
             height: Some(480),
             description: None,
+        }
+    }
+
+    fn focus_messages(state: &mut DashboardState) {
+        while state.focus() != super::state::FocusPane::Messages {
+            state.cycle_focus();
         }
     }
 }

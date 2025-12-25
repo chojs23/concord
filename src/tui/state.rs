@@ -640,10 +640,13 @@ impl DashboardState {
         }
 
         let height = self.message_content_height();
-        let scrolloff = SCROLL_OFF.min(height.saturating_sub(1) / 2);
-        let lower_bound = height.saturating_sub(1).saturating_sub(scrolloff);
+        let upper_scrolloff = SCROLL_OFF.min(height.saturating_sub(1) / 2);
 
         for _ in 0..self.messages().len() {
+            let lower_scrolloff = self
+                .following_message_rendered_rows(preview_width, max_preview_height, SCROLL_OFF)
+                .min(height.saturating_sub(1));
+            let lower_bound = height.saturating_sub(1).saturating_sub(lower_scrolloff);
             let selected_row =
                 self.selected_message_rendered_row(preview_width, max_preview_height);
             let selected_bottom = selected_row.saturating_add(
@@ -655,7 +658,7 @@ impl DashboardState {
                 continue;
             }
 
-            if selected_row < scrolloff && self.message_scroll > 0 {
+            if selected_row < upper_scrolloff && self.message_scroll > 0 {
                 self.message_scroll = self.message_scroll.saturating_sub(1);
                 continue;
             }
@@ -1205,6 +1208,20 @@ impl DashboardState {
             .map(|message| message_rendered_height(message, preview_width, max_preview_height))
             .unwrap_or(1)
     }
+
+    fn following_message_rendered_rows(
+        &self,
+        preview_width: u16,
+        max_preview_height: u16,
+        count: usize,
+    ) -> usize {
+        self.messages()
+            .iter()
+            .skip(self.selected_message.saturating_add(1))
+            .take(count)
+            .map(|message| message_rendered_height(message, preview_width, max_preview_height))
+            .sum()
+    }
 }
 
 fn message_rendered_height(
@@ -1669,7 +1686,27 @@ mod tests {
                 .selected_message_rendered_height(16, 3)
                 .saturating_sub(1),
         );
-        assert!(selected_bottom <= 3);
+        assert!(selected_bottom < state.message_view_height());
+    }
+
+    #[test]
+    fn image_preview_scrolloff_reserves_following_image_items() {
+        let mut state = state_with_image_messages(8, &[5, 6, 7]);
+        focus_messages(&mut state);
+        state.set_message_view_height(14);
+
+        while state.selected_message() > 3 {
+            state.move_up();
+        }
+        state.clamp_message_viewport_for_image_previews(16, 3);
+
+        assert_eq!(state.following_message_rendered_rows(16, 3, 3), 12);
+        let selected_bottom = state.selected_message_rendered_row(16, 3).saturating_add(
+            state
+                .selected_message_rendered_height(16, 3)
+                .saturating_sub(1),
+        );
+        assert!(selected_bottom <= 1);
     }
 
     #[test]
