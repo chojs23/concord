@@ -780,6 +780,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn inline_image_preview_area_clips_preview_at_list_bottom() {
+        let area = Rect::new(10, 5, 80, 6);
+
+        assert_eq!(
+            inline_image_preview_area(area, 3, 4),
+            Some(Rect::new(25, 9, 65, 2))
+        );
+    }
+
+    #[test]
+    fn inline_image_preview_area_returns_none_when_preview_starts_below_list() {
+        let area = Rect::new(10, 5, 80, 6);
+
+        assert_eq!(inline_image_preview_area(area, 5, 4), None);
+    }
+
     fn message_with_attachment(
         content: Option<String>,
         attachment: AttachmentInfo,

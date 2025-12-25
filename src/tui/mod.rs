@@ -442,10 +442,7 @@ fn visible_image_preview_targets(
             attachment.width,
             attachment.height,
         );
-        if preview_height == 0
-            || rendered_rows >= layout.list_height
-            || rendered_rows.saturating_add(preview_height as usize) > layout.list_height
-        {
+        if preview_height == 0 || rendered_rows >= layout.list_height {
             continue;
         }
 
@@ -621,7 +618,24 @@ mod tests {
     }
 
     #[test]
-    fn image_preview_targets_skip_preview_that_would_be_clipped() {
+    fn image_preview_targets_include_preview_that_would_be_clipped() {
+        let mut state = state_with_image_messages(2, &[1, 2]);
+        state.set_message_view_height(6);
+
+        let targets = visible_image_preview_targets(
+            &state,
+            ImagePreviewLayout {
+                list_height: 6,
+                preview_width: 16,
+                max_preview_height: 3,
+            },
+        );
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(1), Id::new(2)]);
+    }
+
+    #[test]
+    fn image_preview_targets_skip_preview_when_no_preview_row_is_visible() {
         let mut state = state_with_image_messages(2, &[1, 2]);
         state.set_message_view_height(5);
 
@@ -635,6 +649,32 @@ mod tests {
         );
 
         assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
+    }
+
+    #[test]
+    fn image_preview_request_is_created_for_clipped_draw_target() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+        };
+        let mut state = state_with_image_messages(2, &[1, 2]);
+        state.set_message_view_height(6);
+        let targets = visible_image_preview_targets(
+            &state,
+            ImagePreviewLayout {
+                list_height: 6,
+                preview_width: 16,
+                max_preview_height: 3,
+            },
+        );
+
+        let requests = cache.next_requests(&targets);
+
+        assert_eq!(requests.len(), 2);
+        assert_eq!(cache.entries.len(), 2);
+        assert!(requests.contains(&AppCommand::LoadAttachmentPreview {
+            url: "https://cdn.discordapp.com/image-2.png".to_owned(),
+        }));
     }
 
     #[test]
