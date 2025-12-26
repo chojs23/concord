@@ -723,4 +723,36 @@ mod tests {
             "https://media.discordapp.net/cat.png"
         );
     }
+
+    #[test]
+    fn message_create_parser_keeps_video_attachment_metadata() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "content": "",
+            "attachments": [{
+                "id": "40",
+                "filename": "clip.mp4",
+                "url": "https://cdn.discordapp.com/clip.mp4",
+                "proxy_url": "https://media.discordapp.net/clip.mp4",
+                "content_type": "video/mp4",
+                "size": 78364758,
+                "width": 1920,
+                "height": 1080,
+                "description": "clip"
+            }]
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { attachments, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].filename, "clip.mp4");
+        assert_eq!(attachments[0].content_type.as_deref(), Some("video/mp4"));
+        assert_eq!(attachments[0].size, 78_364_758);
+        assert_eq!(attachments[0].width, Some(1920));
+        assert_eq!(attachments[0].height, Some(1080));
+    }
 }

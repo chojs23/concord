@@ -203,10 +203,26 @@ impl AttachmentInfo {
     }
 
     pub fn is_image(&self) -> bool {
-        self.content_type
-            .as_deref()
-            .is_some_and(|content_type| content_type.starts_with("image/"))
-            || self.width.is_some() && self.height.is_some()
+        if let Some(content_type) = self.content_type.as_deref() {
+            return content_type.starts_with("image/");
+        }
+
+        filename_has_extension(
+            &self.filename,
+            &["avif", "gif", "jpeg", "jpg", "png", "webp"],
+        )
+    }
+
+    pub fn is_video(&self) -> bool {
+        if let Some(content_type) = self.content_type.as_deref() {
+            return content_type.starts_with("video/");
+        }
+
+        filename_has_extension(&self.filename, &["m4v", "mov", "mp4", "webm"])
+    }
+
+    pub fn inline_preview_url(&self) -> Option<&str> {
+        self.is_image().then(|| self.preferred_url()).flatten()
     }
 
     pub fn from_attachment(attachment: Attachment) -> Self {
@@ -222,6 +238,14 @@ impl AttachmentInfo {
             description: attachment.description,
         }
     }
+}
+
+fn filename_has_extension(filename: &str, extensions: &[&str]) -> bool {
+    filename.rsplit_once('.').is_some_and(|(_, extension)| {
+        extensions
+            .iter()
+            .any(|value| extension.eq_ignore_ascii_case(value))
+    })
 }
 
 impl MessageInfo {
@@ -413,4 +437,50 @@ fn map_message_content(content: &str, message_content_enabled: bool) -> Option<S
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn video_attachment_with_dimensions_is_not_an_image_preview() {
+        let attachment = attachment_info("clip.mp4", Some("video/mp4"));
+
+        assert!(!attachment.is_image());
+        assert!(attachment.is_video());
+        assert_eq!(attachment.inline_preview_url(), None);
+    }
+
+    #[test]
+    fn image_attachment_uses_preferred_inline_preview_url() {
+        let attachment = attachment_info("cat.png", Some("image/png"));
+
+        assert!(attachment.is_image());
+        assert!(!attachment.is_video());
+        assert_eq!(
+            attachment.inline_preview_url(),
+            Some("https://cdn.discordapp.com/cat.png")
+        );
+    }
+
+    #[test]
+    fn filename_extension_classifies_unknown_media_type() {
+        assert!(attachment_info("CAT.PNG", None).is_image());
+        assert!(attachment_info("CLIP.MP4", None).is_video());
+    }
+
+    fn attachment_info(filename: &str, content_type: Option<&str>) -> AttachmentInfo {
+        AttachmentInfo {
+            id: Id::new(1),
+            filename: filename.to_owned(),
+            url: format!("https://cdn.discordapp.com/{filename}"),
+            proxy_url: format!("https://media.discordapp.net/{filename}"),
+            content_type: content_type.map(str::to_owned),
+            size: 1024,
+            width: Some(640),
+            height: Some(480),
+            description: None,
+        }
+    }
 }
