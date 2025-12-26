@@ -427,12 +427,11 @@ fn visible_image_preview_targets(
 
         rendered_rows = rendered_rows.saturating_add(1);
 
-        let Some((attachment, url)) = message.attachments.iter().find_map(|attachment| {
-            attachment
-                .is_image()
-                .then(|| attachment.preferred_url().map(|url| (attachment, url)))
-                .flatten()
-        }) else {
+        let Some((attachment, url)) = message
+            .attachments
+            .iter()
+            .find_map(|attachment| attachment.inline_preview_url().map(|url| (attachment, url)))
+        else {
             continue;
         };
 
@@ -678,6 +677,31 @@ mod tests {
     }
 
     #[test]
+    fn video_attachment_does_not_request_original_as_image_preview() {
+        let mut state = state_with_image_messages(1, &[]);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some("clip".to_owned()),
+            attachments: vec![video_attachment(2)],
+        });
+
+        let targets = visible_image_preview_targets(
+            &state,
+            ImagePreviewLayout {
+                list_height: 6,
+                preview_width: 16,
+                max_preview_height: 3,
+            },
+        );
+
+        assert!(targets.is_empty());
+    }
+
+    #[test]
     fn image_preview_targets_follow_the_scrolled_message_window() {
         let mut state = state_with_image_messages(8, &[1, 6]);
         state.set_message_view_height(6);
@@ -871,6 +895,20 @@ mod tests {
             size: 2048,
             width: Some(640),
             height: Some(480),
+            description: None,
+        }
+    }
+
+    fn video_attachment(id: u64) -> AttachmentInfo {
+        AttachmentInfo {
+            id: Id::new(id),
+            filename: format!("clip-{id}.mp4"),
+            url: format!("https://cdn.discordapp.com/clip-{id}.mp4"),
+            proxy_url: format!("https://media.discordapp.net/clip-{id}.mp4"),
+            content_type: Some("video/mp4".to_owned()),
+            size: 78_364_758,
+            width: Some(1920),
+            height: Some(1080),
             description: None,
         }
     }

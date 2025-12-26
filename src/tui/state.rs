@@ -1232,7 +1232,7 @@ fn message_rendered_height(
     let preview_height = message
         .attachments
         .iter()
-        .find(|attachment| attachment.is_image() && attachment.preferred_url().is_some())
+        .find(|attachment| attachment.inline_preview_url().is_some())
         .map(|attachment| {
             super::image_preview_height_for_dimensions(
                 preview_width,
@@ -1418,6 +1418,7 @@ mod tests {
 
     use super::{
         ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildBranch, GuildPaneEntry,
+        MessageState, message_rendered_height,
     };
     use crate::discord::{
         AppEvent, AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageInfo, PresenceStatus,
@@ -1707,6 +1708,19 @@ mod tests {
                 .saturating_sub(1),
         );
         assert!(selected_bottom <= 1);
+    }
+
+    #[test]
+    fn video_attachment_does_not_reserve_image_preview_rows() {
+        let message = MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            content: Some("clip".to_owned()),
+            attachments: vec![video_attachment(1)],
+        };
+
+        assert_eq!(message_rendered_height(&message, 16, 3), 1);
     }
 
     #[test]
@@ -2502,6 +2516,20 @@ mod tests {
             size: 2048,
             width: Some(640),
             height: Some(480),
+            description: None,
+        }
+    }
+
+    fn video_attachment(id: u64) -> AttachmentInfo {
+        AttachmentInfo {
+            id: Id::new(id),
+            filename: format!("clip-{id}.mp4"),
+            url: format!("https://cdn.discordapp.com/clip-{id}.mp4"),
+            proxy_url: format!("https://media.discordapp.net/clip-{id}.mp4"),
+            content_type: Some("video/mp4".to_owned()),
+            size: 78_364_758,
+            width: Some(1920),
+            height: Some(1080),
             description: None,
         }
     }
