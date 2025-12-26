@@ -244,7 +244,9 @@ fn render(frame: &mut Frame, state: &LoginState) {
 
 fn render_mode_select(frame: &mut Frame, state: &LoginState) {
     let area = centered_rect(72, 18, frame.area());
-    let accent = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let accent = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
     let dim = Style::default().fg(Color::DarkGray);
 
     let mut lines = vec![
@@ -278,10 +280,7 @@ fn render_mode_select(frame: &mut Frame, state: &LoginState) {
         lines.push(Line::from(""));
     }
 
-    lines.push(Line::from(Span::styled(
-        "Esc cancel | Ctrl-C quit",
-        dim,
-    )));
+    lines.push(Line::from(Span::styled("Esc cancel | Ctrl-C quit", dim)));
 
     frame.render_widget(Clear, area);
     frame.render_widget(
@@ -296,7 +295,9 @@ fn render_mode_select(frame: &mut Frame, state: &LoginState) {
 fn render_token_input(frame: &mut Frame, state: &LoginState) {
     let area = centered_rect(72, 14, frame.area());
     let masked = "•".repeat(state.token_input.chars().count());
-    let accent = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let accent = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
     let dim = Style::default().fg(Color::DarkGray);
 
     let persistence_text = if state.notice.is_some() {
@@ -351,7 +352,9 @@ fn render_token_input(frame: &mut Frame, state: &LoginState) {
 fn render_qr(frame: &mut Frame, state: &LoginState) {
     let area = frame.area();
     let dim = Style::default().fg(Color::DarkGray);
-    let accent = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let accent = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
 
     let mut lines = vec![
         Line::from(Span::styled("Discord QR login", accent)),
@@ -394,10 +397,7 @@ fn render_qr(frame: &mut Frame, state: &LoginState) {
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "Esc cancel | Ctrl-C quit",
-        dim,
-    )));
+    lines.push(Line::from(Span::styled("Esc cancel | Ctrl-C quit", dim)));
 
     frame.render_widget(Clear, area);
     frame.render_widget(

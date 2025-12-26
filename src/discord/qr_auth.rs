@@ -236,8 +236,7 @@ where
 fn build_qr_bitmap(content: &str) -> Result<Vec<Vec<bool>>, String> {
     use qrcode::{Color, EcLevel, QrCode};
 
-    let code =
-        QrCode::with_error_correction_level(content, EcLevel::L).map_err(err)?;
+    let code = QrCode::with_error_correction_level(content, EcLevel::L).map_err(err)?;
     let width = code.width();
     let colors = code.to_colors();
     let mut rows = Vec::with_capacity(width);

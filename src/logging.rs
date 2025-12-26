@@ -96,7 +96,11 @@ fn log_path() -> Option<PathBuf> {
         return Some(PathBuf::from(path));
     }
     let home = env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".discord-rs").join("discord-client.log"))
+    Some(
+        PathBuf::from(home)
+            .join(".discord-rs")
+            .join("discord-client.log"),
+    )
 }
 
 fn debug_enabled() -> bool {
@@ -125,10 +129,7 @@ fn unix_timestamp_millis() -> u128 {
 }
 
 fn format_log_line(timestamp_millis: u128, level: Level, target: &str, message: &str) -> String {
-    format!(
-        "{timestamp_millis} [{}] {target}: {message}",
-        level.label()
-    )
+    format!("{timestamp_millis} [{}] {target}: {message}", level.label())
 }
 
 #[cfg(test)]

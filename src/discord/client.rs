@@ -68,9 +68,8 @@ impl DiscordClient {
 
 fn http_client_for_token(token: &str) -> Result<HttpClient> {
     let mut headers = HeaderMap::new();
-    let value = HeaderValue::from_str(token).map_err(|source| {
-        AppError::InvalidDiscordTokenHeader { source }
-    })?;
+    let value = HeaderValue::from_str(token)
+        .map_err(|source| AppError::InvalidDiscordTokenHeader { source })?;
     headers.insert(AUTHORIZATION, value);
 
     Ok(HttpClient::builder().default_headers(headers).build())
