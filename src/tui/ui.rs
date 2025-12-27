@@ -358,8 +358,10 @@ fn format_attachment_summary(attachments: &[AttachmentInfo]) -> String {
 }
 
 fn format_attachment(attachment: &AttachmentInfo) -> String {
-    let kind = if is_image_attachment(attachment) {
+    let kind = if attachment.is_image() {
         "image"
+    } else if attachment.is_video() {
+        "video"
     } else {
         "file"
     };
@@ -369,10 +371,6 @@ fn format_attachment(attachment: &AttachmentInfo) -> String {
     };
 
     format!("[{kind}: {}]{}", attachment.filename, dimensions)
-}
-
-fn is_image_attachment(attachment: &AttachmentInfo) -> bool {
-    attachment.is_image()
 }
 
 fn styled_list_item<'a>(item: ListItem<'a>, selected: bool) -> ListItem<'a> {
@@ -736,6 +734,16 @@ mod tests {
     }
 
     #[test]
+    fn video_attachment_is_labeled_as_video() {
+        let message = message_with_attachment(Some(String::new()), video_attachment());
+
+        assert_eq!(
+            format_message_content(&message, 200),
+            "[video: clip.mp4] 1920x1080"
+        );
+    }
+
+    #[test]
     fn image_preview_rows_are_part_of_the_message_item() {
         let lines = message_item_lines("neo".to_owned(), "look".to_owned(), 14, 3);
 
@@ -820,6 +828,20 @@ mod tests {
             size: 2048,
             width: Some(640),
             height: Some(480),
+            description: None,
+        }
+    }
+
+    fn video_attachment() -> AttachmentInfo {
+        AttachmentInfo {
+            id: Id::new(4),
+            filename: "clip.mp4".to_owned(),
+            url: "https://cdn.discordapp.com/clip.mp4".to_owned(),
+            proxy_url: "https://media.discordapp.net/clip.mp4".to_owned(),
+            content_type: Some("video/mp4".to_owned()),
+            size: 78_364_758,
+            width: Some(1920),
+            height: Some(1080),
             description: None,
         }
     }
