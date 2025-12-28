@@ -7,7 +7,7 @@ use twilight_model::id::{
 
 use super::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
-    PresenceStatus,
+    MessageSnapshotInfo, PresenceStatus,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -42,6 +42,17 @@ pub struct MessageState {
     pub author: String,
     pub content: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
+    pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
+}
+
+impl MessageState {
+    pub fn attachments_in_display_order(&self) -> impl Iterator<Item = &AttachmentInfo> {
+        self.attachments.iter().chain(
+            self.forwarded_snapshots
+                .iter()
+                .flat_map(|snapshot| snapshot.attachments.iter()),
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -137,6 +148,7 @@ impl DiscordState {
                 author,
                 content,
                 attachments,
+                forwarded_snapshots,
                 ..
             } => self.upsert_message(MessageState {
                 id: *message_id,
@@ -144,6 +156,7 @@ impl DiscordState {
                 author: author.clone(),
                 content: content.clone(),
                 attachments: attachments.clone(),
+                forwarded_snapshots: forwarded_snapshots.clone(),
             }),
             AppEvent::MessageHistoryLoaded {
                 channel_id,
@@ -276,6 +289,9 @@ impl DiscordState {
             if !message.attachments.is_empty() || existing.attachments.is_empty() {
                 existing.attachments = message.attachments;
             }
+            if !message.forwarded_snapshots.is_empty() || existing.forwarded_snapshots.is_empty() {
+                existing.forwarded_snapshots = message.forwarded_snapshots;
+            }
         } else {
             messages.push_back(message);
         }
@@ -304,6 +320,7 @@ impl DiscordState {
                 author: message.author.clone(),
                 content: message.content.clone(),
                 attachments: message.attachments.clone(),
+                forwarded_snapshots: message.forwarded_snapshots.clone(),
             };
 
             by_id
@@ -375,6 +392,9 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
     if !incoming.attachments.is_empty() || existing.attachments.is_empty() {
         existing.attachments = incoming.attachments.clone();
     }
+    if !incoming.forwarded_snapshots.is_empty() || existing.forwarded_snapshots.is_empty() {
+        existing.forwarded_snapshots = incoming.forwarded_snapshots.clone();
+    }
 }
 
 fn upsert_member(
@@ -400,7 +420,7 @@ mod tests {
 
     use crate::discord::{
         AppEvent, AttachmentUpdate, ChannelInfo, DiscordState, MemberInfo, MessageInfo,
-        PresenceStatus,
+        MessageSnapshotInfo, PresenceStatus,
     };
 
     #[test]
@@ -434,6 +454,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some("hello".to_owned()),
             attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
         });
 
         assert_eq!(state.guilds().len(), 1);
@@ -478,6 +499,7 @@ mod tests {
                 author: "neo".to_owned(),
                 content: Some(format!("message {id}")),
                 attachments: Vec::new(),
+                forwarded_snapshots: Vec::new(),
             });
         }
 
@@ -501,6 +523,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some("hello".to_owned()),
             attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
             guild_id: None,
@@ -510,6 +533,7 @@ mod tests {
             author: "neo".to_owned(),
             content: None,
             attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageUpdate {
             guild_id: None,
@@ -537,6 +561,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some("live".to_owned()),
             attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
@@ -569,6 +594,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some("known".to_owned()),
             attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
@@ -596,6 +622,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some(String::new()),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
+            forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
@@ -613,6 +640,58 @@ mod tests {
     }
 
     #[test]
+    fn stores_forwarded_snapshots_from_message_create() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(20),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: vec![snapshot_info("forwarded text")],
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].forwarded_snapshots.len(), 1);
+        assert_eq!(
+            messages[0].forwarded_snapshots[0].content.as_deref(),
+            Some("forwarded text")
+        );
+    }
+
+    #[test]
+    fn history_merge_preserves_existing_forwarded_snapshots() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(20),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: vec![snapshot_info("live snapshot")],
+        });
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            messages: vec![message_info(channel_id, 20, "")],
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(
+            messages[0].forwarded_snapshots[0].content.as_deref(),
+            Some("live snapshot")
+        );
+    }
+
+    #[test]
     fn message_update_without_attachments_payload_keeps_cached_attachments() {
         let channel_id: Id<ChannelMarker> = Id::new(10);
         let mut state = DiscordState::default();
@@ -625,6 +704,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some(String::new()),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
+            forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageUpdate {
             guild_id: None,
@@ -652,6 +732,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some(String::new()),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
+            forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageUpdate {
             guild_id: None,
@@ -711,6 +792,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some("new".to_owned()),
             attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
             guild_id: None,
@@ -720,6 +802,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some("old".to_owned()),
             attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
         });
 
         assert_eq!(
@@ -893,6 +976,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some(content.to_owned()),
             attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
         }
     }
 
@@ -911,6 +995,13 @@ mod tests {
             width: Some(100),
             height: Some(100),
             description: None,
+        }
+    }
+
+    fn snapshot_info(content: &str) -> MessageSnapshotInfo {
+        MessageSnapshotInfo {
+            content: Some(content.to_owned()),
+            attachments: Vec::new(),
         }
     }
 }

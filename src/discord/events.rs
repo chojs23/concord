@@ -1,6 +1,6 @@
 use twilight_gateway::Event;
 use twilight_model::{
-    channel::{Attachment, Channel, Message},
+    channel::{Attachment, Channel, Message, message::MessageSnapshot},
     gateway::{
         payload::incoming::{
             GuildCreate as GuildCreatePayload, MemberAdd, MemberUpdate,
@@ -79,6 +79,12 @@ pub struct AttachmentInfo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageSnapshotInfo {
+    pub content: Option<String>,
+    pub attachments: Vec<AttachmentInfo>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageInfo {
     pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,
@@ -87,6 +93,7 @@ pub struct MessageInfo {
     pub author: String,
     pub content: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
+    pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -127,6 +134,7 @@ pub enum AppEvent {
         author: String,
         content: Option<String>,
         attachments: Vec<AttachmentInfo>,
+        forwarded_snapshots: Vec<MessageSnapshotInfo>,
     },
     MessageHistoryLoaded {
         channel_id: Id<ChannelMarker>,
@@ -189,6 +197,7 @@ impl AppEvent {
             author: message.author,
             content: message.content,
             attachments: message.attachments,
+            forwarded_snapshots: message.forwarded_snapshots,
         }
     }
 }
@@ -240,6 +249,20 @@ impl AttachmentInfo {
     }
 }
 
+impl MessageSnapshotInfo {
+    pub fn from_snapshot(snapshot: MessageSnapshot) -> Self {
+        let message = snapshot.message;
+        Self {
+            content: Some(message.content),
+            attachments: message
+                .attachments
+                .into_iter()
+                .map(AttachmentInfo::from_attachment)
+                .collect(),
+        }
+    }
+}
+
 fn filename_has_extension(filename: &str, extensions: &[&str]) -> bool {
     filename.rsplit_once('.').is_some_and(|(_, extension)| {
         extensions
@@ -261,6 +284,11 @@ impl MessageInfo {
                 .attachments
                 .into_iter()
                 .map(AttachmentInfo::from_attachment)
+                .collect(),
+            forwarded_snapshots: message
+                .message_snapshots
+                .into_iter()
+                .map(MessageSnapshotInfo::from_snapshot)
                 .collect(),
         }
     }
@@ -295,6 +323,12 @@ pub fn map_event(event: Event, message_content_enabled: bool) -> Option<AppEvent
                 .clone()
                 .into_iter()
                 .map(AttachmentInfo::from_attachment)
+                .collect(),
+            forwarded_snapshots: message
+                .message_snapshots
+                .clone()
+                .into_iter()
+                .map(MessageSnapshotInfo::from_snapshot)
                 .collect(),
         }),
         Event::MessageUpdate(message) => Some(AppEvent::MessageUpdate {

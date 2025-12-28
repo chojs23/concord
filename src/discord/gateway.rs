@@ -12,7 +12,7 @@ use twilight_model::{
 };
 
 use super::{
-    AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, PresenceStatus,
+    AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageSnapshotInfo, PresenceStatus,
     events::{AppEvent, AttachmentUpdate, map_event},
 };
 use crate::logging;
@@ -353,6 +353,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         .and_then(Value::as_str)
         .map(str::to_owned);
     let attachments = parse_attachments(data.get("attachments"));
+    let forwarded_snapshots = parse_message_snapshots(data.get("message_snapshots"));
 
     Some(AppEvent::MessageCreate {
         guild_id,
@@ -362,6 +363,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         author: author_name,
         content,
         attachments,
+        forwarded_snapshots,
     })
 }
 
@@ -409,6 +411,31 @@ fn parse_attachments(value: Option<&Value>) -> Vec<AttachmentInfo> {
         .and_then(Value::as_array)
         .map(|items| items.iter().filter_map(parse_attachment).collect())
         .unwrap_or_default()
+}
+
+fn parse_message_snapshots(value: Option<&Value>) -> Vec<MessageSnapshotInfo> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(parse_message_snapshot).collect())
+        .unwrap_or_default()
+}
+
+fn parse_message_snapshot(value: &Value) -> Option<MessageSnapshotInfo> {
+    let message = value.get("message")?;
+    let content = message
+        .get("content")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let attachments = parse_attachments(message.get("attachments"));
+
+    if content.as_deref().is_some_and(|value| !value.is_empty()) || !attachments.is_empty() {
+        Some(MessageSnapshotInfo {
+            content,
+            attachments,
+        })
+    } else {
+        None
+    }
 }
 
 fn parse_attachment(value: &Value) -> Option<AttachmentInfo> {
@@ -754,5 +781,74 @@ mod tests {
         assert_eq!(attachments[0].size, 78_364_758);
         assert_eq!(attachments[0].width, Some(1920));
         assert_eq!(attachments[0].height, Some(1080));
+    }
+
+    #[test]
+    fn message_create_parser_keeps_forwarded_snapshot_content() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "content": "",
+            "attachments": [],
+            "message_snapshots": [{
+                "message": {
+                    "content": "forwarded text",
+                    "attachments": []
+                }
+            }]
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate {
+            forwarded_snapshots,
+            ..
+        } = event
+        else {
+            panic!("expected message create event");
+        };
+        assert_eq!(forwarded_snapshots.len(), 1);
+        assert_eq!(
+            forwarded_snapshots[0].content.as_deref(),
+            Some("forwarded text")
+        );
+    }
+
+    #[test]
+    fn message_create_parser_keeps_forwarded_snapshot_attachments() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "content": "",
+            "attachments": [],
+            "message_snapshots": [{
+                "message": {
+                    "content": "",
+                    "attachments": [{
+                        "id": "40",
+                        "filename": "cat.png",
+                        "url": "https://cdn.discordapp.com/cat.png",
+                        "proxy_url": "https://media.discordapp.net/cat.png",
+                        "content_type": "image/png",
+                        "size": 2048,
+                        "width": 640,
+                        "height": 480
+                    }]
+                }
+            }]
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate {
+            forwarded_snapshots,
+            ..
+        } = event
+        else {
+            panic!("expected message create event");
+        };
+        assert_eq!(forwarded_snapshots.len(), 1);
+        assert_eq!(forwarded_snapshots[0].attachments.len(), 1);
+        assert_eq!(forwarded_snapshots[0].attachments[0].filename, "cat.png");
     }
 }
