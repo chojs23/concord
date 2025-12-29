@@ -14,7 +14,7 @@ use super::{
         presence_color, presence_marker,
     },
 };
-use crate::discord::{AttachmentInfo, MessageState};
+use crate::discord::{AttachmentInfo, MessageSnapshotInfo, MessageState};
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
@@ -338,15 +338,52 @@ fn image_preview_spacer_lines(height: u16) -> Vec<Line<'static>> {
 fn format_message_content(message: &MessageState, width: usize) -> String {
     let attachment_summary =
         (!message.attachments.is_empty()).then(|| format_attachment_summary(&message.attachments));
-    let content = match (message.content.as_deref(), attachment_summary.as_deref()) {
-        (Some(value), Some(attachments)) if !value.is_empty() => format!("{value} {attachments}"),
-        (Some(value), None) if !value.is_empty() => value.to_owned(),
-        (_, Some(attachments)) => attachments.to_owned(),
-        (Some(_), None) => "<empty message>".to_owned(),
-        (None, None) => "<message content unavailable>".to_owned(),
+    let forwarded_summary = message
+        .forwarded_snapshots
+        .iter()
+        .find_map(format_forwarded_snapshot);
+    let mut parts = Vec::new();
+
+    if let Some(value) = message.content.as_deref().filter(|value| !value.is_empty()) {
+        parts.push(value.to_owned());
+    }
+    if let Some(attachments) = attachment_summary {
+        parts.push(attachments);
+    }
+    if let Some(forwarded) = forwarded_summary {
+        parts.push(forwarded);
+    }
+
+    let content = if parts.is_empty() {
+        if message.content.is_some() {
+            "<empty message>".to_owned()
+        } else {
+            "<message content unavailable>".to_owned()
+        }
+    } else {
+        parts.join(" ")
     };
 
     truncate_text(&content, width)
+}
+
+fn format_forwarded_snapshot(snapshot: &MessageSnapshotInfo) -> Option<String> {
+    let attachment_summary = (!snapshot.attachments.is_empty())
+        .then(|| format_attachment_summary(&snapshot.attachments));
+    let mut parts = Vec::new();
+
+    if let Some(content) = snapshot
+        .content
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        parts.push(content.to_owned());
+    }
+    if let Some(attachments) = attachment_summary {
+        parts.push(attachments);
+    }
+
+    (!parts.is_empty()).then(|| format!("[forwarded: {}]", parts.join(" ")))
 }
 
 fn format_attachment_summary(attachments: &[AttachmentInfo]) -> String {
@@ -674,7 +711,7 @@ mod tests {
         message_item_lines, sync_view_heights,
     };
     use crate::{
-        discord::{AttachmentInfo, MessageState},
+        discord::{AttachmentInfo, MessageSnapshotInfo, MessageState},
         tui::state::DashboardState,
     };
 
@@ -740,6 +777,41 @@ mod tests {
         assert_eq!(
             format_message_content(&message, 200),
             "[video: clip.mp4] 1920x1080"
+        );
+    }
+
+    #[test]
+    fn forwarded_snapshot_replaces_empty_message_placeholder() {
+        let message =
+            message_with_forwarded_snapshot(forwarded_snapshot(Some("forwarded text"), Vec::new()));
+
+        assert_eq!(
+            format_message_content(&message, 200),
+            "[forwarded: forwarded text]"
+        );
+    }
+
+    #[test]
+    fn forwarded_snapshot_attachment_replaces_empty_message_placeholder() {
+        let message =
+            message_with_forwarded_snapshot(forwarded_snapshot(Some(""), vec![image_attachment()]));
+
+        assert_eq!(
+            format_message_content(&message, 200),
+            "[forwarded: [image: cat.png] 640x480]"
+        );
+    }
+
+    #[test]
+    fn forwarded_snapshot_content_appends_attachment_summary() {
+        let message = message_with_forwarded_snapshot(forwarded_snapshot(
+            Some("hello"),
+            vec![image_attachment()],
+        ));
+
+        assert_eq!(
+            format_message_content(&message, 200),
+            "[forwarded: hello [image: cat.png] 640x480]"
         );
     }
 
@@ -815,6 +887,28 @@ mod tests {
             author: "neo".to_owned(),
             content,
             attachments: vec![attachment],
+            forwarded_snapshots: Vec::new(),
+        }
+    }
+
+    fn message_with_forwarded_snapshot(snapshot: MessageSnapshotInfo) -> MessageState {
+        MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: vec![snapshot],
+        }
+    }
+
+    fn forwarded_snapshot(
+        content: Option<&str>,
+        attachments: Vec<AttachmentInfo>,
+    ) -> MessageSnapshotInfo {
+        MessageSnapshotInfo {
+            content: content.map(str::to_owned),
+            attachments,
         }
     }
 
