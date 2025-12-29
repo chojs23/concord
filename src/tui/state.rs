@@ -694,8 +694,7 @@ impl DashboardState {
         let messages = self.discord.messages_for_channel(channel_id);
         let message = messages.get(self.selected_message())?;
         message
-            .attachments
-            .iter()
+            .attachments_in_display_order()
             .find(|attachment| predicate(attachment))
     }
 
@@ -1230,8 +1229,7 @@ fn message_rendered_height(
     max_preview_height: u16,
 ) -> usize {
     let preview_height = message
-        .attachments
-        .iter()
+        .attachments_in_display_order()
         .find(|attachment| attachment.inline_preview_url().is_some())
         .map(|attachment| {
             super::image_preview_height_for_dimensions(
@@ -1421,7 +1419,8 @@ mod tests {
         MessageState, message_rendered_height,
     };
     use crate::discord::{
-        AppEvent, AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageInfo, PresenceStatus,
+        AppEvent, AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
+        MessageSnapshotInfo, PresenceStatus,
     };
 
     #[test]
@@ -1497,6 +1496,7 @@ mod tests {
                 author: "neo".to_owned(),
                 content: Some(format!("msg {id}")),
                 attachments: Vec::new(),
+                forwarded_snapshots: Vec::new(),
             });
         }
 
@@ -1531,6 +1531,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some("hello".to_owned()),
             attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
         });
 
         assert_eq!(state.selected_channel_id(), None);
@@ -1622,6 +1623,7 @@ mod tests {
                 author: "neo".to_owned(),
                 content: Some(format!("msg {id}")),
                 attachments: Vec::new(),
+                forwarded_snapshots: Vec::new(),
             });
         }
 
@@ -1649,6 +1651,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some("msg 6".to_owned()),
             attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
         });
 
         assert_eq!(state.selected_message(), 3);
@@ -1718,9 +1721,45 @@ mod tests {
             author: "neo".to_owned(),
             content: Some("clip".to_owned()),
             attachments: vec![video_attachment(1)],
+            forwarded_snapshots: Vec::new(),
         };
 
         assert_eq!(message_rendered_height(&message, 16, 3), 1);
+    }
+
+    #[test]
+    fn forwarded_image_attachment_reserves_preview_rows() {
+        let message = MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: vec![forwarded_snapshot(1)],
+        };
+
+        assert_eq!(message_rendered_height(&message, 16, 3), 4);
+    }
+
+    #[test]
+    fn selected_message_attachment_url_falls_back_to_forwarded_attachment() {
+        let mut state = state_with_image_messages(1, &[]);
+        focus_messages(&mut state);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: vec![forwarded_snapshot(2)],
+        });
+
+        assert_eq!(
+            state.selected_message_attachment_url(),
+            Some("https://cdn.discordapp.com/image-2.png")
+        );
     }
 
     #[test]
@@ -1995,6 +2034,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some("new empty dm".to_owned()),
             attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
         });
 
         assert_eq!(channel_entry_names(&state), vec!["empty", "new", "old"]);
@@ -2501,6 +2541,7 @@ mod tests {
                     .then(|| image_attachment(id))
                     .into_iter()
                     .collect(),
+                forwarded_snapshots: Vec::new(),
             });
         }
         state
@@ -2531,6 +2572,13 @@ mod tests {
             width: Some(1920),
             height: Some(1080),
             description: None,
+        }
+    }
+
+    fn forwarded_snapshot(id: u64) -> MessageSnapshotInfo {
+        MessageSnapshotInfo {
+            content: Some(format!("forwarded {id}")),
+            attachments: vec![image_attachment(id)],
         }
     }
 
@@ -2574,6 +2622,7 @@ mod tests {
                 height: Some(480),
                 description: None,
             }],
+            forwarded_snapshots: Vec::new(),
         });
         state
     }
@@ -2587,6 +2636,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some(format!("msg {message_id}")),
             attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
         }
     }
 

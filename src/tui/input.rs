@@ -502,6 +502,7 @@ mod tests {
                 author: "neo".to_owned(),
                 content: Some(format!("msg {id}")),
                 attachments: Vec::new(),
+                forwarded_snapshots: Vec::new(),
             });
         }
         state

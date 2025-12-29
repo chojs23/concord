@@ -428,8 +428,7 @@ fn visible_image_preview_targets(
         rendered_rows = rendered_rows.saturating_add(1);
 
         let Some((attachment, url)) = message
-            .attachments
-            .iter()
+            .attachments_in_display_order()
             .find_map(|attachment| attachment.inline_preview_url().map(|url| (attachment, url)))
         else {
             continue;
@@ -538,7 +537,7 @@ fn next_history_request(
 
 #[cfg(test)]
 mod tests {
-    use crate::discord::{AttachmentInfo, ChannelInfo};
+    use crate::discord::{AttachmentInfo, ChannelInfo, MessageSnapshotInfo};
 
     use super::*;
 
@@ -687,6 +686,7 @@ mod tests {
             author: "neo".to_owned(),
             content: Some("clip".to_owned()),
             attachments: vec![video_attachment(2)],
+            forwarded_snapshots: Vec::new(),
         });
 
         let targets = visible_image_preview_targets(
@@ -699,6 +699,33 @@ mod tests {
         );
 
         assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn image_preview_targets_include_forwarded_image_attachments() {
+        let mut state = state_with_image_messages(1, &[]);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: vec![forwarded_snapshot(2)],
+        });
+
+        let targets = visible_image_preview_targets(
+            &state,
+            ImagePreviewLayout {
+                list_height: 6,
+                preview_width: 16,
+                max_preview_height: 3,
+            },
+        );
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
+        assert_eq!(targets[0].url, "https://cdn.discordapp.com/image-2.png");
     }
 
     #[test]
@@ -865,6 +892,7 @@ mod tests {
                     .then(|| image_attachment(id))
                     .into_iter()
                     .collect(),
+                forwarded_snapshots: Vec::new(),
             });
         }
 
@@ -910,6 +938,13 @@ mod tests {
             width: Some(1920),
             height: Some(1080),
             description: None,
+        }
+    }
+
+    fn forwarded_snapshot(id: u64) -> MessageSnapshotInfo {
+        MessageSnapshotInfo {
+            content: Some(format!("forwarded {id}")),
+            attachments: vec![image_attachment(id)],
         }
     }
 
