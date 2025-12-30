@@ -8,7 +8,7 @@ use futures::{SinkExt, StreamExt};
 use rand::rngs::OsRng;
 use rsa::{Oaep, RsaPrivateKey, RsaPublicKey, pkcs8::EncodePublicKey};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::Sha256;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_tungstenite::{
@@ -192,9 +192,7 @@ async fn run(tx: &mpsc::Sender<QrEvent>) -> Result<Option<String>, String> {
                             .send(QrEvent::Status("Authenticating with Discord...".into()))
                             .await;
                         let _ = writer.close().await;
-                        let token =
-                            exchange_ticket(&ticket, &private_key, fingerprint.as_deref())
-                                .await?;
+                        let token = exchange_ticket(&ticket, &private_key, fingerprint.as_deref()).await?;
                         return Ok(Some(token));
                     }
                     "cancel" => {
@@ -265,6 +263,25 @@ async fn exchange_ticket(
         .build()
         .map_err(err)?;
 
+    let response = send_ticket_exchange(&client, ticket, fingerprint)
+        .await
+        .map_err(err)?;
+    let response = checked_ticket_exchange_response(response).await?;
+
+    let response: ExchangeResponse = response.json().await.map_err(err)?;
+
+    let encrypted = STANDARD.decode(&response.encrypted_token).map_err(err)?;
+    let decrypted = private_key
+        .decrypt(Oaep::new::<Sha256>(), &encrypted)
+        .map_err(err)?;
+    String::from_utf8(decrypted).map_err(err)
+}
+
+async fn send_ticket_exchange(
+    client: &reqwest::Client,
+    ticket: &str,
+    fingerprint: Option<&str>,
+) -> Result<reqwest::Response, reqwest::Error> {
     let mut request = client
         .post(TICKET_EXCHANGE_URL)
         .header("Origin", "https://discord.com")
@@ -274,19 +291,168 @@ async fn exchange_ticket(
         request = request.header("X-Fingerprint", fp);
     }
 
-    let response: ExchangeResponse = request
-        .send()
-        .await
-        .map_err(err)?
-        .error_for_status()
-        .map_err(err)?
-        .json()
-        .await
-        .map_err(err)?;
+    request.send().await
+}
 
-    let encrypted = STANDARD.decode(&response.encrypted_token).map_err(err)?;
-    let decrypted = private_key
-        .decrypt(Oaep::new::<Sha256>(), &encrypted)
-        .map_err(err)?;
-    String::from_utf8(decrypted).map_err(err)
+async fn checked_ticket_exchange_response(
+    response: reqwest::Response,
+) -> Result<reqwest::Response, String> {
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.map_err(err)?;
+        return Err(format_ticket_exchange_error(status, &body));
+    }
+
+    Ok(response)
+}
+
+fn format_ticket_exchange_error(status: reqwest::StatusCode, body: &str) -> String {
+    if parse_captcha_challenge(status, body).is_some() {
+        "Discord requires captcha verification, so QR login cannot continue in this terminal. Log in with a token instead.".into()
+    } else {
+        format_discord_error_response(status, body)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct CaptchaChallenge {
+    captcha_key: Vec<String>,
+    captcha_service: Option<String>,
+}
+
+fn parse_captcha_challenge(status: reqwest::StatusCode, body: &str) -> Option<CaptchaChallenge> {
+    if status != reqwest::StatusCode::BAD_REQUEST {
+        return None;
+    }
+
+    let challenge = serde_json::from_str::<CaptchaChallenge>(body).ok()?;
+    let is_hcaptcha = challenge
+        .captcha_service
+        .as_deref()
+        .is_none_or(|service| service.eq_ignore_ascii_case("hcaptcha"));
+    let requires_captcha = challenge
+        .captcha_key
+        .iter()
+        .any(|key| key == "captcha-required");
+
+    if is_hcaptcha && requires_captcha {
+        Some(challenge)
+    } else {
+        None
+    }
+}
+
+fn format_discord_error_response(status: reqwest::StatusCode, body: &str) -> String {
+    let body = sanitize_response_body(body);
+    if body.is_empty() {
+        format!("Discord ticket exchange failed with status {status}")
+    } else {
+        format!("Discord ticket exchange failed with status {status}: {body}")
+    }
+}
+
+fn sanitize_response_body(body: &str) -> String {
+    const MAX_BODY_CHARS: usize = 1_200;
+
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let sanitized = match serde_json::from_str::<Value>(trimmed) {
+        Ok(mut value) => {
+            redact_sensitive_json(&mut value);
+            serde_json::to_string(&value).unwrap_or_else(|_| trimmed.to_string())
+        }
+        Err(_) => trimmed.to_string(),
+    };
+
+    truncate_chars(&sanitized, MAX_BODY_CHARS)
+}
+
+fn redact_sensitive_json(value: &mut Value) {
+    match value {
+        Value::Object(map) => redact_sensitive_json_object(map),
+        Value::Array(values) => {
+            for value in values {
+                redact_sensitive_json(value);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn redact_sensitive_json_object(map: &mut Map<String, Value>) {
+    for (key, value) in map {
+        if is_sensitive_response_key(key) {
+            *value = Value::String("[redacted]".to_string());
+        } else {
+            redact_sensitive_json(value);
+        }
+    }
+}
+
+fn is_sensitive_response_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key.contains("token")
+        || key.contains("ticket")
+        || key.contains("rqdata")
+        || key == "captcha_session_id"
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...[truncated]")
+    } else {
+        truncated
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_ticket_exchange_error, parse_captcha_challenge, sanitize_response_body};
+
+    #[test]
+    fn sanitize_response_body_preserves_useful_error_fields() {
+        let body = r#"{"message":"captcha required","captcha_service":"hcaptcha"}"#;
+
+        let sanitized = sanitize_response_body(body);
+
+        assert!(sanitized.contains("captcha required"));
+        assert!(sanitized.contains("hcaptcha"));
+    }
+
+    #[test]
+    fn sanitize_response_body_redacts_sensitive_fields() {
+        let body = r#"{"ticket":"abc","captcha_rqtoken":"secret","nested":{"encrypted_token":"token"},"captcha_rqdata":"blob","captcha_session_id":"session"}"#;
+
+        let sanitized = sanitize_response_body(body);
+
+        assert!(!sanitized.contains("abc"));
+        assert!(!sanitized.contains("secret"));
+        assert!(!sanitized.contains("\":\"token\""));
+        assert!(!sanitized.contains("blob"));
+        assert!(!sanitized.contains("\":\"session\""));
+        assert!(sanitized.contains("[redacted]"));
+    }
+
+    #[test]
+    fn parse_captcha_challenge_accepts_hcaptcha_required_response() {
+        let body = r#"{"captcha_key":["captcha-required"],"captcha_service":"hcaptcha","captcha_sitekey":"site","captcha_rqdata":"data","captcha_rqtoken":"rqtoken","captcha_session_id":"session"}"#;
+
+        assert!(parse_captcha_challenge(reqwest::StatusCode::BAD_REQUEST, body).is_some());
+    }
+
+    #[test]
+    fn captcha_response_fails_without_local_fallback() {
+        let message = format_ticket_exchange_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"captcha_key":["captcha-required"],"captcha_service":"hcaptcha"}"#,
+        );
+
+        assert!(message.contains("captcha"));
+        assert!(message.contains("token"));
+    }
 }
