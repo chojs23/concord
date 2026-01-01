@@ -82,6 +82,8 @@ pub struct AttachmentInfo {
 pub struct MessageSnapshotInfo {
     pub content: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
+    pub source_channel_id: Option<Id<ChannelMarker>>,
+    pub timestamp: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -250,7 +252,10 @@ impl AttachmentInfo {
 }
 
 impl MessageSnapshotInfo {
-    pub fn from_snapshot(snapshot: MessageSnapshot) -> Self {
+    pub fn from_snapshot(
+        snapshot: MessageSnapshot,
+        source_channel_id: Option<Id<ChannelMarker>>,
+    ) -> Self {
         let message = snapshot.message;
         Self {
             content: Some(message.content),
@@ -259,6 +264,8 @@ impl MessageSnapshotInfo {
                 .into_iter()
                 .map(AttachmentInfo::from_attachment)
                 .collect(),
+            source_channel_id,
+            timestamp: Some(message.timestamp.iso_8601().to_string()),
         }
     }
 }
@@ -273,6 +280,10 @@ fn filename_has_extension(filename: &str, extensions: &[&str]) -> bool {
 
 impl MessageInfo {
     pub fn from_message(message: Message) -> Self {
+        let source_channel_id = message
+            .reference
+            .as_ref()
+            .and_then(|reference| reference.channel_id);
         Self {
             guild_id: message.guild_id,
             channel_id: message.channel_id,
@@ -288,7 +299,7 @@ impl MessageInfo {
             forwarded_snapshots: message
                 .message_snapshots
                 .into_iter()
-                .map(MessageSnapshotInfo::from_snapshot)
+                .map(|snapshot| MessageSnapshotInfo::from_snapshot(snapshot, source_channel_id))
                 .collect(),
         }
     }
@@ -311,26 +322,33 @@ pub fn map_event(event: Event, message_content_enabled: bool) -> Option<AppEvent
             guild_id: channel.guild_id,
             channel_id: channel.id,
         }),
-        Event::MessageCreate(message) => Some(AppEvent::MessageCreate {
-            guild_id: message.guild_id,
-            channel_id: message.channel_id,
-            message_id: message.id,
-            author_id: message.author.id,
-            author: message.author.name.clone(),
-            content: map_message_content(&message.content, message_content_enabled),
-            attachments: message
-                .attachments
-                .clone()
-                .into_iter()
-                .map(AttachmentInfo::from_attachment)
-                .collect(),
-            forwarded_snapshots: message
-                .message_snapshots
-                .clone()
-                .into_iter()
-                .map(MessageSnapshotInfo::from_snapshot)
-                .collect(),
-        }),
+        Event::MessageCreate(message) => {
+            let source_channel_id = message
+                .reference
+                .as_ref()
+                .and_then(|reference| reference.channel_id);
+
+            Some(AppEvent::MessageCreate {
+                guild_id: message.guild_id,
+                channel_id: message.channel_id,
+                message_id: message.id,
+                author_id: message.author.id,
+                author: message.author.name.clone(),
+                content: map_message_content(&message.content, message_content_enabled),
+                attachments: message
+                    .attachments
+                    .clone()
+                    .into_iter()
+                    .map(AttachmentInfo::from_attachment)
+                    .collect(),
+                forwarded_snapshots: message
+                    .message_snapshots
+                    .clone()
+                    .into_iter()
+                    .map(|snapshot| MessageSnapshotInfo::from_snapshot(snapshot, source_channel_id))
+                    .collect(),
+            })
+        }
         Event::MessageUpdate(message) => Some(AppEvent::MessageUpdate {
             guild_id: message.guild_id,
             channel_id: message.channel_id,

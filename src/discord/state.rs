@@ -1002,6 +1002,8 @@ mod tests {
         MessageSnapshotInfo {
             content: Some(content.to_owned()),
             attachments: Vec::new(),
+            source_channel_id: None,
+            timestamp: None,
         }
     }
 }

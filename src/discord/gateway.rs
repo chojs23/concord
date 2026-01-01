@@ -353,7 +353,12 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         .and_then(Value::as_str)
         .map(str::to_owned);
     let attachments = parse_attachments(data.get("attachments"));
-    let forwarded_snapshots = parse_message_snapshots(data.get("message_snapshots"));
+    let source_channel_id = data
+        .get("message_reference")
+        .and_then(|reference| reference.get("channel_id"))
+        .and_then(parse_id::<ChannelMarker>);
+    let forwarded_snapshots =
+        parse_message_snapshots(data.get("message_snapshots"), source_channel_id);
 
     Some(AppEvent::MessageCreate {
         guild_id,
@@ -413,25 +418,46 @@ fn parse_attachments(value: Option<&Value>) -> Vec<AttachmentInfo> {
         .unwrap_or_default()
 }
 
-fn parse_message_snapshots(value: Option<&Value>) -> Vec<MessageSnapshotInfo> {
+fn parse_message_snapshots(
+    value: Option<&Value>,
+    source_channel_id: Option<Id<ChannelMarker>>,
+) -> Vec<MessageSnapshotInfo> {
     value
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(parse_message_snapshot).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| parse_message_snapshot(item, source_channel_id))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
-fn parse_message_snapshot(value: &Value) -> Option<MessageSnapshotInfo> {
+fn parse_message_snapshot(
+    value: &Value,
+    source_channel_id: Option<Id<ChannelMarker>>,
+) -> Option<MessageSnapshotInfo> {
     let message = value.get("message")?;
     let content = message
         .get("content")
         .and_then(Value::as_str)
         .map(str::to_owned);
     let attachments = parse_attachments(message.get("attachments"));
+    let timestamp = message
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
 
-    if content.as_deref().is_some_and(|value| !value.is_empty()) || !attachments.is_empty() {
+    if content.as_deref().is_some_and(|value| !value.is_empty())
+        || !attachments.is_empty()
+        || source_channel_id.is_some()
+        || timestamp.is_some()
+    {
         Some(MessageSnapshotInfo {
             content,
             attachments,
+            source_channel_id,
+            timestamp,
         })
     } else {
         None
@@ -622,6 +648,7 @@ fn parse_id<M>(value: &Value) -> Option<Id<M>> {
 mod tests {
     use serde_json::json;
     use twilight_model::gateway::Intents;
+    use twilight_model::id::Id;
 
     use super::{gateway_intents, parse_channel_info, parse_message_create, parse_message_update};
     use crate::discord::{AppEvent, AttachmentUpdate};
@@ -791,9 +818,11 @@ mod tests {
             "author": { "id": "30", "username": "neo" },
             "content": "",
             "attachments": [],
+            "message_reference": { "channel_id": "11" },
             "message_snapshots": [{
                 "message": {
                     "content": "forwarded text",
+                    "timestamp": "2026-04-30T12:34:56.000000+00:00",
                     "attachments": []
                 }
             }]
@@ -811,6 +840,11 @@ mod tests {
         assert_eq!(
             forwarded_snapshots[0].content.as_deref(),
             Some("forwarded text")
+        );
+        assert_eq!(forwarded_snapshots[0].source_channel_id, Some(Id::new(11)));
+        assert_eq!(
+            forwarded_snapshots[0].timestamp.as_deref(),
+            Some("2026-04-30T12:34:56.000000+00:00")
         );
     }
 
