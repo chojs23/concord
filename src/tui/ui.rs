@@ -11,7 +11,7 @@ use super::{
     format::truncate_text,
     state::{
         ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MemberGroup, folder_color,
-        presence_color, presence_marker,
+        message_base_line_count, presence_color, presence_marker,
     },
 };
 use crate::discord::{AttachmentInfo, MessageSnapshotInfo, MessageState};
@@ -261,7 +261,7 @@ fn render_messages(
         .enumerate()
         .map(|(index, message)| {
             let author = truncate_text(&message.author, max_author_width);
-            let content = format_message_content(message, content_width.max(8));
+            let content = format_message_content_lines(message, state, content_width.max(8));
             let preview_height = preview_height_for_message(&image_previews, index);
             let lines = message_item_lines(author, content, max_author_width, preview_height);
             styled_list_item(ListItem::new(lines), selected == Some(index))
@@ -273,7 +273,11 @@ fn render_messages(
     frame.render_widget(list, message_areas.list);
     let mut previous_preview_rows = 0usize;
     for image_preview in image_previews.into_iter() {
-        let row = inline_image_preview_row(image_preview.message_index, previous_preview_rows);
+        let row = inline_image_preview_row(
+            &messages,
+            image_preview.message_index,
+            previous_preview_rows,
+        );
         if let Some(preview_area) =
             inline_image_preview_area(message_areas.list, row, image_preview.preview_height)
         {
@@ -316,17 +320,25 @@ fn preview_height_for_message(image_previews: &[ImagePreview<'_>], message_index
 
 fn message_item_lines(
     author: String,
-    content: String,
+    content: Vec<String>,
     max_author_width: usize,
     preview_height: u16,
 ) -> Vec<Line<'static>> {
+    let mut content = content.into_iter();
+    let first_line = content.next().unwrap_or_default();
     let mut lines = vec![Line::from(vec![
         Span::styled(
             format!("{author:<width$} ", width = max_author_width),
             Style::default().fg(Color::Green).bold(),
         ),
-        Span::raw(content),
+        Span::raw(first_line),
     ])];
+    lines.extend(content.map(|line| {
+        Line::from(vec![
+            Span::raw(format!("{:<width$} ", "", width = max_author_width)),
+            Span::raw(line),
+        ])
+    }));
     lines.extend(image_preview_spacer_lines(preview_height));
     lines
 }
@@ -335,39 +347,51 @@ fn image_preview_spacer_lines(height: u16) -> Vec<Line<'static>> {
     (0..height).map(|_| Line::from("")).collect()
 }
 
+#[cfg(test)]
 fn format_message_content(message: &MessageState, width: usize) -> String {
+    format_message_content_lines(message, &DashboardState::new(), width).join(" ")
+}
+
+fn format_message_content_lines(
+    message: &MessageState,
+    state: &DashboardState,
+    width: usize,
+) -> Vec<String> {
     let attachment_summary =
         (!message.attachments.is_empty()).then(|| format_attachment_summary(&message.attachments));
-    let forwarded_summary = message
-        .forwarded_snapshots
-        .iter()
-        .find_map(format_forwarded_snapshot);
-    let mut parts = Vec::new();
+    let mut primary_parts = Vec::new();
 
     if let Some(value) = message.content.as_deref().filter(|value| !value.is_empty()) {
-        parts.push(value.to_owned());
+        primary_parts.push(value.to_owned());
     }
     if let Some(attachments) = attachment_summary {
-        parts.push(attachments);
-    }
-    if let Some(forwarded) = forwarded_summary {
-        parts.push(forwarded);
+        primary_parts.push(attachments);
     }
 
-    let content = if parts.is_empty() {
-        if message.content.is_some() {
+    let mut lines = Vec::new();
+    if !primary_parts.is_empty() {
+        lines.push(truncate_text(&primary_parts.join(" "), width));
+    }
+    if let Some(snapshot) = message.forwarded_snapshots.first() {
+        lines.extend(format_forwarded_snapshot(snapshot, state, width));
+    }
+
+    if lines.is_empty() {
+        lines.push(if message.content.is_some() {
             "<empty message>".to_owned()
         } else {
             "<message content unavailable>".to_owned()
-        }
-    } else {
-        parts.join(" ")
-    };
+        });
+    }
 
-    truncate_text(&content, width)
+    lines
 }
 
-fn format_forwarded_snapshot(snapshot: &MessageSnapshotInfo) -> Option<String> {
+fn format_forwarded_snapshot(
+    snapshot: &MessageSnapshotInfo,
+    state: &DashboardState,
+    width: usize,
+) -> Vec<String> {
     let attachment_summary = (!snapshot.attachments.is_empty())
         .then(|| format_attachment_summary(&snapshot.attachments));
     let mut parts = Vec::new();
@@ -382,8 +406,36 @@ fn format_forwarded_snapshot(snapshot: &MessageSnapshotInfo) -> Option<String> {
     if let Some(attachments) = attachment_summary {
         parts.push(attachments);
     }
+    let body = if parts.is_empty() {
+        "<empty message>".to_owned()
+    } else {
+        parts.join(" ")
+    };
 
-    (!parts.is_empty()).then(|| format!("[forwarded: {}]", parts.join(" ")))
+    let mut lines = vec![
+        "↱ 전달됨".to_owned(),
+        truncate_text(&format!("│ {body}"), width),
+    ];
+    let mut metadata = Vec::new();
+    if let Some(channel_id) = snapshot.source_channel_id {
+        metadata.push(state.channel_label(channel_id));
+    }
+    if let Some(timestamp) = snapshot.timestamp.as_deref() {
+        metadata.push(format_forwarded_time(timestamp));
+    }
+    if !metadata.is_empty() {
+        lines.push(truncate_text(&format!("│ {}", metadata.join(" · ")), width));
+    }
+
+    lines
+}
+
+fn format_forwarded_time(timestamp: &str) -> String {
+    timestamp
+        .split_once('T')
+        .and_then(|(_, time)| time.get(0..5))
+        .unwrap_or(timestamp)
+        .to_owned()
 }
 
 fn format_attachment_summary(attachments: &[AttachmentInfo]) -> String {
@@ -659,8 +711,18 @@ fn inline_image_author_offset(area: Rect) -> u16 {
     15u16.min(area.width.saturating_sub(1))
 }
 
-fn inline_image_preview_row(message_index: usize, previous_preview_rows: usize) -> usize {
-    message_index.saturating_add(previous_preview_rows)
+fn inline_image_preview_row(
+    messages: &[&MessageState],
+    message_index: usize,
+    previous_preview_rows: usize,
+) -> usize {
+    messages
+        .iter()
+        .take(message_index.saturating_add(1))
+        .map(|message| message_base_line_count(message))
+        .sum::<usize>()
+        .saturating_add(previous_preview_rows)
+        .saturating_sub(1)
 }
 
 fn inline_image_preview_area(list: Rect, row: usize, preview_height: u16) -> Option<Rect> {
@@ -707,8 +769,8 @@ mod tests {
     use twilight_model::id::Id;
 
     use super::{
-        format_message_content, inline_image_preview_area, inline_image_preview_row,
-        message_item_lines, sync_view_heights,
+        format_message_content, format_message_content_lines, inline_image_preview_area,
+        inline_image_preview_row, message_item_lines, sync_view_heights,
     };
     use crate::{
         discord::{AttachmentInfo, MessageSnapshotInfo, MessageState},
@@ -787,7 +849,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "[forwarded: forwarded text]"
+            "↱ 전달됨 │ forwarded text"
         );
     }
 
@@ -798,7 +860,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "[forwarded: [image: cat.png] 640x480]"
+            "↱ 전달됨 │ [image: cat.png] 640x480"
         );
     }
 
@@ -811,20 +873,45 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "[forwarded: hello [image: cat.png] 640x480]"
+            "↱ 전달됨 │ hello [image: cat.png] 640x480"
+        );
+    }
+
+    #[test]
+    fn forwarded_snapshot_lines_include_channel_and_time() {
+        let mut state = DashboardState::new();
+        state.push_event(crate::discord::AppEvent::ChannelUpsert(
+            crate::discord::ChannelInfo {
+                guild_id: Some(Id::new(1)),
+                channel_id: Id::new(9),
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            },
+        ));
+        let mut snapshot = forwarded_snapshot(Some("hello"), Vec::new());
+        snapshot.source_channel_id = Some(Id::new(9));
+        snapshot.timestamp = Some("2026-04-30T12:34:56.000000+00:00".to_owned());
+        let message = message_with_forwarded_snapshot(snapshot);
+
+        assert_eq!(
+            format_message_content_lines(&message, &state, 200),
+            vec!["↱ 전달됨", "│ hello", "│ #general · 12:34"]
         );
     }
 
     #[test]
     fn image_preview_rows_are_part_of_the_message_item() {
-        let lines = message_item_lines("neo".to_owned(), "look".to_owned(), 14, 3);
+        let lines = message_item_lines("neo".to_owned(), vec!["look".to_owned()], 14, 3);
 
         assert_eq!(lines.len(), 4);
     }
 
     #[test]
     fn text_only_message_item_has_one_row() {
-        let lines = message_item_lines("neo".to_owned(), "look".to_owned(), 14, 0);
+        let lines = message_item_lines("neo".to_owned(), vec!["look".to_owned()], 14, 0);
 
         assert_eq!(lines.len(), 1);
     }
@@ -851,13 +938,30 @@ mod tests {
     #[test]
     fn later_image_preview_slot_accounts_for_prior_preview_rows() {
         let area = Rect::new(10, 5, 80, 18);
-        let row = inline_image_preview_row(2, 4);
+        let messages = [
+            message_with_attachment(Some("one".to_owned()), image_attachment()),
+            message_with_attachment(Some("two".to_owned()), image_attachment()),
+            message_with_attachment(Some("three".to_owned()), image_attachment()),
+        ];
+        let messages = messages.iter().collect::<Vec<_>>();
+        let row = inline_image_preview_row(&messages, 2, 4);
 
         assert_eq!(row, 6);
         assert_eq!(
             inline_image_preview_area(area, row, 4),
             Some(Rect::new(25, 12, 65, 4))
         );
+    }
+
+    #[test]
+    fn forwarded_card_rows_push_inline_preview_slot_down() {
+        let mut snapshot = forwarded_snapshot(Some("hello"), vec![image_attachment()]);
+        snapshot.source_channel_id = Some(Id::new(9));
+        snapshot.timestamp = Some("2026-04-30T12:34:56.000000+00:00".to_owned());
+        let message = message_with_forwarded_snapshot(snapshot);
+        let messages = [&message];
+
+        assert_eq!(inline_image_preview_row(&messages, 0, 0), 2);
     }
 
     #[test]
@@ -909,6 +1013,8 @@ mod tests {
         MessageSnapshotInfo {
             content: content.map(str::to_owned),
             attachments,
+            source_channel_id: None,
+            timestamp: None,
         }
     }
 

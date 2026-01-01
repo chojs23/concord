@@ -528,6 +528,17 @@ impl DashboardState {
             .and_then(|channel_id| self.discord.channel(channel_id))
     }
 
+    pub fn channel_label(&self, channel_id: Id<ChannelMarker>) -> String {
+        self.discord
+            .channel(channel_id)
+            .map(|channel| match channel.kind.as_str() {
+                "dm" | "Private" => format!("@{}", channel.name),
+                "group-dm" | "Group" => channel.name.clone(),
+                _ => format!("#{}", channel.name),
+            })
+            .unwrap_or_else(|| format!("#channel-{}", channel_id.get()))
+    }
+
     pub fn is_active_channel_entry(&self, entry: &ChannelPaneEntry<'_>) -> bool {
         matches!(
             entry,
@@ -1240,7 +1251,24 @@ fn message_rendered_height(
             )
         })
         .unwrap_or(0);
-    1 + usize::from(preview_height)
+    message_base_line_count(message) + usize::from(preview_height)
+}
+
+pub(crate) fn message_base_line_count(message: &MessageState) -> usize {
+    let has_primary = message
+        .content
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+        || !message.attachments.is_empty();
+
+    if let Some(snapshot) = message.forwarded_snapshots.first() {
+        let metadata_line =
+            usize::from(snapshot.source_channel_id.is_some() || snapshot.timestamp.is_some());
+        let primary_line = usize::from(has_primary);
+        return (primary_line + 2 + metadata_line).max(1);
+    }
+
+    1
 }
 
 fn pane_content_height(height: usize) -> usize {
@@ -1738,7 +1766,24 @@ mod tests {
             forwarded_snapshots: vec![forwarded_snapshot(1)],
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 4);
+        assert_eq!(message_rendered_height(&message, 16, 3), 5);
+    }
+
+    #[test]
+    fn forwarded_metadata_reserves_card_row() {
+        let mut snapshot = forwarded_snapshot(1);
+        snapshot.source_channel_id = Some(Id::new(2));
+        snapshot.timestamp = Some("2026-04-30T12:34:56.000000+00:00".to_owned());
+        let message = MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: vec![snapshot],
+        };
+
+        assert_eq!(message_rendered_height(&message, 16, 3), 6);
     }
 
     #[test]
@@ -2579,6 +2624,8 @@ mod tests {
         MessageSnapshotInfo {
             content: Some(format!("forwarded {id}")),
             attachments: vec![image_attachment(id)],
+            source_channel_id: None,
+            timestamp: None,
         }
     }
 
