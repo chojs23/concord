@@ -413,7 +413,7 @@ fn format_forwarded_snapshot(
     };
 
     let mut lines = vec![
-        "↱ 전달됨".to_owned(),
+        "↱ Forwarded".to_owned(),
         truncate_text(&format!("│ {body}"), width),
     ];
     let mut metadata = Vec::new();
@@ -849,7 +849,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "↱ 전달됨 │ forwarded text"
+            "↱ Forwarded │ forwarded text"
         );
     }
 
@@ -860,7 +860,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "↱ 전달됨 │ [image: cat.png] 640x480"
+            "↱ Forwarded │ [image: cat.png] 640x480"
         );
     }
 
@@ -873,7 +873,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "↱ 전달됨 │ hello [image: cat.png] 640x480"
+            "↱ Forwarded │ hello [image: cat.png] 640x480"
         );
     }
 
@@ -898,7 +898,7 @@ mod tests {
 
         assert_eq!(
             format_message_content_lines(&message, &state, 200),
-            vec!["↱ 전달됨", "│ hello", "│ #general · 12:34"]
+            vec!["↱ Forwarded", "│ hello", "│ #general · 12:34"]
         );
     }
 

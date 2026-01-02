@@ -28,7 +28,7 @@ use crate::{
     logging,
 };
 
-use state::DashboardState;
+use state::{DashboardState, message_base_line_count};
 use ui::{ImagePreview, ImagePreviewLayout, ImagePreviewState};
 
 const IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
@@ -425,7 +425,7 @@ fn visible_image_preview_targets(
             break;
         }
 
-        rendered_rows = rendered_rows.saturating_add(1);
+        rendered_rows = rendered_rows.saturating_add(message_base_line_count(message));
 
         let Some((attachment, url)) = message
             .attachments_in_display_order()
@@ -945,6 +945,8 @@ mod tests {
         MessageSnapshotInfo {
             content: Some(format!("forwarded {id}")),
             attachments: vec![image_attachment(id)],
+            source_channel_id: None,
+            timestamp: None,
         }
     }
 
