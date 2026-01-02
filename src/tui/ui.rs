@@ -22,6 +22,28 @@ const MIN_MESSAGE_INPUT_HEIGHT: u16 = 3;
 const IMAGE_PREVIEW_HEIGHT: u16 = 10;
 const IMAGE_PREVIEW_WIDTH: u16 = 72;
 
+#[derive(Clone)]
+struct MessageContentLine {
+    text: String,
+    style: Style,
+}
+
+impl MessageContentLine {
+    fn plain(text: String) -> Self {
+        Self {
+            text,
+            style: Style::default(),
+        }
+    }
+
+    fn dim(text: String) -> Self {
+        Self {
+            text,
+            style: Style::default().fg(DIM),
+        }
+    }
+}
+
 pub struct ImagePreview<'a> {
     pub message_index: usize,
     pub preview_height: u16,
@@ -320,23 +342,25 @@ fn preview_height_for_message(image_previews: &[ImagePreview<'_>], message_index
 
 fn message_item_lines(
     author: String,
-    content: Vec<String>,
+    content: Vec<MessageContentLine>,
     max_author_width: usize,
     preview_height: u16,
 ) -> Vec<Line<'static>> {
     let mut content = content.into_iter();
-    let first_line = content.next().unwrap_or_default();
+    let first_line = content
+        .next()
+        .unwrap_or_else(|| MessageContentLine::plain(String::new()));
     let mut lines = vec![Line::from(vec![
         Span::styled(
             format!("{author:<width$} ", width = max_author_width),
             Style::default().fg(Color::Green).bold(),
         ),
-        Span::raw(first_line),
+        Span::styled(first_line.text, first_line.style),
     ])];
     lines.extend(content.map(|line| {
         Line::from(vec![
             Span::raw(format!("{:<width$} ", "", width = max_author_width)),
-            Span::raw(line),
+            Span::styled(line.text, line.style),
         ])
     }));
     lines.extend(image_preview_spacer_lines(preview_height));
@@ -349,14 +373,18 @@ fn image_preview_spacer_lines(height: u16) -> Vec<Line<'static>> {
 
 #[cfg(test)]
 fn format_message_content(message: &MessageState, width: usize) -> String {
-    format_message_content_lines(message, &DashboardState::new(), width).join(" ")
+    format_message_content_lines(message, &DashboardState::new(), width)
+        .into_iter()
+        .map(|line| line.text)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn format_message_content_lines(
     message: &MessageState,
     state: &DashboardState,
     width: usize,
-) -> Vec<String> {
+) -> Vec<MessageContentLine> {
     let attachment_summary =
         (!message.attachments.is_empty()).then(|| format_attachment_summary(&message.attachments));
     let mut primary_parts = Vec::new();
@@ -370,18 +398,21 @@ fn format_message_content_lines(
 
     let mut lines = Vec::new();
     if !primary_parts.is_empty() {
-        lines.push(truncate_text(&primary_parts.join(" "), width));
+        lines.push(MessageContentLine::plain(truncate_text(
+            &primary_parts.join(" "),
+            width,
+        )));
     }
     if let Some(snapshot) = message.forwarded_snapshots.first() {
         lines.extend(format_forwarded_snapshot(snapshot, state, width));
     }
 
     if lines.is_empty() {
-        lines.push(if message.content.is_some() {
+        lines.push(MessageContentLine::plain(if message.content.is_some() {
             "<empty message>".to_owned()
         } else {
             "<message content unavailable>".to_owned()
-        });
+        }));
     }
 
     lines
@@ -391,7 +422,7 @@ fn format_forwarded_snapshot(
     snapshot: &MessageSnapshotInfo,
     state: &DashboardState,
     width: usize,
-) -> Vec<String> {
+) -> Vec<MessageContentLine> {
     let attachment_summary = (!snapshot.attachments.is_empty())
         .then(|| format_attachment_summary(&snapshot.attachments));
     let mut parts = Vec::new();
@@ -413,8 +444,8 @@ fn format_forwarded_snapshot(
     };
 
     let mut lines = vec![
-        "↱ Forwarded".to_owned(),
-        truncate_text(&format!("│ {body}"), width),
+        MessageContentLine::plain("↱ Forwarded".to_owned()),
+        MessageContentLine::plain(truncate_text(&format!("│ {body}"), width)),
     ];
     let mut metadata = Vec::new();
     if let Some(channel_id) = snapshot.source_channel_id {
@@ -424,7 +455,10 @@ fn format_forwarded_snapshot(
         metadata.push(format_forwarded_time(timestamp));
     }
     if !metadata.is_empty() {
-        lines.push(truncate_text(&format!("│ {}", metadata.join(" · ")), width));
+        lines.push(MessageContentLine::dim(truncate_text(
+            &format!("│ {}", metadata.join(" · ")),
+            width,
+        )));
     }
 
     lines
@@ -765,12 +799,12 @@ fn composer_prompt_line_count(input: &str, width: u16) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::layout::Rect;
+    use ratatui::{layout::Rect, style::Style};
     use twilight_model::id::Id;
 
     use super::{
-        format_message_content, format_message_content_lines, inline_image_preview_area,
-        inline_image_preview_row, message_item_lines, sync_view_heights,
+        DIM, MessageContentLine, format_message_content, format_message_content_lines,
+        inline_image_preview_area, inline_image_preview_row, message_item_lines, sync_view_heights,
     };
     use crate::{
         discord::{AttachmentInfo, MessageSnapshotInfo, MessageState},
@@ -896,22 +930,35 @@ mod tests {
         snapshot.timestamp = Some("2026-04-30T12:34:56.000000+00:00".to_owned());
         let message = message_with_forwarded_snapshot(snapshot);
 
+        let lines = format_message_content_lines(&message, &state, 200);
+
         assert_eq!(
-            format_message_content_lines(&message, &state, 200),
+            line_texts(&lines),
             vec!["↱ Forwarded", "│ hello", "│ #general · 12:34"]
         );
+        assert_eq!(lines[2].style, Style::default().fg(DIM));
     }
 
     #[test]
     fn image_preview_rows_are_part_of_the_message_item() {
-        let lines = message_item_lines("neo".to_owned(), vec!["look".to_owned()], 14, 3);
+        let lines = message_item_lines(
+            "neo".to_owned(),
+            vec![MessageContentLine::plain("look".to_owned())],
+            14,
+            3,
+        );
 
         assert_eq!(lines.len(), 4);
     }
 
     #[test]
     fn text_only_message_item_has_one_row() {
-        let lines = message_item_lines("neo".to_owned(), vec!["look".to_owned()], 14, 0);
+        let lines = message_item_lines(
+            "neo".to_owned(),
+            vec![MessageContentLine::plain("look".to_owned())],
+            14,
+            0,
+        );
 
         assert_eq!(lines.len(), 1);
     }
@@ -1016,6 +1063,10 @@ mod tests {
             source_channel_id: None,
             timestamp: None,
         }
+    }
+
+    fn line_texts(lines: &[MessageContentLine]) -> Vec<&str> {
+        lines.iter().map(|line| line.text.as_str()).collect()
     }
 
     fn image_attachment() -> AttachmentInfo {
