@@ -42,6 +42,13 @@ impl MessageContentLine {
             style: Style::default().fg(DIM),
         }
     }
+
+    fn accent(text: String) -> Self {
+        Self {
+            text,
+            style: Style::default().fg(ACCENT),
+        }
+    }
 }
 
 pub struct ImagePreview<'a> {
@@ -387,19 +394,14 @@ fn format_message_content_lines(
 ) -> Vec<MessageContentLine> {
     let attachment_summary =
         (!message.attachments.is_empty()).then(|| format_attachment_summary(&message.attachments));
-    let mut primary_parts = Vec::new();
+    let mut lines = Vec::new();
 
     if let Some(value) = message.content.as_deref().filter(|value| !value.is_empty()) {
-        primary_parts.push(value.to_owned());
+        lines.push(MessageContentLine::plain(truncate_text(value, width)));
     }
     if let Some(attachments) = attachment_summary {
-        primary_parts.push(attachments);
-    }
-
-    let mut lines = Vec::new();
-    if !primary_parts.is_empty() {
-        lines.push(MessageContentLine::plain(truncate_text(
-            &primary_parts.join(" "),
+        lines.push(MessageContentLine::accent(truncate_text(
+            &attachments,
             width,
         )));
     }
@@ -425,28 +427,26 @@ fn format_forwarded_snapshot(
 ) -> Vec<MessageContentLine> {
     let attachment_summary = (!snapshot.attachments.is_empty())
         .then(|| format_attachment_summary(&snapshot.attachments));
-    let mut parts = Vec::new();
-
+    let mut lines = vec![MessageContentLine::plain("↱ Forwarded".to_owned())];
     if let Some(content) = snapshot
         .content
         .as_deref()
         .filter(|value| !value.is_empty())
     {
-        parts.push(content.to_owned());
+        lines.push(MessageContentLine::plain(truncate_text(
+            &format!("│ {content}"),
+            width,
+        )));
     }
     if let Some(attachments) = attachment_summary {
-        parts.push(attachments);
+        lines.push(MessageContentLine::accent(truncate_text(
+            &format!("│ {attachments}"),
+            width,
+        )));
     }
-    let body = if parts.is_empty() {
-        "<empty message>".to_owned()
-    } else {
-        parts.join(" ")
-    };
-
-    let mut lines = vec![
-        MessageContentLine::plain("↱ Forwarded".to_owned()),
-        MessageContentLine::plain(truncate_text(&format!("│ {body}"), width)),
-    ];
+    if lines.len() == 1 {
+        lines.push(MessageContentLine::plain("│ <empty message>".to_owned()));
+    }
     let mut metadata = Vec::new();
     if let Some(channel_id) = snapshot.source_channel_id {
         metadata.push(state.channel_label(channel_id));
@@ -803,7 +803,7 @@ mod tests {
     use twilight_model::id::Id;
 
     use super::{
-        DIM, MessageContentLine, format_message_content, format_message_content_lines,
+        ACCENT, DIM, MessageContentLine, format_message_content, format_message_content_lines,
         inline_image_preview_area, inline_image_preview_row, message_item_lines, sync_view_heights,
     };
     use crate::{
@@ -857,13 +857,12 @@ mod tests {
     }
 
     #[test]
-    fn attachment_summary_is_appended_to_text_content() {
+    fn attachment_summary_uses_own_accent_line_after_text_content() {
         let message = message_with_attachment(Some("look".to_owned()), image_attachment());
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
-        assert_eq!(
-            format_message_content(&message, 200),
-            "look [image: cat.png] 640x480"
-        );
+        assert_eq!(line_texts(&lines), vec!["look", "[image: cat.png] 640x480"]);
+        assert_eq!(lines[1].style, Style::default().fg(ACCENT));
     }
 
     #[test]
@@ -907,7 +906,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "↱ Forwarded │ hello [image: cat.png] 640x480"
+            "↱ Forwarded │ hello │ [image: cat.png] 640x480"
         );
     }
 
@@ -993,10 +992,10 @@ mod tests {
         let messages = messages.iter().collect::<Vec<_>>();
         let row = inline_image_preview_row(&messages, 2, 4);
 
-        assert_eq!(row, 6);
+        assert_eq!(row, 9);
         assert_eq!(
             inline_image_preview_area(area, row, 4),
-            Some(Rect::new(25, 12, 65, 4))
+            Some(Rect::new(25, 15, 65, 4))
         );
     }
 
@@ -1008,7 +1007,7 @@ mod tests {
         let message = message_with_forwarded_snapshot(snapshot);
         let messages = [&message];
 
-        assert_eq!(inline_image_preview_row(&messages, 0, 0), 2);
+        assert_eq!(inline_image_preview_row(&messages, 0, 0), 3);
     }
 
     #[test]

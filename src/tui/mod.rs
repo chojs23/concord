@@ -629,7 +629,7 @@ mod tests {
             },
         );
 
-        assert_eq!(target_message_ids(&targets), vec![Id::new(1), Id::new(2)]);
+        assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
     }
 
     #[test]
@@ -668,10 +668,10 @@ mod tests {
 
         let requests = cache.next_requests(&targets);
 
-        assert_eq!(requests.len(), 2);
-        assert_eq!(cache.entries.len(), 2);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(cache.entries.len(), 1);
         assert!(requests.contains(&AppCommand::LoadAttachmentPreview {
-            url: "https://cdn.discordapp.com/image-2.png".to_owned(),
+            url: "https://cdn.discordapp.com/image-1.png".to_owned(),
         }));
     }
 
@@ -764,10 +764,7 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            target_message_ids(&targets),
-            vec![Id::new(5), Id::new(6), Id::new(7)]
-        );
+        assert_eq!(target_message_ids(&targets), vec![Id::new(5), Id::new(6)]);
     }
 
     #[test]

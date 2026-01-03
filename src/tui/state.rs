@@ -4,8 +4,8 @@ use ratatui::style::Color;
 use twilight_model::id::{Id, marker::ChannelMarker, marker::GuildMarker, marker::MessageMarker};
 
 use crate::discord::{
-    AppCommand, AppEvent, ChannelState, DiscordState, GuildFolder, GuildMemberState, GuildState,
-    MessageState, PresenceStatus,
+    AppCommand, AppEvent, AttachmentInfo, ChannelState, DiscordState, GuildFolder,
+    GuildMemberState, GuildState, MessageSnapshotInfo, MessageState, PresenceStatus,
 };
 use crate::logging;
 
@@ -1255,20 +1255,25 @@ fn message_rendered_height(
 }
 
 pub(crate) fn message_base_line_count(message: &MessageState) -> usize {
-    let has_primary = message
-        .content
-        .as_deref()
-        .is_some_and(|value| !value.is_empty())
-        || !message.attachments.is_empty();
+    let primary_lines =
+        message_primary_line_count(message.content.as_deref(), &message.attachments);
 
     if let Some(snapshot) = message.forwarded_snapshots.first() {
         let metadata_line =
             usize::from(snapshot.source_channel_id.is_some() || snapshot.timestamp.is_some());
-        let primary_line = usize::from(has_primary);
-        return (primary_line + 2 + metadata_line).max(1);
+        return (primary_lines + forwarded_snapshot_line_count(snapshot) + metadata_line).max(1);
     }
 
-    1
+    primary_lines.max(1)
+}
+
+fn message_primary_line_count(content: Option<&str>, attachments: &[AttachmentInfo]) -> usize {
+    usize::from(content.is_some_and(|value| !value.is_empty()))
+        + usize::from(!attachments.is_empty())
+}
+
+fn forwarded_snapshot_line_count(snapshot: &MessageSnapshotInfo) -> usize {
+    1 + message_primary_line_count(snapshot.content.as_deref(), &snapshot.attachments).max(1)
 }
 
 fn pane_content_height(height: usize) -> usize {
@@ -1732,7 +1737,7 @@ mod tests {
         }
         state.clamp_message_viewport_for_image_previews(16, 3);
 
-        assert_eq!(state.following_message_rendered_rows(16, 3, 3), 12);
+        assert_eq!(state.following_message_rendered_rows(16, 3, 3), 15);
         let selected_bottom = state.selected_message_rendered_row(16, 3).saturating_add(
             state
                 .selected_message_rendered_height(16, 3)
@@ -1752,7 +1757,21 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 1);
+        assert_eq!(message_rendered_height(&message, 16, 3), 2);
+    }
+
+    #[test]
+    fn image_attachment_summary_reserves_text_row_before_preview() {
+        let message = MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            content: Some("look".to_owned()),
+            attachments: vec![image_attachment(1)],
+            forwarded_snapshots: Vec::new(),
+        };
+
+        assert_eq!(message_rendered_height(&message, 16, 3), 5);
     }
 
     #[test]
@@ -1766,7 +1785,7 @@ mod tests {
             forwarded_snapshots: vec![forwarded_snapshot(1)],
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 5);
+        assert_eq!(message_rendered_height(&message, 16, 3), 6);
     }
 
     #[test]
@@ -1783,7 +1802,7 @@ mod tests {
             forwarded_snapshots: vec![snapshot],
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 6);
+        assert_eq!(message_rendered_height(&message, 16, 3), 7);
     }
 
     #[test]
