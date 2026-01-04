@@ -7,7 +7,7 @@ use twilight_model::id::{
 
 use super::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
-    MessageSnapshotInfo, PresenceStatus,
+    MessageKind, MessageSnapshotInfo, PresenceStatus,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -40,6 +40,7 @@ pub struct MessageState {
     pub id: Id<MessageMarker>,
     pub channel_id: Id<ChannelMarker>,
     pub author: String,
+    pub message_kind: MessageKind,
     pub content: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
@@ -146,6 +147,7 @@ impl DiscordState {
                 channel_id,
                 message_id,
                 author,
+                message_kind,
                 content,
                 attachments,
                 forwarded_snapshots,
@@ -154,6 +156,7 @@ impl DiscordState {
                 id: *message_id,
                 channel_id: *channel_id,
                 author: author.clone(),
+                message_kind: *message_kind,
                 content: content.clone(),
                 attachments: attachments.clone(),
                 forwarded_snapshots: forwarded_snapshots.clone(),
@@ -283,6 +286,7 @@ impl DiscordState {
         if let Some(existing) = messages.iter_mut().find(|item| item.id == message.id) {
             existing.channel_id = message.channel_id;
             existing.author = message.author;
+            existing.message_kind = message.message_kind;
             if message.content.is_some() {
                 existing.content = message.content;
             }
@@ -318,6 +322,7 @@ impl DiscordState {
                 id: message.message_id,
                 channel_id: message.channel_id,
                 author: message.author.clone(),
+                message_kind: message.message_kind,
                 content: message.content.clone(),
                 attachments: message.attachments.clone(),
                 forwarded_snapshots: message.forwarded_snapshots.clone(),
@@ -378,6 +383,7 @@ impl DiscordState {
 fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
     existing.channel_id = incoming.channel_id;
     existing.author = incoming.author.clone();
+    existing.message_kind = incoming.message_kind;
 
     if let Some(content) = &incoming.content {
         let existing_is_empty = existing
@@ -420,7 +426,7 @@ mod tests {
 
     use crate::discord::{
         AppEvent, AttachmentUpdate, ChannelInfo, DiscordState, MemberInfo, MessageInfo,
-        MessageSnapshotInfo, PresenceStatus,
+        MessageKind, MessageSnapshotInfo, PresenceStatus,
     };
 
     #[test]
@@ -452,6 +458,7 @@ mod tests {
             message_id,
             author_id,
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some("hello".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -497,6 +504,7 @@ mod tests {
                 message_id: Id::new(id),
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
+                message_kind: crate::discord::MessageKind::regular(),
                 content: Some(format!("message {id}")),
                 attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),
@@ -506,6 +514,63 @@ mod tests {
         let messages = state.messages_for_channel(channel_id);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].id.get(), 2);
+    }
+
+    #[test]
+    fn stores_message_kind_from_message_create() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(20),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            message_kind: MessageKind::new(19),
+            content: Some("reply".to_owned()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages[0].message_kind, MessageKind::new(19));
+    }
+
+    #[test]
+    fn duplicate_message_create_refreshes_message_kind() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let message_id = Id::new(20);
+        let author_id = Id::new(99);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
+            content: Some("cached".to_owned()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            message_kind: MessageKind::new(19),
+            content: None,
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content.as_deref(), Some("cached"));
+        assert_eq!(messages[0].message_kind, MessageKind::new(19));
     }
 
     #[test]
@@ -521,6 +586,7 @@ mod tests {
             message_id,
             author_id,
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some("hello".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -531,6 +597,7 @@ mod tests {
             message_id,
             author_id,
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: None,
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -559,6 +626,7 @@ mod tests {
             message_id: Id::new(30),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some("live".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -592,6 +660,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some("known".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -620,6 +689,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some(String::new()),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
             forwarded_snapshots: Vec::new(),
@@ -650,6 +720,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![snapshot_info("forwarded text")],
@@ -675,6 +746,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![snapshot_info("live snapshot")],
@@ -702,6 +774,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some(String::new()),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
             forwarded_snapshots: Vec::new(),
@@ -730,6 +803,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some(String::new()),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
             forwarded_snapshots: Vec::new(),
@@ -790,6 +864,7 @@ mod tests {
             message_id: Id::new(30),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some("new".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -800,6 +875,7 @@ mod tests {
             message_id: Id::new(10),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some("old".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -974,6 +1050,7 @@ mod tests {
             message_id: Id::new(message_id),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
             content: Some(content.to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),

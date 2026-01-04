@@ -1257,14 +1257,19 @@ fn message_rendered_height(
 pub(crate) fn message_base_line_count(message: &MessageState) -> usize {
     let primary_lines =
         message_primary_line_count(message.content.as_deref(), &message.attachments);
+    let kind_line = usize::from(!message.message_kind.is_regular());
 
     if let Some(snapshot) = message.forwarded_snapshots.first() {
         let metadata_line =
             usize::from(snapshot.source_channel_id.is_some() || snapshot.timestamp.is_some());
-        return (primary_lines + forwarded_snapshot_line_count(snapshot) + metadata_line).max(1);
+        return (kind_line
+            + primary_lines
+            + forwarded_snapshot_line_count(snapshot)
+            + metadata_line)
+            .max(1);
     }
 
-    primary_lines.max(1)
+    (kind_line + primary_lines).max(1)
 }
 
 fn message_primary_line_count(content: Option<&str>, attachments: &[AttachmentInfo]) -> usize {
@@ -1452,7 +1457,7 @@ mod tests {
         MessageState, message_rendered_height,
     };
     use crate::discord::{
-        AppEvent, AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
+        AppEvent, AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageInfo, MessageKind,
         MessageSnapshotInfo, PresenceStatus,
     };
 
@@ -1527,6 +1532,7 @@ mod tests {
                 message_id: Id::new(id),
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
+                message_kind: crate::discord::MessageKind::regular(),
                 content: Some(format!("msg {id}")),
                 attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),
@@ -1562,6 +1568,7 @@ mod tests {
             message_id: Id::new(30),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some("hello".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -1654,6 +1661,7 @@ mod tests {
                 message_id: Id::new(id),
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
+                message_kind: crate::discord::MessageKind::regular(),
                 content: Some(format!("msg {id}")),
                 attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),
@@ -1682,6 +1690,7 @@ mod tests {
             message_id: Id::new(6),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some("msg 6".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -1752,6 +1761,7 @@ mod tests {
             id: Id::new(1),
             channel_id: Id::new(2),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some("clip".to_owned()),
             attachments: vec![video_attachment(1)],
             forwarded_snapshots: Vec::new(),
@@ -1766,6 +1776,7 @@ mod tests {
             id: Id::new(1),
             channel_id: Id::new(2),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some("look".to_owned()),
             attachments: vec![image_attachment(1)],
             forwarded_snapshots: Vec::new(),
@@ -1780,6 +1791,7 @@ mod tests {
             id: Id::new(1),
             channel_id: Id::new(2),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![forwarded_snapshot(1)],
@@ -1797,12 +1809,32 @@ mod tests {
             id: Id::new(1),
             channel_id: Id::new(2),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![snapshot],
         };
 
         assert_eq!(message_rendered_height(&message, 16, 3), 7);
+    }
+
+    #[test]
+    fn non_default_message_kind_reserves_label_row() {
+        let mut message = MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
+            content: Some("reply body".to_owned()),
+            attachments: vec![image_attachment(1)],
+            forwarded_snapshots: Vec::new(),
+        };
+
+        assert_eq!(message_rendered_height(&message, 16, 3), 5);
+
+        message.message_kind = MessageKind::new(19);
+
+        assert_eq!(message_rendered_height(&message, 16, 3), 6);
     }
 
     #[test]
@@ -1815,6 +1847,7 @@ mod tests {
             message_id: Id::new(2),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![forwarded_snapshot(2)],
@@ -2096,6 +2129,7 @@ mod tests {
             message_id: Id::new(300),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some("new empty dm".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -2600,6 +2634,7 @@ mod tests {
                 message_id: Id::new(id),
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
+                message_kind: crate::discord::MessageKind::regular(),
                 content: Some(format!("msg {id}")),
                 attachments: has_image(id)
                     .then(|| image_attachment(id))
@@ -2676,6 +2711,7 @@ mod tests {
             message_id: Id::new(1),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some(String::new()),
             attachments: vec![AttachmentInfo {
                 id: Id::new(3),
@@ -2700,6 +2736,7 @@ mod tests {
             message_id: Id::new(message_id),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
             content: Some(format!("msg {message_id}")),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),

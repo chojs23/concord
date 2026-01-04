@@ -500,6 +500,7 @@ mod tests {
                 message_id: Id::new(id),
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
+                message_kind: crate::discord::MessageKind::regular(),
                 content: Some(format!("msg {id}")),
                 attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),

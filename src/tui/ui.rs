@@ -14,7 +14,7 @@ use super::{
         message_base_line_count, presence_color, presence_marker,
     },
 };
-use crate::discord::{AttachmentInfo, MessageSnapshotInfo, MessageState};
+use crate::discord::{AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState};
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
@@ -396,6 +396,10 @@ fn format_message_content_lines(
         (!message.attachments.is_empty()).then(|| format_attachment_summary(&message.attachments));
     let mut lines = Vec::new();
 
+    if let Some(line) = format_message_kind_line(message.message_kind) {
+        lines.push(line);
+    }
+
     if let Some(value) = message.content.as_deref().filter(|value| !value.is_empty()) {
         lines.push(MessageContentLine::plain(truncate_text(value, width)));
     }
@@ -418,6 +422,20 @@ fn format_message_content_lines(
     }
 
     lines
+}
+
+fn format_message_kind_line(message_kind: MessageKind) -> Option<MessageContentLine> {
+    if message_kind.is_regular() {
+        return None;
+    }
+
+    let label = if message_kind.label() == "Unknown message type" {
+        format!("{} {}", message_kind.label(), message_kind.code())
+    } else {
+        message_kind.label().to_owned()
+    };
+
+    Some(MessageContentLine::dim(format!("↳ {label}")))
 }
 
 fn format_forwarded_snapshot(
@@ -807,7 +825,7 @@ mod tests {
         inline_image_preview_area, inline_image_preview_row, message_item_lines, sync_view_heights,
     };
     use crate::{
-        discord::{AttachmentInfo, MessageSnapshotInfo, MessageState},
+        discord::{AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState},
         tui::state::DashboardState,
     };
 
@@ -873,6 +891,31 @@ mod tests {
             format_message_content(&message, 200),
             "[video: clip.mp4] 1920x1080"
         );
+    }
+
+    #[test]
+    fn non_default_message_type_adds_dim_label_line() {
+        let mut message =
+            message_with_attachment(Some("reply body".to_owned()), image_attachment());
+        message.message_kind = MessageKind::new(19);
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec!["↳ Reply", "reply body", "[image: cat.png] 640x480"]
+        );
+        assert_eq!(lines[0].style, Style::default().fg(DIM));
+    }
+
+    #[test]
+    fn unknown_message_type_includes_numeric_code() {
+        let mut message = message_with_attachment(Some("body".to_owned()), image_attachment());
+        message.message_kind = MessageKind::new(45);
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(lines[0].text, "↳ Unknown message type 45");
     }
 
     #[test]
@@ -1035,6 +1078,7 @@ mod tests {
             id: Id::new(1),
             channel_id: Id::new(2),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content,
             attachments: vec![attachment],
             forwarded_snapshots: Vec::new(),
@@ -1046,6 +1090,7 @@ mod tests {
             id: Id::new(1),
             channel_id: Id::new(2),
             author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![snapshot],

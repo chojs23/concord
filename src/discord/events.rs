@@ -78,6 +78,78 @@ pub struct AttachmentInfo {
     pub description: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct MessageKind {
+    code: u8,
+}
+
+impl MessageKind {
+    pub const fn new(code: u8) -> Self {
+        Self { code }
+    }
+
+    pub const fn regular() -> Self {
+        Self::new(0)
+    }
+
+    pub const fn code(self) -> u8 {
+        self.code
+    }
+
+    pub const fn is_regular(self) -> bool {
+        self.code == 0
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self.code {
+            0 => "Default",
+            1 => "Recipient add",
+            2 => "Recipient remove",
+            3 => "Call",
+            4 => "Channel name change",
+            5 => "Channel icon change",
+            6 => "Pinned message",
+            7 => "User join",
+            8 => "Guild boost",
+            9 => "Guild boost tier 1",
+            10 => "Guild boost tier 2",
+            11 => "Guild boost tier 3",
+            12 => "Channel follow add",
+            14 => "Guild discovery disqualified",
+            15 => "Guild discovery requalified",
+            16 => "Guild discovery initial warning",
+            17 => "Guild discovery final warning",
+            18 => "Thread created",
+            19 => "Reply",
+            20 => "Chat input command",
+            21 => "Thread starter message",
+            22 => "Guild invite reminder",
+            23 => "Context menu command",
+            24 => "Auto moderation action",
+            25 => "Role subscription purchase",
+            26 => "Premium upsell",
+            27 => "Stage start",
+            28 => "Stage end",
+            29 => "Stage speaker",
+            31 => "Stage topic",
+            32 => "Application premium subscription",
+            36 => "Incident alert mode enabled",
+            37 => "Incident alert mode disabled",
+            38 => "Incident raid report",
+            39 => "Incident false alarm report",
+            44 => "Purchase notification",
+            46 => "Poll result",
+            _ => "Unknown message type",
+        }
+    }
+}
+
+impl Default for MessageKind {
+    fn default() -> Self {
+        Self::regular()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageSnapshotInfo {
     pub content: Option<String>,
@@ -93,6 +165,7 @@ pub struct MessageInfo {
     pub message_id: Id<MessageMarker>,
     pub author_id: Id<UserMarker>,
     pub author: String,
+    pub message_kind: MessageKind,
     pub content: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
@@ -134,6 +207,7 @@ pub enum AppEvent {
         message_id: Id<MessageMarker>,
         author_id: Id<UserMarker>,
         author: String,
+        message_kind: MessageKind,
         content: Option<String>,
         attachments: Vec<AttachmentInfo>,
         forwarded_snapshots: Vec<MessageSnapshotInfo>,
@@ -197,6 +271,7 @@ impl AppEvent {
             message_id: message.message_id,
             author_id: message.author_id,
             author: message.author,
+            message_kind: message.message_kind,
             content: message.content,
             attachments: message.attachments,
             forwarded_snapshots: message.forwarded_snapshots,
@@ -290,6 +365,7 @@ impl MessageInfo {
             message_id: message.id,
             author_id: message.author.id,
             author: message.author.name,
+            message_kind: MessageKind::new(message.kind.into()),
             content: Some(message.content),
             attachments: message
                 .attachments
@@ -334,6 +410,7 @@ pub fn map_event(event: Event, message_content_enabled: bool) -> Option<AppEvent
                 message_id: message.id,
                 author_id: message.author.id,
                 author: message.author.name.clone(),
+                message_kind: MessageKind::new(message.kind.into()),
                 content: map_message_content(&message.content, message_content_enabled),
                 attachments: message
                     .attachments

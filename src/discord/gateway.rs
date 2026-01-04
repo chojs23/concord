@@ -12,7 +12,8 @@ use twilight_model::{
 };
 
 use super::{
-    AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageSnapshotInfo, PresenceStatus,
+    AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageKind, MessageSnapshotInfo,
+    PresenceStatus,
     events::{AppEvent, AttachmentUpdate, map_event},
 };
 use crate::logging;
@@ -348,6 +349,12 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         .unwrap_or("unknown")
         .to_owned();
     let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
+    let message_kind = data
+        .get("type")
+        .and_then(Value::as_u64)
+        .and_then(|value| u8::try_from(value).ok())
+        .map(MessageKind::new)
+        .unwrap_or_default();
     let content = data
         .get("content")
         .and_then(Value::as_str)
@@ -366,6 +373,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         message_id,
         author_id,
         author: author_name,
+        message_kind,
         content,
         attachments,
         forwarded_snapshots,
@@ -651,7 +659,7 @@ mod tests {
     use twilight_model::id::Id;
 
     use super::{gateway_intents, parse_channel_info, parse_message_create, parse_message_update};
-    use crate::discord::{AppEvent, AttachmentUpdate};
+    use crate::discord::{AppEvent, AttachmentUpdate, MessageKind};
 
     #[test]
     fn startup_intents_skip_presence_updates() {
@@ -749,6 +757,24 @@ mod tests {
         assert_eq!(attachments[0].content_type.as_deref(), Some("image/png"));
         assert_eq!(attachments[0].width, Some(640));
         assert_eq!(attachments[0].height, Some(480));
+    }
+
+    #[test]
+    fn message_create_parser_keeps_message_type() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "type": 19,
+            "content": "reply",
+            "attachments": []
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { message_kind, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(message_kind, MessageKind::new(19));
     }
 
     #[test]
