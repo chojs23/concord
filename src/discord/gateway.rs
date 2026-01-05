@@ -13,7 +13,7 @@ use twilight_model::{
 
 use super::{
     AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageKind, MessageSnapshotInfo,
-    PresenceStatus,
+    PresenceStatus, ReplyInfo,
     events::{AppEvent, AttachmentUpdate, map_event},
 };
 use crate::logging;
@@ -360,6 +360,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         .and_then(Value::as_str)
         .map(str::to_owned);
     let attachments = parse_attachments(data.get("attachments"));
+    let reply = data.get("referenced_message").and_then(parse_reply_info);
     let source_channel_id = data
         .get("message_reference")
         .and_then(|reference| reference.get("channel_id"))
@@ -374,6 +375,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         author_id,
         author: author_name,
         message_kind,
+        reply,
         content,
         attachments,
         forwarded_snapshots,
@@ -439,6 +441,31 @@ fn parse_message_snapshots(
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn parse_reply_info(value: &Value) -> Option<ReplyInfo> {
+    if value.is_null() {
+        return None;
+    }
+
+    let author = value.get("author")?;
+    let author_name = author
+        .get("global_name")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .or_else(|| author.get("username").and_then(Value::as_str))
+        .unwrap_or("unknown")
+        .to_owned();
+    let content = value
+        .get("content")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+
+    Some(ReplyInfo {
+        author: author_name,
+        content,
+    })
 }
 
 fn parse_message_snapshot(
@@ -659,7 +686,7 @@ mod tests {
     use twilight_model::id::Id;
 
     use super::{gateway_intents, parse_channel_info, parse_message_create, parse_message_update};
-    use crate::discord::{AppEvent, AttachmentUpdate, MessageKind};
+    use crate::discord::{AppEvent, AttachmentUpdate, MessageKind, ReplyInfo};
 
     #[test]
     fn startup_intents_skip_presence_updates() {
@@ -775,6 +802,37 @@ mod tests {
             panic!("expected message create event");
         };
         assert_eq!(message_kind, MessageKind::new(19));
+    }
+
+    #[test]
+    fn message_create_parser_keeps_reply_preview() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "type": 19,
+            "content": "reply",
+            "attachments": [],
+            "referenced_message": {
+                "id": "19",
+                "channel_id": "10",
+                "author": { "id": "31", "global_name": "Alex", "username": "alex" },
+                "content": "잘되는군",
+                "attachments": []
+            }
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { reply, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(
+            reply,
+            Some(ReplyInfo {
+                author: "Alex".to_owned(),
+                content: Some("잘되는군".to_owned()),
+            })
+        );
     }
 
     #[test]

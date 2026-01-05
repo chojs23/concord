@@ -14,7 +14,7 @@ use super::{
         message_base_line_count, presence_color, presence_marker,
     },
 };
-use crate::discord::{AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState};
+use crate::discord::{AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState, ReplyInfo};
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
@@ -396,7 +396,13 @@ fn format_message_content_lines(
         (!message.attachments.is_empty()).then(|| format_attachment_summary(&message.attachments));
     let mut lines = Vec::new();
 
-    if let Some(line) = format_message_kind_line(message.message_kind) {
+    if let Some(line) = message
+        .reply
+        .as_ref()
+        .map(|reply| format_reply_line(reply, width))
+    {
+        lines.push(line);
+    } else if let Some(line) = format_message_kind_line(message.message_kind) {
         lines.push(line);
     }
 
@@ -422,6 +428,18 @@ fn format_message_content_lines(
     }
 
     lines
+}
+
+fn format_reply_line(reply: &ReplyInfo, width: usize) -> MessageContentLine {
+    let content = reply
+        .content
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("<empty message>");
+    MessageContentLine::dim(truncate_text(
+        &format!("╭─ {} {content}", reply.author),
+        width,
+    ))
 }
 
 fn format_message_kind_line(message_kind: MessageKind) -> Option<MessageContentLine> {
@@ -825,7 +843,7 @@ mod tests {
         inline_image_preview_area, inline_image_preview_row, message_item_lines, sync_view_heights,
     };
     use crate::{
-        discord::{AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState},
+        discord::{AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState, ReplyInfo},
         tui::state::DashboardState,
     };
 
@@ -904,6 +922,24 @@ mod tests {
         assert_eq!(
             line_texts(&lines),
             vec!["↳ Reply", "reply body", "[image: cat.png] 640x480"]
+        );
+        assert_eq!(lines[0].style, Style::default().fg(DIM));
+    }
+
+    #[test]
+    fn reply_message_uses_preview_instead_of_type_label() {
+        let mut message = message_with_attachment(Some("asdf".to_owned()), image_attachment());
+        message.message_kind = MessageKind::new(19);
+        message.reply = Some(ReplyInfo {
+            author: "딱구형".to_owned(),
+            content: Some("잘되는군".to_owned()),
+        });
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec!["╭─ 딱구형 잘되는군", "asdf", "[image: cat.png] 640x480"]
         );
         assert_eq!(lines[0].style, Style::default().fg(DIM));
     }
@@ -1079,6 +1115,7 @@ mod tests {
             channel_id: Id::new(2),
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
             content,
             attachments: vec![attachment],
             forwarded_snapshots: Vec::new(),
@@ -1091,6 +1128,7 @@ mod tests {
             channel_id: Id::new(2),
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![snapshot],

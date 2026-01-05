@@ -159,6 +159,12 @@ pub struct MessageSnapshotInfo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplyInfo {
+    pub author: String,
+    pub content: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageInfo {
     pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,
@@ -166,6 +172,7 @@ pub struct MessageInfo {
     pub author_id: Id<UserMarker>,
     pub author: String,
     pub message_kind: MessageKind,
+    pub reply: Option<ReplyInfo>,
     pub content: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
@@ -208,6 +215,7 @@ pub enum AppEvent {
         author_id: Id<UserMarker>,
         author: String,
         message_kind: MessageKind,
+        reply: Option<ReplyInfo>,
         content: Option<String>,
         attachments: Vec<AttachmentInfo>,
         forwarded_snapshots: Vec<MessageSnapshotInfo>,
@@ -272,6 +280,7 @@ impl AppEvent {
             author_id: message.author_id,
             author: message.author,
             message_kind: message.message_kind,
+            reply: message.reply,
             content: message.content,
             attachments: message.attachments,
             forwarded_snapshots: message.forwarded_snapshots,
@@ -345,6 +354,20 @@ impl MessageSnapshotInfo {
     }
 }
 
+impl ReplyInfo {
+    fn from_message(message: &Message) -> Option<Self> {
+        let content = if message.content.is_empty() {
+            None
+        } else {
+            Some(message.content.clone())
+        };
+        Some(Self {
+            author: message.author.name.clone(),
+            content,
+        })
+    }
+}
+
 fn filename_has_extension(filename: &str, extensions: &[&str]) -> bool {
     filename.rsplit_once('.').is_some_and(|(_, extension)| {
         extensions
@@ -366,6 +389,10 @@ impl MessageInfo {
             author_id: message.author.id,
             author: message.author.name,
             message_kind: MessageKind::new(message.kind.into()),
+            reply: message
+                .referenced_message
+                .as_deref()
+                .and_then(ReplyInfo::from_message),
             content: Some(message.content),
             attachments: message
                 .attachments
@@ -411,6 +438,10 @@ pub fn map_event(event: Event, message_content_enabled: bool) -> Option<AppEvent
                 author_id: message.author.id,
                 author: message.author.name.clone(),
                 message_kind: MessageKind::new(message.kind.into()),
+                reply: message
+                    .referenced_message
+                    .as_deref()
+                    .and_then(ReplyInfo::from_message),
                 content: map_message_content(&message.content, message_content_enabled),
                 attachments: message
                     .attachments
