@@ -437,7 +437,7 @@ fn format_reply_line(reply: &ReplyInfo, width: usize) -> MessageContentLine {
         .filter(|value| !value.is_empty())
         .unwrap_or("<empty message>");
     MessageContentLine::dim(truncate_text(
-        &format!("╭─ {} {content}", reply.author),
+        &format!("╭─ {} : {content}", reply.author),
         width,
     ))
 }
@@ -939,7 +939,7 @@ mod tests {
 
         assert_eq!(
             line_texts(&lines),
-            vec!["╭─ 딱구형 잘되는군", "asdf", "[image: cat.png] 640x480"]
+            vec!["╭─ 딱구형 : 잘되는군", "asdf", "[image: cat.png] 640x480"]
         );
         assert_eq!(lines[0].style, Style::default().fg(DIM));
     }
