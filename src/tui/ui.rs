@@ -427,7 +427,18 @@ fn format_message_content_lines(
         }));
     }
 
+    prefix_message_type(&mut lines, message.message_kind, width);
+
     lines
+}
+
+fn prefix_message_type(lines: &mut [MessageContentLine], message_kind: MessageKind, width: usize) {
+    if let Some(first_line) = lines.first_mut() {
+        first_line.text = truncate_text(
+            &format!("type: <{}> {}", message_kind.code(), first_line.text),
+            width,
+        );
+    }
 }
 
 fn format_reply_line(reply: &ReplyInfo, width: usize) -> MessageContentLine {
@@ -887,7 +898,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "[image: cat.png] 640x480"
+            "type: <0> [image: cat.png] 640x480"
         );
     }
 
@@ -896,7 +907,10 @@ mod tests {
         let message = message_with_attachment(Some("look".to_owned()), image_attachment());
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
-        assert_eq!(line_texts(&lines), vec!["look", "[image: cat.png] 640x480"]);
+        assert_eq!(
+            line_texts(&lines),
+            vec!["type: <0> look", "[image: cat.png] 640x480"]
+        );
         assert_eq!(lines[1].style, Style::default().fg(ACCENT));
     }
 
@@ -906,7 +920,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "[video: clip.mp4] 1920x1080"
+            "type: <0> [video: clip.mp4] 1920x1080"
         );
     }
 
@@ -920,7 +934,11 @@ mod tests {
 
         assert_eq!(
             line_texts(&lines),
-            vec!["↳ Reply", "reply body", "[image: cat.png] 640x480"]
+            vec![
+                "type: <19> ↳ Reply",
+                "reply body",
+                "[image: cat.png] 640x480"
+            ]
         );
         assert_eq!(lines[0].style, Style::default().fg(DIM));
     }
@@ -938,7 +956,11 @@ mod tests {
 
         assert_eq!(
             line_texts(&lines),
-            vec!["╭─ 딱구형 : 잘되는군", "asdf", "[image: cat.png] 640x480"]
+            vec![
+                "type: <19> ╭─ 딱구형 : 잘되는군",
+                "asdf",
+                "[image: cat.png] 640x480"
+            ]
         );
         assert_eq!(lines[0].style, Style::default().fg(DIM));
     }
@@ -950,7 +972,7 @@ mod tests {
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
-        assert_eq!(lines[0].text, "<unsupported message type>");
+        assert_eq!(lines[0].text, "type: <46> <unsupported message type>");
     }
 
     #[test]
@@ -960,7 +982,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "↱ Forwarded │ forwarded text"
+            "type: <0> ↱ Forwarded │ forwarded text"
         );
     }
 
@@ -971,7 +993,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "↱ Forwarded │ [image: cat.png] 640x480"
+            "type: <0> ↱ Forwarded │ [image: cat.png] 640x480"
         );
     }
 
@@ -984,7 +1006,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "↱ Forwarded │ hello │ [image: cat.png] 640x480"
+            "type: <0> ↱ Forwarded │ hello │ [image: cat.png] 640x480"
         );
     }
 
@@ -1011,7 +1033,7 @@ mod tests {
 
         assert_eq!(
             line_texts(&lines),
-            vec!["↱ Forwarded", "│ hello", "│ #general · 12:34"]
+            vec!["type: <0> ↱ Forwarded", "│ hello", "│ #general · 12:34"]
         );
         assert_eq!(lines[2].style, Style::default().fg(DIM));
     }
