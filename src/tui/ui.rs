@@ -447,13 +447,12 @@ fn format_message_kind_line(message_kind: MessageKind) -> Option<MessageContentL
         return None;
     }
 
-    let label = if message_kind.label() == "Unknown message type" {
-        format!("{} {}", message_kind.label(), message_kind.code())
-    } else {
-        message_kind.label().to_owned()
+    let label = match message_kind.code() {
+        19 => "↳ Reply",
+        _ => "<unsupported message type>",
     };
 
-    Some(MessageContentLine::dim(format!("↳ {label}")))
+    Some(MessageContentLine::dim(label.to_owned()))
 }
 
 fn format_forwarded_snapshot(
@@ -945,13 +944,13 @@ mod tests {
     }
 
     #[test]
-    fn unknown_message_type_includes_numeric_code() {
+    fn unsupported_message_type_uses_placeholder() {
         let mut message = message_with_attachment(Some("body".to_owned()), image_attachment());
-        message.message_kind = MessageKind::new(45);
+        message.message_kind = MessageKind::new(46);
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
-        assert_eq!(lines[0].text, "↳ Unknown message type 45");
+        assert_eq!(lines[0].text, "<unsupported message type>");
     }
 
     #[test]
