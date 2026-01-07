@@ -13,6 +13,7 @@ use twilight_model::{
         Id,
         marker::{AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker, UserMarker},
     },
+    poll::Poll,
     user::User as TwilightUser,
 };
 
@@ -165,6 +166,18 @@ pub struct ReplyInfo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PollInfo {
+    pub question: String,
+    pub answers: Vec<PollAnswerInfo>,
+    pub allow_multiselect: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PollAnswerInfo {
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageInfo {
     pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,
@@ -173,6 +186,7 @@ pub struct MessageInfo {
     pub author: String,
     pub message_kind: MessageKind,
     pub reply: Option<ReplyInfo>,
+    pub poll: Option<PollInfo>,
     pub content: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
@@ -216,6 +230,7 @@ pub enum AppEvent {
         author: String,
         message_kind: MessageKind,
         reply: Option<ReplyInfo>,
+        poll: Option<PollInfo>,
         content: Option<String>,
         attachments: Vec<AttachmentInfo>,
         forwarded_snapshots: Vec<MessageSnapshotInfo>,
@@ -281,6 +296,7 @@ impl AppEvent {
             author: message.author,
             message_kind: message.message_kind,
             reply: message.reply,
+            poll: message.poll,
             content: message.content,
             attachments: message.attachments,
             forwarded_snapshots: message.forwarded_snapshots,
@@ -368,6 +384,30 @@ impl ReplyInfo {
     }
 }
 
+impl PollInfo {
+    fn from_poll(poll: &Poll) -> Self {
+        Self {
+            question: poll
+                .question
+                .text
+                .clone()
+                .unwrap_or_else(|| "<no question text>".to_owned()),
+            answers: poll
+                .answers
+                .iter()
+                .map(|answer| PollAnswerInfo {
+                    text: answer
+                        .poll_media
+                        .text
+                        .clone()
+                        .unwrap_or_else(|| "<no answer text>".to_owned()),
+                })
+                .collect(),
+            allow_multiselect: poll.allow_multiselect,
+        }
+    }
+}
+
 fn filename_has_extension(filename: &str, extensions: &[&str]) -> bool {
     filename.rsplit_once('.').is_some_and(|(_, extension)| {
         extensions
@@ -382,6 +422,11 @@ impl MessageInfo {
             .reference
             .as_ref()
             .and_then(|reference| reference.channel_id);
+        let reply = message
+            .referenced_message
+            .as_deref()
+            .and_then(ReplyInfo::from_message);
+        let poll = message.poll.as_ref().map(PollInfo::from_poll);
         Self {
             guild_id: message.guild_id,
             channel_id: message.channel_id,
@@ -389,10 +434,8 @@ impl MessageInfo {
             author_id: message.author.id,
             author: message.author.name,
             message_kind: MessageKind::new(message.kind.into()),
-            reply: message
-                .referenced_message
-                .as_deref()
-                .and_then(ReplyInfo::from_message),
+            reply,
+            poll,
             content: Some(message.content),
             attachments: message
                 .attachments
@@ -430,6 +473,11 @@ pub fn map_event(event: Event, message_content_enabled: bool) -> Option<AppEvent
                 .reference
                 .as_ref()
                 .and_then(|reference| reference.channel_id);
+            let reply = message
+                .referenced_message
+                .as_deref()
+                .and_then(ReplyInfo::from_message);
+            let poll = message.poll.as_ref().map(PollInfo::from_poll);
 
             Some(AppEvent::MessageCreate {
                 guild_id: message.guild_id,
@@ -438,10 +486,8 @@ pub fn map_event(event: Event, message_content_enabled: bool) -> Option<AppEvent
                 author_id: message.author.id,
                 author: message.author.name.clone(),
                 message_kind: MessageKind::new(message.kind.into()),
-                reply: message
-                    .referenced_message
-                    .as_deref()
-                    .and_then(ReplyInfo::from_message),
+                reply,
+                poll,
                 content: map_message_content(&message.content, message_content_enabled),
                 attachments: message
                     .attachments

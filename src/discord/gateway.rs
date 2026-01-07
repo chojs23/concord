@@ -13,7 +13,7 @@ use twilight_model::{
 
 use super::{
     AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageKind, MessageSnapshotInfo,
-    PresenceStatus, ReplyInfo,
+    PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
     events::{AppEvent, AttachmentUpdate, map_event},
 };
 use crate::logging;
@@ -361,6 +361,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         .map(str::to_owned);
     let attachments = parse_attachments(data.get("attachments"));
     let reply = data.get("referenced_message").and_then(parse_reply_info);
+    let poll = data.get("poll").and_then(parse_poll_info);
     let source_channel_id = data
         .get("message_reference")
         .and_then(|reference| reference.get("channel_id"))
@@ -376,6 +377,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         author: author_name,
         message_kind,
         reply,
+        poll,
         content,
         attachments,
         forwarded_snapshots,
@@ -466,6 +468,47 @@ fn parse_reply_info(value: &Value) -> Option<ReplyInfo> {
         author: author_name,
         content,
     })
+}
+
+fn parse_poll_info(value: &Value) -> Option<PollInfo> {
+    if value.is_null() {
+        return None;
+    }
+
+    let question = value
+        .get("question")
+        .and_then(|question| question.get("text"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("<no question text>")
+        .to_owned();
+    let answers = value
+        .get("answers")
+        .and_then(Value::as_array)
+        .map(|answers| answers.iter().filter_map(parse_poll_answer_info).collect())
+        .unwrap_or_default();
+    let allow_multiselect = value
+        .get("allow_multiselect")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    Some(PollInfo {
+        question,
+        answers,
+        allow_multiselect,
+    })
+}
+
+fn parse_poll_answer_info(value: &Value) -> Option<PollAnswerInfo> {
+    let text = value
+        .get("poll_media")
+        .and_then(|media| media.get("text"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("<no answer text>")
+        .to_owned();
+
+    Some(PollAnswerInfo { text })
 }
 
 fn parse_message_snapshot(
@@ -686,7 +729,9 @@ mod tests {
     use twilight_model::id::Id;
 
     use super::{gateway_intents, parse_channel_info, parse_message_create, parse_message_update};
-    use crate::discord::{AppEvent, AttachmentUpdate, MessageKind, ReplyInfo};
+    use crate::discord::{
+        AppEvent, AttachmentUpdate, MessageKind, PollAnswerInfo, PollInfo, ReplyInfo,
+    };
 
     #[test]
     fn startup_intents_skip_presence_updates() {
@@ -831,6 +876,46 @@ mod tests {
             Some(ReplyInfo {
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn message_create_parser_keeps_poll_payload() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "type": 0,
+            "content": "",
+            "attachments": [],
+            "poll": {
+                "question": { "text": "오늘 뭐 먹지?" },
+                "answers": [
+                    { "answer_id": 1, "poll_media": { "text": "김치찌개" } },
+                    { "answer_id": 2, "poll_media": { "text": "라멘" } }
+                ],
+                "allow_multiselect": true
+            }
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { poll, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(
+            poll,
+            Some(PollInfo {
+                question: "오늘 뭐 먹지?".to_owned(),
+                answers: vec![
+                    PollAnswerInfo {
+                        text: "김치찌개".to_owned()
+                    },
+                    PollAnswerInfo {
+                        text: "라멘".to_owned()
+                    },
+                ],
+                allow_multiselect: true,
             })
         );
     }

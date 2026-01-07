@@ -502,6 +502,7 @@ mod tests {
                 author: "neo".to_owned(),
                 message_kind: crate::discord::MessageKind::regular(),
                 reply: None,
+                poll: None,
                 content: Some(format!("msg {id}")),
                 attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),

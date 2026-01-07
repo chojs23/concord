@@ -7,7 +7,7 @@ use twilight_model::id::{
 
 use super::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
-    MessageKind, MessageSnapshotInfo, PresenceStatus, ReplyInfo,
+    MessageKind, MessageSnapshotInfo, PollInfo, PresenceStatus, ReplyInfo,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -42,6 +42,7 @@ pub struct MessageState {
     pub author: String,
     pub message_kind: MessageKind,
     pub reply: Option<ReplyInfo>,
+    pub poll: Option<PollInfo>,
     pub content: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
@@ -150,6 +151,7 @@ impl DiscordState {
                 author,
                 message_kind,
                 reply,
+                poll,
                 content,
                 attachments,
                 forwarded_snapshots,
@@ -160,6 +162,7 @@ impl DiscordState {
                 author: author.clone(),
                 message_kind: *message_kind,
                 reply: reply.clone(),
+                poll: poll.clone(),
                 content: content.clone(),
                 attachments: attachments.clone(),
                 forwarded_snapshots: forwarded_snapshots.clone(),
@@ -293,6 +296,9 @@ impl DiscordState {
             if message.reply.is_some() || existing.reply.is_none() {
                 existing.reply = message.reply;
             }
+            if message.poll.is_some() || existing.poll.is_none() {
+                existing.poll = message.poll;
+            }
             if message.content.is_some() {
                 existing.content = message.content;
             }
@@ -330,6 +336,7 @@ impl DiscordState {
                 author: message.author.clone(),
                 message_kind: message.message_kind,
                 reply: message.reply.clone(),
+                poll: message.poll.clone(),
                 content: message.content.clone(),
                 attachments: message.attachments.clone(),
                 forwarded_snapshots: message.forwarded_snapshots.clone(),
@@ -394,6 +401,9 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
     if incoming.reply.is_some() || existing.reply.is_none() {
         existing.reply = incoming.reply.clone();
     }
+    if incoming.poll.is_some() || existing.poll.is_none() {
+        existing.poll = incoming.poll.clone();
+    }
 
     if let Some(content) = &incoming.content {
         let existing_is_empty = existing
@@ -436,7 +446,7 @@ mod tests {
 
     use crate::discord::{
         AppEvent, AttachmentUpdate, ChannelInfo, DiscordState, MemberInfo, MessageInfo,
-        MessageKind, MessageSnapshotInfo, PresenceStatus, ReplyInfo,
+        MessageKind, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
     };
 
     #[test]
@@ -470,6 +480,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("hello".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -517,6 +528,7 @@ mod tests {
                 author: "neo".to_owned(),
                 message_kind: crate::discord::MessageKind::regular(),
                 reply: None,
+                poll: None,
                 content: Some(format!("message {id}")),
                 attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),
@@ -541,6 +553,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: MessageKind::new(19),
             reply: None,
+            poll: None,
             content: Some("reply".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -565,6 +578,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("cached".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -577,6 +591,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: MessageKind::new(19),
             reply: None,
+            poll: None,
             content: None,
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -604,6 +619,7 @@ mod tests {
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
             }),
+            poll: None,
             content: Some("asdf".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -644,6 +660,7 @@ mod tests {
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
             }),
+            poll: None,
             content: Some("asdf".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -656,6 +673,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: MessageKind::new(19),
             reply: None,
+            poll: None,
             content: None,
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -669,6 +687,74 @@ mod tests {
                 .as_ref()
                 .and_then(|reply| reply.content.as_deref()),
             Some("잘되는군")
+        );
+    }
+
+    #[test]
+    fn stores_poll_payload_from_message_create() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(20),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: Some(poll_info()),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(
+            messages[0].poll.as_ref().map(|poll| poll.question.as_str()),
+            Some("오늘 뭐 먹지?")
+        );
+    }
+
+    #[test]
+    fn duplicate_message_create_preserves_cached_poll_payload() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let message_id = Id::new(20);
+        let author_id = Id::new(99);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: Some(poll_info()),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: None,
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].poll.as_ref().map(|poll| poll.answers.len()),
+            Some(2)
         );
     }
 
@@ -687,6 +773,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("hello".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -699,6 +786,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: None,
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -729,6 +817,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("live".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -764,6 +853,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("known".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -794,6 +884,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some(String::new()),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
             forwarded_snapshots: Vec::new(),
@@ -826,6 +917,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![snapshot_info("forwarded text")],
@@ -853,6 +945,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![snapshot_info("live snapshot")],
@@ -882,6 +975,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some(String::new()),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
             forwarded_snapshots: Vec::new(),
@@ -912,6 +1006,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some(String::new()),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
             forwarded_snapshots: Vec::new(),
@@ -974,6 +1069,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("new".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -986,6 +1082,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("old".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -1162,6 +1259,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some(content.to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -1183,6 +1281,21 @@ mod tests {
             width: Some(100),
             height: Some(100),
             description: None,
+        }
+    }
+
+    fn poll_info() -> PollInfo {
+        PollInfo {
+            question: "오늘 뭐 먹지?".to_owned(),
+            answers: vec![
+                PollAnswerInfo {
+                    text: "김치찌개".to_owned(),
+                },
+                PollAnswerInfo {
+                    text: "라멘".to_owned(),
+                },
+            ],
+            allow_multiselect: false,
         }
     }
 

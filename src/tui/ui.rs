@@ -14,7 +14,9 @@ use super::{
         message_base_line_count, presence_color, presence_marker,
     },
 };
-use crate::discord::{AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState, ReplyInfo};
+use crate::discord::{
+    AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState, PollInfo, ReplyInfo,
+};
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
@@ -402,6 +404,8 @@ fn format_message_content_lines(
         .map(|reply| format_reply_line(reply, width))
     {
         lines.push(line);
+    } else if let Some(poll) = message.poll.as_ref() {
+        lines.extend(format_poll_lines(poll, width));
     } else if let Some(line) = format_message_kind_line(message.message_kind) {
         lines.push(line);
     }
@@ -427,18 +431,26 @@ fn format_message_content_lines(
         }));
     }
 
-    prefix_message_type(&mut lines, message.message_kind, width);
-
     lines
 }
 
-fn prefix_message_type(lines: &mut [MessageContentLine], message_kind: MessageKind, width: usize) {
-    if let Some(first_line) = lines.first_mut() {
-        first_line.text = truncate_text(
-            &format!("type: <{}> {}", message_kind.code(), first_line.text),
+fn format_poll_lines(poll: &PollInfo, width: usize) -> Vec<MessageContentLine> {
+    let mut lines = vec![MessageContentLine::plain(truncate_text(
+        &format!("Poll: {}", poll.question),
+        width,
+    ))];
+    lines.extend(poll.answers.iter().enumerate().map(|(index, answer)| {
+        MessageContentLine::plain(truncate_text(
+            &format!("  {}. {}", index + 1, answer.text),
             width,
-        );
+        ))
+    }));
+    if poll.allow_multiselect {
+        lines.push(MessageContentLine::dim(
+            "  Multiple answers allowed".to_owned(),
+        ));
     }
+    lines
 }
 
 fn format_reply_line(reply: &ReplyInfo, width: usize) -> MessageContentLine {
@@ -853,7 +865,10 @@ mod tests {
         inline_image_preview_area, inline_image_preview_row, message_item_lines, sync_view_heights,
     };
     use crate::{
-        discord::{AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState, ReplyInfo},
+        discord::{
+            AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState, PollAnswerInfo,
+            PollInfo, ReplyInfo,
+        },
         tui::state::DashboardState,
     };
 
@@ -898,7 +913,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "type: <0> [image: cat.png] 640x480"
+            "[image: cat.png] 640x480"
         );
     }
 
@@ -907,10 +922,7 @@ mod tests {
         let message = message_with_attachment(Some("look".to_owned()), image_attachment());
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
-        assert_eq!(
-            line_texts(&lines),
-            vec!["type: <0> look", "[image: cat.png] 640x480"]
-        );
+        assert_eq!(line_texts(&lines), vec!["look", "[image: cat.png] 640x480"]);
         assert_eq!(lines[1].style, Style::default().fg(ACCENT));
     }
 
@@ -920,7 +932,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "type: <0> [video: clip.mp4] 1920x1080"
+            "[video: clip.mp4] 1920x1080"
         );
     }
 
@@ -934,11 +946,7 @@ mod tests {
 
         assert_eq!(
             line_texts(&lines),
-            vec![
-                "type: <19> ↳ Reply",
-                "reply body",
-                "[image: cat.png] 640x480"
-            ]
+            vec!["↳ Reply", "reply body", "[image: cat.png] 640x480"]
         );
         assert_eq!(lines[0].style, Style::default().fg(DIM));
     }
@@ -956,11 +964,7 @@ mod tests {
 
         assert_eq!(
             line_texts(&lines),
-            vec![
-                "type: <19> ╭─ 딱구형 : 잘되는군",
-                "asdf",
-                "[image: cat.png] 640x480"
-            ]
+            vec!["╭─ 딱구형 : 잘되는군", "asdf", "[image: cat.png] 640x480"]
         );
         assert_eq!(lines[0].style, Style::default().fg(DIM));
     }
@@ -972,7 +976,33 @@ mod tests {
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
-        assert_eq!(lines[0].text, "type: <46> <unsupported message type>");
+        assert_eq!(lines[0].text, "<unsupported message type>");
+    }
+
+    #[test]
+    fn poll_message_replaces_empty_message_placeholder() {
+        let mut message = message_with_attachment(Some(String::new()), image_attachment());
+        message.attachments.clear();
+        message.poll = Some(poll_info(false));
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec!["Poll: 오늘 뭐 먹지?", "  1. 김치찌개", "  2. 라멘"]
+        );
+    }
+
+    #[test]
+    fn poll_message_notes_multiselect() {
+        let mut message = message_with_attachment(Some(String::new()), image_attachment());
+        message.attachments.clear();
+        message.poll = Some(poll_info(true));
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(lines[3].text, "  Multiple answers allowed");
+        assert_eq!(lines[3].style, Style::default().fg(DIM));
     }
 
     #[test]
@@ -982,7 +1012,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "type: <0> ↱ Forwarded │ forwarded text"
+            "↱ Forwarded │ forwarded text"
         );
     }
 
@@ -993,7 +1023,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "type: <0> ↱ Forwarded │ [image: cat.png] 640x480"
+            "↱ Forwarded │ [image: cat.png] 640x480"
         );
     }
 
@@ -1006,7 +1036,7 @@ mod tests {
 
         assert_eq!(
             format_message_content(&message, 200),
-            "type: <0> ↱ Forwarded │ hello │ [image: cat.png] 640x480"
+            "↱ Forwarded │ hello │ [image: cat.png] 640x480"
         );
     }
 
@@ -1033,7 +1063,7 @@ mod tests {
 
         assert_eq!(
             line_texts(&lines),
-            vec!["type: <0> ↱ Forwarded", "│ hello", "│ #general · 12:34"]
+            vec!["↱ Forwarded", "│ hello", "│ #general · 12:34"]
         );
         assert_eq!(lines[2].style, Style::default().fg(DIM));
     }
@@ -1137,6 +1167,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content,
             attachments: vec![attachment],
             forwarded_snapshots: Vec::new(),
@@ -1150,9 +1181,25 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![snapshot],
+        }
+    }
+
+    fn poll_info(allow_multiselect: bool) -> PollInfo {
+        PollInfo {
+            question: "오늘 뭐 먹지?".to_owned(),
+            answers: vec![
+                PollAnswerInfo {
+                    text: "김치찌개".to_owned(),
+                },
+                PollAnswerInfo {
+                    text: "라멘".to_owned(),
+                },
+            ],
+            allow_multiselect,
         }
     }
 

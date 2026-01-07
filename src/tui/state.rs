@@ -1257,13 +1257,25 @@ fn message_rendered_height(
 pub(crate) fn message_base_line_count(message: &MessageState) -> usize {
     let primary_lines =
         message_primary_line_count(message.content.as_deref(), &message.attachments);
-    let kind_line = usize::from(message.reply.is_none() && !message.message_kind.is_regular());
+    let kind_line = usize::from(
+        message.reply.is_none() && message.poll.is_none() && !message.message_kind.is_regular(),
+    );
     let reply_line = usize::from(message.reply.is_some());
+    let poll_lines = if message.reply.is_none() {
+        message
+            .poll
+            .as_ref()
+            .map(|poll| 1 + poll.answers.len() + usize::from(poll.allow_multiselect))
+            .unwrap_or(0)
+    } else {
+        0
+    };
 
     if let Some(snapshot) = message.forwarded_snapshots.first() {
         let metadata_line =
             usize::from(snapshot.source_channel_id.is_some() || snapshot.timestamp.is_some());
         return (reply_line
+            + poll_lines
             + kind_line
             + primary_lines
             + forwarded_snapshot_line_count(snapshot)
@@ -1271,7 +1283,7 @@ pub(crate) fn message_base_line_count(message: &MessageState) -> usize {
             .max(1);
     }
 
-    (reply_line + kind_line + primary_lines).max(1)
+    (reply_line + poll_lines + kind_line + primary_lines).max(1)
 }
 
 fn message_primary_line_count(content: Option<&str>, attachments: &[AttachmentInfo]) -> usize {
@@ -1460,7 +1472,7 @@ mod tests {
     };
     use crate::discord::{
         AppEvent, AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageInfo, MessageKind,
-        MessageSnapshotInfo, PresenceStatus, ReplyInfo,
+        MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
     };
 
     #[test]
@@ -1536,6 +1548,7 @@ mod tests {
                 author: "neo".to_owned(),
                 message_kind: crate::discord::MessageKind::regular(),
                 reply: None,
+                poll: None,
                 content: Some(format!("msg {id}")),
                 attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),
@@ -1573,6 +1586,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("hello".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -1667,6 +1681,7 @@ mod tests {
                 author: "neo".to_owned(),
                 message_kind: crate::discord::MessageKind::regular(),
                 reply: None,
+                poll: None,
                 content: Some(format!("msg {id}")),
                 attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),
@@ -1697,6 +1712,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("msg 6".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -1769,6 +1785,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("clip".to_owned()),
             attachments: vec![video_attachment(1)],
             forwarded_snapshots: Vec::new(),
@@ -1785,6 +1802,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("look".to_owned()),
             attachments: vec![image_attachment(1)],
             forwarded_snapshots: Vec::new(),
@@ -1801,6 +1819,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![forwarded_snapshot(1)],
@@ -1820,6 +1839,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![snapshot],
@@ -1836,6 +1856,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("reply body".to_owned()),
             attachments: vec![image_attachment(1)],
             forwarded_snapshots: Vec::new(),
@@ -1859,12 +1880,47 @@ mod tests {
                 author: "딱구형".to_owned(),
                 content: Some("잘되는군".to_owned()),
             }),
+            poll: None,
             content: Some("asdf".to_owned()),
             attachments: vec![image_attachment(1)],
             forwarded_snapshots: Vec::new(),
         };
 
         assert_eq!(message_rendered_height(&message, 16, 3), 6);
+    }
+
+    #[test]
+    fn poll_message_reserves_question_and_answer_rows() {
+        let message = MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: Some(poll_info(false)),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        };
+
+        assert_eq!(message_rendered_height(&message, 16, 3), 3);
+    }
+
+    #[test]
+    fn multiselect_poll_message_reserves_footer_row() {
+        let message = MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: Some(poll_info(true)),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        };
+
+        assert_eq!(message_rendered_height(&message, 16, 3), 4);
     }
 
     #[test]
@@ -1879,6 +1935,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![forwarded_snapshot(2)],
@@ -2162,6 +2219,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("new empty dm".to_owned()),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -2668,6 +2726,7 @@ mod tests {
                 author: "neo".to_owned(),
                 message_kind: crate::discord::MessageKind::regular(),
                 reply: None,
+                poll: None,
                 content: Some(format!("msg {id}")),
                 attachments: has_image(id)
                     .then(|| image_attachment(id))
@@ -2746,6 +2805,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some(String::new()),
             attachments: vec![AttachmentInfo {
                 id: Id::new(3),
@@ -2772,6 +2832,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some(format!("msg {message_id}")),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -2787,6 +2848,21 @@ mod tests {
                 ChannelPaneEntry::CategoryHeader { .. } => None,
             })
             .collect()
+    }
+
+    fn poll_info(allow_multiselect: bool) -> PollInfo {
+        PollInfo {
+            question: "오늘 뭐 먹지?".to_owned(),
+            answers: vec![
+                PollAnswerInfo {
+                    text: "김치찌개".to_owned(),
+                },
+                PollAnswerInfo {
+                    text: "라멘".to_owned(),
+                },
+            ],
+            allow_multiselect,
+        }
     }
 
     fn state_with_two_guilds() -> DashboardState {

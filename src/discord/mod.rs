@@ -11,6 +11,6 @@ pub use client::DiscordClient;
 pub use commands::AppCommand;
 pub use events::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
-    MessageKind, MessageSnapshotInfo, PresenceStatus, ReplyInfo,
+    MessageKind, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
 };
 pub use state::{ChannelState, DiscordState, GuildMemberState, GuildState, MessageState};

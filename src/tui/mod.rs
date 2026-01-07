@@ -686,6 +686,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some("clip".to_owned()),
             attachments: vec![video_attachment(2)],
             forwarded_snapshots: Vec::new(),
@@ -714,6 +715,7 @@ mod tests {
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
+            poll: None,
             content: Some(String::new()),
             attachments: Vec::new(),
             forwarded_snapshots: vec![forwarded_snapshot(2)],
@@ -889,6 +891,7 @@ mod tests {
                 author: "neo".to_owned(),
                 message_kind: crate::discord::MessageKind::regular(),
                 reply: None,
+                poll: None,
                 content: Some(format!("msg {id}")),
                 attachments: image_message_ids
                     .contains(&id)
