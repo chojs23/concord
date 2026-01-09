@@ -13,6 +13,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_composer_key(state, key);
     }
 
+    if state.is_message_action_menu_open() {
+        return handle_message_action_menu_key(state, key);
+    }
+
     match key.code {
         KeyCode::Char('q') => state.quit(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
@@ -43,6 +47,9 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Channels => {
             state.confirm_selected_channel()
         }
+        KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Messages => {
+            state.open_selected_message_actions()
+        }
         KeyCode::Right if state.focus() == FocusPane::Guilds => state.open_selected_folder(),
         KeyCode::Left if state.focus() == FocusPane::Guilds => state.close_selected_folder(),
         KeyCode::Right if state.focus() == FocusPane::Channels => {
@@ -51,6 +58,18 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Left if state.focus() == FocusPane::Channels => {
             state.close_selected_channel_category()
         }
+        _ => {}
+    }
+
+    None
+}
+
+fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc => state.close_message_action_menu(),
+        KeyCode::Char('j') | KeyCode::Down => state.move_message_action_down(),
+        KeyCode::Char('k') | KeyCode::Up => state.move_message_action_up(),
+        KeyCode::Enter | KeyCode::Char(' ') => return state.activate_selected_message_action(),
         _ => {}
     }
 
@@ -91,8 +110,10 @@ mod tests {
 
     use super::handle_key;
     use crate::{
-        discord::{AppEvent, ChannelInfo, GuildFolder},
-        tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry},
+        discord::{AppCommand, AppEvent, ChannelInfo, GuildFolder},
+        tui::state::{
+            ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind,
+        },
     };
 
     #[test]
@@ -372,6 +393,147 @@ mod tests {
         assert_eq!(command, None);
     }
 
+    #[test]
+    fn enter_and_space_open_message_action_menu() {
+        let mut state = state_with_messages(1);
+        focus_messages(&mut state);
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert!(state.is_message_action_menu_open());
+        state.close_message_action_menu();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        );
+
+        assert!(state.is_message_action_menu_open());
+    }
+
+    #[test]
+    fn message_action_menu_navigation_is_modal() {
+        let mut state = state_with_messages(2);
+        focus_messages(&mut state);
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+
+        assert_eq!(state.selected_message(), 1);
+        assert_eq!(
+            state.selected_message_action().map(|action| action.kind),
+            Some(MessageActionKind::DownloadImage)
+        );
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert!(!state.is_message_action_menu_open());
+    }
+
+    #[test]
+    fn message_action_menu_reply_opens_composer() {
+        let mut state = state_with_messages(1);
+        focus_messages(&mut state);
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert_eq!(command, None);
+        assert!(!state.is_message_action_menu_open());
+        assert!(state.is_composing());
+        assert_eq!(state.composer_input(), "@neo ");
+    }
+
+    #[test]
+    fn message_action_menu_download_image_returns_command() {
+        let mut state = state_with_image_message();
+        focus_messages(&mut state);
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert_eq!(
+            command,
+            Some(AppCommand::DownloadAttachment {
+                url: "https://cdn.discordapp.com/cat.png".to_owned(),
+                filename: "cat.png".to_owned(),
+            })
+        );
+        assert!(!state.is_message_action_menu_open());
+    }
+
+    #[test]
+    fn message_action_menu_add_reaction_returns_command() {
+        let mut state = state_with_messages(1);
+        focus_messages(&mut state);
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        for _ in 0..4 {
+            handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert_eq!(
+            command,
+            Some(AppCommand::AddReaction {
+                channel_id: Id::new(2),
+                message_id: Id::new(1),
+                emoji: "👍".to_owned(),
+            })
+        );
+        assert!(!state.is_message_action_menu_open());
+    }
+
+    #[test]
+    fn message_action_menu_view_poll_results_sets_status() {
+        let mut state = state_with_poll_message();
+        focus_messages(&mut state);
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        for _ in 0..3 {
+            handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert_eq!(command, None);
+        assert_eq!(
+            state.last_status(),
+            Some("Poll results are visible on the card: 3 votes")
+        );
+        assert!(!state.is_message_action_menu_open());
+    }
+
     fn state_with_folder() -> DashboardState {
         let first_guild = Id::new(1);
         let second_guild = Id::new(2);
@@ -508,6 +670,110 @@ mod tests {
                 forwarded_snapshots: Vec::new(),
             });
         }
+        state
+    }
+
+    fn state_with_image_message() -> DashboardState {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(guild_id),
+            channel_id,
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some(String::new()),
+            attachments: vec![crate::discord::AttachmentInfo {
+                id: Id::new(3),
+                filename: "cat.png".to_owned(),
+                url: "https://cdn.discordapp.com/cat.png".to_owned(),
+                proxy_url: "https://media.discordapp.net/cat.png".to_owned(),
+                content_type: Some("image/png".to_owned()),
+                size: 2048,
+                width: Some(640),
+                height: Some(480),
+                description: None,
+            }],
+            forwarded_snapshots: Vec::new(),
+        });
+        state
+    }
+
+    fn state_with_poll_message() -> DashboardState {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(guild_id),
+            channel_id,
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: Some(crate::discord::PollInfo {
+                question: "오늘 뭐 먹지?".to_owned(),
+                answers: vec![
+                    crate::discord::PollAnswerInfo {
+                        answer_id: 1,
+                        text: "김치찌개".to_owned(),
+                        vote_count: Some(2),
+                        me_voted: true,
+                    },
+                    crate::discord::PollAnswerInfo {
+                        answer_id: 2,
+                        text: "라멘".to_owned(),
+                        vote_count: Some(1),
+                        me_voted: false,
+                    },
+                ],
+                allow_multiselect: false,
+                results_finalized: Some(false),
+            }),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
         state
     }
 

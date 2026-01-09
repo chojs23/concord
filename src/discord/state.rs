@@ -176,12 +176,14 @@ impl DiscordState {
                 guild_id,
                 channel_id,
                 message_id,
+                poll,
                 content,
                 attachments,
             } => self.update_message(
                 *guild_id,
                 *channel_id,
                 *message_id,
+                poll.clone(),
                 content.clone(),
                 attachments.clone(),
             ),
@@ -225,6 +227,7 @@ impl DiscordState {
             }
             AppEvent::Ready { .. }
             | AppEvent::GatewayError { .. }
+            | AppEvent::StatusMessage { .. }
             | AppEvent::AttachmentPreviewLoaded { .. }
             | AppEvent::AttachmentPreviewLoadFailed { .. }
             | AppEvent::GatewayClosed => {}
@@ -372,11 +375,15 @@ impl DiscordState {
         _guild_id: Option<Id<GuildMarker>>,
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
+        poll: Option<PollInfo>,
         content: Option<String>,
         attachments: AttachmentUpdate,
     ) {
         let messages = self.messages.entry(channel_id).or_default();
         if let Some(existing) = messages.iter_mut().find(|item| item.id == message_id) {
+            if let Some(poll) = poll {
+                existing.poll = Some(poll);
+            }
             if let Some(content) = content {
                 existing.content = Some(content);
             }
@@ -759,6 +766,46 @@ mod tests {
     }
 
     #[test]
+    fn message_update_refreshes_cached_poll_results() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let message_id = Id::new(20);
+        let author_id = Id::new(99);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: Some(poll_info()),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        let mut updated_poll = poll_info();
+        updated_poll.results_finalized = Some(true);
+        updated_poll.answers[0].vote_count = Some(5);
+        updated_poll.answers[1].vote_count = Some(3);
+        state.apply_event(&AppEvent::MessageUpdate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            poll: Some(updated_poll),
+            content: None,
+            attachments: AttachmentUpdate::Unchanged,
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        let poll = messages[0].poll.as_ref().expect("poll should stay cached");
+        assert_eq!(poll.results_finalized, Some(true));
+        assert_eq!(poll.answers[0].vote_count, Some(5));
+        assert_eq!(poll.answers[1].vote_count, Some(3));
+    }
+
+    #[test]
     fn keeps_known_content_when_gateway_echo_has_no_content() {
         let channel_id: Id<ChannelMarker> = Id::new(10);
         let message_id = Id::new(20);
@@ -795,6 +842,7 @@ mod tests {
             guild_id: None,
             channel_id,
             message_id,
+            poll: None,
             content: None,
             attachments: AttachmentUpdate::Unchanged,
         });
@@ -984,6 +1032,7 @@ mod tests {
             guild_id: None,
             channel_id,
             message_id: Id::new(20),
+            poll: None,
             content: None,
             attachments: AttachmentUpdate::Unchanged,
         });
@@ -1015,6 +1064,7 @@ mod tests {
             guild_id: None,
             channel_id,
             message_id: Id::new(20),
+            poll: None,
             content: None,
             attachments: AttachmentUpdate::Replace(Vec::new()),
         });
@@ -1289,13 +1339,20 @@ mod tests {
             question: "오늘 뭐 먹지?".to_owned(),
             answers: vec![
                 PollAnswerInfo {
+                    answer_id: 1,
                     text: "김치찌개".to_owned(),
+                    vote_count: Some(2),
+                    me_voted: true,
                 },
                 PollAnswerInfo {
+                    answer_id: 2,
                     text: "라멘".to_owned(),
+                    vote_count: Some(1),
+                    me_voted: false,
                 },
             ],
             allow_multiselect: false,
+            results_finalized: Some(false),
         }
     }
 

@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use twilight_http::Client as HttpClient;
+use twilight_http::request::channel::reaction::RequestReactionType;
 use twilight_model::{
     channel::Message,
-    id::{Id, marker::ChannelMarker},
+    id::{Id, marker::ChannelMarker, marker::MessageMarker},
 };
 
 use crate::{AppError, Result};
@@ -42,6 +43,22 @@ impl DiscordRest {
         let response = self.http.channel_messages(channel_id).limit(limit).await?;
 
         response.models().await.map_err(Into::into)
+    }
+
+    pub async fn add_unicode_reaction(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: &str,
+    ) -> Result<()> {
+        self.http
+            .create_reaction(
+                channel_id,
+                message_id,
+                &RequestReactionType::Unicode { name: emoji },
+            )
+            .await?;
+        Ok(())
     }
 }
 

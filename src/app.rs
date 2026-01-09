@@ -1,4 +1,4 @@
-use std::{io, process::Command, time::Instant};
+use std::{env, fs, io, path::PathBuf, process::Command, time::Instant};
 
 use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
@@ -11,6 +11,7 @@ use crate::{
 
 const MESSAGE_HISTORY_LIMIT: u16 = 50;
 const MAX_ATTACHMENT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
+const MAX_ATTACHMENT_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
 const ATTACHMENT_PREVIEW_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct App {
@@ -145,6 +146,42 @@ fn start_command_loop(
                         });
                     }
                 }
+                AppCommand::DownloadAttachment { url, filename } => {
+                    match timeout(
+                        ATTACHMENT_PREVIEW_TIMEOUT,
+                        download_attachment(&url, &filename),
+                    )
+                    .await
+                    {
+                        Err(_) => {
+                            let message = "download attachment timed out".to_owned();
+                            logging::error("attachment", &message);
+                            client.publish_event(AppEvent::GatewayError { message });
+                        }
+                        Ok(Ok(path)) => client.publish_event(AppEvent::StatusMessage {
+                            message: format!("downloaded attachment to {}", path.display()),
+                        }),
+                        Ok(Err(message)) => {
+                            logging::error("attachment", &message);
+                            client.publish_event(AppEvent::GatewayError { message });
+                        }
+                    }
+                }
+                AppCommand::AddReaction {
+                    channel_id,
+                    message_id,
+                    emoji,
+                } => match client.add_reaction(channel_id, message_id, &emoji).await {
+                    Ok(()) => client.publish_event(AppEvent::StatusMessage {
+                        message: format!("added {emoji} reaction"),
+                    }),
+                    Err(error) => {
+                        logging::error("app", format!("add reaction failed: {error}"));
+                        client.publish_event(AppEvent::GatewayError {
+                            message: format!("add reaction failed: {error}"),
+                        });
+                    }
+                },
             }
         }
     })
@@ -178,6 +215,89 @@ async fn fetch_attachment_preview(url: &str) -> std::result::Result<Vec<u8>, Str
     }
 
     Ok(bytes.to_vec())
+}
+
+async fn download_attachment(url: &str, filename: &str) -> std::result::Result<PathBuf, String> {
+    let response = reqwest::get(url)
+        .await
+        .map_err(|error| format!("download attachment failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("download attachment failed: {error}"))?;
+
+    if let Some(length) = response.content_length()
+        && length > MAX_ATTACHMENT_DOWNLOAD_BYTES as u64
+    {
+        return Err(format!(
+            "attachment is too large: {length} bytes (max {MAX_ATTACHMENT_DOWNLOAD_BYTES})"
+        ));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| format!("read attachment failed: {error}"))?;
+    if bytes.len() > MAX_ATTACHMENT_DOWNLOAD_BYTES {
+        return Err(format!(
+            "attachment is too large: {} bytes (max {MAX_ATTACHMENT_DOWNLOAD_BYTES})",
+            bytes.len()
+        ));
+    }
+
+    let directory = downloads_directory()?;
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("create download directory failed: {error}"))?;
+    let path = unique_download_path(&directory, &sanitize_filename(filename));
+    fs::write(&path, bytes).map_err(|error| format!("write attachment failed: {error}"))?;
+    Ok(path)
+}
+
+fn downloads_directory() -> std::result::Result<PathBuf, String> {
+    let home = env::var_os("HOME").ok_or_else(|| "HOME is not set".to_owned())?;
+    Ok(PathBuf::from(home).join("Downloads"))
+}
+
+fn sanitize_filename(filename: &str) -> String {
+    let sanitized: String = filename
+        .chars()
+        .map(|character| {
+            if character.is_control() || matches!(character, '/' | '\\') {
+                '_'
+            } else {
+                character
+            }
+        })
+        .collect();
+    let sanitized = sanitized.trim_matches([' ', '.']);
+    if sanitized.is_empty() {
+        "attachment".to_owned()
+    } else {
+        sanitized.to_owned()
+    }
+}
+
+fn unique_download_path(directory: &std::path::Path, filename: &str) -> PathBuf {
+    let path = directory.join(filename);
+    if !path.exists() {
+        return path;
+    }
+
+    let original = std::path::Path::new(filename);
+    let stem = original
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("attachment");
+    let extension = original.extension().and_then(|value| value.to_str());
+    for index in 1.. {
+        let candidate = match extension {
+            Some(extension) => directory.join(format!("{stem} ({index}).{extension}")),
+            None => directory.join(format!("{stem} ({index})")),
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    unreachable!("unbounded search returns a path before exhausting usize")
 }
 
 fn open_url(url: &str) -> io::Result<()> {

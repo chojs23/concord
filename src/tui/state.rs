@@ -20,6 +20,27 @@ pub enum FocusPane {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessageActionKind {
+    Reply,
+    DownloadImage,
+    VoteInPoll,
+    ViewPollResults,
+    AddReaction,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageActionItem {
+    pub kind: MessageActionKind,
+    pub label: &'static str,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageActionMenuState {
+    selected: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ActiveGuildScope {
     Unset,
     DirectMessages,
@@ -47,8 +68,10 @@ pub struct DashboardState {
     member_view_height: usize,
     composer_input: String,
     composer_active: bool,
+    message_action_menu: Option<MessageActionMenuState>,
     current_user: Option<String>,
     last_error: Option<String>,
+    last_status: Option<String>,
     skipped_events: u64,
     should_quit: bool,
     /// Folder IDs the user has collapsed in the guild pane. Single-guild
@@ -89,8 +112,10 @@ impl DashboardState {
             member_view_height: 1,
             composer_input: String::new(),
             composer_active: false,
+            message_action_menu: None,
             current_user: None,
             last_error: None,
+            last_status: None,
             skipped_events: 0,
             should_quit: false,
             collapsed_folders: HashSet::new(),
@@ -120,6 +145,10 @@ impl DashboardState {
             AppEvent::GatewayError { message } => {
                 logging::error("app_event", message);
                 self.last_error = Some(message.clone());
+            }
+            AppEvent::StatusMessage { message } => {
+                self.last_status = Some(message.clone());
+                self.last_error = None;
             }
             AppEvent::MessageHistoryLoadFailed { message, .. } => {
                 logging::error("history", message);
@@ -167,12 +196,174 @@ impl DashboardState {
         self.last_error.as_deref()
     }
 
+    pub fn last_status(&self) -> Option<&str> {
+        self.last_status.as_deref()
+    }
+
     pub fn skipped_events(&self) -> u64 {
         self.skipped_events
     }
 
     pub fn is_composing(&self) -> bool {
         self.composer_active
+    }
+
+    pub fn is_message_action_menu_open(&self) -> bool {
+        self.message_action_menu.is_some()
+    }
+
+    pub fn open_selected_message_actions(&mut self) {
+        if self.focus == FocusPane::Messages && self.selected_message_state().is_some() {
+            self.message_action_menu = Some(MessageActionMenuState { selected: 0 });
+        }
+    }
+
+    pub fn close_message_action_menu(&mut self) {
+        self.message_action_menu = None;
+    }
+
+    pub fn move_message_action_down(&mut self) {
+        let actions_len = self.selected_message_action_items().len();
+        if actions_len == 0 {
+            return;
+        }
+        if let Some(menu) = &mut self.message_action_menu {
+            menu.selected = (menu.selected + 1).min(actions_len - 1);
+        }
+    }
+
+    pub fn move_message_action_up(&mut self) {
+        if let Some(menu) = &mut self.message_action_menu {
+            menu.selected = menu.selected.saturating_sub(1);
+        }
+    }
+
+    pub fn selected_message_action_items(&self) -> Vec<MessageActionItem> {
+        let Some(message) = self.selected_message_state() else {
+            return Vec::new();
+        };
+        let has_image = message
+            .attachments_in_display_order()
+            .any(|attachment| attachment.is_image() && attachment.preferred_url().is_some());
+        let has_poll = message.poll.is_some();
+
+        vec![
+            MessageActionItem {
+                kind: MessageActionKind::Reply,
+                label: "Reply",
+                enabled: true,
+            },
+            MessageActionItem {
+                kind: MessageActionKind::DownloadImage,
+                label: "Download image",
+                enabled: has_image,
+            },
+            MessageActionItem {
+                kind: MessageActionKind::VoteInPoll,
+                label: "Vote in poll (unavailable)",
+                enabled: false,
+            },
+            MessageActionItem {
+                kind: MessageActionKind::ViewPollResults,
+                label: "View poll results",
+                enabled: has_poll,
+            },
+            MessageActionItem {
+                kind: MessageActionKind::AddReaction,
+                label: "Add 👍 reaction",
+                enabled: true,
+            },
+        ]
+    }
+
+    pub fn selected_message_action_index(&self) -> Option<usize> {
+        self.message_action_menu.as_ref().map(|menu| {
+            menu.selected
+                .min(self.selected_message_action_items().len().saturating_sub(1))
+        })
+    }
+
+    pub fn selected_message_action(&self) -> Option<MessageActionItem> {
+        let index = self.selected_message_action_index()?;
+        self.selected_message_action_items().get(index).cloned()
+    }
+
+    pub fn activate_selected_message_action(&mut self) -> Option<AppCommand> {
+        let action = self.selected_message_action()?;
+        if !action.enabled {
+            return None;
+        }
+
+        match action.kind {
+            MessageActionKind::Reply => {
+                self.start_reply_composer();
+                self.close_message_action_menu();
+                None
+            }
+            MessageActionKind::DownloadImage => {
+                let (url, filename) =
+                    self.selected_message_image_attachment()
+                        .and_then(|attachment| {
+                            attachment
+                                .preferred_url()
+                                .map(|url| (url.to_owned(), attachment.filename.clone()))
+                        })?;
+                self.close_message_action_menu();
+                Some(AppCommand::DownloadAttachment { url, filename })
+            }
+            MessageActionKind::VoteInPoll => {
+                self.last_status =
+                    Some("Discord's app API does not allow apps to vote on polls".to_owned());
+                self.close_message_action_menu();
+                None
+            }
+            MessageActionKind::ViewPollResults => {
+                self.last_status = Some(self.selected_poll_result_status());
+                self.close_message_action_menu();
+                None
+            }
+            MessageActionKind::AddReaction => {
+                let message = self.selected_message_state()?;
+                let command = AppCommand::AddReaction {
+                    channel_id: message.channel_id,
+                    message_id: message.id,
+                    emoji: "👍".to_owned(),
+                };
+                self.close_message_action_menu();
+                Some(command)
+            }
+        }
+    }
+
+    fn selected_poll_result_status(&self) -> String {
+        let Some(poll) = self
+            .selected_message_state()
+            .and_then(|message| message.poll.as_ref())
+        else {
+            return "Selected message has no poll".to_owned();
+        };
+        let total_votes = poll
+            .answers
+            .iter()
+            .filter_map(|answer| answer.vote_count)
+            .sum::<u64>();
+        match poll.results_finalized {
+            Some(true) => format!("Poll results are final: {total_votes} votes"),
+            Some(false) => format!("Poll results are visible on the card: {total_votes} votes"),
+            None => "Poll results are not available in this payload yet".to_owned(),
+        }
+    }
+
+    fn start_reply_composer(&mut self) {
+        let Some(author) = self
+            .selected_message_state()
+            .map(|message| message.author.clone())
+        else {
+            return;
+        };
+        self.composer_input = format!("@{author} ");
+        self.composer_active = true;
+        self.focus = FocusPane::Messages;
     }
 
     pub fn composer_input(&self) -> &str {
@@ -612,6 +803,14 @@ impl DashboardState {
             .min(self.messages().len().saturating_sub(1))
     }
 
+    pub fn selected_message_state(&self) -> Option<&MessageState> {
+        let channel_id = self.selected_channel_id()?;
+        self.discord
+            .messages_for_channel(channel_id)
+            .get(self.selected_message())
+            .copied()
+    }
+
     #[cfg(test)]
     pub fn message_scroll(&self) -> usize {
         self.message_scroll
@@ -695,6 +894,10 @@ impl DashboardState {
     #[allow(dead_code)]
     fn selected_message_attachment(&self) -> Option<&crate::discord::AttachmentInfo> {
         self.selected_message_attachment_matching(|_| true)
+    }
+
+    fn selected_message_image_attachment(&self) -> Option<&crate::discord::AttachmentInfo> {
+        self.selected_message_attachment_matching(|attachment| attachment.is_image())
     }
 
     fn selected_message_attachment_matching(
@@ -1265,7 +1468,7 @@ pub(crate) fn message_base_line_count(message: &MessageState) -> usize {
         message
             .poll
             .as_ref()
-            .map(|poll| 1 + poll.answers.len() + usize::from(poll.allow_multiselect))
+            .map(|poll| 3 + poll.answers.len())
             .unwrap_or(0)
     } else {
         0
@@ -1468,7 +1671,7 @@ mod tests {
 
     use super::{
         ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildBranch, GuildPaneEntry,
-        MessageState, message_rendered_height,
+        MessageActionKind, MessageState, message_rendered_height,
     };
     use crate::discord::{
         AppEvent, AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageInfo, MessageKind,
@@ -1903,11 +2106,11 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 3);
+        assert_eq!(message_rendered_height(&message, 16, 3), 5);
     }
 
     #[test]
-    fn multiselect_poll_message_reserves_footer_row() {
+    fn multiselect_poll_message_uses_same_card_height() {
         let message = MessageState {
             id: Id::new(1),
             channel_id: Id::new(2),
@@ -1920,7 +2123,58 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 4);
+        assert_eq!(message_rendered_height(&message, 16, 3), 5);
+    }
+
+    #[test]
+    fn message_action_items_reflect_selected_message_capabilities() {
+        let mut state = state_with_image_messages(1, &[1]);
+        focus_messages(&mut state);
+
+        let actions = state.selected_message_action_items();
+
+        assert!(
+            actions.iter().any(|action| {
+                action.kind == MessageActionKind::DownloadImage && action.enabled
+            })
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|action| { action.kind == MessageActionKind::VoteInPoll && !action.enabled })
+        );
+    }
+
+    #[test]
+    fn message_action_items_enable_poll_actions_for_poll_messages() {
+        let mut state = state_with_messages(1);
+        focus_messages(&mut state);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: Some(poll_info(false)),
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let actions = state.selected_message_action_items();
+
+        assert!(
+            actions
+                .iter()
+                .any(|action| { action.kind == MessageActionKind::VoteInPoll && !action.enabled })
+        );
+        assert!(
+            actions.iter().any(|action| {
+                action.kind == MessageActionKind::ViewPollResults && action.enabled
+            })
+        );
     }
 
     #[test]
@@ -2855,13 +3109,20 @@ mod tests {
             question: "오늘 뭐 먹지?".to_owned(),
             answers: vec![
                 PollAnswerInfo {
+                    answer_id: 1,
                     text: "김치찌개".to_owned(),
+                    vote_count: Some(2),
+                    me_voted: true,
                 },
                 PollAnswerInfo {
+                    answer_id: 2,
                     text: "라멘".to_owned(),
+                    vote_count: Some(1),
+                    me_voted: false,
                 },
             ],
             allow_multiselect,
+            results_finalized: Some(false),
         }
     }
 

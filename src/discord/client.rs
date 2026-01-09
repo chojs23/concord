@@ -5,7 +5,10 @@ use tokio::{sync::broadcast, task::JoinHandle};
 use twilight_http::Client as HttpClient;
 use twilight_model::{
     channel::Message,
-    id::{Id, marker::ChannelMarker},
+    id::{
+        Id,
+        marker::{ChannelMarker, MessageMarker},
+    },
 };
 
 use crate::{AppError, Result};
@@ -63,6 +66,17 @@ impl DiscordClient {
         limit: u16,
     ) -> Result<Vec<Message>> {
         self.rest.load_message_history(channel_id, limit).await
+    }
+
+    pub async fn add_reaction(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: &str,
+    ) -> Result<()> {
+        self.rest
+            .add_unicode_reaction(channel_id, message_id, emoji)
+            .await
     }
 }
 

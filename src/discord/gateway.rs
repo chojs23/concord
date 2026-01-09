@@ -397,10 +397,12 @@ fn parse_message_update(data: &Value) -> Option<AppEvent> {
     } else {
         AttachmentUpdate::Unchanged
     };
+    let poll = data.get("poll").and_then(parse_poll_info);
     Some(AppEvent::MessageUpdate {
         guild_id,
         channel_id,
         message_id,
+        poll,
         content,
         attachments,
     })
@@ -482,7 +484,7 @@ fn parse_poll_info(value: &Value) -> Option<PollInfo> {
         .filter(|value| !value.is_empty())
         .unwrap_or("<no question text>")
         .to_owned();
-    let answers = value
+    let answers: Vec<PollAnswerInfo> = value
         .get("answers")
         .and_then(Value::as_array)
         .map(|answers| answers.iter().filter_map(parse_poll_answer_info).collect())
@@ -491,15 +493,33 @@ fn parse_poll_info(value: &Value) -> Option<PollInfo> {
         .get("allow_multiselect")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let results = value.get("results");
+    let results_finalized = results
+        .and_then(|results| results.get("is_finalized"))
+        .and_then(Value::as_bool);
 
     Some(PollInfo {
         question,
-        answers,
+        answers: answers
+            .into_iter()
+            .map(|mut answer| {
+                if let Some(count) = poll_answer_count(results, answer.answer_id) {
+                    answer.vote_count = Some(count.0);
+                    answer.me_voted = count.1;
+                }
+                answer
+            })
+            .collect(),
         allow_multiselect,
+        results_finalized,
     })
 }
 
 fn parse_poll_answer_info(value: &Value) -> Option<PollAnswerInfo> {
+    let answer_id = value
+        .get("answer_id")
+        .and_then(Value::as_u64)
+        .and_then(|value| u8::try_from(value).ok())?;
     let text = value
         .get("poll_media")
         .and_then(|media| media.get("text"))
@@ -508,7 +528,34 @@ fn parse_poll_answer_info(value: &Value) -> Option<PollAnswerInfo> {
         .unwrap_or("<no answer text>")
         .to_owned();
 
-    Some(PollAnswerInfo { text })
+    Some(PollAnswerInfo {
+        answer_id,
+        text,
+        vote_count: None,
+        me_voted: false,
+    })
+}
+
+fn poll_answer_count(results: Option<&Value>, answer_id: u8) -> Option<(u64, bool)> {
+    results?
+        .get("answer_counts")?
+        .as_array()?
+        .iter()
+        .find(|count| {
+            count
+                .get("id")
+                .and_then(Value::as_u64)
+                .is_some_and(|id| id == u64::from(answer_id))
+        })
+        .map(|count| {
+            (
+                count.get("count").and_then(Value::as_u64).unwrap_or(0),
+                count
+                    .get("me_voted")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            )
+        })
 }
 
 fn parse_message_snapshot(
@@ -801,6 +848,37 @@ mod tests {
     }
 
     #[test]
+    fn message_update_parser_keeps_poll_results() {
+        let event = parse_message_update(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "poll": {
+                "question": { "text": "오늘 뭐 먹지?" },
+                "answers": [
+                    { "answer_id": 1, "poll_media": { "text": "김치찌개" } },
+                    { "answer_id": 2, "poll_media": { "text": "라멘" } }
+                ],
+                "results": {
+                    "is_finalized": true,
+                    "answer_counts": [
+                        { "id": 1, "count": 5, "me_voted": true },
+                        { "id": 2, "count": 3, "me_voted": false }
+                    ]
+                }
+            }
+        }))
+        .expect("message update should parse");
+
+        let AppEvent::MessageUpdate { poll, .. } = event else {
+            panic!("expected message update event");
+        };
+        let poll = poll.expect("poll payload should be kept");
+        assert_eq!(poll.results_finalized, Some(true));
+        assert_eq!(poll.answers[0].vote_count, Some(5));
+        assert!(poll.answers[0].me_voted);
+    }
+
+    #[test]
     fn message_create_parser_keeps_image_attachments() {
         let event = parse_message_create(&json!({
             "id": "20",
@@ -895,6 +973,13 @@ mod tests {
                     { "answer_id": 1, "poll_media": { "text": "김치찌개" } },
                     { "answer_id": 2, "poll_media": { "text": "라멘" } }
                 ],
+                "results": {
+                    "is_finalized": false,
+                    "answer_counts": [
+                        { "id": 1, "count": 2, "me_voted": true },
+                        { "id": 2, "count": 1, "me_voted": false }
+                    ]
+                },
                 "allow_multiselect": true
             }
         }))
@@ -909,13 +994,20 @@ mod tests {
                 question: "오늘 뭐 먹지?".to_owned(),
                 answers: vec![
                     PollAnswerInfo {
-                        text: "김치찌개".to_owned()
+                        answer_id: 1,
+                        text: "김치찌개".to_owned(),
+                        vote_count: Some(2),
+                        me_voted: true,
                     },
                     PollAnswerInfo {
-                        text: "라멘".to_owned()
+                        answer_id: 2,
+                        text: "라멘".to_owned(),
+                        vote_count: Some(1),
+                        me_voted: false,
                     },
                 ],
                 allow_multiselect: true,
+                results_finalized: Some(false),
             })
         );
     }

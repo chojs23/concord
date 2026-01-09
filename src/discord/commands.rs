@@ -1,4 +1,7 @@
-use twilight_model::id::{Id, marker::ChannelMarker};
+use twilight_model::id::{
+    Id,
+    marker::{ChannelMarker, MessageMarker},
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppCommand {
@@ -14,5 +17,14 @@ pub enum AppCommand {
     },
     OpenUrl {
         url: String,
+    },
+    DownloadAttachment {
+        url: String,
+        filename: String,
+    },
+    AddReaction {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: String,
     },
 }

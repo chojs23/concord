@@ -170,11 +170,15 @@ pub struct PollInfo {
     pub question: String,
     pub answers: Vec<PollAnswerInfo>,
     pub allow_multiselect: bool,
+    pub results_finalized: Option<bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PollAnswerInfo {
+    pub answer_id: u8,
     pub text: String,
+    pub vote_count: Option<u64>,
+    pub me_voted: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -247,6 +251,7 @@ pub enum AppEvent {
         guild_id: Option<Id<GuildMarker>>,
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
+        poll: Option<PollInfo>,
         content: Option<String>,
         attachments: AttachmentUpdate,
     },
@@ -272,6 +277,9 @@ pub enum AppEvent {
         folders: Vec<GuildFolder>,
     },
     GatewayError {
+        message: String,
+    },
+    StatusMessage {
         message: String,
     },
     AttachmentPreviewLoaded {
@@ -395,15 +403,27 @@ impl PollInfo {
             answers: poll
                 .answers
                 .iter()
-                .map(|answer| PollAnswerInfo {
-                    text: answer
-                        .poll_media
-                        .text
-                        .clone()
-                        .unwrap_or_else(|| "<no answer text>".to_owned()),
+                .map(|answer| {
+                    let result = poll.results.as_ref().and_then(|results| {
+                        results
+                            .answer_counts
+                            .iter()
+                            .find(|count| count.id == answer.answer_id)
+                    });
+                    PollAnswerInfo {
+                        answer_id: answer.answer_id,
+                        text: answer
+                            .poll_media
+                            .text
+                            .clone()
+                            .unwrap_or_else(|| "<no answer text>".to_owned()),
+                        vote_count: result.map(|count| count.count),
+                        me_voted: result.is_some_and(|count| count.me_voted),
+                    }
                 })
                 .collect(),
             allow_multiselect: poll.allow_multiselect,
+            results_finalized: poll.results.as_ref().map(|results| results.is_finalized),
         }
     }
 }
@@ -507,6 +527,7 @@ pub fn map_event(event: Event, message_content_enabled: bool) -> Option<AppEvent
             guild_id: message.guild_id,
             channel_id: message.channel_id,
             message_id: message.id,
+            poll: message.poll.as_ref().map(PollInfo::from_poll),
             content: map_message_content(&message.content, message_content_enabled),
             attachments: map_attachment_update(message.attachments.clone()),
         }),

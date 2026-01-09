@@ -3,15 +3,15 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 use ratatui_image::{Resize, StatefulImage, protocol::StatefulProtocol};
 
 use super::{
     format::truncate_text,
     state::{
-        ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MemberGroup, folder_color,
-        message_base_line_count, presence_color, presence_marker,
+        ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MemberGroup,
+        MessageActionItem, folder_color, message_base_line_count, presence_color, presence_marker,
     },
 };
 use crate::discord::{
@@ -112,6 +112,7 @@ pub fn render(frame: &mut Frame, state: &DashboardState, image_previews: Vec<Ima
     render_messages(frame, areas.messages, state, image_previews);
     render_members(frame, areas.members, state);
     render_footer(frame, areas.footer, state);
+    render_message_action_menu(frame, areas.messages, state);
 }
 
 fn dashboard_areas(area: Rect) -> DashboardAreas {
@@ -435,22 +436,59 @@ fn format_message_content_lines(
 }
 
 fn format_poll_lines(poll: &PollInfo, width: usize) -> Vec<MessageContentLine> {
-    let mut lines = vec![MessageContentLine::plain(truncate_text(
-        &format!("Poll: {}", poll.question),
-        width,
-    ))];
+    let helper = if poll.allow_multiselect {
+        "Select one or more answers"
+    } else {
+        "Select one answer"
+    };
+    let mut lines = vec![
+        MessageContentLine::plain(truncate_text(&poll.question, width)),
+        MessageContentLine::dim(truncate_text(helper, width)),
+    ];
+    let total_votes = poll
+        .answers
+        .iter()
+        .filter_map(|answer| answer.vote_count)
+        .sum::<u64>();
     lines.extend(poll.answers.iter().enumerate().map(|(index, answer)| {
         MessageContentLine::plain(truncate_text(
-            &format!("  {}. {}", index + 1, answer.text),
+            &format_poll_answer(index, answer, total_votes),
             width,
         ))
     }));
-    if poll.allow_multiselect {
-        lines.push(MessageContentLine::dim(
-            "  Multiple answers allowed".to_owned(),
-        ));
-    }
+    lines.push(MessageContentLine::dim(truncate_text(
+        &format_poll_footer(poll, total_votes),
+        width,
+    )));
     lines
+}
+
+fn format_poll_answer(
+    index: usize,
+    answer: &crate::discord::PollAnswerInfo,
+    total_votes: u64,
+) -> String {
+    let marker = if answer.me_voted { "◉" } else { "◯" };
+    let results = answer.vote_count.map(|count| {
+        let percent = count
+            .saturating_mul(100)
+            .checked_div(total_votes)
+            .unwrap_or(0);
+        format!("  {count} votes  {percent}%")
+    });
+    match results {
+        Some(results) => format!("  {marker} {}. {}{results}", index + 1, answer.text),
+        None => format!("  {marker} {}. {}", index + 1, answer.text),
+    }
+}
+
+fn format_poll_footer(poll: &PollInfo, total_votes: u64) -> String {
+    let vote_label = if total_votes == 1 { "vote" } else { "votes" };
+    match poll.results_finalized {
+        Some(true) => format!("{total_votes} {vote_label} · Final results"),
+        Some(false) => format!("{total_votes} {vote_label} · Results may still change"),
+        None => "Use message actions to view results".to_owned(),
+    }
 }
 
 fn format_reply_line(reply: &ReplyInfo, width: usize) -> MessageContentLine {
@@ -712,16 +750,19 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
             format!(" {user} "),
             Style::default().fg(Color::Green).bold(),
         ),
-        Span::styled(
-            "tab/1-4 focus | j/k move | enter/space tree | ←/→ close/open | i write | esc cancel | q quit",
-            Style::default().fg(DIM),
-        ),
+        Span::styled(footer_hint(state), Style::default().fg(DIM)),
     ];
     if let Some(error) = state.last_error() {
         spans.push(Span::raw(" | "));
         spans.push(Span::styled(
             format!("err: {}", truncate_text(error, 60)),
             Style::default().fg(Color::Red),
+        ));
+    } else if let Some(status) = state.last_status() {
+        spans.push(Span::raw(" | "));
+        spans.push(Span::styled(
+            truncate_text(status, 72),
+            Style::default().fg(Color::Green),
         ));
     }
     if state.skipped_events() > 0 {
@@ -736,6 +777,80 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
         Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
         area,
     );
+}
+
+fn footer_hint(state: &DashboardState) -> &'static str {
+    if state.is_message_action_menu_open() {
+        "j/k choose action | enter select | esc close | q quit"
+    } else {
+        "tab/1-4 focus | j/k move | enter/space action/tree | ←/→ close/open | i write | esc cancel | q quit"
+    }
+}
+
+fn render_message_action_menu(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    if !state.is_message_action_menu_open() {
+        return;
+    }
+
+    let actions = state.selected_message_action_items();
+    if actions.is_empty() {
+        return;
+    }
+
+    let selected = state.selected_message_action_index().unwrap_or(0);
+    let popup = centered_rect(area, 54, (actions.len() as u16).saturating_add(4));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(message_action_menu_lines(&actions, selected))
+            .block(panel_block("Message actions", true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width.saturating_sub(2)).max(1);
+    let height = height.min(area.height.saturating_sub(2)).max(1);
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    }
+}
+
+fn message_action_menu_lines(actions: &[MessageActionItem], selected: usize) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| {
+            let marker = if index == selected { "› " } else { "  " };
+            let label = if action.enabled {
+                action.label.to_owned()
+            } else {
+                format!("{} (unavailable)", action.label)
+            };
+            let mut style = if action.enabled {
+                Style::default()
+            } else {
+                Style::default().fg(DIM)
+            };
+            if index == selected {
+                style = style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            Line::from(vec![
+                Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(label, style),
+            ])
+        })
+        .collect();
+    lines.push(Line::from(Span::styled(
+        "Enter select · Esc close",
+        Style::default().fg(DIM),
+    )));
+    lines
 }
 
 fn channel_prefix(kind: &str) -> &'static str {
@@ -862,14 +977,15 @@ mod tests {
 
     use super::{
         ACCENT, DIM, MessageContentLine, format_message_content, format_message_content_lines,
-        inline_image_preview_area, inline_image_preview_row, message_item_lines, sync_view_heights,
+        inline_image_preview_area, inline_image_preview_row, message_action_menu_lines,
+        message_item_lines, sync_view_heights,
     };
     use crate::{
         discord::{
             AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState, PollAnswerInfo,
             PollInfo, ReplyInfo,
         },
-        tui::state::DashboardState,
+        tui::state::{DashboardState, MessageActionItem, MessageActionKind},
     };
 
     #[test]
@@ -989,7 +1105,13 @@ mod tests {
 
         assert_eq!(
             line_texts(&lines),
-            vec!["Poll: 오늘 뭐 먹지?", "  1. 김치찌개", "  2. 라멘"]
+            vec![
+                "오늘 뭐 먹지?",
+                "Select one answer",
+                "  ◉ 1. 김치찌개  2 votes  66%",
+                "  ◯ 2. 라멘  1 votes  33%",
+                "3 votes · Results may still change"
+            ]
         );
     }
 
@@ -1001,8 +1123,35 @@ mod tests {
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
-        assert_eq!(lines[3].text, "  Multiple answers allowed");
-        assert_eq!(lines[3].style, Style::default().fg(DIM));
+        assert_eq!(lines[1].text, "Select one or more answers");
+        assert_eq!(lines[1].style, Style::default().fg(DIM));
+    }
+
+    #[test]
+    fn message_action_menu_marks_selected_and_disabled_actions() {
+        let actions = vec![
+            MessageActionItem {
+                kind: MessageActionKind::Reply,
+                label: "Reply",
+                enabled: true,
+            },
+            MessageActionItem {
+                kind: MessageActionKind::DownloadImage,
+                label: "Download image",
+                enabled: false,
+            },
+        ];
+
+        let lines = message_action_menu_lines(&actions, 1);
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec![
+                "  Reply",
+                "› Download image (unavailable)",
+                "Enter select · Esc close"
+            ]
+        );
     }
 
     #[test]
@@ -1193,13 +1342,20 @@ mod tests {
             question: "오늘 뭐 먹지?".to_owned(),
             answers: vec![
                 PollAnswerInfo {
+                    answer_id: 1,
                     text: "김치찌개".to_owned(),
+                    vote_count: Some(2),
+                    me_voted: true,
                 },
                 PollAnswerInfo {
+                    answer_id: 2,
                     text: "라멘".to_owned(),
+                    vote_count: Some(1),
+                    me_voted: false,
                 },
             ],
             allow_multiselect,
+            results_finalized: Some(false),
         }
     }
 
@@ -1217,6 +1373,18 @@ mod tests {
 
     fn line_texts(lines: &[MessageContentLine]) -> Vec<&str> {
         lines.iter().map(|line| line.text.as_str()).collect()
+    }
+
+    fn line_texts_from_ratatui(lines: &[ratatui::text::Line<'_>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
     }
 
     fn image_attachment() -> AttachmentInfo {
