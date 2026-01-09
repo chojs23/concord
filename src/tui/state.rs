@@ -5,7 +5,8 @@ use twilight_model::id::{Id, marker::ChannelMarker, marker::GuildMarker, marker:
 
 use crate::discord::{
     AppCommand, AppEvent, AttachmentInfo, ChannelState, DiscordState, GuildFolder,
-    GuildMemberState, GuildState, MessageSnapshotInfo, MessageState, PresenceStatus,
+    GuildMemberState, GuildState, MessageSnapshotInfo, MessageState, MessageSubtype,
+    PresenceStatus,
 };
 use crate::logging;
 
@@ -242,38 +243,39 @@ impl DashboardState {
         let Some(message) = self.selected_message_state() else {
             return Vec::new();
         };
-        let has_image = message
-            .attachments_in_display_order()
-            .any(|attachment| attachment.is_image() && attachment.preferred_url().is_some());
-        let has_poll = message.poll.is_some();
+        let mut actions = vec![MessageActionItem {
+            kind: MessageActionKind::Reply,
+            label: "Reply",
+            enabled: true,
+        }];
 
-        vec![
-            MessageActionItem {
-                kind: MessageActionKind::Reply,
-                label: "Reply",
-                enabled: true,
-            },
-            MessageActionItem {
+        match message.subtype() {
+            MessageSubtype::Normal => {}
+            MessageSubtype::Image => actions.push(MessageActionItem {
                 kind: MessageActionKind::DownloadImage,
                 label: "Download image",
-                enabled: has_image,
-            },
-            MessageActionItem {
-                kind: MessageActionKind::VoteInPoll,
-                label: "Vote in poll (unavailable)",
-                enabled: false,
-            },
-            MessageActionItem {
-                kind: MessageActionKind::ViewPollResults,
-                label: "View poll results",
-                enabled: has_poll,
-            },
-            MessageActionItem {
-                kind: MessageActionKind::AddReaction,
-                label: "Add 👍 reaction",
                 enabled: true,
-            },
-        ]
+            }),
+            MessageSubtype::Poll => actions.extend([
+                MessageActionItem {
+                    kind: MessageActionKind::VoteInPoll,
+                    label: "Vote in poll",
+                    enabled: false,
+                },
+                MessageActionItem {
+                    kind: MessageActionKind::ViewPollResults,
+                    label: "View poll results",
+                    enabled: true,
+                },
+            ]),
+        }
+
+        actions.push(MessageActionItem {
+            kind: MessageActionKind::AddReaction,
+            label: "Add 👍 reaction",
+            enabled: true,
+        });
+        actions
     }
 
     pub fn selected_message_action_index(&self) -> Option<usize> {
@@ -2139,9 +2141,27 @@ mod tests {
             })
         );
         assert!(
-            actions
+            !actions
                 .iter()
-                .any(|action| { action.kind == MessageActionKind::VoteInPoll && !action.enabled })
+                .any(|action| action.kind == MessageActionKind::VoteInPoll)
+        );
+        assert!(
+            !actions
+                .iter()
+                .any(|action| action.kind == MessageActionKind::ViewPollResults)
+        );
+    }
+
+    #[test]
+    fn normal_message_actions_do_not_include_poll_or_image_actions() {
+        let mut state = state_with_messages(1);
+        focus_messages(&mut state);
+
+        let actions = state.selected_message_action_items();
+
+        assert_eq!(
+            actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
+            vec![MessageActionKind::Reply, MessageActionKind::AddReaction]
         );
     }
 

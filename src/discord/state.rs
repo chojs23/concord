@@ -48,6 +48,13 @@ pub struct MessageState {
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessageSubtype {
+    Normal,
+    Poll,
+    Image,
+}
+
 impl MessageState {
     pub fn attachments_in_display_order(&self) -> impl Iterator<Item = &AttachmentInfo> {
         self.attachments.iter().chain(
@@ -55,6 +62,21 @@ impl MessageState {
                 .iter()
                 .flat_map(|snapshot| snapshot.attachments.iter()),
         )
+    }
+
+    pub fn subtype(&self) -> MessageSubtype {
+        if !self.message_kind.is_regular() {
+            MessageSubtype::Normal
+        } else if self.poll.is_some() {
+            MessageSubtype::Poll
+        } else if self
+            .attachments_in_display_order()
+            .any(|attachment| attachment.is_image() && attachment.preferred_url().is_some())
+        {
+            MessageSubtype::Image
+        } else {
+            MessageSubtype::Normal
+        }
     }
 }
 
@@ -453,7 +475,8 @@ mod tests {
 
     use crate::discord::{
         AppEvent, AttachmentUpdate, ChannelInfo, DiscordState, MemberInfo, MessageInfo,
-        MessageKind, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+        MessageKind, MessageSnapshotInfo, MessageState, MessageSubtype, PollAnswerInfo, PollInfo,
+        PresenceStatus, ReplyInfo,
     };
 
     #[test]
@@ -803,6 +826,28 @@ mod tests {
         assert_eq!(poll.results_finalized, Some(true));
         assert_eq!(poll.answers[0].vote_count, Some(5));
         assert_eq!(poll.answers[1].vote_count, Some(3));
+    }
+
+    #[test]
+    fn message_subtype_prefers_poll_then_image_then_normal() {
+        let mut message = message_state("hello");
+        assert_eq!(message.subtype(), MessageSubtype::Normal);
+
+        message.attachments = vec![attachment_info(1, "cat.png", "image/png")];
+        assert_eq!(message.subtype(), MessageSubtype::Image);
+
+        message.poll = Some(poll_info());
+        assert_eq!(message.subtype(), MessageSubtype::Poll);
+    }
+
+    #[test]
+    fn message_subtype_only_applies_to_regular_messages() {
+        let mut message = message_state("system body");
+        message.message_kind = MessageKind::new(19);
+        message.attachments = vec![attachment_info(1, "cat.png", "image/png")];
+        message.poll = Some(poll_info());
+
+        assert_eq!(message.subtype(), MessageSubtype::Normal);
     }
 
     #[test]
@@ -1306,6 +1351,20 @@ mod tests {
             channel_id,
             message_id: Id::new(message_id),
             author_id: Id::new(99),
+            author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some(content.to_owned()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        }
+    }
+
+    fn message_state(content: &str) -> MessageState {
+        MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
             author: "neo".to_owned(),
             message_kind: MessageKind::regular(),
             reply: None,

@@ -428,7 +428,7 @@ mod tests {
         assert_eq!(state.selected_message(), 1);
         assert_eq!(
             state.selected_message_action().map(|action| action.kind),
-            Some(MessageActionKind::DownloadImage)
+            Some(MessageActionKind::AddReaction)
         );
 
         handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
@@ -489,9 +489,7 @@ mod tests {
             &mut state,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         );
-        for _ in 0..4 {
-            handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        }
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
 
         let command = handle_key(
             &mut state,
@@ -517,7 +515,7 @@ mod tests {
             &mut state,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         );
-        for _ in 0..3 {
+        for _ in 0..2 {
             handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         }
 

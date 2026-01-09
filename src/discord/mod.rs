@@ -13,4 +13,6 @@ pub use events::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
     MessageKind, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
 };
-pub use state::{ChannelState, DiscordState, GuildMemberState, GuildState, MessageState};
+pub use state::{
+    ChannelState, DiscordState, GuildMemberState, GuildState, MessageState, MessageSubtype,
+};
