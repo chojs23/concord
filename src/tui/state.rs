@@ -24,7 +24,6 @@ pub enum MessageActionKind {
     Reply,
     DownloadImage,
     VoteInPoll,
-    ViewPollResults,
     AddReaction,
 }
 
@@ -257,18 +256,13 @@ impl DashboardState {
             });
         }
         if capabilities.has_poll {
-            actions.extend([
-                MessageActionItem {
-                    kind: MessageActionKind::VoteInPoll,
-                    label: "Vote in poll",
-                    enabled: false,
-                },
-                MessageActionItem {
-                    kind: MessageActionKind::ViewPollResults,
-                    label: "View poll results",
-                    enabled: true,
-                },
-            ]);
+            actions.push(MessageActionItem {
+                kind: MessageActionKind::VoteInPoll,
+                // Discord's documented app API exposes poll voters and poll
+                // expiry, but does not allow apps to cast poll votes.
+                label: "Vote in poll",
+                enabled: false,
+            });
         }
 
         actions.push(MessageActionItem {
@@ -320,11 +314,6 @@ impl DashboardState {
                 self.close_message_action_menu();
                 None
             }
-            MessageActionKind::ViewPollResults => {
-                self.last_status = Some(self.selected_poll_result_status());
-                self.close_message_action_menu();
-                None
-            }
             MessageActionKind::AddReaction => {
                 let message = self.selected_message_state()?;
                 let command = AppCommand::AddReaction {
@@ -335,25 +324,6 @@ impl DashboardState {
                 self.close_message_action_menu();
                 Some(command)
             }
-        }
-    }
-
-    fn selected_poll_result_status(&self) -> String {
-        let Some(poll) = self
-            .selected_message_state()
-            .and_then(|message| message.poll.as_ref())
-        else {
-            return "Selected message has no poll".to_owned();
-        };
-        let total_votes = poll
-            .answers
-            .iter()
-            .filter_map(|answer| answer.vote_count)
-            .sum::<u64>();
-        match poll.results_finalized {
-            Some(true) => format!("Poll results are final: {total_votes} votes"),
-            Some(false) => format!("Poll results are visible on the card: {total_votes} votes"),
-            None => "Poll results are not available in this payload yet".to_owned(),
         }
     }
 
@@ -2146,11 +2116,7 @@ mod tests {
                 .iter()
                 .any(|action| action.kind == MessageActionKind::VoteInPoll)
         );
-        assert!(
-            !actions
-                .iter()
-                .any(|action| action.kind == MessageActionKind::ViewPollResults)
-        );
+        assert!(!actions.iter().any(|action| action.label.contains("poll")));
     }
 
     #[test]
@@ -2191,10 +2157,13 @@ mod tests {
                 .iter()
                 .any(|action| { action.kind == MessageActionKind::VoteInPoll && !action.enabled })
         );
-        assert!(
-            actions.iter().any(|action| {
-                action.kind == MessageActionKind::ViewPollResults && action.enabled
-            })
+        assert_eq!(
+            actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
+            vec![
+                MessageActionKind::Reply,
+                MessageActionKind::VoteInPoll,
+                MessageActionKind::AddReaction,
+            ]
         );
     }
 
@@ -2224,7 +2193,6 @@ mod tests {
                 MessageActionKind::Reply,
                 MessageActionKind::DownloadImage,
                 MessageActionKind::VoteInPoll,
-                MessageActionKind::ViewPollResults,
                 MessageActionKind::AddReaction,
             ]
         );

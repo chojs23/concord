@@ -507,31 +507,6 @@ mod tests {
         assert!(!state.is_message_action_menu_open());
     }
 
-    #[test]
-    fn message_action_menu_view_poll_results_sets_status() {
-        let mut state = state_with_poll_message();
-        focus_messages(&mut state);
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        for _ in 0..2 {
-            handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        }
-
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-
-        assert_eq!(command, None);
-        assert_eq!(
-            state.last_status(),
-            Some("Poll results are visible on the card: 3 votes")
-        );
-        assert!(!state.is_message_action_menu_open());
-    }
-
     fn state_with_folder() -> DashboardState {
         let first_guild = Id::new(1);
         let second_guild = Id::new(2);
@@ -714,62 +689,6 @@ mod tests {
                 height: Some(480),
                 description: None,
             }],
-            forwarded_snapshots: Vec::new(),
-        });
-        state
-    }
-
-    fn state_with_poll_message() -> DashboardState {
-        let guild_id = Id::new(1);
-        let channel_id = Id::new(2);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id,
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-            }],
-            members: Vec::new(),
-            presences: Vec::new(),
-        });
-        state.confirm_selected_guild();
-        state.confirm_selected_channel();
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(guild_id),
-            channel_id,
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            message_kind: crate::discord::MessageKind::regular(),
-            reply: None,
-            poll: Some(crate::discord::PollInfo {
-                question: "오늘 뭐 먹지?".to_owned(),
-                answers: vec![
-                    crate::discord::PollAnswerInfo {
-                        answer_id: 1,
-                        text: "김치찌개".to_owned(),
-                        vote_count: Some(2),
-                        me_voted: true,
-                    },
-                    crate::discord::PollAnswerInfo {
-                        answer_id: 2,
-                        text: "라멘".to_owned(),
-                        vote_count: Some(1),
-                        me_voted: false,
-                    },
-                ],
-                allow_multiselect: false,
-                results_finalized: Some(false),
-            }),
-            content: Some(String::new()),
-            attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state
