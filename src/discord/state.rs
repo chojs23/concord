@@ -48,11 +48,14 @@ pub struct MessageState {
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MessageSubtype {
-    Normal,
-    Poll,
-    Image,
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MessageCapabilities {
+    pub is_reply: bool,
+    pub is_forwarded: bool,
+    pub has_poll: bool,
+    pub has_image: bool,
+    pub has_video: bool,
+    pub has_file: bool,
 }
 
 impl MessageState {
@@ -64,19 +67,32 @@ impl MessageState {
         )
     }
 
-    pub fn subtype(&self) -> MessageSubtype {
+    pub fn capabilities(&self) -> MessageCapabilities {
+        let mut capabilities = MessageCapabilities {
+            is_reply: self.reply.is_some(),
+            is_forwarded: !self.forwarded_snapshots.is_empty(),
+            ..MessageCapabilities::default()
+        };
+
+        // Poll and attachment actions are only valid for regular type 0
+        // messages. Non-regular messages can still be replies/forwards, but
+        // subtype-like action facets should not leak onto system messages.
         if !self.message_kind.is_regular() {
-            MessageSubtype::Normal
-        } else if self.poll.is_some() {
-            MessageSubtype::Poll
-        } else if self
-            .attachments_in_display_order()
-            .any(|attachment| attachment.is_image() && attachment.preferred_url().is_some())
-        {
-            MessageSubtype::Image
-        } else {
-            MessageSubtype::Normal
+            return capabilities;
         }
+
+        capabilities.has_poll = self.poll.is_some();
+        for attachment in self.attachments_in_display_order() {
+            if attachment.is_image() && attachment.preferred_url().is_some() {
+                capabilities.has_image = true;
+            } else if attachment.is_video() {
+                capabilities.has_video = true;
+            } else {
+                capabilities.has_file = true;
+            }
+        }
+
+        capabilities
     }
 }
 
@@ -475,8 +491,8 @@ mod tests {
 
     use crate::discord::{
         AppEvent, AttachmentUpdate, ChannelInfo, DiscordState, MemberInfo, MessageInfo,
-        MessageKind, MessageSnapshotInfo, MessageState, MessageSubtype, PollAnswerInfo, PollInfo,
-        PresenceStatus, ReplyInfo,
+        MessageKind, MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo, PresenceStatus,
+        ReplyInfo,
     };
 
     #[test]
@@ -829,25 +845,46 @@ mod tests {
     }
 
     #[test]
-    fn message_subtype_prefers_poll_then_image_then_normal() {
+    fn message_capabilities_preserve_overlapping_traits() {
         let mut message = message_state("hello");
-        assert_eq!(message.subtype(), MessageSubtype::Normal);
+        assert_eq!(message.capabilities(), Default::default());
 
         message.attachments = vec![attachment_info(1, "cat.png", "image/png")];
-        assert_eq!(message.subtype(), MessageSubtype::Image);
+        let capabilities = message.capabilities();
+        assert!(capabilities.has_image);
+        assert!(!capabilities.has_poll);
 
         message.poll = Some(poll_info());
-        assert_eq!(message.subtype(), MessageSubtype::Poll);
+        let capabilities = message.capabilities();
+        assert!(capabilities.has_image);
+        assert!(capabilities.has_poll);
     }
 
     #[test]
-    fn message_subtype_only_applies_to_regular_messages() {
+    fn message_capabilities_only_expose_action_facets_for_regular_messages() {
         let mut message = message_state("system body");
         message.message_kind = MessageKind::new(19);
         message.attachments = vec![attachment_info(1, "cat.png", "image/png")];
         message.poll = Some(poll_info());
 
-        assert_eq!(message.subtype(), MessageSubtype::Normal);
+        let capabilities = message.capabilities();
+        assert!(!capabilities.has_poll);
+        assert!(!capabilities.has_image);
+    }
+
+    #[test]
+    fn message_capabilities_track_reply_and_forwarded_traits() {
+        let mut message = message_state("reply body");
+        message.reply = Some(ReplyInfo {
+            author: "neo".to_owned(),
+            content: Some("original".to_owned()),
+        });
+        message.forwarded_snapshots = vec![snapshot_info("forwarded")];
+
+        let capabilities = message.capabilities();
+
+        assert!(capabilities.is_reply);
+        assert!(capabilities.is_forwarded);
     }
 
     #[test]

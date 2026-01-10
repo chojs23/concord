@@ -5,8 +5,7 @@ use twilight_model::id::{Id, marker::ChannelMarker, marker::GuildMarker, marker:
 
 use crate::discord::{
     AppCommand, AppEvent, AttachmentInfo, ChannelState, DiscordState, GuildFolder,
-    GuildMemberState, GuildState, MessageSnapshotInfo, MessageState, MessageSubtype,
-    PresenceStatus,
+    GuildMemberState, GuildState, MessageSnapshotInfo, MessageState, PresenceStatus,
 };
 use crate::logging;
 
@@ -249,14 +248,16 @@ impl DashboardState {
             enabled: true,
         }];
 
-        match message.subtype() {
-            MessageSubtype::Normal => {}
-            MessageSubtype::Image => actions.push(MessageActionItem {
+        let capabilities = message.capabilities();
+        if capabilities.has_image {
+            actions.push(MessageActionItem {
                 kind: MessageActionKind::DownloadImage,
                 label: "Download image",
                 enabled: true,
-            }),
-            MessageSubtype::Poll => actions.extend([
+            });
+        }
+        if capabilities.has_poll {
+            actions.extend([
                 MessageActionItem {
                     kind: MessageActionKind::VoteInPoll,
                     label: "Vote in poll",
@@ -267,7 +268,7 @@ impl DashboardState {
                     label: "View poll results",
                     enabled: true,
                 },
-            ]),
+            ]);
         }
 
         actions.push(MessageActionItem {
@@ -2194,6 +2195,38 @@ mod tests {
             actions.iter().any(|action| {
                 action.kind == MessageActionKind::ViewPollResults && action.enabled
             })
+        );
+    }
+
+    #[test]
+    fn message_action_items_keep_poll_and_image_actions_together() {
+        let mut state = state_with_image_messages(1, &[1]);
+        focus_messages(&mut state);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: Some(poll_info(false)),
+            content: Some(String::new()),
+            attachments: vec![image_attachment(1)],
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let actions = state.selected_message_action_items();
+
+        assert_eq!(
+            actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
+            vec![
+                MessageActionKind::Reply,
+                MessageActionKind::DownloadImage,
+                MessageActionKind::VoteInPoll,
+                MessageActionKind::ViewPollResults,
+                MessageActionKind::AddReaction,
+            ]
         );
     }
 

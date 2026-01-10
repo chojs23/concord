@@ -14,5 +14,5 @@ pub use events::{
     MessageKind, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
 };
 pub use state::{
-    ChannelState, DiscordState, GuildMemberState, GuildState, MessageState, MessageSubtype,
+    ChannelState, DiscordState, GuildMemberState, GuildState, MessageCapabilities, MessageState,
 };
