@@ -23,7 +23,6 @@ pub enum FocusPane {
 pub enum MessageActionKind {
     Reply,
     DownloadImage,
-    VoteInPoll,
     AddReaction,
 }
 
@@ -255,16 +254,6 @@ impl DashboardState {
                 enabled: true,
             });
         }
-        if capabilities.has_poll {
-            actions.push(MessageActionItem {
-                kind: MessageActionKind::VoteInPoll,
-                // Discord's documented app API exposes poll voters and poll
-                // expiry, but does not allow apps to cast poll votes.
-                label: "Vote in poll",
-                enabled: false,
-            });
-        }
-
         actions.push(MessageActionItem {
             kind: MessageActionKind::AddReaction,
             label: "Add 👍 reaction",
@@ -307,12 +296,6 @@ impl DashboardState {
                         })?;
                 self.close_message_action_menu();
                 Some(AppCommand::DownloadAttachment { url, filename })
-            }
-            MessageActionKind::VoteInPoll => {
-                self.last_status =
-                    Some("Discord's app API does not allow apps to vote on polls".to_owned());
-                self.close_message_action_menu();
-                None
             }
             MessageActionKind::AddReaction => {
                 let message = self.selected_message_state()?;
@@ -2111,11 +2094,6 @@ mod tests {
                 action.kind == MessageActionKind::DownloadImage && action.enabled
             })
         );
-        assert!(
-            !actions
-                .iter()
-                .any(|action| action.kind == MessageActionKind::VoteInPoll)
-        );
         assert!(!actions.iter().any(|action| action.label.contains("poll")));
     }
 
@@ -2133,7 +2111,7 @@ mod tests {
     }
 
     #[test]
-    fn message_action_items_enable_poll_actions_for_poll_messages() {
+    fn message_action_items_do_not_add_poll_actions_for_poll_messages() {
         let mut state = state_with_messages(1);
         focus_messages(&mut state);
         state.push_event(AppEvent::MessageCreate {
@@ -2152,23 +2130,15 @@ mod tests {
 
         let actions = state.selected_message_action_items();
 
-        assert!(
-            actions
-                .iter()
-                .any(|action| { action.kind == MessageActionKind::VoteInPoll && !action.enabled })
-        );
         assert_eq!(
             actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
-            vec![
-                MessageActionKind::Reply,
-                MessageActionKind::VoteInPoll,
-                MessageActionKind::AddReaction,
-            ]
+            vec![MessageActionKind::Reply, MessageActionKind::AddReaction]
         );
+        assert!(!actions.iter().any(|action| action.label.contains("poll")));
     }
 
     #[test]
-    fn message_action_items_keep_poll_and_image_actions_together() {
+    fn message_action_items_keep_image_action_for_poll_messages() {
         let mut state = state_with_image_messages(1, &[1]);
         focus_messages(&mut state);
         state.push_event(AppEvent::MessageCreate {
@@ -2192,7 +2162,6 @@ mod tests {
             vec![
                 MessageActionKind::Reply,
                 MessageActionKind::DownloadImage,
-                MessageActionKind::VoteInPoll,
                 MessageActionKind::AddReaction,
             ]
         );
