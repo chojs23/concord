@@ -396,10 +396,8 @@ impl DiscordState {
         }
 
         *messages = by_id.into_values().collect();
-        while messages.len() > self.max_messages_per_channel {
-            if before.is_some() {
-                messages.pop_back();
-            } else {
+        if before.is_none() {
+            while messages.len() > self.max_messages_per_channel {
                 messages.pop_front();
             }
         }
@@ -1195,7 +1193,7 @@ mod tests {
     }
 
     #[test]
-    fn older_history_keeps_loaded_page_when_message_limit_is_reached() {
+    fn older_history_preserves_existing_messages_when_message_limit_is_reached() {
         let channel_id: Id<ChannelMarker> = Id::new(10);
         let mut state = DiscordState::new(3);
 
@@ -1220,7 +1218,50 @@ mod tests {
                 .iter()
                 .map(|message| message.id.get())
                 .collect::<Vec<_>>(),
-            vec![5, 10, 11]
+            vec![5, 10, 11, 12]
+        );
+    }
+
+    #[test]
+    fn live_message_after_older_history_keeps_newer_window() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::new(4);
+
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![
+                message_info(channel_id, 10, "old"),
+                message_info(channel_id, 11, "middle"),
+                message_info(channel_id, 12, "new"),
+            ],
+        });
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: Some(Id::new(10)),
+            messages: vec![message_info(channel_id, 5, "older")],
+        });
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(13),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("newest".to_owned()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.id.get())
+                .collect::<Vec<_>>(),
+            vec![10, 11, 12, 13]
         );
     }
 

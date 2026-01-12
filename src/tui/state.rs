@@ -2513,7 +2513,7 @@ mod tests {
     }
 
     #[test]
-    fn older_history_request_advances_after_cache_limit_trim() {
+    fn older_history_request_advances_after_cache_limit_retention() {
         let channel_id: Id<ChannelMarker> = Id::new(2);
         let mut state = state_with_message_ids(10..=209);
         focus_messages(&mut state);
@@ -2531,6 +2531,11 @@ mod tests {
             before: Some(Id::new(10)),
             messages: vec![message_info(channel_id, 5)],
         });
+
+        assert_eq!(
+            state.messages().last().map(|message| message.id),
+            Some(Id::new(209))
+        );
 
         state.move_up();
 
