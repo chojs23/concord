@@ -170,7 +170,10 @@ async fn run_dashboard(
             &mut history_requests,
             &mut last_history_channel,
         ) && commands
-            .send(AppCommand::LoadMessageHistory { channel_id })
+            .send(AppCommand::LoadMessageHistory {
+                channel_id,
+                before: None,
+            })
             .await
             .is_err()
         {

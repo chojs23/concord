@@ -38,9 +38,14 @@ impl DiscordRest {
     pub async fn load_message_history(
         &self,
         channel_id: Id<ChannelMarker>,
+        before: Option<Id<MessageMarker>>,
         limit: u16,
     ) -> Result<Vec<Message>> {
-        let response = self.http.channel_messages(channel_id).limit(limit).await?;
+        let request = self.http.channel_messages(channel_id);
+        let response = match before {
+            Some(message_id) => request.before(message_id).limit(limit).await?,
+            None => request.limit(limit).await?,
+        };
 
         response.models().await.map_err(Into::into)
     }

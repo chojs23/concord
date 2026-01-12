@@ -207,8 +207,9 @@ impl DiscordState {
             }),
             AppEvent::MessageHistoryLoaded {
                 channel_id,
+                before,
                 messages,
-            } => self.merge_message_history(*channel_id, messages),
+            } => self.merge_message_history(*channel_id, *before, messages),
             AppEvent::MessageHistoryLoadFailed { .. } => {}
             AppEvent::MessageUpdate {
                 guild_id,
@@ -359,7 +360,12 @@ impl DiscordState {
         self.record_channel_message_id(channel_id, message_id);
     }
 
-    fn merge_message_history(&mut self, channel_id: Id<ChannelMarker>, history: &[MessageInfo]) {
+    fn merge_message_history(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        before: Option<Id<MessageMarker>>,
+        history: &[MessageInfo],
+    ) {
         let messages = self.messages.entry(channel_id).or_default();
         let mut by_id: BTreeMap<Id<MessageMarker>, MessageState> = messages
             .drain(..)
@@ -391,7 +397,11 @@ impl DiscordState {
 
         *messages = by_id.into_values().collect();
         while messages.len() > self.max_messages_per_channel {
-            messages.pop_front();
+            if before.is_some() {
+                messages.pop_back();
+            } else {
+                messages.pop_front();
+            }
         }
         if let Some(last_message_id) = messages.back().map(|message| message.id) {
             self.record_channel_message_id(channel_id, last_message_id);
@@ -954,6 +964,7 @@ mod tests {
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
+            before: None,
             messages: vec![
                 message_info(channel_id, 20, "history 20"),
                 message_info(channel_id, 10, "history 10"),
@@ -990,6 +1001,7 @@ mod tests {
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
+            before: None,
             messages: vec![MessageInfo {
                 content: Some(String::new()),
                 ..message_info(channel_id, 20, "")
@@ -1021,6 +1033,7 @@ mod tests {
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
+            before: None,
             messages: vec![MessageInfo {
                 content: Some(String::new()),
                 attachments: Vec::new(),
@@ -1082,6 +1095,7 @@ mod tests {
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
+            before: None,
             messages: vec![message_info(channel_id, 20, "")],
         });
 
@@ -1162,6 +1176,7 @@ mod tests {
 
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
+            before: None,
             messages: vec![
                 message_info(channel_id, 10, "old"),
                 message_info(channel_id, 20, "middle"),
@@ -1176,6 +1191,36 @@ mod tests {
                 .map(|message| message.id.get())
                 .collect::<Vec<_>>(),
             vec![20, 30]
+        );
+    }
+
+    #[test]
+    fn older_history_keeps_loaded_page_when_message_limit_is_reached() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::new(3);
+
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![
+                message_info(channel_id, 10, "old"),
+                message_info(channel_id, 11, "middle"),
+                message_info(channel_id, 12, "new"),
+            ],
+        });
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: Some(Id::new(10)),
+            messages: vec![message_info(channel_id, 5, "older")],
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.id.get())
+                .collect::<Vec<_>>(),
+            vec![5, 10, 11]
         );
     }
 
@@ -1244,6 +1289,7 @@ mod tests {
         }));
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
+            before: None,
             messages: vec![
                 message_info(channel_id, 10, "old"),
                 message_info(channel_id, 40, "new"),

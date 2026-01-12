@@ -63,9 +63,12 @@ impl DiscordClient {
     pub async fn load_message_history(
         &self,
         channel_id: Id<ChannelMarker>,
+        before: Option<Id<MessageMarker>>,
         limit: u16,
     ) -> Result<Vec<Message>> {
-        self.rest.load_message_history(channel_id, limit).await
+        self.rest
+            .load_message_history(channel_id, before, limit)
+            .await
     }
 
     pub async fn add_reaction(

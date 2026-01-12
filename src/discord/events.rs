@@ -241,6 +241,7 @@ pub enum AppEvent {
     },
     MessageHistoryLoaded {
         channel_id: Id<ChannelMarker>,
+        before: Option<Id<MessageMarker>>,
         messages: Vec<MessageInfo>,
     },
     MessageHistoryLoadFailed {

@@ -5,7 +5,7 @@ use twilight_model::id::{Id, marker::ChannelMarker, marker::GuildMarker, marker:
 
 use crate::discord::{
     AppCommand, AppEvent, AttachmentInfo, ChannelState, DiscordState, GuildFolder,
-    GuildMemberState, GuildState, MessageSnapshotInfo, MessageState, PresenceStatus,
+    GuildMemberState, GuildState, MessageInfo, MessageSnapshotInfo, MessageState, PresenceStatus,
 };
 use crate::logging;
 
@@ -36,6 +36,12 @@ pub struct MessageActionItem {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageActionMenuState {
     selected: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OlderHistoryRequestState {
+    Requested { before: Id<MessageMarker> },
+    Exhausted { before: Id<MessageMarker> },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,6 +78,7 @@ pub struct DashboardState {
     last_status: Option<String>,
     skipped_events: u64,
     should_quit: bool,
+    older_history_requests: HashMap<Id<ChannelMarker>, OlderHistoryRequestState>,
     /// Folder IDs the user has collapsed in the guild pane. Single-guild
     /// "folders" (id = None) are never collapsible since they have no header.
     collapsed_folders: HashSet<FolderKey>,
@@ -116,6 +123,7 @@ impl DashboardState {
             last_status: None,
             skipped_events: 0,
             should_quit: false,
+            older_history_requests: HashMap::new(),
             collapsed_folders: HashSet::new(),
             collapsed_channel_categories: HashSet::new(),
         }
@@ -148,10 +156,19 @@ impl DashboardState {
                 self.last_status = Some(message.clone());
                 self.last_error = None;
             }
-            AppEvent::MessageHistoryLoadFailed { message, .. } => {
+            AppEvent::MessageHistoryLoadFailed {
+                channel_id,
+                message,
+            } => {
                 logging::error("history", message);
                 self.last_error = Some(message.clone());
+                self.older_history_requests.remove(channel_id);
             }
+            AppEvent::MessageHistoryLoaded {
+                channel_id,
+                before,
+                messages,
+            } => self.record_older_history_loaded(*channel_id, *before, messages),
             AppEvent::GatewayClosed => {
                 self.last_error = Some("gateway closed".to_owned());
             }
@@ -731,6 +748,29 @@ impl DashboardState {
         self.clamp_message_viewport();
     }
 
+    fn record_older_history_loaded(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        response_before: Option<Id<MessageMarker>>,
+        messages: &[MessageInfo],
+    ) {
+        let Some(OlderHistoryRequestState::Requested { before }) =
+            self.older_history_requests.get(&channel_id).copied()
+        else {
+            return;
+        };
+        if response_before != Some(before) {
+            return;
+        }
+
+        if messages.is_empty() {
+            self.older_history_requests
+                .insert(channel_id, OlderHistoryRequestState::Exhausted { before });
+        } else {
+            self.older_history_requests.remove(&channel_id);
+        }
+    }
+
     fn selected_channel_category_id(&self) -> Option<Id<ChannelMarker>> {
         let entries = self.channel_pane_entries();
         let selected = self.selected_channel();
@@ -765,6 +805,38 @@ impl DashboardState {
             .messages_for_channel(channel_id)
             .get(self.selected_message())
             .copied()
+    }
+
+    pub fn next_older_history_command(&mut self) -> Option<AppCommand> {
+        let channel_id = self.selected_channel_id()?;
+        let before = self.older_history_cursor()?;
+        match self.older_history_requests.get(&channel_id) {
+            Some(OlderHistoryRequestState::Requested { .. }) => return None,
+            Some(OlderHistoryRequestState::Exhausted { before: exhausted })
+                if *exhausted == before =>
+            {
+                return None;
+            }
+            _ => {}
+        }
+
+        self.older_history_requests
+            .insert(channel_id, OlderHistoryRequestState::Requested { before });
+        Some(AppCommand::LoadMessageHistory {
+            channel_id,
+            before: Some(before),
+        })
+    }
+
+    fn older_history_cursor(&self) -> Option<Id<MessageMarker>> {
+        if self.focus != FocusPane::Messages
+            || self.messages().is_empty()
+            || self.selected_message() != 0
+        {
+            return None;
+        }
+
+        self.messages().first().map(|message| message.id)
     }
 
     #[cfg(test)]
@@ -1630,8 +1702,8 @@ mod tests {
         MessageActionKind, MessageState, message_rendered_height,
     };
     use crate::discord::{
-        AppEvent, AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageInfo, MessageKind,
-        MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+        AppCommand, AppEvent, AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
+        MessageKind, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
     };
 
     #[test]
@@ -2399,12 +2471,100 @@ mod tests {
 
         state.push_event(AppEvent::MessageHistoryLoaded {
             channel_id,
+            before: None,
             messages: vec![message_info(channel_id, 5)],
         });
 
         assert_eq!(state.messages()[state.selected_message()].id, selected_id);
         assert_eq!(state.messages()[state.message_scroll()].id, scroll_id);
         assert!(!state.message_auto_follow());
+    }
+
+    #[test]
+    fn older_history_request_waits_for_loaded_page() {
+        let channel_id: Id<ChannelMarker> = Id::new(2);
+        let mut state = state_with_message_ids([10, 11, 12]);
+        focus_messages(&mut state);
+        state.jump_top();
+
+        assert_eq!(
+            state.next_older_history_command(),
+            Some(AppCommand::LoadMessageHistory {
+                channel_id,
+                before: Some(Id::new(10)),
+            })
+        );
+        assert_eq!(state.next_older_history_command(), None);
+
+        state.push_event(AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: Some(Id::new(10)),
+            messages: vec![message_info(channel_id, 5)],
+        });
+
+        state.move_up();
+        assert_eq!(
+            state.next_older_history_command(),
+            Some(AppCommand::LoadMessageHistory {
+                channel_id,
+                before: Some(Id::new(5)),
+            })
+        );
+    }
+
+    #[test]
+    fn older_history_request_advances_after_cache_limit_trim() {
+        let channel_id: Id<ChannelMarker> = Id::new(2);
+        let mut state = state_with_message_ids(10..=209);
+        focus_messages(&mut state);
+        state.jump_top();
+
+        assert_eq!(
+            state.next_older_history_command(),
+            Some(AppCommand::LoadMessageHistory {
+                channel_id,
+                before: Some(Id::new(10)),
+            })
+        );
+        state.push_event(AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: Some(Id::new(10)),
+            messages: vec![message_info(channel_id, 5)],
+        });
+
+        state.move_up();
+
+        assert_eq!(
+            state.next_older_history_command(),
+            Some(AppCommand::LoadMessageHistory {
+                channel_id,
+                before: Some(Id::new(5)),
+            })
+        );
+    }
+
+    #[test]
+    fn empty_older_history_page_marks_cursor_exhausted() {
+        let channel_id: Id<ChannelMarker> = Id::new(2);
+        let mut state = state_with_message_ids([10, 11, 12]);
+        focus_messages(&mut state);
+        state.jump_top();
+
+        assert_eq!(
+            state.next_older_history_command(),
+            Some(AppCommand::LoadMessageHistory {
+                channel_id,
+                before: Some(Id::new(10)),
+            })
+        );
+
+        state.push_event(AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: Some(Id::new(10)),
+            messages: Vec::new(),
+        });
+
+        assert_eq!(state.next_older_history_command(), None);
     }
 
     #[test]

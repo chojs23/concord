@@ -7,6 +7,7 @@ use twilight_model::id::{
 pub enum AppCommand {
     LoadMessageHistory {
         channel_id: Id<ChannelMarker>,
+        before: Option<Id<MessageMarker>>,
     },
     LoadAttachmentPreview {
         url: String,

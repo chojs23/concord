@@ -26,16 +26,31 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('3') => state.focus_pane(FocusPane::Messages),
         KeyCode::Char('4') => state.focus_pane(FocusPane::Members),
         KeyCode::Char('j') | KeyCode::Down => state.move_down(),
-        KeyCode::Char('k') | KeyCode::Up => state.move_up(),
+        KeyCode::Char('k') | KeyCode::Up => {
+            state.move_up();
+            return state.next_older_history_command();
+        }
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.half_page_down()
         }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => state.half_page_up(),
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.half_page_up();
+            return state.next_older_history_command();
+        }
         KeyCode::PageDown => state.half_page_down(),
-        KeyCode::PageUp => state.half_page_up(),
+        KeyCode::PageUp => {
+            state.half_page_up();
+            return state.next_older_history_command();
+        }
         KeyCode::Char('F') => state.toggle_message_auto_follow(),
-        KeyCode::Char('g') => state.jump_top(),
-        KeyCode::Home => state.jump_top(),
+        KeyCode::Char('g') => {
+            state.jump_top();
+            return state.next_older_history_command();
+        }
+        KeyCode::Home => {
+            state.jump_top();
+            return state.next_older_history_command();
+        }
         KeyCode::Char('G') => state.jump_bottom(),
         KeyCode::End => state.jump_bottom(),
         KeyCode::Tab => state.cycle_focus(),
@@ -209,6 +224,26 @@ mod tests {
         );
         assert_eq!(state.selected_message(), 9);
         assert!(!state.message_auto_follow());
+    }
+
+    #[test]
+    fn message_top_scroll_requests_older_history_once() {
+        let mut state = state_with_messages(3);
+        focus_messages(&mut state);
+
+        let command = handle_key(&mut state, KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+
+        assert_eq!(
+            command,
+            Some(AppCommand::LoadMessageHistory {
+                channel_id: Id::new(2),
+                before: Some(Id::new(1)),
+            })
+        );
+
+        let duplicate = handle_key(&mut state, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+
+        assert_eq!(duplicate, None);
     }
 
     #[test]
