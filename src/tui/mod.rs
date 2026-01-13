@@ -28,7 +28,7 @@ use crate::{
     logging,
 };
 
-use state::{DashboardState, message_base_line_count};
+use state::{DashboardState, message_base_line_count_for_width};
 use ui::{ImagePreview, ImagePreviewLayout, ImagePreviewState};
 
 const IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
@@ -97,6 +97,7 @@ async fn run_dashboard(
                 ui::sync_view_heights(frame.area(), &mut state);
                 let preview_layout = ui::image_preview_layout(frame.area(), &state);
                 state.clamp_message_viewport_for_image_previews(
+                    preview_layout.content_width,
                     preview_layout.preview_width,
                     preview_layout.max_preview_height,
                 );
@@ -428,7 +429,10 @@ fn visible_image_preview_targets(
             break;
         }
 
-        rendered_rows = rendered_rows.saturating_add(message_base_line_count(message));
+        rendered_rows = rendered_rows.saturating_add(message_base_line_count_for_width(
+            message,
+            layout.content_width,
+        ));
 
         let Some((attachment, url)) = message
             .attachments_in_display_order()
@@ -610,6 +614,7 @@ mod tests {
             &state,
             ImagePreviewLayout {
                 list_height: 6,
+                content_width: 200,
                 preview_width: 16,
                 max_preview_height: 3,
             },
@@ -627,6 +632,7 @@ mod tests {
             &state,
             ImagePreviewLayout {
                 list_height: 6,
+                content_width: 200,
                 preview_width: 16,
                 max_preview_height: 3,
             },
@@ -644,6 +650,7 @@ mod tests {
             &state,
             ImagePreviewLayout {
                 list_height: 5,
+                content_width: 200,
                 preview_width: 16,
                 max_preview_height: 3,
             },
@@ -664,6 +671,7 @@ mod tests {
             &state,
             ImagePreviewLayout {
                 list_height: 6,
+                content_width: 200,
                 preview_width: 16,
                 max_preview_height: 3,
             },
@@ -699,6 +707,7 @@ mod tests {
             &state,
             ImagePreviewLayout {
                 list_height: 6,
+                content_width: 200,
                 preview_width: 16,
                 max_preview_height: 3,
             },
@@ -728,6 +737,7 @@ mod tests {
             &state,
             ImagePreviewLayout {
                 list_height: 6,
+                content_width: 200,
                 preview_width: 16,
                 max_preview_height: 3,
             },
@@ -746,6 +756,7 @@ mod tests {
             &state,
             ImagePreviewLayout {
                 list_height: 7,
+                content_width: 200,
                 preview_width: 16,
                 max_preview_height: 3,
             },
@@ -762,12 +773,13 @@ mod tests {
         while state.selected_message() > 3 {
             state.move_up();
         }
-        state.clamp_message_viewport_for_image_previews(16, 3);
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
         let targets = visible_image_preview_targets(
             &state,
             ImagePreviewLayout {
                 list_height: 14,
+                content_width: 200,
                 preview_width: 16,
                 max_preview_height: 3,
             },

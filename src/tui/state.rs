@@ -869,6 +869,7 @@ impl DashboardState {
 
     pub fn clamp_message_viewport_for_image_previews(
         &mut self,
+        content_width: usize,
         preview_width: u16,
         max_preview_height: u16,
     ) {
@@ -882,14 +883,26 @@ impl DashboardState {
 
         for _ in 0..self.messages().len() {
             let lower_scrolloff = self
-                .following_message_rendered_rows(preview_width, max_preview_height, SCROLL_OFF)
+                .following_message_rendered_rows(
+                    content_width,
+                    preview_width,
+                    max_preview_height,
+                    SCROLL_OFF,
+                )
                 .min(height.saturating_sub(1));
             let lower_bound = height.saturating_sub(1).saturating_sub(lower_scrolloff);
-            let selected_row =
-                self.selected_message_rendered_row(preview_width, max_preview_height);
+            let selected_row = self.selected_message_rendered_row(
+                content_width,
+                preview_width,
+                max_preview_height,
+            );
             let selected_bottom = selected_row.saturating_add(
-                self.selected_message_rendered_height(preview_width, max_preview_height)
-                    .saturating_sub(1),
+                self.selected_message_rendered_height(
+                    content_width,
+                    preview_width,
+                    max_preview_height,
+                )
+                .saturating_sub(1),
             );
             if selected_bottom > lower_bound && self.message_scroll < self.selected_message {
                 self.message_scroll = self.message_scroll.saturating_add(1);
@@ -1429,29 +1442,40 @@ impl DashboardState {
         pane_content_height(self.message_view_height)
     }
 
-    fn selected_message_rendered_row(&self, preview_width: u16, max_preview_height: u16) -> usize {
+    fn selected_message_rendered_row(
+        &self,
+        content_width: usize,
+        preview_width: u16,
+        max_preview_height: u16,
+    ) -> usize {
         let messages = self.messages();
         messages
             .iter()
             .skip(self.message_scroll)
             .take(self.selected_message.saturating_sub(self.message_scroll))
-            .map(|message| message_rendered_height(message, preview_width, max_preview_height))
+            .map(|message| {
+                message_rendered_height(message, content_width, preview_width, max_preview_height)
+            })
             .sum()
     }
 
     fn selected_message_rendered_height(
         &self,
+        content_width: usize,
         preview_width: u16,
         max_preview_height: u16,
     ) -> usize {
         self.messages()
             .get(self.selected_message)
-            .map(|message| message_rendered_height(message, preview_width, max_preview_height))
+            .map(|message| {
+                message_rendered_height(message, content_width, preview_width, max_preview_height)
+            })
             .unwrap_or(1)
     }
 
     fn following_message_rendered_rows(
         &self,
+        content_width: usize,
         preview_width: u16,
         max_preview_height: u16,
         count: usize,
@@ -1460,13 +1484,16 @@ impl DashboardState {
             .iter()
             .skip(self.selected_message.saturating_add(1))
             .take(count)
-            .map(|message| message_rendered_height(message, preview_width, max_preview_height))
+            .map(|message| {
+                message_rendered_height(message, content_width, preview_width, max_preview_height)
+            })
             .sum()
     }
 }
 
 fn message_rendered_height(
     message: &MessageState,
+    content_width: usize,
     preview_width: u16,
     max_preview_height: u16,
 ) -> usize {
@@ -1482,12 +1509,18 @@ fn message_rendered_height(
             )
         })
         .unwrap_or(0);
-    message_base_line_count(message) + usize::from(preview_height)
+    message_base_line_count_for_width(message, content_width) + usize::from(preview_height)
 }
 
-pub(crate) fn message_base_line_count(message: &MessageState) -> usize {
-    let primary_lines =
-        message_primary_line_count(message.content.as_deref(), &message.attachments);
+pub(crate) fn message_base_line_count_for_width(
+    message: &MessageState,
+    content_width: usize,
+) -> usize {
+    let primary_lines = message_primary_line_count(
+        message.content.as_deref(),
+        &message.attachments,
+        content_width,
+    );
     let kind_line = usize::from(
         message.reply.is_none() && message.poll.is_none() && !message.message_kind.is_regular(),
     );
@@ -1509,7 +1542,7 @@ pub(crate) fn message_base_line_count(message: &MessageState) -> usize {
             + poll_lines
             + kind_line
             + primary_lines
-            + forwarded_snapshot_line_count(snapshot)
+            + forwarded_snapshot_line_count(snapshot, content_width)
             + metadata_line)
             .max(1);
     }
@@ -1517,13 +1550,29 @@ pub(crate) fn message_base_line_count(message: &MessageState) -> usize {
     (reply_line + poll_lines + kind_line + primary_lines).max(1)
 }
 
-fn message_primary_line_count(content: Option<&str>, attachments: &[AttachmentInfo]) -> usize {
-    usize::from(content.is_some_and(|value| !value.is_empty()))
+fn message_primary_line_count(
+    content: Option<&str>,
+    attachments: &[AttachmentInfo],
+    content_width: usize,
+) -> usize {
+    content
+        .filter(|value| !value.is_empty())
+        .map(|value| super::ui::wrapped_text_line_count(value, content_width))
+        .unwrap_or(0)
         + usize::from(!attachments.is_empty())
 }
 
-fn forwarded_snapshot_line_count(snapshot: &MessageSnapshotInfo) -> usize {
-    1 + message_primary_line_count(snapshot.content.as_deref(), &snapshot.attachments).max(1)
+fn forwarded_snapshot_line_count(snapshot: &MessageSnapshotInfo, content_width: usize) -> usize {
+    let forwarded_content_width = content_width.saturating_sub(2).max(1);
+    let content_lines = snapshot
+        .content
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map(|value| super::ui::wrapped_text_line_count(value, forwarded_content_width))
+        .unwrap_or(0);
+    let attachment_line = usize::from(!snapshot.attachments.is_empty());
+
+    1 + content_lines.saturating_add(attachment_line).max(1)
 }
 
 fn pane_content_height(height: usize) -> usize {
@@ -1977,14 +2026,16 @@ mod tests {
 
         assert_eq!(state.message_scroll(), 0);
 
-        state.clamp_message_viewport_for_image_previews(16, 3);
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
         assert!(state.message_scroll() > 0);
-        let selected_bottom = state.selected_message_rendered_row(16, 3).saturating_add(
-            state
-                .selected_message_rendered_height(16, 3)
-                .saturating_sub(1),
-        );
+        let selected_bottom = state
+            .selected_message_rendered_row(200, 16, 3)
+            .saturating_add(
+                state
+                    .selected_message_rendered_height(200, 16, 3)
+                    .saturating_sub(1),
+            );
         assert!(selected_bottom < state.message_view_height());
     }
 
@@ -1997,14 +2048,16 @@ mod tests {
         while state.selected_message() > 3 {
             state.move_up();
         }
-        state.clamp_message_viewport_for_image_previews(16, 3);
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
-        assert_eq!(state.following_message_rendered_rows(16, 3, 3), 15);
-        let selected_bottom = state.selected_message_rendered_row(16, 3).saturating_add(
-            state
-                .selected_message_rendered_height(16, 3)
-                .saturating_sub(1),
-        );
+        assert_eq!(state.following_message_rendered_rows(200, 16, 3, 3), 15);
+        let selected_bottom = state
+            .selected_message_rendered_row(200, 16, 3)
+            .saturating_add(
+                state
+                    .selected_message_rendered_height(200, 16, 3)
+                    .saturating_sub(1),
+            );
         assert!(selected_bottom <= 1);
     }
 
@@ -2022,7 +2075,41 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 2);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 2);
+    }
+
+    #[test]
+    fn explicit_newlines_increase_message_rendered_height() {
+        let message = MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("hello\nworld".to_owned()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        };
+
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 2);
+    }
+
+    #[test]
+    fn wrapped_content_increases_message_rendered_height() {
+        let message = MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("abcdefghijkl".to_owned()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        };
+
+        assert_eq!(message_rendered_height(&message, 5, 16, 3), 3);
     }
 
     #[test]
@@ -2039,7 +2126,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 5);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
     }
 
     #[test]
@@ -2056,7 +2143,29 @@ mod tests {
             forwarded_snapshots: vec![forwarded_snapshot(1)],
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 6);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
+    }
+
+    #[test]
+    fn forwarded_snapshot_wrapped_content_increases_rendered_height() {
+        let message = MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: vec![MessageSnapshotInfo {
+                content: Some("abcdefghijkl".to_owned()),
+                attachments: vec![image_attachment(1)],
+                source_channel_id: None,
+                timestamp: None,
+            }],
+        };
+
+        assert_eq!(message_rendered_height(&message, 7, 16, 3), 8);
     }
 
     #[test]
@@ -2076,7 +2185,7 @@ mod tests {
             forwarded_snapshots: vec![snapshot],
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 7);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
     }
 
     #[test]
@@ -2093,11 +2202,11 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 5);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
 
         message.message_kind = MessageKind::new(19);
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 6);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
     }
 
     #[test]
@@ -2117,7 +2226,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 6);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
     }
 
     #[test]
@@ -2134,7 +2243,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 5);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
     }
 
     #[test]
@@ -2151,7 +2260,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 16, 3), 5);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
     }
 
     #[test]

@@ -11,7 +11,8 @@ use super::{
     format::truncate_text,
     state::{
         ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MemberGroup,
-        MessageActionItem, folder_color, message_base_line_count, presence_color, presence_marker,
+        MessageActionItem, folder_color, message_base_line_count_for_width, presence_color,
+        presence_marker,
     },
 };
 use crate::discord::{
@@ -62,6 +63,7 @@ pub struct ImagePreview<'a> {
 #[derive(Clone, Copy)]
 pub struct ImagePreviewLayout {
     pub list_height: usize,
+    pub content_width: usize,
     pub preview_width: u16,
     pub max_preview_height: u16,
 }
@@ -99,6 +101,7 @@ pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewL
     let list = message_list_area(areas.messages, state);
     ImagePreviewLayout {
         list_height: list.height as usize,
+        content_width: message_content_width(list),
         preview_width: inline_image_preview_width(list),
         max_preview_height: inline_image_preview_height(list, true),
     }
@@ -283,10 +286,7 @@ fn render_messages(
     let messages = state.visible_messages();
     let selected = state.focused_message_selection();
     let max_author_width = 14usize;
-    let padding = 4usize;
-    let content_width = (message_areas.list.width as usize)
-        .saturating_sub(padding)
-        .saturating_sub(max_author_width + 2);
+    let content_width = message_content_width(message_areas.list);
 
     let items: Vec<ListItem> = messages
         .iter()
@@ -308,6 +308,7 @@ fn render_messages(
         let row = inline_image_preview_row(
             &messages,
             image_preview.message_index,
+            content_width,
             previous_preview_rows,
         );
         if let Some(preview_area) =
@@ -377,6 +378,15 @@ fn message_item_lines(
     lines
 }
 
+fn message_content_width(list: Rect) -> usize {
+    let padding = 4usize;
+    let max_author_width = 14usize;
+    (list.width as usize)
+        .saturating_sub(padding)
+        .saturating_sub(max_author_width + 2)
+        .max(8)
+}
+
 fn image_preview_spacer_lines(height: u16) -> Vec<Line<'static>> {
     (0..height).map(|_| Line::from("")).collect()
 }
@@ -412,7 +422,11 @@ fn format_message_content_lines(
     }
 
     if let Some(value) = message.content.as_deref().filter(|value| !value.is_empty()) {
-        lines.push(MessageContentLine::plain(truncate_text(value, width)));
+        lines.extend(
+            wrap_text_lines(value, width)
+                .into_iter()
+                .map(MessageContentLine::plain),
+        );
     }
     if let Some(attachments) = attachment_summary {
         lines.push(MessageContentLine::accent(truncate_text(
@@ -432,6 +446,41 @@ fn format_message_content_lines(
         }));
     }
 
+    lines
+}
+
+pub(crate) fn wrapped_text_line_count(value: &str, width: usize) -> usize {
+    if value.is_empty() {
+        return 0;
+    }
+
+    let width = width.max(1);
+    value
+        .split('\n')
+        .map(|line| line.chars().count().div_ceil(width).max(1))
+        .sum()
+}
+
+fn wrap_text_lines(value: &str, width: usize) -> Vec<String> {
+    if value.is_empty() {
+        return Vec::new();
+    }
+
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    for line in value.split('\n') {
+        if line.is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+
+        let chars = line.chars().collect::<Vec<_>>();
+        lines.extend(
+            chars
+                .chunks(width)
+                .map(|chunk| chunk.iter().collect::<String>()),
+        );
+    }
     lines
 }
 
@@ -529,10 +578,12 @@ fn format_forwarded_snapshot(
         .as_deref()
         .filter(|value| !value.is_empty())
     {
-        lines.push(MessageContentLine::plain(truncate_text(
-            &format!("│ {content}"),
-            width,
-        )));
+        let content_width = width.saturating_sub(2).max(1);
+        lines.extend(
+            wrap_text_lines(content, content_width)
+                .into_iter()
+                .map(|line| MessageContentLine::plain(format!("│ {line}"))),
+        );
     }
     if let Some(attachments) = attachment_summary {
         lines.push(MessageContentLine::accent(truncate_text(
@@ -921,12 +972,13 @@ fn inline_image_author_offset(area: Rect) -> u16 {
 fn inline_image_preview_row(
     messages: &[&MessageState],
     message_index: usize,
+    content_width: usize,
     previous_preview_rows: usize,
 ) -> usize {
     messages
         .iter()
         .take(message_index.saturating_add(1))
-        .map(|message| message_base_line_count(message))
+        .map(|message| message_base_line_count_for_width(message, content_width))
         .sum::<usize>()
         .saturating_add(previous_preview_rows)
         .saturating_sub(1)
@@ -1045,6 +1097,39 @@ mod tests {
 
         assert_eq!(line_texts(&lines), vec!["look", "[image: cat.png] 640x480"]);
         assert_eq!(lines[1].style, Style::default().fg(ACCENT));
+    }
+
+    #[test]
+    fn message_content_preserves_explicit_newlines() {
+        let mut message =
+            message_with_attachment(Some("hello\nworld".to_owned()), image_attachment());
+        message.attachments.clear();
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(line_texts(&lines), vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn message_content_wraps_long_lines_to_content_width() {
+        let mut message =
+            message_with_attachment(Some("abcdefghijkl".to_owned()), image_attachment());
+        message.attachments.clear();
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 5);
+
+        assert_eq!(line_texts(&lines), vec!["abcde", "fghij", "kl"]);
+    }
+
+    #[test]
+    fn message_content_preserves_blank_lines() {
+        let mut message =
+            message_with_attachment(Some("one\n\nthree".to_owned()), image_attachment());
+        message.attachments.clear();
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(line_texts(&lines), vec!["one", "", "three"]);
     }
 
     #[test]
@@ -1195,6 +1280,19 @@ mod tests {
     }
 
     #[test]
+    fn forwarded_snapshot_content_wraps_after_prefix() {
+        let message =
+            message_with_forwarded_snapshot(forwarded_snapshot(Some("abcdefghijkl"), Vec::new()));
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 7);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec!["↱ Forwarded", "│ abcde", "│ fghij", "│ kl"]
+        );
+    }
+
+    #[test]
     fn forwarded_snapshot_lines_include_channel_and_time() {
         let mut state = DashboardState::new();
         state.push_event(crate::discord::AppEvent::ChannelUpsert(
@@ -1274,7 +1372,7 @@ mod tests {
             message_with_attachment(Some("three".to_owned()), image_attachment()),
         ];
         let messages = messages.iter().collect::<Vec<_>>();
-        let row = inline_image_preview_row(&messages, 2, 4);
+        let row = inline_image_preview_row(&messages, 2, 200, 4);
 
         assert_eq!(row, 9);
         assert_eq!(
@@ -1291,7 +1389,7 @@ mod tests {
         let message = message_with_forwarded_snapshot(snapshot);
         let messages = [&message];
 
-        assert_eq!(inline_image_preview_row(&messages, 0, 0), 3);
+        assert_eq!(inline_image_preview_row(&messages, 0, 200, 0), 3);
     }
 
     #[test]
