@@ -939,12 +939,17 @@ fn inline_image_preview_area(list: Rect, row: usize, preview_height: u16) -> Opt
     }
 
     let author_offset = inline_image_author_offset(list);
-    let height = preview_height.min(list.height.saturating_sub(row).saturating_sub(1));
-    (height > 0).then_some(Rect {
+    let y = list.y.saturating_add(row).saturating_add(1);
+    let bottom = y.saturating_add(preview_height);
+    if bottom > list.y.saturating_add(list.height) {
+        return None;
+    }
+
+    Some(Rect {
         x: list.x.saturating_add(author_offset),
-        y: list.y.saturating_add(row).saturating_add(1),
+        y,
         width: list.width.saturating_sub(author_offset),
-        height,
+        height: preview_height,
     })
 }
 
@@ -1290,13 +1295,10 @@ mod tests {
     }
 
     #[test]
-    fn inline_image_preview_area_clips_preview_at_list_bottom() {
+    fn inline_image_preview_area_hides_preview_at_list_bottom() {
         let area = Rect::new(10, 5, 80, 6);
 
-        assert_eq!(
-            inline_image_preview_area(area, 3, 4),
-            Some(Rect::new(25, 9, 65, 2))
-        );
+        assert_eq!(inline_image_preview_area(area, 3, 4), None);
     }
 
     #[test]
