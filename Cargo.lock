@@ -623,6 +623,8 @@ dependencies = [
  "twilight-gateway",
  "twilight-http",
  "twilight-model",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]

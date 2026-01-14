@@ -2113,6 +2113,23 @@ mod tests {
     }
 
     #[test]
+    fn wide_content_increases_message_rendered_height_by_terminal_width() {
+        let message = MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("가나다라마사".to_owned()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        };
+
+        assert_eq!(message_rendered_height(&message, 10, 16, 3), 2);
+    }
+
+    #[test]
     fn image_attachment_summary_reserves_text_row_before_preview() {
         let message = MessageState {
             id: Id::new(1),
@@ -2166,6 +2183,28 @@ mod tests {
         };
 
         assert_eq!(message_rendered_height(&message, 7, 16, 3), 8);
+    }
+
+    #[test]
+    fn forwarded_snapshot_wide_content_uses_terminal_width() {
+        let message = MessageState {
+            id: Id::new(1),
+            channel_id: Id::new(2),
+            author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: vec![MessageSnapshotInfo {
+                content: Some("가나다라마사".to_owned()),
+                attachments: vec![image_attachment(1)],
+                source_channel_id: None,
+                timestamp: None,
+            }],
+        };
+
+        assert_eq!(message_rendered_height(&message, 12, 16, 3), 7);
     }
 
     #[test]

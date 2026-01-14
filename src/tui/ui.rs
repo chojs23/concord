@@ -6,6 +6,8 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 use ratatui_image::{Resize, StatefulImage, protocol::StatefulProtocol};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use super::{
     format::truncate_text,
@@ -450,15 +452,7 @@ fn format_message_content_lines(
 }
 
 pub(crate) fn wrapped_text_line_count(value: &str, width: usize) -> usize {
-    if value.is_empty() {
-        return 0;
-    }
-
-    let width = width.max(1);
-    value
-        .split('\n')
-        .map(|line| line.chars().count().div_ceil(width).max(1))
-        .sum()
+    wrap_text_lines(value, width).len()
 }
 
 fn wrap_text_lines(value: &str, width: usize) -> Vec<String> {
@@ -474,12 +468,23 @@ fn wrap_text_lines(value: &str, width: usize) -> Vec<String> {
             continue;
         }
 
-        let chars = line.chars().collect::<Vec<_>>();
-        lines.extend(
-            chars
-                .chunks(width)
-                .map(|chunk| chunk.iter().collect::<String>()),
-        );
+        let mut current = String::new();
+        let mut current_width = 0usize;
+        for grapheme in line.graphemes(true) {
+            let grapheme_width = grapheme.width();
+            if current_width > 0
+                && grapheme_width > 0
+                && current_width.saturating_add(grapheme_width) > width
+            {
+                lines.push(current);
+                current = String::new();
+                current_width = 0;
+            }
+
+            current.push_str(grapheme);
+            current_width = current_width.saturating_add(grapheme_width);
+        }
+        lines.push(current);
     }
     lines
 }
@@ -1017,14 +1022,7 @@ fn composer_height(area: Rect, state: &DashboardState) -> u16 {
 fn composer_prompt_line_count(input: &str, width: u16) -> u16 {
     let width = usize::from(width.max(1));
     let prompt = format!("> {input}");
-    prompt
-        .split('\n')
-        .map(|line| {
-            let width_lines = line.chars().count().div_ceil(width);
-            width_lines.max(1) as u16
-        })
-        .sum::<u16>()
-        .max(1)
+    wrap_text_lines(&prompt, width).len() as u16
 }
 
 #[cfg(test)]
@@ -1033,9 +1031,9 @@ mod tests {
     use twilight_model::id::Id;
 
     use super::{
-        ACCENT, DIM, MessageContentLine, format_message_content, format_message_content_lines,
-        inline_image_preview_area, inline_image_preview_row, message_action_menu_lines,
-        message_item_lines, sync_view_heights,
+        ACCENT, DIM, MessageContentLine, composer_prompt_line_count, format_message_content,
+        format_message_content_lines, inline_image_preview_area, inline_image_preview_row,
+        message_action_menu_lines, message_item_lines, sync_view_heights, wrap_text_lines,
     };
     use crate::{
         discord::{
@@ -1081,6 +1079,11 @@ mod tests {
     }
 
     #[test]
+    fn composer_prompt_line_count_uses_display_width_for_wide_chars() {
+        assert_eq!(composer_prompt_line_count("가나다", 4), 2);
+    }
+
+    #[test]
     fn image_attachment_replaces_empty_message_placeholder() {
         let message = message_with_attachment(Some(String::new()), image_attachment());
 
@@ -1119,6 +1122,24 @@ mod tests {
         let lines = format_message_content_lines(&message, &DashboardState::new(), 5);
 
         assert_eq!(line_texts(&lines), vec!["abcde", "fghij", "kl"]);
+    }
+
+    #[test]
+    fn message_content_wraps_wide_characters_by_terminal_width() {
+        let mut message =
+            message_with_attachment(Some("가나다라마사".to_owned()), image_attachment());
+        message.attachments.clear();
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 10);
+
+        assert_eq!(line_texts(&lines), vec!["가나다라마", "사"]);
+    }
+
+    #[test]
+    fn message_content_does_not_split_grapheme_clusters() {
+        let lines = wrap_text_lines("👨‍👩‍👧‍👦", 7);
+
+        assert_eq!(lines, vec!["👨‍👩‍👧‍👦".to_owned()]);
     }
 
     #[test]
@@ -1289,6 +1310,19 @@ mod tests {
         assert_eq!(
             line_texts(&lines),
             vec!["↱ Forwarded", "│ abcde", "│ fghij", "│ kl"]
+        );
+    }
+
+    #[test]
+    fn forwarded_snapshot_content_wraps_wide_characters_after_prefix() {
+        let message =
+            message_with_forwarded_snapshot(forwarded_snapshot(Some("가나다라마사"), Vec::new()));
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 12);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec!["↱ Forwarded", "│ 가나다라마", "│ 사"]
         );
     }
 
