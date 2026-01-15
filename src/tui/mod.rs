@@ -429,15 +429,14 @@ fn visible_image_preview_targets(
             break;
         }
 
-        rendered_rows = rendered_rows.saturating_add(message_base_line_count_for_width(
-            message,
-            layout.content_width,
-        ));
+        let line_offset = usize::from(message_index == 0) * state.message_line_scroll();
+        let base_rows = message_base_line_count_for_width(message, layout.content_width);
 
         let Some((attachment, url)) = message
             .attachments_in_display_order()
             .find_map(|attachment| attachment.inline_preview_url().map(|url| (attachment, url)))
         else {
+            rendered_rows = rendered_rows.saturating_add(base_rows.saturating_sub(line_offset));
             continue;
         };
 
@@ -447,18 +446,27 @@ fn visible_image_preview_targets(
             attachment.width,
             attachment.height,
         );
-        if preview_height == 0 || rendered_rows >= layout.list_height {
-            continue;
+        if preview_height > 0
+            && let Some(preview_row) = rendered_rows
+                .checked_add(base_rows)
+                .and_then(|row| row.checked_sub(line_offset))
+                .and_then(|row| row.checked_sub(1))
+            && preview_row.saturating_add(1) < layout.list_height
+        {
+            targets.push(ImagePreviewTarget {
+                message_index,
+                preview_height,
+                message_id: message.id,
+                url: url.to_owned(),
+                filename: attachment.filename.clone(),
+            });
         }
 
-        targets.push(ImagePreviewTarget {
-            message_index,
-            preview_height,
-            message_id: message.id,
-            url: url.to_owned(),
-            filename: attachment.filename.clone(),
-        });
-        rendered_rows = rendered_rows.saturating_add(preview_height as usize);
+        rendered_rows = rendered_rows.saturating_add(
+            base_rows
+                .saturating_add(preview_height as usize)
+                .saturating_sub(line_offset),
+        );
     }
 
     targets
@@ -632,6 +640,27 @@ mod tests {
             &state,
             ImagePreviewLayout {
                 list_height: 6,
+                content_width: 200,
+                preview_width: 16,
+                max_preview_height: 3,
+            },
+        );
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
+    }
+
+    #[test]
+    fn image_preview_targets_account_for_first_message_line_offset() {
+        let mut state = state_with_image_messages(1, &[1]);
+        focus_messages(&mut state);
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
+        state.move_down();
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
+
+        let targets = visible_image_preview_targets(
+            &state,
+            ImagePreviewLayout {
+                list_height: 2,
                 content_width: 200,
                 preview_width: 16,
                 max_preview_height: 3,

@@ -27,7 +27,11 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('4') => state.focus_pane(FocusPane::Members),
         KeyCode::Char('j') | KeyCode::Down => state.move_down(),
         KeyCode::Char('k') | KeyCode::Up => {
+            let was_line_scrolled = state.message_line_scroll() > 0;
             state.move_up();
+            if was_line_scrolled {
+                return None;
+            }
             return state.next_older_history_command();
         }
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -244,6 +248,20 @@ mod tests {
         let duplicate = handle_key(&mut state, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
 
         assert_eq!(duplicate, None);
+    }
+
+    #[test]
+    fn message_line_scroll_up_does_not_request_older_history() {
+        let mut state = state_with_messages(1);
+        focus_messages(&mut state);
+        state.clamp_message_viewport_for_image_previews(2, 16, 3);
+        state.move_down();
+        state.clamp_message_viewport_for_image_previews(2, 16, 3);
+
+        let command = handle_key(&mut state, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+
+        assert_eq!(command, None);
+        assert_eq!(state.message_line_scroll(), 0);
     }
 
     #[test]

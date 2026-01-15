@@ -297,7 +297,14 @@ fn render_messages(
             let author = truncate_text(&message.author, max_author_width);
             let content = format_message_content_lines(message, state, content_width.max(8));
             let preview_height = preview_height_for_message(&image_previews, index);
-            let lines = message_item_lines(author, content, max_author_width, preview_height);
+            let line_offset = usize::from(index == 0) * state.message_line_scroll();
+            let lines = message_item_lines(
+                author,
+                content,
+                max_author_width,
+                preview_height,
+                line_offset,
+            );
             styled_list_item(ListItem::new(lines), selected == Some(index))
         })
         .collect();
@@ -311,6 +318,7 @@ fn render_messages(
             &messages,
             image_preview.message_index,
             content_width,
+            state.message_line_scroll(),
             previous_preview_rows,
         );
         if let Some(preview_area) =
@@ -358,6 +366,7 @@ fn message_item_lines(
     content: Vec<MessageContentLine>,
     max_author_width: usize,
     preview_height: u16,
+    line_offset: usize,
 ) -> Vec<Line<'static>> {
     let mut content = content.into_iter();
     let first_line = content
@@ -377,7 +386,7 @@ fn message_item_lines(
         ])
     }));
     lines.extend(image_preview_spacer_lines(preview_height));
-    lines
+    lines.into_iter().skip(line_offset).collect()
 }
 
 fn message_content_width(list: Rect) -> usize {
@@ -978,15 +987,17 @@ fn inline_image_preview_row(
     messages: &[&MessageState],
     message_index: usize,
     content_width: usize,
+    line_offset: usize,
     previous_preview_rows: usize,
 ) -> usize {
-    messages
+    let row = messages
         .iter()
         .take(message_index.saturating_add(1))
         .map(|message| message_base_line_count_for_width(message, content_width))
         .sum::<usize>()
         .saturating_add(previous_preview_rows)
-        .saturating_sub(1)
+        .saturating_sub(1);
+    row.checked_sub(line_offset).unwrap_or(usize::MAX)
 }
 
 fn inline_image_preview_area(list: Rect, row: usize, preview_height: u16) -> Option<Rect> {
@@ -1361,6 +1372,7 @@ mod tests {
             vec![MessageContentLine::plain("look".to_owned())],
             14,
             3,
+            0,
         );
 
         assert_eq!(lines.len(), 4);
@@ -1373,9 +1385,30 @@ mod tests {
             vec![MessageContentLine::plain("look".to_owned())],
             14,
             0,
+            0,
         );
 
         assert_eq!(lines.len(), 1);
+    }
+
+    #[test]
+    fn message_item_lines_can_start_after_line_offset() {
+        let lines = message_item_lines(
+            "neo".to_owned(),
+            vec![
+                MessageContentLine::plain("first".to_owned()),
+                MessageContentLine::plain("second".to_owned()),
+                MessageContentLine::plain("third".to_owned()),
+            ],
+            14,
+            0,
+            1,
+        );
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec!["               second", "               third"]
+        );
     }
 
     #[test]
@@ -1406,7 +1439,7 @@ mod tests {
             message_with_attachment(Some("three".to_owned()), image_attachment()),
         ];
         let messages = messages.iter().collect::<Vec<_>>();
-        let row = inline_image_preview_row(&messages, 2, 200, 4);
+        let row = inline_image_preview_row(&messages, 2, 200, 0, 4);
 
         assert_eq!(row, 9);
         assert_eq!(
@@ -1423,7 +1456,7 @@ mod tests {
         let message = message_with_forwarded_snapshot(snapshot);
         let messages = [&message];
 
-        assert_eq!(inline_image_preview_row(&messages, 0, 200, 0), 3);
+        assert_eq!(inline_image_preview_row(&messages, 0, 200, 0, 0), 3);
     }
 
     #[test]
