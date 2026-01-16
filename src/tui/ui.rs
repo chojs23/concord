@@ -848,7 +848,7 @@ fn footer_hint(state: &DashboardState) -> &'static str {
     if state.is_message_action_menu_open() {
         "j/k choose action | enter select | esc close | q quit"
     } else {
-        "tab/1-4 focus | j/k move | enter/space action/tree | ←/→ close/open | i write | esc cancel | q quit"
+        "tab/1-4 focus | j/k move | J/K scroll | enter/space action/tree | ←/→ close/open | i write | esc cancel | q quit"
     }
 }
 

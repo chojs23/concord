@@ -66,6 +66,7 @@ pub struct DashboardState {
     selected_message: usize,
     message_scroll: usize,
     message_line_scroll: usize,
+    message_keep_selection_visible: bool,
     message_auto_follow: bool,
     message_view_height: usize,
     message_content_width: usize,
@@ -115,6 +116,7 @@ impl DashboardState {
             selected_message: 0,
             message_scroll: 0,
             message_line_scroll: 0,
+            message_keep_selection_visible: true,
             message_auto_follow: true,
             message_view_height: 1,
             message_content_width: usize::MAX,
@@ -531,6 +533,7 @@ impl DashboardState {
         self.selected_message = 0;
         self.message_scroll = 0;
         self.message_line_scroll = 0;
+        self.message_keep_selection_visible = true;
         self.message_auto_follow = true;
         self.selected_member = 0;
     }
@@ -754,6 +757,7 @@ impl DashboardState {
         self.active_channel_id = Some(channel_id);
         self.message_auto_follow = true;
         self.message_line_scroll = 0;
+        self.message_keep_selection_visible = true;
         self.selected_message = self.messages().len().saturating_sub(1);
         self.clamp_message_viewport();
     }
@@ -842,7 +846,6 @@ impl DashboardState {
         if self.focus != FocusPane::Messages
             || self.messages().is_empty()
             || self.selected_message() != 0
-            || self.message_line_scroll != 0
         {
             return None;
         }
@@ -897,7 +900,11 @@ impl DashboardState {
             self.message_line_scroll = 0;
         }
         self.normalize_message_line_scroll(content_width, preview_width, max_preview_height);
-        if preview_width == 0 || max_preview_height == 0 || self.messages().is_empty() {
+        if preview_width == 0
+            || max_preview_height == 0
+            || self.messages().is_empty()
+            || !self.message_keep_selection_visible
+        {
             return;
         }
 
@@ -974,7 +981,10 @@ impl DashboardState {
 
     pub fn focused_message_selection(&self) -> Option<usize> {
         if self.focus == FocusPane::Messages && !self.messages().is_empty() {
-            Some(self.selected_message().saturating_sub(self.message_scroll))
+            let selected = self.selected_message();
+            let visible_count = self.visible_messages().len();
+            (selected >= self.message_scroll && selected < self.message_scroll + visible_count)
+                .then_some(selected - self.message_scroll)
         } else {
             None
         }
@@ -1097,23 +1107,11 @@ impl DashboardState {
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
-                if self.selected_message == self.message_scroll
-                    && self.message_line_scroll.saturating_add(1)
-                        < self.selected_message_rendered_height(
-                            self.message_content_width,
-                            self.message_preview_width,
-                            self.message_max_preview_height,
-                        )
-                {
-                    self.message_auto_follow = false;
-                    self.message_line_scroll = self.message_line_scroll.saturating_add(1);
-                } else {
-                    self.selected_message = self
-                        .selected_message
-                        .saturating_add(1)
-                        .min(self.messages().len().saturating_sub(1));
-                    self.message_line_scroll = 0;
-                }
+                self.selected_message = self
+                    .selected_message
+                    .saturating_add(1)
+                    .min(self.messages().len().saturating_sub(1));
+                self.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
             }
             FocusPane::Members => {
@@ -1138,28 +1136,8 @@ impl DashboardState {
             }
             FocusPane::Messages => {
                 self.message_auto_follow = false;
-                if self.message_line_scroll > 0 {
-                    self.message_line_scroll = self.message_line_scroll.saturating_sub(1);
-                } else if self.selected_message > 0 {
-                    self.selected_message = self.selected_message.saturating_sub(1);
-                    self.message_scroll = self.selected_message;
-                    self.message_line_scroll = if self.message_content_width == usize::MAX {
-                        0
-                    } else {
-                        self.messages()
-                            .get(self.selected_message)
-                            .map(|message| {
-                                message_rendered_height(
-                                    message,
-                                    self.message_content_width,
-                                    self.message_preview_width,
-                                    self.message_max_preview_height,
-                                )
-                                .saturating_sub(1)
-                            })
-                            .unwrap_or(0)
-                    };
-                }
+                self.selected_message = self.selected_message.saturating_sub(1);
+                self.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
             }
             FocusPane::Members => {
@@ -1182,7 +1160,7 @@ impl DashboardState {
             FocusPane::Messages => {
                 self.message_auto_follow = false;
                 self.selected_message = 0;
-                self.message_line_scroll = 0;
+                self.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
             }
             FocusPane::Members => {
@@ -1204,7 +1182,7 @@ impl DashboardState {
             }
             FocusPane::Messages => {
                 self.selected_message = self.messages().len().saturating_sub(1);
-                self.message_line_scroll = 0;
+                self.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
             }
             FocusPane::Members => {
@@ -1238,7 +1216,7 @@ impl DashboardState {
                     .selected_message
                     .saturating_add(distance.max(1))
                     .min(self.messages().len().saturating_sub(1));
-                self.message_line_scroll = 0;
+                self.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
             }
             FocusPane::Members => {
@@ -1267,7 +1245,7 @@ impl DashboardState {
                 self.message_auto_follow = false;
                 let distance = self.message_content_height() / 2;
                 self.selected_message = self.selected_message.saturating_sub(distance.max(1));
-                self.message_line_scroll = 0;
+                self.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
             }
             FocusPane::Members => {
@@ -1287,9 +1265,79 @@ impl DashboardState {
 
         self.message_auto_follow = !self.message_auto_follow;
         if self.message_auto_follow {
+            self.message_keep_selection_visible = true;
             self.follow_latest_message();
         }
         self.clamp_message_viewport();
+    }
+
+    pub fn scroll_message_viewport_down(&mut self) {
+        if self.focus != FocusPane::Messages || self.message_content_width == usize::MAX {
+            return;
+        }
+        self.message_auto_follow = false;
+        self.message_keep_selection_visible = false;
+        self.scroll_message_viewport_down_one_row(
+            self.message_content_width,
+            self.message_preview_width,
+            self.message_max_preview_height,
+        );
+    }
+
+    pub fn scroll_message_viewport_up(&mut self) {
+        if self.focus != FocusPane::Messages || self.message_content_width == usize::MAX {
+            return;
+        }
+        self.message_auto_follow = false;
+        self.message_keep_selection_visible = false;
+        self.scroll_message_viewport_up_one_row(
+            self.message_content_width,
+            self.message_preview_width,
+            self.message_max_preview_height,
+        );
+    }
+
+    pub fn scroll_message_viewport_top(&mut self) {
+        if self.focus != FocusPane::Messages {
+            return;
+        }
+        self.message_auto_follow = false;
+        self.message_keep_selection_visible = false;
+        self.message_scroll = 0;
+        self.message_line_scroll = 0;
+    }
+
+    pub fn scroll_message_viewport_bottom(&mut self) {
+        if self.focus != FocusPane::Messages || self.message_content_width == usize::MAX {
+            return;
+        }
+        self.message_auto_follow = false;
+        self.message_keep_selection_visible = false;
+        let height = self.message_content_height();
+        let mut remaining = height;
+        for index in (0..self.messages().len()).rev() {
+            let message_height = self
+                .messages()
+                .get(index)
+                .map(|message| {
+                    message_rendered_height(
+                        message,
+                        self.message_content_width,
+                        self.message_preview_width,
+                        self.message_max_preview_height,
+                    )
+                    .max(1)
+                })
+                .unwrap_or(1);
+            if message_height >= remaining {
+                self.message_scroll = index;
+                self.message_line_scroll = message_height.saturating_sub(remaining);
+                return;
+            }
+            remaining = remaining.saturating_sub(message_height);
+        }
+        self.message_scroll = 0;
+        self.message_line_scroll = 0;
     }
 
     pub fn cycle_focus(&mut self) {
@@ -1491,6 +1539,7 @@ impl DashboardState {
         self.selected_message = self.messages().len().saturating_sub(1);
         self.message_scroll = self.selected_message;
         self.message_line_scroll = 0;
+        self.message_keep_selection_visible = true;
     }
 
     fn restore_message_position(
@@ -2606,20 +2655,20 @@ mod tests {
     }
 
     #[test]
-    fn long_message_scrolls_by_rendered_line() {
+    fn message_viewport_scrolls_by_rendered_line() {
         let mut state = state_with_single_message_content("abcdefghijkl");
         focus_messages(&mut state);
         state.set_message_view_height(3);
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
-        state.move_down();
+        state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
         assert_eq!(state.message_scroll(), 0);
         assert_eq!(state.message_line_scroll(), 1);
         assert_eq!(state.selected_message(), 0);
 
-        state.move_down();
+        state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
         assert_eq!(state.message_scroll(), 0);
@@ -2627,7 +2676,7 @@ mod tests {
     }
 
     #[test]
-    fn line_scroll_moves_to_next_message_after_current_message() {
+    fn viewport_scroll_moves_to_next_message_after_current_message() {
         let mut state = state_with_single_message_content("abcdefghijkl");
         state.push_event(AppEvent::MessageCreate {
             guild_id: Some(Id::new(1)),
@@ -2647,16 +2696,16 @@ mod tests {
         state.jump_top();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
-        state.move_down();
+        state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
-        state.move_down();
+        state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
-        state.move_down();
+        state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
-        assert_eq!(state.message_scroll(), 0);
-        assert_eq!(state.message_line_scroll(), 1);
-        assert_eq!(state.selected_message(), 1);
+        assert_eq!(state.message_scroll(), 1);
+        assert_eq!(state.message_line_scroll(), 0);
+        assert_eq!(state.selected_message(), 0);
     }
 
     #[test]
@@ -2680,9 +2729,9 @@ mod tests {
         state.jump_top();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
-        state.move_down();
+        state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
-        state.move_down();
+        state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
         assert_eq!(state.message_scroll(), 0);
@@ -2693,8 +2742,14 @@ mod tests {
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
         assert_eq!(state.selected_message(), 1);
-        assert_eq!(state.message_scroll(), 0);
-        assert_eq!(state.message_line_scroll(), 1);
+        let selected_bottom = state
+            .selected_message_rendered_row(5, 16, 3)
+            .saturating_add(
+                state
+                    .selected_message_rendered_height(5, 16, 3)
+                    .saturating_sub(1),
+            );
+        assert!(selected_bottom < state.message_view_height());
     }
 
     #[test]
@@ -2720,10 +2775,8 @@ mod tests {
         state.jump_top();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
-        while state.selected_message() == 0 {
-            state.move_down();
-            state.clamp_message_viewport_for_image_previews(5, 16, 3);
-        }
+        state.move_down();
+        state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
         let selected_bottom = state
             .selected_message_rendered_row(5, 16, 3)
@@ -2737,7 +2790,7 @@ mod tests {
     }
 
     #[test]
-    fn upward_scroll_enters_previous_long_message_at_last_line() {
+    fn viewport_scroll_up_enters_previous_long_message_at_last_line() {
         let mut state = state_with_single_message_content("abcdefghijkl");
         state.push_event(AppEvent::MessageCreate {
             guild_id: Some(Id::new(1)),
@@ -2756,13 +2809,12 @@ mod tests {
         state.set_message_view_height(3);
         state.jump_top();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
-        while state.selected_message() == 0 {
-            state.move_down();
+        for _ in 0..3 {
+            state.scroll_message_viewport_down();
             state.clamp_message_viewport_for_image_previews(5, 16, 3);
         }
 
-        state.move_up();
-        state.move_up();
+        state.scroll_message_viewport_up();
 
         assert_eq!(state.message_scroll(), 0);
         assert_eq!(state.message_line_scroll(), 2);

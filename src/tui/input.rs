@@ -26,13 +26,15 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('3') => state.focus_pane(FocusPane::Messages),
         KeyCode::Char('4') => state.focus_pane(FocusPane::Members),
         KeyCode::Char('j') | KeyCode::Down => state.move_down(),
+        KeyCode::Char('J') if state.focus() == FocusPane::Messages => {
+            state.scroll_message_viewport_down()
+        }
         KeyCode::Char('k') | KeyCode::Up => {
-            let was_line_scrolled = state.message_line_scroll() > 0;
             state.move_up();
-            if was_line_scrolled {
-                return None;
-            }
             return state.next_older_history_command();
+        }
+        KeyCode::Char('K') if state.focus() == FocusPane::Messages => {
+            state.scroll_message_viewport_up()
         }
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.half_page_down()
@@ -49,14 +51,22 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('F') => state.toggle_message_auto_follow(),
         KeyCode::Char('g') => {
             state.jump_top();
-            return state.next_older_history_command();
         }
         KeyCode::Home => {
-            state.jump_top();
-            return state.next_older_history_command();
+            if state.focus() == FocusPane::Messages {
+                state.scroll_message_viewport_top();
+            } else {
+                state.jump_top();
+            }
         }
         KeyCode::Char('G') => state.jump_bottom(),
-        KeyCode::End => state.jump_bottom(),
+        KeyCode::End => {
+            if state.focus() == FocusPane::Messages {
+                state.scroll_message_viewport_bottom();
+            } else {
+                state.jump_bottom();
+            }
+        }
         KeyCode::Tab => state.cycle_focus(),
         // Tree headers act like a small tree: Enter/Space toggles, Right
         // opens, and Left closes. Anywhere else these keys are no-ops.
@@ -235,7 +245,11 @@ mod tests {
         let mut state = state_with_messages(3);
         focus_messages(&mut state);
 
-        let command = handle_key(&mut state, KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE),
+        );
+        let command = handle_key(&mut state, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
 
         assert_eq!(
             command,
@@ -251,17 +265,43 @@ mod tests {
     }
 
     #[test]
-    fn message_line_scroll_up_does_not_request_older_history() {
+    fn message_viewport_scroll_keys_do_not_change_selection_or_request_history() {
         let mut state = state_with_messages(1);
         focus_messages(&mut state);
         state.clamp_message_viewport_for_image_previews(2, 16, 3);
-        state.move_down();
+        let selected = state.selected_message();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('J'), KeyModifiers::NONE),
+        );
         state.clamp_message_viewport_for_image_previews(2, 16, 3);
 
-        let command = handle_key(&mut state, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('K'), KeyModifiers::NONE),
+        );
 
         assert_eq!(command, None);
+        assert_eq!(state.selected_message(), selected);
         assert_eq!(state.message_line_scroll(), 0);
+    }
+
+    #[test]
+    fn message_home_end_scroll_viewport_without_changing_selection() {
+        let mut state = state_with_messages(10);
+        focus_messages(&mut state);
+        state.set_message_view_height(5);
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
+        let selected = state.selected_message();
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+        assert_eq!(state.selected_message(), selected);
+        assert_eq!(state.message_scroll(), 0);
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+        assert_eq!(state.selected_message(), selected);
+        assert!(state.message_scroll() > 0);
     }
 
     #[test]

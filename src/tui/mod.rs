@@ -654,7 +654,7 @@ mod tests {
         let mut state = state_with_image_messages(1, &[1]);
         focus_messages(&mut state);
         state.clamp_message_viewport_for_image_previews(200, 16, 3);
-        state.move_down();
+        state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
         let targets = visible_image_preview_targets(
