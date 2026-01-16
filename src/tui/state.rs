@@ -983,8 +983,11 @@ impl DashboardState {
         if self.focus == FocusPane::Messages && !self.messages().is_empty() {
             let selected = self.selected_message();
             let visible_count = self.visible_messages().len();
-            (selected >= self.message_scroll && selected < self.message_scroll + visible_count)
-                .then_some(selected - self.message_scroll)
+            if selected >= self.message_scroll && selected < self.message_scroll + visible_count {
+                Some(selected - self.message_scroll)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -2706,6 +2709,37 @@ mod tests {
         assert_eq!(state.message_scroll(), 1);
         assert_eq!(state.message_line_scroll(), 0);
         assert_eq!(state.selected_message(), 0);
+    }
+
+    #[test]
+    fn focused_message_selection_returns_none_when_viewport_scrolled_past_selection() {
+        let mut state = state_with_single_message_content("abcdefghijkl");
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("next".to_owned()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        focus_messages(&mut state);
+        state.set_message_view_height(3);
+        state.jump_top();
+        state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+        for _ in 0..3 {
+            state.scroll_message_viewport_down();
+            state.clamp_message_viewport_for_image_previews(5, 16, 3);
+        }
+
+        assert_eq!(state.message_scroll(), 1);
+        assert_eq!(state.selected_message(), 0);
+        assert_eq!(state.focused_message_selection(), None);
     }
 
     #[test]
