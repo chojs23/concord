@@ -900,11 +900,11 @@ impl DashboardState {
             self.message_line_scroll = 0;
         }
         self.normalize_message_line_scroll(content_width, preview_width, max_preview_height);
-        if preview_width == 0
-            || max_preview_height == 0
-            || self.messages().is_empty()
-            || !self.message_keep_selection_visible
-        {
+        if self.messages().is_empty() || !self.message_keep_selection_visible {
+            return;
+        }
+
+        if self.center_selected_message(content_width, preview_width, max_preview_height) {
             return;
         }
 
@@ -1589,6 +1589,83 @@ impl DashboardState {
                 self.message_line_scroll = 0;
             }
         }
+    }
+
+    fn center_selected_message(
+        &mut self,
+        content_width: usize,
+        preview_width: u16,
+        max_preview_height: u16,
+    ) -> bool {
+        let selected = self.selected_message();
+        let height = self.message_content_height();
+        let Some(selected_message) = self.messages().get(selected).copied() else {
+            return false;
+        };
+        let selected_height = message_rendered_height(
+            selected_message,
+            content_width,
+            preview_width,
+            max_preview_height,
+        )
+        .max(1);
+        let mut top = selected;
+        let mut offset = 0usize;
+        let mut remaining = (height / 2).saturating_sub(selected_height / 2);
+
+        while remaining > 0 && top > 0 {
+            let previous_index = top.saturating_sub(1);
+            let Some(previous_message) = self.messages().get(previous_index).copied() else {
+                break;
+            };
+            let previous_height = message_rendered_height(
+                previous_message,
+                content_width,
+                preview_width,
+                max_preview_height,
+            )
+            .max(1);
+            if remaining >= previous_height {
+                remaining = remaining.saturating_sub(previous_height);
+                top = previous_index;
+                offset = 0;
+            } else {
+                top = previous_index;
+                offset = previous_height.saturating_sub(remaining);
+                remaining = 0;
+            }
+        }
+
+        if remaining > 0 || !self.message_viewport_has_rows_below(top, offset, height) {
+            return false;
+        }
+
+        self.message_scroll = top;
+        self.message_line_scroll = offset;
+        true
+    }
+
+    fn message_viewport_has_rows_below(&self, top: usize, offset: usize, height: usize) -> bool {
+        let mut visible_rows = 0usize;
+        for (index, message) in self.messages().into_iter().skip(top).enumerate() {
+            let message_height = message_rendered_height(
+                message,
+                self.message_content_width,
+                self.message_preview_width,
+                self.message_max_preview_height,
+            )
+            .max(1);
+            let visible_height = if index == 0 {
+                message_height.saturating_sub(offset)
+            } else {
+                message_height
+            };
+            visible_rows = visible_rows.saturating_add(visible_height);
+            if visible_rows >= height {
+                return true;
+            }
+        }
+        false
     }
 
     fn scroll_message_viewport_down_one_row(
@@ -2655,6 +2732,64 @@ mod tests {
         state.move_up();
         assert_eq!(state.selected_message(), 8);
         assert_eq!(state.message_scroll(), 5);
+    }
+
+    #[test]
+    fn message_selection_centers_selected_message_when_possible() {
+        let mut state = state_with_messages(12);
+        focus_messages(&mut state);
+        state.set_message_view_height(7);
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
+
+        for _ in 0..4 {
+            state.move_up();
+            state.clamp_message_viewport_for_image_previews(200, 16, 3);
+        }
+
+        assert_eq!(state.selected_message(), 7);
+        assert_eq!(state.message_scroll(), 4);
+        assert_eq!(state.message_line_scroll(), 0);
+        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 3);
+    }
+
+    #[test]
+    fn message_selection_centers_with_line_offset_inside_previous_message() {
+        let mut state = state_with_single_message_content("abcdefghijkl");
+        for id in 2..=5 {
+            push_text_message(&mut state, id, &format!("msg {id}"));
+        }
+        focus_messages(&mut state);
+        state.set_message_view_height(5);
+        state.jump_top();
+        state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+        state.move_down();
+        state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+        assert_eq!(state.selected_message(), 1);
+        assert_eq!(state.message_scroll(), 0);
+        assert_eq!(state.message_line_scroll(), 1);
+        assert_eq!(state.selected_message_rendered_row(5, 16, 3), 2);
+    }
+
+    #[test]
+    fn message_selection_centers_with_image_preview_height() {
+        let mut state = state_with_image_messages(8, &[4]);
+        focus_messages(&mut state);
+        state.set_message_view_height(9);
+        state.jump_top();
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
+
+        for _ in 0..3 {
+            state.move_down();
+            state.clamp_message_viewport_for_image_previews(200, 16, 3);
+        }
+
+        assert_eq!(state.messages()[state.selected_message()].id, Id::new(4));
+        assert_eq!(state.selected_message_rendered_height(200, 16, 3), 5);
+        assert_eq!(state.message_scroll(), 1);
+        assert_eq!(state.message_line_scroll(), 0);
+        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 2);
     }
 
     #[test]
@@ -3746,6 +3881,22 @@ mod tests {
             });
         }
         state
+    }
+
+    fn push_text_message(state: &mut DashboardState, message_id: u64, content: &str) {
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(message_id),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some(content.to_owned()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
     }
 
     fn image_attachment(id: u64) -> AttachmentInfo {

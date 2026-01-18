@@ -290,28 +290,16 @@ fn render_messages(
     let max_author_width = 14usize;
     let content_width = message_content_width(message_areas.list);
 
-    let items: Vec<ListItem> = messages
-        .iter()
-        .enumerate()
-        .map(|(index, message)| {
-            let author = truncate_text(&message.author, max_author_width);
-            let content = format_message_content_lines(message, state, content_width.max(8));
-            let preview_height = preview_height_for_message(&image_previews, index);
-            let line_offset = usize::from(index == 0) * state.message_line_scroll();
-            let lines = message_item_lines(
-                author,
-                content,
-                max_author_width,
-                preview_height,
-                line_offset,
-            );
-            styled_list_item(ListItem::new(lines), selected == Some(index))
-        })
-        .collect();
+    let lines = message_viewport_lines(
+        &messages,
+        selected,
+        state,
+        content_width,
+        max_author_width,
+        &image_previews,
+    );
 
-    let list = List::new(items).highlight_style(highlight_style());
-
-    frame.render_widget(list, message_areas.list);
+    frame.render_widget(Paragraph::new(lines), message_areas.list);
     let mut previous_preview_rows = 0usize;
     for image_preview in image_previews.into_iter() {
         let row = inline_image_preview_row(
@@ -359,6 +347,40 @@ fn preview_height_for_message(image_previews: &[ImagePreview<'_>], message_index
         .find(|preview| preview.message_index == message_index)
         .map(|preview| preview.preview_height)
         .unwrap_or(0)
+}
+
+fn message_viewport_lines(
+    messages: &[&MessageState],
+    selected: Option<usize>,
+    state: &DashboardState,
+    content_width: usize,
+    max_author_width: usize,
+    image_previews: &[ImagePreview<'_>],
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for (index, message) in messages.iter().enumerate() {
+        let author = truncate_text(&message.author, max_author_width);
+        let content = format_message_content_lines(message, state, content_width.max(8));
+        let preview_height = preview_height_for_message(image_previews, index);
+        let line_offset = usize::from(index == 0) * state.message_line_scroll();
+        let item_lines = message_item_lines(
+            author,
+            content,
+            max_author_width,
+            preview_height,
+            line_offset,
+        );
+        if selected == Some(index) {
+            lines.extend(
+                item_lines
+                    .into_iter()
+                    .map(|line| line.patch_style(highlight_style())),
+            );
+        } else {
+            lines.extend(item_lines);
+        }
+    }
+    lines
 }
 
 fn message_item_lines(
@@ -1044,7 +1066,8 @@ mod tests {
     use super::{
         ACCENT, DIM, MessageContentLine, composer_prompt_line_count, format_message_content,
         format_message_content_lines, inline_image_preview_area, inline_image_preview_row,
-        message_action_menu_lines, message_item_lines, sync_view_heights, wrap_text_lines,
+        message_action_menu_lines, message_item_lines, message_viewport_lines, sync_view_heights,
+        wrap_text_lines,
     };
     use crate::{
         discord::{
@@ -1409,6 +1432,29 @@ mod tests {
             line_texts_from_ratatui(&lines),
             vec!["               second", "               third"]
         );
+    }
+
+    #[test]
+    fn message_viewport_lines_keep_rows_from_tall_following_message() {
+        let mut selected = message_with_attachment(Some("selected".to_owned()), image_attachment());
+        selected.attachments.clear();
+        let mut tall_following = message_with_attachment(
+            Some("abcdefghijklmnopqrstuvwx".to_owned()),
+            image_attachment(),
+        );
+        tall_following.attachments.clear();
+        let messages = [&selected, &tall_following];
+
+        let visible_rows =
+            message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, 14, &[])
+                .into_iter()
+                .take(3)
+                .collect::<Vec<_>>();
+        let visible_text = line_texts_from_ratatui(&visible_rows);
+
+        assert!(visible_text[0].ends_with("selected"));
+        assert!(visible_text[1].ends_with("abcdefgh"));
+        assert!(visible_text[2].ends_with("ijklmnop"));
     }
 
     #[test]
