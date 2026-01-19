@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
-use ratatui_image::{Resize, StatefulImage, protocol::StatefulProtocol};
+use ratatui_image::{Image as RatatuiImage, Resize, StatefulImage, protocol::StatefulProtocol};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -74,6 +74,7 @@ pub enum ImagePreviewState<'a> {
     Loading { filename: String },
     Failed { filename: String, message: String },
     Ready { protocol: &'a mut StatefulProtocol },
+    ReadyCropped(ratatui_image::protocol::Protocol),
 }
 
 #[derive(Clone, Copy)]
@@ -337,6 +338,9 @@ fn render_image_preview(frame: &mut Frame, area: Rect, image_preview: ImagePrevi
         ImagePreviewState::Ready { protocol, .. } => {
             let widget = StatefulImage::new().resize(Resize::Fit(None));
             frame.render_stateful_widget(widget, area, protocol);
+        }
+        ImagePreviewState::ReadyCropped(protocol) => {
+            frame.render_widget(RatatuiImage::new(&protocol), area);
         }
     }
 }
@@ -1011,7 +1015,7 @@ fn inline_image_preview_row(
     content_width: usize,
     line_offset: usize,
     previous_preview_rows: usize,
-) -> usize {
+) -> isize {
     let row = messages
         .iter()
         .take(message_index.saturating_add(1))
@@ -1019,27 +1023,30 @@ fn inline_image_preview_row(
         .sum::<usize>()
         .saturating_add(previous_preview_rows)
         .saturating_sub(1);
-    row.checked_sub(line_offset).unwrap_or(usize::MAX)
+    row as isize - line_offset as isize
 }
 
-fn inline_image_preview_area(list: Rect, row: usize, preview_height: u16) -> Option<Rect> {
-    let row = u16::try_from(row).ok()?;
-    if preview_height == 0 || row.saturating_add(1) >= list.height {
+fn inline_image_preview_area(list: Rect, row: isize, preview_height: u16) -> Option<Rect> {
+    if preview_height == 0 {
         return None;
     }
 
     let author_offset = inline_image_author_offset(list);
-    let y = list.y.saturating_add(row).saturating_add(1);
-    let bottom = y.saturating_add(preview_height);
-    if bottom > list.y.saturating_add(list.height) {
+    let desired_top = list.y as isize + row + 1;
+    let desired_bottom = desired_top.saturating_add(preview_height as isize);
+    let list_top = list.y as isize;
+    let list_bottom = list.y.saturating_add(list.height) as isize;
+    let visible_top = desired_top.max(list_top);
+    let visible_bottom = desired_bottom.min(list_bottom);
+    if visible_top >= visible_bottom {
         return None;
     }
 
     Some(Rect {
         x: list.x.saturating_add(author_offset),
-        y,
+        y: u16::try_from(visible_top).ok()?,
         width: list.width.saturating_sub(author_offset),
-        height: preview_height,
+        height: u16::try_from(visible_bottom - visible_top).ok()?,
     })
 }
 
@@ -1509,7 +1516,20 @@ mod tests {
     fn inline_image_preview_area_hides_preview_at_list_bottom() {
         let area = Rect::new(10, 5, 80, 6);
 
-        assert_eq!(inline_image_preview_area(area, 3, 4), None);
+        assert_eq!(
+            inline_image_preview_area(area, 3, 4),
+            Some(Rect::new(25, 9, 65, 2))
+        );
+    }
+
+    #[test]
+    fn inline_image_preview_area_clips_preview_at_list_top() {
+        let area = Rect::new(10, 5, 80, 6);
+
+        assert_eq!(
+            inline_image_preview_area(area, -2, 4),
+            Some(Rect::new(25, 5, 65, 3))
+        );
     }
 
     #[test]
@@ -1517,6 +1537,13 @@ mod tests {
         let area = Rect::new(10, 5, 80, 6);
 
         assert_eq!(inline_image_preview_area(area, 5, 4), None);
+    }
+
+    #[test]
+    fn inline_image_preview_area_returns_none_when_preview_ends_above_list() {
+        let area = Rect::new(10, 5, 80, 6);
+
+        assert_eq!(inline_image_preview_area(area, -5, 4), None);
     }
 
     fn message_with_attachment(

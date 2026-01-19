@@ -17,7 +17,9 @@ use crossterm::{
     execute,
 };
 use futures::StreamExt;
-use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
+use image::{DynamicImage, ImageBuffer, Rgba, imageops::FilterType};
+use ratatui::layout::Rect;
+use ratatui_image::{Resize, picker::Picker, protocol::StatefulProtocol};
 use tokio::sync::{broadcast, mpsc};
 use twilight_model::id::marker::MessageMarker;
 use twilight_model::id::{Id, marker::ChannelMarker};
@@ -192,7 +194,10 @@ async fn run_dashboard(
 
 struct ImagePreviewTarget {
     message_index: usize,
+    preview_width: u16,
     preview_height: u16,
+    visible_preview_height: u16,
+    top_clip_rows: u16,
     message_id: Id<MessageMarker>,
     url: String,
     filename: String,
@@ -215,6 +220,7 @@ enum ImagePreviewEntry {
     },
     Ready {
         filename: String,
+        image: DynamicImage,
         protocol: Box<StatefulProtocol>,
     },
     Failed {
@@ -243,15 +249,16 @@ impl ImagePreviewCache {
     }
 
     fn render_state(&mut self, targets: &[ImagePreviewTarget]) -> Vec<ImagePreview<'_>> {
+        let picker = self.picker.clone();
         let target_by_key = targets
             .iter()
-            .map(|target| (target.key(), (target.message_index, target.preview_height)))
+            .map(|target| (target.key(), target.preview_render_info()))
             .collect::<HashMap<_, _>>();
         let mut rendered_keys = HashSet::new();
         let mut previews = Vec::new();
 
         for (key, entry) in &mut self.entries {
-            let Some((message_index, preview_height)) = target_by_key.get(key).copied() else {
+            let Some(render_info) = target_by_key.get(key).copied() else {
                 continue;
             };
             rendered_keys.insert(key.clone());
@@ -259,17 +266,29 @@ impl ImagePreviewCache {
                 ImagePreviewEntry::Loading { filename } => ImagePreviewState::Loading {
                     filename: filename.clone(),
                 },
-                ImagePreviewEntry::Ready { protocol, .. } => ImagePreviewState::Ready {
-                    protocol: protocol.as_mut(),
-                },
+                ImagePreviewEntry::Ready {
+                    image, protocol, ..
+                } => {
+                    if render_info.needs_crop()
+                        && let Some(protocol) = picker
+                            .as_ref()
+                            .and_then(|picker| clipped_preview_protocol(picker, image, render_info))
+                    {
+                        ImagePreviewState::ReadyCropped(protocol)
+                    } else {
+                        ImagePreviewState::Ready {
+                            protocol: protocol.as_mut(),
+                        }
+                    }
+                }
                 ImagePreviewEntry::Failed { filename, message } => ImagePreviewState::Failed {
                     filename: filename.clone(),
                     message: message.clone(),
                 },
             };
             previews.push(ImagePreview {
-                message_index,
-                preview_height,
+                message_index: render_info.message_index,
+                preview_height: render_info.preview_height,
                 state,
             });
         }
@@ -351,6 +370,7 @@ impl ImagePreviewCache {
                         key,
                         ImagePreviewEntry::Ready {
                             filename,
+                            image: image.clone(),
                             protocol: Box::new(picker.new_resize_protocol(image)),
                         },
                     );
@@ -405,6 +425,31 @@ impl ImagePreviewTarget {
             url: self.url.clone(),
         }
     }
+
+    fn preview_render_info(&self) -> ImagePreviewRenderInfo {
+        ImagePreviewRenderInfo {
+            message_index: self.message_index,
+            preview_width: self.preview_width,
+            preview_height: self.preview_height,
+            visible_preview_height: self.visible_preview_height,
+            top_clip_rows: self.top_clip_rows,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ImagePreviewRenderInfo {
+    message_index: usize,
+    preview_width: u16,
+    preview_height: u16,
+    visible_preview_height: u16,
+    top_clip_rows: u16,
+}
+
+impl ImagePreviewRenderInfo {
+    fn needs_crop(self) -> bool {
+        self.top_clip_rows > 0 || self.visible_preview_height < self.preview_height
+    }
 }
 
 impl ImagePreviewEntry {
@@ -415,6 +460,57 @@ impl ImagePreviewEntry {
             | Self::Failed { filename, .. } => filename,
         }
     }
+}
+
+fn clipped_preview_protocol(
+    picker: &Picker,
+    image: &DynamicImage,
+    render_info: ImagePreviewRenderInfo,
+) -> Option<ratatui_image::protocol::Protocol> {
+    if render_info.preview_width == 0
+        || render_info.preview_height == 0
+        || render_info.visible_preview_height == 0
+    {
+        return None;
+    }
+
+    let (font_width, font_height) = picker.font_size();
+    let full_width = u32::from(render_info.preview_width).checked_mul(u32::from(font_width))?;
+    let full_height = u32::from(render_info.preview_height).checked_mul(u32::from(font_height))?;
+    let crop_top = u32::from(render_info.top_clip_rows).checked_mul(u32::from(font_height))?;
+    let crop_height = u32::from(render_info.visible_preview_height)
+        .checked_mul(u32::from(font_height))?
+        .min(full_height.saturating_sub(crop_top));
+    if full_width == 0 || crop_height == 0 {
+        return None;
+    }
+
+    let fitted = fit_image_to_canvas(image, full_width, full_height);
+    let cropped = fitted.crop_imm(0, crop_top, full_width, crop_height);
+    picker
+        .new_protocol(
+            cropped,
+            Rect::new(
+                0,
+                0,
+                render_info.preview_width,
+                render_info.visible_preview_height,
+            ),
+            Resize::Fit(None),
+        )
+        .ok()
+}
+
+fn fit_image_to_canvas(image: &DynamicImage, width: u32, height: u32) -> DynamicImage {
+    let resized = image.resize(width, height, FilterType::Nearest);
+    if resized.width() == width && resized.height() == height {
+        return resized;
+    }
+
+    let mut canvas =
+        DynamicImage::ImageRgba8(ImageBuffer::from_pixel(width, height, Rgba([0, 0, 0, 0])));
+    image::imageops::overlay(&mut canvas, &resized, 0, 0);
+    canvas
 }
 
 fn visible_image_preview_targets(
@@ -446,16 +542,18 @@ fn visible_image_preview_targets(
             attachment.width,
             attachment.height,
         );
-        if preview_height > 0
-            && let Some(preview_row) = rendered_rows
-                .checked_add(base_rows)
-                .and_then(|row| row.checked_sub(line_offset))
-                .and_then(|row| row.checked_sub(1))
-            && preview_row.saturating_add(1) < layout.list_height
-        {
+        let preview_top = rendered_rows as isize + base_rows as isize - line_offset as isize;
+        let preview_bottom = preview_top.saturating_add(preview_height as isize);
+        let visible_top = preview_top.max(0);
+        let visible_bottom = preview_bottom.min(layout.list_height as isize);
+        if preview_height > 0 && visible_top < visible_bottom {
             targets.push(ImagePreviewTarget {
                 message_index,
+                preview_width: layout.preview_width,
                 preview_height,
+                visible_preview_height: u16::try_from(visible_bottom - visible_top)
+                    .unwrap_or(u16::MAX),
+                top_clip_rows: u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX),
                 message_id: message.id,
                 url: url.to_owned(),
                 filename: attachment.filename.clone(),
@@ -668,6 +766,31 @@ mod tests {
         );
 
         assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
+    }
+
+    #[test]
+    fn image_preview_targets_include_top_clipped_preview_rows() {
+        let mut state = state_with_image_messages(1, &[1]);
+        focus_messages(&mut state);
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
+        for _ in 0..3 {
+            state.scroll_message_viewport_down();
+            state.clamp_message_viewport_for_image_previews(200, 16, 3);
+        }
+
+        let targets = visible_image_preview_targets(
+            &state,
+            ImagePreviewLayout {
+                list_height: 2,
+                content_width: 200,
+                preview_width: 16,
+                max_preview_height: 3,
+            },
+        );
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
+        assert_eq!(targets[0].visible_preview_height, 2);
+        assert_eq!(targets[0].top_clip_rows, 1);
     }
 
     #[test]
@@ -956,7 +1079,10 @@ mod tests {
     fn image_preview_target(id: u64) -> ImagePreviewTarget {
         ImagePreviewTarget {
             message_index: 0,
+            preview_width: 16,
             preview_height: 3,
+            visible_preview_height: 3,
+            top_clip_rows: 0,
             message_id: Id::new(id),
             url: format!("https://cdn.discordapp.com/image-{id}.png"),
             filename: format!("image-{id}.png"),
