@@ -38,7 +38,9 @@ impl ChannelState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageState {
     pub id: Id<MessageMarker>,
+    pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,
+    pub author_id: Id<UserMarker>,
     pub author: String,
     pub message_kind: MessageKind,
     pub reply: Option<ReplyInfo>,
@@ -184,8 +186,10 @@ impl DiscordState {
                 self.messages.remove(channel_id);
             }
             AppEvent::MessageCreate {
+                guild_id,
                 channel_id,
                 message_id,
+                author_id,
                 author,
                 message_kind,
                 reply,
@@ -196,8 +200,10 @@ impl DiscordState {
                 ..
             } => self.upsert_message(MessageState {
                 id: *message_id,
+                guild_id: *guild_id,
                 channel_id: *channel_id,
-                author: author.clone(),
+                author_id: *author_id,
+                author: self.message_author_display_name(*guild_id, *author_id, author),
                 message_kind: *message_kind,
                 reply: reply.clone(),
                 poll: poll.clone(),
@@ -235,6 +241,7 @@ impl DiscordState {
                 let entry = self.members.entry(*guild_id).or_default();
                 let previous_status = entry.get(&member.user_id).map(|m| m.status);
                 upsert_member(entry, member, previous_status);
+                self.refresh_message_author_display_name(*guild_id, member);
             }
             AppEvent::GuildMemberRemove { guild_id, user_id } => {
                 if let Some(entry) = self.members.get_mut(guild_id) {
@@ -306,6 +313,33 @@ impl DiscordState {
         self.channels.get(&channel_id)
     }
 
+    fn message_author_display_name(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        author_id: Id<UserMarker>,
+        fallback: &str,
+    ) -> String {
+        guild_id
+            .and_then(|guild_id| self.members.get(&guild_id))
+            .and_then(|members| members.get(&author_id))
+            .map(|member| member.display_name.clone())
+            .unwrap_or_else(|| fallback.to_owned())
+    }
+
+    fn refresh_message_author_display_name(
+        &mut self,
+        guild_id: Id<GuildMarker>,
+        member: &MemberInfo,
+    ) {
+        for messages in self.messages.values_mut() {
+            for message in messages.iter_mut() {
+                if message.guild_id == Some(guild_id) && message.author_id == member.user_id {
+                    message.author = member.display_name.clone();
+                }
+            }
+        }
+    }
+
     fn upsert_channel(&mut self, channel: &ChannelInfo) {
         let last_message_id = self
             .channels
@@ -332,7 +366,9 @@ impl DiscordState {
         let message_id = message.id;
         let messages = self.messages.entry(message.channel_id).or_default();
         if let Some(existing) = messages.iter_mut().find(|item| item.id == message.id) {
+            existing.guild_id = message.guild_id;
             existing.channel_id = message.channel_id;
+            existing.author_id = message.author_id;
             existing.author = message.author;
             existing.message_kind = message.message_kind;
             if message.reply.is_some() || existing.reply.is_none() {
@@ -366,29 +402,34 @@ impl DiscordState {
         before: Option<Id<MessageMarker>>,
         history: &[MessageInfo],
     ) {
-        let messages = self.messages.entry(channel_id).or_default();
-        let mut by_id: BTreeMap<Id<MessageMarker>, MessageState> = messages
-            .drain(..)
-            .map(|message| (message.id, message))
-            .collect();
-
-        for message in history {
-            if message.channel_id != channel_id {
-                continue;
-            }
-
-            let incoming = MessageState {
+        let incoming_messages = history
+            .iter()
+            .filter(|message| message.channel_id == channel_id)
+            .map(|message| MessageState {
                 id: message.message_id,
+                guild_id: message.guild_id,
                 channel_id: message.channel_id,
-                author: message.author.clone(),
+                author_id: message.author_id,
+                author: self.message_author_display_name(
+                    message.guild_id,
+                    message.author_id,
+                    &message.author,
+                ),
                 message_kind: message.message_kind,
                 reply: message.reply.clone(),
                 poll: message.poll.clone(),
                 content: message.content.clone(),
                 attachments: message.attachments.clone(),
                 forwarded_snapshots: message.forwarded_snapshots.clone(),
-            };
+            })
+            .collect::<Vec<_>>();
+        let messages = self.messages.entry(channel_id).or_default();
+        let mut by_id: BTreeMap<Id<MessageMarker>, MessageState> = messages
+            .drain(..)
+            .map(|message| (message.id, message))
+            .collect();
 
+        for incoming in incoming_messages {
             by_id
                 .entry(incoming.id)
                 .and_modify(|existing| merge_message(existing, &incoming))
@@ -448,7 +489,9 @@ impl DiscordState {
 }
 
 fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
+    existing.guild_id = incoming.guild_id;
     existing.channel_id = incoming.channel_id;
+    existing.author_id = incoming.author_id;
     existing.author = incoming.author.clone();
     existing.message_kind = incoming.message_kind;
     if incoming.reply.is_some() || existing.reply.is_none() {
@@ -543,6 +586,83 @@ mod tests {
         assert_eq!(state.guilds().len(), 1);
         assert_eq!(state.channels_for_guild(Some(guild_id)).len(), 1);
         assert_eq!(state.messages_for_channel(channel_id).len(), 1);
+    }
+
+    #[test]
+    fn message_author_uses_cached_member_display_name() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let author_id = Id::new(4);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            }],
+            members: vec![MemberInfo {
+                user_id: author_id,
+                display_name: "server alias".to_owned(),
+                is_bot: false,
+            }],
+            presences: Vec::new(),
+        });
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: Some(guild_id),
+            channel_id,
+            message_id: Id::new(3),
+            author_id,
+            author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages[0].author, "server alias");
+    }
+
+    #[test]
+    fn member_update_refreshes_existing_message_author() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let author_id = Id::new(4);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: Some(guild_id),
+            channel_id,
+            message_id: Id::new(3),
+            author_id,
+            author: "neo".to_owned(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state.apply_event(&AppEvent::GuildMemberUpsert {
+            guild_id,
+            member: MemberInfo {
+                user_id: author_id,
+                display_name: "server alias".to_owned(),
+                is_bot: false,
+            },
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages[0].author, "server alias");
     }
 
     #[test]
@@ -1488,7 +1608,9 @@ mod tests {
     fn message_state(content: &str) -> MessageState {
         MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: MessageKind::regular(),
             reply: None,

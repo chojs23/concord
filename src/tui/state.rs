@@ -2359,7 +2359,9 @@ mod tests {
     fn video_attachment_does_not_reserve_image_preview_rows() {
         let message = MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
@@ -2376,7 +2378,9 @@ mod tests {
     fn explicit_newlines_increase_message_rendered_height() {
         let message = MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
@@ -2393,7 +2397,9 @@ mod tests {
     fn wrapped_content_increases_message_rendered_height() {
         let message = MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
@@ -2410,7 +2416,9 @@ mod tests {
     fn wide_content_increases_message_rendered_height_by_terminal_width() {
         let message = MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
@@ -2427,7 +2435,9 @@ mod tests {
     fn image_attachment_summary_reserves_text_row_before_preview() {
         let message = MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
@@ -2444,7 +2454,9 @@ mod tests {
     fn forwarded_image_attachment_reserves_preview_rows() {
         let message = MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
@@ -2461,7 +2473,9 @@ mod tests {
     fn forwarded_snapshot_wrapped_content_increases_rendered_height() {
         let message = MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
@@ -2483,7 +2497,9 @@ mod tests {
     fn forwarded_snapshot_wide_content_uses_terminal_width() {
         let message = MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
@@ -2508,7 +2524,9 @@ mod tests {
         snapshot.timestamp = Some("2026-04-30T12:34:56.000000+00:00".to_owned());
         let message = MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
@@ -2525,7 +2543,9 @@ mod tests {
     fn non_default_message_kind_reserves_label_row() {
         let mut message = MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: MessageKind::regular(),
             reply: None,
@@ -2546,7 +2566,9 @@ mod tests {
     fn reply_preview_reserves_connector_row_without_extra_type_label() {
         let message = MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: MessageKind::new(19),
             reply: Some(ReplyInfo {
@@ -2566,7 +2588,9 @@ mod tests {
     fn poll_message_reserves_question_and_answer_rows() {
         let message = MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: MessageKind::regular(),
             reply: None,
@@ -2583,7 +2607,9 @@ mod tests {
     fn multiselect_poll_message_uses_same_card_height() {
         let message = MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: MessageKind::regular(),
             reply: None,

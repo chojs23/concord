@@ -341,13 +341,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
     let message_id = parse_id::<MessageMarker>(data.get("id")?)?;
     let author = data.get("author")?;
     let author_id = parse_id::<UserMarker>(author.get("id")?)?;
-    let author_name = author
-        .get("global_name")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .or_else(|| author.get("username").and_then(Value::as_str))
-        .unwrap_or("unknown")
-        .to_owned();
+    let author_name = message_author_display_name(data, author);
     let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
     let message_kind = data
         .get("type")
@@ -453,13 +447,7 @@ fn parse_reply_info(value: &Value) -> Option<ReplyInfo> {
     }
 
     let author = value.get("author")?;
-    let author_name = author
-        .get("global_name")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .or_else(|| author.get("username").and_then(Value::as_str))
-        .unwrap_or("unknown")
-        .to_owned();
+    let author_name = message_author_display_name(value, author);
     let content = value
         .get("content")
         .and_then(Value::as_str)
@@ -470,6 +458,23 @@ fn parse_reply_info(value: &Value) -> Option<ReplyInfo> {
         author: author_name,
         content,
     })
+}
+
+fn message_author_display_name(message: &Value, author: &Value) -> String {
+    let nick = message
+        .get("member")
+        .and_then(|member| member.get("nick"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty());
+    let global_name = author
+        .get("global_name")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty());
+    let username = author.get("username").and_then(Value::as_str);
+    nick.or(global_name)
+        .or(username)
+        .unwrap_or("unknown")
+        .to_owned()
 }
 
 fn parse_poll_info(value: &Value) -> Option<PollInfo> {
@@ -925,6 +930,46 @@ mod tests {
             panic!("expected message create event");
         };
         assert_eq!(message_kind, MessageKind::new(19));
+    }
+
+    #[test]
+    fn message_create_parser_prefers_member_nick_for_author() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "guild_id": "1",
+            "author": { "id": "30", "global_name": "global", "username": "neo" },
+            "member": { "nick": "server alias" },
+            "content": "hello",
+            "attachments": []
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { author, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(author, "server alias");
+    }
+
+    #[test]
+    fn message_create_parser_falls_back_to_global_name_without_member() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "global_name": "global alias", "username": "neo" },
+            "content": "hello",
+            "attachments": []
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate {
+            author, guild_id, ..
+        } = event
+        else {
+            panic!("expected message create event");
+        };
+        assert_eq!(guild_id, None);
+        assert_eq!(author, "global alias");
     }
 
     #[test]

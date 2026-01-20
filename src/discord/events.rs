@@ -387,7 +387,7 @@ impl ReplyInfo {
             Some(message.content.clone())
         };
         Some(Self {
-            author: message.author.name.clone(),
+            author: message_display_name(message),
             content,
         })
     }
@@ -453,7 +453,7 @@ impl MessageInfo {
             channel_id: message.channel_id,
             message_id: message.id,
             author_id: message.author.id,
-            author: message.author.name,
+            author: message_display_name(&message),
             message_kind: MessageKind::new(message.kind.into()),
             reply,
             poll,
@@ -505,7 +505,7 @@ pub fn map_event(event: Event, message_content_enabled: bool) -> Option<AppEvent
                 channel_id: message.channel_id,
                 message_id: message.id,
                 author_id: message.author.id,
-                author: message.author.name.clone(),
+                author: message_display_name(&message),
                 message_kind: MessageKind::new(message.kind.into()),
                 reply,
                 poll,
@@ -659,6 +659,16 @@ fn display_name(nick: Option<&str>, user: &TwilightUser) -> String {
     user.name.clone()
 }
 
+fn message_display_name(message: &Message) -> String {
+    display_name(
+        message
+            .member
+            .as_ref()
+            .and_then(|member| member.nick.as_deref()),
+        &message.author,
+    )
+}
+
 fn map_message_content(content: &str, message_content_enabled: bool) -> Option<String> {
     if message_content_enabled || !content.is_empty() {
         return Some(content.to_owned());
@@ -696,6 +706,42 @@ mod tests {
     fn filename_extension_classifies_unknown_media_type() {
         assert!(attachment_info("CAT.PNG", None).is_image());
         assert!(attachment_info("CLIP.MP4", None).is_video());
+    }
+
+    #[test]
+    fn display_name_prefers_nick_then_global_name_then_username() {
+        let user_with_global = user("neo", Some("global alias"));
+
+        assert_eq!(
+            display_name(Some("server alias"), &user_with_global),
+            "server alias"
+        );
+        assert_eq!(display_name(None, &user_with_global), "global alias");
+        assert_eq!(display_name(None, &user("neo", None)), "neo");
+    }
+
+    fn user(name: &str, global_name: Option<&str>) -> TwilightUser {
+        TwilightUser {
+            accent_color: None,
+            avatar: None,
+            avatar_decoration: None,
+            avatar_decoration_data: None,
+            banner: None,
+            bot: false,
+            discriminator: 0,
+            email: None,
+            flags: None,
+            global_name: global_name.map(str::to_owned),
+            id: Id::new(1),
+            locale: None,
+            mfa_enabled: None,
+            name: name.to_owned(),
+            premium_type: None,
+            primary_guild: None,
+            public_flags: None,
+            system: None,
+            verified: None,
+        }
     }
 
     fn attachment_info(filename: &str, content_type: Option<&str>) -> AttachmentInfo {
