@@ -10,7 +10,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    format::truncate_text,
+    format::{blank_display_width, pad_right_display_width, truncate_text},
     state::{
         ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MemberGroup,
         MessageActionItem, folder_color, message_base_line_count_for_width, presence_color,
@@ -363,7 +363,7 @@ fn message_viewport_lines(
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for (index, message) in messages.iter().enumerate() {
-        let author = truncate_text(&message.author, max_author_width);
+        let author = message.author.clone();
         let content = format_message_content_lines(message, state, content_width.max(8));
         let preview_height = preview_height_for_message(image_previews, index);
         let line_offset = usize::from(index == 0) * state.message_line_scroll();
@@ -400,14 +400,14 @@ fn message_item_lines(
         .unwrap_or_else(|| MessageContentLine::plain(String::new()));
     let mut lines = vec![Line::from(vec![
         Span::styled(
-            format!("{author:<width$} ", width = max_author_width),
+            format!("{} ", pad_right_display_width(&author, max_author_width)),
             Style::default().fg(Color::Green).bold(),
         ),
         Span::styled(first_line.text, first_line.style),
     ])];
     lines.extend(content.map(|line| {
         Line::from(vec![
-            Span::raw(format!("{:<width$} ", "", width = max_author_width)),
+            Span::raw(format!("{} ", blank_display_width(max_author_width))),
             Span::styled(line.text, line.style),
         ])
     }));
@@ -1069,6 +1069,7 @@ fn composer_prompt_line_count(input: &str, width: u16) -> u16 {
 mod tests {
     use ratatui::{layout::Rect, style::Style};
     use twilight_model::id::Id;
+    use unicode_width::UnicodeWidthStr;
 
     use super::{
         ACCENT, DIM, MessageContentLine, composer_prompt_line_count, format_message_content,
@@ -1081,7 +1082,10 @@ mod tests {
             AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState, PollAnswerInfo,
             PollInfo, ReplyInfo,
         },
-        tui::state::{DashboardState, MessageActionItem, MessageActionKind},
+        tui::{
+            format::truncate_display_width,
+            state::{DashboardState, MessageActionItem, MessageActionKind},
+        },
     };
 
     #[test]
@@ -1442,6 +1446,37 @@ mod tests {
     }
 
     #[test]
+    fn message_author_padding_uses_display_width_for_korean() {
+        let ascii = message_item_lines(
+            "bruised8".to_owned(),
+            vec![MessageContentLine::plain("난다".to_owned())],
+            14,
+            0,
+            0,
+        );
+        let korean = message_item_lines(
+            "장방이".to_owned(),
+            vec![MessageContentLine::plain(
+                "그리고 그 티비 대가리도".to_owned(),
+            )],
+            14,
+            0,
+            0,
+        );
+
+        assert_eq!(ascii[0].spans[0].content.width(), 15);
+        assert_eq!(korean[0].spans[0].content.width(), 15);
+    }
+
+    #[test]
+    fn shared_truncation_uses_display_width_for_wide_characters() {
+        let author = truncate_display_width("가나다라마바사아자", 8);
+
+        assert_eq!(author, "가나...");
+        assert_eq!(author.width(), 7);
+    }
+
+    #[test]
     fn message_viewport_lines_keep_rows_from_tall_following_message() {
         let mut selected = message_with_attachment(Some("selected".to_owned()), image_attachment());
         selected.attachments.clear();
@@ -1552,7 +1587,9 @@ mod tests {
     ) -> MessageState {
         MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
@@ -1566,7 +1603,9 @@ mod tests {
     fn message_with_forwarded_snapshot(snapshot: MessageSnapshotInfo) -> MessageState {
         MessageState {
             id: Id::new(1),
+            guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            author_id: Id::new(99),
             author: "neo".to_owned(),
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
