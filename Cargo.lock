@@ -373,6 +373,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "concord"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "crossterm",
+ "futures",
+ "image",
+ "qrcode",
+ "rand 0.8.6",
+ "ratatui",
+ "ratatui-image",
+ "reqwest",
+ "rsa",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite",
+ "twilight-gateway",
+ "twilight-http",
+ "twilight-model",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -597,34 +625,6 @@ dependencies = [
  "block-buffer",
  "const-oid",
  "crypto-common",
-]
-
-[[package]]
-name = "discord-client-terminal"
-version = "0.1.0"
-dependencies = [
- "base64",
- "crossterm",
- "futures",
- "image",
- "qrcode",
- "rand 0.8.6",
- "ratatui",
- "ratatui-image",
- "reqwest",
- "rsa",
- "rustls",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite",
- "twilight-gateway",
- "twilight-http",
- "twilight-model",
- "unicode-segmentation",
- "unicode-width",
 ]
 
 [[package]]
