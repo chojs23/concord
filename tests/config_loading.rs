@@ -13,11 +13,3 @@ fn rejects_invalid_channel_id() {
 
     assert!(matches!(error, AppError::InvalidChannelId { .. }));
 }
-
-#[test]
-fn rejects_invalid_message_content_flag() {
-    let error = Config::from_pairs([("DISCORD_ENABLE_MESSAGE_CONTENT", "maybe")])
-        .expect_err("message content flag must be a known boolean");
-
-    assert!(matches!(error, AppError::InvalidMessageContentFlag { .. }));
-}

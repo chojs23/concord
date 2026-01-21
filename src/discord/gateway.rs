@@ -18,12 +18,8 @@ use super::{
 };
 use crate::logging;
 
-pub async fn run_gateway(
-    token: String,
-    message_content_enabled: bool,
-    tx: broadcast::Sender<AppEvent>,
-) {
-    let intents = gateway_intents(message_content_enabled);
+pub async fn run_gateway(token: String, tx: broadcast::Sender<AppEvent>) {
+    let intents = gateway_intents();
 
     let mut shard = Shard::new(ShardId::ONE, token, intents);
 
@@ -31,7 +27,7 @@ pub async fn run_gateway(
         match item {
             Ok(event) => {
                 logging::debug("gateway", format!("ok: {:?}", event.kind()));
-                if let Some(event) = map_event(event, message_content_enabled) {
+                if let Some(event) = map_event(event) {
                     let _ = tx.send(event);
                 }
             }
@@ -64,16 +60,12 @@ pub async fn run_gateway(
     let _ = tx.send(AppEvent::GatewayClosed);
 }
 
-fn gateway_intents(message_content_enabled: bool) -> Intents {
-    let mut intents = Intents::GUILDS
+fn gateway_intents() -> Intents {
+    Intents::GUILDS
         | Intents::GUILD_MESSAGES
         | Intents::DIRECT_MESSAGES
-        | Intents::GUILD_MEMBERS;
-    if message_content_enabled {
-        intents |= Intents::MESSAGE_CONTENT;
-    }
-
-    intents
+        | Intents::GUILD_MEMBERS
+        | Intents::MESSAGE_CONTENT
 }
 
 /// Best-effort fallback that rebuilds the dashboard's domain events directly
@@ -786,21 +778,13 @@ mod tests {
     };
 
     #[test]
-    fn startup_intents_skip_presence_updates() {
-        let intents = gateway_intents(false);
+    fn startup_intents_include_message_content() {
+        let intents = gateway_intents();
 
         assert!(intents.contains(Intents::GUILDS));
         assert!(intents.contains(Intents::GUILD_MESSAGES));
         assert!(intents.contains(Intents::DIRECT_MESSAGES));
         assert!(intents.contains(Intents::GUILD_MEMBERS));
-        assert!(!intents.contains(Intents::GUILD_PRESENCES));
-        assert!(!intents.contains(Intents::MESSAGE_CONTENT));
-    }
-
-    #[test]
-    fn startup_intents_keep_message_content_optional() {
-        let intents = gateway_intents(true);
-
         assert!(intents.contains(Intents::MESSAGE_CONTENT));
         assert!(!intents.contains(Intents::GUILD_PRESENCES));
     }

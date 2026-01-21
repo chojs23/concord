@@ -43,12 +43,12 @@ impl DiscordClient {
         let _ = self.events_tx.send(event);
     }
 
-    pub fn start_gateway(&self, message_content_enabled: bool) -> JoinHandle<()> {
+    pub fn start_gateway(&self) -> JoinHandle<()> {
         let token = self.token.clone();
         let events_tx = self.events_tx.clone();
 
         tokio::spawn(async move {
-            run_gateway(token, message_content_enabled, events_tx).await;
+            run_gateway(token, events_tx).await;
         })
     }
 

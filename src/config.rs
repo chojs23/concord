@@ -8,7 +8,6 @@ use crate::{AppError, Result};
 pub struct Config {
     pub default_channel_id: Option<Id<ChannelMarker>>,
     pub boot_message: Option<String>,
-    pub enable_message_content: bool,
 }
 
 impl Config {
@@ -45,18 +44,9 @@ impl Config {
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty());
 
-        let enable_message_content = lookup("DISCORD_ENABLE_MESSAGE_CONTENT")
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(parse_bool_flag)
-            .transpose()?
-            .unwrap_or(false);
-
         Ok(Self {
             default_channel_id,
             boot_message,
-            enable_message_content,
         })
     }
 }
@@ -70,16 +60,6 @@ fn parse_channel_id(value: &str) -> Result<Id<ChannelMarker>> {
         })?;
 
     Ok(Id::new(parsed))
-}
-
-fn parse_bool_flag(value: &str) -> Result<bool> {
-    match value.to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        _ => Err(AppError::InvalidMessageContentFlag {
-            value: value.to_owned(),
-        }),
-    }
 }
 
 #[cfg(test)]
@@ -99,7 +79,6 @@ mod tests {
             123456789
         );
         assert_eq!(config.boot_message.as_deref(), Some("hello from startup"));
-        assert!(!config.enable_message_content);
     }
 
     #[test]
@@ -112,14 +91,5 @@ mod tests {
 
         assert!(config.default_channel_id.is_none());
         assert!(config.boot_message.is_none());
-        assert!(!config.enable_message_content);
-    }
-
-    #[test]
-    fn parses_message_content_flag() {
-        let config = Config::from_pairs([("DISCORD_ENABLE_MESSAGE_CONTENT", "true")])
-            .expect("config should parse");
-
-        assert!(config.enable_message_content);
     }
 }

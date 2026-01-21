@@ -21,8 +21,6 @@ pub enum AppError {
         #[source]
         source: ParseIntError,
     },
-    #[error("invalid DISCORD_ENABLE_MESSAGE_CONTENT value `{value}`")]
-    InvalidMessageContentFlag { value: String },
     #[error("message content must not be empty")]
     EmptyMessageContent,
     #[error("message content exceeds Discord's 2000 character limit: {len}")]

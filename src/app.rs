@@ -30,7 +30,7 @@ impl App {
         let client = DiscordClient::new(token)?;
         let events = client.subscribe();
         let (commands_tx, commands_rx) = mpsc::channel(64);
-        let gateway_task = client.start_gateway(self.config.enable_message_content);
+        let gateway_task = client.start_gateway();
         let command_task = start_command_loop(client.clone(), commands_rx);
 
         let result = async {

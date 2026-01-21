@@ -472,7 +472,7 @@ impl MessageInfo {
     }
 }
 
-pub fn map_event(event: Event, message_content_enabled: bool) -> Option<AppEvent> {
+pub fn map_event(event: Event) -> Option<AppEvent> {
     match event {
         Event::Ready(ready) => Some(AppEvent::Ready {
             user: ready.user.name,
@@ -509,7 +509,7 @@ pub fn map_event(event: Event, message_content_enabled: bool) -> Option<AppEvent
                 message_kind: MessageKind::new(message.kind.into()),
                 reply,
                 poll,
-                content: map_message_content(&message.content, message_content_enabled),
+                content: Some(message.content.clone()),
                 attachments: message
                     .attachments
                     .clone()
@@ -529,7 +529,7 @@ pub fn map_event(event: Event, message_content_enabled: bool) -> Option<AppEvent
             channel_id: message.channel_id,
             message_id: message.id,
             poll: message.poll.as_ref().map(PollInfo::from_poll),
-            content: map_message_content(&message.content, message_content_enabled),
+            content: Some(message.content.clone()),
             attachments: map_attachment_update(message.attachments.clone()),
         }),
         Event::MessageDelete(message) => Some(AppEvent::MessageDelete {
@@ -667,14 +667,6 @@ fn message_display_name(message: &Message) -> String {
             .and_then(|member| member.nick.as_deref()),
         &message.author,
     )
-}
-
-fn map_message_content(content: &str, message_content_enabled: bool) -> Option<String> {
-    if message_content_enabled || !content.is_empty() {
-        return Some(content.to_owned());
-    }
-
-    None
 }
 
 #[cfg(test)]
