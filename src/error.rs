@@ -1,5 +1,3 @@
-use std::num::ParseIntError;
-
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, AppError>;
@@ -14,12 +12,6 @@ pub enum AppError {
     InvalidDiscordTokenHeader {
         #[source]
         source: reqwest::header::InvalidHeaderValue,
-    },
-    #[error("invalid DISCORD_DEFAULT_CHANNEL_ID value `{value}`")]
-    InvalidChannelId {
-        value: String,
-        #[source]
-        source: ParseIntError,
     },
     #[error("message content must not be empty")]
     EmptyMessageContent,
