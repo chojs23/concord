@@ -1,11 +1,10 @@
-use discord_client_terminal::{App, Config, Result};
+use concord::{App, Result};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     install_rustls_crypto_provider();
 
-    let config = Config::from_env()?;
-    let app = App::new(config);
+    let app = App::new();
     app.run().await
 }
 

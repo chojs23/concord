@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
 
 use crate::{
-    Config, DiscordClient, Result,
+    DiscordClient, Result,
     discord::{AppCommand, AppEvent, MessageInfo},
     logging, token_store, tui,
 };
@@ -14,13 +14,11 @@ const MAX_ATTACHMENT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ATTACHMENT_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
 const ATTACHMENT_PREVIEW_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub struct App {
-    config: Config,
-}
+pub struct App;
 
 impl App {
-    pub fn new(config: Config) -> Self {
-        Self { config }
+    pub fn new() -> Self {
+        Self
     }
 
     pub async fn run(self) -> Result<()> {
@@ -37,17 +35,6 @@ impl App {
             for warning in token_warnings {
                 logging::error("app", &warning);
                 client.publish_event(AppEvent::GatewayError { message: warning });
-            }
-
-            if let (Some(channel_id), Some(message)) = (
-                self.config.default_channel_id,
-                self.config.boot_message.as_deref(),
-            ) && let Err(error) = client.send_message(channel_id, message).await
-            {
-                logging::error("app", format!("startup message failed: {error}"));
-                client.publish_event(AppEvent::GatewayError {
-                    message: format!("startup message failed: {error}"),
-                });
             }
 
             tui::run(events, commands_tx).await
