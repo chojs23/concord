@@ -92,19 +92,15 @@ fn logger() -> &'static FileLogger {
 }
 
 fn log_path() -> Option<PathBuf> {
-    if let Some(path) = env::var_os("DISCORD_LOG_FILE") {
+    if let Some(path) = env::var_os("CONCORD_LOG_FILE") {
         return Some(PathBuf::from(path));
     }
     let home = env::var_os("HOME")?;
-    Some(
-        PathBuf::from(home)
-            .join(".discord-rs")
-            .join("discord-client.log"),
-    )
+    Some(PathBuf::from(home).join(".concord").join("concord.log"))
 }
 
 fn debug_enabled() -> bool {
-    env_flag("DISCORD_DEBUG")
+    env_flag("CONCORD_DEBUG")
 }
 
 fn env_flag(name: &str) -> bool {
