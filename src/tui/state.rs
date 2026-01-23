@@ -896,8 +896,17 @@ impl DashboardState {
         self.message_max_preview_height = max_preview_height;
         self.clamp_message_viewport();
         if self.message_auto_follow {
-            self.message_scroll = self.selected_message();
-            self.message_line_scroll = 0;
+            if self.message_view_height <= 1 {
+                self.message_scroll = self.selected_message();
+                self.message_line_scroll = 0;
+            } else {
+                self.align_message_viewport_to_bottom(
+                    content_width,
+                    preview_width,
+                    max_preview_height,
+                );
+            }
+            return;
         }
         self.normalize_message_line_scroll(content_width, preview_width, max_preview_height);
         if self.messages().is_empty() || !self.message_keep_selection_visible {
@@ -1543,6 +1552,39 @@ impl DashboardState {
         self.message_scroll = self.selected_message;
         self.message_line_scroll = 0;
         self.message_keep_selection_visible = true;
+    }
+
+    fn align_message_viewport_to_bottom(
+        &mut self,
+        content_width: usize,
+        preview_width: u16,
+        max_preview_height: u16,
+    ) {
+        let height = self.message_content_height();
+        let mut remaining = height;
+        for index in (0..self.messages().len()).rev() {
+            let message_height = self
+                .messages()
+                .get(index)
+                .map(|message| {
+                    message_rendered_height(
+                        message,
+                        content_width,
+                        preview_width,
+                        max_preview_height,
+                    )
+                    .max(1)
+                })
+                .unwrap_or(1);
+            if message_height >= remaining {
+                self.message_scroll = index;
+                self.message_line_scroll = message_height.saturating_sub(remaining);
+                return;
+            }
+            remaining = remaining.saturating_sub(message_height);
+        }
+        self.message_scroll = 0;
+        self.message_line_scroll = 0;
     }
 
     fn restore_message_position(
@@ -2313,7 +2355,7 @@ mod tests {
     }
 
     #[test]
-    fn image_preview_rows_advance_message_scroll_when_selection_would_be_clipped() {
+    fn image_preview_rows_keep_latest_message_visible_when_auto_following() {
         let mut state = state_with_image_messages(6, &[1]);
         focus_messages(&mut state);
         state.set_message_view_height(6);
@@ -2322,7 +2364,7 @@ mod tests {
 
         state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
-        assert!(state.message_scroll() > 0);
+        assert!(state.message_scroll() > 0 || state.message_line_scroll() > 0);
         let selected_bottom = state
             .selected_message_rendered_row(200, 16, 3)
             .saturating_add(
@@ -2758,6 +2800,21 @@ mod tests {
         state.move_up();
         assert_eq!(state.selected_message(), 8);
         assert_eq!(state.message_scroll(), 5);
+    }
+
+    #[test]
+    fn message_auto_follow_keeps_latest_message_at_bottom_after_rendered_clamp() {
+        let mut state = state_with_messages(12);
+        focus_messages(&mut state);
+        state.set_message_view_height(7);
+
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
+
+        assert!(state.message_auto_follow());
+        assert_eq!(state.selected_message(), 11);
+        assert_eq!(state.message_scroll(), 5);
+        assert_eq!(state.message_line_scroll(), 0);
+        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 6);
     }
 
     #[test]
