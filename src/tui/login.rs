@@ -640,7 +640,7 @@ fn render_token_input(frame: &mut Frame, state: &LoginState) {
     let persistence_text = if state.notice.is_some() {
         "Paste your token below. It will be used for this session."
     } else {
-        "Paste your token below. It will be saved to ~/.discord-rs/credential."
+        "Paste your token below. It will be saved to ~/.concord/credential."
     };
 
     let mut lines = vec![

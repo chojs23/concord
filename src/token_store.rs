@@ -5,7 +5,7 @@ use std::{
 
 use crate::{AppError, Result};
 
-const CONFIG_DIR: &str = ".discord-rs";
+const CONFIG_DIR: &str = ".concord";
 const CREDENTIAL_FILE: &str = "credential";
 
 pub fn load_token() -> Result<Option<String>> {
