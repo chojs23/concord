@@ -1874,16 +1874,17 @@ pub(crate) fn message_base_line_count_for_width(
     if let Some(snapshot) = message.forwarded_snapshots.first() {
         let metadata_line =
             usize::from(snapshot.source_channel_id.is_some() || snapshot.timestamp.is_some());
-        return (reply_line
-            + poll_lines
-            + kind_line
-            + primary_lines
-            + forwarded_snapshot_line_count(snapshot, content_width)
-            + metadata_line)
-            .max(1);
+        return 1
+            + (reply_line
+                + poll_lines
+                + kind_line
+                + primary_lines
+                + forwarded_snapshot_line_count(snapshot, content_width)
+                + metadata_line)
+                .max(1);
     }
 
-    (reply_line + poll_lines + kind_line + primary_lines).max(1)
+    1 + (reply_line + poll_lines + kind_line + primary_lines).max(1)
 }
 
 fn message_primary_line_count(
@@ -2386,7 +2387,7 @@ mod tests {
         }
         state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
-        assert_eq!(state.following_message_rendered_rows(200, 16, 3, 3), 15);
+        assert_eq!(state.following_message_rendered_rows(200, 16, 3, 3), 18);
         let selected_bottom = state
             .selected_message_rendered_row(200, 16, 3)
             .saturating_add(
@@ -2413,7 +2414,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 2);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 3);
     }
 
     #[test]
@@ -2432,7 +2433,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 2);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 3);
     }
 
     #[test]
@@ -2451,7 +2452,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 5, 16, 3), 3);
+        assert_eq!(message_rendered_height(&message, 5, 16, 3), 4);
     }
 
     #[test]
@@ -2470,7 +2471,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 10, 16, 3), 2);
+        assert_eq!(message_rendered_height(&message, 10, 16, 3), 3);
     }
 
     #[test]
@@ -2489,7 +2490,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
     }
 
     #[test]
@@ -2508,7 +2509,7 @@ mod tests {
             forwarded_snapshots: vec![forwarded_snapshot(1)],
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
     }
 
     #[test]
@@ -2532,7 +2533,7 @@ mod tests {
             }],
         };
 
-        assert_eq!(message_rendered_height(&message, 7, 16, 3), 8);
+        assert_eq!(message_rendered_height(&message, 7, 16, 3), 9);
     }
 
     #[test]
@@ -2556,7 +2557,7 @@ mod tests {
             }],
         };
 
-        assert_eq!(message_rendered_height(&message, 12, 16, 3), 7);
+        assert_eq!(message_rendered_height(&message, 12, 16, 3), 8);
     }
 
     #[test]
@@ -2578,7 +2579,7 @@ mod tests {
             forwarded_snapshots: vec![snapshot],
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
     }
 
     #[test]
@@ -2597,11 +2598,11 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
 
         message.message_kind = MessageKind::new(19);
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
     }
 
     #[test]
@@ -2623,7 +2624,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
     }
 
     #[test]
@@ -2642,7 +2643,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
     }
 
     #[test]
@@ -2661,7 +2662,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
     }
 
     #[test]
@@ -2812,9 +2813,9 @@ mod tests {
 
         assert!(state.message_auto_follow());
         assert_eq!(state.selected_message(), 11);
-        assert_eq!(state.message_scroll(), 5);
-        assert_eq!(state.message_line_scroll(), 0);
-        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 6);
+        assert_eq!(state.message_scroll(), 8);
+        assert_eq!(state.message_line_scroll(), 1);
+        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 5);
     }
 
     #[test]
@@ -2830,9 +2831,9 @@ mod tests {
         }
 
         assert_eq!(state.selected_message(), 7);
-        assert_eq!(state.message_scroll(), 4);
+        assert_eq!(state.message_scroll(), 6);
         assert_eq!(state.message_line_scroll(), 0);
-        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 3);
+        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 2);
     }
 
     #[test]
@@ -2851,8 +2852,8 @@ mod tests {
 
         assert_eq!(state.selected_message(), 1);
         assert_eq!(state.message_scroll(), 0);
-        assert_eq!(state.message_line_scroll(), 1);
-        assert_eq!(state.selected_message_rendered_row(5, 16, 3), 2);
+        assert_eq!(state.message_line_scroll(), 3);
+        assert_eq!(state.selected_message_rendered_row(5, 16, 3), 1);
     }
 
     #[test]
@@ -2869,10 +2870,10 @@ mod tests {
         }
 
         assert_eq!(state.messages()[state.selected_message()].id, Id::new(4));
-        assert_eq!(state.selected_message_rendered_height(200, 16, 3), 5);
-        assert_eq!(state.message_scroll(), 1);
-        assert_eq!(state.message_line_scroll(), 0);
-        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 2);
+        assert_eq!(state.selected_message_rendered_height(200, 16, 3), 6);
+        assert_eq!(state.message_scroll(), 2);
+        assert_eq!(state.message_line_scroll(), 1);
+        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 1);
     }
 
     #[test]
@@ -2886,14 +2887,14 @@ mod tests {
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
         assert_eq!(state.message_scroll(), 0);
-        assert_eq!(state.message_line_scroll(), 1);
+        assert_eq!(state.message_line_scroll(), 2);
         assert_eq!(state.selected_message(), 0);
 
         state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
         assert_eq!(state.message_scroll(), 0);
-        assert_eq!(state.message_line_scroll(), 2);
+        assert_eq!(state.message_line_scroll(), 3);
     }
 
     #[test]
@@ -2917,6 +2918,8 @@ mod tests {
         state.jump_top();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
+        state.scroll_message_viewport_down();
+        state.clamp_message_viewport_for_image_previews(5, 16, 3);
         state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
         state.scroll_message_viewport_down();
@@ -2950,7 +2953,7 @@ mod tests {
         state.jump_top();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
-        for _ in 0..3 {
+        for _ in 0..4 {
             state.scroll_message_viewport_down();
             state.clamp_message_viewport_for_image_previews(5, 16, 3);
         }

@@ -754,6 +754,8 @@ mod tests {
         state.clamp_message_viewport_for_image_previews(200, 16, 3);
         state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(200, 16, 3);
+        state.scroll_message_viewport_down();
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
         let targets = visible_image_preview_targets(
             &state,
@@ -773,7 +775,7 @@ mod tests {
         let mut state = state_with_image_messages(1, &[1]);
         focus_messages(&mut state);
         state.clamp_message_viewport_for_image_previews(200, 16, 3);
-        for _ in 0..3 {
+        for _ in 0..4 {
             state.scroll_message_viewport_down();
             state.clamp_message_viewport_for_image_previews(200, 16, 3);
         }
@@ -914,7 +916,7 @@ mod tests {
             },
         );
 
-        assert_eq!(target_message_ids(&targets), vec![Id::new(6)]);
+        assert!(target_message_ids(&targets).is_empty());
     }
 
     #[test]
@@ -937,7 +939,7 @@ mod tests {
             },
         );
 
-        assert_eq!(target_message_ids(&targets), vec![Id::new(5), Id::new(6)]);
+        assert_eq!(target_message_ids(&targets), vec![Id::new(5)]);
     }
 
     #[test]

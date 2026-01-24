@@ -6,11 +6,12 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 use ratatui_image::{Image as RatatuiImage, Resize, StatefulImage, protocol::StatefulProtocol};
+use twilight_model::id::{Id, marker::MessageMarker};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    format::{blank_display_width, pad_right_display_width, truncate_text},
+    format::{truncate_display_width, truncate_text},
     state::{
         ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MemberGroup,
         MessageActionItem, folder_color, message_base_line_count_for_width, presence_color,
@@ -26,6 +27,10 @@ const DIM: Color = Color::DarkGray;
 const MIN_MESSAGE_INPUT_HEIGHT: u16 = 3;
 const IMAGE_PREVIEW_HEIGHT: u16 = 10;
 const IMAGE_PREVIEW_WIDTH: u16 = 72;
+const MESSAGE_AVATAR_PLACEHOLDER: &str = "oo";
+const MESSAGE_AVATAR_OFFSET: u16 = 3;
+const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
+const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
 
 #[derive(Clone)]
 struct MessageContentLine {
@@ -288,17 +293,9 @@ fn render_messages(
     let message_areas = message_areas(inner, state);
     let messages = state.visible_messages();
     let selected = state.focused_message_selection();
-    let max_author_width = 14usize;
     let content_width = message_content_width(message_areas.list);
 
-    let lines = message_viewport_lines(
-        &messages,
-        selected,
-        state,
-        content_width,
-        max_author_width,
-        &image_previews,
-    );
+    let lines = message_viewport_lines(&messages, selected, state, content_width, &image_previews);
 
     frame.render_widget(Paragraph::new(lines), message_areas.list);
     let mut previous_preview_rows = 0usize;
@@ -358,7 +355,6 @@ fn message_viewport_lines(
     selected: Option<usize>,
     state: &DashboardState,
     content_width: usize,
-    max_author_width: usize,
     image_previews: &[ImagePreview<'_>],
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
@@ -369,8 +365,9 @@ fn message_viewport_lines(
         let line_offset = usize::from(index == 0) * state.message_line_scroll();
         let item_lines = message_item_lines(
             author,
+            format_message_sent_time(message.id),
             content,
-            max_author_width,
+            content_width,
             preview_height,
             line_offset,
         );
@@ -389,25 +386,27 @@ fn message_viewport_lines(
 
 fn message_item_lines(
     author: String,
+    sent_time: String,
     content: Vec<MessageContentLine>,
-    max_author_width: usize,
+    content_width: usize,
     preview_height: u16,
     line_offset: usize,
 ) -> Vec<Line<'static>> {
-    let mut content = content.into_iter();
-    let first_line = content
-        .next()
-        .unwrap_or_else(|| MessageContentLine::plain(String::new()));
+    let sent_time_width = sent_time.as_str().width();
+    let author_width = content_width
+        .saturating_sub(sent_time_width)
+        .saturating_sub(1)
+        .max(1);
+    let author = truncate_display_width(&author, author_width);
     let mut lines = vec![Line::from(vec![
-        Span::styled(
-            format!("{} ", pad_right_display_width(&author, max_author_width)),
-            Style::default().fg(Color::Green).bold(),
-        ),
-        Span::styled(first_line.text, first_line.style),
+        message_avatar_span(),
+        Span::styled(author, Style::default().fg(Color::Green).bold()),
+        Span::raw(" "),
+        Span::styled(sent_time, Style::default().fg(DIM)),
     ])];
-    lines.extend(content.map(|line| {
+    lines.extend(content.into_iter().map(|line| {
         Line::from(vec![
-            Span::raw(format!("{} ", blank_display_width(max_author_width))),
+            message_avatar_span(),
             Span::styled(line.text, line.style),
         ])
     }));
@@ -417,11 +416,26 @@ fn message_item_lines(
 
 fn message_content_width(list: Rect) -> usize {
     let padding = 4usize;
-    let max_author_width = 14usize;
     (list.width as usize)
         .saturating_sub(padding)
-        .saturating_sub(max_author_width + 2)
+        .saturating_sub(MESSAGE_AVATAR_OFFSET as usize)
         .max(8)
+}
+
+fn message_avatar_span() -> Span<'static> {
+    Span::styled(
+        format!("{MESSAGE_AVATAR_PLACEHOLDER} "),
+        Style::default().fg(DIM),
+    )
+}
+
+fn format_message_sent_time(message_id: Id<MessageMarker>) -> String {
+    let unix_millis = (message_id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS;
+    let seconds_in_day = (unix_millis / 1_000) % 86_400;
+    let hour = seconds_in_day / 3_600;
+    let minute = (seconds_in_day % 3_600) / 60;
+
+    format!("{hour:02}:{minute:02}")
 }
 
 fn image_preview_spacer_lines(height: u16) -> Vec<Line<'static>> {
@@ -1001,12 +1015,12 @@ fn inline_image_preview_height(area: Rect, visible: bool) -> u16 {
 
 fn inline_image_preview_width(area: Rect) -> u16 {
     area.width
-        .saturating_sub(inline_image_author_offset(area))
+        .saturating_sub(inline_image_content_offset(area))
         .min(IMAGE_PREVIEW_WIDTH)
 }
 
-fn inline_image_author_offset(area: Rect) -> u16 {
-    15u16.min(area.width.saturating_sub(1))
+fn inline_image_content_offset(area: Rect) -> u16 {
+    MESSAGE_AVATAR_OFFSET.min(area.width.saturating_sub(1))
 }
 
 fn inline_image_preview_row(
@@ -1031,7 +1045,7 @@ fn inline_image_preview_area(list: Rect, row: isize, preview_height: u16) -> Opt
         return None;
     }
 
-    let author_offset = inline_image_author_offset(list);
+    let content_offset = inline_image_content_offset(list);
     let desired_top = list.y as isize + row + 1;
     let desired_bottom = desired_top.saturating_add(preview_height as isize);
     let list_top = list.y as isize;
@@ -1043,9 +1057,9 @@ fn inline_image_preview_area(list: Rect, row: isize, preview_height: u16) -> Opt
     }
 
     Some(Rect {
-        x: list.x.saturating_add(author_offset),
+        x: list.x.saturating_add(content_offset),
         y: u16::try_from(visible_top).ok()?,
-        width: list.width.saturating_sub(author_offset),
+        width: list.width.saturating_sub(content_offset),
         height: u16::try_from(visible_bottom - visible_top).ok()?,
     })
 }
@@ -1403,32 +1417,38 @@ mod tests {
     fn image_preview_rows_are_part_of_the_message_item() {
         let lines = message_item_lines(
             "neo".to_owned(),
+            "00:00".to_owned(),
             vec![MessageContentLine::plain("look".to_owned())],
             14,
             3,
             0,
         );
 
-        assert_eq!(lines.len(), 4);
+        assert_eq!(lines.len(), 5);
     }
 
     #[test]
-    fn text_only_message_item_has_one_row() {
+    fn text_only_message_item_has_header_and_content_rows() {
         let lines = message_item_lines(
             "neo".to_owned(),
+            "00:00".to_owned(),
             vec![MessageContentLine::plain("look".to_owned())],
             14,
             0,
             0,
         );
 
-        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec!["oo neo 00:00", "oo look"]
+        );
     }
 
     #[test]
     fn message_item_lines_can_start_after_line_offset() {
         let lines = message_item_lines(
             "neo".to_owned(),
+            "00:00".to_owned(),
             vec![
                 MessageContentLine::plain("first".to_owned()),
                 MessageContentLine::plain("second".to_owned()),
@@ -1436,19 +1456,20 @@ mod tests {
             ],
             14,
             0,
-            1,
+            2,
         );
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
-            vec!["               second", "               third"]
+            vec!["oo second", "oo third"]
         );
     }
 
     #[test]
-    fn message_author_padding_uses_display_width_for_korean() {
+    fn message_item_header_uses_display_width_for_korean_author() {
         let ascii = message_item_lines(
             "bruised8".to_owned(),
+            "00:00".to_owned(),
             vec![MessageContentLine::plain("난다".to_owned())],
             14,
             0,
@@ -1456,6 +1477,7 @@ mod tests {
         );
         let korean = message_item_lines(
             "장방이".to_owned(),
+            "00:00".to_owned(),
             vec![MessageContentLine::plain(
                 "그리고 그 티비 대가리도".to_owned(),
             )],
@@ -1464,8 +1486,8 @@ mod tests {
             0,
         );
 
-        assert_eq!(ascii[0].spans[0].content.width(), 15);
-        assert_eq!(korean[0].spans[0].content.width(), 15);
+        assert_eq!(line_texts_from_ratatui(&ascii)[0], "oo bruised8 00:00");
+        assert_eq!(line_texts_from_ratatui(&korean)[0], "oo 장방이 00:00");
     }
 
     #[test]
@@ -1488,15 +1510,18 @@ mod tests {
         let messages = [&selected, &tall_following];
 
         let visible_rows =
-            message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, 14, &[])
+            message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, &[])
                 .into_iter()
-                .take(3)
+                .take(4)
                 .collect::<Vec<_>>();
         let visible_text = line_texts_from_ratatui(&visible_rows);
 
-        assert!(visible_text[0].ends_with("selected"));
-        assert!(visible_text[1].ends_with("abcdefgh"));
-        assert!(visible_text[2].ends_with("ijklmnop"));
+        assert!(visible_text[0].starts_with("oo "));
+        assert!(visible_text[0].ends_with("00:00"));
+        assert!(visible_text[1].ends_with("selected"));
+        assert!(visible_text[2].starts_with("oo "));
+        assert!(visible_text[2].ends_with("00:00"));
+        assert!(visible_text[3].ends_with("abcdefgh"));
     }
 
     #[test]
@@ -1514,7 +1539,7 @@ mod tests {
 
         assert_eq!(
             inline_image_preview_area(area, 2, 4),
-            Some(Rect::new(25, 8, 65, 4))
+            Some(Rect::new(13, 8, 77, 4))
         );
     }
 
@@ -1529,10 +1554,10 @@ mod tests {
         let messages = messages.iter().collect::<Vec<_>>();
         let row = inline_image_preview_row(&messages, 2, 200, 0, 4);
 
-        assert_eq!(row, 9);
+        assert_eq!(row, 12);
         assert_eq!(
             inline_image_preview_area(area, row, 4),
-            Some(Rect::new(25, 15, 65, 4))
+            Some(Rect::new(13, 18, 77, 4))
         );
     }
 
@@ -1544,7 +1569,7 @@ mod tests {
         let message = message_with_forwarded_snapshot(snapshot);
         let messages = [&message];
 
-        assert_eq!(inline_image_preview_row(&messages, 0, 200, 0, 0), 3);
+        assert_eq!(inline_image_preview_row(&messages, 0, 200, 0, 0), 4);
     }
 
     #[test]
@@ -1553,7 +1578,7 @@ mod tests {
 
         assert_eq!(
             inline_image_preview_area(area, 3, 4),
-            Some(Rect::new(25, 9, 65, 2))
+            Some(Rect::new(13, 9, 77, 2))
         );
     }
 
@@ -1563,7 +1588,7 @@ mod tests {
 
         assert_eq!(
             inline_image_preview_area(area, -2, 4),
-            Some(Rect::new(25, 5, 65, 3))
+            Some(Rect::new(13, 5, 77, 3))
         );
     }
 
