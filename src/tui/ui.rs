@@ -425,7 +425,7 @@ fn message_item_lines(
     ])];
     lines.extend(content.into_iter().map(|line| {
         Line::from(vec![
-            message_avatar_span(),
+            message_avatar_spacer_span(),
             Span::styled(line.text, line.style),
         ])
     }));
@@ -466,6 +466,10 @@ fn message_avatar_span() -> Span<'static> {
         format!("{MESSAGE_AVATAR_PLACEHOLDER} "),
         Style::default().fg(DIM),
     )
+}
+
+fn message_avatar_spacer_span() -> Span<'static> {
+    Span::raw(" ".repeat(MESSAGE_AVATAR_OFFSET as usize))
 }
 
 fn format_message_sent_time(message_id: Id<MessageMarker>) -> String {
@@ -1479,7 +1483,7 @@ mod tests {
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
-            vec!["oo neo 00:00", "oo look"]
+            vec!["oo neo 00:00", "   look"]
         );
     }
 
@@ -1500,7 +1504,7 @@ mod tests {
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
-            vec!["oo second", "oo third"]
+            vec!["   second", "   third"]
         );
     }
 
