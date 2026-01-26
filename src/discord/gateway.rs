@@ -14,6 +14,7 @@ use twilight_model::{
 use super::{
     AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageKind, MessageSnapshotInfo,
     PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+    events::default_avatar_url,
     events::{AppEvent, AttachmentUpdate, map_event},
 };
 use crate::logging;
@@ -334,6 +335,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
     let author = data.get("author")?;
     let author_id = parse_id::<UserMarker>(author.get("id")?)?;
     let author_name = message_author_display_name(data, author);
+    let author_avatar_url = raw_user_avatar_url(author_id, author);
     let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
     let message_kind = data
         .get("type")
@@ -361,6 +363,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         message_id,
         author_id,
         author: author_name,
+        author_avatar_url,
         message_kind,
         reply,
         poll,
@@ -739,6 +742,30 @@ fn parse_member_info(value: &Value) -> Option<MemberInfo> {
         user_id,
         display_name,
         is_bot,
+        avatar_url: raw_user_avatar_url(user_id, user),
+    })
+}
+
+fn raw_user_avatar_url(user_id: Id<UserMarker>, user: &Value) -> Option<String> {
+    let avatar = user
+        .get("avatar")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty());
+    Some(match avatar {
+        Some(hash) => {
+            let extension = if hash.starts_with("a_") { "gif" } else { "png" };
+            format!("https://cdn.discordapp.com/avatars/{user_id}/{hash}.{extension}")
+        }
+        None => default_avatar_url(user_id, raw_discriminator(user).unwrap_or(0)),
+    })
+}
+
+fn raw_discriminator(user: &Value) -> Option<u16> {
+    user.get("discriminator").and_then(|value| {
+        value
+            .as_str()
+            .and_then(|value| value.parse::<u16>().ok())
+            .or_else(|| value.as_u64().and_then(|value| u16::try_from(value).ok()))
     })
 }
 
@@ -933,6 +960,33 @@ mod tests {
             panic!("expected message create event");
         };
         assert_eq!(author, "server alias");
+    }
+
+    #[test]
+    fn message_create_parser_builds_author_avatar_url() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": {
+                "id": "30",
+                "username": "neo",
+                "avatar": "a_avatarhash"
+            },
+            "content": "hello",
+            "attachments": []
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate {
+            author_avatar_url, ..
+        } = event
+        else {
+            panic!("expected message create event");
+        };
+        assert_eq!(
+            author_avatar_url.as_deref(),
+            Some("https://cdn.discordapp.com/avatars/30/a_avatarhash.gif")
+        );
     }
 
     #[test]

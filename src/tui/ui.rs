@@ -67,6 +67,12 @@ pub struct ImagePreview<'a> {
     pub state: ImagePreviewState<'a>,
 }
 
+pub struct AvatarImage {
+    pub row: isize,
+    pub visible_height: u16,
+    pub protocol: ratatui_image::protocol::Protocol,
+}
+
 #[derive(Clone, Copy)]
 pub struct ImagePreviewLayout {
     pub list_height: usize,
@@ -115,12 +121,17 @@ pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewL
     }
 }
 
-pub fn render(frame: &mut Frame, state: &DashboardState, image_previews: Vec<ImagePreview<'_>>) {
+pub fn render(
+    frame: &mut Frame,
+    state: &DashboardState,
+    image_previews: Vec<ImagePreview<'_>>,
+    avatar_images: Vec<AvatarImage>,
+) {
     let areas = dashboard_areas(frame.area());
 
     render_guilds(frame, areas.guilds, state);
     render_channels(frame, areas.channels, state);
-    render_messages(frame, areas.messages, state, image_previews);
+    render_messages(frame, areas.messages, state, image_previews, avatar_images);
     render_members(frame, areas.members, state);
     render_footer(frame, areas.footer, state);
     render_message_action_menu(frame, areas.messages, state);
@@ -276,6 +287,7 @@ fn render_messages(
     area: Rect,
     state: &DashboardState,
     image_previews: Vec<ImagePreview<'_>>,
+    avatar_images: Vec<AvatarImage>,
 ) {
     let title_text = state
         .selected_channel_state()
@@ -298,6 +310,13 @@ fn render_messages(
     let lines = message_viewport_lines(&messages, selected, state, content_width, &image_previews);
 
     frame.render_widget(Paragraph::new(lines), message_areas.list);
+    for avatar in avatar_images {
+        if let Some(area) =
+            message_avatar_area(message_areas.list, avatar.row, avatar.visible_height)
+        {
+            frame.render_widget(RatatuiImage::new(&avatar.protocol), area);
+        }
+    }
     let mut previous_preview_rows = 0usize;
     for image_preview in image_previews.into_iter() {
         let row = inline_image_preview_row(
@@ -420,6 +439,26 @@ fn message_content_width(list: Rect) -> usize {
         .saturating_sub(padding)
         .saturating_sub(MESSAGE_AVATAR_OFFSET as usize)
         .max(8)
+}
+
+fn message_avatar_area(list: Rect, row: isize, visible_height: u16) -> Option<Rect> {
+    if visible_height == 0 {
+        return None;
+    }
+
+    let top = list.y as isize + row.max(0);
+    let bottom = top.saturating_add(visible_height as isize);
+    let list_bottom = list.y.saturating_add(list.height) as isize;
+    if top >= list_bottom || bottom <= list.y as isize {
+        return None;
+    }
+
+    Some(Rect {
+        x: list.x,
+        y: u16::try_from(top).ok()?,
+        width: MESSAGE_AVATAR_PLACEHOLDER.width() as u16,
+        height: visible_height,
+    })
 }
 
 fn message_avatar_span() -> Span<'static> {
@@ -1616,6 +1655,7 @@ mod tests {
             channel_id: Id::new(2),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1632,6 +1672,7 @@ mod tests {
             channel_id: Id::new(2),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,

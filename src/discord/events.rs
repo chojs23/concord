@@ -52,6 +52,7 @@ pub struct MemberInfo {
     pub user_id: Id<UserMarker>,
     pub display_name: String,
     pub is_bot: bool,
+    pub avatar_url: Option<String>,
 }
 
 /// One entry from the user's `guild_folders` setting. A folder with `id ==
@@ -188,6 +189,7 @@ pub struct MessageInfo {
     pub message_id: Id<MessageMarker>,
     pub author_id: Id<UserMarker>,
     pub author: String,
+    pub author_avatar_url: Option<String>,
     pub message_kind: MessageKind,
     pub reply: Option<ReplyInfo>,
     pub poll: Option<PollInfo>,
@@ -232,6 +234,7 @@ pub enum AppEvent {
         message_id: Id<MessageMarker>,
         author_id: Id<UserMarker>,
         author: String,
+        author_avatar_url: Option<String>,
         message_kind: MessageKind,
         reply: Option<ReplyInfo>,
         poll: Option<PollInfo>,
@@ -303,6 +306,7 @@ impl AppEvent {
             message_id: message.message_id,
             author_id: message.author_id,
             author: message.author,
+            author_avatar_url: message.author_avatar_url,
             message_kind: message.message_kind,
             reply: message.reply,
             poll: message.poll,
@@ -454,6 +458,7 @@ impl MessageInfo {
             message_id: message.id,
             author_id: message.author.id,
             author: message_display_name(&message),
+            author_avatar_url: Some(user_avatar_url(&message.author)),
             message_kind: MessageKind::new(message.kind.into()),
             reply,
             poll,
@@ -506,6 +511,7 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
                 message_id: message.id,
                 author_id: message.author.id,
                 author: message_display_name(&message),
+                author_avatar_url: Some(user_avatar_url(&message.author)),
                 message_kind: MessageKind::new(message.kind.into()),
                 reply,
                 poll,
@@ -604,6 +610,7 @@ fn member_info(member: &TwilightMember) -> MemberInfo {
         user_id: member.user.id,
         display_name: display_name(member.nick.as_deref(), &member.user),
         is_bot: member.user.bot,
+        avatar_url: Some(user_avatar_url(&member.user)),
     }
 }
 
@@ -621,6 +628,7 @@ fn member_upsert_from_update(update: &MemberUpdate) -> AppEvent {
             user_id: update.user.id,
             display_name: display_name(update.nick.as_deref(), &update.user),
             is_bot: update.user.bot,
+            avatar_url: Some(user_avatar_url(&update.user)),
         },
     }
 }
@@ -657,6 +665,29 @@ fn display_name(nick: Option<&str>, user: &TwilightUser) -> String {
         return global.to_owned();
     }
     user.name.clone()
+}
+
+fn user_avatar_url(user: &TwilightUser) -> String {
+    match user.avatar.as_ref() {
+        Some(hash) => {
+            let extension = if hash.is_animated() { "gif" } else { "png" };
+            format!(
+                "https://cdn.discordapp.com/avatars/{}/{}.{}",
+                user.id, hash, extension
+            )
+        }
+        None => default_avatar_url(user.id, user.discriminator),
+    }
+}
+
+pub(crate) fn default_avatar_url(user_id: Id<UserMarker>, discriminator: u16) -> String {
+    let index = if discriminator == 0 {
+        (user_id.get() >> 22) % 6
+    } else {
+        u64::from(discriminator % 5)
+    };
+
+    format!("https://cdn.discordapp.com/embed/avatars/{index}.png")
 }
 
 fn message_display_name(message: &Message) -> String {

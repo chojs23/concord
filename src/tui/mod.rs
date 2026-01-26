@@ -31,9 +31,11 @@ use crate::{
 };
 
 use state::{DashboardState, message_base_line_count_for_width};
-use ui::{ImagePreview, ImagePreviewLayout, ImagePreviewState};
+use ui::{AvatarImage, ImagePreview, ImagePreviewLayout, ImagePreviewState};
 
 const IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
+const AVATAR_PREVIEW_WIDTH: u16 = 2;
+const AVATAR_PREVIEW_HEIGHT: u16 = 2;
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
@@ -87,10 +89,12 @@ async fn run_dashboard(
 ) -> Result<()> {
     let mut state = DashboardState::new();
     let mut image_previews = ImagePreviewCache::new();
+    let mut avatar_images = AvatarImageCache::new();
     let mut terminal_events = EventStream::new();
     let mut history_requests = HashMap::new();
     let mut last_history_channel = None;
     let mut image_targets = Vec::new();
+    let mut avatar_targets = Vec::new();
     let mut dirty = true;
 
     while !state.should_quit() {
@@ -104,12 +108,25 @@ async fn run_dashboard(
                     preview_layout.max_preview_height,
                 );
                 image_targets = visible_image_preview_targets(&state, preview_layout);
+                avatar_targets = visible_avatar_targets(&state, preview_layout);
                 let image_previews = image_previews.render_state(&image_targets);
-                ui::render(frame, &state, image_previews);
+                let rendered_avatars = avatar_images.render_state(&avatar_targets);
+                ui::render(frame, &state, image_previews, rendered_avatars);
             })?;
             dirty = false;
 
             for command in image_previews.next_requests(&image_targets) {
+                if commands.send(command).await.is_err() {
+                    logging::error("tui", "command channel closed");
+                    state.push_event(AppEvent::GatewayError {
+                        message: "command channel closed".to_owned(),
+                    });
+                    dirty = true;
+                    break;
+                }
+                dirty = true;
+            }
+            for command in avatar_images.next_requests(&avatar_targets) {
                 if commands.send(command).await.is_err() {
                     logging::error("tui", "command channel closed");
                     state.push_event(AppEvent::GatewayError {
@@ -151,6 +168,7 @@ async fn run_dashboard(
                 match event {
                     Ok(event) => {
                         image_previews.record_event(&event);
+                        avatar_images.record_event(&event);
                         record_history_event(&event, &mut history_requests);
                         state.push_event(event);
                         dirty = true;
@@ -203,6 +221,14 @@ struct ImagePreviewTarget {
     filename: String,
 }
 
+#[derive(Clone)]
+struct AvatarTarget {
+    row: isize,
+    visible_height: u16,
+    top_clip_rows: u16,
+    url: String,
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct ImagePreviewKey {
     message_id: Id<MessageMarker>,
@@ -227,6 +253,17 @@ enum ImagePreviewEntry {
         filename: String,
         message: String,
     },
+}
+
+struct AvatarImageCache {
+    picker: Option<Picker>,
+    entries: HashMap<String, AvatarImageEntry>,
+}
+
+enum AvatarImageEntry {
+    Loading,
+    Ready { image: DynamicImage },
+    Failed,
 }
 
 impl ImagePreviewCache {
@@ -418,6 +455,110 @@ impl ImagePreviewCache {
     }
 }
 
+impl AvatarImageCache {
+    fn new() -> Self {
+        let picker = match Picker::from_query_stdio() {
+            Ok(picker) => Some(picker),
+            Err(error) => {
+                logging::error(
+                    "avatar",
+                    format!("avatar image picker unavailable: {error}"),
+                );
+                None
+            }
+        };
+
+        Self {
+            picker,
+            entries: HashMap::new(),
+        }
+    }
+
+    fn render_state(&self, targets: &[AvatarTarget]) -> Vec<AvatarImage> {
+        let Some(picker) = self.picker.as_ref() else {
+            return Vec::new();
+        };
+
+        targets
+            .iter()
+            .filter_map(|target| {
+                let AvatarImageEntry::Ready { image } = self.entries.get(&target.url)? else {
+                    return None;
+                };
+                let render_info = ImagePreviewRenderInfo {
+                    message_index: 0,
+                    preview_width: AVATAR_PREVIEW_WIDTH,
+                    preview_height: AVATAR_PREVIEW_HEIGHT,
+                    visible_preview_height: target.visible_height,
+                    top_clip_rows: target.top_clip_rows,
+                };
+                clipped_preview_protocol(picker, image, render_info).map(|protocol| AvatarImage {
+                    row: target.row,
+                    visible_height: target.visible_height,
+                    protocol,
+                })
+            })
+            .collect()
+    }
+
+    fn next_requests(&mut self, targets: &[AvatarTarget]) -> Vec<AppCommand> {
+        let mut commands = Vec::new();
+        let mut requested_urls = HashSet::new();
+        for target in targets {
+            if self.entries.contains_key(&target.url) {
+                continue;
+            }
+
+            self.entries
+                .insert(target.url.clone(), AvatarImageEntry::Loading);
+            if requested_urls.insert(target.url.clone()) {
+                commands.push(AppCommand::LoadAttachmentPreview {
+                    url: target.url.clone(),
+                });
+            }
+        }
+        commands
+    }
+
+    fn record_event(&mut self, event: &AppEvent) {
+        match event {
+            AppEvent::AttachmentPreviewLoaded { url, bytes } => self.store_loaded(url, bytes),
+            AppEvent::AttachmentPreviewLoadFailed { url, .. } => self.store_failed(url),
+            _ => {}
+        }
+    }
+
+    fn store_loaded(&mut self, url: &str, bytes: &[u8]) {
+        if !self.entries.contains_key(url) {
+            return;
+        }
+
+        if self.picker.is_none() {
+            self.entries
+                .insert(url.to_owned(), AvatarImageEntry::Failed);
+            return;
+        }
+
+        match image::load_from_memory(bytes) {
+            Ok(image) => {
+                self.entries
+                    .insert(url.to_owned(), AvatarImageEntry::Ready { image });
+            }
+            Err(_) => {
+                self.entries
+                    .insert(url.to_owned(), AvatarImageEntry::Failed);
+            }
+        }
+    }
+
+    fn store_failed(&mut self, url: &str) {
+        if self.entries.contains_key(url) {
+            self.entries
+                .insert(url.to_owned(), AvatarImageEntry::Failed);
+        }
+    }
+}
+
 impl ImagePreviewTarget {
     fn key(&self) -> ImagePreviewKey {
         ImagePreviewKey {
@@ -560,6 +701,54 @@ fn visible_image_preview_targets(
             });
         }
 
+        rendered_rows = rendered_rows.saturating_add(
+            base_rows
+                .saturating_add(preview_height as usize)
+                .saturating_sub(line_offset),
+        );
+    }
+
+    targets
+}
+
+fn visible_avatar_targets(state: &DashboardState, layout: ImagePreviewLayout) -> Vec<AvatarTarget> {
+    let mut rendered_rows = 0usize;
+    let mut targets = Vec::new();
+
+    for message in state.visible_messages() {
+        if rendered_rows >= layout.list_height {
+            break;
+        }
+
+        let line_offset = usize::from(rendered_rows == 0) * state.message_line_scroll();
+        let base_rows = message_base_line_count_for_width(message, layout.content_width);
+        let message_top = rendered_rows as isize - line_offset as isize;
+        let avatar_bottom = message_top.saturating_add(AVATAR_PREVIEW_HEIGHT as isize);
+        let visible_top = message_top.max(0);
+        let visible_bottom = avatar_bottom.min(layout.list_height as isize);
+        if let Some(url) = message.author_avatar_url.as_ref()
+            && visible_top < visible_bottom
+        {
+            targets.push(AvatarTarget {
+                row: visible_top,
+                visible_height: u16::try_from(visible_bottom - visible_top).unwrap_or(u16::MAX),
+                top_clip_rows: u16::try_from(visible_top - message_top).unwrap_or(u16::MAX),
+                url: url.clone(),
+            });
+        }
+
+        let preview_height = message
+            .attachments_in_display_order()
+            .find_map(|attachment| attachment.inline_preview_url().map(|_| attachment))
+            .map(|attachment| {
+                image_preview_height_for_dimensions(
+                    layout.preview_width,
+                    layout.max_preview_height,
+                    attachment.width,
+                    attachment.height,
+                )
+            })
+            .unwrap_or(0);
         rendered_rows = rendered_rows.saturating_add(
             base_rows
                 .saturating_add(preview_height as usize)
@@ -771,6 +960,51 @@ mod tests {
     }
 
     #[test]
+    fn avatar_targets_include_visible_author_avatar() {
+        let state = state_with_avatar_messages(1);
+
+        let targets = visible_avatar_targets(
+            &state,
+            ImagePreviewLayout {
+                list_height: 2,
+                content_width: 200,
+                preview_width: 16,
+                max_preview_height: 3,
+            },
+        );
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].row, 0);
+        assert_eq!(targets[0].visible_height, 2);
+        assert_eq!(targets[0].top_clip_rows, 0);
+        assert_eq!(targets[0].url, "https://cdn.discordapp.com/avatar-1.png");
+    }
+
+    #[test]
+    fn avatar_targets_clip_first_message_avatar_after_line_scroll() {
+        let mut state = state_with_avatar_messages(1);
+        focus_messages(&mut state);
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
+        state.scroll_message_viewport_down();
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
+
+        let targets = visible_avatar_targets(
+            &state,
+            ImagePreviewLayout {
+                list_height: 1,
+                content_width: 200,
+                preview_width: 16,
+                max_preview_height: 3,
+            },
+        );
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].row, 0);
+        assert_eq!(targets[0].visible_height, 1);
+        assert_eq!(targets[0].top_clip_rows, 1);
+    }
+
+    #[test]
     fn image_preview_targets_include_top_clipped_preview_rows() {
         let mut state = state_with_image_messages(1, &[1]);
         focus_messages(&mut state);
@@ -849,6 +1083,7 @@ mod tests {
             message_id: Id::new(2),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -879,6 +1114,7 @@ mod tests {
             message_id: Id::new(2),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1058,6 +1294,7 @@ mod tests {
                 message_id: Id::new(id),
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
+                author_avatar_url: None,
                 message_kind: crate::discord::MessageKind::regular(),
                 reply: None,
                 poll: None,
@@ -1067,6 +1304,49 @@ mod tests {
                     .then(|| image_attachment(id))
                     .into_iter()
                     .collect(),
+                forwarded_snapshots: Vec::new(),
+            });
+        }
+
+        state
+    }
+
+    fn state_with_avatar_messages(count: u64) -> DashboardState {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+
+        for id in 1..=count {
+            state.push_event(AppEvent::MessageCreate {
+                guild_id: Some(guild_id),
+                channel_id,
+                message_id: Id::new(id),
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                author_avatar_url: Some(format!("https://cdn.discordapp.com/avatar-{id}.png")),
+                message_kind: crate::discord::MessageKind::regular(),
+                reply: None,
+                poll: None,
+                content: Some(format!("msg {id}")),
+                attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),
             });
         }

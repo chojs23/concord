@@ -42,6 +42,7 @@ pub struct MessageState {
     pub channel_id: Id<ChannelMarker>,
     pub author_id: Id<UserMarker>,
     pub author: String,
+    pub author_avatar_url: Option<String>,
     pub message_kind: MessageKind,
     pub reply: Option<ReplyInfo>,
     pub poll: Option<PollInfo>,
@@ -103,6 +104,7 @@ pub struct GuildMemberState {
     pub user_id: Id<UserMarker>,
     pub display_name: String,
     pub is_bot: bool,
+    pub avatar_url: Option<String>,
     pub status: PresenceStatus,
 }
 
@@ -191,6 +193,7 @@ impl DiscordState {
                 message_id,
                 author_id,
                 author,
+                author_avatar_url,
                 message_kind,
                 reply,
                 poll,
@@ -204,6 +207,11 @@ impl DiscordState {
                 channel_id: *channel_id,
                 author_id: *author_id,
                 author: self.message_author_display_name(*guild_id, *author_id, author),
+                author_avatar_url: self.message_author_avatar_url(
+                    *guild_id,
+                    *author_id,
+                    author_avatar_url,
+                ),
                 message_kind: *message_kind,
                 reply: reply.clone(),
                 poll: poll.clone(),
@@ -263,6 +271,7 @@ impl DiscordState {
                             user_id: *user_id,
                             display_name: format!("user-{}", user_id.get()),
                             is_bot: false,
+                            avatar_url: None,
                             status: *status,
                         },
                     );
@@ -326,6 +335,19 @@ impl DiscordState {
             .unwrap_or_else(|| fallback.to_owned())
     }
 
+    fn message_author_avatar_url(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        author_id: Id<UserMarker>,
+        fallback: &Option<String>,
+    ) -> Option<String> {
+        guild_id
+            .and_then(|guild_id| self.members.get(&guild_id))
+            .and_then(|members| members.get(&author_id))
+            .and_then(|member| member.avatar_url.clone())
+            .or_else(|| fallback.clone())
+    }
+
     fn refresh_message_author_display_name(
         &mut self,
         guild_id: Id<GuildMarker>,
@@ -335,6 +357,9 @@ impl DiscordState {
             for message in messages.iter_mut() {
                 if message.guild_id == Some(guild_id) && message.author_id == member.user_id {
                     message.author = member.display_name.clone();
+                    if member.avatar_url.is_some() || message.author_avatar_url.is_none() {
+                        message.author_avatar_url = member.avatar_url.clone();
+                    }
                 }
             }
         }
@@ -370,6 +395,9 @@ impl DiscordState {
             existing.channel_id = message.channel_id;
             existing.author_id = message.author_id;
             existing.author = message.author;
+            if message.author_avatar_url.is_some() || existing.author_avatar_url.is_none() {
+                existing.author_avatar_url = message.author_avatar_url;
+            }
             existing.message_kind = message.message_kind;
             if message.reply.is_some() || existing.reply.is_none() {
                 existing.reply = message.reply;
@@ -414,6 +442,11 @@ impl DiscordState {
                     message.guild_id,
                     message.author_id,
                     &message.author,
+                ),
+                author_avatar_url: self.message_author_avatar_url(
+                    message.guild_id,
+                    message.author_id,
+                    &message.author_avatar_url,
                 ),
                 message_kind: message.message_kind,
                 reply: message.reply.clone(),
@@ -493,6 +526,9 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
     existing.channel_id = incoming.channel_id;
     existing.author_id = incoming.author_id;
     existing.author = incoming.author.clone();
+    if incoming.author_avatar_url.is_some() || existing.author_avatar_url.is_none() {
+        existing.author_avatar_url = incoming.author_avatar_url.clone();
+    }
     existing.message_kind = incoming.message_kind;
     if incoming.reply.is_some() || existing.reply.is_none() {
         existing.reply = incoming.reply.clone();
@@ -531,6 +567,7 @@ fn upsert_member(
             user_id: member.user_id,
             display_name: member.display_name.clone(),
             is_bot: member.is_bot,
+            avatar_url: member.avatar_url.clone(),
             status,
         },
     );
@@ -575,6 +612,7 @@ mod tests {
             message_id,
             author_id,
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -611,6 +649,7 @@ mod tests {
                 user_id: author_id,
                 display_name: "server alias".to_owned(),
                 is_bot: false,
+                avatar_url: None,
             }],
             presences: Vec::new(),
         });
@@ -620,6 +659,7 @@ mod tests {
             message_id: Id::new(3),
             author_id,
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -645,6 +685,7 @@ mod tests {
             message_id: Id::new(3),
             author_id,
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -658,6 +699,7 @@ mod tests {
                 user_id: author_id,
                 display_name: "server alias".to_owned(),
                 is_bot: false,
+                avatar_url: None,
             },
         });
 
@@ -700,6 +742,7 @@ mod tests {
                 message_id: Id::new(id),
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
+                author_avatar_url: None,
                 message_kind: crate::discord::MessageKind::regular(),
                 reply: None,
                 poll: None,
@@ -725,6 +768,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: MessageKind::new(19),
             reply: None,
             poll: None,
@@ -750,6 +794,7 @@ mod tests {
             message_id,
             author_id,
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: MessageKind::regular(),
             reply: None,
             poll: None,
@@ -763,6 +808,7 @@ mod tests {
             message_id,
             author_id,
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: MessageKind::new(19),
             reply: None,
             poll: None,
@@ -788,6 +834,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: MessageKind::new(19),
             reply: Some(ReplyInfo {
                 author: "Alex".to_owned(),
@@ -829,6 +876,7 @@ mod tests {
             message_id,
             author_id,
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: MessageKind::new(19),
             reply: Some(ReplyInfo {
                 author: "Alex".to_owned(),
@@ -845,6 +893,7 @@ mod tests {
             message_id,
             author_id,
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: MessageKind::new(19),
             reply: None,
             poll: None,
@@ -875,6 +924,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: MessageKind::regular(),
             reply: None,
             poll: Some(poll_info()),
@@ -903,6 +953,7 @@ mod tests {
             message_id,
             author_id,
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: MessageKind::regular(),
             reply: None,
             poll: Some(poll_info()),
@@ -916,6 +967,7 @@ mod tests {
             message_id,
             author_id,
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: MessageKind::regular(),
             reply: None,
             poll: None,
@@ -945,6 +997,7 @@ mod tests {
             message_id,
             author_id,
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: MessageKind::regular(),
             reply: None,
             poll: Some(poll_info()),
@@ -1028,6 +1081,7 @@ mod tests {
             message_id,
             author_id,
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1041,6 +1095,7 @@ mod tests {
             message_id,
             author_id,
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1073,6 +1128,7 @@ mod tests {
             message_id: Id::new(30),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1110,6 +1166,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1142,6 +1199,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1176,6 +1234,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1204,6 +1263,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1235,6 +1295,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1267,6 +1328,7 @@ mod tests {
             message_id: Id::new(20),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1367,6 +1429,7 @@ mod tests {
             message_id: Id::new(13),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1405,6 +1468,7 @@ mod tests {
             message_id: Id::new(30),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1418,6 +1482,7 @@ mod tests {
             message_id: Id::new(10),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1519,11 +1584,13 @@ mod tests {
                     user_id: alice,
                     display_name: "alice".to_owned(),
                     is_bot: false,
+                    avatar_url: None,
                 },
                 MemberInfo {
                     user_id: bob,
                     display_name: "bob".to_owned(),
                     is_bot: false,
+                    avatar_url: None,
                 },
             ],
             presences: vec![(alice, PresenceStatus::Online)],
@@ -1564,6 +1631,7 @@ mod tests {
                 user_id: user,
                 display_name: "alice".to_owned(),
                 is_bot: false,
+                avatar_url: None,
             },
         });
         state.apply_event(&AppEvent::PresenceUpdate {
@@ -1577,6 +1645,7 @@ mod tests {
                 user_id: user,
                 display_name: "alice-renamed".to_owned(),
                 is_bot: false,
+                avatar_url: None,
             },
         });
 
@@ -1596,6 +1665,7 @@ mod tests {
             message_id: Id::new(message_id),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: MessageKind::regular(),
             reply: None,
             poll: None,
@@ -1612,6 +1682,7 @@ mod tests {
             channel_id: Id::new(2),
             author_id: Id::new(99),
             author: "neo".to_owned(),
+            author_avatar_url: None,
             message_kind: MessageKind::regular(),
             reply: None,
             poll: None,
