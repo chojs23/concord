@@ -1016,10 +1016,7 @@ fn channel_prefix(kind: &str) -> &'static str {
 }
 
 fn highlight_style() -> Style {
-    Style::default()
-        .bg(Color::Rgb(24, 54, 65))
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD)
+    Style::default().bg(Color::Rgb(24, 54, 65)).fg(Color::White)
 }
 
 fn panel_block(title: &'static str, focused: bool) -> Block<'static> {
