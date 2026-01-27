@@ -391,11 +391,7 @@ fn message_viewport_lines(
             line_offset,
         );
         if selected == Some(index) {
-            lines.extend(
-                item_lines
-                    .into_iter()
-                    .map(|line| line.patch_style(highlight_style())),
-            );
+            lines.extend(item_lines.into_iter().map(highlight_message_line));
         } else {
             lines.extend(item_lines);
         }
@@ -470,6 +466,13 @@ fn message_avatar_span() -> Span<'static> {
 
 fn message_avatar_spacer_span() -> Span<'static> {
     Span::raw(" ".repeat(MESSAGE_AVATAR_OFFSET as usize))
+}
+
+fn highlight_message_line(mut line: Line<'static>) -> Line<'static> {
+    for span in line.spans.iter_mut().skip(1) {
+        span.style = span.style.patch(highlight_style());
+    }
+    line
 }
 
 fn format_message_sent_time(message_id: Id<MessageMarker>) -> String {
@@ -1130,9 +1133,9 @@ mod tests {
 
     use super::{
         ACCENT, DIM, MessageContentLine, composer_prompt_line_count, format_message_content,
-        format_message_content_lines, inline_image_preview_area, inline_image_preview_row,
-        message_action_menu_lines, message_item_lines, message_viewport_lines, sync_view_heights,
-        wrap_text_lines,
+        format_message_content_lines, highlight_style, inline_image_preview_area,
+        inline_image_preview_row, message_action_menu_lines, message_item_lines,
+        message_viewport_lines, sync_view_heights, wrap_text_lines,
     };
     use crate::{
         discord::{
@@ -1565,6 +1568,24 @@ mod tests {
         assert!(visible_text[2].starts_with("oo "));
         assert!(visible_text[2].ends_with("00:00"));
         assert!(visible_text[3].ends_with("abcdefgh"));
+    }
+
+    #[test]
+    fn selected_message_highlight_skips_avatar_column() {
+        let mut message =
+            message_with_attachment(Some("abcdefghijkl".to_owned()), image_attachment());
+        message.attachments.clear();
+        let messages = [&message];
+
+        let lines = message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, &[]);
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec!["oo . 00:00", "   abcdefgh", "   ijkl"]
+        );
+        assert_eq!(lines[0].spans[0].style.bg, None);
+        assert_eq!(lines[1].spans[0].style.bg, None);
+        assert_eq!(lines[1].spans[1].style.bg, highlight_style().bg);
     }
 
     #[test]
