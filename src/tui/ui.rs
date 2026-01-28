@@ -1,3 +1,4 @@
+use chrono::{DateTime, Local};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Rect},
@@ -477,11 +478,20 @@ fn highlight_message_line(mut line: Line<'static>) -> Line<'static> {
 
 fn format_message_sent_time(message_id: Id<MessageMarker>) -> String {
     let unix_millis = (message_id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS;
-    let seconds_in_day = (unix_millis / 1_000) % 86_400;
-    let hour = seconds_in_day / 3_600;
-    let minute = (seconds_in_day % 3_600) / 60;
+    format_unix_millis_local_time(unix_millis).unwrap_or_else(|| "--:--".to_owned())
+}
 
-    format!("{hour:02}:{minute:02}")
+fn format_unix_millis_local_time(unix_millis: u64) -> Option<String> {
+    let unix_millis = i64::try_from(unix_millis).ok()?;
+    let utc = DateTime::from_timestamp_millis(unix_millis)?;
+    Some(utc.with_timezone(&Local).format("%H:%M").to_string())
+}
+
+#[cfg(test)]
+fn format_unix_millis_with_offset(unix_millis: u64, offset: chrono::FixedOffset) -> Option<String> {
+    let unix_millis = i64::try_from(unix_millis).ok()?;
+    let utc = DateTime::from_timestamp_millis(unix_millis)?;
+    Some(utc.with_timezone(&offset).format("%H:%M").to_string())
 }
 
 fn image_preview_spacer_lines(height: u16) -> Vec<Line<'static>> {
@@ -1132,8 +1142,9 @@ mod tests {
     use unicode_width::UnicodeWidthStr;
 
     use super::{
-        ACCENT, DIM, MessageContentLine, composer_prompt_line_count, format_message_content,
-        format_message_content_lines, highlight_style, inline_image_preview_area,
+        ACCENT, DIM, DISCORD_EPOCH_MILLIS, MessageContentLine, composer_prompt_line_count,
+        format_message_content, format_message_content_lines, format_message_sent_time,
+        format_unix_millis_with_offset, highlight_style, inline_image_preview_area,
         inline_image_preview_row, message_action_menu_lines, message_item_lines,
         message_viewport_lines, sync_view_heights, wrap_text_lines,
     };
@@ -1545,6 +1556,16 @@ mod tests {
     }
 
     #[test]
+    fn message_sent_time_formats_with_timezone_offset() {
+        let kst = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("KST offset should be valid");
+
+        assert_eq!(
+            format_unix_millis_with_offset(DISCORD_EPOCH_MILLIS, kst),
+            Some("09:00".to_owned())
+        );
+    }
+
+    #[test]
     fn message_viewport_lines_keep_rows_from_tall_following_message() {
         let mut selected = message_with_attachment(Some("selected".to_owned()), image_attachment());
         selected.attachments.clear();
@@ -1561,12 +1582,13 @@ mod tests {
                 .take(4)
                 .collect::<Vec<_>>();
         let visible_text = line_texts_from_ratatui(&visible_rows);
+        let sent_time = format_message_sent_time(Id::new(1));
 
         assert!(visible_text[0].starts_with("oo "));
-        assert!(visible_text[0].ends_with("00:00"));
+        assert!(visible_text[0].ends_with(&sent_time));
         assert!(visible_text[1].ends_with("selected"));
         assert!(visible_text[2].starts_with("oo "));
-        assert!(visible_text[2].ends_with("00:00"));
+        assert!(visible_text[2].ends_with(&sent_time));
         assert!(visible_text[3].ends_with("abcdefgh"));
     }
 
@@ -1578,10 +1600,15 @@ mod tests {
         let messages = [&message];
 
         let lines = message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, &[]);
+        let sent_time = format_message_sent_time(Id::new(1));
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
-            vec!["oo . 00:00", "   abcdefgh", "   ijkl"]
+            vec![
+                format!("oo . {sent_time}"),
+                "   abcdefgh".to_owned(),
+                "   ijkl".to_owned(),
+            ]
         );
         assert_eq!(lines[0].spans[0].style.bg, None);
         assert_eq!(lines[1].spans[0].style.bg, None);
