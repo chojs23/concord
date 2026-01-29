@@ -7,7 +7,10 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 use ratatui_image::{Image as RatatuiImage, Resize, StatefulImage, protocol::StatefulProtocol};
-use twilight_model::id::{Id, marker::MessageMarker};
+use twilight_model::id::{
+    Id,
+    marker::{GuildMarker, MessageMarker},
+};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -15,8 +18,7 @@ use super::{
     format::{truncate_display_width, truncate_text},
     state::{
         ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MemberGroup,
-        MessageActionItem, folder_color, message_base_line_count_for_width, presence_color,
-        presence_marker,
+        MessageActionItem, folder_color, presence_color, presence_marker,
     },
 };
 use crate::discord::{
@@ -322,6 +324,7 @@ fn render_messages(
     for image_preview in image_previews.into_iter() {
         let row = inline_image_preview_row(
             &messages,
+            state,
             image_preview.message_index,
             content_width,
             state.message_line_scroll(),
@@ -519,7 +522,7 @@ fn format_message_content_lines(
     if let Some(line) = message
         .reply
         .as_ref()
-        .map(|reply| format_reply_line(reply, width))
+        .map(|reply| format_reply_line(reply, message.guild_id, state, width))
     {
         lines.push(line);
     } else if let Some(poll) = message.poll.as_ref() {
@@ -530,7 +533,7 @@ fn format_message_content_lines(
 
     if let Some(value) = message.content.as_deref().filter(|value| !value.is_empty()) {
         lines.extend(
-            wrap_text_lines(value, width)
+            wrap_text_lines(&state.render_user_mentions(message.guild_id, value), width)
                 .into_iter()
                 .map(MessageContentLine::plain),
         );
@@ -650,14 +653,20 @@ fn format_poll_footer(poll: &PollInfo, total_votes: u64) -> String {
     }
 }
 
-fn format_reply_line(reply: &ReplyInfo, width: usize) -> MessageContentLine {
+fn format_reply_line(
+    reply: &ReplyInfo,
+    guild_id: Option<Id<GuildMarker>>,
+    state: &DashboardState,
+    width: usize,
+) -> MessageContentLine {
     let content = reply
         .content
         .as_deref()
         .filter(|value| !value.is_empty())
         .unwrap_or("<empty message>");
+    let content = state.render_user_mentions(guild_id, content);
     MessageContentLine::dim(truncate_text(
-        &format!("╭─ {} : {content}", reply.author),
+        &format!("╭─ {} : {}", reply.author, content),
         width,
     ))
 }
@@ -689,8 +698,10 @@ fn format_forwarded_snapshot(
         .filter(|value| !value.is_empty())
     {
         let content_width = width.saturating_sub(2).max(1);
+        let content = state
+            .render_user_mentions(state.forwarded_snapshot_mention_guild_id(snapshot), content);
         lines.extend(
-            wrap_text_lines(content, content_width)
+            wrap_text_lines(&content, content_width)
                 .into_iter()
                 .map(|line| MessageContentLine::plain(format!("│ {line}"))),
         );
@@ -1081,6 +1092,7 @@ fn inline_image_content_offset(area: Rect) -> u16 {
 
 fn inline_image_preview_row(
     messages: &[&MessageState],
+    state: &DashboardState,
     message_index: usize,
     content_width: usize,
     line_offset: usize,
@@ -1089,7 +1101,7 @@ fn inline_image_preview_row(
     let row = messages
         .iter()
         .take(message_index.saturating_add(1))
-        .map(|message| message_base_line_count_for_width(message, content_width))
+        .map(|message| state.message_base_line_count_for_width(message, content_width))
         .sum::<usize>()
         .saturating_add(previous_preview_rows)
         .saturating_sub(1);
@@ -1150,8 +1162,8 @@ mod tests {
     };
     use crate::{
         discord::{
-            AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState, PollAnswerInfo,
-            PollInfo, ReplyInfo,
+            AppEvent, AttachmentInfo, ChannelInfo, MemberInfo, MessageKind, MessageSnapshotInfo,
+            MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
         },
         tui::{
             format::truncate_display_width,
@@ -1252,6 +1264,29 @@ mod tests {
     }
 
     #[test]
+    fn message_content_renders_known_user_mentions() {
+        let mut message =
+            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
+        message.attachments.clear();
+        let state = state_with_member(10, "alice");
+
+        let lines = format_message_content_lines(&message, &state, 200);
+
+        assert_eq!(line_texts(&lines), vec!["hello @alice"]);
+    }
+
+    #[test]
+    fn message_content_keeps_unknown_user_mentions_raw() {
+        let mut message =
+            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
+        message.attachments.clear();
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(line_texts(&lines), vec!["hello <@10>"]);
+    }
+
+    #[test]
     fn message_content_does_not_split_grapheme_clusters() {
         let lines = wrap_text_lines("👨‍👩‍👧‍👦", 7);
 
@@ -1310,6 +1345,22 @@ mod tests {
             vec!["╭─ 딱구형 : 잘되는군", "asdf", "[image: cat.png] 640x480"]
         );
         assert_eq!(lines[0].style, Style::default().fg(DIM));
+    }
+
+    #[test]
+    fn reply_preview_renders_known_user_mentions() {
+        let mut message = message_with_attachment(Some("asdf".to_owned()), image_attachment());
+        message.message_kind = MessageKind::new(19);
+        message.reply = Some(ReplyInfo {
+            author: "neo".to_owned(),
+            content: Some("hello <@10>".to_owned()),
+        });
+        message.attachments.clear();
+        let state = state_with_member(10, "alice");
+
+        let lines = format_message_content_lines(&message, &state, 200);
+
+        assert_eq!(line_texts(&lines), vec!["╭─ neo : hello @alice", "asdf"]);
     }
 
     #[test]
@@ -1426,6 +1477,45 @@ mod tests {
         assert_eq!(
             line_texts(&lines),
             vec!["↱ Forwarded", "│ abcde", "│ fghij", "│ kl"]
+        );
+    }
+
+    #[test]
+    fn forwarded_snapshot_content_renders_known_user_mentions() {
+        let message =
+            message_with_forwarded_snapshot(forwarded_snapshot(Some("hello <@10>"), Vec::new()));
+        let state = state_with_member(10, "alice");
+
+        let lines = format_message_content_lines(&message, &state, 200);
+
+        assert_eq!(line_texts(&lines), vec!["↱ Forwarded", "│ hello <@10>"]);
+    }
+
+    #[test]
+    fn forwarded_snapshot_content_uses_source_channel_guild_for_mentions() {
+        let mut snapshot = forwarded_snapshot(Some("hello <@10>"), Vec::new());
+        snapshot.source_channel_id = Some(Id::new(9));
+        let message = message_with_forwarded_snapshot(snapshot);
+        let mut state = state_with_member(10, "outer");
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(2)),
+            channel_id: Id::new(9),
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "source".to_owned(),
+            kind: "GuildText".to_owned(),
+        }));
+        state.push_event(AppEvent::GuildMemberUpsert {
+            guild_id: Id::new(2),
+            member: member_info(10, "source"),
+        });
+
+        let lines = format_message_content_lines(&message, &state, 200);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec!["↱ Forwarded", "│ hello @source", "│ #source"]
         );
     }
 
@@ -1643,7 +1733,8 @@ mod tests {
             message_with_attachment(Some("three".to_owned()), image_attachment()),
         ];
         let messages = messages.iter().collect::<Vec<_>>();
-        let row = inline_image_preview_row(&messages, 2, 200, 0, 4);
+        let state = DashboardState::new();
+        let row = inline_image_preview_row(&messages, &state, 2, 200, 0, 4);
 
         assert_eq!(row, 12);
         assert_eq!(
@@ -1659,8 +1750,9 @@ mod tests {
         snapshot.timestamp = Some("2026-04-30T12:34:56.000000+00:00".to_owned());
         let message = message_with_forwarded_snapshot(snapshot);
         let messages = [&message];
+        let state = DashboardState::new();
 
-        assert_eq!(inline_image_preview_row(&messages, 0, 200, 0, 0), 4);
+        assert_eq!(inline_image_preview_row(&messages, &state, 0, 200, 0, 0), 4);
     }
 
     #[test]
@@ -1765,6 +1857,27 @@ mod tests {
             attachments,
             source_channel_id: None,
             timestamp: None,
+        }
+    }
+
+    fn state_with_member(user_id: u64, display_name: &str) -> DashboardState {
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::GuildCreate {
+            guild_id: Id::new(1),
+            name: "guild".to_owned(),
+            channels: Vec::new(),
+            members: vec![member_info(user_id, display_name)],
+            presences: vec![(Id::new(user_id), PresenceStatus::Online)],
+        });
+        state
+    }
+
+    fn member_info(user_id: u64, display_name: &str) -> MemberInfo {
+        MemberInfo {
+            user_id: Id::new(user_id),
+            display_name: display_name.to_owned(),
+            is_bot: false,
+            avatar_url: None,
         }
     }
 

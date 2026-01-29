@@ -318,6 +318,17 @@ impl DiscordState {
             .unwrap_or_default()
     }
 
+    pub fn member_display_name(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> Option<&str> {
+        self.members
+            .get(&guild_id)
+            .and_then(|members| members.get(&user_id))
+            .map(|member| member.display_name.as_str())
+    }
+
     pub fn channel(&self, channel_id: Id<ChannelMarker>) -> Option<&ChannelState> {
         self.channels.get(&channel_id)
     }

@@ -1,13 +1,18 @@
 use std::collections::{HashMap, HashSet};
 
 use ratatui::style::Color;
-use twilight_model::id::{Id, marker::ChannelMarker, marker::GuildMarker, marker::MessageMarker};
+use twilight_model::id::{
+    Id,
+    marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+};
 
 use crate::discord::{
     AppCommand, AppEvent, AttachmentInfo, ChannelState, DiscordState, GuildFolder,
     GuildMemberState, GuildState, MessageInfo, MessageSnapshotInfo, MessageState, PresenceStatus,
 };
 use crate::logging;
+
+use super::format::render_user_mentions;
 
 const SCROLL_OFF: usize = 3;
 
@@ -715,6 +720,30 @@ impl DashboardState {
             .unwrap_or_else(|| format!("#channel-{}", channel_id.get()))
     }
 
+    pub(crate) fn render_user_mentions(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        value: &str,
+    ) -> String {
+        render_user_mentions(value, |user_id| {
+            let guild_id = guild_id?;
+            let user_id = Id::<UserMarker>::new(user_id);
+            self.discord
+                .member_display_name(guild_id, user_id)
+                .map(str::to_owned)
+        })
+    }
+
+    pub(crate) fn forwarded_snapshot_mention_guild_id(
+        &self,
+        snapshot: &MessageSnapshotInfo,
+    ) -> Option<Id<GuildMarker>> {
+        snapshot
+            .source_channel_id
+            .and_then(|channel_id| self.discord.channel(channel_id))
+            .and_then(|channel| channel.guild_id)
+    }
+
     pub fn is_active_channel_entry(&self, entry: &ChannelPaneEntry<'_>) -> bool {
         matches!(
             entry,
@@ -923,7 +952,12 @@ impl DashboardState {
             .messages()
             .into_iter()
             .map(|message| {
-                message_rendered_height(message, content_width, preview_width, max_preview_height)
+                self.message_rendered_height(
+                    message,
+                    content_width,
+                    preview_width,
+                    max_preview_height,
+                )
             })
             .sum::<usize>()
             .max(1);
@@ -965,7 +999,7 @@ impl DashboardState {
                     .messages()
                     .get(self.message_scroll.saturating_sub(1))
                     .map(|message| {
-                        message_rendered_height(
+                        self.message_rendered_height(
                             message,
                             content_width,
                             preview_width,
@@ -1332,7 +1366,7 @@ impl DashboardState {
                 .messages()
                 .get(index)
                 .map(|message| {
-                    message_rendered_height(
+                    self.message_rendered_height(
                         message,
                         self.message_content_width,
                         self.message_preview_width,
@@ -1567,7 +1601,7 @@ impl DashboardState {
                 .messages()
                 .get(index)
                 .map(|message| {
-                    message_rendered_height(
+                    self.message_rendered_height(
                         message,
                         content_width,
                         preview_width,
@@ -1644,13 +1678,14 @@ impl DashboardState {
         let Some(selected_message) = self.messages().get(selected).copied() else {
             return false;
         };
-        let selected_height = message_rendered_height(
-            selected_message,
-            content_width,
-            preview_width,
-            max_preview_height,
-        )
-        .max(1);
+        let selected_height = self
+            .message_rendered_height(
+                selected_message,
+                content_width,
+                preview_width,
+                max_preview_height,
+            )
+            .max(1);
         let mut top = selected;
         let mut offset = 0usize;
         let mut remaining = (height / 2).saturating_sub(selected_height / 2);
@@ -1660,13 +1695,14 @@ impl DashboardState {
             let Some(previous_message) = self.messages().get(previous_index).copied() else {
                 break;
             };
-            let previous_height = message_rendered_height(
-                previous_message,
-                content_width,
-                preview_width,
-                max_preview_height,
-            )
-            .max(1);
+            let previous_height = self
+                .message_rendered_height(
+                    previous_message,
+                    content_width,
+                    preview_width,
+                    max_preview_height,
+                )
+                .max(1);
             if remaining >= previous_height {
                 remaining = remaining.saturating_sub(previous_height);
                 top = previous_index;
@@ -1690,13 +1726,14 @@ impl DashboardState {
     fn message_viewport_has_rows_below(&self, top: usize, offset: usize, height: usize) -> bool {
         let mut visible_rows = 0usize;
         for (index, message) in self.messages().into_iter().skip(top).enumerate() {
-            let message_height = message_rendered_height(
-                message,
-                self.message_content_width,
-                self.message_preview_width,
-                self.message_max_preview_height,
-            )
-            .max(1);
+            let message_height = self
+                .message_rendered_height(
+                    message,
+                    self.message_content_width,
+                    self.message_preview_width,
+                    self.message_max_preview_height,
+                )
+                .max(1);
             let visible_height = if index == 0 {
                 message_height.saturating_sub(offset)
             } else {
@@ -1721,9 +1758,9 @@ impl DashboardState {
             self.message_line_scroll = 0;
             return;
         };
-        let height =
-            message_rendered_height(message, content_width, preview_width, max_preview_height)
-                .max(1);
+        let height = self
+            .message_rendered_height(message, content_width, preview_width, max_preview_height)
+            .max(1);
         if self.message_line_scroll.saturating_add(1) < height {
             self.message_line_scroll = self.message_line_scroll.saturating_add(1);
         } else if self.message_scroll < messages_len.saturating_sub(1) {
@@ -1750,8 +1787,13 @@ impl DashboardState {
             .messages()
             .get(self.message_scroll)
             .map(|message| {
-                message_rendered_height(message, content_width, preview_width, max_preview_height)
-                    .saturating_sub(1)
+                self.message_rendered_height(
+                    message,
+                    content_width,
+                    preview_width,
+                    max_preview_height,
+                )
+                .saturating_sub(1)
             })
             .unwrap_or(0);
     }
@@ -1767,9 +1809,9 @@ impl DashboardState {
             return;
         };
 
-        let height =
-            message_rendered_height(message, content_width, preview_width, max_preview_height)
-                .max(1);
+        let height = self
+            .message_rendered_height(message, content_width, preview_width, max_preview_height)
+            .max(1);
         self.message_line_scroll = self.message_line_scroll.min(height.saturating_sub(1));
     }
 
@@ -1789,7 +1831,12 @@ impl DashboardState {
             .skip(self.message_scroll)
             .take(self.selected_message.saturating_sub(self.message_scroll))
             .map(|message| {
-                message_rendered_height(message, content_width, preview_width, max_preview_height)
+                self.message_rendered_height(
+                    message,
+                    content_width,
+                    preview_width,
+                    max_preview_height,
+                )
             })
             .sum::<usize>();
         row.saturating_sub(self.message_line_scroll)
@@ -1804,7 +1851,12 @@ impl DashboardState {
         self.messages()
             .get(self.selected_message)
             .map(|message| {
-                message_rendered_height(message, content_width, preview_width, max_preview_height)
+                self.message_rendered_height(
+                    message,
+                    content_width,
+                    preview_width,
+                    max_preview_height,
+                )
             })
             .unwrap_or(1)
     }
@@ -1821,18 +1873,80 @@ impl DashboardState {
             .skip(self.selected_message.saturating_add(1))
             .take(count)
             .map(|message| {
-                message_rendered_height(message, content_width, preview_width, max_preview_height)
+                self.message_rendered_height(
+                    message,
+                    content_width,
+                    preview_width,
+                    max_preview_height,
+                )
             })
             .sum()
     }
+
+    pub(crate) fn message_base_line_count_for_width(
+        &self,
+        message: &MessageState,
+        content_width: usize,
+    ) -> usize {
+        message_base_line_count_for_width_with_mentions(
+            message,
+            content_width,
+            |value| self.render_user_mentions(message.guild_id, value),
+            |snapshot, value| {
+                self.render_user_mentions(self.forwarded_snapshot_mention_guild_id(snapshot), value)
+            },
+        )
+    }
+
+    fn message_rendered_height(
+        &self,
+        message: &MessageState,
+        content_width: usize,
+        preview_width: u16,
+        max_preview_height: u16,
+    ) -> usize {
+        message_rendered_height_with_mentions(
+            message,
+            content_width,
+            preview_width,
+            max_preview_height,
+            |value| self.render_user_mentions(message.guild_id, value),
+            |snapshot, value| {
+                self.render_user_mentions(self.forwarded_snapshot_mention_guild_id(snapshot), value)
+            },
+        )
+    }
 }
 
+#[cfg(test)]
 fn message_rendered_height(
     message: &MessageState,
     content_width: usize,
     preview_width: u16,
     max_preview_height: u16,
 ) -> usize {
+    message_rendered_height_with_mentions(
+        message,
+        content_width,
+        preview_width,
+        max_preview_height,
+        str::to_owned,
+        |_, value| value.to_owned(),
+    )
+}
+
+fn message_rendered_height_with_mentions<F, G>(
+    message: &MessageState,
+    content_width: usize,
+    preview_width: u16,
+    max_preview_height: u16,
+    render_text: F,
+    render_snapshot_text: G,
+) -> usize
+where
+    F: Fn(&str) -> String,
+    G: Fn(&MessageSnapshotInfo, &str) -> String,
+{
     let preview_height = message
         .attachments_in_display_order()
         .find(|attachment| attachment.inline_preview_url().is_some())
@@ -1845,17 +1959,29 @@ fn message_rendered_height(
             )
         })
         .unwrap_or(0);
-    message_base_line_count_for_width(message, content_width) + usize::from(preview_height)
+    message_base_line_count_for_width_with_mentions(
+        message,
+        content_width,
+        render_text,
+        render_snapshot_text,
+    ) + usize::from(preview_height)
 }
 
-pub(crate) fn message_base_line_count_for_width(
+fn message_base_line_count_for_width_with_mentions<F, G>(
     message: &MessageState,
     content_width: usize,
-) -> usize {
+    render_text: F,
+    render_snapshot_text: G,
+) -> usize
+where
+    F: Fn(&str) -> String,
+    G: Fn(&MessageSnapshotInfo, &str) -> String,
+{
     let primary_lines = message_primary_line_count(
         message.content.as_deref(),
         &message.attachments,
         content_width,
+        &render_text,
     );
     let kind_line = usize::from(
         message.reply.is_none() && message.poll.is_none() && !message.message_kind.is_regular(),
@@ -1879,7 +2005,7 @@ pub(crate) fn message_base_line_count_for_width(
                 + poll_lines
                 + kind_line
                 + primary_lines
-                + forwarded_snapshot_line_count(snapshot, content_width)
+                + forwarded_snapshot_line_count(snapshot, content_width, &render_snapshot_text)
                 + metadata_line)
                 .max(1);
     }
@@ -1891,21 +2017,31 @@ fn message_primary_line_count(
     content: Option<&str>,
     attachments: &[AttachmentInfo],
     content_width: usize,
+    render_text: &dyn Fn(&str) -> String,
 ) -> usize {
     content
         .filter(|value| !value.is_empty())
-        .map(|value| super::ui::wrapped_text_line_count(value, content_width))
+        .map(|value| super::ui::wrapped_text_line_count(&render_text(value), content_width))
         .unwrap_or(0)
         + usize::from(!attachments.is_empty())
 }
 
-fn forwarded_snapshot_line_count(snapshot: &MessageSnapshotInfo, content_width: usize) -> usize {
+fn forwarded_snapshot_line_count(
+    snapshot: &MessageSnapshotInfo,
+    content_width: usize,
+    render_text: &dyn Fn(&MessageSnapshotInfo, &str) -> String,
+) -> usize {
     let forwarded_content_width = content_width.saturating_sub(2).max(1);
     let content_lines = snapshot
         .content
         .as_deref()
         .filter(|value| !value.is_empty())
-        .map(|value| super::ui::wrapped_text_line_count(value, forwarded_content_width))
+        .map(|value| {
+            super::ui::wrapped_text_line_count(
+                &render_text(snapshot, value),
+                forwarded_content_width,
+            )
+        })
         .unwrap_or(0);
     let attachment_line = usize::from(!snapshot.attachments.is_empty());
 
@@ -2462,6 +2598,68 @@ mod tests {
         };
 
         assert_eq!(message_rendered_height(&message, 5, 16, 3), 4);
+    }
+
+    #[test]
+    fn rendered_mentions_affect_message_height() {
+        let mut state = state_with_single_message_content("<@10><@10>");
+        state.push_event(AppEvent::GuildMemberUpsert {
+            guild_id: Id::new(1),
+            member: MemberInfo {
+                user_id: Id::new(10),
+                display_name: "a".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+            },
+        });
+        let message = state.messages()[0];
+
+        assert_eq!(message_rendered_height(message, 5, 16, 3), 3);
+        assert_eq!(state.message_base_line_count_for_width(message, 5), 2);
+    }
+
+    #[test]
+    fn forwarded_mentions_affect_height_from_source_channel_guild() {
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(2)),
+            channel_id: Id::new(9),
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "source".to_owned(),
+            kind: "GuildText".to_owned(),
+        }));
+        state.push_event(AppEvent::GuildMemberUpsert {
+            guild_id: Id::new(2),
+            member: MemberInfo {
+                user_id: Id::new(10),
+                display_name: "a".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+            },
+        });
+        let message = MessageState {
+            id: Id::new(1),
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some(String::new()),
+            attachments: Vec::new(),
+            forwarded_snapshots: vec![MessageSnapshotInfo {
+                content: Some("<@10><@10>".to_owned()),
+                attachments: Vec::new(),
+                source_channel_id: Some(Id::new(9)),
+                timestamp: None,
+            }],
+        };
+
+        assert_eq!(state.message_base_line_count_for_width(&message, 7), 4);
     }
 
     #[test]
