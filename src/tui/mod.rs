@@ -30,7 +30,7 @@ use crate::{
     logging,
 };
 
-use state::{DashboardState, message_base_line_count_for_width};
+use state::DashboardState;
 use ui::{AvatarImage, ImagePreview, ImagePreviewLayout, ImagePreviewState};
 
 const IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
@@ -667,7 +667,7 @@ fn visible_image_preview_targets(
         }
 
         let line_offset = usize::from(message_index == 0) * state.message_line_scroll();
-        let base_rows = message_base_line_count_for_width(message, layout.content_width);
+        let base_rows = state.message_base_line_count_for_width(message, layout.content_width);
 
         let Some((attachment, url)) = message
             .attachments_in_display_order()
@@ -721,7 +721,7 @@ fn visible_avatar_targets(state: &DashboardState, layout: ImagePreviewLayout) ->
         }
 
         let line_offset = usize::from(rendered_rows == 0) * state.message_line_scroll();
-        let base_rows = message_base_line_count_for_width(message, layout.content_width);
+        let base_rows = state.message_base_line_count_for_width(message, layout.content_width);
         let message_top = rendered_rows as isize - line_offset as isize;
         let avatar_bottom = message_top.saturating_add(AVATAR_PREVIEW_HEIGHT as isize);
         let visible_top = message_top.max(0);
