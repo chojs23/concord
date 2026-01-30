@@ -10,8 +10,9 @@ mod state;
 pub use client::DiscordClient;
 pub use commands::AppCommand;
 pub use events::{
-    AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
-    MessageKind, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+    AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, GuildFolder, MemberInfo, MentionInfo,
+    MessageInfo, MessageKind, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus,
+    ReplyInfo,
 };
 pub use state::{
     ChannelState, DiscordState, GuildMemberState, GuildState, MessageCapabilities, MessageState,

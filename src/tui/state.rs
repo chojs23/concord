@@ -8,7 +8,8 @@ use twilight_model::id::{
 
 use crate::discord::{
     AppCommand, AppEvent, AttachmentInfo, ChannelState, DiscordState, GuildFolder,
-    GuildMemberState, GuildState, MessageInfo, MessageSnapshotInfo, MessageState, PresenceStatus,
+    GuildMemberState, GuildState, MentionInfo, MessageInfo, MessageSnapshotInfo, MessageState,
+    PresenceStatus,
 };
 use crate::logging;
 
@@ -723,9 +724,16 @@ impl DashboardState {
     pub(crate) fn render_user_mentions(
         &self,
         guild_id: Option<Id<GuildMarker>>,
+        mentions: &[MentionInfo],
         value: &str,
     ) -> String {
         render_user_mentions(value, |user_id| {
+            if let Some(mention) = mentions
+                .iter()
+                .find(|mention| mention.user_id.get() == user_id)
+            {
+                return Some(mention.display_name.clone());
+            }
             let guild_id = guild_id?;
             let user_id = Id::<UserMarker>::new(user_id);
             self.discord
@@ -1891,9 +1899,13 @@ impl DashboardState {
         message_base_line_count_for_width_with_mentions(
             message,
             content_width,
-            |value| self.render_user_mentions(message.guild_id, value),
+            |value| self.render_user_mentions(message.guild_id, &message.mentions, value),
             |snapshot, value| {
-                self.render_user_mentions(self.forwarded_snapshot_mention_guild_id(snapshot), value)
+                self.render_user_mentions(
+                    self.forwarded_snapshot_mention_guild_id(snapshot),
+                    &snapshot.mentions,
+                    value,
+                )
             },
         )
     }
@@ -1910,9 +1922,13 @@ impl DashboardState {
             content_width,
             preview_width,
             max_preview_height,
-            |value| self.render_user_mentions(message.guild_id, value),
+            |value| self.render_user_mentions(message.guild_id, &message.mentions, value),
             |snapshot, value| {
-                self.render_user_mentions(self.forwarded_snapshot_mention_guild_id(snapshot), value)
+                self.render_user_mentions(
+                    self.forwarded_snapshot_mention_guild_id(snapshot),
+                    &snapshot.mentions,
+                    value,
+                )
             },
         )
     }
@@ -2304,6 +2320,7 @@ mod tests {
                 reply: None,
                 poll: None,
                 content: Some(format!("msg {id}")),
+                mentions: Vec::new(),
                 attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),
             });
@@ -2343,6 +2360,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("hello".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -2441,6 +2459,7 @@ mod tests {
                 reply: None,
                 poll: None,
                 content: Some(format!("msg {id}")),
+                mentions: Vec::new(),
                 attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),
             });
@@ -2473,6 +2492,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("msg 6".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -2553,6 +2573,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("clip".to_owned()),
+            mentions: Vec::new(),
             attachments: vec![video_attachment(1)],
             forwarded_snapshots: Vec::new(),
         };
@@ -2573,6 +2594,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("hello\nworld".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
@@ -2593,6 +2615,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("abcdefghijkl".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
@@ -2650,9 +2673,11 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: vec![MessageSnapshotInfo {
                 content: Some("<@10><@10>".to_owned()),
+                mentions: Vec::new(),
                 attachments: Vec::new(),
                 source_channel_id: Some(Id::new(9)),
                 timestamp: None,
@@ -2675,6 +2700,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("가나다라마사".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
@@ -2695,6 +2721,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("look".to_owned()),
+            mentions: Vec::new(),
             attachments: vec![image_attachment(1)],
             forwarded_snapshots: Vec::new(),
         };
@@ -2715,6 +2742,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: vec![forwarded_snapshot(1)],
         };
@@ -2735,9 +2763,11 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: vec![MessageSnapshotInfo {
                 content: Some("abcdefghijkl".to_owned()),
+                mentions: Vec::new(),
                 attachments: vec![image_attachment(1)],
                 source_channel_id: None,
                 timestamp: None,
@@ -2760,9 +2790,11 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: vec![MessageSnapshotInfo {
                 content: Some("가나다라마사".to_owned()),
+                mentions: Vec::new(),
                 attachments: vec![image_attachment(1)],
                 source_channel_id: None,
                 timestamp: None,
@@ -2788,6 +2820,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: vec![snapshot],
         };
@@ -2808,6 +2841,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("reply body".to_owned()),
+            mentions: Vec::new(),
             attachments: vec![image_attachment(1)],
             forwarded_snapshots: Vec::new(),
         };
@@ -2832,9 +2866,11 @@ mod tests {
             reply: Some(ReplyInfo {
                 author: "딱구형".to_owned(),
                 content: Some("잘되는군".to_owned()),
+                mentions: Vec::new(),
             }),
             poll: None,
             content: Some("asdf".to_owned()),
+            mentions: Vec::new(),
             attachments: vec![image_attachment(1)],
             forwarded_snapshots: Vec::new(),
         };
@@ -2855,6 +2891,7 @@ mod tests {
             reply: None,
             poll: Some(poll_info(false)),
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
@@ -2875,6 +2912,7 @@ mod tests {
             reply: None,
             poll: Some(poll_info(true)),
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
@@ -2925,6 +2963,7 @@ mod tests {
             reply: None,
             poll: Some(poll_info(false)),
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -2953,6 +2992,7 @@ mod tests {
             reply: None,
             poll: Some(poll_info(false)),
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: vec![image_attachment(1)],
             forwarded_snapshots: Vec::new(),
         });
@@ -2984,6 +3024,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: vec![forwarded_snapshot(2)],
         });
@@ -3131,6 +3172,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("next".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -3167,6 +3209,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("next".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -3199,6 +3242,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("next".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -3246,6 +3290,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("next".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -3282,6 +3327,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("next".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -3640,6 +3686,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("new empty dm".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -4138,6 +4185,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(content.to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -4189,6 +4237,7 @@ mod tests {
                 reply: None,
                 poll: None,
                 content: Some(format!("msg {id}")),
+                mentions: Vec::new(),
                 attachments: has_image(id)
                     .then(|| image_attachment(id))
                     .into_iter()
@@ -4211,6 +4260,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(content.to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -4247,6 +4297,7 @@ mod tests {
     fn forwarded_snapshot(id: u64) -> MessageSnapshotInfo {
         MessageSnapshotInfo {
             content: Some(format!("forwarded {id}")),
+            mentions: Vec::new(),
             attachments: vec![image_attachment(id)],
             source_channel_id: None,
             timestamp: None,
@@ -4286,6 +4337,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: vec![AttachmentInfo {
                 id: Id::new(3),
                 filename: "cat.png".to_owned(),
@@ -4314,6 +4366,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(format!("msg {message_id}")),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         }

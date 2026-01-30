@@ -1,6 +1,6 @@
 use twilight_gateway::Event;
 use twilight_model::{
-    channel::{Attachment, Channel, Message, message::MessageSnapshot},
+    channel::{Attachment, Channel, Message, message::Mention, message::MessageSnapshot},
     gateway::{
         payload::incoming::{
             GuildCreate as GuildCreatePayload, MemberAdd, MemberUpdate,
@@ -53,6 +53,12 @@ pub struct MemberInfo {
     pub display_name: String,
     pub is_bot: bool,
     pub avatar_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MentionInfo {
+    pub user_id: Id<UserMarker>,
+    pub display_name: String,
 }
 
 /// One entry from the user's `guild_folders` setting. A folder with `id ==
@@ -155,6 +161,7 @@ impl Default for MessageKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageSnapshotInfo {
     pub content: Option<String>,
+    pub mentions: Vec<MentionInfo>,
     pub attachments: Vec<AttachmentInfo>,
     pub source_channel_id: Option<Id<ChannelMarker>>,
     pub timestamp: Option<String>,
@@ -164,6 +171,7 @@ pub struct MessageSnapshotInfo {
 pub struct ReplyInfo {
     pub author: String,
     pub content: Option<String>,
+    pub mentions: Vec<MentionInfo>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -194,6 +202,7 @@ pub struct MessageInfo {
     pub reply: Option<ReplyInfo>,
     pub poll: Option<PollInfo>,
     pub content: Option<String>,
+    pub mentions: Vec<MentionInfo>,
     pub attachments: Vec<AttachmentInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
 }
@@ -239,6 +248,7 @@ pub enum AppEvent {
         reply: Option<ReplyInfo>,
         poll: Option<PollInfo>,
         content: Option<String>,
+        mentions: Vec<MentionInfo>,
         attachments: Vec<AttachmentInfo>,
         forwarded_snapshots: Vec<MessageSnapshotInfo>,
     },
@@ -257,6 +267,7 @@ pub enum AppEvent {
         message_id: Id<MessageMarker>,
         poll: Option<PollInfo>,
         content: Option<String>,
+        mentions: Option<Vec<MentionInfo>>,
         attachments: AttachmentUpdate,
     },
     MessageDelete {
@@ -311,6 +322,7 @@ impl AppEvent {
             reply: message.reply,
             poll: message.poll,
             content: message.content,
+            mentions: message.mentions,
             attachments: message.attachments,
             forwarded_snapshots: message.forwarded_snapshots,
         }
@@ -370,8 +382,10 @@ impl MessageSnapshotInfo {
         source_channel_id: Option<Id<ChannelMarker>>,
     ) -> Self {
         let message = snapshot.message;
+        let mentions = mention_infos(&message.mentions);
         Self {
             content: Some(message.content),
+            mentions,
             attachments: message
                 .attachments
                 .into_iter()
@@ -393,6 +407,7 @@ impl ReplyInfo {
         Some(Self {
             author: message_display_name(message),
             content,
+            mentions: mention_infos(&message.mentions),
         })
     }
 }
@@ -452,6 +467,7 @@ impl MessageInfo {
             .as_deref()
             .and_then(ReplyInfo::from_message);
         let poll = message.poll.as_ref().map(PollInfo::from_poll);
+        let mentions = mention_infos(&message.mentions);
         Self {
             guild_id: message.guild_id,
             channel_id: message.channel_id,
@@ -463,6 +479,7 @@ impl MessageInfo {
             reply,
             poll,
             content: Some(message.content),
+            mentions,
             attachments: message
                 .attachments
                 .into_iter()
@@ -516,6 +533,7 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
                 reply,
                 poll,
                 content: Some(message.content.clone()),
+                mentions: mention_infos(&message.mentions),
                 attachments: message
                     .attachments
                     .clone()
@@ -536,6 +554,7 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
             message_id: message.id,
             poll: message.poll.as_ref().map(PollInfo::from_poll),
             content: Some(message.content.clone()),
+            mentions: Some(mention_infos(&message.mentions)),
             attachments: map_attachment_update(message.attachments.clone()),
         }),
         Event::MessageDelete(message) => Some(AppEvent::MessageDelete {
@@ -650,6 +669,24 @@ fn map_status(status: TwilightStatus) -> PresenceStatus {
         TwilightStatus::Idle => PresenceStatus::Idle,
         TwilightStatus::DoNotDisturb => PresenceStatus::DoNotDisturb,
         TwilightStatus::Offline | TwilightStatus::Invisible => PresenceStatus::Offline,
+    }
+}
+
+fn mention_infos(mentions: &[Mention]) -> Vec<MentionInfo> {
+    mentions.iter().map(mention_info).collect()
+}
+
+fn mention_info(mention: &Mention) -> MentionInfo {
+    let display_name = mention
+        .member
+        .as_ref()
+        .and_then(|member| member.nick.as_deref())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&mention.name)
+        .to_owned();
+    MentionInfo {
+        user_id: mention.id,
+        display_name,
     }
 }
 

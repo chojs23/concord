@@ -533,9 +533,12 @@ fn format_message_content_lines(
 
     if let Some(value) = message.content.as_deref().filter(|value| !value.is_empty()) {
         lines.extend(
-            wrap_text_lines(&state.render_user_mentions(message.guild_id, value), width)
-                .into_iter()
-                .map(MessageContentLine::plain),
+            wrap_text_lines(
+                &state.render_user_mentions(message.guild_id, &message.mentions, value),
+                width,
+            )
+            .into_iter()
+            .map(MessageContentLine::plain),
         );
     }
     if let Some(attachments) = attachment_summary {
@@ -664,7 +667,7 @@ fn format_reply_line(
         .as_deref()
         .filter(|value| !value.is_empty())
         .unwrap_or("<empty message>");
-    let content = state.render_user_mentions(guild_id, content);
+    let content = state.render_user_mentions(guild_id, &reply.mentions, content);
     MessageContentLine::dim(truncate_text(
         &format!("╭─ {} : {}", reply.author, content),
         width,
@@ -698,8 +701,11 @@ fn format_forwarded_snapshot(
         .filter(|value| !value.is_empty())
     {
         let content_width = width.saturating_sub(2).max(1);
-        let content = state
-            .render_user_mentions(state.forwarded_snapshot_mention_guild_id(snapshot), content);
+        let content = state.render_user_mentions(
+            state.forwarded_snapshot_mention_guild_id(snapshot),
+            &snapshot.mentions,
+            content,
+        );
         lines.extend(
             wrap_text_lines(&content, content_width)
                 .into_iter()
@@ -1162,8 +1168,8 @@ mod tests {
     };
     use crate::{
         discord::{
-            AppEvent, AttachmentInfo, ChannelInfo, MemberInfo, MessageKind, MessageSnapshotInfo,
-            MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+            AppEvent, AttachmentInfo, ChannelInfo, MemberInfo, MentionInfo, MessageKind,
+            MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
         },
         tui::{
             format::truncate_display_width,
@@ -1287,6 +1293,18 @@ mod tests {
     }
 
     #[test]
+    fn message_content_renders_mentions_from_message_metadata() {
+        let mut message =
+            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
+        message.attachments.clear();
+        message.mentions = vec![mention_info(10, "alice")];
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(line_texts(&lines), vec!["hello @alice"]);
+    }
+
+    #[test]
     fn message_content_does_not_split_grapheme_clusters() {
         let lines = wrap_text_lines("👨‍👩‍👧‍👦", 7);
 
@@ -1336,6 +1354,7 @@ mod tests {
         message.reply = Some(ReplyInfo {
             author: "딱구형".to_owned(),
             content: Some("잘되는군".to_owned()),
+            mentions: Vec::new(),
         });
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
@@ -1354,11 +1373,28 @@ mod tests {
         message.reply = Some(ReplyInfo {
             author: "neo".to_owned(),
             content: Some("hello <@10>".to_owned()),
+            mentions: Vec::new(),
         });
         message.attachments.clear();
         let state = state_with_member(10, "alice");
 
         let lines = format_message_content_lines(&message, &state, 200);
+
+        assert_eq!(line_texts(&lines), vec!["╭─ neo : hello @alice", "asdf"]);
+    }
+
+    #[test]
+    fn reply_preview_renders_mentions_from_reply_metadata() {
+        let mut message = message_with_attachment(Some("asdf".to_owned()), image_attachment());
+        message.message_kind = MessageKind::new(19);
+        message.reply = Some(ReplyInfo {
+            author: "neo".to_owned(),
+            content: Some("hello <@10>".to_owned()),
+            mentions: vec![mention_info(10, "alice")],
+        });
+        message.attachments.clear();
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
         assert_eq!(line_texts(&lines), vec!["╭─ neo : hello @alice", "asdf"]);
     }
@@ -1517,6 +1553,17 @@ mod tests {
             line_texts(&lines),
             vec!["↱ Forwarded", "│ hello @source", "│ #source"]
         );
+    }
+
+    #[test]
+    fn forwarded_snapshot_content_renders_mentions_from_snapshot_metadata() {
+        let mut snapshot = forwarded_snapshot(Some("hello <@10>"), Vec::new());
+        snapshot.mentions = vec![mention_info(10, "alice")];
+        let message = message_with_forwarded_snapshot(snapshot);
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(line_texts(&lines), vec!["↱ Forwarded", "│ hello @alice"]);
     }
 
     #[test]
@@ -1804,6 +1851,7 @@ mod tests {
             reply: None,
             poll: None,
             content,
+            mentions: Vec::new(),
             attachments: vec![attachment],
             forwarded_snapshots: Vec::new(),
         }
@@ -1821,6 +1869,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: vec![snapshot],
         }
@@ -1854,6 +1903,7 @@ mod tests {
     ) -> MessageSnapshotInfo {
         MessageSnapshotInfo {
             content: content.map(str::to_owned),
+            mentions: Vec::new(),
             attachments,
             source_channel_id: None,
             timestamp: None,
@@ -1878,6 +1928,13 @@ mod tests {
             display_name: display_name.to_owned(),
             is_bot: false,
             avatar_url: None,
+        }
+    }
+
+    fn mention_info(user_id: u64, display_name: &str) -> MentionInfo {
+        MentionInfo {
+            user_id: Id::new(user_id),
+            display_name: display_name.to_owned(),
         }
     }
 

@@ -6,8 +6,8 @@ use twilight_model::id::{
 };
 
 use super::{
-    AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
-    MessageKind, MessageSnapshotInfo, PollInfo, PresenceStatus, ReplyInfo,
+    AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, GuildFolder, MemberInfo, MentionInfo,
+    MessageInfo, MessageKind, MessageSnapshotInfo, PollInfo, PresenceStatus, ReplyInfo,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -47,6 +47,7 @@ pub struct MessageState {
     pub reply: Option<ReplyInfo>,
     pub poll: Option<PollInfo>,
     pub content: Option<String>,
+    pub mentions: Vec<MentionInfo>,
     pub attachments: Vec<AttachmentInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
 }
@@ -198,6 +199,7 @@ impl DiscordState {
                 reply,
                 poll,
                 content,
+                mentions,
                 attachments,
                 forwarded_snapshots,
                 ..
@@ -216,6 +218,7 @@ impl DiscordState {
                 reply: reply.clone(),
                 poll: poll.clone(),
                 content: content.clone(),
+                mentions: mentions.clone(),
                 attachments: attachments.clone(),
                 forwarded_snapshots: forwarded_snapshots.clone(),
             }),
@@ -231,6 +234,7 @@ impl DiscordState {
                 message_id,
                 poll,
                 content,
+                mentions,
                 attachments,
             } => self.update_message(
                 *guild_id,
@@ -238,6 +242,7 @@ impl DiscordState {
                 *message_id,
                 poll.clone(),
                 content.clone(),
+                mentions.clone(),
                 attachments.clone(),
             ),
             AppEvent::MessageDelete {
@@ -463,6 +468,7 @@ impl DiscordState {
                 reply: message.reply.clone(),
                 poll: message.poll.clone(),
                 content: message.content.clone(),
+                mentions: message.mentions.clone(),
                 attachments: message.attachments.clone(),
                 forwarded_snapshots: message.forwarded_snapshots.clone(),
             })
@@ -508,6 +514,7 @@ impl DiscordState {
         message_id: Id<MessageMarker>,
         poll: Option<PollInfo>,
         content: Option<String>,
+        mentions: Option<Vec<MentionInfo>>,
         attachments: AttachmentUpdate,
     ) {
         let messages = self.messages.entry(channel_id).or_default();
@@ -517,6 +524,9 @@ impl DiscordState {
             }
             if let Some(content) = content {
                 existing.content = Some(content);
+            }
+            if let Some(mentions) = mentions {
+                existing.mentions = mentions;
             }
             match attachments {
                 AttachmentUpdate::Replace(attachments) => existing.attachments = attachments,
@@ -558,6 +568,9 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
             existing.content = Some(content.clone());
         }
     }
+    if !incoming.mentions.is_empty() || existing.mentions.is_empty() {
+        existing.mentions = incoming.mentions.clone();
+    }
     if !incoming.attachments.is_empty() || existing.attachments.is_empty() {
         existing.attachments = incoming.attachments.clone();
     }
@@ -589,9 +602,9 @@ mod tests {
     use twilight_model::id::{Id, marker::ChannelMarker};
 
     use crate::discord::{
-        AppEvent, AttachmentUpdate, ChannelInfo, DiscordState, MemberInfo, MessageInfo,
-        MessageKind, MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo, PresenceStatus,
-        ReplyInfo,
+        AppEvent, AttachmentUpdate, ChannelInfo, DiscordState, MemberInfo, MentionInfo,
+        MessageInfo, MessageKind, MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo,
+        PresenceStatus, ReplyInfo,
     };
 
     #[test]
@@ -628,6 +641,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("hello".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -675,6 +689,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("hello".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -701,6 +716,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("hello".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -758,6 +774,7 @@ mod tests {
                 reply: None,
                 poll: None,
                 content: Some(format!("message {id}")),
+                mentions: Vec::new(),
                 attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),
             });
@@ -784,6 +801,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("reply".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -810,6 +828,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("cached".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -824,6 +843,7 @@ mod tests {
             reply: None,
             poll: None,
             content: None,
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -850,9 +870,11 @@ mod tests {
             reply: Some(ReplyInfo {
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
+                mentions: Vec::new(),
             }),
             poll: None,
             content: Some("asdf".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -892,9 +914,11 @@ mod tests {
             reply: Some(ReplyInfo {
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
+                mentions: Vec::new(),
             }),
             poll: None,
             content: Some("asdf".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -909,6 +933,7 @@ mod tests {
             reply: None,
             poll: None,
             content: None,
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -940,6 +965,7 @@ mod tests {
             reply: None,
             poll: Some(poll_info()),
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -969,6 +995,7 @@ mod tests {
             reply: None,
             poll: Some(poll_info()),
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -983,6 +1010,7 @@ mod tests {
             reply: None,
             poll: None,
             content: None,
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -1013,6 +1041,7 @@ mod tests {
             reply: None,
             poll: Some(poll_info()),
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -1026,6 +1055,7 @@ mod tests {
             message_id,
             poll: Some(updated_poll),
             content: None,
+            mentions: None,
             attachments: AttachmentUpdate::Unchanged,
         });
 
@@ -1034,6 +1064,42 @@ mod tests {
         assert_eq!(poll.results_finalized, Some(true));
         assert_eq!(poll.answers[0].vote_count, Some(5));
         assert_eq!(poll.answers[1].vote_count, Some(3));
+    }
+
+    #[test]
+    fn message_update_refreshes_mentions_when_present() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let message_id = Id::new(20);
+        let author_id = Id::new(99);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("hello <@10>".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state.apply_event(&AppEvent::MessageUpdate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            poll: None,
+            content: Some("hello <@10>".to_owned()),
+            mentions: Some(vec![mention_info(10, "alice")]),
+            attachments: AttachmentUpdate::Unchanged,
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages[0].mentions, vec![mention_info(10, "alice")]);
     }
 
     #[test]
@@ -1070,6 +1136,7 @@ mod tests {
         message.reply = Some(ReplyInfo {
             author: "neo".to_owned(),
             content: Some("original".to_owned()),
+            mentions: Vec::new(),
         });
         message.forwarded_snapshots = vec![snapshot_info("forwarded")];
 
@@ -1097,6 +1164,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("hello".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -1111,6 +1179,7 @@ mod tests {
             reply: None,
             poll: None,
             content: None,
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -1120,6 +1189,7 @@ mod tests {
             message_id,
             poll: None,
             content: None,
+            mentions: None,
             attachments: AttachmentUpdate::Unchanged,
         });
 
@@ -1144,6 +1214,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("live".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -1182,6 +1253,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("known".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -1200,6 +1272,48 @@ mod tests {
     }
 
     #[test]
+    fn history_merge_adds_missing_mentions_without_clearing_known_mentions() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(20),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("hello <@10>".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![MessageInfo {
+                mentions: vec![mention_info(10, "alice")],
+                ..message_info(channel_id, 20, "hello <@10>")
+            }],
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages[0].mentions, vec![mention_info(10, "alice")]);
+
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![message_info(channel_id, 20, "hello <@10>")],
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages[0].mentions, vec![mention_info(10, "alice")]);
+    }
+
+    #[test]
     fn stores_and_merges_message_attachments() {
         let channel_id: Id<ChannelMarker> = Id::new(10);
         let mut state = DiscordState::default();
@@ -1215,6 +1329,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
             forwarded_snapshots: Vec::new(),
         });
@@ -1250,6 +1365,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: vec![snapshot_info("forwarded text")],
         });
@@ -1279,6 +1395,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: vec![snapshot_info("live snapshot")],
         });
@@ -1311,6 +1428,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
             forwarded_snapshots: Vec::new(),
         });
@@ -1320,6 +1438,7 @@ mod tests {
             message_id: Id::new(20),
             poll: None,
             content: None,
+            mentions: None,
             attachments: AttachmentUpdate::Unchanged,
         });
 
@@ -1344,6 +1463,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
             forwarded_snapshots: Vec::new(),
         });
@@ -1353,6 +1473,7 @@ mod tests {
             message_id: Id::new(20),
             poll: None,
             content: None,
+            mentions: None,
             attachments: AttachmentUpdate::Replace(Vec::new()),
         });
 
@@ -1445,6 +1566,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("newest".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -1484,6 +1606,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("new".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -1498,6 +1621,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("old".to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
@@ -1681,6 +1805,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(content.to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         }
@@ -1698,6 +1823,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(content.to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         }
@@ -1718,6 +1844,13 @@ mod tests {
             width: Some(100),
             height: Some(100),
             description: None,
+        }
+    }
+
+    fn mention_info(user_id: u64, display_name: &str) -> MentionInfo {
+        MentionInfo {
+            user_id: Id::new(user_id),
+            display_name: display_name.to_owned(),
         }
     }
 
@@ -1746,6 +1879,7 @@ mod tests {
     fn snapshot_info(content: &str) -> MessageSnapshotInfo {
         MessageSnapshotInfo {
             content: Some(content.to_owned()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             source_channel_id: None,
             timestamp: None,

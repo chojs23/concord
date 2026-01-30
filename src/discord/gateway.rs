@@ -12,8 +12,8 @@ use twilight_model::{
 };
 
 use super::{
-    AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageKind, MessageSnapshotInfo,
-    PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+    AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MentionInfo, MessageKind,
+    MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
     events::default_avatar_url,
     events::{AppEvent, AttachmentUpdate, map_event},
 };
@@ -347,6 +347,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         .get("content")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let mentions = parse_mentions(data.get("mentions"));
     let attachments = parse_attachments(data.get("attachments"));
     let reply = data.get("referenced_message").and_then(parse_reply_info);
     let poll = data.get("poll").and_then(parse_poll_info);
@@ -368,6 +369,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         reply,
         poll,
         content,
+        mentions,
         attachments,
         forwarded_snapshots,
     })
@@ -387,12 +389,16 @@ fn parse_message_update(data: &Value) -> Option<AppEvent> {
         AttachmentUpdate::Unchanged
     };
     let poll = data.get("poll").and_then(parse_poll_info);
+    let mentions = data
+        .get("mentions")
+        .map(|value| parse_mentions(Some(value)));
     Some(AppEvent::MessageUpdate {
         guild_id,
         channel_id,
         message_id,
         poll,
         content,
+        mentions,
         attachments,
     })
 }
@@ -448,10 +454,40 @@ fn parse_reply_info(value: &Value) -> Option<ReplyInfo> {
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
+    let mentions = parse_mentions(value.get("mentions"));
 
     Some(ReplyInfo {
         author: author_name,
         content,
+        mentions,
+    })
+}
+
+fn parse_mentions(value: Option<&Value>) -> Vec<MentionInfo> {
+    value
+        .and_then(Value::as_array)
+        .map(|mentions| mentions.iter().filter_map(parse_mention_info).collect())
+        .unwrap_or_default()
+}
+
+fn parse_mention_info(value: &Value) -> Option<MentionInfo> {
+    let user_id = parse_id::<UserMarker>(value.get("id")?)?;
+    let nick = value
+        .get("member")
+        .and_then(|member| member.get("nick"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty());
+    let global_name = value
+        .get("global_name")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty());
+    let username = value
+        .get("username")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty());
+    Some(MentionInfo {
+        user_id,
+        display_name: nick.or(global_name).or(username)?.to_owned(),
     })
 }
 
@@ -568,6 +604,7 @@ fn parse_message_snapshot(
         .and_then(Value::as_str)
         .map(str::to_owned);
     let attachments = parse_attachments(message.get("attachments"));
+    let mentions = parse_mentions(message.get("mentions"));
     let timestamp = message
         .get("timestamp")
         .and_then(Value::as_str)
@@ -580,6 +617,7 @@ fn parse_message_snapshot(
     {
         Some(MessageSnapshotInfo {
             content,
+            mentions,
             attachments,
             source_channel_id,
             timestamp,
@@ -801,7 +839,7 @@ mod tests {
 
     use super::{gateway_intents, parse_channel_info, parse_message_create, parse_message_update};
     use crate::discord::{
-        AppEvent, AttachmentUpdate, MessageKind, PollAnswerInfo, PollInfo, ReplyInfo,
+        AppEvent, AttachmentUpdate, MentionInfo, MessageKind, PollAnswerInfo, PollInfo, ReplyInfo,
     };
 
     #[test]
@@ -861,6 +899,22 @@ mod tests {
             panic!("expected message update event");
         };
         assert!(matches!(attachments, AttachmentUpdate::Replace(values) if values.is_empty()));
+    }
+
+    #[test]
+    fn message_update_parser_keeps_mentions_when_present() {
+        let event = parse_message_update(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "content": "edited <@40>",
+            "mentions": [{ "id": "40", "username": "alice" }]
+        }))
+        .expect("message update should parse");
+
+        let AppEvent::MessageUpdate { mentions, .. } = event else {
+            panic!("expected message update event");
+        };
+        assert_eq!(mentions, Some(vec![mention_info(40, "alice")]));
     }
 
     #[test]
@@ -1011,6 +1065,47 @@ mod tests {
     }
 
     #[test]
+    fn message_create_parser_keeps_mention_display_names() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "content": "hello <@40> <@41> <@42>",
+            "mentions": [
+                {
+                    "id": "40",
+                    "username": "alpha",
+                    "global_name": "Alpha Global",
+                    "member": { "nick": "Alpha Nick" }
+                },
+                {
+                    "id": "41",
+                    "username": "beta",
+                    "global_name": "Beta Global"
+                },
+                {
+                    "id": "42",
+                    "username": "gamma"
+                }
+            ],
+            "attachments": []
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { mentions, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(
+            mentions,
+            vec![
+                mention_info(40, "Alpha Nick"),
+                mention_info(41, "Beta Global"),
+                mention_info(42, "gamma"),
+            ]
+        );
+    }
+
+    #[test]
     fn message_create_parser_keeps_reply_preview() {
         let event = parse_message_create(&json!({
             "id": "20",
@@ -1037,7 +1132,37 @@ mod tests {
             Some(ReplyInfo {
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
+                mentions: Vec::new(),
             })
+        );
+    }
+
+    #[test]
+    fn message_create_parser_keeps_reply_mentions() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "type": 19,
+            "content": "reply",
+            "attachments": [],
+            "referenced_message": {
+                "id": "19",
+                "channel_id": "10",
+                "author": { "id": "31", "username": "alex" },
+                "content": "hello <@40>",
+                "mentions": [{ "id": "40", "username": "alice" }],
+                "attachments": []
+            }
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { reply, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(
+            reply.and_then(|reply| reply.mentions.into_iter().next()),
+            Some(mention_info(40, "alice"))
         );
     }
 
@@ -1193,6 +1318,38 @@ mod tests {
     }
 
     #[test]
+    fn message_create_parser_keeps_forwarded_snapshot_mentions() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "content": "",
+            "attachments": [],
+            "message_snapshots": [{
+                "message": {
+                    "content": "hello <@40>",
+                    "mentions": [{ "id": "40", "username": "alice" }],
+                    "attachments": []
+                }
+            }]
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate {
+            forwarded_snapshots,
+            ..
+        } = event
+        else {
+            panic!("expected message create event");
+        };
+        assert_eq!(forwarded_snapshots.len(), 1);
+        assert_eq!(
+            forwarded_snapshots[0].mentions,
+            vec![mention_info(40, "alice")]
+        );
+    }
+
+    #[test]
     fn message_create_parser_keeps_forwarded_snapshot_attachments() {
         let event = parse_message_create(&json!({
             "id": "20",
@@ -1228,5 +1385,12 @@ mod tests {
         assert_eq!(forwarded_snapshots.len(), 1);
         assert_eq!(forwarded_snapshots[0].attachments.len(), 1);
         assert_eq!(forwarded_snapshots[0].attachments[0].filename, "cat.png");
+    }
+
+    fn mention_info(user_id: u64, display_name: &str) -> MentionInfo {
+        MentionInfo {
+            user_id: Id::new(user_id),
+            display_name: display_name.to_owned(),
+        }
     }
 }
