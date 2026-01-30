@@ -733,6 +733,7 @@ mod tests {
                 reply: None,
                 poll: None,
                 content: Some(format!("msg {id}")),
+                mentions: Vec::new(),
                 attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),
             });
@@ -773,6 +774,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: vec![crate::discord::AttachmentInfo {
                 id: Id::new(3),
                 filename: "cat.png".to_owned(),

@@ -424,6 +424,9 @@ impl DiscordState {
             if message.content.is_some() {
                 existing.content = message.content;
             }
+            if !message.mentions.is_empty() || existing.mentions.is_empty() {
+                existing.mentions = message.mentions;
+            }
             if !message.attachments.is_empty() || existing.attachments.is_empty() {
                 existing.attachments = message.attachments;
             }
@@ -568,9 +571,7 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
             existing.content = Some(content.clone());
         }
     }
-    if !incoming.mentions.is_empty() || existing.mentions.is_empty() {
-        existing.mentions = incoming.mentions.clone();
-    }
+    existing.mentions = incoming.mentions.clone();
     if !incoming.attachments.is_empty() || existing.attachments.is_empty() {
         existing.attachments = incoming.attachments.clone();
     }
@@ -855,6 +856,49 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_message_create_adds_missing_mentions() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let message_id = Id::new(20);
+        let author_id = Id::new(99);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("hello <@10>".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("hello <@10>".to_owned()),
+            mentions: vec![mention_info(10, "alice")],
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].mentions, vec![mention_info(10, "alice")]);
+    }
+
+    #[test]
     fn stores_reply_preview_from_message_create() {
         let channel_id: Id<ChannelMarker> = Id::new(10);
         let mut state = DiscordState::default();
@@ -1103,6 +1147,78 @@ mod tests {
     }
 
     #[test]
+    fn message_update_preserves_mentions_when_absent() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let message_id = Id::new(20);
+        let author_id = Id::new(99);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("hello <@10>".to_owned()),
+            mentions: vec![mention_info(10, "alice")],
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state.apply_event(&AppEvent::MessageUpdate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            poll: Some(poll_info()),
+            content: None,
+            mentions: None,
+            attachments: AttachmentUpdate::Unchanged,
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages[0].mentions, vec![mention_info(10, "alice")]);
+    }
+
+    #[test]
+    fn message_update_clears_mentions_when_present_and_empty() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let message_id = Id::new(20);
+        let author_id = Id::new(99);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("hello <@10>".to_owned()),
+            mentions: vec![mention_info(10, "alice")],
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state.apply_event(&AppEvent::MessageUpdate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            poll: None,
+            content: Some("hello".to_owned()),
+            mentions: Some(Vec::new()),
+            attachments: AttachmentUpdate::Unchanged,
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert!(messages[0].mentions.is_empty());
+    }
+
+    #[test]
     fn message_capabilities_preserve_overlapping_traits() {
         let mut message = message_state("hello");
         assert_eq!(message.capabilities(), Default::default());
@@ -1272,7 +1388,7 @@ mod tests {
     }
 
     #[test]
-    fn history_merge_adds_missing_mentions_without_clearing_known_mentions() {
+    fn history_merge_replaces_mentions_from_authoritative_history() {
         let channel_id: Id<ChannelMarker> = Id::new(10);
         let mut state = DiscordState::default();
 
@@ -1306,11 +1422,11 @@ mod tests {
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
             before: None,
-            messages: vec![message_info(channel_id, 20, "hello <@10>")],
+            messages: vec![message_info(channel_id, 20, "hello")],
         });
 
         let messages = state.messages_for_channel(channel_id);
-        assert_eq!(messages[0].mentions, vec![mention_info(10, "alice")]);
+        assert!(messages[0].mentions.is_empty());
     }
 
     #[test]

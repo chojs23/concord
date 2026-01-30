@@ -1088,6 +1088,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some("clip".to_owned()),
+            mentions: Vec::new(),
             attachments: vec![video_attachment(2)],
             forwarded_snapshots: Vec::new(),
         });
@@ -1119,6 +1120,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(String::new()),
+            mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: vec![forwarded_snapshot(2)],
         });
@@ -1299,6 +1301,7 @@ mod tests {
                 reply: None,
                 poll: None,
                 content: Some(format!("msg {id}")),
+                mentions: Vec::new(),
                 attachments: image_message_ids
                     .contains(&id)
                     .then(|| image_attachment(id))
@@ -1346,6 +1349,7 @@ mod tests {
                 reply: None,
                 poll: None,
                 content: Some(format!("msg {id}")),
+                mentions: Vec::new(),
                 attachments: Vec::new(),
                 forwarded_snapshots: Vec::new(),
             });
@@ -1402,6 +1406,7 @@ mod tests {
     fn forwarded_snapshot(id: u64) -> MessageSnapshotInfo {
         MessageSnapshotInfo {
             content: Some(format!("forwarded {id}")),
+            mentions: Vec::new(),
             attachments: vec![image_attachment(id)],
             source_channel_id: None,
             timestamp: None,

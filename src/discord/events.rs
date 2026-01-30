@@ -554,7 +554,7 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
             message_id: message.id,
             poll: message.poll.as_ref().map(PollInfo::from_poll),
             content: Some(message.content.clone()),
-            mentions: Some(mention_infos(&message.mentions)),
+            mentions: (!message.mentions.is_empty()).then(|| mention_infos(&message.mentions)),
             attachments: map_attachment_update(message.attachments.clone()),
         }),
         Event::MessageDelete(message) => Some(AppEvent::MessageDelete {
