@@ -1305,6 +1305,19 @@ mod tests {
     }
 
     #[test]
+    fn message_content_prefers_cached_member_alias_over_mention_metadata() {
+        let mut message =
+            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
+        message.attachments.clear();
+        message.mentions = vec![mention_info(10, "username")];
+        let state = state_with_member(10, "server alias");
+
+        let lines = format_message_content_lines(&message, &state, 200);
+
+        assert_eq!(line_texts(&lines), vec!["hello @server alias"]);
+    }
+
+    #[test]
     fn message_content_does_not_split_grapheme_clusters() {
         let lines = wrap_text_lines("👨‍👩‍👧‍👦", 7);
 

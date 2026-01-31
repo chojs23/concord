@@ -728,17 +728,20 @@ impl DashboardState {
         value: &str,
     ) -> String {
         render_user_mentions(value, |user_id| {
+            let member_display_name = guild_id.and_then(|guild_id| {
+                let user_id = Id::<UserMarker>::new(user_id);
+                self.discord.member_display_name(guild_id, user_id)
+            });
+            if let Some(display_name) = member_display_name {
+                return Some(display_name.to_owned());
+            }
             if let Some(mention) = mentions
                 .iter()
                 .find(|mention| mention.user_id.get() == user_id)
             {
                 return Some(mention.display_name.clone());
             }
-            let guild_id = guild_id?;
-            let user_id = Id::<UserMarker>::new(user_id);
-            self.discord
-                .member_display_name(guild_id, user_id)
-                .map(str::to_owned)
+            None
         })
     }
 
