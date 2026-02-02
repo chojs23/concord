@@ -1565,6 +1565,95 @@ mod tests {
     }
 
     #[test]
+    fn message_content_highlights_mixed_everyone_and_direct_mentions_in_order() {
+        let mut message =
+            message_with_attachment(Some("@everyone hello <@10>".to_owned()), image_attachment());
+        message.attachments.clear();
+        message.mentions = vec![mention_info(10, "neo")];
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(Id::new(10)),
+        });
+
+        let lines = message_item_lines(
+            message.author.clone(),
+            "00:00".to_owned(),
+            format_message_content_lines(&message, &state, 200),
+            40,
+            0,
+            0,
+        );
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec!["oo neo 00:00", "   @everyone hello @neo"]
+        );
+        assert_eq!(lines[1].spans[1].content.as_ref(), "@everyone");
+        assert_eq!(lines[1].spans[3].content.as_ref(), "@neo");
+        assert_eq!(lines[1].spans[1].style.bg, mention_highlight_style().bg);
+        assert_eq!(lines[1].spans[3].style.bg, mention_highlight_style().bg);
+    }
+
+    #[test]
+    fn message_content_highlights_here_mentions_for_current_user() {
+        let mut message =
+            message_with_attachment(Some("ping @here".to_owned()), image_attachment());
+        message.attachments.clear();
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(Id::new(99)),
+        });
+
+        let lines = message_item_lines(
+            message.author.clone(),
+            "00:00".to_owned(),
+            format_message_content_lines(&message, &state, 200),
+            40,
+            0,
+            0,
+        );
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec!["oo neo 00:00", "   ping @here"]
+        );
+        assert_eq!(lines[1].spans[2].content.as_ref(), "@here");
+        assert_eq!(lines[1].spans[2].style.bg, mention_highlight_style().bg);
+    }
+
+    #[test]
+    fn mention_like_display_name_does_not_duplicate_highlight_spans() {
+        let mut message =
+            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
+        message.attachments.clear();
+        message.mentions = vec![mention_info(10, "everyone")];
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::Ready {
+            user: "everyone".to_owned(),
+            user_id: Some(Id::new(10)),
+        });
+
+        let lines = message_item_lines(
+            message.author.clone(),
+            "00:00".to_owned(),
+            format_message_content_lines(&message, &state, 200),
+            40,
+            0,
+            0,
+        );
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec!["oo neo 00:00", "   hello @everyone"]
+        );
+        assert_eq!(lines[1].spans.len(), 3);
+        assert_eq!(lines[1].spans[2].content.as_ref(), "@everyone");
+        assert_eq!(lines[1].spans[2].style.bg, mention_highlight_style().bg);
+    }
+
+    #[test]
     fn message_content_prefers_cached_member_alias_over_mention_metadata() {
         let mut message =
             message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());

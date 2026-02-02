@@ -755,6 +755,7 @@ impl DashboardState {
             add_literal_mention_highlights(&mut rendered, "@everyone");
             add_literal_mention_highlights(&mut rendered, "@here");
         }
+        normalize_text_highlights(&mut rendered.highlights);
         rendered
     }
 
@@ -2108,6 +2109,23 @@ fn add_literal_mention_highlights(rendered: &mut RenderedText, mention: &str) {
         }
         cursor = end;
     }
+}
+
+fn normalize_text_highlights(highlights: &mut Vec<TextHighlight>) {
+    highlights.sort_by_key(|highlight| (highlight.start, highlight.end));
+    let mut normalized: Vec<TextHighlight> = Vec::new();
+    for highlight in highlights.drain(..) {
+        let Some(last) = normalized.last_mut() else {
+            normalized.push(highlight);
+            continue;
+        };
+        if highlight.start <= last.end {
+            last.end = last.end.max(highlight.end);
+        } else {
+            normalized.push(highlight);
+        }
+    }
+    *highlights = normalized;
 }
 
 fn is_literal_mention_boundary(value: &str, start: usize, end: usize) -> bool {
