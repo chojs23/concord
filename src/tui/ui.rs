@@ -15,7 +15,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    format::{truncate_display_width, truncate_text},
+    format::{RenderedText, TextHighlight, truncate_display_width, truncate_text},
     state::{
         ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MemberGroup,
         MessageActionItem, folder_color, presence_color, presence_marker,
@@ -39,6 +39,7 @@ const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
 struct MessageContentLine {
     text: String,
     style: Style,
+    mention_highlights: Vec<TextHighlight>,
 }
 
 impl MessageContentLine {
@@ -46,6 +47,15 @@ impl MessageContentLine {
         Self {
             text,
             style: Style::default(),
+            mention_highlights: Vec::new(),
+        }
+    }
+
+    fn styled_text(text: String, style: Style, mention_highlights: Vec<TextHighlight>) -> Self {
+        Self {
+            text,
+            style,
+            mention_highlights,
         }
     }
 
@@ -53,6 +63,7 @@ impl MessageContentLine {
         Self {
             text,
             style: Style::default().fg(DIM),
+            mention_highlights: Vec::new(),
         }
     }
 
@@ -60,7 +71,34 @@ impl MessageContentLine {
         Self {
             text,
             style: Style::default().fg(ACCENT),
+            mention_highlights: Vec::new(),
         }
+    }
+
+    fn spans(&self) -> Vec<Span<'static>> {
+        if self.mention_highlights.is_empty() {
+            return vec![Span::styled(self.text.clone(), self.style)];
+        }
+
+        let mut spans = Vec::new();
+        let mut cursor = 0usize;
+        for highlight in &self.mention_highlights {
+            if highlight.start > cursor {
+                spans.push(Span::styled(
+                    self.text[cursor..highlight.start].to_owned(),
+                    self.style,
+                ));
+            }
+            spans.push(Span::styled(
+                self.text[highlight.start..highlight.end].to_owned(),
+                self.style.patch(mention_highlight_style()),
+            ));
+            cursor = highlight.end;
+        }
+        if cursor < self.text.len() {
+            spans.push(Span::styled(self.text[cursor..].to_owned(), self.style));
+        }
+        spans
     }
 }
 
@@ -424,10 +462,9 @@ fn message_item_lines(
         Span::styled(sent_time, Style::default().fg(DIM)),
     ])];
     lines.extend(content.into_iter().map(|line| {
-        Line::from(vec![
-            message_avatar_spacer_span(),
-            Span::styled(line.text, line.style),
-        ])
+        let mut spans = vec![message_avatar_spacer_span()];
+        spans.extend(line.spans());
+        Line::from(spans)
     }));
     lines.extend(image_preview_spacer_lines(preview_height));
     lines.into_iter().skip(line_offset).collect()
@@ -532,14 +569,11 @@ fn format_message_content_lines(
     }
 
     if let Some(value) = message.content.as_deref().filter(|value| !value.is_empty()) {
-        lines.extend(
-            wrap_text_lines(
-                &state.render_user_mentions(message.guild_id, &message.mentions, value),
-                width,
-            )
-            .into_iter()
-            .map(MessageContentLine::plain),
-        );
+        lines.extend(wrap_rendered_text_lines(
+            state.render_user_mentions_with_highlights(message.guild_id, &message.mentions, value),
+            width,
+            Style::default(),
+        ));
     }
     if let Some(attachments) = attachment_summary {
         lines.push(MessageContentLine::accent(truncate_text(
@@ -564,6 +598,64 @@ fn format_message_content_lines(
 
 pub(crate) fn wrapped_text_line_count(value: &str, width: usize) -> usize {
     wrap_text_lines(value, width).len()
+}
+
+fn wrap_rendered_text_lines(
+    rendered: RenderedText,
+    width: usize,
+    style: Style,
+) -> Vec<MessageContentLine> {
+    wrap_text_with_highlights(&rendered.text, &rendered.highlights, width)
+        .into_iter()
+        .map(|(text, mention_highlights)| {
+            MessageContentLine::styled_text(text, style, mention_highlights)
+        })
+        .collect()
+}
+
+fn rendered_text_line(rendered: RenderedText, style: Style) -> MessageContentLine {
+    MessageContentLine::styled_text(rendered.text, style, rendered.highlights)
+}
+
+fn prepend_rendered_text(prefix: String, mut rendered: RenderedText) -> RenderedText {
+    let shift = prefix.len();
+    for highlight in &mut rendered.highlights {
+        highlight.start = highlight.start.saturating_add(shift);
+        highlight.end = highlight.end.saturating_add(shift);
+    }
+    rendered.text.insert_str(0, &prefix);
+    rendered
+}
+
+fn truncate_rendered_text(rendered: RenderedText, limit: usize) -> RenderedText {
+    let mut chars = rendered.text.char_indices();
+    let cutoff = match chars.nth(limit) {
+        Some((index, _)) => index,
+        None => return rendered,
+    };
+    let mut text = rendered.text[..cutoff].to_owned();
+    text.push_str("...");
+    let highlights = rendered
+        .highlights
+        .into_iter()
+        .filter_map(|highlight| {
+            (highlight.start < cutoff).then(|| TextHighlight {
+                start: highlight.start,
+                end: highlight.end.min(cutoff),
+            })
+        })
+        .collect();
+    RenderedText { text, highlights }
+}
+
+fn prefix_message_content_line(prefix: &str, mut line: MessageContentLine) -> MessageContentLine {
+    let shift = prefix.len();
+    for highlight in &mut line.mention_highlights {
+        highlight.start = highlight.start.saturating_add(shift);
+        highlight.end = highlight.end.saturating_add(shift);
+    }
+    line.text.insert_str(0, prefix);
+    line
 }
 
 fn wrap_text_lines(value: &str, width: usize) -> Vec<String> {
@@ -598,6 +690,77 @@ fn wrap_text_lines(value: &str, width: usize) -> Vec<String> {
         lines.push(current);
     }
     lines
+}
+
+fn wrap_text_with_highlights(
+    value: &str,
+    highlights: &[TextHighlight],
+    width: usize,
+) -> Vec<(String, Vec<TextHighlight>)> {
+    if value.is_empty() {
+        return Vec::new();
+    }
+
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut line_start = 0usize;
+    for line in value.split('\n') {
+        if line.is_empty() {
+            lines.push((String::new(), Vec::new()));
+            line_start = line_start.saturating_add(1);
+            continue;
+        }
+
+        let mut current = String::new();
+        let mut current_width = 0usize;
+        let mut current_start = line_start;
+        let mut current_end = line_start;
+        for (relative_start, grapheme) in line.grapheme_indices(true) {
+            let grapheme_start = line_start.saturating_add(relative_start);
+            let grapheme_end = grapheme_start.saturating_add(grapheme.len());
+            let grapheme_width = grapheme.width();
+            if current_width > 0
+                && grapheme_width > 0
+                && current_width.saturating_add(grapheme_width) > width
+            {
+                let text = std::mem::take(&mut current);
+                lines.push((
+                    text,
+                    highlights_for_range(highlights, current_start, current_end),
+                ));
+                current_width = 0;
+                current_start = grapheme_start;
+            }
+
+            current.push_str(grapheme);
+            current_width = current_width.saturating_add(grapheme_width);
+            current_end = grapheme_end;
+        }
+        lines.push((
+            current,
+            highlights_for_range(highlights, current_start, current_end),
+        ));
+        line_start = line_start.saturating_add(line.len()).saturating_add(1);
+    }
+    lines
+}
+
+fn highlights_for_range(
+    highlights: &[TextHighlight],
+    start: usize,
+    end: usize,
+) -> Vec<TextHighlight> {
+    highlights
+        .iter()
+        .filter_map(|highlight| {
+            let highlight_start = highlight.start.max(start);
+            let highlight_end = highlight.end.min(end);
+            (highlight_start < highlight_end).then(|| TextHighlight {
+                start: highlight_start.saturating_sub(start),
+                end: highlight_end.saturating_sub(start),
+            })
+        })
+        .collect()
 }
 
 fn format_poll_lines(poll: &PollInfo, width: usize) -> Vec<MessageContentLine> {
@@ -667,11 +830,12 @@ fn format_reply_line(
         .as_deref()
         .filter(|value| !value.is_empty())
         .unwrap_or("<empty message>");
-    let content = state.render_user_mentions(guild_id, &reply.mentions, content);
-    MessageContentLine::dim(truncate_text(
-        &format!("╭─ {} : {}", reply.author, content),
-        width,
-    ))
+    let content = state.render_user_mentions_with_highlights(guild_id, &reply.mentions, content);
+    let content = prepend_rendered_text(format!("╭─ {} : ", reply.author), content);
+    rendered_text_line(
+        truncate_rendered_text(content, width),
+        Style::default().fg(DIM),
+    )
 }
 
 fn format_message_kind_line(message_kind: MessageKind) -> Option<MessageContentLine> {
@@ -701,15 +865,15 @@ fn format_forwarded_snapshot(
         .filter(|value| !value.is_empty())
     {
         let content_width = width.saturating_sub(2).max(1);
-        let content = state.render_user_mentions(
+        let content = state.render_user_mentions_with_highlights(
             state.forwarded_snapshot_mention_guild_id(snapshot),
             &snapshot.mentions,
             content,
         );
         lines.extend(
-            wrap_text_lines(&content, content_width)
+            wrap_rendered_text_lines(content, content_width, Style::default())
                 .into_iter()
-                .map(|line| MessageContentLine::plain(format!("│ {line}"))),
+                .map(|line| prefix_message_content_line("│ ", line)),
         );
     }
     if let Some(attachments) = attachment_summary {
@@ -1049,6 +1213,12 @@ fn highlight_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+fn mention_highlight_style() -> Style {
+    Style::default()
+        .bg(Color::Rgb(92, 76, 35))
+        .fg(Color::Yellow)
+}
+
 fn panel_block(title: &'static str, focused: bool) -> Block<'static> {
     panel_block_owned(title.to_owned(), focused)
 }
@@ -1163,8 +1333,8 @@ mod tests {
         ACCENT, DIM, DISCORD_EPOCH_MILLIS, MessageContentLine, composer_prompt_line_count,
         format_message_content, format_message_content_lines, format_message_sent_time,
         format_unix_millis_with_offset, highlight_style, inline_image_preview_area,
-        inline_image_preview_row, message_action_menu_lines, message_item_lines,
-        message_viewport_lines, sync_view_heights, wrap_text_lines,
+        inline_image_preview_row, mention_highlight_style, message_action_menu_lines,
+        message_item_lines, message_viewport_lines, sync_view_heights, wrap_text_lines,
     };
     use crate::{
         discord::{
@@ -1302,6 +1472,96 @@ mod tests {
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
         assert_eq!(line_texts(&lines), vec!["hello @alice"]);
+    }
+
+    #[test]
+    fn message_content_highlights_current_user_mentions() {
+        let mut message =
+            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
+        message.attachments.clear();
+        message.mentions = vec![mention_info(10, "username")];
+        let mut state = state_with_member(10, "server alias");
+        state.push_event(AppEvent::Ready {
+            user: "server alias".to_owned(),
+            user_id: Some(Id::new(10)),
+        });
+
+        let lines = message_item_lines(
+            message.author.clone(),
+            "00:00".to_owned(),
+            format_message_content_lines(&message, &state, 200),
+            40,
+            0,
+            0,
+        );
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec!["oo neo 00:00", "   hello @server alias"]
+        );
+        assert_eq!(lines[1].spans[2].content.as_ref(), "@server alias");
+        assert_eq!(lines[1].spans[2].style.bg, mention_highlight_style().bg);
+    }
+
+    #[test]
+    fn message_content_does_not_highlight_other_user_mentions() {
+        let mut message =
+            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
+        message.attachments.clear();
+        message.mentions = vec![mention_info(10, "alice")];
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(Id::new(99)),
+        });
+
+        let lines = message_item_lines(
+            message.author.clone(),
+            "00:00".to_owned(),
+            format_message_content_lines(&message, &state, 200),
+            40,
+            0,
+            0,
+        );
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec!["oo neo 00:00", "   hello @alice"]
+        );
+        assert!(
+            lines[1]
+                .spans
+                .iter()
+                .all(|span| span.style.bg != mention_highlight_style().bg)
+        );
+    }
+
+    #[test]
+    fn message_content_highlights_everyone_mentions_for_current_user() {
+        let mut message =
+            message_with_attachment(Some("ping @everyone".to_owned()), image_attachment());
+        message.attachments.clear();
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(Id::new(99)),
+        });
+
+        let lines = message_item_lines(
+            message.author.clone(),
+            "00:00".to_owned(),
+            format_message_content_lines(&message, &state, 200),
+            40,
+            0,
+            0,
+        );
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec!["oo neo 00:00", "   ping @everyone"]
+        );
+        assert_eq!(lines[1].spans[2].content.as_ref(), "@everyone");
+        assert_eq!(lines[1].spans[2].style.bg, mention_highlight_style().bg);
     }
 
     #[test]

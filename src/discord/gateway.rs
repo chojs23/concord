@@ -119,6 +119,7 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
 
     let user_started = Instant::now();
     if let Some(user) = data.get("user") {
+        let user_id = user.get("id").and_then(parse_id::<UserMarker>);
         let name = user
             .get("global_name")
             .and_then(Value::as_str)
@@ -126,7 +127,10 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
             .or_else(|| user.get("username").and_then(Value::as_str))
             .unwrap_or("unknown")
             .to_owned();
-        events.push(AppEvent::Ready { user: name });
+        events.push(AppEvent::Ready {
+            user: name,
+            user_id,
+        });
     }
     stats.user = user_started.elapsed();
 

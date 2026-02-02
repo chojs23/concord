@@ -13,7 +13,9 @@ use crate::discord::{
 };
 use crate::logging;
 
-use super::format::render_user_mentions;
+use super::format::{
+    RenderedText, TextHighlight, render_user_mentions, render_user_mentions_with_highlights,
+};
 
 const SCROLL_OFF: usize = 3;
 
@@ -85,6 +87,7 @@ pub struct DashboardState {
     composer_active: bool,
     message_action_menu: Option<MessageActionMenuState>,
     current_user: Option<String>,
+    current_user_id: Option<Id<UserMarker>>,
     last_error: Option<String>,
     last_status: Option<String>,
     skipped_events: u64,
@@ -135,6 +138,7 @@ impl DashboardState {
             composer_active: false,
             message_action_menu: None,
             current_user: None,
+            current_user_id: None,
             last_error: None,
             last_status: None,
             skipped_events: 0,
@@ -163,7 +167,10 @@ impl DashboardState {
         let channel_cursor_id = self.selected_channel_cursor_id();
 
         match &event {
-            AppEvent::Ready { user } => self.current_user = Some(user.clone()),
+            AppEvent::Ready { user, user_id } => {
+                self.current_user = Some(user.clone());
+                self.current_user_id = *user_id;
+            }
             AppEvent::GatewayError { message } => {
                 logging::error("app_event", message);
                 self.last_error = Some(message.clone());
@@ -728,21 +735,45 @@ impl DashboardState {
         value: &str,
     ) -> String {
         render_user_mentions(value, |user_id| {
-            let member_display_name = guild_id.and_then(|guild_id| {
-                let user_id = Id::<UserMarker>::new(user_id);
-                self.discord.member_display_name(guild_id, user_id)
-            });
-            if let Some(display_name) = member_display_name {
-                return Some(display_name.to_owned());
-            }
-            if let Some(mention) = mentions
-                .iter()
-                .find(|mention| mention.user_id.get() == user_id)
-            {
-                return Some(mention.display_name.clone());
-            }
-            None
+            self.resolve_mention_display_name(guild_id, mentions, user_id)
         })
+    }
+
+    pub(crate) fn render_user_mentions_with_highlights(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        mentions: &[MentionInfo],
+        value: &str,
+    ) -> RenderedText {
+        let current_user_id = self.current_user_id.map(|id| id.get());
+        let mut rendered = render_user_mentions_with_highlights(
+            value,
+            |user_id| self.resolve_mention_display_name(guild_id, mentions, user_id),
+            |user_id| current_user_id == Some(user_id),
+        );
+        if current_user_id.is_some() {
+            add_literal_mention_highlights(&mut rendered, "@everyone");
+            add_literal_mention_highlights(&mut rendered, "@here");
+        }
+        rendered
+    }
+
+    fn resolve_mention_display_name(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        mentions: &[MentionInfo],
+        user_id: u64,
+    ) -> Option<String> {
+        if let Some(display_name) = guild_id.and_then(|guild_id| {
+            let user_id = Id::<UserMarker>::new(user_id);
+            self.discord.member_display_name(guild_id, user_id)
+        }) {
+            return Some(display_name.to_owned());
+        }
+        mentions
+            .iter()
+            .find(|mention| mention.user_id.get() == user_id)
+            .map(|mention| mention.display_name.clone())
     }
 
     pub(crate) fn forwarded_snapshot_mention_guild_id(
@@ -2067,6 +2098,29 @@ fn forwarded_snapshot_line_count(
     1 + content_lines.saturating_add(attachment_line).max(1)
 }
 
+fn add_literal_mention_highlights(rendered: &mut RenderedText, mention: &str) {
+    let mut cursor = 0usize;
+    while let Some(relative_start) = rendered.text[cursor..].find(mention) {
+        let start = cursor.saturating_add(relative_start);
+        let end = start.saturating_add(mention.len());
+        if is_literal_mention_boundary(&rendered.text, start, end) {
+            rendered.highlights.push(TextHighlight { start, end });
+        }
+        cursor = end;
+    }
+}
+
+fn is_literal_mention_boundary(value: &str, start: usize, end: usize) -> bool {
+    let before = value[..start].chars().next_back();
+    let after = value[end..].chars().next();
+    !before.is_some_and(is_literal_mention_word_char)
+        && !after.is_some_and(is_literal_mention_word_char)
+}
+
+fn is_literal_mention_word_char(value: char) -> bool {
+    value.is_ascii_alphanumeric() || value == '_'
+}
+
 fn pane_content_height(height: usize) -> usize {
     height.max(1)
 }
@@ -2252,8 +2306,10 @@ mod tests {
         let mut state = DashboardState::new();
         state.push_event(AppEvent::Ready {
             user: "neo".to_owned(),
+            user_id: Some(Id::new(10)),
         });
         assert_eq!(state.current_user(), Some("neo"));
+        assert_eq!(state.current_user_id, Some(Id::new(10)));
     }
 
     #[test]

@@ -217,6 +217,7 @@ pub enum AttachmentUpdate {
 pub enum AppEvent {
     Ready {
         user: String,
+        user_id: Option<Id<UserMarker>>,
     },
     GuildCreate {
         guild_id: Id<GuildMarker>,
@@ -498,6 +499,7 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
     match event {
         Event::Ready(ready) => Some(AppEvent::Ready {
             user: ready.user.name,
+            user_id: Some(ready.user.id),
         }),
         Event::GuildCreate(guild) => map_guild_create(*guild),
         Event::GuildDelete(guild) => Some(AppEvent::GuildDelete { guild_id: guild.id }),

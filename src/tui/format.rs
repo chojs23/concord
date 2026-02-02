@@ -71,6 +71,72 @@ where
     rendered
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RenderedText {
+    pub text: String,
+    pub highlights: Vec<TextHighlight>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TextHighlight {
+    pub start: usize,
+    pub end: usize,
+}
+
+pub fn render_user_mentions_with_highlights<F, H>(
+    value: &str,
+    mut resolve_name: F,
+    mut should_highlight: H,
+) -> RenderedText
+where
+    F: FnMut(u64) -> Option<String>,
+    H: FnMut(u64) -> bool,
+{
+    if !value.contains("<@") {
+        return RenderedText {
+            text: value.to_owned(),
+            highlights: Vec::new(),
+        };
+    }
+
+    let mut rendered = String::with_capacity(value.len());
+    let mut highlights = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(relative_start) = value[cursor..].find("<@") {
+        let start = cursor.saturating_add(relative_start);
+        rendered.push_str(&value[cursor..start]);
+
+        let Some((end, user_id)) = parse_user_mention(value, start) else {
+            rendered.push_str("<@");
+            cursor = start.saturating_add(2);
+            continue;
+        };
+
+        match resolve_name(user_id) {
+            Some(name) => {
+                let highlight_start = rendered.len();
+                rendered.push('@');
+                rendered.push_str(&name);
+                let highlight_end = rendered.len();
+                if should_highlight(user_id) {
+                    highlights.push(TextHighlight {
+                        start: highlight_start,
+                        end: highlight_end,
+                    });
+                }
+            }
+            None => rendered.push_str(&value[start..end]),
+        }
+        cursor = end;
+    }
+    rendered.push_str(&value[cursor..]);
+
+    RenderedText {
+        text: rendered,
+        highlights,
+    }
+}
+
 fn parse_user_mention(value: &str, start: usize) -> Option<(usize, u64)> {
     let bytes = value.as_bytes();
     if bytes.get(start..start.saturating_add(2)) != Some(b"<@") {
