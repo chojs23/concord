@@ -638,11 +638,10 @@ fn truncate_rendered_text(rendered: RenderedText, limit: usize) -> RenderedText 
     let highlights = rendered
         .highlights
         .into_iter()
-        .filter_map(|highlight| {
-            (highlight.start < cutoff).then(|| TextHighlight {
+        .filter(|highlight| highlight.start < cutoff)
+        .map(|highlight| TextHighlight {
                 start: highlight.start,
                 end: highlight.end.min(cutoff),
-            })
         })
         .collect();
     RenderedText { text, highlights }
