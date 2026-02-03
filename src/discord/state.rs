@@ -121,6 +121,13 @@ pub struct DiscordState {
     max_messages_per_channel: usize,
 }
 
+struct MessageUpdateFields {
+    poll: Option<PollInfo>,
+    content: Option<String>,
+    mentions: Option<Vec<MentionInfo>>,
+    attachments: AttachmentUpdate,
+}
+
 impl Default for DiscordState {
     fn default() -> Self {
         Self::new(DEFAULT_MAX_MESSAGES_PER_CHANNEL)
@@ -229,21 +236,22 @@ impl DiscordState {
             } => self.merge_message_history(*channel_id, *before, messages),
             AppEvent::MessageHistoryLoadFailed { .. } => {}
             AppEvent::MessageUpdate {
-                guild_id,
                 channel_id,
                 message_id,
                 poll,
                 content,
                 mentions,
                 attachments,
+                ..
             } => self.update_message(
-                *guild_id,
                 *channel_id,
                 *message_id,
-                poll.clone(),
-                content.clone(),
-                mentions.clone(),
-                attachments.clone(),
+                MessageUpdateFields {
+                    poll: poll.clone(),
+                    content: content.clone(),
+                    mentions: mentions.clone(),
+                    attachments: attachments.clone(),
+                },
             ),
             AppEvent::MessageDelete {
                 channel_id,
@@ -512,26 +520,22 @@ impl DiscordState {
 
     fn update_message(
         &mut self,
-        _guild_id: Option<Id<GuildMarker>>,
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
-        poll: Option<PollInfo>,
-        content: Option<String>,
-        mentions: Option<Vec<MentionInfo>>,
-        attachments: AttachmentUpdate,
+        update: MessageUpdateFields,
     ) {
         let messages = self.messages.entry(channel_id).or_default();
         if let Some(existing) = messages.iter_mut().find(|item| item.id == message_id) {
-            if let Some(poll) = poll {
+            if let Some(poll) = update.poll {
                 existing.poll = Some(poll);
             }
-            if let Some(content) = content {
+            if let Some(content) = update.content {
                 existing.content = Some(content);
             }
-            if let Some(mentions) = mentions {
+            if let Some(mentions) = update.mentions {
                 existing.mentions = mentions;
             }
-            match attachments {
+            match update.attachments {
                 AttachmentUpdate::Replace(attachments) => existing.attachments = attachments,
                 AttachmentUpdate::Unchanged => {}
             }
