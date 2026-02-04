@@ -1079,17 +1079,6 @@ impl DashboardState {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn selected_message_attachment_url(&self) -> Option<&str> {
-        self.selected_message_attachment()
-            .and_then(|attachment| attachment.preferred_url())
-    }
-
-    #[allow(dead_code)]
-    fn selected_message_attachment(&self) -> Option<&crate::discord::AttachmentInfo> {
-        self.selected_message_attachment_matching(|_| true)
-    }
-
     fn selected_message_image_attachment(&self) -> Option<&crate::discord::AttachmentInfo> {
         self.selected_message_attachment_matching(|attachment| attachment.is_image())
     }
@@ -3087,43 +3076,6 @@ mod tests {
     }
 
     #[test]
-    fn selected_message_attachment_url_falls_back_to_forwarded_attachment() {
-        let mut state = state_with_image_messages(1, &[]);
-        focus_messages(&mut state);
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reply: None,
-            poll: None,
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            forwarded_snapshots: vec![forwarded_snapshot(2)],
-        });
-
-        assert_eq!(
-            state.selected_message_attachment_url(),
-            Some("https://cdn.discordapp.com/image-2.png")
-        );
-    }
-
-    #[test]
-    fn selected_message_attachment_url_uses_proxy_when_url_is_empty() {
-        let mut state = state_with_proxy_only_attachment_message();
-        focus_messages(&mut state);
-
-        assert_eq!(
-            state.selected_message_attachment_url(),
-            Some("https://media.discordapp.net/cat.png")
-        );
-    }
-
-    #[test]
     fn message_scroll_uses_scrolloff() {
         let mut state = state_with_messages(12);
         focus_messages(&mut state);
@@ -4379,56 +4331,6 @@ mod tests {
             source_channel_id: None,
             timestamp: None,
         }
-    }
-
-    fn state_with_proxy_only_attachment_message() -> DashboardState {
-        let guild_id = Id::new(1);
-        let channel_id: Id<ChannelMarker> = Id::new(2);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id,
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-            }],
-            members: Vec::new(),
-            presences: Vec::new(),
-        });
-        state.confirm_selected_guild();
-        state.confirm_selected_channel();
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(guild_id),
-            channel_id,
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reply: None,
-            poll: None,
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: vec![AttachmentInfo {
-                id: Id::new(3),
-                filename: "cat.png".to_owned(),
-                url: String::new(),
-                proxy_url: "https://media.discordapp.net/cat.png".to_owned(),
-                content_type: Some("image/png".to_owned()),
-                size: 2048,
-                width: Some(640),
-                height: Some(480),
-                description: None,
-            }],
-            forwarded_snapshots: Vec::new(),
-        });
-        state
     }
 
     fn message_info(channel_id: Id<ChannelMarker>, message_id: u64) -> MessageInfo {
