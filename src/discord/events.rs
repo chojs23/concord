@@ -556,7 +556,7 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
             message_id: message.id,
             poll: message.poll.as_ref().map(PollInfo::from_poll),
             content: Some(message.content.clone()),
-            mentions: (!message.mentions.is_empty()).then(|| mention_infos(&message.mentions)),
+            mentions: Some(mention_infos(&message.mentions)),
             attachments: map_attachment_update(message.attachments.clone()),
         }),
         Event::MessageDelete(message) => Some(AppEvent::MessageDelete {
@@ -576,16 +576,12 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
 }
 
 fn map_attachment_update(attachments: Vec<Attachment>) -> AttachmentUpdate {
-    if attachments.is_empty() {
-        AttachmentUpdate::Unchanged
-    } else {
-        AttachmentUpdate::Replace(
-            attachments
-                .into_iter()
-                .map(AttachmentInfo::from_attachment)
-                .collect(),
-        )
-    }
+    AttachmentUpdate::Replace(
+        attachments
+            .into_iter()
+            .map(AttachmentInfo::from_attachment)
+            .collect(),
+    )
 }
 
 fn map_guild_create(guild: GuildCreatePayload) -> Option<AppEvent> {
@@ -780,6 +776,19 @@ mod tests {
         );
         assert_eq!(display_name(None, &user_with_global), "global alias");
         assert_eq!(display_name(None, &user("neo", None)), "neo");
+    }
+
+    #[test]
+    fn message_update_empty_mentions_can_clear_cached_mentions() {
+        assert_eq!(mention_infos(&[]), Vec::<MentionInfo>::new());
+    }
+
+    #[test]
+    fn message_update_empty_attachments_can_clear_cached_attachments() {
+        assert!(matches!(
+            map_attachment_update(Vec::new()),
+            AttachmentUpdate::Replace(attachments) if attachments.is_empty()
+        ));
     }
 
     fn user(name: &str, global_name: Option<&str>) -> TwilightUser {
