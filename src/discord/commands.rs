@@ -15,6 +15,7 @@ pub enum AppCommand {
     SendMessage {
         channel_id: Id<ChannelMarker>,
         content: String,
+        reply_to: Option<Id<MessageMarker>>,
     },
     OpenUrl {
         url: String,

@@ -23,14 +23,16 @@ impl DiscordRest {
         &self,
         channel_id: Id<ChannelMarker>,
         content: &str,
+        reply_to: Option<Id<MessageMarker>>,
     ) -> Result<Message> {
         validate_message_content(content)?;
 
-        let response = self
-            .http
-            .create_message(channel_id)
-            .content(content)
-            .await?;
+        let mut request = self.http.create_message(channel_id).content(content);
+        if let Some(message_id) = reply_to {
+            request = request.reply(message_id);
+        }
+
+        let response = request.await?;
 
         response.model().await.map_err(Into::into)
     }

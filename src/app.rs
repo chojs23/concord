@@ -133,7 +133,8 @@ fn start_command_loop(
                 AppCommand::SendMessage {
                     channel_id,
                     content,
-                } => match client.send_message(channel_id, &content).await {
+                    reply_to,
+                } => match client.send_message(channel_id, &content, reply_to).await {
                     Ok(message) => client.publish_event(AppEvent::from_message(message)),
                     Err(error) => {
                         logging::error("app", format!("send message failed: {error}"));

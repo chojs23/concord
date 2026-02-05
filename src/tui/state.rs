@@ -85,6 +85,7 @@ pub struct DashboardState {
     member_view_height: usize,
     composer_input: String,
     composer_active: bool,
+    reply_target_message_id: Option<Id<MessageMarker>>,
     message_action_menu: Option<MessageActionMenuState>,
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
@@ -136,6 +137,7 @@ impl DashboardState {
             member_view_height: 1,
             composer_input: String::new(),
             composer_active: false,
+            reply_target_message_id: None,
             message_action_menu: None,
             current_user: None,
             current_user_id: None,
@@ -351,13 +353,11 @@ impl DashboardState {
     }
 
     fn start_reply_composer(&mut self) {
-        let Some(author) = self
-            .selected_message_state()
-            .map(|message| message.author.clone())
-        else {
+        let Some(message_id) = self.selected_message_state().map(|message| message.id) else {
             return;
         };
-        self.composer_input = format!("@{author} ");
+        self.composer_input.clear();
+        self.reply_target_message_id = Some(message_id);
         self.composer_active = true;
         self.focus = FocusPane::Messages;
     }
@@ -1435,6 +1435,7 @@ impl DashboardState {
         if self.selected_channel_id().is_none() {
             return;
         }
+        self.reply_target_message_id = None;
         self.composer_active = true;
         self.focus = FocusPane::Messages;
     }
@@ -1442,6 +1443,7 @@ impl DashboardState {
     pub fn cancel_composer(&mut self) {
         self.composer_active = false;
         self.composer_input.clear();
+        self.reply_target_message_id = None;
     }
 
     pub fn push_composer_char(&mut self, value: char) {
@@ -1461,9 +1463,11 @@ impl DashboardState {
 
         self.composer_input.clear();
         self.composer_active = false;
+        let reply_to = self.reply_target_message_id.take();
         Some(AppCommand::SendMessage {
             channel_id,
             content,
+            reply_to,
         })
     }
 

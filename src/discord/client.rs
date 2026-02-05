@@ -56,8 +56,9 @@ impl DiscordClient {
         &self,
         channel_id: Id<ChannelMarker>,
         content: &str,
+        reply_to: Option<Id<MessageMarker>>,
     ) -> Result<Message> {
-        self.rest.send_message(channel_id, content).await
+        self.rest.send_message(channel_id, content, reply_to).await
     }
 
     pub async fn load_message_history(

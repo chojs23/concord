@@ -469,6 +469,7 @@ mod tests {
             Some(crate::discord::AppCommand::SendMessage {
                 channel_id: Id::new(11),
                 content: "h\ni".to_owned(),
+                reply_to: None,
             })
         );
     }
@@ -546,7 +547,66 @@ mod tests {
         assert_eq!(command, None);
         assert!(!state.is_message_action_menu_open());
         assert!(state.is_composing());
-        assert_eq!(state.composer_input(), "@neo ");
+        assert_eq!(state.composer_input(), "");
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+        );
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert_eq!(
+            command,
+            Some(AppCommand::SendMessage {
+                channel_id: Id::new(2),
+                content: "hi".to_owned(),
+                reply_to: Some(Id::new(1)),
+            })
+        );
+    }
+
+    #[test]
+    fn canceling_reply_composer_clears_reply_target() {
+        let mut state = state_with_messages(1);
+        focus_messages(&mut state);
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+        );
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert_eq!(
+            command,
+            Some(AppCommand::SendMessage {
+                channel_id: Id::new(2),
+                content: "n".to_owned(),
+                reply_to: None,
+            })
+        );
     }
 
     #[test]
