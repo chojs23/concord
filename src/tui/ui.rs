@@ -640,8 +640,8 @@ fn truncate_rendered_text(rendered: RenderedText, limit: usize) -> RenderedText 
         .into_iter()
         .filter(|highlight| highlight.start < cutoff)
         .map(|highlight| TextHighlight {
-                start: highlight.start,
-                end: highlight.end.min(cutoff),
+            start: highlight.start,
+            end: highlight.end.min(cutoff),
         })
         .collect();
     RenderedText { text, highlights }
