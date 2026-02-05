@@ -1,4 +1,10 @@
-use std::{env, fs, io, path::PathBuf, process::Command, time::Instant};
+use std::{
+    env, fs,
+    io::{self, Write},
+    path::{Path, PathBuf},
+    process::Command,
+    time::Instant,
+};
 
 use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
@@ -244,9 +250,7 @@ async fn download_attachment(url: &str, filename: &str) -> std::result::Result<P
     let directory = downloads_directory()?;
     fs::create_dir_all(&directory)
         .map_err(|error| format!("create download directory failed: {error}"))?;
-    let path = unique_download_path(&directory, &sanitize_filename(filename));
-    fs::write(&path, bytes).map_err(|error| format!("write attachment failed: {error}"))?;
-    Ok(path)
+    write_unique_download_file(&directory, &sanitize_filename(filename), &bytes)
 }
 
 fn downloads_directory() -> std::result::Result<PathBuf, String> {
@@ -273,25 +277,40 @@ fn sanitize_filename(filename: &str) -> String {
     }
 }
 
-fn unique_download_path(directory: &std::path::Path, filename: &str) -> PathBuf {
-    let path = directory.join(filename);
-    if !path.exists() {
-        return path;
-    }
-
-    let original = std::path::Path::new(filename);
+fn write_unique_download_file(
+    directory: &Path,
+    filename: &str,
+    bytes: &[u8],
+) -> std::result::Result<PathBuf, String> {
+    let original = Path::new(filename);
     let stem = original
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or("attachment");
     let extension = original.extension().and_then(|value| value.to_str());
-    for index in 1.. {
-        let candidate = match extension {
-            Some(extension) => directory.join(format!("{stem} ({index}).{extension}")),
-            None => directory.join(format!("{stem} ({index})")),
+
+    for index in 0.. {
+        let candidate = if index == 0 {
+            directory.join(filename)
+        } else {
+            match extension {
+                Some(extension) => directory.join(format!("{stem} ({index}).{extension}")),
+                None => directory.join(format!("{stem} ({index})")),
+            }
         };
-        if !candidate.exists() {
-            return candidate;
+
+        match fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                file.write_all(bytes)
+                    .map_err(|error| format!("write attachment failed: {error}"))?;
+                return Ok(candidate);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(format!("write attachment failed: {error}")),
         }
     }
 
@@ -371,5 +390,51 @@ async fn shutdown_gateway(gateway_task: tokio::task::JoinHandle<()>) {
         && !error.is_cancelled()
     {
         logging::error("app", format!("gateway task ended unexpectedly: {error}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, process};
+
+    use super::{sanitize_filename, write_unique_download_file};
+
+    fn unix_timestamp_nanos() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn write_unique_download_file_uses_next_available_name() {
+        let directory = std::env::temp_dir().join(format!(
+            "concord-download-test-{}-{}",
+            process::id(),
+            unix_timestamp_nanos()
+        ));
+        fs::create_dir_all(&directory).expect("test directory should be created");
+        let existing = directory.join("cat.png");
+        fs::write(&existing, b"old").expect("existing file should be written");
+
+        let path = write_unique_download_file(&directory, "cat.png", b"new")
+            .expect("download file should be written");
+
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("cat (1).png")
+        );
+        assert_eq!(
+            fs::read(&existing).expect("existing file should remain"),
+            b"old"
+        );
+        assert_eq!(fs::read(&path).expect("new file should be written"), b"new");
+
+        fs::remove_dir_all(&directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn sanitize_filename_replaces_path_separators() {
+        assert_eq!(sanitize_filename("../cat\\dog.png"), "_cat_dog.png");
     }
 }
