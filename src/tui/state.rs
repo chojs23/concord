@@ -41,9 +41,57 @@ pub struct MessageActionItem {
     pub enabled: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EmojiReactionItem {
+    pub emoji: &'static str,
+    pub label: &'static str,
+}
+
+pub const EMOJI_REACTION_ITEMS: &[EmojiReactionItem] = &[
+    EmojiReactionItem {
+        emoji: "👍",
+        label: "Thumbs up",
+    },
+    EmojiReactionItem {
+        emoji: "❤️",
+        label: "Heart",
+    },
+    EmojiReactionItem {
+        emoji: "😂",
+        label: "Laugh",
+    },
+    EmojiReactionItem {
+        emoji: "🎉",
+        label: "Celebrate",
+    },
+    EmojiReactionItem {
+        emoji: "😮",
+        label: "Surprised",
+    },
+    EmojiReactionItem {
+        emoji: "😢",
+        label: "Sad",
+    },
+    EmojiReactionItem {
+        emoji: "🙏",
+        label: "Thanks",
+    },
+    EmojiReactionItem {
+        emoji: "👀",
+        label: "Looking",
+    },
+];
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageActionMenuState {
     selected: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmojiReactionPickerState {
+    selected: usize,
+    channel_id: Id<ChannelMarker>,
+    message_id: Id<MessageMarker>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -87,6 +135,7 @@ pub struct DashboardState {
     composer_active: bool,
     reply_target_message_id: Option<Id<MessageMarker>>,
     message_action_menu: Option<MessageActionMenuState>,
+    emoji_reaction_picker: Option<EmojiReactionPickerState>,
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
     last_error: Option<String>,
@@ -139,6 +188,7 @@ impl DashboardState {
             composer_active: false,
             reply_target_message_id: None,
             message_action_menu: None,
+            emoji_reaction_picker: None,
             current_user: None,
             current_user_id: None,
             last_error: None,
@@ -252,6 +302,14 @@ impl DashboardState {
         self.message_action_menu.is_some()
     }
 
+    pub fn is_emoji_reaction_picker_open(&self) -> bool {
+        self.emoji_reaction_picker.is_some()
+    }
+
+    pub fn emoji_reaction_items(&self) -> &'static [EmojiReactionItem] {
+        EMOJI_REACTION_ITEMS
+    }
+
     pub fn open_selected_message_actions(&mut self) {
         if self.focus == FocusPane::Messages && self.selected_message_state().is_some() {
             self.message_action_menu = Some(MessageActionMenuState { selected: 0 });
@@ -260,6 +318,10 @@ impl DashboardState {
 
     pub fn close_message_action_menu(&mut self) {
         self.message_action_menu = None;
+    }
+
+    pub fn close_emoji_reaction_picker(&mut self) {
+        self.emoji_reaction_picker = None;
     }
 
     pub fn move_message_action_down(&mut self) {
@@ -275,6 +337,22 @@ impl DashboardState {
     pub fn move_message_action_up(&mut self) {
         if let Some(menu) = &mut self.message_action_menu {
             menu.selected = menu.selected.saturating_sub(1);
+        }
+    }
+
+    pub fn move_emoji_reaction_down(&mut self) {
+        let reactions_len = self.emoji_reaction_items().len();
+        if reactions_len == 0 {
+            return;
+        }
+        if let Some(picker) = &mut self.emoji_reaction_picker {
+            picker.selected = (picker.selected + 1).min(reactions_len - 1);
+        }
+    }
+
+    pub fn move_emoji_reaction_up(&mut self) {
+        if let Some(picker) = &mut self.emoji_reaction_picker {
+            picker.selected = picker.selected.saturating_sub(1);
         }
     }
 
@@ -298,7 +376,7 @@ impl DashboardState {
         }
         actions.push(MessageActionItem {
             kind: MessageActionKind::AddReaction,
-            label: "Add 👍 reaction",
+            label: "Add reaction",
             enabled: true,
         });
         actions
@@ -314,6 +392,19 @@ impl DashboardState {
     pub fn selected_message_action(&self) -> Option<MessageActionItem> {
         let index = self.selected_message_action_index()?;
         self.selected_message_action_items().get(index).cloned()
+    }
+
+    pub fn selected_emoji_reaction_index(&self) -> Option<usize> {
+        self.emoji_reaction_picker.as_ref().map(|picker| {
+            picker
+                .selected
+                .min(self.emoji_reaction_items().len().saturating_sub(1))
+        })
+    }
+
+    pub fn selected_emoji_reaction(&self) -> Option<EmojiReactionItem> {
+        let index = self.selected_emoji_reaction_index()?;
+        self.emoji_reaction_items().get(index).copied()
     }
 
     pub fn activate_selected_message_action(&mut self) -> Option<AppCommand> {
@@ -340,15 +431,32 @@ impl DashboardState {
                 Some(AppCommand::DownloadAttachment { url, filename })
             }
             MessageActionKind::AddReaction => {
-                let message = self.selected_message_state()?;
-                let command = AppCommand::AddReaction {
-                    channel_id: message.channel_id,
-                    message_id: message.id,
-                    emoji: "👍".to_owned(),
-                };
+                self.open_emoji_reaction_picker();
                 self.close_message_action_menu();
-                Some(command)
+                None
             }
+        }
+    }
+
+    pub fn activate_selected_emoji_reaction(&mut self) -> Option<AppCommand> {
+        let picker = self.emoji_reaction_picker.clone()?;
+        let reaction = self.selected_emoji_reaction()?;
+        let command = AppCommand::AddReaction {
+            channel_id: picker.channel_id,
+            message_id: picker.message_id,
+            emoji: reaction.emoji.to_owned(),
+        };
+        self.close_emoji_reaction_picker();
+        Some(command)
+    }
+
+    fn open_emoji_reaction_picker(&mut self) {
+        if let Some(message) = self.selected_message_state() {
+            self.emoji_reaction_picker = Some(EmojiReactionPickerState {
+                selected: 0,
+                channel_id: message.channel_id,
+                message_id: message.id,
+            });
         }
     }
 

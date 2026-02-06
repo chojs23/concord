@@ -13,6 +13,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_composer_key(state, key);
     }
 
+    if state.is_emoji_reaction_picker_open() {
+        return handle_emoji_reaction_picker_key(state, key);
+    }
+
     if state.is_message_action_menu_open() {
         return handle_message_action_menu_key(state, key);
     }
@@ -99,6 +103,21 @@ fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
         KeyCode::Char('j') | KeyCode::Down => state.move_message_action_down(),
         KeyCode::Char('k') | KeyCode::Up => state.move_message_action_up(),
         KeyCode::Enter | KeyCode::Char(' ') => return state.activate_selected_message_action(),
+        _ => {}
+    }
+
+    None
+}
+
+fn handle_emoji_reaction_picker_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc => state.close_emoji_reaction_picker(),
+        KeyCode::Char('j') | KeyCode::Down => state.move_emoji_reaction_down(),
+        KeyCode::Char('k') | KeyCode::Up => state.move_emoji_reaction_up(),
+        KeyCode::Enter | KeyCode::Char(' ') => return state.activate_selected_emoji_reaction(),
         _ => {}
     }
 
@@ -635,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    fn message_action_menu_add_reaction_returns_command() {
+    fn message_action_menu_add_reaction_opens_emoji_picker() {
         let mut state = state_with_messages(1);
         focus_messages(&mut state);
         handle_key(
@@ -649,15 +668,115 @@ mod tests {
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         );
 
+        assert_eq!(command, None);
+        assert!(!state.is_message_action_menu_open());
+        assert!(state.is_emoji_reaction_picker_open());
+        assert_eq!(
+            state.selected_emoji_reaction().map(|item| item.emoji),
+            Some("👍")
+        );
+    }
+
+    #[test]
+    fn emoji_picker_selection_returns_reaction_command() {
+        let mut state = state_with_messages(1);
+        focus_messages(&mut state);
+        open_emoji_picker(&mut state);
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
         assert_eq!(
             command,
             Some(AppCommand::AddReaction {
                 channel_id: Id::new(2),
                 message_id: Id::new(1),
-                emoji: "👍".to_owned(),
+                emoji: "🎉".to_owned(),
             })
         );
-        assert!(!state.is_message_action_menu_open());
+        assert!(!state.is_emoji_reaction_picker_open());
+    }
+
+    #[test]
+    fn emoji_picker_space_selects_reaction() {
+        let mut state = state_with_messages(1);
+        focus_messages(&mut state);
+        open_emoji_picker(&mut state);
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        );
+
+        assert_eq!(
+            command,
+            Some(AppCommand::AddReaction {
+                channel_id: Id::new(2),
+                message_id: Id::new(1),
+                emoji: "❤️".to_owned(),
+            })
+        );
+        assert!(!state.is_emoji_reaction_picker_open());
+    }
+
+    #[test]
+    fn emoji_picker_vim_and_arrow_keys_move_selection() {
+        let mut state = state_with_messages(1);
+        focus_messages(&mut state);
+        open_emoji_picker(&mut state);
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+        );
+        assert_eq!(
+            state.selected_emoji_reaction().map(|item| item.emoji),
+            Some("❤️")
+        );
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+        );
+        assert_eq!(
+            state.selected_emoji_reaction().map(|item| item.emoji),
+            Some("😂")
+        );
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+        );
+        assert_eq!(
+            state.selected_emoji_reaction().map(|item| item.emoji),
+            Some("❤️")
+        );
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(
+            state.selected_emoji_reaction().map(|item| item.emoji),
+            Some("👍")
+        );
+    }
+
+    #[test]
+    fn escape_closes_emoji_picker_without_reacting() {
+        let mut state = state_with_messages(2);
+        focus_messages(&mut state);
+        open_emoji_picker(&mut state);
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let command = handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert_eq!(command, None);
+        assert!(!state.is_emoji_reaction_picker_open());
+        assert_eq!(state.selected_message(), 1);
     }
 
     fn state_with_folder() -> DashboardState {
@@ -855,5 +974,12 @@ mod tests {
         while state.focus() != FocusPane::Messages {
             state.cycle_focus();
         }
+    }
+
+    fn open_emoji_picker(state: &mut DashboardState) {
+        handle_key(state, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        handle_key(state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(state, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(state.is_emoji_reaction_picker_open());
     }
 }

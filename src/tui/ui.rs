@@ -17,8 +17,8 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     format::{RenderedText, TextHighlight, truncate_display_width, truncate_text},
     state::{
-        ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MemberGroup,
-        MessageActionItem, folder_color, presence_color, presence_marker,
+        ChannelPaneEntry, DashboardState, EmojiReactionItem, FocusPane, GuildPaneEntry,
+        MemberGroup, MessageActionItem, folder_color, presence_color, presence_marker,
     },
 };
 use crate::discord::{
@@ -176,6 +176,7 @@ pub fn render(
     render_members(frame, areas.members, state);
     render_footer(frame, areas.footer, state);
     render_message_action_menu(frame, areas.messages, state);
+    render_emoji_reaction_picker(frame, areas.messages, state);
 }
 
 fn dashboard_areas(area: Rect) -> DashboardAreas {
@@ -1121,7 +1122,9 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
 }
 
 fn footer_hint(state: &DashboardState) -> &'static str {
-    if state.is_message_action_menu_open() {
+    if state.is_emoji_reaction_picker_open() {
+        "j/k choose emoji | enter/space react | esc close"
+    } else if state.is_message_action_menu_open() {
         "j/k choose action | enter select | esc close | q quit"
     } else {
         "tab/1-4 focus | j/k move | J/K scroll | enter/space action/tree | ←/→ close/open | i write | esc cancel | q quit"
@@ -1144,6 +1147,27 @@ fn render_message_action_menu(frame: &mut Frame, area: Rect, state: &DashboardSt
     frame.render_widget(
         Paragraph::new(message_action_menu_lines(&actions, selected))
             .block(panel_block("Message actions", true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+fn render_emoji_reaction_picker(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    if !state.is_emoji_reaction_picker_open() {
+        return;
+    }
+
+    let reactions = state.emoji_reaction_items();
+    if reactions.is_empty() {
+        return;
+    }
+
+    let selected = state.selected_emoji_reaction_index().unwrap_or(0);
+    let popup = centered_rect(area, 42, (reactions.len() as u16).saturating_add(4));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(emoji_reaction_picker_lines(reactions, selected))
+            .block(panel_block("Choose reaction", true))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -1189,6 +1213,34 @@ fn message_action_menu_lines(actions: &[MessageActionItem], selected: usize) -> 
         .collect();
     lines.push(Line::from(Span::styled(
         "Enter select · Esc close",
+        Style::default().fg(DIM),
+    )));
+    lines
+}
+
+fn emoji_reaction_picker_lines(
+    reactions: &[EmojiReactionItem],
+    selected: usize,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = reactions
+        .iter()
+        .enumerate()
+        .map(|(index, reaction)| {
+            let marker = if index == selected { "› " } else { "  " };
+            let mut style = Style::default();
+            if index == selected {
+                style = style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            Line::from(vec![
+                Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(format!("{} {}", reaction.emoji, reaction.label), style),
+            ])
+        })
+        .collect();
+    lines.push(Line::from(Span::styled(
+        "Enter/Space react · Esc close",
         Style::default().fg(DIM),
     )));
     lines
@@ -1330,10 +1382,11 @@ mod tests {
 
     use super::{
         ACCENT, DIM, DISCORD_EPOCH_MILLIS, MessageContentLine, composer_prompt_line_count,
-        format_message_content, format_message_content_lines, format_message_sent_time,
-        format_unix_millis_with_offset, highlight_style, inline_image_preview_area,
-        inline_image_preview_row, mention_highlight_style, message_action_menu_lines,
-        message_item_lines, message_viewport_lines, sync_view_heights, wrap_text_lines,
+        emoji_reaction_picker_lines, footer_hint, format_message_content,
+        format_message_content_lines, format_message_sent_time, format_unix_millis_with_offset,
+        highlight_style, inline_image_preview_area, inline_image_preview_row,
+        mention_highlight_style, message_action_menu_lines, message_item_lines,
+        message_viewport_lines, sync_view_heights, wrap_text_lines,
     };
     use crate::{
         discord::{
@@ -1342,7 +1395,9 @@ mod tests {
         },
         tui::{
             format::truncate_display_width,
-            state::{DashboardState, MessageActionItem, MessageActionKind},
+            state::{
+                DashboardState, EmojiReactionItem, FocusPane, MessageActionItem, MessageActionKind,
+            },
         },
     };
 
@@ -1830,6 +1885,44 @@ mod tests {
     }
 
     #[test]
+    fn emoji_reaction_picker_marks_selected_reaction() {
+        let reactions = vec![
+            EmojiReactionItem {
+                emoji: "👍",
+                label: "Thumbs up",
+            },
+            EmojiReactionItem {
+                emoji: "🎉",
+                label: "Celebrate",
+            },
+        ];
+
+        let lines = emoji_reaction_picker_lines(&reactions, 1);
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec![
+                "  👍 Thumbs up",
+                "› 🎉 Celebrate",
+                "Enter/Space react · Esc close"
+            ]
+        );
+    }
+
+    #[test]
+    fn footer_hint_switches_for_emoji_picker() {
+        let mut state = state_with_message();
+        state.open_selected_message_actions();
+        state.move_message_action_down();
+        state.activate_selected_message_action();
+
+        assert_eq!(
+            footer_hint(&state),
+            "j/k choose emoji | enter/space react | esc close"
+        );
+    }
+
+    #[test]
     fn forwarded_snapshot_replaces_empty_message_placeholder() {
         let message =
             message_with_forwarded_snapshot(forwarded_snapshot(Some("forwarded text"), Vec::new()));
@@ -2216,6 +2309,47 @@ mod tests {
             attachments: vec![attachment],
             forwarded_snapshots: Vec::new(),
         }
+    }
+
+    fn state_with_message() -> DashboardState {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.focus_pane(FocusPane::Messages);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(guild_id),
+            channel_id,
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state
     }
 
     fn message_with_forwarded_snapshot(snapshot: MessageSnapshotInfo) -> MessageState {
