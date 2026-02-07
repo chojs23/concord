@@ -1,7 +1,29 @@
 use twilight_model::id::{
     Id,
-    marker::{ChannelMarker, MessageMarker},
+    marker::{ChannelMarker, EmojiMarker, MessageMarker},
 };
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReactionEmoji {
+    Unicode(String),
+    Custom {
+        id: Id<EmojiMarker>,
+        name: Option<String>,
+        animated: bool,
+    },
+}
+
+impl ReactionEmoji {
+    pub fn status_label(&self) -> String {
+        match self {
+            Self::Unicode(emoji) => emoji.clone(),
+            Self::Custom { name, .. } => name
+                .as_deref()
+                .map(|name| format!(":{name}:"))
+                .unwrap_or_else(|| ":custom:".to_owned()),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppCommand {
@@ -27,6 +49,6 @@ pub enum AppCommand {
     AddReaction {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
-        emoji: String,
+        emoji: ReactionEmoji,
     },
 }

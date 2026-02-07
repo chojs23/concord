@@ -6,8 +6,9 @@ use twilight_model::id::{
 };
 
 use super::{
-    AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, GuildFolder, MemberInfo, MentionInfo,
-    MessageInfo, MessageKind, MessageSnapshotInfo, PollInfo, PresenceStatus, ReplyInfo,
+    AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, GuildFolder,
+    MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageSnapshotInfo, PollInfo,
+    PresenceStatus, ReplyInfo,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -115,6 +116,7 @@ pub struct DiscordState {
     channels: BTreeMap<Id<ChannelMarker>, ChannelState>,
     messages: BTreeMap<Id<ChannelMarker>, VecDeque<MessageState>>,
     members: BTreeMap<Id<GuildMarker>, BTreeMap<Id<UserMarker>, GuildMemberState>>,
+    custom_emojis: BTreeMap<Id<GuildMarker>, Vec<CustomEmojiInfo>>,
     /// User's `guild_folders` setting in display order. Empty until READY
     /// delivers it; the dashboard falls back to a flat guild list.
     guild_folders: Vec<GuildFolder>,
@@ -141,6 +143,7 @@ impl DiscordState {
             channels: BTreeMap::new(),
             messages: BTreeMap::new(),
             members: BTreeMap::new(),
+            custom_emojis: BTreeMap::new(),
             guild_folders: Vec::new(),
             max_messages_per_channel,
         }
@@ -154,6 +157,7 @@ impl DiscordState {
                 channels,
                 members,
                 presences,
+                emojis,
             } => {
                 self.guilds.insert(
                     *guild_id,
@@ -176,6 +180,7 @@ impl DiscordState {
                         member.status = *status;
                     }
                 }
+                self.custom_emojis.insert(*guild_id, emojis.clone());
             }
             AppEvent::GuildUpdate { guild_id, name } => {
                 if let Some(guild) = self.guilds.get_mut(guild_id) {
@@ -189,6 +194,7 @@ impl DiscordState {
                 self.messages
                     .retain(|channel_id, _| self.channels.contains_key(channel_id));
                 self.members.remove(guild_id);
+                self.custom_emojis.remove(guild_id);
             }
             AppEvent::ChannelUpsert(channel) => self.upsert_channel(channel),
             AppEvent::ChannelDelete { channel_id, .. } => {
@@ -328,6 +334,13 @@ impl DiscordState {
         self.members
             .get(&guild_id)
             .map(|map| map.values().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn custom_emojis_for_guild(&self, guild_id: Id<GuildMarker>) -> &[CustomEmojiInfo] {
+        self.custom_emojis
+            .get(&guild_id)
+            .map(Vec::as_slice)
             .unwrap_or_default()
     }
 
@@ -607,9 +620,9 @@ mod tests {
     use twilight_model::id::{Id, marker::ChannelMarker};
 
     use crate::discord::{
-        AppEvent, AttachmentUpdate, ChannelInfo, DiscordState, MemberInfo, MentionInfo,
-        MessageInfo, MessageKind, MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo,
-        PresenceStatus, ReplyInfo,
+        AppEvent, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, DiscordState, MemberInfo,
+        MentionInfo, MessageInfo, MessageKind, MessageSnapshotInfo, MessageState, PollAnswerInfo,
+        PollInfo, PresenceStatus, ReplyInfo,
     };
 
     #[test]
@@ -634,6 +647,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            emojis: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
             guild_id: Some(guild_id),
@@ -682,6 +696,7 @@ mod tests {
                 avatar_url: None,
             }],
             presences: Vec::new(),
+            emojis: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
             guild_id: Some(guild_id),
@@ -1849,6 +1864,7 @@ mod tests {
                 },
             ],
             presences: vec![(alice, PresenceStatus::Online)],
+            emojis: Vec::new(),
         });
 
         let members = state.members_for_guild(guild_id);
@@ -1872,6 +1888,33 @@ mod tests {
                 .status,
             PresenceStatus::Idle,
         );
+    }
+
+    #[test]
+    fn stores_and_clears_custom_guild_emojis() {
+        let guild_id = Id::new(1);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: Vec::new(),
+            members: Vec::new(),
+            presences: Vec::new(),
+            emojis: vec![CustomEmojiInfo {
+                id: Id::new(50),
+                name: "party".to_owned(),
+                animated: true,
+                available: true,
+            }],
+        });
+
+        assert_eq!(state.custom_emojis_for_guild(guild_id).len(), 1);
+        assert_eq!(state.custom_emojis_for_guild(guild_id)[0].name, "party");
+
+        state.apply_event(&AppEvent::GuildDelete { guild_id });
+
+        assert!(state.custom_emojis_for_guild(guild_id).is_empty());
     }
 
     #[test]

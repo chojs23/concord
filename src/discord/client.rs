@@ -13,7 +13,7 @@ use twilight_model::{
 
 use crate::{AppError, Result};
 
-use super::{events::AppEvent, gateway::run_gateway, rest::DiscordRest};
+use super::{ReactionEmoji, events::AppEvent, gateway::run_gateway, rest::DiscordRest};
 
 #[derive(Clone, Debug)]
 pub struct DiscordClient {
@@ -76,11 +76,9 @@ impl DiscordClient {
         &self,
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
-        emoji: &str,
+        emoji: &ReactionEmoji,
     ) -> Result<()> {
-        self.rest
-            .add_unicode_reaction(channel_id, message_id, emoji)
-            .await
+        self.rest.add_reaction(channel_id, message_id, emoji).await
     }
 }
 

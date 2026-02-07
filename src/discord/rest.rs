@@ -7,7 +7,7 @@ use twilight_model::{
     id::{Id, marker::ChannelMarker, marker::MessageMarker},
 };
 
-use crate::{AppError, Result};
+use crate::{AppError, Result, discord::ReactionEmoji};
 
 #[derive(Clone, Debug)]
 pub struct DiscordRest {
@@ -52,20 +52,27 @@ impl DiscordRest {
         response.models().await.map_err(Into::into)
     }
 
-    pub async fn add_unicode_reaction(
+    pub async fn add_reaction(
         &self,
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
-        emoji: &str,
+        emoji: &ReactionEmoji,
     ) -> Result<()> {
+        let reaction = request_reaction_type(emoji);
         self.http
-            .create_reaction(
-                channel_id,
-                message_id,
-                &RequestReactionType::Unicode { name: emoji },
-            )
+            .create_reaction(channel_id, message_id, &reaction)
             .await?;
         Ok(())
+    }
+}
+
+pub fn request_reaction_type(emoji: &ReactionEmoji) -> RequestReactionType<'_> {
+    match emoji {
+        ReactionEmoji::Unicode(name) => RequestReactionType::Unicode { name },
+        ReactionEmoji::Custom { id, name, .. } => RequestReactionType::Custom {
+            id: *id,
+            name: name.as_deref(),
+        },
     }
 }
 
@@ -84,7 +91,16 @@ pub fn validate_message_content(content: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{AppError, discord::rest::validate_message_content};
+    use twilight_http::request::channel::reaction::RequestReactionType;
+    use twilight_model::id::Id;
+
+    use crate::{
+        AppError,
+        discord::{
+            ReactionEmoji,
+            rest::{request_reaction_type, validate_message_content},
+        },
+    };
 
     #[test]
     fn rejects_empty_messages() {
@@ -97,5 +113,32 @@ mod tests {
         let content = "x".repeat(2_001);
         let error = validate_message_content(&content).expect_err("oversized message must fail");
         assert!(matches!(error, AppError::MessageTooLong { len: 2_001 }));
+    }
+
+    #[test]
+    fn unicode_reaction_uses_twilight_unicode_request_type() {
+        let reaction = ReactionEmoji::Unicode("🎉".to_owned());
+
+        assert_eq!(
+            request_reaction_type(&reaction),
+            RequestReactionType::Unicode { name: "🎉" }
+        );
+    }
+
+    #[test]
+    fn custom_reaction_uses_twilight_custom_request_type_without_animated() {
+        let reaction = ReactionEmoji::Custom {
+            id: Id::new(42),
+            name: Some("party".to_owned()),
+            animated: true,
+        };
+
+        assert_eq!(
+            request_reaction_type(&reaction),
+            RequestReactionType::Custom {
+                id: Id::new(42),
+                name: Some("party"),
+            }
+        );
     }
 }

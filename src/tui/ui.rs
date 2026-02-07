@@ -34,6 +34,7 @@ const MESSAGE_AVATAR_PLACEHOLDER: &str = "oo";
 const MESSAGE_AVATAR_OFFSET: u16 = 3;
 const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
 const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
+const MAX_EMOJI_REACTION_VISIBLE_ITEMS: usize = 10;
 
 #[derive(Clone)]
 struct MessageContentLine {
@@ -1163,12 +1164,17 @@ fn render_emoji_reaction_picker(frame: &mut Frame, area: Rect, state: &Dashboard
     }
 
     let selected = state.selected_emoji_reaction_index().unwrap_or(0);
-    let popup = centered_rect(area, 42, (reactions.len() as u16).saturating_add(4));
+    let visible_items = reactions.len().clamp(1, MAX_EMOJI_REACTION_VISIBLE_ITEMS);
+    let popup = centered_rect(area, 42, (visible_items as u16).saturating_add(4));
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(emoji_reaction_picker_lines(reactions, selected))
-            .block(panel_block("Choose reaction", true))
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(emoji_reaction_picker_lines(
+            &reactions,
+            selected,
+            visible_items,
+        ))
+        .block(panel_block("Choose reaction", true))
+        .wrap(Wrap { trim: false }),
         popup,
     );
 }
@@ -1221,11 +1227,21 @@ fn message_action_menu_lines(actions: &[MessageActionItem], selected: usize) -> 
 fn emoji_reaction_picker_lines(
     reactions: &[EmojiReactionItem],
     selected: usize,
+    max_visible_items: usize,
 ) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'static>> = reactions
+    let selected = selected.min(reactions.len().saturating_sub(1));
+    let visible_items = max_visible_items.max(1).min(reactions.len().max(1));
+    let start = selected
+        .saturating_add(1)
+        .saturating_sub(visible_items)
+        .min(reactions.len().saturating_sub(visible_items));
+    let end = (start + visible_items).min(reactions.len());
+
+    let mut lines: Vec<Line<'static>> = reactions[start..end]
         .iter()
         .enumerate()
-        .map(|(index, reaction)| {
+        .map(|(offset, reaction)| {
+            let index = start + offset;
             let marker = if index == selected { "› " } else { "  " };
             let mut style = Style::default();
             if index == selected {
@@ -1235,7 +1251,7 @@ fn emoji_reaction_picker_lines(
             }
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(format!("{} {}", reaction.emoji, reaction.label), style),
+                Span::styled(format_emoji_reaction_item(reaction), style),
             ])
         })
         .collect();
@@ -1244,6 +1260,16 @@ fn emoji_reaction_picker_lines(
         Style::default().fg(DIM),
     )));
     lines
+}
+
+fn format_emoji_reaction_item(reaction: &EmojiReactionItem) -> String {
+    match &reaction.emoji {
+        crate::discord::ReactionEmoji::Unicode(emoji) => format!("{} {}", emoji, reaction.label),
+        crate::discord::ReactionEmoji::Custom { name, .. } => name
+            .as_deref()
+            .map(|name| format!(":{name}: {}", reaction.label))
+            .unwrap_or_else(|| format!(":custom: {}", reaction.label)),
+    }
 }
 
 fn channel_prefix(kind: &str) -> &'static str {
@@ -1391,7 +1417,8 @@ mod tests {
     use crate::{
         discord::{
             AppEvent, AttachmentInfo, ChannelInfo, MemberInfo, MentionInfo, MessageKind,
-            MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+            MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo, PresenceStatus,
+            ReactionEmoji, ReplyInfo,
         },
         tui::{
             format::truncate_display_width,
@@ -1888,22 +1915,54 @@ mod tests {
     fn emoji_reaction_picker_marks_selected_reaction() {
         let reactions = vec![
             EmojiReactionItem {
-                emoji: "👍",
-                label: "Thumbs up",
+                emoji: ReactionEmoji::Unicode("👍".to_owned()),
+                label: "Thumbs up".to_owned(),
             },
             EmojiReactionItem {
-                emoji: "🎉",
-                label: "Celebrate",
+                emoji: ReactionEmoji::Custom {
+                    id: Id::new(42),
+                    name: Some("party".to_owned()),
+                    animated: false,
+                },
+                label: "Party".to_owned(),
             },
         ];
 
-        let lines = emoji_reaction_picker_lines(&reactions, 1);
+        let lines = emoji_reaction_picker_lines(&reactions, 1, 10);
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
             vec![
                 "  👍 Thumbs up",
-                "› 🎉 Celebrate",
+                "› :party: Party",
+                "Enter/Space react · Esc close"
+            ]
+        );
+    }
+
+    #[test]
+    fn emoji_reaction_picker_windows_long_lists_around_selection() {
+        let reactions = (0..15)
+            .map(|index| EmojiReactionItem {
+                emoji: ReactionEmoji::Custom {
+                    id: Id::new(100 + index),
+                    name: Some(format!("emoji_{index}")),
+                    animated: false,
+                },
+                label: format!("Emoji {index}"),
+            })
+            .collect::<Vec<_>>();
+
+        let lines = emoji_reaction_picker_lines(&reactions, 12, 5);
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec![
+                "  :emoji_8: Emoji 8",
+                "  :emoji_9: Emoji 9",
+                "  :emoji_10: Emoji 10",
+                "  :emoji_11: Emoji 11",
+                "› :emoji_12: Emoji 12",
                 "Enter/Space react · Esc close"
             ]
         );
@@ -2330,6 +2389,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            emojis: Vec::new(),
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -2413,6 +2473,7 @@ mod tests {
             channels: Vec::new(),
             members: vec![member_info(user_id, display_name)],
             presences: vec![(Id::new(user_id), PresenceStatus::Online)],
+            emojis: Vec::new(),
         });
         state
     }

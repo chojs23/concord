@@ -178,7 +178,7 @@ fn start_command_loop(
                     emoji,
                 } => match client.add_reaction(channel_id, message_id, &emoji).await {
                     Ok(()) => client.publish_event(AppEvent::StatusMessage {
-                        message: format!("added {emoji} reaction"),
+                        message: format!("added {} reaction", emoji.status_label()),
                     }),
                     Err(error) => {
                         logging::error("app", format!("add reaction failed: {error}"));

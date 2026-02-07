@@ -8,10 +8,12 @@ use twilight_model::{
         },
         presence::{Status as TwilightStatus, UserOrId},
     },
-    guild::Member as TwilightMember,
+    guild::{Emoji as TwilightEmoji, Member as TwilightMember},
     id::{
         Id,
-        marker::{AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+        marker::{
+            AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, UserMarker,
+        },
     },
     poll::Poll,
     user::User as TwilightUser,
@@ -71,6 +73,14 @@ pub struct GuildFolder {
     pub name: Option<String>,
     pub color: Option<u32>,
     pub guild_ids: Vec<Id<GuildMarker>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CustomEmojiInfo {
+    pub id: Id<EmojiMarker>,
+    pub name: String,
+    pub animated: bool,
+    pub available: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -225,6 +235,7 @@ pub enum AppEvent {
         channels: Vec<ChannelInfo>,
         members: Vec<MemberInfo>,
         presences: Vec<(Id<UserMarker>, PresenceStatus)>,
+        emojis: Vec<CustomEmojiInfo>,
     },
     GuildUpdate {
         guild_id: Id<GuildMarker>,
@@ -597,6 +608,7 @@ fn map_guild_create(guild: GuildCreatePayload) -> Option<AppEvent> {
         .iter()
         .map(|presence| (presence.user.id(), map_status(presence.status)))
         .collect();
+    let emojis = guild.emojis.iter().map(custom_emoji_info).collect();
 
     Some(AppEvent::GuildCreate {
         guild_id: guild.id,
@@ -604,7 +616,17 @@ fn map_guild_create(guild: GuildCreatePayload) -> Option<AppEvent> {
         channels,
         members,
         presences,
+        emojis,
     })
+}
+
+fn custom_emoji_info(emoji: &TwilightEmoji) -> CustomEmojiInfo {
+    CustomEmojiInfo {
+        id: emoji.id,
+        name: emoji.name.clone(),
+        animated: emoji.animated,
+        available: emoji.available,
+    }
 }
 
 fn channel_info(channel: &Channel) -> ChannelInfo {
@@ -789,6 +811,27 @@ mod tests {
             map_attachment_update(Vec::new()),
             AttachmentUpdate::Replace(attachments) if attachments.is_empty()
         ));
+    }
+
+    #[test]
+    fn twilight_custom_emoji_maps_to_app_emoji_info() {
+        let emoji = TwilightEmoji {
+            animated: true,
+            available: true,
+            id: Id::new(50),
+            managed: false,
+            name: "party".to_owned(),
+            require_colons: true,
+            roles: Vec::new(),
+            user: None,
+        };
+
+        let info = custom_emoji_info(&emoji);
+
+        assert_eq!(info.id, Id::new(50));
+        assert_eq!(info.name, "party");
+        assert!(info.animated);
+        assert!(info.available);
     }
 
     fn user(name: &str, global_name: Option<&str>) -> TwilightUser {

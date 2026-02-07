@@ -7,9 +7,9 @@ use twilight_model::id::{
 };
 
 use crate::discord::{
-    AppCommand, AppEvent, AttachmentInfo, ChannelState, DiscordState, GuildFolder,
+    AppCommand, AppEvent, AttachmentInfo, ChannelState, CustomEmojiInfo, DiscordState, GuildFolder,
     GuildMemberState, GuildState, MentionInfo, MessageInfo, MessageSnapshotInfo, MessageState,
-    PresenceStatus,
+    PresenceStatus, ReactionEmoji,
 };
 use crate::logging;
 
@@ -41,46 +41,83 @@ pub struct MessageActionItem {
     pub enabled: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmojiReactionItem {
-    pub emoji: &'static str,
-    pub label: &'static str,
+    pub emoji: ReactionEmoji,
+    pub label: String,
 }
 
-pub const EMOJI_REACTION_ITEMS: &[EmojiReactionItem] = &[
-    EmojiReactionItem {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct UnicodeEmojiReactionItem {
+    emoji: &'static str,
+    label: &'static str,
+}
+
+const EMOJI_REACTION_ITEMS: &[UnicodeEmojiReactionItem] = &[
+    UnicodeEmojiReactionItem {
         emoji: "👍",
         label: "Thumbs up",
     },
-    EmojiReactionItem {
+    UnicodeEmojiReactionItem {
         emoji: "❤️",
         label: "Heart",
     },
-    EmojiReactionItem {
+    UnicodeEmojiReactionItem {
         emoji: "😂",
         label: "Laugh",
     },
-    EmojiReactionItem {
+    UnicodeEmojiReactionItem {
         emoji: "🎉",
         label: "Celebrate",
     },
-    EmojiReactionItem {
+    UnicodeEmojiReactionItem {
         emoji: "😮",
         label: "Surprised",
     },
-    EmojiReactionItem {
+    UnicodeEmojiReactionItem {
         emoji: "😢",
         label: "Sad",
     },
-    EmojiReactionItem {
+    UnicodeEmojiReactionItem {
         emoji: "🙏",
         label: "Thanks",
     },
-    EmojiReactionItem {
+    UnicodeEmojiReactionItem {
         emoji: "👀",
         label: "Looking",
     },
 ];
+
+fn custom_emoji_reaction_item(emoji: &CustomEmojiInfo) -> EmojiReactionItem {
+    EmojiReactionItem {
+        emoji: ReactionEmoji::Custom {
+            id: emoji.id,
+            name: Some(emoji.name.clone()),
+            animated: emoji.animated,
+        },
+        label: custom_emoji_label(&emoji.name),
+    }
+}
+
+fn custom_emoji_label(name: &str) -> String {
+    let words: Vec<String> = name
+        .split('_')
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect();
+
+    if words.is_empty() {
+        name.to_owned()
+    } else {
+        words.join(" ")
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageActionMenuState {
@@ -90,6 +127,7 @@ pub struct MessageActionMenuState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmojiReactionPickerState {
     selected: usize,
+    guild_id: Option<Id<GuildMarker>>,
     channel_id: Id<ChannelMarker>,
     message_id: Id<MessageMarker>,
 }
@@ -306,8 +344,35 @@ impl DashboardState {
         self.emoji_reaction_picker.is_some()
     }
 
-    pub fn emoji_reaction_items(&self) -> &'static [EmojiReactionItem] {
-        EMOJI_REACTION_ITEMS
+    pub fn emoji_reaction_items(&self) -> Vec<EmojiReactionItem> {
+        let mut items: Vec<EmojiReactionItem> = EMOJI_REACTION_ITEMS
+            .iter()
+            .map(|item| EmojiReactionItem {
+                emoji: ReactionEmoji::Unicode(item.emoji.to_owned()),
+                label: item.label.to_owned(),
+            })
+            .collect();
+
+        let guild_id = self
+            .emoji_reaction_picker
+            .as_ref()
+            .and_then(|picker| picker.guild_id)
+            .or_else(|| {
+                self.selected_message_state()
+                    .and_then(|message| message.guild_id)
+            });
+
+        if let Some(guild_id) = guild_id {
+            items.extend(
+                self.discord
+                    .custom_emojis_for_guild(guild_id)
+                    .iter()
+                    .filter(|emoji| emoji.available)
+                    .map(custom_emoji_reaction_item),
+            );
+        }
+
+        items
     }
 
     pub fn open_selected_message_actions(&mut self) {
@@ -404,7 +469,7 @@ impl DashboardState {
 
     pub fn selected_emoji_reaction(&self) -> Option<EmojiReactionItem> {
         let index = self.selected_emoji_reaction_index()?;
-        self.emoji_reaction_items().get(index).copied()
+        self.emoji_reaction_items().get(index).cloned()
     }
 
     pub fn activate_selected_message_action(&mut self) -> Option<AppCommand> {
@@ -444,7 +509,7 @@ impl DashboardState {
         let command = AppCommand::AddReaction {
             channel_id: picker.channel_id,
             message_id: picker.message_id,
-            emoji: reaction.emoji.to_owned(),
+            emoji: reaction.emoji,
         };
         self.close_emoji_reaction_picker();
         Some(command)
@@ -454,6 +519,7 @@ impl DashboardState {
         if let Some(message) = self.selected_message_state() {
             self.emoji_reaction_picker = Some(EmojiReactionPickerState {
                 selected: 0,
+                guild_id: message.guild_id,
                 channel_id: message.channel_id,
                 message_id: message.id,
             });
@@ -2416,8 +2482,9 @@ mod tests {
         MessageActionKind, MessageState, message_rendered_height,
     };
     use crate::discord::{
-        AppCommand, AppEvent, AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MessageInfo,
-        MessageKind, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+        AppCommand, AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, GuildFolder,
+        MemberInfo, MessageInfo, MessageKind, MessageSnapshotInfo, PollAnswerInfo, PollInfo,
+        PresenceStatus, ReactionEmoji, ReplyInfo,
     };
 
     #[test]
@@ -2483,6 +2550,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            emojis: Vec::new(),
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -2586,6 +2654,7 @@ mod tests {
                 (alice, PresenceStatus::Online),
                 (bob, PresenceStatus::Online),
             ],
+            emojis: Vec::new(),
         });
         state.confirm_selected_guild();
 
@@ -2600,6 +2669,59 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["alice", "bob"],
         );
+    }
+
+    #[test]
+    fn emoji_picker_items_include_available_custom_emojis_for_selected_message_guild() {
+        let state = state_with_custom_emojis();
+
+        let items = state.emoji_reaction_items();
+
+        assert_eq!(items.len(), 9);
+        assert_eq!(items[0].emoji, ReactionEmoji::Unicode("👍".to_owned()));
+        assert_eq!(items[8].label, "Party Time");
+        assert_eq!(
+            items[8].emoji,
+            ReactionEmoji::Custom {
+                id: Id::new(50),
+                name: Some("party_time".to_owned()),
+                animated: true,
+            }
+        );
+    }
+
+    #[test]
+    fn emoji_picker_items_stay_unicode_only_for_direct_messages() {
+        let mut state = DashboardState::new();
+        let channel_id = Id::new(20);
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "neo".to_owned(),
+            kind: "dm".to_owned(),
+        }));
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        assert_eq!(state.emoji_reaction_items().len(), 8);
     }
 
     #[test]
@@ -2622,6 +2744,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            emojis: Vec::new(),
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -4098,6 +4221,7 @@ mod tests {
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),
+                emojis: Vec::new(),
             });
         }
         state.push_event(AppEvent::GuildFoldersUpdate {
@@ -4120,6 +4244,7 @@ mod tests {
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),
+                emojis: Vec::new(),
             });
         }
         state
@@ -4146,6 +4271,7 @@ mod tests {
             channels,
             members: Vec::new(),
             presences: Vec::new(),
+            emojis: Vec::new(),
         });
         state.confirm_selected_guild();
         state
@@ -4181,6 +4307,7 @@ mod tests {
             }],
             members,
             presences,
+            emojis: Vec::new(),
         });
         state.confirm_selected_guild();
         state
@@ -4218,6 +4345,7 @@ mod tests {
                 (Id::new(3), PresenceStatus::Offline),
                 (Id::new(4), PresenceStatus::Offline),
             ],
+            emojis: Vec::new(),
         });
         state.confirm_selected_guild();
         state
@@ -4264,6 +4392,7 @@ mod tests {
             ],
             members: Vec::new(),
             presences: Vec::new(),
+            emojis: Vec::new(),
         });
         state.confirm_selected_guild();
         state
@@ -4293,6 +4422,60 @@ mod tests {
         state_with_message_ids(1..=count)
     }
 
+    fn state_with_custom_emojis() -> DashboardState {
+        let guild_id = Id::new(1);
+        let channel_id: Id<ChannelMarker> = Id::new(2);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+            emojis: vec![
+                CustomEmojiInfo {
+                    id: Id::new(50),
+                    name: "party_time".to_owned(),
+                    animated: true,
+                    available: true,
+                },
+                CustomEmojiInfo {
+                    id: Id::new(51),
+                    name: "gone".to_owned(),
+                    animated: false,
+                    available: false,
+                },
+            ],
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(guild_id),
+            channel_id,
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state
+    }
+
     fn state_with_single_message_content(content: &str) -> DashboardState {
         let guild_id = Id::new(1);
         let channel_id: Id<ChannelMarker> = Id::new(2);
@@ -4312,6 +4495,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            emojis: Vec::new(),
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -4363,6 +4547,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            emojis: Vec::new(),
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -4507,6 +4692,7 @@ mod tests {
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),
+                emojis: Vec::new(),
             });
         }
         state.push_event(AppEvent::GuildFoldersUpdate {

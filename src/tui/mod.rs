@@ -1285,6 +1285,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            emojis: Vec::new(),
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -1333,6 +1334,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            emojis: Vec::new(),
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();

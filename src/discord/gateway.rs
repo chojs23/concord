@@ -7,13 +7,15 @@ use twilight_model::{
     gateway::{Intents, ShardId},
     id::{
         Id,
-        marker::{AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+        marker::{
+            AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, UserMarker,
+        },
     },
 };
 
 use super::{
-    AttachmentInfo, ChannelInfo, GuildFolder, MemberInfo, MentionInfo, MessageKind,
-    MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+    AttachmentInfo, ChannelInfo, CustomEmojiInfo, GuildFolder, MemberInfo, MentionInfo,
+    MessageKind, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
     events::default_avatar_url,
     events::{AppEvent, AttachmentUpdate, map_event},
 };
@@ -295,12 +297,43 @@ fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         .map(|items| items.iter().filter_map(parse_presence_entry).collect())
         .unwrap_or_default();
 
+    let emojis = data
+        .get("emojis")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(parse_custom_emoji).collect())
+        .unwrap_or_default();
+
     Some(AppEvent::GuildCreate {
         guild_id,
         name,
         channels,
         members,
         presences,
+        emojis,
+    })
+}
+
+fn parse_custom_emoji(value: &Value) -> Option<CustomEmojiInfo> {
+    let id = parse_id::<EmojiMarker>(value.get("id")?)?;
+    let name = value
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())?
+        .to_owned();
+    let animated = value
+        .get("animated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let available = value
+        .get("available")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+
+    Some(CustomEmojiInfo {
+        id,
+        name,
+        animated,
+        available,
     })
 }
 
@@ -841,7 +874,10 @@ mod tests {
     use twilight_model::gateway::Intents;
     use twilight_model::id::Id;
 
-    use super::{gateway_intents, parse_channel_info, parse_message_create, parse_message_update};
+    use super::{
+        gateway_intents, parse_channel_info, parse_guild_create, parse_message_create,
+        parse_message_update,
+    };
     use crate::discord::{
         AppEvent, AttachmentUpdate, MentionInfo, MessageKind, PollAnswerInfo, PollInfo, ReplyInfo,
     };
@@ -903,6 +939,41 @@ mod tests {
             panic!("expected message update event");
         };
         assert!(matches!(attachments, AttachmentUpdate::Replace(values) if values.is_empty()));
+    }
+
+    #[test]
+    fn guild_create_parser_keeps_custom_emojis() {
+        let event = parse_guild_create(&json!({
+            "id": "1",
+            "name": "guild",
+            "channels": [],
+            "members": [],
+            "presences": [],
+            "emojis": [
+                {
+                    "id": "50",
+                    "name": "party",
+                    "animated": true,
+                    "available": true
+                },
+                {
+                    "id": "51",
+                    "name": "sleep",
+                    "available": false
+                }
+            ]
+        }))
+        .expect("guild create should parse");
+
+        let AppEvent::GuildCreate { emojis, .. } = event else {
+            panic!("expected guild create event");
+        };
+        assert_eq!(emojis.len(), 2);
+        assert_eq!(emojis[0].id, Id::new(50));
+        assert_eq!(emojis[0].name, "party");
+        assert!(emojis[0].animated);
+        assert!(emojis[0].available);
+        assert!(!emojis[1].available);
     }
 
     #[test]
