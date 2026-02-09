@@ -897,7 +897,7 @@ mod tests {
 
     use super::{
         gateway_intents, parse_channel_info, parse_guild_create, parse_guild_emojis_update,
-        parse_guild_update, parse_message_create, parse_message_update,
+        parse_guild_update, parse_message_create, parse_message_update, parse_user_account_event,
     };
     use crate::discord::{
         AppEvent, AttachmentUpdate, MentionInfo, MessageKind, PollAnswerInfo, PollInfo, ReplyInfo,
@@ -996,6 +996,50 @@ mod tests {
         assert!(emojis[0].animated);
         assert!(emojis[0].available);
         assert!(!emojis[1].available);
+    }
+
+    #[test]
+    fn raw_ready_parser_keeps_guild_custom_emojis() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY",
+                "d": {
+                    "user": {
+                        "id": "99",
+                        "username": "neo"
+                    },
+                    "guilds": [{
+                        "id": "1",
+                        "name": "guild",
+                        "channels": [],
+                        "members": [],
+                        "presences": [],
+                        "emojis": [{
+                            "id": "50",
+                            "name": "party_time",
+                            "animated": true,
+                            "available": true
+                        }]
+                    }],
+                    "private_channels": []
+                }
+            })
+            .to_string(),
+        );
+
+        let guild_create = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::GuildCreate { emojis, .. } => Some(emojis),
+                _ => None,
+            })
+            .expect("ready should emit a guild create event");
+
+        assert_eq!(guild_create.len(), 1);
+        assert_eq!(guild_create[0].id, Id::new(50));
+        assert_eq!(guild_create[0].name, "party_time");
+        assert!(guild_create[0].animated);
+        assert!(guild_create[0].available);
     }
 
     #[test]
