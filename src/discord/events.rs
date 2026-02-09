@@ -3,8 +3,8 @@ use twilight_model::{
     channel::{Attachment, Channel, Message, message::Mention, message::MessageSnapshot},
     gateway::{
         payload::incoming::{
-            GuildCreate as GuildCreatePayload, MemberAdd, MemberUpdate,
-            PresenceUpdate as PresenceUpdatePayload,
+            GuildCreate as GuildCreatePayload, GuildEmojisUpdate as GuildEmojisUpdatePayload,
+            MemberAdd, MemberUpdate, PresenceUpdate as PresenceUpdatePayload,
         },
         presence::{Status as TwilightStatus, UserOrId},
     },
@@ -240,6 +240,11 @@ pub enum AppEvent {
     GuildUpdate {
         guild_id: Id<GuildMarker>,
         name: String,
+        emojis: Option<Vec<CustomEmojiInfo>>,
+    },
+    GuildEmojisUpdate {
+        guild_id: Id<GuildMarker>,
+        emojis: Vec<CustomEmojiInfo>,
     },
     GuildDelete {
         guild_id: Id<GuildMarker>,
@@ -517,7 +522,9 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
         Event::GuildUpdate(guild) => Some(AppEvent::GuildUpdate {
             guild_id: guild.id,
             name: guild.name.clone(),
+            emojis: Some(guild.emojis.iter().map(custom_emoji_info).collect()),
         }),
+        Event::GuildEmojisUpdate(update) => Some(guild_emojis_update(&update)),
         Event::ChannelCreate(channel) => Some(AppEvent::ChannelUpsert(channel_info(&channel.0))),
         Event::ChannelUpdate(channel) => Some(AppEvent::ChannelUpsert(channel_info(&channel.0))),
         Event::ChannelDelete(channel) => Some(AppEvent::ChannelDelete {
@@ -626,6 +633,13 @@ fn custom_emoji_info(emoji: &TwilightEmoji) -> CustomEmojiInfo {
         name: emoji.name.clone(),
         animated: emoji.animated,
         available: emoji.available,
+    }
+}
+
+fn guild_emojis_update(payload: &GuildEmojisUpdatePayload) -> AppEvent {
+    AppEvent::GuildEmojisUpdate {
+        guild_id: payload.guild_id,
+        emojis: payload.emojis.iter().map(custom_emoji_info).collect(),
     }
 }
 
@@ -760,6 +774,15 @@ fn message_display_name(message: &Message) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use twilight_model::{
+        gateway::payload::incoming::{
+            GuildEmojisUpdate as TwilightGuildEmojisUpdate, GuildUpdate as TwilightGuildUpdate,
+        },
+        guild::{
+            AfkTimeout, DefaultMessageNotificationLevel, ExplicitContentFilter, MfaLevel,
+            NSFWLevel, PartialGuild, PremiumTier, SystemChannelFlags, VerificationLevel,
+        },
+    };
 
     #[test]
     fn video_attachment_with_dimensions_is_not_an_image_preview() {
@@ -815,16 +838,7 @@ mod tests {
 
     #[test]
     fn twilight_custom_emoji_maps_to_app_emoji_info() {
-        let emoji = TwilightEmoji {
-            animated: true,
-            available: true,
-            id: Id::new(50),
-            managed: false,
-            name: "party".to_owned(),
-            require_colons: true,
-            roles: Vec::new(),
-            user: None,
-        };
+        let emoji = twilight_emoji(50, "party", true, true);
 
         let info = custom_emoji_info(&emoji);
 
@@ -832,6 +846,108 @@ mod tests {
         assert_eq!(info.name, "party");
         assert!(info.animated);
         assert!(info.available);
+    }
+
+    #[test]
+    fn typed_guild_emojis_update_maps_custom_emojis() {
+        let event = Event::GuildEmojisUpdate(TwilightGuildEmojisUpdate {
+            guild_id: Id::new(10),
+            emojis: vec![twilight_emoji(50, "party", true, true)],
+        });
+
+        let app_event = map_event(event);
+
+        assert!(matches!(
+            app_event,
+            Some(AppEvent::GuildEmojisUpdate { guild_id, emojis })
+                if guild_id == Id::new(10)
+                    && emojis == vec![CustomEmojiInfo {
+                        id: Id::new(50),
+                        name: "party".to_owned(),
+                        animated: true,
+                        available: true,
+                    }]
+        ));
+    }
+
+    #[test]
+    fn typed_guild_update_maps_custom_emojis() {
+        let event = Event::GuildUpdate(Box::new(TwilightGuildUpdate(partial_guild(
+            10,
+            "Renamed Guild",
+            vec![twilight_emoji(51, "wave", false, false)],
+        ))));
+
+        let app_event = map_event(event);
+
+        assert!(matches!(
+            app_event,
+            Some(AppEvent::GuildUpdate {
+                guild_id,
+                name,
+                emojis: Some(emojis),
+            }) if guild_id == Id::new(10)
+                && name == "Renamed Guild"
+                && emojis == vec![CustomEmojiInfo {
+                    id: Id::new(51),
+                    name: "wave".to_owned(),
+                    animated: false,
+                    available: false,
+                }]
+        ));
+    }
+
+    fn twilight_emoji(id: u64, name: &str, animated: bool, available: bool) -> TwilightEmoji {
+        TwilightEmoji {
+            animated,
+            available,
+            id: Id::new(id),
+            managed: false,
+            name: name.to_owned(),
+            require_colons: true,
+            roles: Vec::new(),
+            user: None,
+        }
+    }
+
+    fn partial_guild(id: u64, name: &str, emojis: Vec<TwilightEmoji>) -> PartialGuild {
+        PartialGuild {
+            afk_channel_id: None,
+            afk_timeout: AfkTimeout::FIFTEEN_MINUTES,
+            application_id: None,
+            banner: None,
+            default_message_notifications: DefaultMessageNotificationLevel::Mentions,
+            description: None,
+            discovery_splash: None,
+            emojis,
+            explicit_content_filter: ExplicitContentFilter::MembersWithoutRole,
+            features: Vec::new(),
+            icon: None,
+            id: Id::new(id),
+            max_members: None,
+            max_presences: None,
+            member_count: None,
+            mfa_level: MfaLevel::Elevated,
+            name: name.to_owned(),
+            nsfw_level: NSFWLevel::Default,
+            owner_id: Id::new(5),
+            owner: None,
+            permissions: None,
+            preferred_locale: "en-us".to_owned(),
+            premium_progress_bar_enabled: false,
+            premium_subscription_count: None,
+            premium_tier: PremiumTier::Tier1,
+            public_updates_channel_id: None,
+            roles: Vec::new(),
+            rules_channel_id: None,
+            splash: None,
+            system_channel_flags: SystemChannelFlags::empty(),
+            system_channel_id: None,
+            verification_level: VerificationLevel::Medium,
+            vanity_url_code: None,
+            widget_channel_id: None,
+            widget_enabled: None,
+        }
     }
 
     fn user(name: &str, global_name: Option<&str>) -> TwilightUser {

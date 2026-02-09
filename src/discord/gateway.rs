@@ -65,6 +65,7 @@ pub async fn run_gateway(token: String, tx: broadcast::Sender<AppEvent>) {
 
 fn gateway_intents() -> Intents {
     Intents::GUILDS
+        | Intents::GUILD_EMOJIS_AND_STICKERS
         | Intents::GUILD_MESSAGES
         | Intents::DIRECT_MESSAGES
         | Intents::GUILD_MEMBERS
@@ -95,6 +96,7 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
             result
         }
         "GUILD_UPDATE" => parse_guild_update(data).into_iter().collect(),
+        "GUILD_EMOJIS_UPDATE" => parse_guild_emojis_update(data).into_iter().collect(),
         "GUILD_DELETE" => parse_guild_delete(data).into_iter().collect(),
         "CHANNEL_CREATE" | "CHANNEL_UPDATE" => parse_channel_upsert(data).into_iter().collect(),
         "CHANNEL_DELETE" => parse_channel_delete(data).into_iter().collect(),
@@ -337,6 +339,17 @@ fn parse_custom_emoji(value: &Value) -> Option<CustomEmojiInfo> {
     })
 }
 
+fn parse_guild_emojis_update(data: &Value) -> Option<AppEvent> {
+    let guild_id = parse_id::<GuildMarker>(data.get("guild_id")?)?;
+    let emojis = data
+        .get("emojis")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(parse_custom_emoji).collect())
+        .unwrap_or_default();
+
+    Some(AppEvent::GuildEmojisUpdate { guild_id, emojis })
+}
+
 fn parse_guild_update(data: &Value) -> Option<AppEvent> {
     let guild_id = parse_id::<GuildMarker>(data.get("id")?)?;
     let name = data
@@ -344,7 +357,15 @@ fn parse_guild_update(data: &Value) -> Option<AppEvent> {
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_owned();
-    Some(AppEvent::GuildUpdate { guild_id, name })
+    let emojis = data
+        .get("emojis")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(parse_custom_emoji).collect());
+    Some(AppEvent::GuildUpdate {
+        guild_id,
+        name,
+        emojis,
+    })
 }
 
 fn parse_guild_delete(data: &Value) -> Option<AppEvent> {
@@ -875,8 +896,8 @@ mod tests {
     use twilight_model::id::Id;
 
     use super::{
-        gateway_intents, parse_channel_info, parse_guild_create, parse_message_create,
-        parse_message_update,
+        gateway_intents, parse_channel_info, parse_guild_create, parse_guild_emojis_update,
+        parse_guild_update, parse_message_create, parse_message_update,
     };
     use crate::discord::{
         AppEvent, AttachmentUpdate, MentionInfo, MessageKind, PollAnswerInfo, PollInfo, ReplyInfo,
@@ -888,6 +909,7 @@ mod tests {
 
         assert!(intents.contains(Intents::GUILDS));
         assert!(intents.contains(Intents::GUILD_MESSAGES));
+        assert!(intents.contains(Intents::GUILD_EMOJIS_AND_STICKERS));
         assert!(intents.contains(Intents::DIRECT_MESSAGES));
         assert!(intents.contains(Intents::GUILD_MEMBERS));
         assert!(intents.contains(Intents::MESSAGE_CONTENT));
@@ -974,6 +996,76 @@ mod tests {
         assert!(emojis[0].animated);
         assert!(emojis[0].available);
         assert!(!emojis[1].available);
+    }
+
+    #[test]
+    fn guild_emojis_update_parser_replaces_custom_emojis() {
+        let event = parse_guild_emojis_update(&json!({
+            "guild_id": "1",
+            "emojis": [
+                {
+                    "id": "60",
+                    "name": "wave",
+                    "animated": false,
+                    "available": true
+                }
+            ]
+        }))
+        .expect("guild emojis update should parse");
+
+        let AppEvent::GuildEmojisUpdate { guild_id, emojis } = event else {
+            panic!("expected guild emojis update event");
+        };
+        assert_eq!(guild_id, Id::new(1));
+        assert_eq!(emojis.len(), 1);
+        assert_eq!(emojis[0].id, Id::new(60));
+        assert_eq!(emojis[0].name, "wave");
+        assert!(emojis[0].available);
+    }
+
+    #[test]
+    fn guild_update_parser_keeps_custom_emojis_when_present() {
+        let event = parse_guild_update(&json!({
+            "id": "1",
+            "name": "guild renamed",
+            "emojis": [{
+                "id": "70",
+                "name": "dance",
+                "animated": true,
+                "available": true
+            }]
+        }))
+        .expect("guild update should parse");
+
+        let AppEvent::GuildUpdate {
+            guild_id,
+            name,
+            emojis,
+        } = event
+        else {
+            panic!("expected guild update event");
+        };
+        assert_eq!(guild_id, Id::new(1));
+        assert_eq!(name, "guild renamed");
+        let emojis = emojis.expect("emoji field should be preserved when present");
+        assert_eq!(emojis.len(), 1);
+        assert_eq!(emojis[0].id, Id::new(70));
+        assert_eq!(emojis[0].name, "dance");
+        assert!(emojis[0].animated);
+    }
+
+    #[test]
+    fn guild_update_parser_distinguishes_missing_custom_emojis() {
+        let event = parse_guild_update(&json!({
+            "id": "1",
+            "name": "guild renamed"
+        }))
+        .expect("guild update should parse");
+
+        let AppEvent::GuildUpdate { emojis, .. } = event else {
+            panic!("expected guild update event");
+        };
+        assert_eq!(emojis, None);
     }
 
     #[test]

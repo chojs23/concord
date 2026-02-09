@@ -353,14 +353,7 @@ impl DashboardState {
             })
             .collect();
 
-        let guild_id = self
-            .emoji_reaction_picker
-            .as_ref()
-            .and_then(|picker| picker.guild_id)
-            .or_else(|| {
-                self.selected_message_state()
-                    .and_then(|message| message.guild_id)
-            });
+        let guild_id = self.picker_guild_id();
 
         if let Some(guild_id) = guild_id {
             items.extend(
@@ -519,11 +512,29 @@ impl DashboardState {
         if let Some(message) = self.selected_message_state() {
             self.emoji_reaction_picker = Some(EmojiReactionPickerState {
                 selected: 0,
-                guild_id: message.guild_id,
+                guild_id: message
+                    .guild_id
+                    .or_else(|| self.selected_channel_guild_id()),
                 channel_id: message.channel_id,
                 message_id: message.id,
             });
         }
+    }
+
+    fn picker_guild_id(&self) -> Option<Id<GuildMarker>> {
+        self.emoji_reaction_picker
+            .as_ref()
+            .and_then(|picker| picker.guild_id)
+            .or_else(|| {
+                self.selected_message_state()
+                    .and_then(|message| message.guild_id)
+            })
+            .or_else(|| self.selected_channel_guild_id())
+    }
+
+    fn selected_channel_guild_id(&self) -> Option<Id<GuildMarker>> {
+        self.selected_channel_state()
+            .and_then(|channel| channel.guild_id)
     }
 
     fn start_reply_composer(&mut self) {
@@ -2688,6 +2699,61 @@ mod tests {
                 animated: true,
             }
         );
+    }
+
+    #[test]
+    fn emoji_picker_items_include_custom_emojis_from_update_event() {
+        let guild_id = Id::new(1);
+        let mut state = state_with_messages(1);
+
+        state.push_event(AppEvent::GuildEmojisUpdate {
+            guild_id,
+            emojis: vec![CustomEmojiInfo {
+                id: Id::new(60),
+                name: "wave".to_owned(),
+                animated: false,
+                available: true,
+            }],
+        });
+
+        let items = state.emoji_reaction_items();
+
+        assert_eq!(items.len(), 9);
+        assert_eq!(items[8].label, "Wave");
+        assert_eq!(
+            items[8].emoji,
+            ReactionEmoji::Custom {
+                id: Id::new(60),
+                name: Some("wave".to_owned()),
+                animated: false,
+            }
+        );
+    }
+
+    #[test]
+    fn emoji_picker_uses_channel_guild_when_selected_message_lacks_guild_id() {
+        let mut state = state_with_custom_emojis();
+
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some("history message without guild".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let items = state.emoji_reaction_items();
+
+        assert_eq!(items.len(), 9);
+        assert_eq!(items[8].label, "Party Time");
     }
 
     #[test]
