@@ -35,6 +35,7 @@ const MESSAGE_AVATAR_OFFSET: u16 = 3;
 const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
 const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
 const MAX_EMOJI_REACTION_VISIBLE_ITEMS: usize = 10;
+const EMOJI_REACTION_IMAGE_WIDTH: u16 = 2;
 
 #[derive(Clone)]
 struct MessageContentLine {
@@ -115,6 +116,11 @@ pub struct AvatarImage {
     pub protocol: ratatui_image::protocol::Protocol,
 }
 
+pub struct EmojiReactionImage<'a> {
+    pub url: String,
+    pub protocol: &'a ratatui_image::protocol::Protocol,
+}
+
 #[derive(Clone, Copy)]
 pub struct ImagePreviewLayout {
     pub list_height: usize,
@@ -168,6 +174,7 @@ pub fn render(
     state: &DashboardState,
     image_previews: Vec<ImagePreview<'_>>,
     avatar_images: Vec<AvatarImage>,
+    emoji_images: Vec<EmojiReactionImage<'_>>,
 ) {
     let areas = dashboard_areas(frame.area());
 
@@ -177,7 +184,7 @@ pub fn render(
     render_members(frame, areas.members, state);
     render_footer(frame, areas.footer, state);
     render_message_action_menu(frame, areas.messages, state);
-    render_emoji_reaction_picker(frame, areas.messages, state);
+    render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
 }
 
 fn dashboard_areas(area: Rect) -> DashboardAreas {
@@ -1153,7 +1160,12 @@ fn render_message_action_menu(frame: &mut Frame, area: Rect, state: &DashboardSt
     );
 }
 
-fn render_emoji_reaction_picker(frame: &mut Frame, area: Rect, state: &DashboardState) {
+fn render_emoji_reaction_picker(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+    emoji_images: Vec<EmojiReactionImage<'_>>,
+) {
     if !state.is_emoji_reaction_picker_open() {
         return;
     }
@@ -1166,16 +1178,31 @@ fn render_emoji_reaction_picker(frame: &mut Frame, area: Rect, state: &Dashboard
     let selected = state.selected_emoji_reaction_index().unwrap_or(0);
     let visible_items = reactions.len().clamp(1, MAX_EMOJI_REACTION_VISIBLE_ITEMS);
     let popup = centered_rect(area, 42, (visible_items as u16).saturating_add(4));
+    let ready_urls = emoji_images
+        .iter()
+        .map(|image| image.url.clone())
+        .collect::<Vec<_>>();
+    let block = panel_block("Choose reaction", true);
+    let content = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(emoji_reaction_picker_lines(
             &reactions,
             selected,
             visible_items,
+            &ready_urls,
         ))
-        .block(panel_block("Choose reaction", true))
+        .block(block)
         .wrap(Wrap { trim: false }),
         popup,
+    );
+    render_emoji_reaction_images(
+        frame,
+        content,
+        &reactions,
+        selected,
+        visible_items,
+        emoji_images,
     );
 }
 
@@ -1228,20 +1255,17 @@ fn emoji_reaction_picker_lines(
     reactions: &[EmojiReactionItem],
     selected: usize,
     max_visible_items: usize,
+    thumbnail_urls: &[String],
 ) -> Vec<Line<'static>> {
     let selected = selected.min(reactions.len().saturating_sub(1));
     let visible_items = max_visible_items.max(1).min(reactions.len().max(1));
-    let start = selected
-        .saturating_add(1)
-        .saturating_sub(visible_items)
-        .min(reactions.len().saturating_sub(visible_items));
-    let end = (start + visible_items).min(reactions.len());
+    let visible_range = emoji_reaction_visible_range(reactions.len(), selected, visible_items);
 
-    let mut lines: Vec<Line<'static>> = reactions[start..end]
+    let mut lines: Vec<Line<'static>> = reactions[visible_range.clone()]
         .iter()
         .enumerate()
         .map(|(offset, reaction)| {
-            let index = start + offset;
+            let index = visible_range.start + offset;
             let marker = if index == selected { "› " } else { "  " };
             let mut style = Style::default();
             if index == selected {
@@ -1249,9 +1273,12 @@ fn emoji_reaction_picker_lines(
                     .bg(Color::Rgb(40, 45, 90))
                     .add_modifier(Modifier::BOLD);
             }
+            let thumbnail_ready = reaction
+                .custom_image_url()
+                .is_some_and(|url| thumbnail_urls.iter().any(|ready| ready == &url));
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(format_emoji_reaction_item(reaction), style),
+                Span::styled(format_emoji_reaction_item(reaction, thumbnail_ready), style),
             ])
         })
         .collect();
@@ -1262,9 +1289,64 @@ fn emoji_reaction_picker_lines(
     lines
 }
 
-fn format_emoji_reaction_item(reaction: &EmojiReactionItem) -> String {
+fn emoji_reaction_visible_range(
+    reactions_len: usize,
+    selected: usize,
+    visible_items: usize,
+) -> std::ops::Range<usize> {
+    let start = selected
+        .saturating_add(1)
+        .saturating_sub(visible_items)
+        .min(reactions_len.saturating_sub(visible_items));
+    let end = (start + visible_items).min(reactions_len);
+    start..end
+}
+
+fn render_emoji_reaction_images(
+    frame: &mut Frame,
+    area: Rect,
+    reactions: &[EmojiReactionItem],
+    selected: usize,
+    visible_items: usize,
+    emoji_images: Vec<EmojiReactionImage<'_>>,
+) {
+    if area.width <= EMOJI_REACTION_IMAGE_WIDTH || area.height == 0 {
+        return;
+    }
+
+    let selected = selected.min(reactions.len().saturating_sub(1));
+    let visible_range = emoji_reaction_visible_range(reactions.len(), selected, visible_items);
+    for (offset, reaction) in reactions[visible_range].iter().enumerate() {
+        let Some(url) = reaction.custom_image_url() else {
+            continue;
+        };
+        let Some(image) = emoji_images.iter().find(|image| image.url == url) else {
+            continue;
+        };
+        let y = area
+            .y
+            .saturating_add(u16::try_from(offset).unwrap_or(u16::MAX));
+        if y >= area.y.saturating_add(area.height.saturating_sub(1)) {
+            continue;
+        }
+        let image_area = Rect::new(
+            area.x.saturating_add(2),
+            y,
+            EMOJI_REACTION_IMAGE_WIDTH.min(area.width.saturating_sub(2)),
+            1,
+        );
+        frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+    }
+}
+
+fn format_emoji_reaction_item(reaction: &EmojiReactionItem, thumbnail_ready: bool) -> String {
     match &reaction.emoji {
         crate::discord::ReactionEmoji::Unicode(emoji) => format!("{} {}", emoji, reaction.label),
+        crate::discord::ReactionEmoji::Custom { .. } if thumbnail_ready => format!(
+            "{}{}",
+            " ".repeat(usize::from(EMOJI_REACTION_IMAGE_WIDTH.saturating_add(1))),
+            reaction.label
+        ),
         crate::discord::ReactionEmoji::Custom { name, .. } => name
             .as_deref()
             .map(|name| format!(":{name}: {}", reaction.label))
@@ -1928,7 +2010,7 @@ mod tests {
             },
         ];
 
-        let lines = emoji_reaction_picker_lines(&reactions, 1, 10);
+        let lines = emoji_reaction_picker_lines(&reactions, 1, 10, &[]);
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
@@ -1937,6 +2019,30 @@ mod tests {
                 "› :party: Party",
                 "Enter/Space react · Esc close"
             ]
+        );
+    }
+
+    #[test]
+    fn emoji_reaction_picker_reserves_space_for_loaded_custom_image() {
+        let reactions = vec![EmojiReactionItem {
+            emoji: ReactionEmoji::Custom {
+                id: Id::new(42),
+                name: Some("party".to_owned()),
+                animated: false,
+            },
+            label: "Party".to_owned(),
+        }];
+
+        let lines = emoji_reaction_picker_lines(
+            &reactions,
+            0,
+            10,
+            &["https://cdn.discordapp.com/emojis/42.png".to_owned()],
+        );
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec!["›    Party", "Enter/Space react · Esc close"]
         );
     }
 
@@ -1953,7 +2059,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let lines = emoji_reaction_picker_lines(&reactions, 12, 5);
+        let lines = emoji_reaction_picker_lines(&reactions, 12, 5, &[]);
 
         assert_eq!(
             line_texts_from_ratatui(&lines),

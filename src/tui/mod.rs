@@ -31,11 +31,14 @@ use crate::{
 };
 
 use state::DashboardState;
-use ui::{AvatarImage, ImagePreview, ImagePreviewLayout, ImagePreviewState};
+use ui::{AvatarImage, EmojiReactionImage, ImagePreview, ImagePreviewLayout, ImagePreviewState};
 
 const IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
 const AVATAR_PREVIEW_WIDTH: u16 = 2;
 const AVATAR_PREVIEW_HEIGHT: u16 = 2;
+const EMOJI_REACTION_THUMB_WIDTH: u16 = 2;
+const EMOJI_REACTION_THUMB_HEIGHT: u16 = 1;
+const MAX_EMOJI_REACTION_VISIBLE_ITEMS: usize = 10;
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
@@ -90,11 +93,13 @@ async fn run_dashboard(
     let mut state = DashboardState::new();
     let mut image_previews = ImagePreviewCache::new();
     let mut avatar_images = AvatarImageCache::new();
+    let mut emoji_images = EmojiImageCache::new();
     let mut terminal_events = EventStream::new();
     let mut history_requests = HashMap::new();
     let mut last_history_channel = None;
     let mut image_targets = Vec::new();
     let mut avatar_targets = Vec::new();
+    let mut emoji_targets = Vec::new();
     let mut dirty = true;
 
     while !state.should_quit() {
@@ -109,9 +114,17 @@ async fn run_dashboard(
                 );
                 image_targets = visible_image_preview_targets(&state, preview_layout);
                 avatar_targets = visible_avatar_targets(&state, preview_layout);
+                emoji_targets = visible_emoji_image_targets(&state);
                 let image_previews = image_previews.render_state(&image_targets);
                 let rendered_avatars = avatar_images.render_state(&avatar_targets);
-                ui::render(frame, &state, image_previews, rendered_avatars);
+                let rendered_emojis = emoji_images.render_state(&emoji_targets);
+                ui::render(
+                    frame,
+                    &state,
+                    image_previews,
+                    rendered_avatars,
+                    rendered_emojis,
+                );
             })?;
             dirty = false;
 
@@ -127,6 +140,17 @@ async fn run_dashboard(
                 dirty = true;
             }
             for command in avatar_images.next_requests(&avatar_targets) {
+                if commands.send(command).await.is_err() {
+                    logging::error("tui", "command channel closed");
+                    state.push_event(AppEvent::GatewayError {
+                        message: "command channel closed".to_owned(),
+                    });
+                    dirty = true;
+                    break;
+                }
+                dirty = true;
+            }
+            for command in emoji_images.next_requests(&emoji_targets) {
                 if commands.send(command).await.is_err() {
                     logging::error("tui", "command channel closed");
                     state.push_event(AppEvent::GatewayError {
@@ -169,6 +193,7 @@ async fn run_dashboard(
                     Ok(event) => {
                         image_previews.record_event(&event);
                         avatar_images.record_event(&event);
+                        emoji_images.record_event(&event);
                         record_history_event(&event, &mut history_requests);
                         state.push_event(event);
                         dirty = true;
@@ -263,6 +288,19 @@ struct AvatarImageCache {
 enum AvatarImageEntry {
     Loading,
     Ready { image: DynamicImage },
+    Failed,
+}
+
+struct EmojiImageCache {
+    picker: Option<Picker>,
+    entries: HashMap<String, EmojiImageEntry>,
+}
+
+enum EmojiImageEntry {
+    Loading,
+    Ready {
+        protocol: ratatui_image::protocol::Protocol,
+    },
     Failed,
 }
 
@@ -559,6 +597,112 @@ impl AvatarImageCache {
     }
 }
 
+impl EmojiImageCache {
+    fn new() -> Self {
+        let picker = match Picker::from_query_stdio() {
+            Ok(picker) => Some(picker),
+            Err(error) => {
+                logging::error("emoji", format!("emoji image picker unavailable: {error}"));
+                None
+            }
+        };
+
+        Self {
+            picker,
+            entries: HashMap::new(),
+        }
+    }
+
+    fn render_state(&self, targets: &[EmojiImageTarget]) -> Vec<EmojiReactionImage<'_>> {
+        targets
+            .iter()
+            .filter_map(|target| {
+                let EmojiImageEntry::Ready { protocol } = self.entries.get(&target.url)? else {
+                    return None;
+                };
+                Some(EmojiReactionImage {
+                    url: target.url.clone(),
+                    protocol,
+                })
+            })
+            .collect()
+    }
+
+    fn next_requests(&mut self, targets: &[EmojiImageTarget]) -> Vec<AppCommand> {
+        if self.picker.is_none() {
+            return Vec::new();
+        }
+
+        let mut commands = Vec::new();
+        let mut requested_urls = HashSet::new();
+        for target in targets {
+            if self.entries.contains_key(&target.url) {
+                continue;
+            }
+
+            self.entries
+                .insert(target.url.clone(), EmojiImageEntry::Loading);
+            if requested_urls.insert(target.url.clone()) {
+                commands.push(AppCommand::LoadAttachmentPreview {
+                    url: target.url.clone(),
+                });
+            }
+        }
+        commands
+    }
+
+    fn record_event(&mut self, event: &AppEvent) {
+        match event {
+            AppEvent::AttachmentPreviewLoaded { url, bytes } => self.store_loaded(url, bytes),
+            AppEvent::AttachmentPreviewLoadFailed { url, .. } => self.store_failed(url),
+            _ => {}
+        }
+    }
+
+    fn store_loaded(&mut self, url: &str, bytes: &[u8]) {
+        if !self.entries.contains_key(url) {
+            return;
+        }
+
+        let Some(picker) = self.picker.as_ref() else {
+            self.entries.insert(url.to_owned(), EmojiImageEntry::Failed);
+            return;
+        };
+
+        match image::load_from_memory(bytes) {
+            Ok(image) => {
+                let render_info = ImagePreviewRenderInfo {
+                    message_index: 0,
+                    preview_width: EMOJI_REACTION_THUMB_WIDTH,
+                    preview_height: EMOJI_REACTION_THUMB_HEIGHT,
+                    visible_preview_height: EMOJI_REACTION_THUMB_HEIGHT,
+                    top_clip_rows: 0,
+                };
+                if let Some(protocol) = clipped_preview_protocol(picker, &image, render_info) {
+                    self.entries
+                        .insert(url.to_owned(), EmojiImageEntry::Ready { protocol });
+                } else {
+                    self.entries.insert(url.to_owned(), EmojiImageEntry::Failed);
+                }
+            }
+            Err(_) => {
+                self.entries.insert(url.to_owned(), EmojiImageEntry::Failed);
+            }
+        }
+    }
+
+    fn store_failed(&mut self, url: &str) {
+        if self.entries.contains_key(url) {
+            self.entries.insert(url.to_owned(), EmojiImageEntry::Failed);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EmojiImageTarget {
+    url: String,
+}
+
 impl ImagePreviewTarget {
     fn key(&self) -> ImagePreviewKey {
         ImagePreviewKey {
@@ -759,6 +903,46 @@ fn visible_avatar_targets(state: &DashboardState, layout: ImagePreviewLayout) ->
     targets
 }
 
+fn visible_emoji_image_targets(state: &DashboardState) -> Vec<EmojiImageTarget> {
+    if !state.is_emoji_reaction_picker_open() {
+        return Vec::new();
+    }
+
+    let reactions = state.emoji_reaction_items();
+    if reactions.is_empty() {
+        return Vec::new();
+    }
+
+    let selected = state
+        .selected_emoji_reaction_index()
+        .unwrap_or(0)
+        .min(reactions.len().saturating_sub(1));
+    let visible_items = reactions.len().clamp(1, MAX_EMOJI_REACTION_VISIBLE_ITEMS);
+    let visible_range = emoji_reaction_visible_range(reactions.len(), selected, visible_items);
+
+    reactions[visible_range]
+        .iter()
+        .filter_map(|reaction| {
+            reaction
+                .custom_image_url()
+                .map(|url| EmojiImageTarget { url })
+        })
+        .collect()
+}
+
+fn emoji_reaction_visible_range(
+    reactions_len: usize,
+    selected: usize,
+    visible_items: usize,
+) -> std::ops::Range<usize> {
+    let start = selected
+        .saturating_add(1)
+        .saturating_sub(visible_items)
+        .min(reactions_len.saturating_sub(visible_items));
+    let end = (start + visible_items).min(reactions_len);
+    start..end
+}
+
 fn image_preview_height_for_dimensions(
     preview_width: u16,
     max_preview_height: u16,
@@ -839,7 +1023,7 @@ fn next_history_request(
 
 #[cfg(test)]
 mod tests {
-    use crate::discord::{AttachmentInfo, ChannelInfo, MessageSnapshotInfo};
+    use crate::discord::{AttachmentInfo, ChannelInfo, CustomEmojiInfo, MessageSnapshotInfo};
 
     use super::*;
 
@@ -1201,6 +1385,71 @@ mod tests {
             }]
         );
         assert_eq!(cache.entries.len(), 1);
+    }
+
+    #[test]
+    fn emoji_image_targets_include_visible_custom_reactions() {
+        let mut state = state_with_image_messages(1, &[]);
+        state.push_event(AppEvent::GuildEmojisUpdate {
+            guild_id: Id::new(1),
+            emojis: vec![CustomEmojiInfo {
+                id: Id::new(50),
+                name: "party".to_owned(),
+                animated: false,
+                available: true,
+            }],
+        });
+        focus_messages(&mut state);
+        state.open_selected_message_actions();
+        state.move_message_action_down();
+        state.activate_selected_message_action();
+
+        let targets = visible_emoji_image_targets(&state);
+
+        assert_eq!(
+            targets,
+            vec![EmojiImageTarget {
+                url: "https://cdn.discordapp.com/emojis/50.png".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn emoji_image_request_is_created_for_visible_target() {
+        let mut cache = EmojiImageCache::new();
+        let target = EmojiImageTarget {
+            url: "https://cdn.discordapp.com/emojis/50.png".to_owned(),
+        };
+
+        if cache.picker.is_none() {
+            return;
+        }
+
+        let requests = cache.next_requests(std::slice::from_ref(&target));
+
+        assert_eq!(
+            requests,
+            vec![AppCommand::LoadAttachmentPreview {
+                url: target.url.clone(),
+            }]
+        );
+        assert_eq!(cache.entries.len(), 1);
+    }
+
+    #[test]
+    fn emoji_image_cache_skips_requests_without_image_protocol() {
+        let mut cache = EmojiImageCache {
+            picker: None,
+            entries: HashMap::new(),
+        };
+        let target = EmojiImageTarget {
+            url: "https://cdn.discordapp.com/emojis/50.png".to_owned(),
+        };
+
+        let requests = cache.next_requests(std::slice::from_ref(&target));
+
+        assert!(requests.is_empty());
+        assert!(cache.entries.is_empty());
     }
 
     #[test]

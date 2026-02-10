@@ -47,6 +47,20 @@ pub struct EmojiReactionItem {
     pub label: String,
 }
 
+impl EmojiReactionItem {
+    pub fn custom_image_url(&self) -> Option<String> {
+        let ReactionEmoji::Custom { id, animated, .. } = self.emoji else {
+            return None;
+        };
+        let extension = if animated { "gif" } else { "png" };
+        Some(format!(
+            "https://cdn.discordapp.com/emojis/{}.{}",
+            id.get(),
+            extension
+        ))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct UnicodeEmojiReactionItem {
     emoji: &'static str,
@@ -2699,6 +2713,19 @@ mod tests {
                 animated: true,
             }
         );
+    }
+
+    #[test]
+    fn custom_emoji_reaction_items_expose_cdn_image_url() {
+        let state = state_with_custom_emojis();
+
+        let items = state.emoji_reaction_items();
+
+        assert_eq!(
+            items[8].custom_image_url().as_deref(),
+            Some("https://cdn.discordapp.com/emojis/50.gif")
+        );
+        assert_eq!(items[0].custom_image_url(), None);
     }
 
     #[test]
