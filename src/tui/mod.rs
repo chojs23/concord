@@ -39,6 +39,7 @@ const AVATAR_PREVIEW_HEIGHT: u16 = 2;
 const EMOJI_REACTION_THUMB_WIDTH: u16 = 2;
 const EMOJI_REACTION_THUMB_HEIGHT: u16 = 1;
 const MAX_EMOJI_REACTION_VISIBLE_ITEMS: usize = 10;
+const MAX_IMAGE_PREVIEW_CACHE_ENTRIES: usize = 32;
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
@@ -263,20 +264,25 @@ struct ImagePreviewKey {
 struct ImagePreviewCache {
     picker: Option<Picker>,
     entries: HashMap<ImagePreviewKey, ImagePreviewEntry>,
+    tick: u64,
 }
 
 enum ImagePreviewEntry {
     Loading {
         filename: String,
+        render_info: ImagePreviewRenderInfo,
+        last_used: u64,
     },
     Ready {
         filename: String,
         image: DynamicImage,
         protocol: Box<StatefulProtocol>,
+        last_used: u64,
     },
     Failed {
         filename: String,
         message: String,
+        last_used: u64,
     },
 }
 
@@ -320,10 +326,12 @@ impl ImagePreviewCache {
         Self {
             picker,
             entries: HashMap::new(),
+            tick: 0,
         }
     }
 
     fn render_state(&mut self, targets: &[ImagePreviewTarget]) -> Vec<ImagePreview<'_>> {
+        self.prune_to_limit(targets);
         let picker = self.picker.clone();
         let target_by_key = targets
             .iter()
@@ -337,8 +345,9 @@ impl ImagePreviewCache {
                 continue;
             };
             rendered_keys.insert(key.clone());
+            tick_entry(entry, &mut self.tick);
             let state = match entry {
-                ImagePreviewEntry::Loading { filename } => ImagePreviewState::Loading {
+                ImagePreviewEntry::Loading { filename, .. } => ImagePreviewState::Loading {
                     filename: filename.clone(),
                 },
                 ImagePreviewEntry::Ready {
@@ -356,7 +365,9 @@ impl ImagePreviewCache {
                         }
                     }
                 }
-                ImagePreviewEntry::Failed { filename, message } => ImagePreviewState::Failed {
+                ImagePreviewEntry::Failed {
+                    filename, message, ..
+                } => ImagePreviewState::Failed {
                     filename: filename.clone(),
                     message: message.clone(),
                 },
@@ -387,23 +398,27 @@ impl ImagePreviewCache {
     fn next_requests(&mut self, targets: &[ImagePreviewTarget]) -> Vec<AppCommand> {
         let mut commands = Vec::new();
         let mut requested_urls = HashSet::new();
-        for target in targets {
+        for target in targets.iter().take(MAX_IMAGE_PREVIEW_CACHE_ENTRIES) {
             let key = target.key();
             if self.entries.contains_key(&key) {
                 continue;
             }
 
             let url = target.url.clone();
+            let last_used = self.next_tick();
             self.entries.insert(
                 key,
                 ImagePreviewEntry::Loading {
                     filename: target.filename.clone(),
+                    render_info: target.preview_render_info(),
+                    last_used,
                 },
             );
             if requested_urls.insert(url.clone()) {
                 commands.push(AppCommand::LoadAttachmentPreview { url });
             }
         }
+        self.prune_to_limit(targets);
         commands
     }
 
@@ -418,69 +433,146 @@ impl ImagePreviewCache {
     }
 
     fn store_loaded(&mut self, url: &str, bytes: &[u8]) {
-        let keys = self.keys_for_url(url);
+        let keys = self.loading_keys_for_url(url);
         if keys.is_empty() {
             return;
         }
 
-        let Some(picker) = &self.picker else {
+        let Some(picker) = self.picker.clone() else {
             for key in keys {
                 let filename = self.filename_for_key(&key);
+                let last_used = self.next_tick();
                 self.entries.insert(
                     key,
                     ImagePreviewEntry::Failed {
                         filename,
                         message: "inline preview unavailable in this terminal".to_owned(),
+                        last_used,
                     },
                 );
             }
             return;
         };
 
-        for key in keys {
-            let filename = self.filename_for_key(&key);
-            match image::load_from_memory(bytes) {
-                Ok(image) => {
-                    self.entries.insert(
-                        key,
-                        ImagePreviewEntry::Ready {
-                            filename,
-                            image: image.clone(),
-                            protocol: Box::new(picker.new_resize_protocol(image)),
-                        },
-                    );
-                }
-                Err(error) => {
+        let decoded = match image::load_from_memory(bytes) {
+            Ok(image) => image,
+            Err(error) => {
+                for key in keys {
+                    let filename = self.filename_for_key(&key);
+                    let last_used = self.next_tick();
                     self.entries.insert(
                         key,
                         ImagePreviewEntry::Failed {
                             filename,
                             message: format!("decode failed: {error}"),
+                            last_used,
                         },
                     );
                 }
+                return;
             }
-        }
-    }
+        };
 
-    fn store_failed(&mut self, url: &str, message: String) {
-        for key in self.keys_for_url(url) {
+        for key in keys {
             let filename = self.filename_for_key(&key);
+            let Some(render_info) = self.render_info_for_key(&key) else {
+                let last_used = self.next_tick();
+                self.entries.insert(
+                    key,
+                    ImagePreviewEntry::Failed {
+                        filename,
+                        message: "preview dimensions unavailable".to_owned(),
+                        last_used,
+                    },
+                );
+                continue;
+            };
+            let Some(image) = preview_sized_image(&decoded, picker.font_size(), render_info) else {
+                let last_used = self.next_tick();
+                self.entries.insert(
+                    key,
+                    ImagePreviewEntry::Failed {
+                        filename,
+                        message: "preview dimensions unavailable".to_owned(),
+                        last_used,
+                    },
+                );
+                continue;
+            };
+
+            let last_used = self.next_tick();
             self.entries.insert(
                 key,
-                ImagePreviewEntry::Failed {
+                ImagePreviewEntry::Ready {
                     filename,
-                    message: message.clone(),
+                    image: image.clone(),
+                    protocol: Box::new(picker.new_resize_protocol(image)),
+                    last_used,
                 },
             );
         }
     }
 
-    fn keys_for_url(&self, url: &str) -> Vec<ImagePreviewKey> {
+    fn render_info_for_key(&self, key: &ImagePreviewKey) -> Option<ImagePreviewRenderInfo> {
+        match self.entries.get(key)? {
+            ImagePreviewEntry::Loading { render_info, .. } => Some(*render_info),
+            ImagePreviewEntry::Ready { .. } | ImagePreviewEntry::Failed { .. } => None,
+        }
+    }
+
+    fn next_tick(&mut self) -> u64 {
+        self.tick = self.tick.saturating_add(1);
+        self.tick
+    }
+
+    fn prune_to_limit(&mut self, targets: &[ImagePreviewTarget]) {
+        if self.entries.len() <= MAX_IMAGE_PREVIEW_CACHE_ENTRIES {
+            return;
+        }
+
+        let protected = targets
+            .iter()
+            .take(MAX_IMAGE_PREVIEW_CACHE_ENTRIES)
+            .map(ImagePreviewTarget::key)
+            .collect::<HashSet<_>>();
+        let mut removable = self
+            .entries
+            .iter()
+            .filter(|(key, _)| !protected.contains(*key))
+            .map(|(key, entry)| (key.clone(), entry.last_used()))
+            .collect::<Vec<_>>();
+        removable.sort_by_key(|(_, last_used)| *last_used);
+
+        for (key, _) in removable {
+            if self.entries.len() <= MAX_IMAGE_PREVIEW_CACHE_ENTRIES {
+                break;
+            }
+            self.entries.remove(&key);
+        }
+    }
+
+    fn store_failed(&mut self, url: &str, message: String) {
+        for key in self.loading_keys_for_url(url) {
+            let filename = self.filename_for_key(&key);
+            let last_used = self.next_tick();
+            self.entries.insert(
+                key,
+                ImagePreviewEntry::Failed {
+                    filename,
+                    message: message.clone(),
+                    last_used,
+                },
+            );
+        }
+    }
+
+    fn loading_keys_for_url(&self, url: &str) -> Vec<ImagePreviewKey> {
         self.entries
-            .keys()
-            .filter(|key| key.url == url)
-            .cloned()
+            .iter()
+            .filter(|(key, entry)| {
+                key.url == url && matches!(entry, ImagePreviewEntry::Loading { .. })
+            })
+            .map(|(key, _)| key.clone())
             .collect()
     }
 
@@ -740,11 +832,50 @@ impl ImagePreviewRenderInfo {
 impl ImagePreviewEntry {
     fn filename(&self) -> &str {
         match self {
-            Self::Loading { filename }
+            Self::Loading { filename, .. }
             | Self::Ready { filename, .. }
             | Self::Failed { filename, .. } => filename,
         }
     }
+
+    fn last_used(&self) -> u64 {
+        match self {
+            Self::Loading { last_used, .. }
+            | Self::Ready { last_used, .. }
+            | Self::Failed { last_used, .. } => *last_used,
+        }
+    }
+}
+
+fn tick_entry(entry: &mut ImagePreviewEntry, tick: &mut u64) {
+    *tick = tick.saturating_add(1);
+    let last_used = *tick;
+    match entry {
+        ImagePreviewEntry::Loading {
+            last_used: value, ..
+        }
+        | ImagePreviewEntry::Ready {
+            last_used: value, ..
+        }
+        | ImagePreviewEntry::Failed {
+            last_used: value, ..
+        } => *value = last_used,
+    }
+}
+
+fn preview_sized_image(
+    image: &DynamicImage,
+    font_size: (u16, u16),
+    render_info: ImagePreviewRenderInfo,
+) -> Option<DynamicImage> {
+    let (font_width, font_height) = font_size;
+    let width = u32::from(render_info.preview_width).checked_mul(u32::from(font_width))?;
+    let height = u32::from(render_info.preview_height).checked_mul(u32::from(font_height))?;
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    Some(image.resize(width, height, FilterType::Triangle))
 }
 
 fn clipped_preview_protocol(
@@ -1236,6 +1367,7 @@ mod tests {
         let mut cache = ImagePreviewCache {
             picker: None,
             entries: HashMap::new(),
+            tick: 0,
         };
         let mut state = state_with_image_messages(2, &[1, 2]);
         state.set_message_view_height(6);
@@ -1369,6 +1501,7 @@ mod tests {
         let mut cache = ImagePreviewCache {
             picker: None,
             entries: HashMap::new(),
+            tick: 0,
         };
         let target = image_preview_target(1);
 
@@ -1385,6 +1518,157 @@ mod tests {
             }]
         );
         assert_eq!(cache.entries.len(), 1);
+    }
+
+    #[test]
+    fn image_preview_cache_evicts_least_recently_used_entries() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+        };
+        let existing_targets = (1..=MAX_IMAGE_PREVIEW_CACHE_ENTRIES as u64)
+            .map(image_preview_target)
+            .collect::<Vec<_>>();
+        cache.next_requests(&existing_targets);
+        cache.render_state(std::slice::from_ref(&existing_targets[0]));
+
+        let new_target = image_preview_target(999);
+        cache.next_requests(std::slice::from_ref(&new_target));
+
+        assert_eq!(cache.entries.len(), MAX_IMAGE_PREVIEW_CACHE_ENTRIES);
+        assert!(cache.entries.contains_key(&existing_targets[0].key()));
+        assert!(!cache.entries.contains_key(&existing_targets[1].key()));
+        assert!(cache.entries.contains_key(&new_target.key()));
+    }
+
+    #[test]
+    fn image_preview_cache_limits_visible_requests() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+        };
+        let targets = (1..=MAX_IMAGE_PREVIEW_CACHE_ENTRIES as u64 + 2)
+            .map(image_preview_target)
+            .collect::<Vec<_>>();
+
+        let requests = cache.next_requests(&targets);
+
+        assert_eq!(cache.entries.len(), MAX_IMAGE_PREVIEW_CACHE_ENTRIES);
+        assert_eq!(requests.len(), MAX_IMAGE_PREVIEW_CACHE_ENTRIES);
+        assert!(cache.entries.contains_key(&targets[0].key()));
+        assert!(
+            !cache
+                .entries
+                .contains_key(&targets[MAX_IMAGE_PREVIEW_CACHE_ENTRIES].key())
+        );
+    }
+
+    #[test]
+    fn image_preview_store_loaded_preserves_existing_non_loading_entries() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+        };
+        let existing = image_preview_target(1).key();
+        let loading = ImagePreviewTarget {
+            message_id: Id::new(2),
+            ..image_preview_target(1)
+        }
+        .key();
+        cache.entries.insert(
+            existing.clone(),
+            ImagePreviewEntry::Failed {
+                filename: "existing.png".to_owned(),
+                message: "existing failure".to_owned(),
+                last_used: 1,
+            },
+        );
+        cache.entries.insert(
+            loading.clone(),
+            ImagePreviewEntry::Loading {
+                filename: "loading.png".to_owned(),
+                render_info: image_preview_target(1).preview_render_info(),
+                last_used: 2,
+            },
+        );
+
+        cache.store_loaded(&existing.url, &[]);
+
+        assert!(matches!(
+            cache.entries.get(&existing),
+            Some(ImagePreviewEntry::Failed { message, .. }) if message == "existing failure"
+        ));
+        assert!(matches!(
+            cache.entries.get(&loading),
+            Some(ImagePreviewEntry::Failed { message, .. })
+                if message == "inline preview unavailable in this terminal"
+        ));
+    }
+
+    #[test]
+    fn image_preview_store_failed_preserves_existing_non_loading_entries() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+        };
+        let existing = image_preview_target(1).key();
+        let loading = ImagePreviewTarget {
+            message_id: Id::new(2),
+            ..image_preview_target(1)
+        }
+        .key();
+        cache.entries.insert(
+            existing.clone(),
+            ImagePreviewEntry::Failed {
+                filename: "existing.png".to_owned(),
+                message: "existing failure".to_owned(),
+                last_used: 1,
+            },
+        );
+        cache.entries.insert(
+            loading.clone(),
+            ImagePreviewEntry::Loading {
+                filename: "loading.png".to_owned(),
+                render_info: image_preview_target(1).preview_render_info(),
+                last_used: 2,
+            },
+        );
+
+        cache.store_failed(&existing.url, "new failure".to_owned());
+
+        assert!(matches!(
+            cache.entries.get(&existing),
+            Some(ImagePreviewEntry::Failed { message, .. }) if message == "existing failure"
+        ));
+        assert!(matches!(
+            cache.entries.get(&loading),
+            Some(ImagePreviewEntry::Failed { message, .. }) if message == "new failure"
+        ));
+    }
+
+    #[test]
+    fn preview_sized_image_stays_within_preview_pixel_bounds() {
+        let image =
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(400, 400, Rgba([0, 0, 0, 255])));
+        let render_info = ImagePreviewRenderInfo {
+            message_index: 0,
+            preview_width: 16,
+            preview_height: 3,
+            visible_preview_height: 3,
+            top_clip_rows: 0,
+        };
+
+        let resized = preview_sized_image(&image, (10, 20), render_info)
+            .expect("preview dimensions should produce resized image");
+
+        assert!(resized.width() <= 160);
+        assert!(resized.height() <= 60);
+        assert!(resized.width() < image.width());
+        assert!(resized.height() < image.height());
     }
 
     #[test]
