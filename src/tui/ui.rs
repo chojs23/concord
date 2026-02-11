@@ -970,7 +970,7 @@ fn active_text_style(active: bool, style: Style) -> Style {
 }
 
 fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    let prompt = composer_text(state, area.width);
+    let prompt = composer_lines(state, area.width);
 
     frame.render_widget(
         Paragraph::new(prompt)
@@ -989,6 +989,24 @@ fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn composer_lines(state: &DashboardState, width: u16) -> Vec<Line<'static>> {
+    if state.is_composing() {
+        let input = Line::from(format!("> {}", state.composer_input()));
+        if let Some(message) = state.reply_target_message_state() {
+            return vec![
+                Line::from(Span::styled(
+                    reply_target_hint(message, state, width),
+                    Style::default().fg(DIM),
+                )),
+                input,
+            ];
+        }
+        return vec![input];
+    }
+
+    vec![Line::from(composer_text(state, width))]
 }
 
 fn composer_text(state: &DashboardState, width: u16) -> String {
@@ -1538,11 +1556,12 @@ mod tests {
 
     use super::{
         ACCENT, DIM, DISCORD_EPOCH_MILLIS, MessageContentLine, composer_content_line_count,
-        composer_prompt_line_count, composer_text, emoji_reaction_picker_lines, footer_hint,
-        format_message_content, format_message_content_lines, format_message_sent_time,
-        format_unix_millis_with_offset, highlight_style, inline_image_preview_area,
-        inline_image_preview_row, mention_highlight_style, message_action_menu_lines,
-        message_item_lines, message_viewport_lines, sync_view_heights, wrap_text_lines,
+        composer_lines, composer_prompt_line_count, composer_text, emoji_reaction_picker_lines,
+        footer_hint, format_message_content, format_message_content_lines,
+        format_message_sent_time, format_unix_millis_with_offset, highlight_style,
+        inline_image_preview_area, inline_image_preview_row, mention_highlight_style,
+        message_action_menu_lines, message_item_lines, message_viewport_lines, sync_view_heights,
+        wrap_text_lines,
     };
     use crate::{
         discord::{
@@ -1613,6 +1632,22 @@ mod tests {
         );
 
         assert_eq!(composer_text(&state, 80), "reply to hello\n> ");
+    }
+
+    #[test]
+    fn reply_composer_hint_line_is_dim() {
+        let mut state = state_with_message();
+        state.open_selected_message_actions();
+        state.activate_selected_message_action();
+
+        let lines = composer_lines(&state, 80);
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec!["reply to hello", "> "]
+        );
+        assert_eq!(lines[0].spans[0].style.fg, Some(DIM));
+        assert_eq!(lines[1].spans[0].style.fg, None);
     }
 
     #[test]
