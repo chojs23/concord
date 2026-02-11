@@ -970,18 +970,7 @@ fn active_text_style(active: bool, style: Style) -> Style {
 }
 
 fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    let prompt = if state.is_composing() {
-        format!("> {}", state.composer_input())
-    } else if let Some(channel) = state.selected_channel_state() {
-        let label = match channel.kind.as_str() {
-            "dm" | "Private" => format!("@{}", channel.name),
-            "group-dm" | "Group" => channel.name.clone(),
-            _ => format!("#{}", channel.name),
-        };
-        format!("press i to write in {label}")
-    } else {
-        "select a channel to write a message".to_owned()
-    };
+    let prompt = composer_text(state, area.width);
 
     frame.render_widget(
         Paragraph::new(prompt)
@@ -1000,6 +989,57 @@ fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn composer_text(state: &DashboardState, width: u16) -> String {
+    if state.is_composing() {
+        let input = format!("> {}", state.composer_input());
+        if let Some(message) = state.reply_target_message_state() {
+            return format!("{}\n{input}", reply_target_hint(message, state, width));
+        }
+        return input;
+    }
+
+    if let Some(channel) = state.selected_channel_state() {
+        let label = match channel.kind.as_str() {
+            "dm" | "Private" => format!("@{}", channel.name),
+            "group-dm" | "Group" => channel.name.clone(),
+            _ => format!("#{}", channel.name),
+        };
+        return format!("press i to write in {label}");
+    }
+
+    "select a channel to write a message".to_owned()
+}
+
+fn reply_target_hint(message: &MessageState, state: &DashboardState, width: u16) -> String {
+    const PREFIX: &str = "reply to ";
+    let excerpt_width = usize::from(width).saturating_sub(PREFIX.width()).max(1);
+    format!(
+        "{PREFIX}{}",
+        truncate_display_width(&reply_target_excerpt(message, state), excerpt_width)
+    )
+}
+
+fn reply_target_excerpt(message: &MessageState, state: &DashboardState) -> String {
+    if let Some(content) = message
+        .content
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        let rendered = state.render_user_mentions(message.guild_id, &message.mentions, content);
+        return rendered.split_whitespace().collect::<Vec<_>>().join(" ");
+    }
+
+    if !message.attachments.is_empty() {
+        return format_attachment_summary(&message.attachments);
+    }
+
+    if message.content.is_some() {
+        "<empty message>".to_owned()
+    } else {
+        "<message content unavailable>".to_owned()
+    }
 }
 
 fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
@@ -1469,11 +1509,19 @@ fn inline_image_preview_area(list: Rect, row: isize, preview_height: u16) -> Opt
 
 fn composer_height(area: Rect, state: &DashboardState) -> u16 {
     let content_lines = if state.is_composing() || !state.composer_input().is_empty() {
-        composer_prompt_line_count(state.composer_input(), area.width)
+        composer_content_line_count(state, area.width)
     } else {
         1
     };
     MIN_MESSAGE_INPUT_HEIGHT.max(content_lines.saturating_add(1))
+}
+
+fn composer_content_line_count(state: &DashboardState, width: u16) -> u16 {
+    let mut line_count = composer_prompt_line_count(state.composer_input(), width);
+    if state.is_composing() && state.reply_target_message_state().is_some() {
+        line_count = line_count.saturating_add(1);
+    }
+    line_count
 }
 
 fn composer_prompt_line_count(input: &str, width: u16) -> u16 {
@@ -1489,12 +1537,12 @@ mod tests {
     use unicode_width::UnicodeWidthStr;
 
     use super::{
-        ACCENT, DIM, DISCORD_EPOCH_MILLIS, MessageContentLine, composer_prompt_line_count,
-        emoji_reaction_picker_lines, footer_hint, format_message_content,
-        format_message_content_lines, format_message_sent_time, format_unix_millis_with_offset,
-        highlight_style, inline_image_preview_area, inline_image_preview_row,
-        mention_highlight_style, message_action_menu_lines, message_item_lines,
-        message_viewport_lines, sync_view_heights, wrap_text_lines,
+        ACCENT, DIM, DISCORD_EPOCH_MILLIS, MessageContentLine, composer_content_line_count,
+        composer_prompt_line_count, composer_text, emoji_reaction_picker_lines, footer_hint,
+        format_message_content, format_message_content_lines, format_message_sent_time,
+        format_unix_millis_with_offset, highlight_style, inline_image_preview_area,
+        inline_image_preview_row, mention_highlight_style, message_action_menu_lines,
+        message_item_lines, message_viewport_lines, sync_view_heights, wrap_text_lines,
     };
     use crate::{
         discord::{
@@ -1548,6 +1596,35 @@ mod tests {
     #[test]
     fn composer_prompt_line_count_uses_display_width_for_wide_chars() {
         assert_eq!(composer_prompt_line_count("가나다", 4), 2);
+    }
+
+    #[test]
+    fn reply_composer_text_uses_original_reply_target_after_selection_changes() {
+        let mut state = state_with_message();
+        state.open_selected_message_actions();
+        state.activate_selected_message_action();
+        push_message(&mut state, 2, "newer selected message");
+
+        assert_eq!(
+            state
+                .selected_message_state()
+                .and_then(|message| message.content.as_deref()),
+            Some("newer selected message")
+        );
+
+        assert_eq!(composer_text(&state, 80), "reply to hello\n> ");
+    }
+
+    #[test]
+    fn reply_composer_line_count_includes_reply_hint() {
+        let mut state = state_with_message();
+        state.open_selected_message_actions();
+        state.activate_selected_message_action();
+        state.push_composer_char('h');
+        state.push_composer_char('\n');
+        state.push_composer_char('i');
+
+        assert_eq!(composer_content_line_count(&state, 80), 3);
     }
 
     #[test]
@@ -2516,6 +2593,24 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         });
         state
+    }
+
+    fn push_message(state: &mut DashboardState, message_id: u64, content: &str) {
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(message_id),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: crate::discord::MessageKind::regular(),
+            reply: None,
+            poll: None,
+            content: Some(content.to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
     }
 
     fn message_with_forwarded_snapshot(snapshot: MessageSnapshotInfo) -> MessageState {

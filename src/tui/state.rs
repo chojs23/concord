@@ -1092,6 +1092,13 @@ impl DashboardState {
             .copied()
     }
 
+    pub(crate) fn reply_target_message_state(&self) -> Option<&MessageState> {
+        let message_id = self.reply_target_message_id?;
+        self.messages()
+            .into_iter()
+            .find(|message| message.id == message_id)
+    }
+
     pub fn next_older_history_command(&mut self) -> Option<AppCommand> {
         let channel_id = self.selected_channel_id()?;
         let before = self.older_history_cursor()?;
