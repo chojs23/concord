@@ -7,6 +7,7 @@ mod ui;
 use std::{
     collections::{HashMap, HashSet},
     io::stdout,
+    sync::Arc,
 };
 
 use crossterm::{
@@ -20,7 +21,10 @@ use futures::StreamExt;
 use image::{DynamicImage, ImageBuffer, Rgba, imageops::FilterType};
 use ratatui::layout::Rect;
 use ratatui_image::{Resize, picker::Picker, protocol::StatefulProtocol};
-use tokio::sync::{broadcast, mpsc};
+use tokio::{
+    sync::{broadcast, mpsc},
+    task,
+};
 use twilight_model::id::marker::MessageMarker;
 use twilight_model::id::{Id, marker::ChannelMarker};
 
@@ -96,6 +100,7 @@ async fn run_dashboard(
     let mut avatar_images = AvatarImageCache::new();
     let mut emoji_images = EmojiImageCache::new();
     let mut terminal_events = EventStream::new();
+    let (preview_decode_tx, mut preview_decode_rx) = mpsc::unbounded_channel();
     let mut history_requests = HashMap::new();
     let mut last_history_channel = None;
     let mut image_targets = Vec::new();
@@ -189,10 +194,16 @@ async fn run_dashboard(
                     }
                 }
             }
+            Some(result) = preview_decode_rx.recv() => {
+                image_previews.store_decoded(result);
+                dirty = true;
+            }
             event = events.recv() => {
                 match event {
                     Ok(event) => {
-                        image_previews.record_event(&event);
+                        for job in image_previews.record_event(&event) {
+                            spawn_image_preview_decode(job, preview_decode_tx.clone());
+                        }
                         avatar_images.record_event(&event);
                         emoji_images.record_event(&event);
                         record_history_event(&event, &mut history_requests);
@@ -265,12 +276,32 @@ struct ImagePreviewCache {
     picker: Option<Picker>,
     entries: HashMap<ImagePreviewKey, ImagePreviewEntry>,
     tick: u64,
+    decode_generation: u64,
+}
+
+struct ImagePreviewDecodeJob {
+    key: ImagePreviewKey,
+    generation: u64,
+    bytes: Arc<[u8]>,
+    font_size: (u16, u16),
+    render_info: ImagePreviewRenderInfo,
+}
+
+struct ImagePreviewDecodeResult {
+    key: ImagePreviewKey,
+    generation: u64,
+    result: std::result::Result<DynamicImage, String>,
 }
 
 enum ImagePreviewEntry {
     Loading {
         filename: String,
         render_info: ImagePreviewRenderInfo,
+        last_used: u64,
+    },
+    Decoding {
+        filename: String,
+        generation: u64,
         last_used: u64,
     },
     Ready {
@@ -327,6 +358,7 @@ impl ImagePreviewCache {
             picker,
             entries: HashMap::new(),
             tick: 0,
+            decode_generation: 0,
         }
     }
 
@@ -347,7 +379,8 @@ impl ImagePreviewCache {
             rendered_keys.insert(key.clone());
             tick_entry(entry, &mut self.tick);
             let state = match entry {
-                ImagePreviewEntry::Loading { filename, .. } => ImagePreviewState::Loading {
+                ImagePreviewEntry::Loading { filename, .. }
+                | ImagePreviewEntry::Decoding { filename, .. } => ImagePreviewState::Loading {
                     filename: filename.clone(),
                 },
                 ImagePreviewEntry::Ready {
@@ -422,23 +455,24 @@ impl ImagePreviewCache {
         commands
     }
 
-    fn record_event(&mut self, event: &AppEvent) {
+    fn record_event(&mut self, event: &AppEvent) -> Vec<ImagePreviewDecodeJob> {
         match event {
             AppEvent::AttachmentPreviewLoaded { url, bytes } => self.store_loaded(url, bytes),
             AppEvent::AttachmentPreviewLoadFailed { url, message } => {
-                self.store_failed(url, message.clone())
+                self.store_failed(url, message.clone());
+                Vec::new()
             }
-            _ => {}
+            _ => Vec::new(),
         }
     }
 
-    fn store_loaded(&mut self, url: &str, bytes: &[u8]) {
+    fn store_loaded(&mut self, url: &str, bytes: &[u8]) -> Vec<ImagePreviewDecodeJob> {
         let keys = self.loading_keys_for_url(url);
         if keys.is_empty() {
-            return;
+            return Vec::new();
         }
 
-        let Some(picker) = self.picker.clone() else {
+        let Some(font_size) = self.picker.as_ref().map(Picker::font_size) else {
             for key in keys {
                 let filename = self.filename_for_key(&key);
                 let last_used = self.next_tick();
@@ -451,28 +485,20 @@ impl ImagePreviewCache {
                     },
                 );
             }
-            return;
+            return Vec::new();
         };
 
-        let decoded = match image::load_from_memory(bytes) {
-            Ok(image) => image,
-            Err(error) => {
-                for key in keys {
-                    let filename = self.filename_for_key(&key);
-                    let last_used = self.next_tick();
-                    self.entries.insert(
-                        key,
-                        ImagePreviewEntry::Failed {
-                            filename,
-                            message: format!("decode failed: {error}"),
-                            last_used,
-                        },
-                    );
-                }
-                return;
-            }
-        };
+        self.decode_jobs_for_loaded_keys(keys, bytes, font_size)
+    }
 
+    fn decode_jobs_for_loaded_keys(
+        &mut self,
+        keys: Vec<ImagePreviewKey>,
+        bytes: &[u8],
+        font_size: (u16, u16),
+    ) -> Vec<ImagePreviewDecodeJob> {
+        let bytes: Arc<[u8]> = Arc::from(bytes.to_vec());
+        let mut jobs = Vec::new();
         for key in keys {
             let filename = self.filename_for_key(&key);
             let Some(render_info) = self.render_info_for_key(&key) else {
@@ -487,42 +513,94 @@ impl ImagePreviewCache {
                 );
                 continue;
             };
-            let Some(image) = preview_sized_image(&decoded, picker.font_size(), render_info) else {
-                let last_used = self.next_tick();
-                self.entries.insert(
-                    key,
-                    ImagePreviewEntry::Failed {
-                        filename,
-                        message: "preview dimensions unavailable".to_owned(),
-                        last_used,
-                    },
-                );
-                continue;
-            };
-
             let last_used = self.next_tick();
+            let generation = self.next_decode_generation();
             self.entries.insert(
-                key,
-                ImagePreviewEntry::Ready {
+                key.clone(),
+                ImagePreviewEntry::Decoding {
                     filename,
-                    image: image.clone(),
-                    protocol: Box::new(picker.new_resize_protocol(image)),
+                    generation,
                     last_used,
                 },
             );
+            jobs.push(ImagePreviewDecodeJob {
+                key,
+                generation,
+                bytes: bytes.clone(),
+                font_size,
+                render_info,
+            });
+        }
+        jobs
+    }
+
+    fn store_decoded(&mut self, result: ImagePreviewDecodeResult) {
+        let Some(ImagePreviewEntry::Decoding {
+            filename,
+            generation,
+            ..
+        }) = self.entries.get(&result.key)
+        else {
+            return;
+        };
+        if *generation != result.generation {
+            return;
+        }
+        let filename = filename.clone();
+        let last_used = self.next_tick();
+        match result.result {
+            Ok(image) => {
+                let Some(picker) = self.picker.as_ref() else {
+                    self.entries.insert(
+                        result.key,
+                        ImagePreviewEntry::Failed {
+                            filename,
+                            message: "inline preview unavailable in this terminal".to_owned(),
+                            last_used,
+                        },
+                    );
+                    return;
+                };
+                self.entries.insert(
+                    result.key,
+                    ImagePreviewEntry::Ready {
+                        filename,
+                        image: image.clone(),
+                        protocol: Box::new(picker.new_resize_protocol(image)),
+                        last_used,
+                    },
+                );
+            }
+            Err(message) => {
+                self.entries.insert(
+                    result.key,
+                    ImagePreviewEntry::Failed {
+                        filename,
+                        message,
+                        last_used,
+                    },
+                );
+            }
         }
     }
 
     fn render_info_for_key(&self, key: &ImagePreviewKey) -> Option<ImagePreviewRenderInfo> {
         match self.entries.get(key)? {
             ImagePreviewEntry::Loading { render_info, .. } => Some(*render_info),
-            ImagePreviewEntry::Ready { .. } | ImagePreviewEntry::Failed { .. } => None,
+            ImagePreviewEntry::Decoding { .. }
+            | ImagePreviewEntry::Ready { .. }
+            | ImagePreviewEntry::Failed { .. } => None,
         }
     }
 
     fn next_tick(&mut self) -> u64 {
         self.tick = self.tick.saturating_add(1);
         self.tick
+    }
+
+    fn next_decode_generation(&mut self) -> u64 {
+        self.decode_generation = self.decode_generation.saturating_add(1);
+        self.decode_generation
     }
 
     fn prune_to_limit(&mut self, targets: &[ImagePreviewTarget]) {
@@ -814,7 +892,7 @@ impl ImagePreviewTarget {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ImagePreviewRenderInfo {
     message_index: usize,
     preview_width: u16,
@@ -833,6 +911,7 @@ impl ImagePreviewEntry {
     fn filename(&self) -> &str {
         match self {
             Self::Loading { filename, .. }
+            | Self::Decoding { filename, .. }
             | Self::Ready { filename, .. }
             | Self::Failed { filename, .. } => filename,
         }
@@ -841,6 +920,7 @@ impl ImagePreviewEntry {
     fn last_used(&self) -> u64 {
         match self {
             Self::Loading { last_used, .. }
+            | Self::Decoding { last_used, .. }
             | Self::Ready { last_used, .. }
             | Self::Failed { last_used, .. } => *last_used,
         }
@@ -854,6 +934,9 @@ fn tick_entry(entry: &mut ImagePreviewEntry, tick: &mut u64) {
         ImagePreviewEntry::Loading {
             last_used: value, ..
         }
+        | ImagePreviewEntry::Decoding {
+            last_used: value, ..
+        }
         | ImagePreviewEntry::Ready {
             last_used: value, ..
         }
@@ -861,6 +944,36 @@ fn tick_entry(entry: &mut ImagePreviewEntry, tick: &mut u64) {
             last_used: value, ..
         } => *value = last_used,
     }
+}
+
+fn spawn_image_preview_decode(
+    job: ImagePreviewDecodeJob,
+    tx: mpsc::UnboundedSender<ImagePreviewDecodeResult>,
+) {
+    task::spawn_blocking(move || {
+        let result = decode_image_preview(job);
+        let _ = tx.send(result);
+    });
+}
+
+fn decode_image_preview(job: ImagePreviewDecodeJob) -> ImagePreviewDecodeResult {
+    let result = decode_preview_sized_image(&job.bytes, job.font_size, job.render_info);
+    ImagePreviewDecodeResult {
+        key: job.key,
+        generation: job.generation,
+        result,
+    }
+}
+
+fn decode_preview_sized_image(
+    bytes: &[u8],
+    font_size: (u16, u16),
+    render_info: ImagePreviewRenderInfo,
+) -> std::result::Result<DynamicImage, String> {
+    let decoded =
+        image::load_from_memory(bytes).map_err(|error| format!("decode failed: {error}"))?;
+    preview_sized_image(&decoded, font_size, render_info)
+        .ok_or_else(|| "preview dimensions unavailable".to_owned())
 }
 
 fn preview_sized_image(
@@ -1368,6 +1481,7 @@ mod tests {
             picker: None,
             entries: HashMap::new(),
             tick: 0,
+            decode_generation: 0,
         };
         let mut state = state_with_image_messages(2, &[1, 2]);
         state.set_message_view_height(6);
@@ -1502,6 +1616,7 @@ mod tests {
             picker: None,
             entries: HashMap::new(),
             tick: 0,
+            decode_generation: 0,
         };
         let target = image_preview_target(1);
 
@@ -1526,6 +1641,7 @@ mod tests {
             picker: None,
             entries: HashMap::new(),
             tick: 0,
+            decode_generation: 0,
         };
         let existing_targets = (1..=MAX_IMAGE_PREVIEW_CACHE_ENTRIES as u64)
             .map(image_preview_target)
@@ -1548,6 +1664,7 @@ mod tests {
             picker: None,
             entries: HashMap::new(),
             tick: 0,
+            decode_generation: 0,
         };
         let targets = (1..=MAX_IMAGE_PREVIEW_CACHE_ENTRIES as u64 + 2)
             .map(image_preview_target)
@@ -1571,6 +1688,7 @@ mod tests {
             picker: None,
             entries: HashMap::new(),
             tick: 0,
+            decode_generation: 0,
         };
         let existing = image_preview_target(1).key();
         let loading = ImagePreviewTarget {
@@ -1609,11 +1727,152 @@ mod tests {
     }
 
     #[test]
+    fn image_preview_loaded_bytes_start_decode_jobs_for_loading_entries() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+            decode_generation: 0,
+        };
+        let target = image_preview_target(1);
+        let key = target.key();
+        let render_info = target.preview_render_info();
+        cache.entries.insert(
+            key.clone(),
+            ImagePreviewEntry::Loading {
+                filename: "loading.png".to_owned(),
+                render_info,
+                last_used: 1,
+            },
+        );
+
+        let jobs = cache.decode_jobs_for_loaded_keys(vec![key.clone()], b"image bytes", (10, 20));
+
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].key, key);
+        assert_eq!(jobs[0].generation, 1);
+        assert_eq!(jobs[0].bytes.as_ref(), b"image bytes");
+        assert_eq!(jobs[0].font_size, (10, 20));
+        assert_eq!(jobs[0].render_info, render_info);
+        assert!(matches!(
+            cache.entries.get(&jobs[0].key),
+            Some(ImagePreviewEntry::Decoding { filename, generation, .. })
+                if filename == "loading.png" && *generation == 1
+        ));
+    }
+
+    #[test]
+    fn image_preview_store_decoded_records_decode_failure() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+            decode_generation: 0,
+        };
+        let key = image_preview_target(1).key();
+        cache.entries.insert(
+            key.clone(),
+            ImagePreviewEntry::Decoding {
+                filename: "loading.png".to_owned(),
+                generation: 1,
+                last_used: 1,
+            },
+        );
+
+        cache.store_decoded(ImagePreviewDecodeResult {
+            key: key.clone(),
+            generation: 1,
+            result: Err("decode failed: invalid image".to_owned()),
+        });
+
+        assert!(matches!(
+            cache.entries.get(&key),
+            Some(ImagePreviewEntry::Failed { filename, message, .. })
+                if filename == "loading.png" && message == "decode failed: invalid image"
+        ));
+    }
+
+    #[test]
+    fn image_preview_store_decoded_ignores_stale_results() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+            decode_generation: 0,
+        };
+        let key = image_preview_target(1).key();
+        cache.entries.insert(
+            key.clone(),
+            ImagePreviewEntry::Failed {
+                filename: "existing.png".to_owned(),
+                message: "existing failure".to_owned(),
+                last_used: 1,
+            },
+        );
+
+        cache.store_decoded(ImagePreviewDecodeResult {
+            key: key.clone(),
+            generation: 1,
+            result: Err("decode failed: stale".to_owned()),
+        });
+
+        assert!(matches!(
+            cache.entries.get(&key),
+            Some(ImagePreviewEntry::Failed { filename, message, .. })
+                if filename == "existing.png" && message == "existing failure"
+        ));
+    }
+
+    #[test]
+    fn image_preview_store_decoded_ignores_replaced_decoding_generation() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+            decode_generation: 0,
+        };
+        let key = image_preview_target(1).key();
+        cache.entries.insert(
+            key.clone(),
+            ImagePreviewEntry::Decoding {
+                filename: "newer.png".to_owned(),
+                generation: 2,
+                last_used: 2,
+            },
+        );
+
+        cache.store_decoded(ImagePreviewDecodeResult {
+            key: key.clone(),
+            generation: 1,
+            result: Err("decode failed: old generation".to_owned()),
+        });
+
+        assert!(matches!(
+            cache.entries.get(&key),
+            Some(ImagePreviewEntry::Decoding { filename, generation, .. })
+                if filename == "newer.png" && *generation == 2
+        ));
+    }
+
+    #[test]
+    fn decode_preview_sized_image_reports_invalid_bytes() {
+        let error = decode_preview_sized_image(
+            b"not an image",
+            (10, 20),
+            image_preview_target(1).preview_render_info(),
+        )
+        .expect_err("invalid bytes should fail to decode");
+
+        assert!(error.starts_with("decode failed:"));
+    }
+
+    #[test]
     fn image_preview_store_failed_preserves_existing_non_loading_entries() {
         let mut cache = ImagePreviewCache {
             picker: None,
             entries: HashMap::new(),
             tick: 0,
+            decode_generation: 0,
         };
         let existing = image_preview_target(1).key();
         let loading = ImagePreviewTarget {
