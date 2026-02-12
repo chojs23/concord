@@ -852,6 +852,7 @@ fn format_message_kind_line(message_kind: MessageKind) -> Option<MessageContentL
     }
 
     let label = match message_kind.code() {
+        7 => "joined the server",
         19 => "↳ Reply",
         _ => "<unsupported message type>",
     };
@@ -1981,6 +1982,18 @@ mod tests {
             line_texts(&lines),
             vec!["↳ Reply", "reply body", "[image: cat.png] 640x480"]
         );
+        assert_eq!(lines[0].style, Style::default().fg(DIM));
+    }
+
+    #[test]
+    fn user_join_message_type_uses_join_label() {
+        let mut message = message_with_attachment(Some(String::new()), image_attachment());
+        message.attachments.clear();
+        message.message_kind = MessageKind::new(7);
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(line_texts(&lines), vec!["joined the server"]);
         assert_eq!(lines[0].style, Style::default().fg(DIM));
     }
 
