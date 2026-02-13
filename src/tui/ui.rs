@@ -854,7 +854,9 @@ fn format_message_kind_line(message_kind: MessageKind) -> Option<MessageContentL
     let label = match message_kind.code() {
         7 => "joined the server",
         19 => "↳ Reply",
-        _ => "<unsupported message type>",
+        _ => message_kind
+            .known_label()
+            .unwrap_or("<unsupported message type>"),
     };
 
     Some(MessageContentLine::dim(label.to_owned()))
@@ -1998,6 +2000,24 @@ mod tests {
     }
 
     #[test]
+    fn known_system_message_types_use_kind_labels() {
+        for (kind, label) in [
+            (8, "Guild boost"),
+            (18, "Thread created"),
+            (46, "Poll result"),
+        ] {
+            let mut message = message_with_attachment(Some(String::new()), image_attachment());
+            message.attachments.clear();
+            message.message_kind = MessageKind::new(kind);
+
+            let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+            assert_eq!(line_texts(&lines), vec![label]);
+            assert_eq!(lines[0].style, Style::default().fg(DIM));
+        }
+    }
+
+    #[test]
     fn reply_message_uses_preview_instead_of_type_label() {
         let mut message = message_with_attachment(Some("asdf".to_owned()), image_attachment());
         message.message_kind = MessageKind::new(19);
@@ -2052,7 +2072,7 @@ mod tests {
     #[test]
     fn unsupported_message_type_uses_placeholder() {
         let mut message = message_with_attachment(Some("body".to_owned()), image_attachment());
-        message.message_kind = MessageKind::new(46);
+        message.message_kind = MessageKind::new(255);
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
