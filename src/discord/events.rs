@@ -1,6 +1,8 @@
 use twilight_gateway::Event;
 use twilight_model::{
-    channel::{Attachment, Channel, Message, message::Mention, message::MessageSnapshot},
+    channel::{
+        Attachment, Channel, Message, message::Embed, message::Mention, message::MessageSnapshot,
+    },
     gateway::{
         payload::incoming::{
             GuildCreate as GuildCreatePayload, GuildEmojisUpdate as GuildEmojisUpdatePayload,
@@ -47,6 +49,10 @@ pub struct ChannelInfo {
     pub last_message_id: Option<Id<MessageMarker>>,
     pub name: String,
     pub kind: String,
+    pub message_count: Option<u64>,
+    pub total_message_sent: Option<u64>,
+    pub thread_archived: Option<bool>,
+    pub thread_locked: Option<bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -192,11 +198,19 @@ pub struct ReplyInfo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageReferenceInfo {
+    pub guild_id: Option<Id<GuildMarker>>,
+    pub channel_id: Option<Id<ChannelMarker>>,
+    pub message_id: Option<Id<MessageMarker>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PollInfo {
     pub question: String,
     pub answers: Vec<PollAnswerInfo>,
     pub allow_multiselect: bool,
     pub results_finalized: Option<bool>,
+    pub total_votes: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -216,6 +230,7 @@ pub struct MessageInfo {
     pub author: String,
     pub author_avatar_url: Option<String>,
     pub message_kind: MessageKind,
+    pub reference: Option<MessageReferenceInfo>,
     pub reply: Option<ReplyInfo>,
     pub poll: Option<PollInfo>,
     pub content: Option<String>,
@@ -269,6 +284,7 @@ pub enum AppEvent {
         author: String,
         author_avatar_url: Option<String>,
         message_kind: MessageKind,
+        reference: Option<MessageReferenceInfo>,
         reply: Option<ReplyInfo>,
         poll: Option<PollInfo>,
         content: Option<String>,
@@ -343,6 +359,7 @@ impl AppEvent {
             author: message.author,
             author_avatar_url: message.author_avatar_url,
             message_kind: message.message_kind,
+            reference: message.reference,
             reply: message.reply,
             poll: message.poll,
             content: message.content,
@@ -468,6 +485,10 @@ impl PollInfo {
                 .collect(),
             allow_multiselect: poll.allow_multiselect,
             results_finalized: poll.results.as_ref().map(|results| results.is_finalized),
+            total_votes: poll
+                .results
+                .as_ref()
+                .map(|results| results.answer_counts.iter().map(|count| count.count).sum()),
         }
     }
 }
@@ -482,8 +503,8 @@ fn filename_has_extension(filename: &str, extensions: &[&str]) -> bool {
 
 impl MessageInfo {
     pub fn from_message(message: Message) -> Self {
-        let source_channel_id = message
-            .reference
+        let reference = message_reference_info(&message.reference);
+        let source_channel_id = reference
             .as_ref()
             .and_then(|reference| reference.channel_id);
         let reply = message
@@ -500,8 +521,9 @@ impl MessageInfo {
             author: message_display_name(&message),
             author_avatar_url: Some(user_avatar_url(&message.author)),
             message_kind: MessageKind::new(message.kind.into()),
+            reference,
             reply,
-            poll,
+            poll: poll.or_else(|| poll_result_info(&message.embeds)),
             content: Some(message.content),
             mentions,
             attachments: message
@@ -539,15 +561,19 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
             channel_id: channel.id,
         }),
         Event::MessageCreate(message) => {
-            let source_channel_id = message
-                .reference
+            let reference = message_reference_info(&message.reference);
+            let source_channel_id = reference
                 .as_ref()
                 .and_then(|reference| reference.channel_id);
             let reply = message
                 .referenced_message
                 .as_deref()
                 .and_then(ReplyInfo::from_message);
-            let poll = message.poll.as_ref().map(PollInfo::from_poll);
+            let poll = message
+                .poll
+                .as_ref()
+                .map(PollInfo::from_poll)
+                .or_else(|| poll_result_info(&message.embeds));
 
             Some(AppEvent::MessageCreate {
                 guild_id: message.guild_id,
@@ -557,6 +583,7 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
                 author: message_display_name(&message),
                 author_avatar_url: Some(user_avatar_url(&message.author)),
                 message_kind: MessageKind::new(message.kind.into()),
+                reference,
                 reply,
                 poll,
                 content: Some(message.content.clone()),
@@ -579,7 +606,11 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
             guild_id: message.guild_id,
             channel_id: message.channel_id,
             message_id: message.id,
-            poll: message.poll.as_ref().map(PollInfo::from_poll),
+            poll: message
+                .poll
+                .as_ref()
+                .map(PollInfo::from_poll)
+                .or_else(|| poll_result_info(&message.embeds)),
             content: Some(message.content.clone()),
             mentions: Some(mention_infos(&message.mentions)),
             attachments: map_attachment_update(message.attachments.clone()),
@@ -598,6 +629,16 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
         Event::PresenceUpdate(presence) => Some(presence_update(&presence)),
         _ => None,
     }
+}
+
+fn message_reference_info(
+    reference: &Option<twilight_model::channel::message::MessageReference>,
+) -> Option<MessageReferenceInfo> {
+    reference.as_ref().map(|reference| MessageReferenceInfo {
+        guild_id: reference.guild_id,
+        channel_id: reference.channel_id,
+        message_id: reference.message_id,
+    })
 }
 
 fn map_attachment_update(attachments: Vec<Attachment>) -> AttachmentUpdate {
@@ -662,7 +703,67 @@ fn channel_info(channel: &Channel) -> ChannelInfo {
             .clone()
             .unwrap_or_else(|| format!("channel-{}", channel.id.get())),
         kind: format!("{:?}", channel.kind),
+        message_count: channel.message_count.map(u64::from),
+        total_message_sent: None,
+        thread_archived: channel
+            .thread_metadata
+            .as_ref()
+            .map(|metadata| metadata.archived),
+        thread_locked: channel
+            .thread_metadata
+            .as_ref()
+            .map(|metadata| metadata.locked),
     }
+}
+
+fn poll_result_info(embeds: &[Embed]) -> Option<PollInfo> {
+    let embed = embeds.iter().find(|embed| embed.kind == "poll_result")?;
+    poll_result_info_from_fields(
+        embed
+            .fields
+            .iter()
+            .map(|field| (field.name.as_str(), field.value.as_str())),
+    )
+}
+
+fn poll_result_info_from_fields<'a>(
+    fields: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Option<PollInfo> {
+    let mut question = None;
+    let mut winner_id = None;
+    let mut winner_text = None;
+    let mut winner_votes = None;
+    let mut total_votes = None;
+    for (name, value) in fields {
+        match name {
+            "poll_question_text" => question = Some(value.to_owned()),
+            "victor_answer_id" => winner_id = value.parse::<u8>().ok(),
+            "victor_answer_text" => winner_text = Some(value.to_owned()),
+            "victor_answer_votes" => winner_votes = value.parse::<u64>().ok(),
+            "total_votes" => total_votes = value.parse::<u64>().ok(),
+            _ => {}
+        }
+    }
+
+    let question = question.unwrap_or_else(|| "Poll results".to_owned());
+    let answers = winner_text
+        .map(|text| {
+            vec![PollAnswerInfo {
+                answer_id: winner_id.unwrap_or(1),
+                text,
+                vote_count: winner_votes,
+                me_voted: false,
+            }]
+        })
+        .unwrap_or_default();
+
+    Some(PollInfo {
+        question,
+        answers,
+        allow_multiselect: false,
+        results_finalized: Some(true),
+        total_votes,
+    })
 }
 
 fn member_info(member: &TwilightMember) -> MemberInfo {
@@ -902,6 +1003,41 @@ mod tests {
                     available: false,
                 }]
         ));
+    }
+
+    #[test]
+    fn poll_result_embed_fields_map_to_poll_summary() {
+        let poll = poll_result_info_from_fields([
+            ("poll_question_text", "오늘 뭐 먹지?"),
+            ("victor_answer_id", "1"),
+            ("victor_answer_text", "김치찌개"),
+            ("victor_answer_votes", "5"),
+            ("total_votes", "7"),
+        ])
+        .expect("poll result fields should map");
+
+        assert_eq!(poll.question, "오늘 뭐 먹지?");
+        assert_eq!(poll.total_votes, Some(7));
+        assert_eq!(poll.results_finalized, Some(true));
+        assert_eq!(poll.answers[0].text, "김치찌개");
+        assert_eq!(poll.answers[0].vote_count, Some(5));
+    }
+
+    #[test]
+    fn message_reference_maps_thread_ids() {
+        let reference = Some(twilight_model::channel::message::MessageReference {
+            channel_id: Some(Id::new(10)),
+            guild_id: Some(Id::new(1)),
+            kind: twilight_model::channel::message::MessageReferenceType::Default,
+            message_id: Some(Id::new(20)),
+            fail_if_not_exists: None,
+        });
+
+        let mapped = message_reference_info(&reference).expect("reference should map");
+
+        assert_eq!(mapped.guild_id, Some(Id::new(1)));
+        assert_eq!(mapped.channel_id, Some(Id::new(10)));
+        assert_eq!(mapped.message_id, Some(Id::new(20)));
     }
 
     fn twilight_emoji(id: u64, name: &str, animated: bool, available: bool) -> TwilightEmoji {

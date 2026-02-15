@@ -18,7 +18,8 @@ use super::{
     format::{RenderedText, TextHighlight, truncate_display_width, truncate_text},
     state::{
         ChannelPaneEntry, DashboardState, EmojiReactionItem, FocusPane, GuildPaneEntry,
-        MemberGroup, MessageActionItem, folder_color, presence_color, presence_marker,
+        MemberGroup, MessageActionItem, ThreadSummary, folder_color, presence_color,
+        presence_marker,
     },
 };
 use crate::discord::{
@@ -565,6 +566,10 @@ fn format_message_content_lines(
         (!message.attachments.is_empty()).then(|| format_attachment_summary(&message.attachments));
     let mut lines = Vec::new();
 
+    if let Some(system_lines) = format_system_message_lines(message, state, width) {
+        return system_lines;
+    }
+
     if let Some(line) = message
         .reply
         .as_ref()
@@ -781,11 +786,12 @@ fn format_poll_lines(poll: &PollInfo, width: usize) -> Vec<MessageContentLine> {
         MessageContentLine::plain(truncate_text(&poll.question, width)),
         MessageContentLine::dim(truncate_text(helper, width)),
     ];
-    let total_votes = poll
+    let counted_votes = poll
         .answers
         .iter()
         .filter_map(|answer| answer.vote_count)
         .sum::<u64>();
+    let total_votes = poll.total_votes.unwrap_or(counted_votes);
     lines.extend(poll.answers.iter().enumerate().map(|(index, answer)| {
         MessageContentLine::plain(truncate_text(
             &format_poll_answer(index, answer, total_votes),
@@ -796,6 +802,50 @@ fn format_poll_lines(poll: &PollInfo, width: usize) -> Vec<MessageContentLine> {
         &format_poll_footer(poll, total_votes),
         width,
     )));
+    lines
+}
+
+fn format_poll_result_lines(poll: Option<&PollInfo>, width: usize) -> Vec<MessageContentLine> {
+    let Some(poll) = poll else {
+        return vec![
+            MessageContentLine::accent(truncate_text("Poll results", width)),
+            MessageContentLine::dim(truncate_text("Result details unavailable", width)),
+        ];
+    };
+    let mut lines = vec![
+        MessageContentLine::accent(truncate_text("Poll results", width)),
+        MessageContentLine::plain(truncate_text(&poll.question, width)),
+    ];
+    if let Some(winner) = poll.answers.first() {
+        let votes = winner
+            .vote_count
+            .map(|count| format!(" with {count} votes"))
+            .unwrap_or_default();
+        lines.push(MessageContentLine::plain(truncate_text(
+            &format!("Winner: {}{votes}", winner.text),
+            width,
+        )));
+    } else {
+        lines.push(MessageContentLine::dim(truncate_text(
+            "No winning answer recorded",
+            width,
+        )));
+    }
+    let counted_votes = poll
+        .answers
+        .iter()
+        .filter_map(|answer| answer.vote_count)
+        .sum::<u64>();
+    let total_votes = poll
+        .total_votes
+        .or_else(|| (counted_votes > 0).then_some(counted_votes));
+    if let Some(total_votes) = total_votes {
+        let vote_label = if total_votes == 1 { "vote" } else { "votes" };
+        lines.push(MessageContentLine::dim(truncate_text(
+            &format!("{total_votes} total {vote_label} · Final results"),
+            width,
+        )));
+    }
     lines
 }
 
@@ -823,7 +873,7 @@ fn format_poll_footer(poll: &PollInfo, total_votes: u64) -> String {
     match poll.results_finalized {
         Some(true) => format!("{total_votes} {vote_label} · Final results"),
         Some(false) => format!("{total_votes} {vote_label} · Results may still change"),
-        None => "Use message actions to view results".to_owned(),
+        None => "Results not available yet".to_owned(),
     }
 }
 
@@ -860,6 +910,95 @@ fn format_message_kind_line(message_kind: MessageKind) -> Option<MessageContentL
     };
 
     Some(MessageContentLine::dim(label.to_owned()))
+}
+
+fn format_system_message_lines(
+    message: &MessageState,
+    state: &DashboardState,
+    width: usize,
+) -> Option<Vec<MessageContentLine>> {
+    match message.message_kind.code() {
+        8 => Some(vec![MessageContentLine::accent(truncate_text(
+            &format!("{} boosted the server", message.author),
+            width,
+        ))]),
+        9..=11 => {
+            let tier = message.message_kind.code() - 8;
+            Some(vec![MessageContentLine::accent(truncate_text(
+                &format!("{} boosted the server to Level {tier}", message.author),
+                width,
+            ))])
+        }
+        18 => Some(format_thread_created_lines(message, state, width)),
+        21 => Some(format_thread_starter_lines(message, state, width)),
+        46 => Some(format_poll_result_lines(message.poll.as_ref(), width)),
+        _ => None,
+    }
+}
+
+fn format_thread_created_lines(
+    message: &MessageState,
+    state: &DashboardState,
+    width: usize,
+) -> Vec<MessageContentLine> {
+    let summary = state.thread_summary_for_message(message);
+    let thread_name = summary
+        .as_ref()
+        .map(|summary| summary.name.as_str())
+        .or_else(|| message.content.as_deref().filter(|value| !value.is_empty()))
+        .unwrap_or("thread");
+    let mut lines = vec![
+        MessageContentLine::accent(truncate_text(
+            &format!("{} started a thread", message.author),
+            width,
+        )),
+        MessageContentLine::plain(truncate_text(&format!("# {thread_name}"), width)),
+    ];
+    if let Some(summary) = summary {
+        lines.push(format_thread_summary_line(&summary, width));
+    } else {
+        lines.push(MessageContentLine::dim(truncate_text(
+            "Thread details unavailable",
+            width,
+        )));
+    }
+    lines
+}
+
+fn format_thread_summary_line(summary: &ThreadSummary, width: usize) -> MessageContentLine {
+    let mut parts = Vec::new();
+    if let Some(count) = summary.message_count.or(summary.total_message_sent) {
+        let label = if count == 1 { "message" } else { "messages" };
+        parts.push(format!("{count} {label}"));
+    }
+    if summary.archived == Some(true) {
+        parts.push("archived".to_owned());
+    }
+    if summary.locked == Some(true) {
+        parts.push("locked".to_owned());
+    }
+    parts.push("Open thread to view messages".to_owned());
+    MessageContentLine::dim(truncate_text(&parts.join(" · "), width))
+}
+
+fn format_thread_starter_lines(
+    message: &MessageState,
+    state: &DashboardState,
+    width: usize,
+) -> Vec<MessageContentLine> {
+    let mut lines = vec![MessageContentLine::accent(truncate_text(
+        "Thread starter message",
+        width,
+    ))];
+    if let Some(reply) = message.reply.as_ref() {
+        lines.push(format_reply_line(reply, message.guild_id, state, width));
+    } else {
+        lines.push(MessageContentLine::dim(truncate_text(
+            "Started from an unavailable message",
+            width,
+        )));
+    }
+    lines
 }
 
 fn format_forwarded_snapshot(
@@ -2000,11 +2139,12 @@ mod tests {
     }
 
     #[test]
-    fn known_system_message_types_use_kind_labels() {
+    fn boost_message_types_use_discord_like_copy() {
         for (kind, label) in [
-            (8, "Guild boost"),
-            (18, "Thread created"),
-            (46, "Poll result"),
+            (8, "neo boosted the server"),
+            (9, "neo boosted the server to Level 1"),
+            (10, "neo boosted the server to Level 2"),
+            (11, "neo boosted the server to Level 3"),
         ] {
             let mut message = message_with_attachment(Some(String::new()), image_attachment());
             message.attachments.clear();
@@ -2013,8 +2153,91 @@ mod tests {
             let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
             assert_eq!(line_texts(&lines), vec![label]);
-            assert_eq!(lines[0].style, Style::default().fg(DIM));
+            assert_eq!(lines[0].style, Style::default().fg(ACCENT));
         }
+    }
+
+    #[test]
+    fn thread_created_message_uses_cached_thread_details() {
+        let mut message =
+            message_with_attachment(Some("release notes".to_owned()), image_attachment());
+        message.attachments.clear();
+        message.message_kind = MessageKind::new(18);
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(10),
+            parent_id: Some(message.channel_id),
+            position: None,
+            last_message_id: None,
+            name: "release notes".to_owned(),
+            kind: "thread".to_owned(),
+            message_count: Some(12),
+            total_message_sent: Some(14),
+            thread_archived: Some(false),
+            thread_locked: Some(false),
+        }));
+
+        let lines = format_message_content_lines(&message, &state, 200);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec![
+                "neo started a thread",
+                "# release notes",
+                "12 messages · Open thread to view messages"
+            ]
+        );
+    }
+
+    #[test]
+    fn thread_starter_message_uses_referenced_message_card() {
+        let mut message = message_with_attachment(Some(String::new()), image_attachment());
+        message.attachments.clear();
+        message.message_kind = MessageKind::new(21);
+        message.reply = Some(ReplyInfo {
+            author: "alice".to_owned(),
+            content: Some("original topic".to_owned()),
+            mentions: Vec::new(),
+        });
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec!["Thread starter message", "╭─ alice : original topic"]
+        );
+    }
+
+    #[test]
+    fn poll_result_message_uses_result_card() {
+        let mut message = message_with_attachment(Some(String::new()), image_attachment());
+        message.attachments.clear();
+        message.message_kind = MessageKind::new(46);
+        message.poll = Some(PollInfo {
+            question: "오늘 뭐 먹지?".to_owned(),
+            answers: vec![PollAnswerInfo {
+                answer_id: 1,
+                text: "김치찌개".to_owned(),
+                vote_count: Some(5),
+                me_voted: false,
+            }],
+            allow_multiselect: false,
+            results_finalized: Some(true),
+            total_votes: Some(7),
+        });
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec![
+                "Poll results",
+                "오늘 뭐 먹지?",
+                "Winner: 김치찌개 with 5 votes",
+                "7 total votes · Final results"
+            ]
+        );
     }
 
     #[test]
@@ -2305,6 +2528,10 @@ mod tests {
             last_message_id: None,
             name: "source".to_owned(),
             kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
         }));
         state.push_event(AppEvent::GuildMemberUpsert {
             guild_id: Id::new(2),
@@ -2355,6 +2582,10 @@ mod tests {
                 last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             },
         ));
         let mut snapshot = forwarded_snapshot(Some("hello"), Vec::new());
@@ -2612,6 +2843,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content,
@@ -2637,6 +2869,10 @@ mod tests {
                 last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -2653,6 +2889,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello".to_owned()),
@@ -2672,6 +2909,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(content.to_owned()),
@@ -2690,6 +2928,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(String::new()),
@@ -2718,6 +2957,7 @@ mod tests {
             ],
             allow_multiselect,
             results_finalized: Some(false),
+            total_votes: Some(3),
         }
     }
 

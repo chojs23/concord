@@ -15,7 +15,8 @@ use twilight_model::{
 
 use super::{
     AttachmentInfo, ChannelInfo, CustomEmojiInfo, GuildFolder, MemberInfo, MentionInfo,
-    MessageKind, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+    MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo,
+    PresenceStatus, ReplyInfo,
     events::default_avatar_url,
     events::{AppEvent, AttachmentUpdate, map_event},
 };
@@ -408,11 +409,16 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
     let mentions = parse_mentions(data.get("mentions"));
     let attachments = parse_attachments(data.get("attachments"));
     let reply = data.get("referenced_message").and_then(parse_reply_info);
-    let poll = data.get("poll").and_then(parse_poll_info);
-    let source_channel_id = data
+    let poll = data
+        .get("poll")
+        .and_then(parse_poll_info)
+        .or_else(|| parse_poll_result_embed(data.get("embeds")));
+    let reference = data
         .get("message_reference")
-        .and_then(|reference| reference.get("channel_id"))
-        .and_then(parse_id::<ChannelMarker>);
+        .map(parse_message_reference_info);
+    let source_channel_id = reference
+        .as_ref()
+        .and_then(|reference| reference.channel_id);
     let forwarded_snapshots =
         parse_message_snapshots(data.get("message_snapshots"), source_channel_id);
 
@@ -424,6 +430,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         author: author_name,
         author_avatar_url,
         message_kind,
+        reference,
         reply,
         poll,
         content,
@@ -431,6 +438,14 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         attachments,
         forwarded_snapshots,
     })
+}
+
+fn parse_message_reference_info(value: &Value) -> MessageReferenceInfo {
+    MessageReferenceInfo {
+        guild_id: value.get("guild_id").and_then(parse_id::<GuildMarker>),
+        channel_id: value.get("channel_id").and_then(parse_id::<ChannelMarker>),
+        message_id: value.get("message_id").and_then(parse_id::<MessageMarker>),
+    }
 }
 
 fn parse_message_update(data: &Value) -> Option<AppEvent> {
@@ -446,7 +461,10 @@ fn parse_message_update(data: &Value) -> Option<AppEvent> {
     } else {
         AttachmentUpdate::Unchanged
     };
-    let poll = data.get("poll").and_then(parse_poll_info);
+    let poll = data
+        .get("poll")
+        .and_then(parse_poll_info)
+        .or_else(|| parse_poll_result_embed(data.get("embeds")));
     let mentions = data
         .get("mentions")
         .map(|value| parse_mentions(Some(value)));
@@ -591,6 +609,15 @@ fn parse_poll_info(value: &Value) -> Option<PollInfo> {
     let results_finalized = results
         .and_then(|results| results.get("is_finalized"))
         .and_then(Value::as_bool);
+    let total_votes = results
+        .and_then(|results| results.get("answer_counts"))
+        .and_then(Value::as_array)
+        .map(|counts| {
+            counts
+                .iter()
+                .filter_map(|count| count.get("count").and_then(Value::as_u64))
+                .sum()
+        });
 
     Some(PollInfo {
         question,
@@ -606,6 +633,55 @@ fn parse_poll_info(value: &Value) -> Option<PollInfo> {
             .collect(),
         allow_multiselect,
         results_finalized,
+        total_votes,
+    })
+}
+
+fn parse_poll_result_embed(value: Option<&Value>) -> Option<PollInfo> {
+    let embed = value?
+        .as_array()?
+        .iter()
+        .find(|embed| embed.get("type").and_then(Value::as_str) == Some("poll_result"))?;
+    let fields = embed.get("fields")?.as_array()?;
+    let mut question = None;
+    let mut winner_id = None;
+    let mut winner_text = None;
+    let mut winner_votes = None;
+    let mut total_votes = None;
+
+    for field in fields {
+        let Some(name) = field.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(value) = field.get("value").and_then(Value::as_str) else {
+            continue;
+        };
+        match name {
+            "poll_question_text" => question = Some(value.to_owned()),
+            "victor_answer_id" => winner_id = value.parse::<u8>().ok(),
+            "victor_answer_text" => winner_text = Some(value.to_owned()),
+            "victor_answer_votes" => winner_votes = value.parse::<u64>().ok(),
+            "total_votes" => total_votes = value.parse::<u64>().ok(),
+            _ => {}
+        }
+    }
+
+    let answers = winner_text
+        .map(|text| {
+            vec![PollAnswerInfo {
+                answer_id: winner_id.unwrap_or(1),
+                text,
+                vote_count: winner_votes,
+                me_voted: false,
+            }]
+        })
+        .unwrap_or_default();
+    Some(PollInfo {
+        question: question.unwrap_or_else(|| "Poll results".to_owned()),
+        answers,
+        allow_multiselect: false,
+        results_finalized: Some(true),
+        total_votes,
     })
 }
 
@@ -792,6 +868,16 @@ fn parse_channel_info(
         last_message_id,
         name,
         kind,
+        message_count: value.get("message_count").and_then(Value::as_u64),
+        total_message_sent: value.get("total_message_sent").and_then(Value::as_u64),
+        thread_archived: value
+            .get("thread_metadata")
+            .and_then(|metadata| metadata.get("archived"))
+            .and_then(Value::as_bool),
+        thread_locked: value
+            .get("thread_metadata")
+            .and_then(|metadata| metadata.get("locked"))
+            .and_then(Value::as_bool),
     })
 }
 
@@ -930,6 +1016,30 @@ mod tests {
         .expect("dm channel should parse");
 
         assert_eq!(channel.last_message_id.map(|id| id.get()), Some(99));
+    }
+
+    #[test]
+    fn thread_channel_parser_keeps_counts_and_status() {
+        let channel = parse_channel_info(
+            &json!({
+                "id": "10",
+                "guild_id": "1",
+                "parent_id": "2",
+                "type": 11,
+                "name": "release notes",
+                "message_count": 12,
+                "total_message_sent": 14,
+                "thread_metadata": { "archived": true, "locked": false }
+            }),
+            None,
+        )
+        .expect("thread channel should parse");
+
+        assert_eq!(channel.kind, "thread");
+        assert_eq!(channel.message_count, Some(12));
+        assert_eq!(channel.total_message_sent, Some(14));
+        assert_eq!(channel.thread_archived, Some(true));
+        assert_eq!(channel.thread_locked, Some(false));
     }
 
     #[test]
@@ -1427,7 +1537,40 @@ mod tests {
                 ],
                 allow_multiselect: true,
                 results_finalized: Some(false),
+                total_votes: Some(3),
             })
+        );
+    }
+
+    #[test]
+    fn message_create_parser_keeps_poll_result_embed() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "type": 46,
+            "content": "",
+            "attachments": [],
+            "embeds": [{
+                "type": "poll_result",
+                "fields": [
+                    { "name": "poll_question_text", "value": "오늘 뭐 먹지?" },
+                    { "name": "victor_answer_id", "value": "1" },
+                    { "name": "victor_answer_text", "value": "김치찌개" },
+                    { "name": "victor_answer_votes", "value": "5" },
+                    { "name": "total_votes", "value": "7" }
+                ]
+            }]
+        }))
+        .expect("poll result message should parse");
+
+        let AppEvent::MessageCreate { poll, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(
+            poll.expect("poll result should map to poll info")
+                .total_votes,
+            Some(7)
         );
     }
 

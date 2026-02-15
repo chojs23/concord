@@ -7,8 +7,8 @@ use twilight_model::id::{
 
 use super::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, GuildFolder,
-    MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageSnapshotInfo, PollInfo,
-    PresenceStatus, ReplyInfo,
+    MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+    PollInfo, PresenceStatus, ReplyInfo,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -28,11 +28,22 @@ pub struct ChannelState {
     pub last_message_id: Option<Id<MessageMarker>>,
     pub name: String,
     pub kind: String,
+    pub message_count: Option<u64>,
+    pub total_message_sent: Option<u64>,
+    pub thread_archived: Option<bool>,
+    pub thread_locked: Option<bool>,
 }
 
 impl ChannelState {
     pub fn is_category(&self) -> bool {
         matches!(self.kind.as_str(), "category" | "GuildCategory")
+    }
+
+    pub fn is_thread(&self) -> bool {
+        matches!(
+            self.kind.as_str(),
+            "thread" | "GuildPublicThread" | "GuildPrivateThread" | "GuildNewsThread"
+        )
     }
 }
 
@@ -45,6 +56,7 @@ pub struct MessageState {
     pub author: String,
     pub author_avatar_url: Option<String>,
     pub message_kind: MessageKind,
+    pub reference: Option<MessageReferenceInfo>,
     pub reply: Option<ReplyInfo>,
     pub poll: Option<PollInfo>,
     pub content: Option<String>,
@@ -219,6 +231,7 @@ impl DiscordState {
                 author,
                 author_avatar_url,
                 message_kind,
+                reference,
                 reply,
                 poll,
                 content,
@@ -238,6 +251,7 @@ impl DiscordState {
                     author_avatar_url,
                 ),
                 message_kind: *message_kind,
+                reference: reference.clone(),
                 reply: reply.clone(),
                 poll: poll.clone(),
                 content: content.clone(),
@@ -429,6 +443,10 @@ impl DiscordState {
                 last_message_id,
                 name: channel.name.clone(),
                 kind: channel.kind.clone(),
+                message_count: channel.message_count,
+                total_message_sent: channel.total_message_sent,
+                thread_archived: channel.thread_archived,
+                thread_locked: channel.thread_locked,
             },
         );
     }
@@ -446,6 +464,9 @@ impl DiscordState {
                 existing.author_avatar_url = message.author_avatar_url;
             }
             existing.message_kind = message.message_kind;
+            if message.reference.is_some() || existing.reference.is_none() {
+                existing.reference = message.reference;
+            }
             if message.reply.is_some() || existing.reply.is_none() {
                 existing.reply = message.reply;
             }
@@ -499,6 +520,7 @@ impl DiscordState {
                     &message.author_avatar_url,
                 ),
                 message_kind: message.message_kind,
+                reference: message.reference.clone(),
                 reply: message.reply.clone(),
                 poll: message.poll.clone(),
                 content: message.content.clone(),
@@ -631,8 +653,8 @@ mod tests {
 
     use crate::discord::{
         AppEvent, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, DiscordState, MemberInfo,
-        MentionInfo, MessageInfo, MessageKind, MessageSnapshotInfo, MessageState, PollAnswerInfo,
-        PollInfo, PresenceStatus, ReplyInfo,
+        MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+        MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
     };
 
     #[test]
@@ -654,6 +676,10 @@ mod tests {
                 last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -667,6 +693,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello".to_owned()),
@@ -698,6 +725,10 @@ mod tests {
                 last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             }],
             members: vec![MemberInfo {
                 user_id: author_id,
@@ -716,6 +747,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello".to_owned()),
@@ -743,6 +775,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello".to_owned()),
@@ -779,6 +812,10 @@ mod tests {
             last_message_id: Some(Id::new(9)),
             name: "general".to_owned(),
             kind: "text".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
         }));
 
         let channel = state.channel(channel_id).unwrap();
@@ -801,6 +838,7 @@ mod tests {
                 author: "neo".to_owned(),
                 author_avatar_url: None,
                 message_kind: crate::discord::MessageKind::regular(),
+                reference: None,
                 reply: None,
                 poll: None,
                 content: Some(format!("message {id}")),
@@ -828,6 +866,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::new(19),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("reply".to_owned()),
@@ -855,6 +894,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("cached".to_owned()),
@@ -870,6 +910,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::new(19),
+            reference: None,
             reply: None,
             poll: None,
             content: None,
@@ -899,6 +940,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello <@10>".to_owned()),
@@ -914,6 +956,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello <@10>".to_owned()),
@@ -940,6 +983,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::new(19),
+            reference: None,
             reply: Some(ReplyInfo {
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
@@ -984,6 +1028,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::new(19),
+            reference: None,
             reply: Some(ReplyInfo {
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
@@ -1003,6 +1048,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::new(19),
+            reference: None,
             reply: None,
             poll: None,
             content: None,
@@ -1035,6 +1081,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: Some(poll_info()),
             content: Some(String::new()),
@@ -1065,6 +1112,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: Some(poll_info()),
             content: Some(String::new()),
@@ -1080,6 +1128,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: None,
@@ -1111,6 +1160,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: Some(poll_info()),
             content: Some(String::new()),
@@ -1154,6 +1204,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello <@10>".to_owned()),
@@ -1190,6 +1241,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello <@10>".to_owned()),
@@ -1226,6 +1278,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello <@10>".to_owned()),
@@ -1306,6 +1359,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello".to_owned()),
@@ -1321,6 +1375,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: None,
@@ -1356,6 +1411,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("live".to_owned()),
@@ -1383,6 +1439,29 @@ mod tests {
     }
 
     #[test]
+    fn history_merge_preserves_message_reference() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+        let reference = MessageReferenceInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Some(Id::new(20)),
+            message_id: Some(Id::new(30)),
+        };
+
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![MessageInfo {
+                reference: Some(reference.clone()),
+                ..message_info(channel_id, 20, "history")
+            }],
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages[0].reference, Some(reference));
+    }
+
+    #[test]
     fn history_dedupes_and_preserves_known_content() {
         let channel_id: Id<ChannelMarker> = Id::new(10);
         let mut state = DiscordState::default();
@@ -1395,6 +1474,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("known".to_owned()),
@@ -1429,6 +1509,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello <@10>".to_owned()),
@@ -1471,6 +1552,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(String::new()),
@@ -1507,6 +1589,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(String::new()),
@@ -1537,6 +1620,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(String::new()),
@@ -1570,6 +1654,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(String::new()),
@@ -1605,6 +1690,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(String::new()),
@@ -1708,6 +1794,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("newest".to_owned()),
@@ -1739,6 +1826,10 @@ mod tests {
             last_message_id: Some(Id::new(20)),
             name: "neo".to_owned(),
             kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
         }));
         state.apply_event(&AppEvent::MessageCreate {
             guild_id: None,
@@ -1748,6 +1839,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("new".to_owned()),
@@ -1763,6 +1855,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("old".to_owned()),
@@ -1792,6 +1885,10 @@ mod tests {
             last_message_id: Some(Id::new(20)),
             name: "neo".to_owned(),
             kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
         }));
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
@@ -1823,6 +1920,10 @@ mod tests {
             last_message_id: Some(Id::new(30)),
             name: "neo".to_owned(),
             kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
         }));
         state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
             guild_id: None,
@@ -1832,6 +1933,10 @@ mod tests {
             last_message_id: None,
             name: "neo renamed".to_owned(),
             kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
         }));
         state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
             guild_id: None,
@@ -1841,6 +1946,10 @@ mod tests {
             last_message_id: Some(Id::new(20)),
             name: "neo renamed again".to_owned(),
             kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
         }));
 
         let channel = state.channel(channel_id).unwrap();
@@ -2074,6 +2183,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(content.to_owned()),
@@ -2092,6 +2202,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(content.to_owned()),
@@ -2145,6 +2256,7 @@ mod tests {
             ],
             allow_multiselect: false,
             results_finalized: Some(false),
+            total_votes: Some(3),
         }
     }
 

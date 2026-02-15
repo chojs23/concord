@@ -30,6 +30,7 @@ pub enum FocusPane {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MessageActionKind {
     Reply,
+    OpenThread,
     DownloadImage,
     AddReaction,
 }
@@ -45,6 +46,16 @@ pub struct MessageActionItem {
 pub struct EmojiReactionItem {
     pub emoji: ReactionEmoji,
     pub label: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThreadSummary {
+    pub channel_id: Id<ChannelMarker>,
+    pub name: String,
+    pub message_count: Option<u64>,
+    pub total_message_sent: Option<u64>,
+    pub archived: Option<bool>,
+    pub locked: Option<bool>,
 }
 
 impl EmojiReactionItem {
@@ -439,6 +450,13 @@ impl DashboardState {
         }];
 
         let capabilities = message.capabilities();
+        if self.thread_summary_for_message(message).is_some() {
+            actions.push(MessageActionItem {
+                kind: MessageActionKind::OpenThread,
+                label: "Open thread",
+                enabled: true,
+            });
+        }
         if capabilities.has_image {
             actions.push(MessageActionItem {
                 kind: MessageActionKind::DownloadImage,
@@ -488,6 +506,15 @@ impl DashboardState {
         match action.kind {
             MessageActionKind::Reply => {
                 self.start_reply_composer();
+                self.close_message_action_menu();
+                None
+            }
+            MessageActionKind::OpenThread => {
+                let channel_id = self
+                    .selected_message_state()
+                    .and_then(|message| self.thread_summary_for_message(message))?
+                    .channel_id;
+                self.activate_channel(channel_id);
                 self.close_message_action_menu();
                 None
             }
@@ -925,6 +952,43 @@ impl DashboardState {
                 _ => format!("#{}", channel.name),
             })
             .unwrap_or_else(|| format!("#channel-{}", channel_id.get()))
+    }
+
+    pub(crate) fn thread_summary_for_message(
+        &self,
+        message: &MessageState,
+    ) -> Option<ThreadSummary> {
+        if message.message_kind.code() != 18 {
+            return None;
+        }
+        let referenced_thread = message
+            .reference
+            .as_ref()
+            .and_then(|reference| reference.channel_id)
+            .and_then(|channel_id| self.discord.channel(channel_id))
+            .filter(|channel| channel.is_thread());
+        let thread = referenced_thread.or_else(|| {
+            let thread_name = message.content.as_deref()?.trim();
+            if thread_name.is_empty() {
+                return None;
+            }
+            self.discord
+                .channels_for_guild(message.guild_id)
+                .into_iter()
+                .find(|channel| {
+                    channel.is_thread()
+                        && channel.parent_id == Some(message.channel_id)
+                        && channel.name == thread_name
+                })
+        });
+        thread.map(|channel| ThreadSummary {
+            channel_id: channel.id,
+            name: channel.name.clone(),
+            message_count: channel.message_count,
+            total_message_sent: channel.total_message_sent,
+            archived: channel.thread_archived,
+            locked: channel.thread_locked,
+        })
     }
 
     pub(crate) fn render_user_mentions(
@@ -2227,6 +2291,10 @@ where
     F: Fn(&str) -> String,
     G: Fn(&MessageSnapshotInfo, &str) -> String,
 {
+    if let Some(system_lines) = system_message_line_count(message) {
+        return 1 + system_lines.max(1);
+    }
+
     let primary_lines = message_primary_line_count(
         message.content.as_deref(),
         &message.attachments,
@@ -2261,6 +2329,20 @@ where
     }
 
     1 + (reply_line + poll_lines + kind_line + primary_lines).max(1)
+}
+
+fn system_message_line_count(message: &MessageState) -> Option<usize> {
+    match message.message_kind.code() {
+        8..=11 => Some(1),
+        18 => Some(3),
+        21 => Some(2),
+        46 => Some(match message.poll.as_ref() {
+            Some(poll) if poll.total_votes.is_some() => 4,
+            Some(_) => 3,
+            None => 2,
+        }),
+        _ => None,
+    }
 }
 
 fn message_primary_line_count(
@@ -2515,8 +2597,8 @@ mod tests {
     };
     use crate::discord::{
         AppCommand, AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, GuildFolder,
-        MemberInfo, MessageInfo, MessageKind, MessageSnapshotInfo, PollAnswerInfo, PollInfo,
-        PresenceStatus, ReactionEmoji, ReplyInfo,
+        MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+        PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReplyInfo,
     };
 
     #[test]
@@ -2579,6 +2661,10 @@ mod tests {
                 last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -2595,6 +2681,7 @@ mod tests {
                 author: "neo".to_owned(),
                 author_avatar_url: None,
                 message_kind: crate::discord::MessageKind::regular(),
+                reference: None,
                 reply: None,
                 poll: None,
                 content: Some(format!("msg {id}")),
@@ -2626,6 +2713,10 @@ mod tests {
             last_message_id: Some(Id::new(30)),
             name: "neo".to_owned(),
             kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
         }));
         state.push_event(AppEvent::MessageCreate {
             guild_id: None,
@@ -2635,6 +2726,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello".to_owned()),
@@ -2667,6 +2759,10 @@ mod tests {
                 last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             }],
             members: vec![
                 MemberInfo {
@@ -2776,6 +2872,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("history message without guild".to_owned()),
@@ -2802,6 +2899,10 @@ mod tests {
             last_message_id: None,
             name: "neo".to_owned(),
             kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
         }));
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -2813,6 +2914,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello".to_owned()),
@@ -2841,6 +2943,10 @@ mod tests {
                 last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -2857,6 +2963,7 @@ mod tests {
                 author: "neo".to_owned(),
                 author_avatar_url: None,
                 message_kind: crate::discord::MessageKind::regular(),
+                reference: None,
                 reply: None,
                 poll: None,
                 content: Some(format!("msg {id}")),
@@ -2890,6 +2997,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("msg 6".to_owned()),
@@ -2971,6 +3079,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("clip".to_owned()),
@@ -2992,6 +3101,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello\nworld".to_owned()),
@@ -3013,6 +3123,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("abcdefghijkl".to_owned()),
@@ -3053,6 +3164,10 @@ mod tests {
             last_message_id: None,
             name: "source".to_owned(),
             kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
         }));
         state.push_event(AppEvent::GuildMemberUpsert {
             guild_id: Id::new(2),
@@ -3071,6 +3186,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(String::new()),
@@ -3098,6 +3214,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("가나다라마사".to_owned()),
@@ -3119,6 +3236,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("look".to_owned()),
@@ -3140,6 +3258,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(String::new()),
@@ -3161,6 +3280,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(String::new()),
@@ -3188,6 +3308,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(String::new()),
@@ -3218,6 +3339,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(String::new()),
@@ -3239,6 +3361,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("reply body".to_owned()),
@@ -3264,6 +3387,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::new(19),
+            reference: None,
             reply: Some(ReplyInfo {
                 author: "딱구형".to_owned(),
                 content: Some("잘되는군".to_owned()),
@@ -3289,6 +3413,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: Some(poll_info(false)),
             content: Some(String::new()),
@@ -3301,6 +3426,36 @@ mod tests {
     }
 
     #[test]
+    fn thread_created_message_reserves_system_card_rows() {
+        let mut message = height_test_message("release notes");
+        message.message_kind = MessageKind::new(18);
+
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
+    }
+
+    #[test]
+    fn poll_result_message_reserves_result_card_rows() {
+        let mut message = height_test_message("");
+        message.message_kind = MessageKind::new(46);
+        message.poll = Some(poll_info(false));
+
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
+    }
+
+    #[test]
+    fn thread_starter_message_reserves_system_card_rows() {
+        let mut message = height_test_message("");
+        message.message_kind = MessageKind::new(21);
+        message.reply = Some(ReplyInfo {
+            author: "alice".to_owned(),
+            content: Some("original topic".to_owned()),
+            mentions: Vec::new(),
+        });
+
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 3);
+    }
+
+    #[test]
     fn multiselect_poll_message_uses_same_card_height() {
         let message = MessageState {
             id: Id::new(1),
@@ -3310,6 +3465,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: Some(poll_info(true)),
             content: Some(String::new()),
@@ -3350,6 +3506,85 @@ mod tests {
     }
 
     #[test]
+    fn thread_created_message_action_opens_cached_thread() {
+        let mut state = state_with_thread_created_message();
+        focus_messages(&mut state);
+
+        let actions = state.selected_message_action_items();
+        assert_eq!(
+            actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
+            vec![
+                MessageActionKind::Reply,
+                MessageActionKind::OpenThread,
+                MessageActionKind::AddReaction,
+            ]
+        );
+
+        state.open_selected_message_actions();
+        state.move_message_action_down();
+        let command = state.activate_selected_message_action();
+
+        assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
+        assert_eq!(command, None);
+    }
+
+    #[test]
+    fn history_loaded_thread_created_message_opens_reference_thread_after_rename() {
+        let mut state = state_with_thread_created_message();
+        state.push_event(AppEvent::MessageHistoryLoaded {
+            channel_id: Id::new(2),
+            before: None,
+            messages: vec![MessageInfo {
+                message_kind: MessageKind::new(18),
+                reference: Some(MessageReferenceInfo {
+                    guild_id: Some(Id::new(1)),
+                    channel_id: Some(Id::new(10)),
+                    message_id: None,
+                }),
+                content: Some("old thread name".to_owned()),
+                ..message_info(Id::new(2), 2)
+            }],
+        });
+        focus_messages(&mut state);
+        state.jump_bottom();
+
+        let actions = state.selected_message_action_items();
+        assert!(
+            actions
+                .iter()
+                .any(|action| action.kind == MessageActionKind::OpenThread)
+        );
+
+        state.open_selected_message_actions();
+        state.move_message_action_down();
+        state.activate_selected_message_action();
+
+        assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
+    }
+
+    #[test]
+    fn composer_sends_to_opened_thread_channel() {
+        let mut state = state_with_thread_created_message();
+        focus_messages(&mut state);
+        state.open_selected_message_actions();
+        state.move_message_action_down();
+        state.activate_selected_message_action();
+
+        state.start_composer();
+        state.push_composer_char('h');
+        state.push_composer_char('i');
+
+        assert_eq!(
+            state.submit_composer(),
+            Some(AppCommand::SendMessage {
+                channel_id: Id::new(10),
+                content: "hi".to_owned(),
+                reply_to: None,
+            })
+        );
+    }
+
+    #[test]
     fn message_action_items_do_not_add_poll_actions_for_poll_messages() {
         let mut state = state_with_messages(1);
         focus_messages(&mut state);
@@ -3361,6 +3596,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: Some(poll_info(false)),
             content: Some(String::new()),
@@ -3390,6 +3626,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: Some(poll_info(false)),
             content: Some(String::new()),
@@ -3533,6 +3770,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("next".to_owned()),
@@ -3570,6 +3808,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("next".to_owned()),
@@ -3603,6 +3842,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("next".to_owned()),
@@ -3651,6 +3891,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("next".to_owned()),
@@ -3688,6 +3929,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("next".to_owned()),
@@ -4022,6 +4264,10 @@ mod tests {
                 last_message_id: None,
                 name: name.to_owned(),
                 kind: "dm".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             }));
         }
         state.confirm_selected_guild();
@@ -4047,6 +4293,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("new empty dm".to_owned()),
@@ -4362,6 +4609,10 @@ mod tests {
                 last_message_id: None,
                 name: format!("channel {id}"),
                 kind: "text".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             })
             .collect();
 
@@ -4404,6 +4655,10 @@ mod tests {
                 last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             }],
             members,
             presences,
@@ -4437,6 +4692,10 @@ mod tests {
                 last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             }],
             members,
             presences: vec![
@@ -4470,6 +4729,10 @@ mod tests {
                     last_message_id: None,
                     name: "Text Channels".to_owned(),
                     kind: "category".to_owned(),
+                    message_count: None,
+                    total_message_sent: None,
+                    thread_archived: None,
+                    thread_locked: None,
                 },
                 ChannelInfo {
                     guild_id: Some(guild_id),
@@ -4479,6 +4742,10 @@ mod tests {
                     last_message_id: None,
                     name: "general".to_owned(),
                     kind: "text".to_owned(),
+                    message_count: None,
+                    total_message_sent: None,
+                    thread_archived: None,
+                    thread_locked: None,
                 },
                 ChannelInfo {
                     guild_id: Some(guild_id),
@@ -4488,6 +4755,10 @@ mod tests {
                     last_message_id: None,
                     name: "random".to_owned(),
                     kind: "text".to_owned(),
+                    message_count: None,
+                    total_message_sent: None,
+                    thread_archived: None,
+                    thread_locked: None,
                 },
             ],
             members: Vec::new(),
@@ -4513,6 +4784,10 @@ mod tests {
                 last_message_id,
                 name: name.to_owned(),
                 kind: "dm".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             }));
         }
         state
@@ -4538,6 +4813,10 @@ mod tests {
                 last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -4566,6 +4845,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some("hello".to_owned()),
@@ -4592,6 +4872,10 @@ mod tests {
                 last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -4607,6 +4891,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(content.to_owned()),
@@ -4615,6 +4900,91 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         });
         state
+    }
+
+    fn state_with_thread_created_message() -> DashboardState {
+        let guild_id = Id::new(1);
+        let parent_id: Id<ChannelMarker> = Id::new(2);
+        let thread_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![
+                ChannelInfo {
+                    guild_id: Some(guild_id),
+                    channel_id: parent_id,
+                    parent_id: None,
+                    position: None,
+                    last_message_id: None,
+                    name: "general".to_owned(),
+                    kind: "GuildText".to_owned(),
+                    message_count: None,
+                    total_message_sent: None,
+                    thread_archived: None,
+                    thread_locked: None,
+                },
+                ChannelInfo {
+                    guild_id: Some(guild_id),
+                    channel_id: thread_id,
+                    parent_id: Some(parent_id),
+                    position: None,
+                    last_message_id: None,
+                    name: "release notes".to_owned(),
+                    kind: "thread".to_owned(),
+                    message_count: Some(12),
+                    total_message_sent: Some(14),
+                    thread_archived: Some(false),
+                    thread_locked: Some(false),
+                },
+            ],
+            members: Vec::new(),
+            presences: Vec::new(),
+            emojis: Vec::new(),
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(guild_id),
+            channel_id: parent_id,
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::new(18),
+            reference: Some(MessageReferenceInfo {
+                guild_id: Some(guild_id),
+                channel_id: Some(thread_id),
+                message_id: None,
+            }),
+            reply: None,
+            poll: None,
+            content: Some("release notes".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state
+    }
+
+    fn height_test_message(content: &str) -> MessageState {
+        MessageState {
+            id: Id::new(1),
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some(content.to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        }
     }
 
     fn state_with_image_messages(count: u64, image_message_ids: &[u64]) -> DashboardState {
@@ -4644,6 +5014,10 @@ mod tests {
                 last_message_id: None,
                 name: "general".to_owned(),
                 kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -4660,6 +5034,7 @@ mod tests {
                 author: "neo".to_owned(),
                 author_avatar_url: None,
                 message_kind: crate::discord::MessageKind::regular(),
+                reference: None,
                 reply: None,
                 poll: None,
                 content: Some(format!("msg {id}")),
@@ -4683,6 +5058,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(content.to_owned()),
@@ -4739,6 +5115,7 @@ mod tests {
             author: "neo".to_owned(),
             author_avatar_url: None,
             message_kind: MessageKind::regular(),
+            reference: None,
             reply: None,
             poll: None,
             content: Some(format!("msg {message_id}")),
@@ -4778,6 +5155,7 @@ mod tests {
             ],
             allow_multiselect,
             results_finalized: Some(false),
+            total_votes: Some(3),
         }
     }
 
