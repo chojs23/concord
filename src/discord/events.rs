@@ -540,26 +540,37 @@ impl MessageInfo {
     }
 }
 
-pub fn map_event(event: Event) -> Option<AppEvent> {
+pub fn map_event(event: Event) -> Vec<AppEvent> {
     match event {
-        Event::Ready(ready) => Some(AppEvent::Ready {
+        Event::Ready(ready) => vec![AppEvent::Ready {
             user: ready.user.name,
             user_id: Some(ready.user.id),
-        }),
-        Event::GuildCreate(guild) => map_guild_create(*guild),
-        Event::GuildDelete(guild) => Some(AppEvent::GuildDelete { guild_id: guild.id }),
-        Event::GuildUpdate(guild) => Some(AppEvent::GuildUpdate {
+        }],
+        Event::GuildCreate(guild) => map_guild_create(*guild).into_iter().collect(),
+        Event::GuildDelete(guild) => vec![AppEvent::GuildDelete { guild_id: guild.id }],
+        Event::GuildUpdate(guild) => vec![AppEvent::GuildUpdate {
             guild_id: guild.id,
             name: guild.name.clone(),
             emojis: Some(guild.emojis.iter().map(custom_emoji_info).collect()),
-        }),
-        Event::GuildEmojisUpdate(update) => Some(guild_emojis_update(&update)),
-        Event::ChannelCreate(channel) => Some(AppEvent::ChannelUpsert(channel_info(&channel.0))),
-        Event::ChannelUpdate(channel) => Some(AppEvent::ChannelUpsert(channel_info(&channel.0))),
-        Event::ChannelDelete(channel) => Some(AppEvent::ChannelDelete {
+        }],
+        Event::GuildEmojisUpdate(update) => vec![guild_emojis_update(&update)],
+        Event::ChannelCreate(channel) => vec![AppEvent::ChannelUpsert(channel_info(&channel.0))],
+        Event::ChannelUpdate(channel) => vec![AppEvent::ChannelUpsert(channel_info(&channel.0))],
+        Event::ChannelDelete(channel) => vec![AppEvent::ChannelDelete {
             guild_id: channel.guild_id,
             channel_id: channel.id,
-        }),
+        }],
+        Event::ThreadCreate(thread) => vec![AppEvent::ChannelUpsert(channel_info(&thread.0))],
+        Event::ThreadUpdate(thread) => vec![AppEvent::ChannelUpsert(channel_info(&thread.0))],
+        Event::ThreadDelete(thread) => vec![AppEvent::ChannelDelete {
+            guild_id: Some(thread.guild_id),
+            channel_id: thread.id,
+        }],
+        Event::ThreadListSync(sync) => sync
+            .threads
+            .iter()
+            .map(|thread| AppEvent::ChannelUpsert(channel_info(thread)))
+            .collect(),
         Event::MessageCreate(message) => {
             let reference = message_reference_info(&message.reference);
             let source_channel_id = reference
@@ -575,7 +586,7 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
                 .map(PollInfo::from_poll)
                 .or_else(|| poll_result_info(&message.embeds));
 
-            Some(AppEvent::MessageCreate {
+            vec![AppEvent::MessageCreate {
                 guild_id: message.guild_id,
                 channel_id: message.channel_id,
                 message_id: message.id,
@@ -600,9 +611,9 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
                     .into_iter()
                     .map(|snapshot| MessageSnapshotInfo::from_snapshot(snapshot, source_channel_id))
                     .collect(),
-            })
+            }]
         }
-        Event::MessageUpdate(message) => Some(AppEvent::MessageUpdate {
+        Event::MessageUpdate(message) => vec![AppEvent::MessageUpdate {
             guild_id: message.guild_id,
             channel_id: message.channel_id,
             message_id: message.id,
@@ -614,20 +625,20 @@ pub fn map_event(event: Event) -> Option<AppEvent> {
             content: Some(message.content.clone()),
             mentions: Some(mention_infos(&message.mentions)),
             attachments: map_attachment_update(message.attachments.clone()),
-        }),
-        Event::MessageDelete(message) => Some(AppEvent::MessageDelete {
+        }],
+        Event::MessageDelete(message) => vec![AppEvent::MessageDelete {
             guild_id: message.guild_id,
             channel_id: message.channel_id,
             message_id: message.id,
-        }),
-        Event::MemberAdd(member_add) => Some(member_upsert_from_add(&member_add)),
-        Event::MemberUpdate(update) => Some(member_upsert_from_update(&update)),
-        Event::MemberRemove(remove) => Some(AppEvent::GuildMemberRemove {
+        }],
+        Event::MemberAdd(member_add) => vec![member_upsert_from_add(&member_add)],
+        Event::MemberUpdate(update) => vec![member_upsert_from_update(&update)],
+        Event::MemberRemove(remove) => vec![AppEvent::GuildMemberRemove {
             guild_id: remove.guild_id,
             user_id: remove.user.id,
-        }),
-        Event::PresenceUpdate(presence) => Some(presence_update(&presence)),
-        _ => None,
+        }],
+        Event::PresenceUpdate(presence) => vec![presence_update(&presence)],
+        _ => Vec::new(),
     }
 }
 
@@ -656,7 +667,12 @@ fn map_guild_create(guild: GuildCreatePayload) -> Option<AppEvent> {
         GuildCreatePayload::Unavailable(_) => return None,
     };
 
-    let channels = guild.channels.iter().map(channel_info).collect();
+    let channels = guild
+        .channels
+        .iter()
+        .chain(guild.threads.iter())
+        .map(channel_info)
+        .collect();
     let members = guild.members.iter().map(member_info).collect();
     let presences = guild
         .presences
@@ -966,10 +982,10 @@ mod tests {
         let app_event = map_event(event);
 
         assert!(matches!(
-            app_event,
-            Some(AppEvent::GuildEmojisUpdate { guild_id, emojis })
-                if guild_id == Id::new(10)
-                    && emojis == vec![CustomEmojiInfo {
+            app_event.as_slice(),
+            [AppEvent::GuildEmojisUpdate { guild_id, emojis }]
+                if *guild_id == Id::new(10)
+                    && *emojis == vec![CustomEmojiInfo {
                         id: Id::new(50),
                         name: "party".to_owned(),
                         animated: true,
@@ -989,14 +1005,14 @@ mod tests {
         let app_event = map_event(event);
 
         assert!(matches!(
-            app_event,
-            Some(AppEvent::GuildUpdate {
+            app_event.as_slice(),
+            [AppEvent::GuildUpdate {
                 guild_id,
                 name,
                 emojis: Some(emojis),
-            }) if guild_id == Id::new(10)
+            }] if *guild_id == Id::new(10)
                 && name == "Renamed Guild"
-                && emojis == vec![CustomEmojiInfo {
+                && *emojis == vec![CustomEmojiInfo {
                     id: Id::new(51),
                     name: "wave".to_owned(),
                     animated: false,

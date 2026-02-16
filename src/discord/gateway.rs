@@ -31,7 +31,7 @@ pub async fn run_gateway(token: String, tx: broadcast::Sender<AppEvent>) {
         match item {
             Ok(event) => {
                 logging::debug("gateway", format!("ok: {:?}", event.kind()));
-                if let Some(event) = map_event(event) {
+                for event in map_event(event) {
                     let _ = tx.send(event);
                 }
             }
@@ -99,8 +99,11 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         "GUILD_UPDATE" => parse_guild_update(data).into_iter().collect(),
         "GUILD_EMOJIS_UPDATE" => parse_guild_emojis_update(data).into_iter().collect(),
         "GUILD_DELETE" => parse_guild_delete(data).into_iter().collect(),
-        "CHANNEL_CREATE" | "CHANNEL_UPDATE" => parse_channel_upsert(data).into_iter().collect(),
-        "CHANNEL_DELETE" => parse_channel_delete(data).into_iter().collect(),
+        "CHANNEL_CREATE" | "CHANNEL_UPDATE" | "THREAD_CREATE" | "THREAD_UPDATE" => {
+            parse_channel_upsert(data).into_iter().collect()
+        }
+        "CHANNEL_DELETE" | "THREAD_DELETE" => parse_channel_delete(data).into_iter().collect(),
+        "THREAD_LIST_SYNC" => parse_thread_list_sync(data),
         "MESSAGE_CREATE" => parse_message_create(data).into_iter().collect(),
         "MESSAGE_UPDATE" => parse_message_update(data).into_iter().collect(),
         "MESSAGE_DELETE" => parse_message_delete(data).into_iter().collect(),
@@ -143,11 +146,8 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
     if let Some(guilds) = data.get("guilds").and_then(Value::as_array) {
         stats.guilds = guilds.len();
         for guild in guilds {
-            stats.guild_channels += guild
-                .get("channels")
-                .and_then(Value::as_array)
-                .map(Vec::len)
-                .unwrap_or_default();
+            stats.guild_channels += channel_array_len(guild, "channels");
+            stats.guild_channels += channel_array_len(guild, "threads");
             stats.guild_members += guild
                 .get("members")
                 .and_then(Value::as_array)
@@ -277,7 +277,7 @@ fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         .unwrap_or("unknown")
         .to_owned();
 
-    let channels = data
+    let mut channels: Vec<ChannelInfo> = data
         .get("channels")
         .and_then(Value::as_array)
         .map(|items| {
@@ -287,6 +287,13 @@ fn parse_guild_create(data: &Value) -> Option<AppEvent> {
                 .collect()
         })
         .unwrap_or_default();
+    if let Some(threads) = data.get("threads").and_then(Value::as_array) {
+        channels.extend(
+            threads
+                .iter()
+                .filter_map(|channel| parse_channel_info(channel, Some(guild_id))),
+        );
+    }
 
     let members = data
         .get("members")
@@ -386,6 +393,28 @@ fn parse_channel_delete(data: &Value) -> Option<AppEvent> {
         guild_id,
         channel_id,
     })
+}
+
+fn parse_thread_list_sync(data: &Value) -> Vec<AppEvent> {
+    let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
+    data.get("threads")
+        .and_then(Value::as_array)
+        .map(|threads| {
+            threads
+                .iter()
+                .filter_map(|thread| parse_channel_info(thread, guild_id))
+                .map(AppEvent::ChannelUpsert)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn channel_array_len(value: &Value, field: &str) -> usize {
+    value
+        .get(field)
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or_default()
 }
 
 fn parse_message_create(data: &Value) -> Option<AppEvent> {
@@ -1043,6 +1072,103 @@ mod tests {
     }
 
     #[test]
+    fn raw_thread_create_upserts_thread_channel() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "THREAD_CREATE",
+                "d": thread_payload(10, "release notes")
+            })
+            .to_string(),
+        );
+
+        assert!(matches!(
+            events.as_slice(),
+            [AppEvent::ChannelUpsert(channel)]
+                if channel.channel_id == Id::new(10)
+                    && channel.guild_id == Some(Id::new(1))
+                    && channel.parent_id == Some(Id::new(2))
+                    && channel.name == "release notes"
+                    && channel.kind == "thread"
+                    && channel.message_count == Some(12)
+                    && channel.total_message_sent == Some(14)
+                    && channel.thread_archived == Some(false)
+                    && channel.thread_locked == Some(false)
+        ));
+    }
+
+    #[test]
+    fn raw_thread_update_upserts_thread_channel() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "THREAD_UPDATE",
+                "d": thread_payload(10, "renamed thread")
+            })
+            .to_string(),
+        );
+
+        assert!(matches!(
+            events.as_slice(),
+            [AppEvent::ChannelUpsert(channel)]
+                if channel.channel_id == Id::new(10)
+                    && channel.name == "renamed thread"
+                    && channel.kind == "thread"
+        ));
+    }
+
+    #[test]
+    fn raw_thread_delete_removes_thread_channel() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "THREAD_DELETE",
+                "d": {
+                    "id": "10",
+                    "guild_id": "1",
+                    "parent_id": "2",
+                    "type": 11
+                }
+            })
+            .to_string(),
+        );
+
+        assert!(matches!(
+            events.as_slice(),
+            [AppEvent::ChannelDelete { guild_id, channel_id }]
+                if *guild_id == Some(Id::new(1)) && *channel_id == Id::new(10)
+        ));
+    }
+
+    #[test]
+    fn raw_thread_list_sync_upserts_all_threads() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "THREAD_LIST_SYNC",
+                "d": {
+                    "guild_id": "1",
+                    "channel_ids": ["2"],
+                    "threads": [
+                        thread_payload(10, "release notes"),
+                        thread_payload(11, "bug reports")
+                    ],
+                    "members": []
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            AppEvent::ChannelUpsert(channel)
+                if channel.channel_id == Id::new(10) && channel.name == "release notes"
+        ));
+        assert!(matches!(
+            &events[1],
+            AppEvent::ChannelUpsert(channel)
+                if channel.channel_id == Id::new(11) && channel.name == "bug reports"
+        ));
+    }
+
+    #[test]
     fn message_update_parser_without_attachments_does_not_clear_cached_attachments() {
         let event = parse_message_update(&json!({
             "id": "20",
@@ -1106,6 +1232,29 @@ mod tests {
         assert!(emojis[0].animated);
         assert!(emojis[0].available);
         assert!(!emojis[1].available);
+    }
+
+    #[test]
+    fn guild_create_parser_keeps_active_threads() {
+        let event = parse_guild_create(&json!({
+            "id": "1",
+            "name": "guild",
+            "channels": [],
+            "threads": [thread_payload(10, "release notes")],
+            "members": [],
+            "presences": [],
+            "emojis": []
+        }))
+        .expect("guild create should parse");
+
+        let AppEvent::GuildCreate { channels, .. } = event else {
+            panic!("expected guild create event");
+        };
+
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].channel_id, Id::new(10));
+        assert_eq!(channels[0].kind, "thread");
+        assert_eq!(channels[0].name, "release notes");
     }
 
     #[test]
@@ -1746,5 +1895,18 @@ mod tests {
             user_id: Id::new(user_id),
             display_name: display_name.to_owned(),
         }
+    }
+
+    fn thread_payload(id: u64, name: &str) -> serde_json::Value {
+        json!({
+            "id": id.to_string(),
+            "guild_id": "1",
+            "parent_id": "2",
+            "type": 11,
+            "name": name,
+            "message_count": 12,
+            "total_message_sent": 14,
+            "thread_metadata": { "archived": false, "locked": false }
+        })
     }
 }
