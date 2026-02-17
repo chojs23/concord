@@ -2037,6 +2037,48 @@ mod tests {
     }
 
     #[test]
+    fn chunk_style_member_upserts_populate_member_list() {
+        let guild_id = Id::new(1);
+        let alice = Id::new(10);
+        let bob = Id::new(20);
+        let mut state = DiscordState::default();
+
+        for (user_id, display_name) in [(alice, "alice"), (bob, "bob")] {
+            state.apply_event(&AppEvent::GuildMemberUpsert {
+                guild_id,
+                member: MemberInfo {
+                    user_id,
+                    display_name: display_name.to_owned(),
+                    is_bot: false,
+                    avatar_url: None,
+                },
+            });
+        }
+        state.apply_event(&AppEvent::PresenceUpdate {
+            guild_id,
+            user_id: alice,
+            status: PresenceStatus::Online,
+        });
+
+        let members = state.members_for_guild(guild_id);
+        assert_eq!(members.len(), 2);
+        assert_eq!(
+            members
+                .iter()
+                .find(|member| member.user_id == alice)
+                .map(|member| member.status),
+            Some(PresenceStatus::Online)
+        );
+        assert_eq!(
+            members
+                .iter()
+                .find(|member| member.user_id == bob)
+                .map(|member| member.status),
+            Some(PresenceStatus::Offline)
+        );
+    }
+
+    #[test]
     fn stores_and_clears_custom_guild_emojis() {
         let guild_id = Id::new(1);
         let mut state = DiscordState::default();

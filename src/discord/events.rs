@@ -6,7 +6,8 @@ use twilight_model::{
     gateway::{
         payload::incoming::{
             GuildCreate as GuildCreatePayload, GuildEmojisUpdate as GuildEmojisUpdatePayload,
-            MemberAdd, MemberUpdate, PresenceUpdate as PresenceUpdatePayload,
+            MemberAdd, MemberChunk as TwilightMemberChunk, MemberUpdate,
+            PresenceUpdate as PresenceUpdatePayload,
         },
         presence::{Status as TwilightStatus, UserOrId},
     },
@@ -631,6 +632,7 @@ pub fn map_event(event: Event) -> Vec<AppEvent> {
             channel_id: message.channel_id,
             message_id: message.id,
         }],
+        Event::MemberChunk(chunk) => member_chunk_events(&chunk),
         Event::MemberAdd(member_add) => vec![member_upsert_from_add(&member_add)],
         Event::MemberUpdate(update) => vec![member_upsert_from_update(&update)],
         Event::MemberRemove(remove) => vec![AppEvent::GuildMemberRemove {
@@ -808,6 +810,30 @@ fn member_upsert_from_update(update: &MemberUpdate) -> AppEvent {
             avatar_url: Some(user_avatar_url(&update.user)),
         },
     }
+}
+
+fn member_chunk_events(chunk: &TwilightMemberChunk) -> Vec<AppEvent> {
+    let mut events: Vec<AppEvent> = chunk
+        .members
+        .iter()
+        .map(|member| AppEvent::GuildMemberUpsert {
+            guild_id: chunk.guild_id,
+            member: member_info(member),
+        })
+        .collect();
+
+    events.extend(
+        chunk
+            .presences
+            .iter()
+            .map(|presence| AppEvent::PresenceUpdate {
+                guild_id: chunk.guild_id,
+                user_id: presence.user.id(),
+                status: map_status(presence.status),
+            }),
+    );
+
+    events
 }
 
 fn presence_update(payload: &PresenceUpdatePayload) -> AppEvent {

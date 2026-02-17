@@ -110,6 +110,7 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         "GUILD_MEMBER_ADD" | "GUILD_MEMBER_UPDATE" => {
             parse_member_upsert(data).into_iter().collect()
         }
+        "GUILD_MEMBERS_CHUNK" => parse_member_chunk(data),
         "GUILD_MEMBER_REMOVE" => parse_member_remove(data).into_iter().collect(),
         "PRESENCE_UPDATE" => parse_presence_update(data).into_iter().collect(),
         _ => Vec::new(),
@@ -523,6 +524,36 @@ fn parse_member_upsert(data: &Value) -> Option<AppEvent> {
     let guild_id = parse_id::<GuildMarker>(data.get("guild_id")?)?;
     let member = parse_member_info(data)?;
     Some(AppEvent::GuildMemberUpsert { guild_id, member })
+}
+
+fn parse_member_chunk(data: &Value) -> Vec<AppEvent> {
+    let Some(guild_id) = data.get("guild_id").and_then(parse_id::<GuildMarker>) else {
+        return Vec::new();
+    };
+
+    let mut events: Vec<AppEvent> = data
+        .get("members")
+        .and_then(Value::as_array)
+        .map(|members| {
+            members
+                .iter()
+                .filter_map(parse_member_info)
+                .map(|member| AppEvent::GuildMemberUpsert { guild_id, member })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if let Some(presences) = data.get("presences").and_then(Value::as_array) {
+        events.extend(presences.iter().filter_map(parse_presence_entry).map(
+            |(user_id, status)| AppEvent::PresenceUpdate {
+                guild_id,
+                user_id,
+                status,
+            },
+        ));
+    }
+
+    events
 }
 
 fn parse_attachments(value: Option<&Value>) -> Vec<AttachmentInfo> {
@@ -1015,7 +1046,8 @@ mod tests {
         parse_guild_update, parse_message_create, parse_message_update, parse_user_account_event,
     };
     use crate::discord::{
-        AppEvent, AttachmentUpdate, MentionInfo, MessageKind, PollAnswerInfo, PollInfo, ReplyInfo,
+        AppEvent, AttachmentUpdate, MentionInfo, MessageKind, PollAnswerInfo, PollInfo,
+        PresenceStatus, ReplyInfo,
     };
 
     #[test]
@@ -1255,6 +1287,75 @@ mod tests {
         assert_eq!(channels[0].channel_id, Id::new(10));
         assert_eq!(channels[0].kind, "thread");
         assert_eq!(channels[0].name, "release notes");
+    }
+
+    #[test]
+    fn raw_member_chunk_upserts_members_and_presences() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "GUILD_MEMBERS_CHUNK",
+                "d": {
+                    "guild_id": "1",
+                    "chunk_index": 0,
+                    "chunk_count": 1,
+                    "members": [
+                        {
+                            "nick": "Alice Nick",
+                            "user": {
+                                "id": "10",
+                                "username": "alice",
+                                "global_name": "Alice Global",
+                                "avatar": "avatarhash"
+                            }
+                        },
+                        {
+                            "user": {
+                                "id": "20",
+                                "username": "bob",
+                                "bot": true
+                            }
+                        }
+                    ],
+                    "presences": [
+                        { "user": { "id": "10" }, "status": "online" },
+                        { "user": { "id": "20" }, "status": "idle" }
+                    ]
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(events.len(), 4);
+        assert!(matches!(
+            &events[0],
+            AppEvent::GuildMemberUpsert { guild_id, member }
+                if *guild_id == Id::new(1)
+                    && member.user_id == Id::new(10)
+                    && member.display_name == "Alice Nick"
+                    && !member.is_bot
+        ));
+        assert!(matches!(
+            &events[1],
+            AppEvent::GuildMemberUpsert { guild_id, member }
+                if *guild_id == Id::new(1)
+                    && member.user_id == Id::new(20)
+                    && member.display_name == "bob"
+                    && member.is_bot
+        ));
+        assert!(matches!(
+            &events[2],
+            AppEvent::PresenceUpdate { guild_id, user_id, status }
+                if *guild_id == Id::new(1)
+                    && *user_id == Id::new(10)
+                    && *status == PresenceStatus::Online
+        ));
+        assert!(matches!(
+            &events[3],
+            AppEvent::PresenceUpdate { guild_id, user_id, status }
+                if *guild_id == Id::new(1)
+                    && *user_id == Id::new(20)
+                    && *status == PresenceStatus::Idle
+        ));
     }
 
     #[test]
