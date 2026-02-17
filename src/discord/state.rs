@@ -1958,6 +1958,33 @@ mod tests {
     }
 
     #[test]
+    fn channel_delete_removes_cached_thread() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id,
+            parent_id: Some(Id::new(2)),
+            position: None,
+            last_message_id: None,
+            name: "release notes".to_owned(),
+            kind: "thread".to_owned(),
+            message_count: Some(12),
+            total_message_sent: Some(14),
+            thread_archived: Some(false),
+            thread_locked: Some(false),
+        }));
+        state.apply_event(&AppEvent::ChannelDelete {
+            guild_id: Some(guild_id),
+            channel_id,
+        });
+
+        assert_eq!(state.channel(channel_id), None);
+    }
+
+    #[test]
     fn tracks_members_and_presences() {
         let guild_id = Id::new(1);
         let alice = Id::new(10);
