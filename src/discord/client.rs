@@ -1,25 +1,35 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
-use tokio::{sync::broadcast, task::JoinHandle};
+use tokio::{
+    sync::{broadcast, mpsc},
+    task::JoinHandle,
+};
 use twilight_http::Client as HttpClient;
 use twilight_model::{
     channel::Message,
     id::{
         Id,
-        marker::{ChannelMarker, MessageMarker},
+        marker::{ChannelMarker, GuildMarker, MessageMarker},
     },
 };
 
 use crate::{AppError, Result};
 
-use super::{ReactionEmoji, events::AppEvent, gateway::run_gateway, rest::DiscordRest};
+use super::{
+    ReactionEmoji,
+    events::AppEvent,
+    gateway::{GatewayCommand, run_gateway},
+    rest::DiscordRest,
+};
 
 #[derive(Clone, Debug)]
 pub struct DiscordClient {
     token: String,
     rest: DiscordRest,
     events_tx: broadcast::Sender<AppEvent>,
+    gateway_commands_tx: mpsc::UnboundedSender<GatewayCommand>,
+    gateway_commands_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<GatewayCommand>>>>,
 }
 
 impl DiscordClient {
@@ -27,11 +37,14 @@ impl DiscordClient {
         let http = Arc::new(http_client_for_token(&token)?);
         let rest = DiscordRest::new(http);
         let (events_tx, _) = broadcast::channel(512);
+        let (gateway_commands_tx, gateway_commands_rx) = mpsc::unbounded_channel();
 
         Ok(Self {
             token,
             rest,
             events_tx,
+            gateway_commands_tx,
+            gateway_commands_rx: Arc::new(Mutex::new(Some(gateway_commands_rx))),
         })
     }
 
@@ -46,10 +59,25 @@ impl DiscordClient {
     pub fn start_gateway(&self) -> JoinHandle<()> {
         let token = self.token.clone();
         let events_tx = self.events_tx.clone();
+        let gateway_commands = self
+            .gateway_commands_rx
+            .lock()
+            .expect("gateway command receiver mutex is not poisoned")
+            .take()
+            .expect("gateway can only be started once");
 
         tokio::spawn(async move {
-            run_gateway(token, events_tx).await;
+            run_gateway(token, events_tx, gateway_commands).await;
         })
+    }
+
+    pub fn request_guild_members(
+        &self,
+        guild_id: Id<GuildMarker>,
+    ) -> std::result::Result<(), String> {
+        self.gateway_commands_tx
+            .send(GatewayCommand::RequestGuildMembers { guild_id })
+            .map_err(|_| "gateway command channel closed".to_owned())
     }
 
     pub async fn send_message(

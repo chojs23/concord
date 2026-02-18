@@ -1,10 +1,12 @@
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use tokio::sync::broadcast;
-use twilight_gateway::{EventTypeFlags, Shard, StreamExt, error::ReceiveMessageErrorType};
+use tokio::sync::{broadcast, mpsc};
+use twilight_gateway::{
+    EventTypeFlags, MessageSender, Shard, StreamExt, error::ReceiveMessageErrorType,
+};
 use twilight_model::{
-    gateway::{Intents, ShardId},
+    gateway::{Intents, ShardId, payload::outgoing::RequestGuildMembers},
     id::{
         Id,
         marker::{
@@ -22,46 +24,94 @@ use super::{
 };
 use crate::logging;
 
-pub async fn run_gateway(token: String, tx: broadcast::Sender<AppEvent>) {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GatewayCommand {
+    RequestGuildMembers { guild_id: Id<GuildMarker> },
+}
+
+pub async fn run_gateway(
+    token: String,
+    tx: broadcast::Sender<AppEvent>,
+    mut commands: mpsc::UnboundedReceiver<GatewayCommand>,
+) {
     let intents = gateway_intents();
 
     let mut shard = Shard::new(ShardId::ONE, token, intents);
+    let sender = shard.sender();
+    let mut commands_closed = false;
 
-    while let Some(item) = shard.next_event(EventTypeFlags::all()).await {
-        match item {
-            Ok(event) => {
-                logging::debug("gateway", format!("ok: {:?}", event.kind()));
-                for event in map_event(event) {
-                    let _ = tx.send(event);
+    loop {
+        tokio::select! {
+            maybe_command = commands.recv(), if !commands_closed => {
+                match maybe_command {
+                    Some(command) => handle_gateway_command(&sender, command, &tx),
+                    None => commands_closed = true,
                 }
             }
-            Err(error) => {
-                // User-account payloads diverge from twilight's bot-shaped structs.
-                // For events we can rebuild from raw JSON, do so. Other deserialize
-                // failures are silently dropped instead of spamming the footer.
-                if let ReceiveMessageErrorType::Deserializing { event } = error.kind() {
-                    logging::debug("gateway", format!("deserialize fallback: {event}"));
-                    let started = Instant::now();
-                    let mut events = parse_user_account_event(event);
-                    logging::timing("gateway", "fallback total", started.elapsed());
-                    if events.is_empty() {
-                        logging::debug("gateway", "fallback emitted no app events");
-                    }
-                    for app_event in events.drain(..) {
-                        let _ = tx.send(app_event);
-                    }
-                    continue;
-                }
+            item = shard.next_event(EventTypeFlags::all()) => {
+                let Some(item) = item else {
+                    break;
+                };
 
-                logging::error("gateway", error.to_string());
-                let _ = tx.send(AppEvent::GatewayError {
-                    message: error.to_string(),
-                });
+                match item {
+                    Ok(event) => {
+                        logging::debug("gateway", format!("ok: {:?}", event.kind()));
+                        for event in map_event(event) {
+                            let _ = tx.send(event);
+                        }
+                    }
+                    Err(error) => {
+                        // User-account payloads diverge from twilight's bot-shaped structs.
+                        // For events we can rebuild from raw JSON, do so. Other deserialize
+                        // failures are silently dropped instead of spamming the footer.
+                        if let ReceiveMessageErrorType::Deserializing { event } = error.kind() {
+                            logging::debug("gateway", format!("deserialize fallback: {event}"));
+                            let started = Instant::now();
+                            let mut events = parse_user_account_event(event);
+                            logging::timing("gateway", "fallback total", started.elapsed());
+                            if events.is_empty() {
+                                logging::debug("gateway", "fallback emitted no app events");
+                            }
+                            for app_event in events.drain(..) {
+                                let _ = tx.send(app_event);
+                            }
+                            continue;
+                        }
+
+                        logging::error("gateway", error.to_string());
+                        let _ = tx.send(AppEvent::GatewayError {
+                            message: error.to_string(),
+                        });
+                    }
+                }
             }
         }
     }
 
     let _ = tx.send(AppEvent::GatewayClosed);
+}
+
+fn handle_gateway_command(
+    sender: &MessageSender,
+    command: GatewayCommand,
+    tx: &broadcast::Sender<AppEvent>,
+) {
+    match command {
+        GatewayCommand::RequestGuildMembers { guild_id } => {
+            let request = RequestGuildMembers::builder(guild_id).query("", None);
+            match sender.command(&request) {
+                Ok(()) => logging::debug(
+                    "gateway",
+                    format!("requested guild members: guild={}", guild_id.get()),
+                ),
+                Err(error) => {
+                    let message = format!("request guild members failed: {error}");
+                    logging::error("gateway", &message);
+                    let _ = tx.send(AppEvent::GatewayError { message });
+                }
+            }
+        }
+    }
 }
 
 fn gateway_intents() -> Intents {
