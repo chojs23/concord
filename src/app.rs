@@ -106,6 +106,12 @@ fn start_command_loop(
                         }
                     }
                 }
+                AppCommand::LoadGuildMembers { guild_id } => {
+                    if let Err(message) = client.request_guild_members(guild_id) {
+                        logging::error("app", &message);
+                        client.publish_event(AppEvent::GatewayError { message });
+                    }
+                }
                 AppCommand::LoadAttachmentPreview { url } => {
                     match timeout(ATTACHMENT_PREVIEW_TIMEOUT, fetch_attachment_preview(&url)).await
                     {

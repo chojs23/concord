@@ -1,6 +1,6 @@
 use twilight_model::id::{
     Id,
-    marker::{ChannelMarker, EmojiMarker, MessageMarker},
+    marker::{ChannelMarker, EmojiMarker, GuildMarker, MessageMarker},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -30,6 +30,9 @@ pub enum AppCommand {
     LoadMessageHistory {
         channel_id: Id<ChannelMarker>,
         before: Option<Id<MessageMarker>>,
+    },
+    LoadGuildMembers {
+        guild_id: Id<GuildMarker>,
     },
     LoadAttachmentPreview {
         url: String,
