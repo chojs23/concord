@@ -25,8 +25,10 @@ use tokio::{
     sync::{broadcast, mpsc},
     task,
 };
-use twilight_model::id::marker::MessageMarker;
-use twilight_model::id::{Id, marker::ChannelMarker};
+use twilight_model::id::{
+    Id,
+    marker::{ChannelMarker, GuildMarker, MessageMarker},
+};
 
 use crate::{
     Result,
@@ -102,6 +104,7 @@ async fn run_dashboard(
     let mut terminal_events = EventStream::new();
     let (preview_decode_tx, mut preview_decode_rx) = mpsc::unbounded_channel();
     let mut history_requests = HashMap::new();
+    let mut member_requests = HashSet::new();
     let mut last_history_channel = None;
     let mut image_targets = Vec::new();
     let mut avatar_targets = Vec::new();
@@ -236,6 +239,20 @@ async fn run_dashboard(
             .is_err()
         {
             history_requests.insert(channel_id, HistoryRequestState::Failed);
+            logging::error("tui", "command channel closed");
+            state.push_event(AppEvent::GatewayError {
+                message: "command channel closed".to_owned(),
+            });
+            dirty = true;
+        }
+
+        if let Some(guild_id) = next_member_request(state.selected_guild_id(), &mut member_requests)
+            && commands
+                .send(AppCommand::LoadGuildMembers { guild_id })
+                .await
+                .is_err()
+        {
+            member_requests.remove(&guild_id);
             logging::error("tui", "command channel closed");
             state.push_event(AppEvent::GatewayError {
                 message: "command channel closed".to_owned(),
@@ -1265,6 +1282,14 @@ fn next_history_request(
     }
 }
 
+fn next_member_request(
+    guild_id: Option<Id<GuildMarker>>,
+    requests: &mut HashSet<Id<GuildMarker>>,
+) -> Option<Id<GuildMarker>> {
+    let guild_id = guild_id?;
+    requests.insert(guild_id).then_some(guild_id)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::discord::{AttachmentInfo, ChannelInfo, CustomEmojiInfo, MessageSnapshotInfo};
@@ -1326,6 +1351,22 @@ mod tests {
             next_history_request(Some(first), &mut requests, &mut last_channel),
             Some(first)
         );
+    }
+
+    #[test]
+    fn member_request_is_sent_once_per_active_guild() {
+        let mut requests = HashSet::new();
+        let first = Id::new(1);
+        let second = Id::new(2);
+
+        assert_eq!(next_member_request(None, &mut requests), None);
+        assert_eq!(next_member_request(Some(first), &mut requests), Some(first));
+        assert_eq!(next_member_request(Some(first), &mut requests), None);
+        assert_eq!(
+            next_member_request(Some(second), &mut requests),
+            Some(second)
+        );
+        assert_eq!(next_member_request(Some(first), &mut requests), None);
     }
 
     #[test]
