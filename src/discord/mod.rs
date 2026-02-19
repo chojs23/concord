@@ -13,8 +13,9 @@ pub use commands::ReactionEmoji;
 pub use events::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, GuildFolder,
     MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+    PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
 };
 pub use state::{
     ChannelState, DiscordState, GuildMemberState, GuildState, MessageCapabilities, MessageState,
+    RoleState,
 };

@@ -10,7 +10,8 @@ use twilight_model::{
     id::{
         Id,
         marker::{
-            AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, UserMarker,
+            AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, RoleMarker,
+            UserMarker,
         },
     },
 };
@@ -18,7 +19,7 @@ use twilight_model::{
 use super::{
     AttachmentInfo, ChannelInfo, CustomEmojiInfo, GuildFolder, MemberInfo, MentionInfo,
     MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo,
-    PresenceStatus, ReplyInfo,
+    PresenceStatus, ReplyInfo, RoleInfo,
     events::default_avatar_url,
     events::{AppEvent, AttachmentUpdate, map_event},
 };
@@ -358,6 +359,12 @@ fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         .map(|items| items.iter().filter_map(parse_presence_entry).collect())
         .unwrap_or_default();
 
+    let roles = data
+        .get("roles")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(parse_role_info).collect())
+        .unwrap_or_default();
+
     let emojis = data
         .get("emojis")
         .and_then(Value::as_array)
@@ -370,7 +377,34 @@ fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         channels,
         members,
         presences,
+        roles,
         emojis,
+    })
+}
+
+fn parse_role_info(value: &Value) -> Option<RoleInfo> {
+    let id = parse_id::<RoleMarker>(value.get("id")?)?;
+    let name = value
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())?
+        .to_owned();
+    let color = value
+        .get("colors")
+        .and_then(|colors| colors.get("primary_color"))
+        .and_then(Value::as_u64)
+        .or_else(|| value.get("color").and_then(Value::as_u64))
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value != 0);
+    let position = value.get("position").and_then(Value::as_i64).unwrap_or(0);
+    let hoist = value.get("hoist").and_then(Value::as_bool).unwrap_or(false);
+
+    Some(RoleInfo {
+        id,
+        name,
+        color,
+        position,
+        hoist,
     })
 }
 
@@ -420,9 +454,14 @@ fn parse_guild_update(data: &Value) -> Option<AppEvent> {
         .get("emojis")
         .and_then(Value::as_array)
         .map(|items| items.iter().filter_map(parse_custom_emoji).collect());
+    let roles = data
+        .get("roles")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(parse_role_info).collect());
     Some(AppEvent::GuildUpdate {
         guild_id,
         name,
+        roles,
         emojis,
     })
 }
@@ -1035,6 +1074,11 @@ fn parse_member_info(value: &Value) -> Option<MemberInfo> {
         display_name,
         is_bot,
         avatar_url: raw_user_avatar_url(user_id, user),
+        role_ids: value
+            .get("roles")
+            .and_then(Value::as_array)
+            .map(|roles| roles.iter().filter_map(parse_id::<RoleMarker>).collect())
+            .unwrap_or_default(),
     })
 }
 
@@ -1317,6 +1361,37 @@ mod tests {
     }
 
     #[test]
+    fn guild_create_parser_keeps_roles() {
+        let event = parse_guild_create(&json!({
+            "id": "1",
+            "name": "guild",
+            "channels": [],
+            "members": [],
+            "presences": [],
+            "roles": [{
+                "id": "90",
+                "name": "Admin",
+                "color": 16755200,
+                "position": 10,
+                "hoist": true
+            }],
+            "emojis": []
+        }))
+        .expect("guild create should parse");
+
+        let AppEvent::GuildCreate { roles, .. } = event else {
+            panic!("expected guild create event");
+        };
+
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].id, Id::new(90));
+        assert_eq!(roles[0].name, "Admin");
+        assert_eq!(roles[0].color, Some(16755200));
+        assert_eq!(roles[0].position, 10);
+        assert!(roles[0].hoist);
+    }
+
+    #[test]
     fn guild_create_parser_keeps_active_threads() {
         let event = parse_guild_create(&json!({
             "id": "1",
@@ -1494,6 +1569,7 @@ mod tests {
         let AppEvent::GuildUpdate {
             guild_id,
             name,
+            roles,
             emojis,
         } = event
         else {
@@ -1501,6 +1577,7 @@ mod tests {
         };
         assert_eq!(guild_id, Id::new(1));
         assert_eq!(name, "guild renamed");
+        assert_eq!(roles, None);
         let emojis = emojis.expect("emoji field should be preserved when present");
         assert_eq!(emojis.len(), 1);
         assert_eq!(emojis[0].id, Id::new(70));
@@ -1516,9 +1593,10 @@ mod tests {
         }))
         .expect("guild update should parse");
 
-        let AppEvent::GuildUpdate { emojis, .. } = event else {
+        let AppEvent::GuildUpdate { roles, emojis, .. } = event else {
             panic!("expected guild update event");
         };
+        assert_eq!(roles, None);
         assert_eq!(emojis, None);
     }
 

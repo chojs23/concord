@@ -2,13 +2,13 @@ use std::collections::{BTreeMap, VecDeque};
 
 use twilight_model::id::{
     Id,
-    marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+    marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
 
 use super::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, GuildFolder,
     MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    PollInfo, PresenceStatus, ReplyInfo,
+    PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -119,7 +119,17 @@ pub struct GuildMemberState {
     pub display_name: String,
     pub is_bot: bool,
     pub avatar_url: Option<String>,
+    pub role_ids: Vec<Id<RoleMarker>>,
     pub status: PresenceStatus,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoleState {
+    pub id: Id<RoleMarker>,
+    pub name: String,
+    pub color: Option<u32>,
+    pub position: i64,
+    pub hoist: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -128,6 +138,7 @@ pub struct DiscordState {
     channels: BTreeMap<Id<ChannelMarker>, ChannelState>,
     messages: BTreeMap<Id<ChannelMarker>, VecDeque<MessageState>>,
     members: BTreeMap<Id<GuildMarker>, BTreeMap<Id<UserMarker>, GuildMemberState>>,
+    roles: BTreeMap<Id<GuildMarker>, BTreeMap<Id<RoleMarker>, RoleState>>,
     custom_emojis: BTreeMap<Id<GuildMarker>, Vec<CustomEmojiInfo>>,
     /// User's `guild_folders` setting in display order. Empty until READY
     /// delivers it; the dashboard falls back to a flat guild list.
@@ -155,6 +166,7 @@ impl DiscordState {
             channels: BTreeMap::new(),
             messages: BTreeMap::new(),
             members: BTreeMap::new(),
+            roles: BTreeMap::new(),
             custom_emojis: BTreeMap::new(),
             guild_folders: Vec::new(),
             max_messages_per_channel,
@@ -169,6 +181,7 @@ impl DiscordState {
                 channels,
                 members,
                 presences,
+                roles,
                 emojis,
             } => {
                 self.guilds.insert(
@@ -192,15 +205,20 @@ impl DiscordState {
                         member.status = *status;
                     }
                 }
+                self.roles.insert(*guild_id, role_map(roles));
                 self.custom_emojis.insert(*guild_id, emojis.clone());
             }
             AppEvent::GuildUpdate {
                 guild_id,
                 name,
+                roles,
                 emojis,
             } => {
                 if let Some(guild) = self.guilds.get_mut(guild_id) {
                     guild.name = name.clone();
+                }
+                if let Some(roles) = roles {
+                    self.roles.insert(*guild_id, role_map(roles));
                 }
                 if let Some(emojis) = emojis {
                     self.custom_emojis.insert(*guild_id, emojis.clone());
@@ -216,6 +234,7 @@ impl DiscordState {
                 self.messages
                     .retain(|channel_id, _| self.channels.contains_key(channel_id));
                 self.members.remove(guild_id);
+                self.roles.remove(guild_id);
                 self.custom_emojis.remove(guild_id);
             }
             AppEvent::ChannelUpsert(channel) => self.upsert_channel(channel),
@@ -315,6 +334,7 @@ impl DiscordState {
                             display_name: format!("user-{}", user_id.get()),
                             is_bot: false,
                             avatar_url: None,
+                            role_ids: Vec::new(),
                             status: *status,
                         },
                     );
@@ -356,6 +376,13 @@ impl DiscordState {
 
     pub fn members_for_guild(&self, guild_id: Id<GuildMarker>) -> Vec<&GuildMemberState> {
         self.members
+            .get(&guild_id)
+            .map(|map| map.values().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn roles_for_guild(&self, guild_id: Id<GuildMarker>) -> Vec<&RoleState> {
+        self.roles
             .get(&guild_id)
             .map(|map| map.values().collect())
             .unwrap_or_default()
@@ -642,9 +669,28 @@ fn upsert_member(
             display_name: member.display_name.clone(),
             is_bot: member.is_bot,
             avatar_url: member.avatar_url.clone(),
+            role_ids: member.role_ids.clone(),
             status,
         },
     );
+}
+
+fn role_map(roles: &[RoleInfo]) -> BTreeMap<Id<RoleMarker>, RoleState> {
+    roles
+        .iter()
+        .map(|role| {
+            (
+                role.id,
+                RoleState {
+                    id: role.id,
+                    name: role.name.clone(),
+                    color: role.color,
+                    position: role.position,
+                    hoist: role.hoist,
+                },
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -654,7 +700,7 @@ mod tests {
     use crate::discord::{
         AppEvent, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, DiscordState, MemberInfo,
         MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-        MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+        MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
     };
 
     #[test]
@@ -683,6 +729,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
@@ -735,8 +782,10 @@ mod tests {
                 display_name: "server alias".to_owned(),
                 is_bot: false,
                 avatar_url: None,
+                role_ids: Vec::new(),
             }],
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
@@ -790,6 +839,7 @@ mod tests {
                 display_name: "server alias".to_owned(),
                 is_bot: false,
                 avatar_url: None,
+                role_ids: Vec::new(),
             },
         });
 
@@ -2001,15 +2051,18 @@ mod tests {
                     display_name: "alice".to_owned(),
                     is_bot: false,
                     avatar_url: None,
+                    role_ids: Vec::new(),
                 },
                 MemberInfo {
                     user_id: bob,
                     display_name: "bob".to_owned(),
                     is_bot: false,
                     avatar_url: None,
+                    role_ids: Vec::new(),
                 },
             ],
             presences: vec![(alice, PresenceStatus::Online)],
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
 
@@ -2037,6 +2090,42 @@ mod tests {
     }
 
     #[test]
+    fn guild_create_caches_roles_and_member_role_ids() {
+        let guild_id = Id::new(1);
+        let role_id = Id::new(90);
+        let user_id = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: Vec::new(),
+            members: vec![MemberInfo {
+                user_id,
+                display_name: "alice".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: vec![role_id],
+            }],
+            presences: Vec::new(),
+            roles: vec![RoleInfo {
+                id: role_id,
+                name: "Admin".to_owned(),
+                color: Some(0xFFAA00),
+                position: 10,
+                hoist: true,
+            }],
+            emojis: Vec::new(),
+        });
+
+        let roles = state.roles_for_guild(guild_id);
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].name, "Admin");
+        let members = state.members_for_guild(guild_id);
+        assert_eq!(members[0].role_ids, vec![role_id]);
+    }
+
+    #[test]
     fn chunk_style_member_upserts_populate_member_list() {
         let guild_id = Id::new(1);
         let alice = Id::new(10);
@@ -2051,6 +2140,7 @@ mod tests {
                     display_name: display_name.to_owned(),
                     is_bot: false,
                     avatar_url: None,
+                    role_ids: Vec::new(),
                 },
             });
         }
@@ -2089,6 +2179,7 @@ mod tests {
             channels: Vec::new(),
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: vec![CustomEmojiInfo {
                 id: Id::new(50),
                 name: "party".to_owned(),
@@ -2116,6 +2207,7 @@ mod tests {
             channels: Vec::new(),
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: vec![CustomEmojiInfo {
                 id: Id::new(50),
                 name: "party".to_owned(),
@@ -2151,6 +2243,7 @@ mod tests {
             channels: Vec::new(),
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: vec![CustomEmojiInfo {
                 id: Id::new(50),
                 name: "party".to_owned(),
@@ -2161,6 +2254,7 @@ mod tests {
         state.apply_event(&AppEvent::GuildUpdate {
             guild_id,
             name: "guild renamed".to_owned(),
+            roles: None,
             emojis: Some(vec![CustomEmojiInfo {
                 id: Id::new(70),
                 name: "dance".to_owned(),
@@ -2186,6 +2280,7 @@ mod tests {
             channels: Vec::new(),
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: vec![CustomEmojiInfo {
                 id: Id::new(50),
                 name: "party".to_owned(),
@@ -2196,6 +2291,7 @@ mod tests {
         state.apply_event(&AppEvent::GuildUpdate {
             guild_id,
             name: "guild renamed".to_owned(),
+            roles: None,
             emojis: None,
         });
 
@@ -2217,6 +2313,7 @@ mod tests {
                 display_name: "alice".to_owned(),
                 is_bot: false,
                 avatar_url: None,
+                role_ids: Vec::new(),
             },
         });
         state.apply_event(&AppEvent::PresenceUpdate {
@@ -2231,6 +2328,7 @@ mod tests {
                 display_name: "alice-renamed".to_owned(),
                 is_bot: false,
                 avatar_url: None,
+                role_ids: Vec::new(),
             },
         });
 

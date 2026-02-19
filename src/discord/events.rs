@@ -11,11 +11,12 @@ use twilight_model::{
         },
         presence::{Status as TwilightStatus, UserOrId},
     },
-    guild::{Emoji as TwilightEmoji, Member as TwilightMember},
+    guild::{Emoji as TwilightEmoji, Member as TwilightMember, Role as TwilightRole},
     id::{
         Id,
         marker::{
-            AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, UserMarker,
+            AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, RoleMarker,
+            UserMarker,
         },
     },
     poll::Poll,
@@ -62,6 +63,16 @@ pub struct MemberInfo {
     pub display_name: String,
     pub is_bot: bool,
     pub avatar_url: Option<String>,
+    pub role_ids: Vec<Id<RoleMarker>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoleInfo {
+    pub id: Id<RoleMarker>,
+    pub name: String,
+    pub color: Option<u32>,
+    pub position: i64,
+    pub hoist: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -258,11 +269,13 @@ pub enum AppEvent {
         channels: Vec<ChannelInfo>,
         members: Vec<MemberInfo>,
         presences: Vec<(Id<UserMarker>, PresenceStatus)>,
+        roles: Vec<RoleInfo>,
         emojis: Vec<CustomEmojiInfo>,
     },
     GuildUpdate {
         guild_id: Id<GuildMarker>,
         name: String,
+        roles: Option<Vec<RoleInfo>>,
         emojis: Option<Vec<CustomEmojiInfo>>,
     },
     GuildEmojisUpdate {
@@ -552,6 +565,7 @@ pub fn map_event(event: Event) -> Vec<AppEvent> {
         Event::GuildUpdate(guild) => vec![AppEvent::GuildUpdate {
             guild_id: guild.id,
             name: guild.name.clone(),
+            roles: Some(guild.roles.iter().map(role_info).collect()),
             emojis: Some(guild.emojis.iter().map(custom_emoji_info).collect()),
         }],
         Event::GuildEmojisUpdate(update) => vec![guild_emojis_update(&update)],
@@ -681,6 +695,7 @@ fn map_guild_create(guild: GuildCreatePayload) -> Option<AppEvent> {
         .iter()
         .map(|presence| (presence.user.id(), map_status(presence.status)))
         .collect();
+    let roles = guild.roles.iter().map(role_info).collect();
     let emojis = guild.emojis.iter().map(custom_emoji_info).collect();
 
     Some(AppEvent::GuildCreate {
@@ -689,8 +704,30 @@ fn map_guild_create(guild: GuildCreatePayload) -> Option<AppEvent> {
         channels,
         members,
         presences,
+        roles,
         emojis,
     })
+}
+
+fn role_info(role: &TwilightRole) -> RoleInfo {
+    let color = role_color(role.colors.primary_color).or_else(|| {
+        #[allow(deprecated)]
+        {
+            role_color(role.color)
+        }
+    });
+
+    RoleInfo {
+        id: role.id,
+        name: role.name.clone(),
+        color,
+        position: role.position,
+        hoist: role.hoist,
+    }
+}
+
+fn role_color(color: u32) -> Option<u32> {
+    (color != 0).then_some(color)
 }
 
 fn custom_emoji_info(emoji: &TwilightEmoji) -> CustomEmojiInfo {
@@ -790,6 +827,7 @@ fn member_info(member: &TwilightMember) -> MemberInfo {
         display_name: display_name(member.nick.as_deref(), &member.user),
         is_bot: member.user.bot,
         avatar_url: Some(user_avatar_url(&member.user)),
+        role_ids: member.roles.clone(),
     }
 }
 
@@ -808,6 +846,7 @@ fn member_upsert_from_update(update: &MemberUpdate) -> AppEvent {
             display_name: display_name(update.nick.as_deref(), &update.user),
             is_bot: update.user.bot,
             avatar_url: Some(user_avatar_url(&update.user)),
+            role_ids: update.roles.clone(),
         },
     }
 }
@@ -1035,9 +1074,11 @@ mod tests {
             [AppEvent::GuildUpdate {
                 guild_id,
                 name,
+                roles: Some(roles),
                 emojis: Some(emojis),
             }] if *guild_id == Id::new(10)
                 && name == "Renamed Guild"
+                && roles.is_empty()
                 && *emojis == vec![CustomEmojiInfo {
                     id: Id::new(51),
                     name: "wave".to_owned(),
