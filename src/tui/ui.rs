@@ -23,7 +23,8 @@ use super::{
     },
 };
 use crate::discord::{
-    AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState, PollInfo, ReplyInfo,
+    AttachmentInfo, GuildMemberState, MessageKind, MessageSnapshotInfo, MessageState, PollInfo,
+    ReplyInfo,
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -1239,10 +1240,7 @@ fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
                     .add_modifier(Modifier::BOLD);
             }
 
-            let mut display = truncate_text(&member.display_name, max_name_width);
-            if member.is_bot {
-                display = format!("{display} [bot]");
-            }
+            let display = member_display_label(member, max_name_width);
             lines.push(Line::from(vec![
                 Span::styled(
                     format!(" {} ", presence_marker(member.status)),
@@ -1281,6 +1279,27 @@ fn member_group_header(group: &MemberGroup<'_>) -> Line<'static> {
             Style::default().fg(DIM),
         ),
     ])
+}
+
+fn member_display_label(member: &GuildMemberState, max_width: usize) -> String {
+    if !member.is_bot {
+        return truncate_display_width(&member.display_name, max_width);
+    }
+
+    const BOT_SUFFIX: &str = " [bot]";
+    let suffix_width = BOT_SUFFIX.width();
+    if max_width <= suffix_width {
+        return truncate_display_width(
+            &format!("{}{}", member.display_name, BOT_SUFFIX),
+            max_width,
+        );
+    }
+
+    format!(
+        "{}{}",
+        truncate_display_width(&member.display_name, max_width.saturating_sub(suffix_width)),
+        BOT_SUFFIX
+    )
 }
 
 fn discord_role_color(color: Option<u32>) -> Color {
@@ -1707,15 +1726,15 @@ mod tests {
         composer_lines, composer_prompt_line_count, composer_text, emoji_reaction_picker_lines,
         footer_hint, format_message_content, format_message_content_lines,
         format_message_sent_time, format_unix_millis_with_offset, highlight_style,
-        inline_image_preview_area, inline_image_preview_row, mention_highlight_style,
-        message_action_menu_lines, message_item_lines, message_viewport_lines, sync_view_heights,
-        wrap_text_lines,
+        inline_image_preview_area, inline_image_preview_row, member_display_label,
+        mention_highlight_style, message_action_menu_lines, message_item_lines,
+        message_viewport_lines, sync_view_heights, wrap_text_lines,
     };
     use crate::{
         discord::{
-            AppEvent, AttachmentInfo, ChannelInfo, MemberInfo, MentionInfo, MessageKind,
-            MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo, PresenceStatus,
-            ReactionEmoji, ReplyInfo,
+            AppEvent, AttachmentInfo, ChannelInfo, GuildMemberState, MemberInfo, MentionInfo,
+            MessageKind, MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo,
+            PresenceStatus, ReactionEmoji, ReplyInfo,
         },
         tui::{
             format::truncate_display_width,
@@ -2691,6 +2710,23 @@ mod tests {
 
         assert_eq!(author, "가나...");
         assert_eq!(author.width(), 7);
+    }
+
+    #[test]
+    fn member_label_truncates_by_display_width() {
+        let member = GuildMemberState {
+            user_id: Id::new(10),
+            display_name: "텍스쳐를위협하는초대형신인".to_owned(),
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+            status: PresenceStatus::Online,
+        };
+
+        let label = member_display_label(&member, 12);
+
+        assert_eq!(label, "텍스쳐를...");
+        assert!(label.width() <= 12);
     }
 
     #[test]
