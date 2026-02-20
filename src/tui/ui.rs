@@ -1229,13 +1229,7 @@ fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
         for member in &group.entries {
             let is_selected = focused && selected_line == Some(line_index);
             let marker_style = Style::default().fg(presence_color(member.status));
-            let mut name_style = Style::default().fg(
-                if member.status == crate::discord::PresenceStatus::Offline {
-                    DIM
-                } else {
-                    Color::White
-                },
-            );
+            let mut name_style = Style::default().fg(presence_color(member.status));
             if member.is_bot {
                 name_style = name_style.add_modifier(Modifier::ITALIC);
             }
@@ -1277,9 +1271,9 @@ fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
 fn member_group_header(group: &MemberGroup<'_>) -> Line<'static> {
     Line::from(vec![
         Span::styled(
-            group.status.label().to_owned(),
+            group.label.clone(),
             Style::default()
-                .fg(presence_color(group.status))
+                .fg(discord_role_color(group.color))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -1287,6 +1281,18 @@ fn member_group_header(group: &MemberGroup<'_>) -> Line<'static> {
             Style::default().fg(DIM),
         ),
     ])
+}
+
+fn discord_role_color(color: Option<u32>) -> Color {
+    match color {
+        Some(value) if value != 0 => {
+            let r = ((value >> 16) & 0xFF) as u8;
+            let g = ((value >> 8) & 0xFF) as u8;
+            let b = (value & 0xFF) as u8;
+            Color::Rgb(r, g, b)
+        }
+        _ => DIM,
+    }
 }
 
 fn panel_content_height(area: Rect, title: &'static str) -> usize {
@@ -2876,6 +2882,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
@@ -2982,6 +2989,7 @@ mod tests {
             channels: Vec::new(),
             members: vec![member_info(user_id, display_name)],
             presences: vec![(Id::new(user_id), PresenceStatus::Online)],
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state
@@ -2993,6 +3001,7 @@ mod tests {
             display_name: display_name.to_owned(),
             is_bot: false,
             avatar_url: None,
+            role_ids: Vec::new(),
         }
     }
 

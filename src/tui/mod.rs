@@ -2124,6 +2124,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
@@ -2178,6 +2179,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();

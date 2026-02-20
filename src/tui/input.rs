@@ -819,6 +819,7 @@ mod tests {
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),
+                roles: Vec::new(),
                 emojis: Vec::new(),
             });
         }
@@ -914,6 +915,7 @@ mod tests {
             ],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
@@ -943,6 +945,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
@@ -991,6 +994,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: vec![CustomEmojiInfo {
                 id: Id::new(50),
                 name: "party".to_owned(),
@@ -1042,6 +1046,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
