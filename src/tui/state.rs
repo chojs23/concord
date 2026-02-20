@@ -3,13 +3,13 @@ use std::collections::{HashMap, HashSet};
 use ratatui::style::Color;
 use twilight_model::id::{
     Id,
-    marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+    marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
 
 use crate::discord::{
     AppCommand, AppEvent, AttachmentInfo, ChannelState, CustomEmojiInfo, DiscordState, GuildFolder,
     GuildMemberState, GuildState, MentionInfo, MessageInfo, MessageSnapshotInfo, MessageState,
-    PresenceStatus, ReactionEmoji,
+    PresenceStatus, ReactionEmoji, RoleState,
 };
 use crate::logging;
 
@@ -1370,28 +1370,40 @@ impl DashboardState {
             return Vec::new();
         };
         let members = self.discord.members_for_guild(guild_id);
+        let roles = self.discord.roles_for_guild(guild_id);
+        let hoisted_roles = sorted_hoisted_roles(&roles);
         let mut groups: Vec<MemberGroup<'_>> = Vec::new();
+        let mut grouped_members: HashSet<Id<UserMarker>> = HashSet::new();
 
-        for status in [
-            PresenceStatus::Online,
-            PresenceStatus::Idle,
-            PresenceStatus::DoNotDisturb,
-            PresenceStatus::Offline,
-        ] {
+        for role in hoisted_roles {
             let mut entries: Vec<&GuildMemberState> = members
                 .iter()
-                .filter(|member| member.status == status)
+                .filter(|member| primary_hoisted_role(member, &roles) == Some(role.id))
                 .copied()
                 .collect();
             if entries.is_empty() {
                 continue;
             }
-            entries.sort_by(|a, b| {
-                a.display_name
-                    .to_lowercase()
-                    .cmp(&b.display_name.to_lowercase())
+            sort_member_entries(&mut entries);
+            grouped_members.extend(entries.iter().map(|member| member.user_id));
+            groups.push(MemberGroup {
+                label: role.name.clone(),
+                color: role.color,
+                entries,
             });
-            groups.push(MemberGroup { status, entries });
+        }
+
+        let mut ungrouped: Vec<&GuildMemberState> = members
+            .into_iter()
+            .filter(|member| !grouped_members.contains(&member.user_id))
+            .collect();
+        if !ungrouped.is_empty() {
+            sort_member_entries(&mut ungrouped);
+            groups.push(MemberGroup {
+                label: "Members".to_owned(),
+                color: None,
+                entries: ungrouped,
+            });
         }
 
         groups
@@ -2460,7 +2472,8 @@ impl Default for DashboardState {
 
 #[derive(Debug)]
 pub struct MemberGroup<'a> {
-    pub status: PresenceStatus,
+    pub label: String,
+    pub color: Option<u32>,
     pub entries: Vec<&'a GuildMemberState>,
 }
 
@@ -2559,9 +2572,53 @@ pub fn folder_color(color: Option<u32>) -> Color {
 pub fn presence_color(status: PresenceStatus) -> Color {
     match status {
         PresenceStatus::Online => Color::Green,
-        PresenceStatus::Idle => Color::Yellow,
+        PresenceStatus::Idle => Color::Rgb(180, 140, 0),
         PresenceStatus::DoNotDisturb => Color::Red,
         PresenceStatus::Offline => Color::DarkGray,
+    }
+}
+
+fn sorted_hoisted_roles<'a>(roles: &'a [&'a RoleState]) -> Vec<&'a RoleState> {
+    let mut roles: Vec<&RoleState> = roles.iter().copied().filter(|role| role.hoist).collect();
+    roles.sort_by(|left, right| role_display_order(left, right));
+    roles
+}
+
+fn primary_hoisted_role(member: &GuildMemberState, roles: &[&RoleState]) -> Option<Id<RoleMarker>> {
+    member
+        .role_ids
+        .iter()
+        .filter_map(|role_id| roles.iter().find(|role| role.id == *role_id).copied())
+        .filter(|role| role.hoist)
+        .min_by(|left, right| role_display_order(left, right))
+        .map(|role| role.id)
+}
+
+fn role_display_order(left: &RoleState, right: &RoleState) -> std::cmp::Ordering {
+    right
+        .position
+        .cmp(&left.position)
+        .then(left.id.get().cmp(&right.id.get()))
+}
+
+fn sort_member_entries(entries: &mut [&GuildMemberState]) {
+    entries.sort_by(|left, right| {
+        member_status_rank(left.status)
+            .cmp(&member_status_rank(right.status))
+            .then_with(|| {
+                left.display_name
+                    .to_lowercase()
+                    .cmp(&right.display_name.to_lowercase())
+            })
+    });
+}
+
+fn member_status_rank(status: PresenceStatus) -> u8 {
+    match status {
+        PresenceStatus::Online => 0,
+        PresenceStatus::Idle => 1,
+        PresenceStatus::DoNotDisturb => 2,
+        PresenceStatus::Offline => 3,
     }
 }
 
@@ -2598,7 +2655,7 @@ mod tests {
     use crate::discord::{
         AppCommand, AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, GuildFolder,
         MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-        PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReplyInfo,
+        PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReplyInfo, RoleInfo,
     };
 
     #[test]
@@ -2668,6 +2725,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
@@ -2742,10 +2800,11 @@ mod tests {
     }
 
     #[test]
-    fn member_groups_are_sorted_by_status_then_name() {
+    fn member_groups_use_roles_and_status_sorted_entries() {
         let guild_id = Id::new(1);
         let alice: Id<UserMarker> = Id::new(10);
         let bob: Id<UserMarker> = Id::new(20);
+        let admin_role = Id::new(100);
         let mut state = DashboardState::new();
 
         state.push_event(AppEvent::GuildCreate {
@@ -2770,25 +2829,32 @@ mod tests {
                     display_name: "bob".to_owned(),
                     is_bot: false,
                     avatar_url: None,
+                    role_ids: vec![admin_role],
                 },
                 MemberInfo {
                     user_id: alice,
                     display_name: "alice".to_owned(),
                     is_bot: false,
                     avatar_url: None,
+                    role_ids: vec![admin_role],
                 },
             ],
-            presences: vec![
-                (alice, PresenceStatus::Online),
-                (bob, PresenceStatus::Online),
-            ],
+            presences: vec![(alice, PresenceStatus::Online), (bob, PresenceStatus::Idle)],
+            roles: vec![RoleInfo {
+                id: admin_role,
+                name: "Admin".to_owned(),
+                color: Some(0xFFAA00),
+                position: 10,
+                hoist: true,
+            }],
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
 
         let groups = state.members_grouped();
         assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].status, PresenceStatus::Online);
+        assert_eq!(groups[0].label, "Admin");
+        assert_eq!(groups[0].color, Some(0xFFAA00));
         assert_eq!(
             groups[0]
                 .entries
@@ -2950,6 +3016,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
@@ -3145,6 +3212,7 @@ mod tests {
                 display_name: "a".to_owned(),
                 is_bot: false,
                 avatar_url: None,
+                role_ids: Vec::new(),
             },
         });
         let message = state.messages()[0];
@@ -3176,6 +3244,7 @@ mod tests {
                 display_name: "a".to_owned(),
                 is_bot: false,
                 avatar_url: None,
+                role_ids: Vec::new(),
             },
         });
         let message = MessageState {
@@ -4568,6 +4637,7 @@ mod tests {
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),
+                roles: Vec::new(),
                 emojis: Vec::new(),
             });
         }
@@ -4591,6 +4661,7 @@ mod tests {
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),
+                roles: Vec::new(),
                 emojis: Vec::new(),
             });
         }
@@ -4622,6 +4693,7 @@ mod tests {
             channels,
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
@@ -4638,6 +4710,7 @@ mod tests {
                 display_name: format!("member {id}"),
                 is_bot: false,
                 avatar_url: None,
+                role_ids: Vec::new(),
             })
             .collect();
         let presences = (1..=count)
@@ -4662,6 +4735,7 @@ mod tests {
             }],
             members,
             presences,
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
@@ -4671,6 +4745,7 @@ mod tests {
     fn state_with_grouped_members() -> DashboardState {
         let guild_id = Id::new(1);
         let channel_id: Id<ChannelMarker> = Id::new(2);
+        let role_id = Id::new(100);
         let mut state = DashboardState::new();
         let members = (1..=4)
             .map(|id| MemberInfo {
@@ -4678,6 +4753,7 @@ mod tests {
                 display_name: format!("member {id}"),
                 is_bot: false,
                 avatar_url: None,
+                role_ids: (id <= 2).then_some(role_id).into_iter().collect(),
             })
             .collect();
 
@@ -4704,6 +4780,13 @@ mod tests {
                 (Id::new(3), PresenceStatus::Offline),
                 (Id::new(4), PresenceStatus::Offline),
             ],
+            roles: vec![RoleInfo {
+                id: role_id,
+                name: "Role".to_owned(),
+                color: None,
+                position: 1,
+                hoist: true,
+            }],
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
@@ -4763,6 +4846,7 @@ mod tests {
             ],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
@@ -4820,6 +4904,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: vec![
                 CustomEmojiInfo {
                     id: Id::new(50),
@@ -4879,6 +4964,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
@@ -4941,6 +5027,7 @@ mod tests {
             ],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
@@ -5021,6 +5108,7 @@ mod tests {
             }],
             members: Vec::new(),
             presences: Vec::new(),
+            roles: Vec::new(),
             emojis: Vec::new(),
         });
         state.confirm_selected_guild();
@@ -5170,6 +5258,7 @@ mod tests {
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),
+                roles: Vec::new(),
                 emojis: Vec::new(),
             });
         }
