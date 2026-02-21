@@ -1781,7 +1781,7 @@ mod tests {
 
     #[test]
     fn composer_prompt_line_count_uses_display_width_for_wide_chars() {
-        assert_eq!(composer_prompt_line_count("가나다", 4), 2);
+        assert_eq!(composer_prompt_line_count("漢字仮", 4), 2);
     }
 
     #[test]
@@ -1873,12 +1873,12 @@ mod tests {
     #[test]
     fn message_content_wraps_wide_characters_by_terminal_width() {
         let mut message =
-            message_with_attachment(Some("가나다라마사".to_owned()), image_attachment());
+            message_with_attachment(Some("漢字仮名交じ".to_owned()), image_attachment());
         message.attachments.clear();
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 10);
 
-        assert_eq!(line_texts(&lines), vec!["가나다라마", "사"]);
+        assert_eq!(line_texts(&lines), vec!["漢字仮名交", "じ"]);
     }
 
     #[test]
@@ -2240,10 +2240,10 @@ mod tests {
         message.attachments.clear();
         message.message_kind = MessageKind::new(46);
         message.poll = Some(PollInfo {
-            question: "오늘 뭐 먹지?".to_owned(),
+            question: "What should we eat?".to_owned(),
             answers: vec![PollAnswerInfo {
                 answer_id: 1,
-                text: "김치찌개".to_owned(),
+                text: "Soup".to_owned(),
                 vote_count: Some(5),
                 me_voted: false,
             }],
@@ -2258,8 +2258,8 @@ mod tests {
             line_texts(&lines),
             vec![
                 "Poll results",
-                "오늘 뭐 먹지?",
-                "Winner: 김치찌개 with 5 votes",
+                "What should we eat?",
+                "Winner: Soup with 5 votes",
                 "7 total votes · Final results"
             ]
         );
@@ -2267,11 +2267,12 @@ mod tests {
 
     #[test]
     fn reply_message_uses_preview_instead_of_type_label() {
-        let mut message = message_with_attachment(Some("asdf".to_owned()), image_attachment());
+        let mut message =
+            message_with_attachment(Some("message body".to_owned()), image_attachment());
         message.message_kind = MessageKind::new(19);
         message.reply = Some(ReplyInfo {
-            author: "딱구형".to_owned(),
-            content: Some("잘되는군".to_owned()),
+            author: "casey".to_owned(),
+            content: Some("looks good".to_owned()),
             mentions: Vec::new(),
         });
 
@@ -2279,7 +2280,11 @@ mod tests {
 
         assert_eq!(
             line_texts(&lines),
-            vec!["╭─ 딱구형 : 잘되는군", "asdf", "[image: cat.png] 640x480"]
+            vec![
+                "╭─ casey : looks good",
+                "message body",
+                "[image: cat.png] 640x480"
+            ]
         );
         assert_eq!(lines[0].style, Style::default().fg(DIM));
     }
@@ -2338,10 +2343,10 @@ mod tests {
         assert_eq!(
             line_texts(&lines),
             vec![
-                "오늘 뭐 먹지?",
+                "What should we eat?",
                 "Select one answer",
-                "  ◉ 1. 김치찌개  2 votes  66%",
-                "  ◯ 2. 라멘  1 votes  33%",
+                "  ◉ 1. Soup  2 votes  66%",
+                "  ◯ 2. Noodles  1 votes  33%",
                 "3 votes · Results may still change"
             ]
         );
@@ -2585,13 +2590,13 @@ mod tests {
     #[test]
     fn forwarded_snapshot_content_wraps_wide_characters_after_prefix() {
         let message =
-            message_with_forwarded_snapshot(forwarded_snapshot(Some("가나다라마사"), Vec::new()));
+            message_with_forwarded_snapshot(forwarded_snapshot(Some("漢字仮名交じ"), Vec::new()));
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 12);
 
         assert_eq!(
             line_texts(&lines),
-            vec!["↱ Forwarded", "│ 가나다라마", "│ 사"]
+            vec!["↱ Forwarded", "│ 漢字仮名交", "│ じ"]
         );
     }
 
@@ -2680,35 +2685,33 @@ mod tests {
     }
 
     #[test]
-    fn message_item_header_uses_display_width_for_korean_author() {
+    fn message_item_header_uses_display_width_for_wide_author() {
         let ascii = message_item_lines(
             "bruised8".to_owned(),
             "00:00".to_owned(),
-            vec![MessageContentLine::plain("난다".to_owned())],
+            vec![MessageContentLine::plain("plain text".to_owned())],
             14,
             0,
             0,
         );
-        let korean = message_item_lines(
-            "장방이".to_owned(),
+        let wide = message_item_lines(
+            "漢字名".to_owned(),
             "00:00".to_owned(),
-            vec![MessageContentLine::plain(
-                "그리고 그 티비 대가리도".to_owned(),
-            )],
+            vec![MessageContentLine::plain("plain text".to_owned())],
             14,
             0,
             0,
         );
 
         assert_eq!(line_texts_from_ratatui(&ascii)[0], "oo bruised8 00:00");
-        assert_eq!(line_texts_from_ratatui(&korean)[0], "oo 장방이 00:00");
+        assert_eq!(line_texts_from_ratatui(&wide)[0], "oo 漢字名 00:00");
     }
 
     #[test]
     fn shared_truncation_uses_display_width_for_wide_characters() {
-        let author = truncate_display_width("가나다라마바사아자", 8);
+        let author = truncate_display_width("漢字仮名交じり", 8);
 
-        assert_eq!(author, "가나...");
+        assert_eq!(author, "漢字...");
         assert_eq!(author.width(), 7);
     }
 
@@ -2716,7 +2719,7 @@ mod tests {
     fn member_label_truncates_by_display_width() {
         let member = GuildMemberState {
             user_id: Id::new(10),
-            display_name: "텍스쳐를위협하는초대형신인".to_owned(),
+            display_name: "漢字仮名交じり文章".to_owned(),
             is_bot: false,
             avatar_url: None,
             role_ids: Vec::new(),
@@ -2725,7 +2728,7 @@ mod tests {
 
         let label = member_display_label(&member, 12);
 
-        assert_eq!(label, "텍스쳐를...");
+        assert_eq!(label, "漢字仮名...");
         assert!(label.width() <= 12);
     }
 
@@ -2983,17 +2986,17 @@ mod tests {
 
     fn poll_info(allow_multiselect: bool) -> PollInfo {
         PollInfo {
-            question: "오늘 뭐 먹지?".to_owned(),
+            question: "What should we eat?".to_owned(),
             answers: vec![
                 PollAnswerInfo {
                     answer_id: 1,
-                    text: "김치찌개".to_owned(),
+                    text: "Soup".to_owned(),
                     vote_count: Some(2),
                     me_voted: true,
                 },
                 PollAnswerInfo {
                     answer_id: 2,
-                    text: "라멘".to_owned(),
+                    text: "Noodles".to_owned(),
                     vote_count: Some(1),
                     me_voted: false,
                 },
