@@ -181,9 +181,9 @@ mod tests {
 
     #[test]
     fn truncates_by_display_width() {
-        let text = truncate_display_width("가나다라마바사아자", 8);
+        let text = truncate_display_width("漢字仮名交じり", 8);
 
-        assert_eq!(text, "가나...");
+        assert_eq!(text, "漢字...");
         assert!(text.width() <= 8);
     }
 
@@ -241,11 +241,11 @@ mod tests {
 
     #[test]
     fn renders_user_mentions_next_to_unicode() {
-        let text = render_user_mentions("안녕<@10>님", |user_id| {
+        let text = render_user_mentions("café<@10>!", |user_id| {
             (user_id == 10).then(|| "alice".to_owned())
         });
 
-        assert_eq!(text, "안녕@alice님");
+        assert_eq!(text, "café@alice!");
     }
 
     #[test]

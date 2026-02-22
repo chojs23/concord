@@ -3286,7 +3286,7 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
-            content: Some("가나다라마사".to_owned()),
+            content: Some("漢字仮名交じ".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -3384,7 +3384,7 @@ mod tests {
             mentions: Vec::new(),
             attachments: Vec::new(),
             forwarded_snapshots: vec![MessageSnapshotInfo {
-                content: Some("가나다라마사".to_owned()),
+                content: Some("漢字仮名交じ".to_owned()),
                 mentions: Vec::new(),
                 attachments: vec![image_attachment(1)],
                 source_channel_id: None,
@@ -3458,8 +3458,8 @@ mod tests {
             message_kind: MessageKind::new(19),
             reference: None,
             reply: Some(ReplyInfo {
-                author: "딱구형".to_owned(),
-                content: Some("잘되는군".to_owned()),
+                author: "casey".to_owned(),
+                content: Some("looks good".to_owned()),
                 mentions: Vec::new(),
             }),
             poll: None,
@@ -5226,17 +5226,17 @@ mod tests {
 
     fn poll_info(allow_multiselect: bool) -> PollInfo {
         PollInfo {
-            question: "오늘 뭐 먹지?".to_owned(),
+            question: "What should we eat?".to_owned(),
             answers: vec![
                 PollAnswerInfo {
                     answer_id: 1,
-                    text: "김치찌개".to_owned(),
+                    text: "Soup".to_owned(),
                     vote_count: Some(2),
                     me_voted: true,
                 },
                 PollAnswerInfo {
                     answer_id: 2,
-                    text: "라멘".to_owned(),
+                    text: "Noodles".to_owned(),
                     vote_count: Some(1),
                     me_voted: false,
                 },
