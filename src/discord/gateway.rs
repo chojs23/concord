@@ -17,8 +17,8 @@ use twilight_model::{
 };
 
 use super::{
-    AttachmentInfo, ChannelInfo, CustomEmojiInfo, GuildFolder, MemberInfo, MentionInfo,
-    MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo,
+    AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, GuildFolder, MemberInfo,
+    MentionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo,
     PresenceStatus, ReplyInfo, RoleInfo,
     events::default_avatar_url,
     events::{AppEvent, AttachmentUpdate, map_event},
@@ -1008,6 +1008,19 @@ fn parse_channel_info(
             format!("channel-{}", channel_id.get())
         }
     });
+    let recipients = if matches!(kind.as_str(), "dm" | "group-dm") {
+        value.get("recipients").and_then(|recipients| {
+            Some(
+                recipients
+                    .as_array()?
+                    .iter()
+                    .filter_map(parse_channel_recipient_info)
+                    .collect(),
+            )
+        })
+    } else {
+        None
+    };
 
     Some(ChannelInfo {
         guild_id,
@@ -1027,6 +1040,7 @@ fn parse_channel_info(
             .get("thread_metadata")
             .and_then(|metadata| metadata.get("locked"))
             .and_then(Value::as_bool),
+        recipients,
     })
 }
 
@@ -1049,6 +1063,24 @@ fn recipient_label(value: &Value) -> Option<String> {
         return None;
     }
     Some(names.join(", "))
+}
+
+fn parse_channel_recipient_info(value: &Value) -> Option<ChannelRecipientInfo> {
+    let user_id = parse_id::<UserMarker>(value.get("id")?)?;
+    let global_name = value
+        .get("global_name")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty());
+    let username = value.get("username").and_then(Value::as_str);
+    let display_name = global_name.or(username).unwrap_or("unknown").to_owned();
+    let is_bot = value.get("bot").and_then(Value::as_bool).unwrap_or(false);
+
+    Some(ChannelRecipientInfo {
+        user_id,
+        display_name,
+        is_bot,
+        avatar_url: raw_user_avatar_url(user_id, value),
+    })
 }
 
 fn parse_member_info(value: &Value) -> Option<MemberInfo> {
@@ -1171,6 +1203,61 @@ mod tests {
         .expect("dm channel should parse");
 
         assert_eq!(channel.last_message_id.map(|id| id.get()), Some(99));
+    }
+
+    #[test]
+    fn raw_ready_parser_keeps_group_dm_recipients() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY",
+                "d": {
+                    "user": {
+                        "id": "99",
+                        "username": "neo"
+                    },
+                    "guilds": [],
+                    "private_channels": [{
+                        "id": "10",
+                        "type": 3,
+                        "name": "project chat",
+                        "recipients": [
+                            {
+                                "id": "20",
+                                "username": "alice",
+                                "global_name": "Alice",
+                                "bot": false
+                            },
+                            {
+                                "id": "30",
+                                "username": "helper-bot",
+                                "bot": true
+                            }
+                        ]
+                    }]
+                }
+            })
+            .to_string(),
+        );
+
+        let channel = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::ChannelUpsert(channel) => Some(channel),
+                _ => None,
+            })
+            .expect("ready should emit a private channel upsert");
+        let recipients = channel
+            .recipients
+            .as_ref()
+            .expect("group dm should carry recipients");
+
+        assert_eq!(channel.kind, "group-dm");
+        assert_eq!(recipients.len(), 2);
+        assert_eq!(recipients[0].user_id, Id::new(20));
+        assert_eq!(recipients[0].display_name, "Alice");
+        assert!(!recipients[0].is_bot);
+        assert_eq!(recipients[1].display_name, "helper-bot");
+        assert!(recipients[1].is_bot);
     }
 
     #[test]

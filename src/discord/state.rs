@@ -6,9 +6,9 @@ use twilight_model::id::{
 };
 
 use super::{
-    AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, GuildFolder,
-    MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
+    AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
+    GuildFolder, MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
+    MessageSnapshotInfo, PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -32,6 +32,7 @@ pub struct ChannelState {
     pub total_message_sent: Option<u64>,
     pub thread_archived: Option<bool>,
     pub thread_locked: Option<bool>,
+    pub recipients: Vec<ChannelRecipientState>,
 }
 
 impl ChannelState {
@@ -44,6 +45,25 @@ impl ChannelState {
             self.kind.as_str(),
             "thread" | "GuildPublicThread" | "GuildPrivateThread" | "GuildNewsThread"
         )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChannelRecipientState {
+    pub user_id: Id<UserMarker>,
+    pub display_name: String,
+    pub is_bot: bool,
+    pub avatar_url: Option<String>,
+}
+
+impl ChannelRecipientState {
+    fn from_info(recipient: &ChannelRecipientInfo) -> Self {
+        Self {
+            user_id: recipient.user_id,
+            display_name: recipient.display_name.clone(),
+            is_bot: recipient.is_bot,
+            avatar_url: recipient.avatar_url.clone(),
+        }
     }
 }
 
@@ -454,11 +474,21 @@ impl DiscordState {
     }
 
     fn upsert_channel(&mut self, channel: &ChannelInfo) {
-        let last_message_id = self
-            .channels
-            .get(&channel.channel_id)
+        let existing = self.channels.get(&channel.channel_id);
+        let last_message_id = existing
             .and_then(|existing| existing.last_message_id)
             .max(channel.last_message_id);
+        let recipients = channel
+            .recipients
+            .as_ref()
+            .map(|recipients| {
+                recipients
+                    .iter()
+                    .map(ChannelRecipientState::from_info)
+                    .collect()
+            })
+            .or_else(|| existing.map(|existing| existing.recipients.clone()))
+            .unwrap_or_default();
 
         self.channels.insert(
             channel.channel_id,
@@ -474,6 +504,7 @@ impl DiscordState {
                 total_message_sent: channel.total_message_sent,
                 thread_archived: channel.thread_archived,
                 thread_locked: channel.thread_locked,
+                recipients,
             },
         );
     }
@@ -698,9 +729,10 @@ mod tests {
     use twilight_model::id::{Id, marker::ChannelMarker};
 
     use crate::discord::{
-        AppEvent, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, DiscordState, MemberInfo,
-        MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-        MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
+        AppEvent, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
+        DiscordState, MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
+        MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+        RoleInfo,
     };
 
     #[test]
@@ -726,6 +758,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -776,6 +809,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             }],
             members: vec![MemberInfo {
                 user_id: author_id,
@@ -866,12 +900,64 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            recipients: None,
         }));
 
         let channel = state.channel(channel_id).unwrap();
         assert_eq!(channel.parent_id, Some(category_id));
         assert_eq!(channel.position, Some(7));
         assert_eq!(channel.last_message_id, Some(Id::new(9)));
+    }
+
+    #[test]
+    fn channel_upsert_stores_and_preserves_recipients() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "project chat".to_owned(),
+            kind: "group-dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: Some(vec![ChannelRecipientInfo {
+                user_id: Id::new(20),
+                display_name: "alice".to_owned(),
+                is_bot: false,
+                avatar_url: Some("https://cdn.discordapp.com/avatar.png".to_owned()),
+            }]),
+        }));
+
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: Some(Id::new(30)),
+            name: "renamed project chat".to_owned(),
+            kind: "group-dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: None,
+        }));
+
+        let channel = state.channel(channel_id).expect("channel should be stored");
+        assert_eq!(channel.name, "renamed project chat");
+        assert_eq!(channel.recipients.len(), 1);
+        assert_eq!(channel.recipients[0].user_id, Id::new(20));
+        assert_eq!(channel.recipients[0].display_name, "alice");
+        assert_eq!(
+            channel.recipients[0].avatar_url.as_deref(),
+            Some("https://cdn.discordapp.com/avatar.png")
+        );
     }
 
     #[test]
@@ -1880,6 +1966,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            recipients: None,
         }));
         state.apply_event(&AppEvent::MessageCreate {
             guild_id: None,
@@ -1939,6 +2026,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            recipients: None,
         }));
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
@@ -1974,6 +2062,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            recipients: None,
         }));
         state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
             guild_id: None,
@@ -1987,6 +2076,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            recipients: None,
         }));
         state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
             guild_id: None,
@@ -2000,6 +2090,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            recipients: None,
         }));
 
         let channel = state.channel(channel_id).unwrap();
@@ -2025,6 +2116,7 @@ mod tests {
             total_message_sent: Some(14),
             thread_archived: Some(false),
             thread_locked: Some(false),
+            recipients: None,
         }));
         state.apply_event(&AppEvent::ChannelDelete {
             guild_id: Some(guild_id),

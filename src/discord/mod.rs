@@ -11,11 +11,11 @@ pub use client::DiscordClient;
 pub use commands::AppCommand;
 pub use commands::ReactionEmoji;
 pub use events::{
-    AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, GuildFolder,
-    MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
+    AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
+    GuildFolder, MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
+    MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
 };
 pub use state::{
-    ChannelState, DiscordState, GuildMemberState, GuildState, MessageCapabilities, MessageState,
-    RoleState,
+    ChannelRecipientState, ChannelState, DiscordState, GuildMemberState, GuildState,
+    MessageCapabilities, MessageState, RoleState,
 };

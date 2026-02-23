@@ -55,6 +55,15 @@ pub struct ChannelInfo {
     pub total_message_sent: Option<u64>,
     pub thread_archived: Option<bool>,
     pub thread_locked: Option<bool>,
+    pub recipients: Option<Vec<ChannelRecipientInfo>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChannelRecipientInfo {
+    pub user_id: Id<UserMarker>,
+    pub display_name: String,
+    pub is_bot: bool,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -768,6 +777,19 @@ fn channel_info(channel: &Channel) -> ChannelInfo {
             .thread_metadata
             .as_ref()
             .map(|metadata| metadata.locked),
+        recipients: channel
+            .recipients
+            .as_ref()
+            .map(|recipients| recipients.iter().map(channel_recipient_info).collect()),
+    }
+}
+
+fn channel_recipient_info(user: &TwilightUser) -> ChannelRecipientInfo {
+    ChannelRecipientInfo {
+        user_id: user.id,
+        display_name: display_name(None, user),
+        is_bot: user.bot,
+        avatar_url: Some(user_avatar_url(user)),
     }
 }
 
@@ -963,6 +985,7 @@ fn message_display_name(message: &Message) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use twilight_model::{
         gateway::payload::incoming::{
             GuildEmojisUpdate as TwilightGuildEmojisUpdate, GuildUpdate as TwilightGuildUpdate,
@@ -1010,6 +1033,46 @@ mod tests {
         );
         assert_eq!(display_name(None, &user_with_global), "global alias");
         assert_eq!(display_name(None, &user("neo", None)), "neo");
+    }
+
+    #[test]
+    fn typed_group_channel_maps_recipients() {
+        let channel: Channel = serde_json::from_value(json!({
+            "id": "10",
+            "type": 3,
+            "name": "project chat",
+            "recipients": [
+                {
+                    "id": "20",
+                    "username": "alice",
+                    "global_name": "Alice",
+                    "discriminator": "0",
+                    "avatar": null,
+                    "bot": false
+                },
+                {
+                    "id": "30",
+                    "username": "helper-bot",
+                    "discriminator": "0",
+                    "avatar": null,
+                    "bot": true
+                }
+            ]
+        }))
+        .expect("group channel should deserialize");
+
+        let info = channel_info(&channel);
+        let recipients = info
+            .recipients
+            .expect("typed group channel should carry recipients");
+
+        assert_eq!(info.kind, "Group");
+        assert_eq!(recipients.len(), 2);
+        assert_eq!(recipients[0].user_id, Id::new(20));
+        assert_eq!(recipients[0].display_name, "Alice");
+        assert!(!recipients[0].is_bot);
+        assert_eq!(recipients[1].display_name, "helper-bot");
+        assert!(recipients[1].is_bot);
     }
 
     #[test]
