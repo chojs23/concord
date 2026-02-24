@@ -18,13 +18,12 @@ use super::{
     format::{RenderedText, TextHighlight, truncate_display_width, truncate_text},
     state::{
         ChannelPaneEntry, DashboardState, EmojiReactionItem, FocusPane, GuildPaneEntry,
-        MemberGroup, MessageActionItem, ThreadSummary, folder_color, presence_color,
+        MemberEntry, MemberGroup, MessageActionItem, ThreadSummary, folder_color, presence_color,
         presence_marker,
     },
 };
 use crate::discord::{
-    AttachmentInfo, GuildMemberState, MessageKind, MessageSnapshotInfo, MessageState, PollInfo,
-    ReplyInfo,
+    AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState, PollInfo, ReplyInfo,
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -1228,10 +1227,11 @@ fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
         lines.push(member_group_header(group));
         line_index += 1;
         for member in &group.entries {
+            let member = *member;
             let is_selected = focused && selected_line == Some(line_index);
-            let marker_style = Style::default().fg(presence_color(member.status));
-            let mut name_style = Style::default().fg(presence_color(member.status));
-            if member.is_bot {
+            let marker_style = Style::default().fg(presence_color(member.status()));
+            let mut name_style = Style::default().fg(presence_color(member.status()));
+            if member.is_bot() {
                 name_style = name_style.add_modifier(Modifier::ITALIC);
             }
             if is_selected {
@@ -1243,7 +1243,7 @@ fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
             let display = member_display_label(member, max_name_width);
             lines.push(Line::from(vec![
                 Span::styled(
-                    format!(" {} ", presence_marker(member.status)),
+                    format!(" {} ", presence_marker(member.status())),
                     marker_style,
                 ),
                 Span::styled(display, name_style),
@@ -1281,23 +1281,21 @@ fn member_group_header(group: &MemberGroup<'_>) -> Line<'static> {
     ])
 }
 
-fn member_display_label(member: &GuildMemberState, max_width: usize) -> String {
-    if !member.is_bot {
-        return truncate_display_width(&member.display_name, max_width);
+fn member_display_label(member: MemberEntry<'_>, max_width: usize) -> String {
+    let display_name = member.display_name();
+    if !member.is_bot() {
+        return truncate_display_width(&display_name, max_width);
     }
 
     const BOT_SUFFIX: &str = " [bot]";
     let suffix_width = BOT_SUFFIX.width();
     if max_width <= suffix_width {
-        return truncate_display_width(
-            &format!("{}{}", member.display_name, BOT_SUFFIX),
-            max_width,
-        );
+        return truncate_display_width(&format!("{}{}", display_name, BOT_SUFFIX), max_width);
     }
 
     format!(
         "{}{}",
-        truncate_display_width(&member.display_name, max_width.saturating_sub(suffix_width)),
+        truncate_display_width(&display_name, max_width.saturating_sub(suffix_width)),
         BOT_SUFFIX
     )
 }
@@ -1722,11 +1720,11 @@ mod tests {
     use unicode_width::UnicodeWidthStr;
 
     use super::{
-        ACCENT, DIM, DISCORD_EPOCH_MILLIS, MessageContentLine, composer_content_line_count,
-        composer_lines, composer_prompt_line_count, composer_text, emoji_reaction_picker_lines,
-        footer_hint, format_message_content, format_message_content_lines,
-        format_message_sent_time, format_unix_millis_with_offset, highlight_style,
-        inline_image_preview_area, inline_image_preview_row, member_display_label,
+        ACCENT, DIM, DISCORD_EPOCH_MILLIS, MemberEntry, MessageContentLine,
+        composer_content_line_count, composer_lines, composer_prompt_line_count, composer_text,
+        emoji_reaction_picker_lines, footer_hint, format_message_content,
+        format_message_content_lines, format_message_sent_time, format_unix_millis_with_offset,
+        highlight_style, inline_image_preview_area, inline_image_preview_row, member_display_label,
         mention_highlight_style, message_action_menu_lines, message_item_lines,
         message_viewport_lines, sync_view_heights, wrap_text_lines,
     };
@@ -2201,6 +2199,7 @@ mod tests {
             total_message_sent: Some(14),
             thread_archived: Some(false),
             thread_locked: Some(false),
+            recipients: None,
         }));
 
         let lines = format_message_content_lines(&message, &state, 200);
@@ -2562,6 +2561,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            recipients: None,
         }));
         state.push_event(AppEvent::GuildMemberUpsert {
             guild_id: Id::new(2),
@@ -2616,6 +2616,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             },
         ));
         let mut snapshot = forwarded_snapshot(Some("hello"), Vec::new());
@@ -2726,7 +2727,7 @@ mod tests {
             status: PresenceStatus::Online,
         };
 
-        let label = member_display_label(&member, 12);
+        let label = member_display_label(MemberEntry::Guild(&member), 12);
 
         assert_eq!(label, "漢字仮名...");
         assert!(label.width() <= 12);
@@ -2918,6 +2919,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),

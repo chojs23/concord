@@ -7,9 +7,9 @@ use twilight_model::id::{
 };
 
 use crate::discord::{
-    AppCommand, AppEvent, AttachmentInfo, ChannelState, CustomEmojiInfo, DiscordState, GuildFolder,
-    GuildMemberState, GuildState, MentionInfo, MessageInfo, MessageSnapshotInfo, MessageState,
-    PresenceStatus, ReactionEmoji, RoleState,
+    AppCommand, AppEvent, AttachmentInfo, ChannelRecipientState, ChannelState, CustomEmojiInfo,
+    DiscordState, GuildFolder, GuildMemberState, GuildState, MentionInfo, MessageInfo,
+    MessageSnapshotInfo, MessageState, PresenceStatus, ReactionEmoji, RoleState,
 };
 use crate::logging;
 
@@ -1367,7 +1367,7 @@ impl DashboardState {
 
     pub fn members_grouped(&self) -> Vec<MemberGroup<'_>> {
         let Some(guild_id) = self.selected_guild_id() else {
-            return Vec::new();
+            return self.selected_channel_recipient_group();
         };
         let members = self.discord.members_for_guild(guild_id);
         let roles = self.discord.roles_for_guild(guild_id);
@@ -1389,7 +1389,7 @@ impl DashboardState {
             groups.push(MemberGroup {
                 label: role.name.clone(),
                 color: role.color,
-                entries,
+                entries: entries.into_iter().map(MemberEntry::Guild).collect(),
             });
         }
 
@@ -1402,14 +1402,31 @@ impl DashboardState {
             groups.push(MemberGroup {
                 label: "Members".to_owned(),
                 color: None,
-                entries: ungrouped,
+                entries: ungrouped.into_iter().map(MemberEntry::Guild).collect(),
             });
         }
 
         groups
     }
 
-    pub fn flattened_members(&self) -> Vec<&GuildMemberState> {
+    fn selected_channel_recipient_group(&self) -> Vec<MemberGroup<'_>> {
+        let Some(channel) = self.selected_channel_state() else {
+            return Vec::new();
+        };
+        if !is_direct_message_channel(channel) || channel.recipients.is_empty() {
+            return Vec::new();
+        }
+
+        let mut recipients: Vec<&ChannelRecipientState> = channel.recipients.iter().collect();
+        sort_recipient_entries(&mut recipients);
+        vec![MemberGroup {
+            label: "Recipients".to_owned(),
+            color: None,
+            entries: recipients.into_iter().map(MemberEntry::Recipient).collect(),
+        }]
+    }
+
+    pub fn flattened_members(&self) -> Vec<MemberEntry<'_>> {
         self.members_grouped()
             .into_iter()
             .flat_map(|group| group.entries)
@@ -2474,7 +2491,36 @@ impl Default for DashboardState {
 pub struct MemberGroup<'a> {
     pub label: String,
     pub color: Option<u32>,
-    pub entries: Vec<&'a GuildMemberState>,
+    pub entries: Vec<MemberEntry<'a>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum MemberEntry<'a> {
+    Guild(&'a GuildMemberState),
+    Recipient(&'a ChannelRecipientState),
+}
+
+impl MemberEntry<'_> {
+    pub fn display_name(self) -> String {
+        match self {
+            Self::Guild(member) => member.display_name.clone(),
+            Self::Recipient(recipient) => recipient.display_name.clone(),
+        }
+    }
+
+    pub fn is_bot(self) -> bool {
+        match self {
+            Self::Guild(member) => member.is_bot,
+            Self::Recipient(recipient) => recipient.is_bot,
+        }
+    }
+
+    pub fn status(self) -> PresenceStatus {
+        match self {
+            Self::Guild(member) => member.status,
+            Self::Recipient(_) => PresenceStatus::Offline,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2613,6 +2659,21 @@ fn sort_member_entries(entries: &mut [&GuildMemberState]) {
     });
 }
 
+fn sort_recipient_entries(entries: &mut [&ChannelRecipientState]) {
+    entries.sort_by(|left, right| {
+        left.display_name
+            .to_lowercase()
+            .cmp(&right.display_name.to_lowercase())
+    });
+}
+
+fn is_direct_message_channel(channel: &ChannelState) -> bool {
+    matches!(
+        channel.kind.as_str(),
+        "dm" | "Private" | "group-dm" | "Group"
+    )
+}
+
 fn member_status_rank(status: PresenceStatus) -> u8 {
     match status {
         PresenceStatus::Online => 0,
@@ -2653,9 +2714,10 @@ mod tests {
         MessageActionKind, MessageState, message_rendered_height,
     };
     use crate::discord::{
-        AppCommand, AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, GuildFolder,
-        MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-        PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReplyInfo, RoleInfo,
+        AppCommand, AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
+        GuildFolder, MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo,
+        MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReplyInfo,
+        RoleInfo,
     };
 
     #[test]
@@ -2722,6 +2784,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -2775,6 +2838,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            recipients: None,
         }));
         state.push_event(AppEvent::MessageCreate {
             guild_id: None,
@@ -2822,6 +2886,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             }],
             members: vec![
                 MemberInfo {
@@ -2859,10 +2924,92 @@ mod tests {
             groups[0]
                 .entries
                 .iter()
-                .map(|m| m.display_name.as_str())
+                .map(|member| member.display_name())
                 .collect::<Vec<_>>(),
-            vec!["alice", "bob"],
+            vec!["alice".to_owned(), "bob".to_owned()],
         );
+    }
+
+    #[test]
+    fn member_groups_show_selected_group_dm_recipients() {
+        let mut state = DashboardState::new();
+        let channel_id = Id::new(20);
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "project chat".to_owned(),
+            kind: "group-dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: Some(vec![
+                ChannelRecipientInfo {
+                    user_id: Id::new(30),
+                    display_name: "bob".to_owned(),
+                    is_bot: false,
+                    avatar_url: None,
+                },
+                ChannelRecipientInfo {
+                    user_id: Id::new(10),
+                    display_name: "alice".to_owned(),
+                    is_bot: false,
+                    avatar_url: None,
+                },
+            ]),
+        }));
+
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+
+        let groups = state.members_grouped();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].label, "Recipients");
+        assert_eq!(
+            groups[0]
+                .entries
+                .iter()
+                .map(|member| member.display_name())
+                .collect::<Vec<_>>(),
+            vec!["alice".to_owned(), "bob".to_owned()],
+        );
+    }
+
+    #[test]
+    fn member_groups_show_selected_dm_recipient() {
+        let mut state = DashboardState::new();
+        let channel_id = Id::new(20);
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "alice".to_owned(),
+            kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: Some(vec![ChannelRecipientInfo {
+                user_id: Id::new(10),
+                display_name: "alice".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+            }]),
+        }));
+
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+
+        let groups = state.members_grouped();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].label, "Recipients");
+        assert_eq!(groups[0].entries.len(), 1);
+        assert_eq!(groups[0].entries[0].display_name(), "alice");
     }
 
     #[test]
@@ -2969,6 +3116,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            recipients: None,
         }));
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -3013,6 +3161,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -3236,6 +3385,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            recipients: None,
         }));
         state.push_event(AppEvent::GuildMemberUpsert {
             guild_id: Id::new(2),
@@ -4337,6 +4487,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             }));
         }
         state.confirm_selected_guild();
@@ -4684,6 +4835,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             })
             .collect();
 
@@ -4732,6 +4884,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             }],
             members,
             presences,
@@ -4772,6 +4925,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             }],
             members,
             presences: vec![
@@ -4816,6 +4970,7 @@ mod tests {
                     total_message_sent: None,
                     thread_archived: None,
                     thread_locked: None,
+                    recipients: None,
                 },
                 ChannelInfo {
                     guild_id: Some(guild_id),
@@ -4829,6 +4984,7 @@ mod tests {
                     total_message_sent: None,
                     thread_archived: None,
                     thread_locked: None,
+                    recipients: None,
                 },
                 ChannelInfo {
                     guild_id: Some(guild_id),
@@ -4842,6 +4998,7 @@ mod tests {
                     total_message_sent: None,
                     thread_archived: None,
                     thread_locked: None,
+                    recipients: None,
                 },
             ],
             members: Vec::new(),
@@ -4872,6 +5029,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             }));
         }
         state
@@ -4901,6 +5059,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -4961,6 +5120,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -5010,6 +5170,7 @@ mod tests {
                     total_message_sent: None,
                     thread_archived: None,
                     thread_locked: None,
+                    recipients: None,
                 },
                 ChannelInfo {
                     guild_id: Some(guild_id),
@@ -5023,6 +5184,7 @@ mod tests {
                     total_message_sent: Some(14),
                     thread_archived: Some(false),
                     thread_locked: Some(false),
+                    recipients: None,
                 },
             ],
             members: Vec::new(),
@@ -5105,6 +5267,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                recipients: None,
             }],
             members: Vec::new(),
             presences: Vec::new(),
