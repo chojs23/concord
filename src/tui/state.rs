@@ -1420,7 +1420,7 @@ impl DashboardState {
         let mut recipients: Vec<&ChannelRecipientState> = channel.recipients.iter().collect();
         sort_recipient_entries(&mut recipients);
         vec![MemberGroup {
-            label: "Recipients".to_owned(),
+            label: "Members".to_owned(),
             color: None,
             entries: recipients.into_iter().map(MemberEntry::Recipient).collect(),
         }]
@@ -2518,7 +2518,7 @@ impl MemberEntry<'_> {
     pub fn status(self) -> PresenceStatus {
         match self {
             Self::Guild(member) => member.status,
-            Self::Recipient(_) => PresenceStatus::Offline,
+            Self::Recipient(recipient) => recipient.status,
         }
     }
 }
@@ -2661,9 +2661,13 @@ fn sort_member_entries(entries: &mut [&GuildMemberState]) {
 
 fn sort_recipient_entries(entries: &mut [&ChannelRecipientState]) {
     entries.sort_by(|left, right| {
-        left.display_name
-            .to_lowercase()
-            .cmp(&right.display_name.to_lowercase())
+        member_status_rank(left.status)
+            .cmp(&member_status_rank(right.status))
+            .then_with(|| {
+                left.display_name
+                    .to_lowercase()
+                    .cmp(&right.display_name.to_lowercase())
+            })
     });
 }
 
@@ -2952,12 +2956,14 @@ mod tests {
                     display_name: "bob".to_owned(),
                     is_bot: false,
                     avatar_url: None,
+                    status: Some(PresenceStatus::Idle),
                 },
                 ChannelRecipientInfo {
                     user_id: Id::new(10),
                     display_name: "alice".to_owned(),
                     is_bot: false,
                     avatar_url: None,
+                    status: Some(PresenceStatus::Online),
                 },
             ]),
         }));
@@ -2967,15 +2973,80 @@ mod tests {
 
         let groups = state.members_grouped();
         assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].label, "Recipients");
+        assert_eq!(groups[0].label, "Members");
         assert_eq!(
             groups[0]
                 .entries
                 .iter()
-                .map(|member| member.display_name())
+                .map(|member| (member.display_name(), member.status()))
                 .collect::<Vec<_>>(),
-            vec!["alice".to_owned(), "bob".to_owned()],
+            vec![
+                ("alice".to_owned(), PresenceStatus::Online),
+                ("bob".to_owned(), PresenceStatus::Idle),
+            ],
         );
+    }
+
+    #[test]
+    fn member_groups_keep_unroled_guild_members_in_members_group() {
+        let guild_id = Id::new(1);
+        let admin_role = Id::new(100);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: Id::new(2),
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                recipients: None,
+            }],
+            members: vec![
+                MemberInfo {
+                    user_id: Id::new(10),
+                    display_name: "alice".to_owned(),
+                    is_bot: false,
+                    avatar_url: None,
+                    role_ids: vec![admin_role],
+                },
+                MemberInfo {
+                    user_id: Id::new(20),
+                    display_name: "bob".to_owned(),
+                    is_bot: false,
+                    avatar_url: None,
+                    role_ids: Vec::new(),
+                },
+            ],
+            presences: vec![
+                (Id::new(10), PresenceStatus::Online),
+                (Id::new(20), PresenceStatus::Offline),
+            ],
+            roles: vec![RoleInfo {
+                id: admin_role,
+                name: "Admin".to_owned(),
+                color: Some(0xFFAA00),
+                position: 10,
+                hoist: true,
+            }],
+            emojis: Vec::new(),
+        });
+        state.confirm_selected_guild();
+
+        let groups = state.members_grouped();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].label, "Admin");
+        assert_eq!(groups[0].entries[0].display_name(), "alice");
+        assert_eq!(groups[1].label, "Members");
+        assert_eq!(groups[1].entries[0].display_name(), "bob");
     }
 
     #[test]
@@ -2999,6 +3070,7 @@ mod tests {
                 display_name: "alice".to_owned(),
                 is_bot: false,
                 avatar_url: None,
+                status: Some(PresenceStatus::DoNotDisturb),
             }]),
         }));
 
@@ -3007,9 +3079,10 @@ mod tests {
 
         let groups = state.members_grouped();
         assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].label, "Recipients");
+        assert_eq!(groups[0].label, "Members");
         assert_eq!(groups[0].entries.len(), 1);
         assert_eq!(groups[0].entries[0].display_name(), "alice");
+        assert_eq!(groups[0].entries[0].status(), PresenceStatus::DoNotDisturb);
     }
 
     #[test]
