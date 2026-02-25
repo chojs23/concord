@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::BTreeMap,
+    time::{Duration, Instant},
+};
 
 use serde_json::Value;
 use tokio::sync::{broadcast, mpsc};
@@ -163,7 +166,7 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         }
         "GUILD_MEMBERS_CHUNK" => parse_member_chunk(data),
         "GUILD_MEMBER_REMOVE" => parse_member_remove(data).into_iter().collect(),
-        "PRESENCE_UPDATE" => parse_presence_update(data).into_iter().collect(),
+        "PRESENCE_UPDATE" => parse_presence_update(data),
         _ => Vec::new(),
     }
 }
@@ -217,6 +220,8 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
     }
     stats.guilds_duration = guilds_started.elapsed();
 
+    let friend_presences = parse_friend_presences(data);
+
     // User-account READY also lists DM and group-DM channels under
     // `private_channels`. They have no `guild_id` and never come through
     // `GUILD_CREATE`, so we surface them as standalone channel upserts.
@@ -224,7 +229,8 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
     if let Some(privates) = data.get("private_channels").and_then(Value::as_array) {
         stats.private_channels = privates.len();
         for channel in privates {
-            if let Some(info) = parse_channel_info(channel, None) {
+            if let Some(mut info) = parse_channel_info(channel, None) {
+                apply_recipient_presences(&mut info, &friend_presences);
                 events.push(AppEvent::ChannelUpsert(info));
             }
         }
@@ -319,6 +325,28 @@ fn parse_guild_folder(value: &Value) -> Option<GuildFolder> {
         color,
         guild_ids,
     })
+}
+
+fn parse_friend_presences(data: &Value) -> BTreeMap<Id<UserMarker>, PresenceStatus> {
+    data.get("merged_presences")
+        .and_then(|merged| merged.get("friends"))
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(parse_presence_entry).collect())
+        .unwrap_or_default()
+}
+
+fn apply_recipient_presences(
+    channel: &mut ChannelInfo,
+    presences: &BTreeMap<Id<UserMarker>, PresenceStatus>,
+) {
+    let Some(recipients) = channel.recipients.as_mut() else {
+        return;
+    };
+    for recipient in recipients {
+        if let Some(status) = presences.get(&recipient.user_id) {
+            recipient.status = Some(*status);
+        }
+    }
 }
 
 fn parse_guild_create(data: &Value) -> Option<AppEvent> {
@@ -951,14 +979,19 @@ fn parse_member_remove(data: &Value) -> Option<AppEvent> {
     Some(AppEvent::GuildMemberRemove { guild_id, user_id })
 }
 
-fn parse_presence_update(data: &Value) -> Option<AppEvent> {
-    let guild_id = parse_id::<GuildMarker>(data.get("guild_id")?)?;
-    let (user_id, status) = parse_presence_entry(data)?;
-    Some(AppEvent::PresenceUpdate {
-        guild_id,
-        user_id,
-        status,
-    })
+fn parse_presence_update(data: &Value) -> Vec<AppEvent> {
+    let Some((user_id, status)) = parse_presence_entry(data) else {
+        return Vec::new();
+    };
+    if let Some(guild_id) = data.get("guild_id").and_then(parse_id::<GuildMarker>) {
+        vec![AppEvent::PresenceUpdate {
+            guild_id,
+            user_id,
+            status,
+        }]
+    } else {
+        vec![AppEvent::UserPresenceUpdate { user_id, status }]
+    }
 }
 
 fn parse_channel_info(
@@ -1074,12 +1107,17 @@ fn parse_channel_recipient_info(value: &Value) -> Option<ChannelRecipientInfo> {
     let username = value.get("username").and_then(Value::as_str);
     let display_name = global_name.or(username).unwrap_or("unknown").to_owned();
     let is_bot = value.get("bot").and_then(Value::as_bool).unwrap_or(false);
+    let status = value
+        .get("status")
+        .and_then(Value::as_str)
+        .map(parse_status);
 
     Some(ChannelRecipientInfo {
         user_id,
         display_name,
         is_bot,
         avatar_url: raw_user_avatar_url(user_id, value),
+        status,
     })
 }
 
@@ -1216,6 +1254,12 @@ mod tests {
                         "username": "neo"
                     },
                     "guilds": [],
+                    "merged_presences": {
+                        "friends": [
+                            { "user": { "id": "20" }, "status": "online" },
+                            { "user": { "id": "30" }, "status": "idle" }
+                        ]
+                    },
                     "private_channels": [{
                         "id": "10",
                         "type": 3,
@@ -1256,8 +1300,30 @@ mod tests {
         assert_eq!(recipients[0].user_id, Id::new(20));
         assert_eq!(recipients[0].display_name, "Alice");
         assert!(!recipients[0].is_bot);
+        assert_eq!(recipients[0].status, Some(PresenceStatus::Online));
         assert_eq!(recipients[1].display_name, "helper-bot");
         assert!(recipients[1].is_bot);
+        assert_eq!(recipients[1].status, Some(PresenceStatus::Idle));
+    }
+
+    #[test]
+    fn raw_presence_update_without_guild_updates_user_presence() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "PRESENCE_UPDATE",
+                "d": {
+                    "user": { "id": "20" },
+                    "status": "dnd"
+                }
+            })
+            .to_string(),
+        );
+
+        assert!(matches!(
+            events.as_slice(),
+            [AppEvent::UserPresenceUpdate { user_id, status }]
+                if *user_id == Id::new(20) && *status == PresenceStatus::DoNotDisturb
+        ));
     }
 
     #[test]

@@ -64,6 +64,7 @@ pub struct ChannelRecipientInfo {
     pub display_name: String,
     pub is_bot: bool,
     pub avatar_url: Option<String>,
+    pub status: Option<PresenceStatus>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -348,6 +349,10 @@ pub enum AppEvent {
     },
     PresenceUpdate {
         guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+        status: PresenceStatus,
+    },
+    UserPresenceUpdate {
         user_id: Id<UserMarker>,
         status: PresenceStatus,
     },
@@ -790,6 +795,7 @@ fn channel_recipient_info(user: &TwilightUser) -> ChannelRecipientInfo {
         display_name: display_name(None, user),
         is_bot: user.bot,
         avatar_url: Some(user_avatar_url(user)),
+        status: None,
     }
 }
 
@@ -1071,8 +1077,10 @@ mod tests {
         assert_eq!(recipients[0].user_id, Id::new(20));
         assert_eq!(recipients[0].display_name, "Alice");
         assert!(!recipients[0].is_bot);
+        assert_eq!(recipients[0].status, None);
         assert_eq!(recipients[1].display_name, "helper-bot");
         assert!(recipients[1].is_bot);
+        assert_eq!(recipients[1].status, None);
     }
 
     #[test]
