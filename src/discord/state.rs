@@ -367,15 +367,10 @@ impl DiscordState {
                         },
                     );
                 }
+                self.update_channel_recipient_presence(*user_id, *status);
             }
             AppEvent::UserPresenceUpdate { user_id, status } => {
-                for channel in self.channels.values_mut() {
-                    for recipient in &mut channel.recipients {
-                        if recipient.user_id == *user_id {
-                            recipient.status = *status;
-                        }
-                    }
-                }
+                self.update_channel_recipient_presence(*user_id, *status);
             }
             AppEvent::GuildFoldersUpdate { folders } => {
                 self.guild_folders = folders.clone();
@@ -534,6 +529,20 @@ impl DiscordState {
                 recipients,
             },
         );
+    }
+
+    fn update_channel_recipient_presence(
+        &mut self,
+        user_id: Id<UserMarker>,
+        status: PresenceStatus,
+    ) {
+        for channel in self.channels.values_mut() {
+            for recipient in &mut channel.recipients {
+                if recipient.user_id == user_id {
+                    recipient.status = status;
+                }
+            }
+        }
     }
 
     fn upsert_message(&mut self, message: MessageState) {
@@ -1074,6 +1083,42 @@ mod tests {
 
         let channel = state.channel(channel_id).expect("channel should be stored");
         assert_eq!(channel.recipients[0].status, PresenceStatus::DoNotDisturb);
+    }
+
+    #[test]
+    fn guild_presence_update_updates_matching_channel_recipients() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "alice".to_owned(),
+            kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: Some(vec![ChannelRecipientInfo {
+                user_id: Id::new(20),
+                display_name: "alice".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                status: None,
+            }]),
+        }));
+
+        state.apply_event(&AppEvent::PresenceUpdate {
+            guild_id: Id::new(1),
+            user_id: Id::new(20),
+            status: PresenceStatus::Idle,
+        });
+
+        let channel = state.channel(channel_id).expect("channel should be stored");
+        assert_eq!(channel.recipients[0].status, PresenceStatus::Idle);
     }
 
     #[test]

@@ -144,6 +144,7 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
 
     match event_type {
         "READY" => parse_ready(data),
+        "READY_SUPPLEMENTAL" => parse_ready_supplemental(data),
         "GUILD_CREATE" => {
             let started = Instant::now();
             let result = parse_guild_create(data).into_iter().collect();
@@ -220,7 +221,7 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
     }
     stats.guilds_duration = guilds_started.elapsed();
 
-    let friend_presences = parse_friend_presences(data);
+    let merged_presences = parse_merged_presences(data);
 
     // User-account READY also lists DM and group-DM channels under
     // `private_channels`. They have no `guild_id` and never come through
@@ -230,7 +231,7 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
         stats.private_channels = privates.len();
         for channel in privates {
             if let Some(mut info) = parse_channel_info(channel, None) {
-                apply_recipient_presences(&mut info, &friend_presences);
+                apply_recipient_presences(&mut info, &merged_presences);
                 events.push(AppEvent::ChannelUpsert(info));
             }
         }
@@ -259,6 +260,13 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
     log_ready_stats(&stats);
 
     events
+}
+
+fn parse_ready_supplemental(data: &Value) -> Vec<AppEvent> {
+    parse_merged_presences(data)
+        .into_iter()
+        .map(|(user_id, status)| AppEvent::UserPresenceUpdate { user_id, status })
+        .collect()
 }
 
 #[derive(Default)]
@@ -327,12 +335,32 @@ fn parse_guild_folder(value: &Value) -> Option<GuildFolder> {
     })
 }
 
-fn parse_friend_presences(data: &Value) -> BTreeMap<Id<UserMarker>, PresenceStatus> {
-    data.get("merged_presences")
-        .and_then(|merged| merged.get("friends"))
-        .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(parse_presence_entry).collect())
-        .unwrap_or_default()
+fn parse_merged_presences(data: &Value) -> BTreeMap<Id<UserMarker>, PresenceStatus> {
+    let mut presences = BTreeMap::new();
+    if let Some(merged) = data.get("merged_presences") {
+        collect_presence_entries(merged, &mut presences);
+    }
+    presences
+}
+
+fn collect_presence_entries(
+    value: &Value,
+    presences: &mut BTreeMap<Id<UserMarker>, PresenceStatus>,
+) {
+    if let Some((user_id, status)) = parse_presence_entry(value) {
+        presences.insert(user_id, status);
+        return;
+    }
+
+    if let Some(items) = value.as_array() {
+        for item in items {
+            collect_presence_entries(item, presences);
+        }
+    } else if let Some(object) = value.as_object() {
+        for item in object.values() {
+            collect_presence_entries(item, presences);
+        }
+    }
 }
 
 fn apply_recipient_presences(
@@ -1176,14 +1204,21 @@ fn raw_discriminator(user: &Value) -> Option<u16> {
 }
 
 fn parse_presence_entry(value: &Value) -> Option<(Id<UserMarker>, PresenceStatus)> {
-    let user = value.get("user")?;
-    let user_id = parse_id::<UserMarker>(user.get("id")?)?;
+    let user_id = presence_user_id(value)?;
     let status = value
         .get("status")
         .and_then(Value::as_str)
-        .map(parse_status)
-        .unwrap_or(PresenceStatus::Offline);
+        .map(parse_status)?;
     Some((user_id, status))
+}
+
+fn presence_user_id(value: &Value) -> Option<Id<UserMarker>> {
+    value
+        .get("user")
+        .and_then(|user| user.get("id"))
+        .or_else(|| value.get("user_id"))
+        .or_else(|| value.get("id"))
+        .and_then(parse_id::<UserMarker>)
 }
 
 fn parse_status(value: &str) -> PresenceStatus {
@@ -1307,6 +1342,126 @@ mod tests {
     }
 
     #[test]
+    fn raw_ready_parser_applies_guild_merged_presence_to_dm_recipient() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY",
+                "d": {
+                    "user": {
+                        "id": "99",
+                        "username": "neo"
+                    },
+                    "guilds": [],
+                    "merged_presences": {
+                        "friends": [],
+                        "guilds": [[
+                            { "user_id": "20", "status": "idle" }
+                        ]]
+                    },
+                    "private_channels": [{
+                        "id": "10",
+                        "type": 1,
+                        "recipients": [{
+                            "id": "20",
+                            "username": "alice"
+                        }]
+                    }]
+                }
+            })
+            .to_string(),
+        );
+
+        let channel = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::ChannelUpsert(channel) => Some(channel),
+                _ => None,
+            })
+            .expect("ready should emit a private channel upsert");
+        let recipients = channel
+            .recipients
+            .as_ref()
+            .expect("dm should carry recipients");
+
+        assert_eq!(channel.kind, "dm");
+        assert_eq!(recipients[0].user_id, Id::new(20));
+        assert_eq!(recipients[0].status, Some(PresenceStatus::Idle));
+    }
+
+    #[test]
+    fn raw_ready_supplemental_updates_user_presences() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY_SUPPLEMENTAL",
+                "d": {
+                    "merged_presences": {
+                        "friends": [
+                            { "user_id": "20", "status": "online" }
+                        ],
+                        "guilds": [[
+                            { "user_id": "30", "status": "idle" }
+                        ]]
+                    }
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::UserPresenceUpdate { user_id, status }
+                if *user_id == Id::new(20) && *status == PresenceStatus::Online
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::UserPresenceUpdate { user_id, status }
+                if *user_id == Id::new(30) && *status == PresenceStatus::Idle
+        )));
+    }
+
+    #[test]
+    fn raw_ready_supplemental_accepts_bare_id_presence_entries() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY_SUPPLEMENTAL",
+                "d": {
+                    "merged_presences": {
+                        "friends": [
+                            { "id": "20", "status": "online" }
+                        ]
+                    }
+                }
+            })
+            .to_string(),
+        );
+
+        assert!(matches!(
+            events.as_slice(),
+            [AppEvent::UserPresenceUpdate { user_id, status }]
+                if *user_id == Id::new(20) && *status == PresenceStatus::Online
+        ));
+    }
+
+    #[test]
+    fn raw_ready_supplemental_ignores_non_presence_ids() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY_SUPPLEMENTAL",
+                "d": {
+                    "merged_presences": {
+                        "friends": [],
+                        "metadata": { "id": "20" }
+                    }
+                }
+            })
+            .to_string(),
+        );
+
+        assert!(events.is_empty());
+    }
+
+    #[test]
     fn raw_presence_update_without_guild_updates_user_presence() {
         let events = parse_user_account_event(
             &json!({
@@ -1323,6 +1478,26 @@ mod tests {
             events.as_slice(),
             [AppEvent::UserPresenceUpdate { user_id, status }]
                 if *user_id == Id::new(20) && *status == PresenceStatus::DoNotDisturb
+        ));
+    }
+
+    #[test]
+    fn raw_presence_update_accepts_user_id_field() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "PRESENCE_UPDATE",
+                "d": {
+                    "user_id": "20",
+                    "status": "online"
+                }
+            })
+            .to_string(),
+        );
+
+        assert!(matches!(
+            events.as_slice(),
+            [AppEvent::UserPresenceUpdate { user_id, status }]
+                if *user_id == Id::new(20) && *status == PresenceStatus::Online
         ));
     }
 
