@@ -23,7 +23,8 @@ use super::{
     },
 };
 use crate::discord::{
-    AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState, PollInfo, ReplyInfo,
+    AttachmentInfo, ChannelState, MessageKind, MessageSnapshotInfo, MessageState, PollInfo,
+    PresenceStatus, ReplyInfo,
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -313,7 +314,7 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
                             Span::styled(channel_prefix, Style::default().fg(DIM)),
                             Span::styled(
                                 truncate_text(&state.name, label_width),
-                                active_text_style(is_active, Style::default()),
+                                channel_name_style(state, is_active),
                             ),
                         ]))
                     }
@@ -1588,6 +1589,24 @@ fn channel_prefix(kind: &str) -> &'static str {
     }
 }
 
+fn channel_name_style(channel: &ChannelState, active: bool) -> Style {
+    match one_to_one_dm_recipient_status(channel) {
+        Some(status) if active => Style::default()
+            .fg(presence_color(status))
+            .add_modifier(Modifier::BOLD),
+        Some(status) => Style::default().fg(presence_color(status)),
+        None => active_text_style(active, Style::default()),
+    }
+}
+
+fn one_to_one_dm_recipient_status(channel: &ChannelState) -> Option<PresenceStatus> {
+    if !matches!(channel.kind.as_str(), "dm" | "Private") || channel.recipients.len() != 1 {
+        return None;
+    }
+
+    channel.recipients.first().map(|recipient| recipient.status)
+}
+
 fn highlight_style() -> Style {
     Style::default()
         .bg(Color::Rgb(24, 54, 65))
@@ -1715,12 +1734,15 @@ fn composer_prompt_line_count(input: &str, width: u16) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::{layout::Rect, style::Style};
+    use ratatui::{
+        layout::Rect,
+        style::{Color, Modifier, Style},
+    };
     use twilight_model::id::Id;
     use unicode_width::UnicodeWidthStr;
 
     use super::{
-        ACCENT, DIM, DISCORD_EPOCH_MILLIS, MemberEntry, MessageContentLine,
+        ACCENT, DIM, DISCORD_EPOCH_MILLIS, MemberEntry, MessageContentLine, channel_name_style,
         composer_content_line_count, composer_lines, composer_prompt_line_count, composer_text,
         emoji_reaction_picker_lines, footer_hint, format_message_content,
         format_message_content_lines, format_message_sent_time, format_unix_millis_with_offset,
@@ -1730,9 +1752,9 @@ mod tests {
     };
     use crate::{
         discord::{
-            AppEvent, AttachmentInfo, ChannelInfo, GuildMemberState, MemberInfo, MentionInfo,
-            MessageKind, MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo,
-            PresenceStatus, ReactionEmoji, ReplyInfo,
+            AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientState, ChannelState,
+            GuildMemberState, MemberInfo, MentionInfo, MessageKind, MessageSnapshotInfo,
+            MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReplyInfo,
         },
         tui::{
             format::truncate_display_width,
@@ -1813,6 +1835,29 @@ mod tests {
         );
         assert_eq!(lines[0].spans[0].style.fg, Some(DIM));
         assert_eq!(lines[1].spans[0].style.fg, None);
+    }
+
+    #[test]
+    fn one_to_one_dm_channel_name_uses_recipient_status_color() {
+        let channel = channel_with_recipients("dm", &[PresenceStatus::DoNotDisturb]);
+
+        let inactive_style = channel_name_style(&channel, false);
+        let active_style = channel_name_style(&channel, true);
+
+        assert_eq!(inactive_style.fg, Some(Color::Red));
+        assert_eq!(active_style.fg, Some(Color::Red));
+        assert!(active_style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn group_dm_channel_name_keeps_default_channel_style() {
+        let channel = channel_with_recipients(
+            "group-dm",
+            &[PresenceStatus::Online, PresenceStatus::DoNotDisturb],
+        );
+
+        assert_eq!(channel_name_style(&channel, false).fg, None);
+        assert_eq!(channel_name_style(&channel, true).fg, Some(Color::Green));
     }
 
     #[test]
@@ -3050,6 +3095,33 @@ mod tests {
         MentionInfo {
             user_id: Id::new(user_id),
             display_name: display_name.to_owned(),
+        }
+    }
+
+    fn channel_with_recipients(kind: &str, statuses: &[PresenceStatus]) -> ChannelState {
+        ChannelState {
+            id: Id::new(10),
+            guild_id: None,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "alice".to_owned(),
+            kind: kind.to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: statuses
+                .iter()
+                .enumerate()
+                .map(|(index, status)| ChannelRecipientState {
+                    user_id: Id::new(100 + u64::try_from(index).expect("index should fit u64")),
+                    display_name: format!("recipient {index}"),
+                    is_bot: false,
+                    avatar_url: None,
+                    status: *status,
+                })
+                .collect(),
         }
     }
 
