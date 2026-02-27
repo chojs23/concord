@@ -1078,13 +1078,24 @@ impl DashboardState {
         }
     }
 
+    #[cfg(test)]
     pub fn confirm_selected_channel(&mut self) {
+        let _ = self.confirm_selected_channel_command();
+    }
+
+    pub fn confirm_selected_channel_command(&mut self) -> Option<AppCommand> {
         match self.channel_pane_entries().get(self.selected_channel()) {
             Some(ChannelPaneEntry::CategoryHeader { .. }) => {
-                self.toggle_selected_channel_category()
+                self.toggle_selected_channel_category();
+                None
             }
-            Some(ChannelPaneEntry::Channel { state, .. }) => self.activate_channel(state.id),
-            None => {}
+            Some(ChannelPaneEntry::Channel { state, .. }) => {
+                let channel_id = state.id;
+                let subscribe = is_direct_message_channel(state);
+                self.activate_channel(channel_id);
+                subscribe.then_some(AppCommand::SubscribeDirectMessage { channel_id })
+            }
+            None => None,
         }
     }
 
@@ -2621,6 +2632,7 @@ pub fn presence_color(status: PresenceStatus) -> Color {
         PresenceStatus::Idle => Color::Rgb(180, 140, 0),
         PresenceStatus::DoNotDisturb => Color::Red,
         PresenceStatus::Offline => Color::DarkGray,
+        PresenceStatus::Unknown => Color::Gray,
     }
 }
 
@@ -2684,6 +2696,7 @@ fn member_status_rank(status: PresenceStatus) -> u8 {
         PresenceStatus::Idle => 1,
         PresenceStatus::DoNotDisturb => 2,
         PresenceStatus::Offline => 3,
+        PresenceStatus::Unknown => 4,
     }
 }
 
@@ -2693,6 +2706,7 @@ pub fn presence_marker(status: PresenceStatus) -> char {
         PresenceStatus::Idle => '◐',
         PresenceStatus::DoNotDisturb => '⊘',
         PresenceStatus::Offline => '○',
+        PresenceStatus::Unknown => ' ',
     }
 }
 
@@ -2715,7 +2729,7 @@ mod tests {
 
     use super::{
         ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildBranch, GuildPaneEntry,
-        MessageActionKind, MessageState, message_rendered_height,
+        MessageActionKind, MessageState, message_rendered_height, presence_marker,
     };
     use crate::discord::{
         AppCommand, AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
@@ -2985,6 +2999,11 @@ mod tests {
                 ("bob".to_owned(), PresenceStatus::Idle),
             ],
         );
+    }
+
+    #[test]
+    fn unknown_presence_uses_neutral_member_marker() {
+        assert_eq!(presence_marker(PresenceStatus::Unknown), ' ');
     }
 
     #[test]

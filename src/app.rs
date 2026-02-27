@@ -112,6 +112,12 @@ fn start_command_loop(
                         client.publish_event(AppEvent::GatewayError { message });
                     }
                 }
+                AppCommand::SubscribeDirectMessage { channel_id } => {
+                    if let Err(message) = client.subscribe_direct_message(channel_id) {
+                        logging::error("app", &message);
+                        client.publish_event(AppEvent::GatewayError { message });
+                    }
+                }
                 AppCommand::LoadAttachmentPreview { url } => {
                     match timeout(ATTACHMENT_PREVIEW_TIMEOUT, fetch_attachment_preview(&url)).await
                     {

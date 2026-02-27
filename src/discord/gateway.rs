@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc};
 use twilight_gateway::{
     EventTypeFlags, MessageSender, Shard, StreamExt, error::ReceiveMessageErrorType,
@@ -31,6 +31,7 @@ use crate::logging;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GatewayCommand {
     RequestGuildMembers { guild_id: Id<GuildMarker> },
+    SubscribeDirectMessage { channel_id: Id<ChannelMarker> },
 }
 
 pub async fn run_gateway(
@@ -115,7 +116,32 @@ fn handle_gateway_command(
                 }
             }
         }
+        GatewayCommand::SubscribeDirectMessage { channel_id } => {
+            let payload = direct_message_subscribe_payload(channel_id);
+            match sender.send(payload) {
+                Ok(()) => logging::debug(
+                    "gateway",
+                    format!("subscribed to direct message: channel={}", channel_id.get()),
+                ),
+                Err(error) => {
+                    logging::debug(
+                        "gateway",
+                        format!("subscribe direct message failed: {error}"),
+                    );
+                }
+            }
+        }
     }
+}
+
+fn direct_message_subscribe_payload(channel_id: Id<ChannelMarker>) -> String {
+    json!({
+        "op": 13,
+        "d": {
+            "channel_id": channel_id.to_string(),
+        },
+    })
+    .to_string()
 }
 
 fn gateway_intents() -> Intents {
@@ -1226,7 +1252,8 @@ fn parse_status(value: &str) -> PresenceStatus {
         "online" => PresenceStatus::Online,
         "idle" => PresenceStatus::Idle,
         "dnd" => PresenceStatus::DoNotDisturb,
-        _ => PresenceStatus::Offline,
+        "offline" | "invisible" => PresenceStatus::Offline,
+        _ => PresenceStatus::Unknown,
     }
 }
 
@@ -1241,8 +1268,9 @@ mod tests {
     use twilight_model::id::Id;
 
     use super::{
-        gateway_intents, parse_channel_info, parse_guild_create, parse_guild_emojis_update,
-        parse_guild_update, parse_message_create, parse_message_update, parse_user_account_event,
+        direct_message_subscribe_payload, gateway_intents, parse_channel_info, parse_guild_create,
+        parse_guild_emojis_update, parse_guild_update, parse_message_create, parse_message_update,
+        parse_user_account_event,
     };
     use crate::discord::{
         AppEvent, AttachmentUpdate, MentionInfo, MessageKind, PollAnswerInfo, PollInfo,
@@ -1260,6 +1288,25 @@ mod tests {
         assert!(intents.contains(Intents::GUILD_MEMBERS));
         assert!(intents.contains(Intents::MESSAGE_CONTENT));
         assert!(!intents.contains(Intents::GUILD_PRESENCES));
+    }
+
+    #[test]
+    fn direct_message_subscribe_payload_matches_expected_shape() {
+        let payload: serde_json::Value =
+            serde_json::from_str(&direct_message_subscribe_payload(Id::<
+                twilight_model::id::marker::ChannelMarker,
+            >::new(20)))
+            .expect("payload should be valid json");
+
+        assert_eq!(
+            payload,
+            json!({
+                "op": 13,
+                "d": {
+                    "channel_id": "20"
+                }
+            })
+        );
     }
 
     #[test]

@@ -29,6 +29,7 @@ pub enum PresenceStatus {
     Idle,
     DoNotDisturb,
     Offline,
+    Unknown,
 }
 
 impl PresenceStatus {
@@ -38,6 +39,7 @@ impl PresenceStatus {
             Self::Idle => "Idle",
             Self::DoNotDisturb => "Do Not Disturb",
             Self::Offline => "Offline",
+            Self::Unknown => "Unknown",
         }
     }
 }

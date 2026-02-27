@@ -70,7 +70,7 @@ impl ChannelRecipientState {
             status: recipient
                 .status
                 .or(previous_status)
-                .unwrap_or(PresenceStatus::Offline),
+                .unwrap_or(PresenceStatus::Unknown),
         }
     }
 }
@@ -728,7 +728,7 @@ fn upsert_member(
     member: &MemberInfo,
     previous_status: Option<PresenceStatus>,
 ) {
-    let status = previous_status.unwrap_or(PresenceStatus::Offline);
+    let status = previous_status.unwrap_or(PresenceStatus::Unknown);
     map.insert(
         member.user_id,
         GuildMemberState {
@@ -1048,6 +1048,36 @@ mod tests {
         let channel = state.channel(channel_id).expect("channel should be stored");
         assert_eq!(channel.recipients[0].display_name, "alice renamed");
         assert_eq!(channel.recipients[0].status, PresenceStatus::Online);
+    }
+
+    #[test]
+    fn channel_upsert_defaults_missing_recipient_status_to_unknown() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "alice".to_owned(),
+            kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: Some(vec![ChannelRecipientInfo {
+                user_id: Id::new(20),
+                display_name: "alice".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                status: None,
+            }]),
+        }));
+
+        let channel = state.channel(channel_id).expect("channel should be stored");
+        assert_eq!(channel.recipients[0].status, PresenceStatus::Unknown);
     }
 
     #[test]
@@ -2324,7 +2354,7 @@ mod tests {
         let alice_state = members.iter().find(|m| m.user_id == alice).unwrap();
         assert_eq!(alice_state.status, PresenceStatus::Online);
         let bob_state = members.iter().find(|m| m.user_id == bob).unwrap();
-        assert_eq!(bob_state.status, PresenceStatus::Offline);
+        assert_eq!(bob_state.status, PresenceStatus::Unknown);
 
         state.apply_event(&AppEvent::PresenceUpdate {
             guild_id,
@@ -2417,7 +2447,7 @@ mod tests {
                 .iter()
                 .find(|member| member.user_id == bob)
                 .map(|member| member.status),
-            Some(PresenceStatus::Offline)
+            Some(PresenceStatus::Unknown)
         );
     }
 

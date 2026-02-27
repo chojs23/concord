@@ -34,6 +34,9 @@ pub enum AppCommand {
     LoadGuildMembers {
         guild_id: Id<GuildMarker>,
     },
+    SubscribeDirectMessage {
+        channel_id: Id<ChannelMarker>,
+    },
     LoadAttachmentPreview {
         url: String,
     },

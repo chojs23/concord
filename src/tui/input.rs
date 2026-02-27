@@ -78,7 +78,7 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
             state.confirm_selected_guild()
         }
         KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Channels => {
-            state.confirm_selected_channel()
+            return state.confirm_selected_channel_command();
         }
         KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Messages => {
             state.open_selected_message_actions()
@@ -158,7 +158,10 @@ mod tests {
 
     use super::handle_key;
     use crate::{
-        discord::{AppCommand, AppEvent, ChannelInfo, CustomEmojiInfo, GuildFolder, ReactionEmoji},
+        discord::{
+            AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, GuildFolder,
+            PresenceStatus, ReactionEmoji,
+        },
         tui::state::{
             ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind,
         },
@@ -210,10 +213,11 @@ mod tests {
         handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         assert_eq!(state.selected_channel_id(), None);
 
-        handle_key(
+        let command = handle_key(
             &mut state,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         );
+        assert_eq!(command, None);
         assert_eq!(state.selected_channel_id(), Some(Id::new(11)));
 
         handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
@@ -222,6 +226,43 @@ mod tests {
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         );
         assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
+    }
+
+    #[test]
+    fn enter_on_direct_message_subscribes_channel() {
+        let mut state = state_with_direct_message("dm");
+        focus_channels(&mut state);
+
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
+        assert_eq!(
+            command,
+            Some(AppCommand::SubscribeDirectMessage {
+                channel_id: Id::new(20),
+            })
+        );
+    }
+
+    #[test]
+    fn enter_on_group_direct_message_subscribes_channel() {
+        let mut state = state_with_direct_message("group-dm");
+        focus_channels(&mut state);
+
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert_eq!(
+            command,
+            Some(AppCommand::SubscribeDirectMessage {
+                channel_id: Id::new(20),
+            })
+        );
     }
 
     #[test]
@@ -921,6 +962,34 @@ mod tests {
             roles: Vec::new(),
             emojis: Vec::new(),
         });
+        state.confirm_selected_guild();
+        state
+    }
+
+    fn state_with_direct_message(kind: &str) -> DashboardState {
+        let channel_id = Id::new(20);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "alice".to_owned(),
+            kind: kind.to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: Some(vec![ChannelRecipientInfo {
+                user_id: Id::new(30),
+                display_name: "alice".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                status: Some(PresenceStatus::Online),
+            }]),
+        }));
         state.confirm_selected_guild();
         state
     }

@@ -1604,7 +1604,11 @@ fn one_to_one_dm_recipient_status(channel: &ChannelState) -> Option<PresenceStat
         return None;
     }
 
-    channel.recipients.first().map(|recipient| recipient.status)
+    channel
+        .recipients
+        .first()
+        .map(|recipient| recipient.status)
+        .filter(|status| *status != PresenceStatus::Unknown)
 }
 
 fn highlight_style() -> Style {
@@ -1847,6 +1851,14 @@ mod tests {
         assert_eq!(inactive_style.fg, Some(Color::Red));
         assert_eq!(active_style.fg, Some(Color::Red));
         assert!(active_style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn unknown_dm_status_keeps_default_channel_style() {
+        let channel = channel_with_recipients("dm", &[PresenceStatus::Unknown]);
+
+        assert_eq!(channel_name_style(&channel, false).fg, None);
+        assert_eq!(channel_name_style(&channel, true).fg, Some(Color::Green));
     }
 
     #[test]
