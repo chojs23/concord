@@ -217,13 +217,26 @@ mod tests {
             &mut state,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         );
-        assert_eq!(command, None);
+        assert_eq!(
+            command,
+            Some(AppCommand::SubscribeGuildChannel {
+                guild_id: Id::new(1),
+                channel_id: Id::new(11),
+            })
+        );
         assert_eq!(state.selected_channel_id(), Some(Id::new(11)));
 
         handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        handle_key(
+        let command = handle_key(
             &mut state,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        assert_eq!(
+            command,
+            Some(AppCommand::SubscribeGuildChannel {
+                guild_id: Id::new(1),
+                channel_id: Id::new(12),
+            })
         );
         assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
     }

@@ -118,6 +118,15 @@ fn start_command_loop(
                         client.publish_event(AppEvent::GatewayError { message });
                     }
                 }
+                AppCommand::SubscribeGuildChannel {
+                    guild_id,
+                    channel_id,
+                } => {
+                    if let Err(message) = client.subscribe_guild_channel(guild_id, channel_id) {
+                        logging::error("app", &message);
+                        client.publish_event(AppEvent::GatewayError { message });
+                    }
+                }
                 AppCommand::LoadAttachmentPreview { url } => {
                     match timeout(ATTACHMENT_PREVIEW_TIMEOUT, fetch_attachment_preview(&url)).await
                     {

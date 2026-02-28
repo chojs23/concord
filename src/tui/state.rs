@@ -1091,9 +1091,18 @@ impl DashboardState {
             }
             Some(ChannelPaneEntry::Channel { state, .. }) => {
                 let channel_id = state.id;
-                let subscribe = is_direct_message_channel(state);
+                let command = if is_direct_message_channel(state) {
+                    Some(AppCommand::SubscribeDirectMessage { channel_id })
+                } else {
+                    state
+                        .guild_id
+                        .map(|guild_id| AppCommand::SubscribeGuildChannel {
+                            guild_id,
+                            channel_id,
+                        })
+                };
                 self.activate_channel(channel_id);
-                subscribe.then_some(AppCommand::SubscribeDirectMessage { channel_id })
+                command
             }
             None => None,
         }
@@ -2632,7 +2641,7 @@ pub fn presence_color(status: PresenceStatus) -> Color {
         PresenceStatus::Idle => Color::Rgb(180, 140, 0),
         PresenceStatus::DoNotDisturb => Color::Red,
         PresenceStatus::Offline => Color::DarkGray,
-        PresenceStatus::Unknown => Color::Gray,
+        PresenceStatus::Unknown => Color::DarkGray,
     }
 }
 

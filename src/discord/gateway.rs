@@ -30,8 +30,16 @@ use crate::logging;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GatewayCommand {
-    RequestGuildMembers { guild_id: Id<GuildMarker> },
-    SubscribeDirectMessage { channel_id: Id<ChannelMarker> },
+    RequestGuildMembers {
+        guild_id: Id<GuildMarker>,
+    },
+    SubscribeDirectMessage {
+        channel_id: Id<ChannelMarker>,
+    },
+    SubscribeGuildChannel {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+    },
 }
 
 pub async fn run_gateway(
@@ -131,6 +139,28 @@ fn handle_gateway_command(
                 }
             }
         }
+        GatewayCommand::SubscribeGuildChannel {
+            guild_id,
+            channel_id,
+        } => {
+            let payload = guild_channel_subscribe_payload(guild_id, channel_id);
+            match sender.send(payload) {
+                Ok(()) => logging::debug(
+                    "gateway",
+                    format!(
+                        "subscribed to guild channel: guild={} channel={}",
+                        guild_id.get(),
+                        channel_id.get()
+                    ),
+                ),
+                Err(error) => {
+                    logging::debug(
+                        "gateway",
+                        format!("subscribe guild channel failed: {error}"),
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -139,6 +169,28 @@ fn direct_message_subscribe_payload(channel_id: Id<ChannelMarker>) -> String {
         "op": 13,
         "d": {
             "channel_id": channel_id.to_string(),
+        },
+    })
+    .to_string()
+}
+
+fn guild_channel_subscribe_payload(
+    guild_id: Id<GuildMarker>,
+    channel_id: Id<ChannelMarker>,
+) -> String {
+    json!({
+        "op": 37,
+        "d": {
+            "subscriptions": {
+                guild_id.to_string(): {
+                    "typing": true,
+                    "activities": true,
+                    "threads": true,
+                    "channels": {
+                        channel_id.to_string(): [[0, 99]],
+                    },
+                },
+            },
         },
     })
     .to_string()
@@ -191,6 +243,7 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         "GUILD_MEMBER_ADD" | "GUILD_MEMBER_UPDATE" => {
             parse_member_upsert(data).into_iter().collect()
         }
+        "GUILD_MEMBER_LIST_UPDATE" => parse_member_list_update(data),
         "GUILD_MEMBERS_CHUNK" => parse_member_chunk(data),
         "GUILD_MEMBER_REMOVE" => parse_member_remove(data).into_iter().collect(),
         "PRESENCE_UPDATE" => parse_presence_update(data),
@@ -247,7 +300,10 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
     }
     stats.guilds_duration = guilds_started.elapsed();
 
-    let merged_presences = parse_merged_presences(data);
+    let mut merged_presences = parse_merged_presences(data);
+    if let Some(presences) = data.get("presences").and_then(Value::as_array) {
+        merged_presences.extend(presences.iter().filter_map(parse_presence_entry));
+    }
 
     // User-account READY also lists DM and group-DM channels under
     // `private_channels`. They have no `guild_id` and never come through
@@ -724,6 +780,75 @@ fn parse_member_chunk(data: &Value) -> Vec<AppEvent> {
         ));
     }
 
+    events
+}
+
+fn parse_member_list_update(data: &Value) -> Vec<AppEvent> {
+    let Some(guild_id) = data.get("guild_id").and_then(parse_id::<GuildMarker>) else {
+        return Vec::new();
+    };
+    let Some(ops) = data.get("ops").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    let mut events = Vec::new();
+    for op in ops {
+        match op.get("op").and_then(Value::as_str) {
+            Some("SYNC") if sync_range_starts_at_zero(op) => {
+                if let Some(items) = op.get("items").and_then(Value::as_array) {
+                    for item in items {
+                        events.extend(parse_member_list_item(guild_id, item));
+                    }
+                }
+            }
+            Some("INSERT" | "UPDATE") => {
+                if let Some(item) = op.get("item") {
+                    events.extend(parse_member_list_item(guild_id, item));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    events
+}
+
+fn sync_range_starts_at_zero(op: &Value) -> bool {
+    op.get("range")
+        .and_then(Value::as_array)
+        .and_then(|range| range.first())
+        .and_then(Value::as_u64)
+        == Some(0)
+}
+
+fn parse_member_list_item(guild_id: Id<GuildMarker>, item: &Value) -> Vec<AppEvent> {
+    let Some(member) = item
+        .get("member")
+        .or_else(|| item.get("user").map(|_| item))
+    else {
+        return Vec::new();
+    };
+    let Some(member_info) = parse_member_info(member) else {
+        return Vec::new();
+    };
+    let user_id = member_info.user_id;
+    let status = member
+        .get("presence")
+        .and_then(|presence| presence.get("status"))
+        .and_then(Value::as_str)
+        .map(parse_status);
+
+    let mut events = vec![AppEvent::GuildMemberUpsert {
+        guild_id,
+        member: member_info,
+    }];
+    if let Some(status) = status {
+        events.push(AppEvent::PresenceUpdate {
+            guild_id,
+            user_id,
+            status,
+        });
+    }
     events
 }
 
@@ -1268,9 +1393,9 @@ mod tests {
     use twilight_model::id::Id;
 
     use super::{
-        direct_message_subscribe_payload, gateway_intents, parse_channel_info, parse_guild_create,
-        parse_guild_emojis_update, parse_guild_update, parse_message_create, parse_message_update,
-        parse_user_account_event,
+        direct_message_subscribe_payload, gateway_intents, guild_channel_subscribe_payload,
+        parse_channel_info, parse_guild_create, parse_guild_emojis_update, parse_guild_update,
+        parse_message_create, parse_message_update, parse_user_account_event,
     };
     use crate::discord::{
         AppEvent, AttachmentUpdate, MentionInfo, MessageKind, PollAnswerInfo, PollInfo,
@@ -1307,6 +1432,135 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn guild_channel_subscribe_payload_matches_expected_shape() {
+        let payload: serde_json::Value = serde_json::from_str(&guild_channel_subscribe_payload(
+            Id::<twilight_model::id::marker::GuildMarker>::new(10),
+            Id::<twilight_model::id::marker::ChannelMarker>::new(20),
+        ))
+        .expect("payload should be valid json");
+
+        assert_eq!(
+            payload,
+            json!({
+                "op": 37,
+                "d": {
+                    "subscriptions": {
+                        "10": {
+                            "typing": true,
+                            "activities": true,
+                            "threads": true,
+                            "channels": {
+                                "20": [[0, 99]]
+                            }
+                        }
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn raw_member_list_update_populates_members_and_presence() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "GUILD_MEMBER_LIST_UPDATE",
+                "d": {
+                    "guild_id": "10",
+                    "ops": [{
+                        "op": "SYNC",
+                        "range": [0, 99],
+                        "items": [{
+                            "member": {
+                                "user": {
+                                    "id": "20",
+                                    "username": "alice",
+                                    "global_name": "Alice"
+                                },
+                                "nick": "Alice Nick",
+                                "roles": ["30"],
+                                "presence": { "status": "idle" }
+                            }
+                        }]
+                    }]
+                }
+            })
+            .to_string(),
+        );
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::GuildMemberUpsert { guild_id, member }
+                if *guild_id == Id::new(10)
+                    && member.user_id == Id::new(20)
+                    && member.display_name == "Alice Nick"
+                    && member.role_ids == vec![Id::new(30)]
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::PresenceUpdate { guild_id, user_id, status }
+                if *guild_id == Id::new(10)
+                    && *user_id == Id::new(20)
+                    && *status == PresenceStatus::Idle
+        )));
+    }
+
+    #[test]
+    fn raw_member_list_update_handles_insert_and_update_items() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "GUILD_MEMBER_LIST_UPDATE",
+                "d": {
+                    "guild_id": "10",
+                    "ops": [
+                        {
+                            "op": "INSERT",
+                            "item": {
+                                "member": {
+                                    "user": {
+                                        "id": "20",
+                                        "username": "alice"
+                                    },
+                                    "roles": [],
+                                    "presence": { "status": "online" }
+                                }
+                            }
+                        },
+                        {
+                            "op": "UPDATE",
+                            "item": {
+                                "member": {
+                                    "user": {
+                                        "id": "30",
+                                        "username": "bob"
+                                    },
+                                    "roles": [],
+                                    "presence": { "status": "dnd" }
+                                }
+                            }
+                        }
+                    ]
+                }
+            })
+            .to_string(),
+        );
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::PresenceUpdate { guild_id, user_id, status }
+                if *guild_id == Id::new(10)
+                    && *user_id == Id::new(20)
+                    && *status == PresenceStatus::Online
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::PresenceUpdate { guild_id, user_id, status }
+                if *guild_id == Id::new(10)
+                    && *user_id == Id::new(30)
+                    && *status == PresenceStatus::DoNotDisturb
+        )));
     }
 
     #[test]
@@ -1433,6 +1687,50 @@ mod tests {
         assert_eq!(channel.kind, "dm");
         assert_eq!(recipients[0].user_id, Id::new(20));
         assert_eq!(recipients[0].status, Some(PresenceStatus::Idle));
+    }
+
+    #[test]
+    fn raw_ready_parser_applies_top_level_presence_to_dm_recipient() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY",
+                "d": {
+                    "user": {
+                        "id": "99",
+                        "username": "neo"
+                    },
+                    "guilds": [],
+                    "presences": [{
+                        "user": { "id": "20" },
+                        "status": "online"
+                    }],
+                    "private_channels": [{
+                        "id": "10",
+                        "type": 1,
+                        "recipients": [{
+                            "id": "20",
+                            "username": "alice"
+                        }]
+                    }]
+                }
+            })
+            .to_string(),
+        );
+
+        let channel = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::ChannelUpsert(channel) => Some(channel),
+                _ => None,
+            })
+            .expect("ready should emit a private channel upsert");
+        let recipients = channel
+            .recipients
+            .as_ref()
+            .expect("dm should carry recipients");
+
+        assert_eq!(recipients[0].user_id, Id::new(20));
+        assert_eq!(recipients[0].status, Some(PresenceStatus::Online));
     }
 
     #[test]
