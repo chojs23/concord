@@ -259,6 +259,7 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
     let total_started = Instant::now();
     let mut events = Vec::new();
     let mut stats = ReadyTimingStats::default();
+    let mut current_user = None;
 
     let user_started = Instant::now();
     if let Some(user) = data.get("user") {
@@ -274,6 +275,7 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
             user: name,
             user_id,
         });
+        current_user = parse_channel_recipient_info(user);
     }
     stats.user = user_started.elapsed();
 
@@ -314,6 +316,7 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
         for channel in privates {
             if let Some(mut info) = parse_channel_info(channel, None) {
                 apply_recipient_presences(&mut info, &merged_presences);
+                add_current_user_to_group_dm(&mut info, current_user.as_ref());
                 events.push(AppEvent::ChannelUpsert(info));
             }
         }
@@ -457,6 +460,28 @@ fn apply_recipient_presences(
             recipient.status = Some(*status);
         }
     }
+}
+
+fn add_current_user_to_group_dm(
+    channel: &mut ChannelInfo,
+    current_user: Option<&ChannelRecipientInfo>,
+) {
+    if channel.kind != "group-dm" {
+        return;
+    }
+    let Some(current_user) = current_user else {
+        return;
+    };
+    let Some(recipients) = channel.recipients.as_mut() else {
+        return;
+    };
+    if recipients
+        .iter()
+        .any(|recipient| recipient.user_id == current_user.user_id)
+    {
+        return;
+    }
+    recipients.push(current_user.clone());
 }
 
 fn parse_guild_create(data: &Value) -> Option<AppEvent> {
@@ -678,7 +703,6 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         .and_then(|reference| reference.channel_id);
     let forwarded_snapshots =
         parse_message_snapshots(data.get("message_snapshots"), source_channel_id);
-
     Some(AppEvent::MessageCreate {
         guild_id,
         channel_id,
@@ -1580,7 +1604,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_ready_parser_keeps_group_dm_recipients() {
+    fn raw_ready_parser_adds_current_user_to_group_dm_recipients() {
         let events = parse_user_account_event(
             &json!({
                 "t": "READY",
@@ -1632,7 +1656,7 @@ mod tests {
             .expect("group dm should carry recipients");
 
         assert_eq!(channel.kind, "group-dm");
-        assert_eq!(recipients.len(), 2);
+        assert_eq!(recipients.len(), 3);
         assert_eq!(recipients[0].user_id, Id::new(20));
         assert_eq!(recipients[0].display_name, "Alice");
         assert!(!recipients[0].is_bot);
@@ -1640,6 +1664,9 @@ mod tests {
         assert_eq!(recipients[1].display_name, "helper-bot");
         assert!(recipients[1].is_bot);
         assert_eq!(recipients[1].status, Some(PresenceStatus::Idle));
+        assert_eq!(recipients[2].user_id, Id::new(99));
+        assert_eq!(recipients[2].display_name, "neo");
+        assert_eq!(recipients[2].status, None);
     }
 
     #[test]
