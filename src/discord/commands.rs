@@ -61,4 +61,27 @@ pub enum AppCommand {
         message_id: Id<MessageMarker>,
         emoji: ReactionEmoji,
     },
+    RemoveReaction {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: ReactionEmoji,
+    },
+    LoadReactionUsers {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        reactions: Vec<ReactionEmoji>,
+    },
+    LoadPinnedMessages {
+        channel_id: Id<ChannelMarker>,
+    },
+    SetMessagePinned {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        pinned: bool,
+    },
+    VotePoll {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        answer_ids: Vec<u8>,
+    },
 }

@@ -1,7 +1,8 @@
 use twilight_gateway::Event;
 use twilight_model::{
     channel::{
-        Attachment, Channel, Message, message::Embed, message::Mention, message::MessageSnapshot,
+        Attachment, Channel, Message,
+        message::{Embed, EmojiReactionType, Mention, MessageSnapshot, Reaction},
     },
     gateway::{
         payload::incoming::{
@@ -22,6 +23,8 @@ use twilight_model::{
     poll::Poll,
     user::User as TwilightUser,
 };
+
+use super::commands::ReactionEmoji;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum PresenceStatus {
@@ -246,6 +249,25 @@ pub struct PollAnswerInfo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReactionInfo {
+    pub emoji: ReactionEmoji,
+    pub count: u64,
+    pub me: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReactionUserInfo {
+    pub user_id: Id<UserMarker>,
+    pub display_name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReactionUsersInfo {
+    pub emoji: ReactionEmoji,
+    pub users: Vec<ReactionUserInfo>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageInfo {
     pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,
@@ -257,6 +279,8 @@ pub struct MessageInfo {
     pub reference: Option<MessageReferenceInfo>,
     pub reply: Option<ReplyInfo>,
     pub poll: Option<PollInfo>,
+    pub pinned: bool,
+    pub reactions: Vec<ReactionInfo>,
     pub content: Option<String>,
     pub mentions: Vec<MentionInfo>,
     pub attachments: Vec<AttachmentInfo>,
@@ -357,6 +381,26 @@ pub enum AppEvent {
     UserPresenceUpdate {
         user_id: Id<UserMarker>,
         status: PresenceStatus,
+    },
+    CurrentUserReactionAdd {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: ReactionEmoji,
+    },
+    CurrentUserReactionRemove {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: ReactionEmoji,
+    },
+    MessagePinnedUpdate {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        pinned: bool,
+    },
+    ReactionUsersLoaded {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        reactions: Vec<ReactionUsersInfo>,
     },
     GuildFoldersUpdate {
         folders: Vec<GuildFolder>,
@@ -523,6 +567,39 @@ impl PollInfo {
     }
 }
 
+impl ReactionInfo {
+    fn from_reaction(reaction: &Reaction) -> Self {
+        Self {
+            emoji: reaction_emoji(&reaction.emoji),
+            count: reaction.count,
+            me: reaction.me,
+        }
+    }
+}
+
+fn reaction_emoji(emoji: &EmojiReactionType) -> ReactionEmoji {
+    match emoji {
+        EmojiReactionType::Unicode { name } => ReactionEmoji::Unicode(name.clone()),
+        EmojiReactionType::Custom { id, name, animated } => ReactionEmoji::Custom {
+            id: *id,
+            name: name.clone(),
+            animated: *animated,
+        },
+    }
+}
+
+pub fn reaction_user_info(user: &TwilightUser) -> ReactionUserInfo {
+    ReactionUserInfo {
+        user_id: user.id,
+        display_name: user
+            .global_name
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&user.name)
+            .to_owned(),
+    }
+}
+
 fn filename_has_extension(filename: &str, extensions: &[&str]) -> bool {
     filename.rsplit_once('.').is_some_and(|(_, extension)| {
         extensions
@@ -554,6 +631,12 @@ impl MessageInfo {
             reference,
             reply,
             poll: poll.or_else(|| poll_result_info(&message.embeds)),
+            pinned: message.pinned,
+            reactions: message
+                .reactions
+                .iter()
+                .map(ReactionInfo::from_reaction)
+                .collect(),
             content: Some(message.content),
             mentions,
             attachments: message

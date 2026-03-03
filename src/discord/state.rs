@@ -8,7 +8,7 @@ use twilight_model::id::{
 use super::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
     GuildFolder, MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
-    MessageSnapshotInfo, PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
+    MessageSnapshotInfo, PollInfo, PresenceStatus, ReactionInfo, ReplyInfo, RoleInfo,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -87,6 +87,8 @@ pub struct MessageState {
     pub reference: Option<MessageReferenceInfo>,
     pub reply: Option<ReplyInfo>,
     pub poll: Option<PollInfo>,
+    pub pinned: bool,
+    pub reactions: Vec<ReactionInfo>,
     pub content: Option<String>,
     pub mentions: Vec<MentionInfo>,
     pub attachments: Vec<AttachmentInfo>,
@@ -179,6 +181,8 @@ struct MessageUpdateFields {
     content: Option<String>,
     mentions: Option<Vec<MentionInfo>>,
     attachments: AttachmentUpdate,
+    pinned: Option<bool>,
+    reactions: Option<Vec<ReactionInfo>>,
 }
 
 impl Default for DiscordState {
@@ -301,6 +305,8 @@ impl DiscordState {
                 reference: reference.clone(),
                 reply: reply.clone(),
                 poll: poll.clone(),
+                pinned: false,
+                reactions: Vec::new(),
                 content: content.clone(),
                 mentions: mentions.clone(),
                 attachments: attachments.clone(),
@@ -328,6 +334,34 @@ impl DiscordState {
                     content: content.clone(),
                     mentions: mentions.clone(),
                     attachments: attachments.clone(),
+                    pinned: None,
+                    reactions: None,
+                },
+            ),
+            AppEvent::CurrentUserReactionAdd {
+                channel_id,
+                message_id,
+                emoji,
+            } => self.add_reaction(*channel_id, *message_id, emoji.clone()),
+            AppEvent::CurrentUserReactionRemove {
+                channel_id,
+                message_id,
+                emoji,
+            } => self.remove_reaction(*channel_id, *message_id, emoji),
+            AppEvent::MessagePinnedUpdate {
+                channel_id,
+                message_id,
+                pinned,
+            } => self.update_message(
+                *channel_id,
+                *message_id,
+                MessageUpdateFields {
+                    poll: None,
+                    content: None,
+                    mentions: None,
+                    attachments: AttachmentUpdate::Unchanged,
+                    pinned: Some(*pinned),
+                    reactions: None,
                 },
             ),
             AppEvent::MessageDelete {
@@ -378,6 +412,7 @@ impl DiscordState {
             AppEvent::Ready { .. }
             | AppEvent::GatewayError { .. }
             | AppEvent::StatusMessage { .. }
+            | AppEvent::ReactionUsersLoaded { .. }
             | AppEvent::AttachmentPreviewLoaded { .. }
             | AppEvent::AttachmentPreviewLoadFailed { .. }
             | AppEvent::GatewayClosed => {}
@@ -567,6 +602,8 @@ impl DiscordState {
             if message.poll.is_some() || existing.poll.is_none() {
                 existing.poll = message.poll;
             }
+            existing.pinned = message.pinned;
+            existing.reactions = message.reactions;
             if message.content.is_some() {
                 existing.content = message.content;
             }
@@ -587,6 +624,63 @@ impl DiscordState {
             messages.pop_front();
         }
         self.record_channel_message_id(channel_id, message_id);
+    }
+
+    fn add_reaction(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: super::ReactionEmoji,
+    ) {
+        let Some(message) = self
+            .messages
+            .get_mut(&channel_id)
+            .and_then(|messages| messages.iter_mut().find(|message| message.id == message_id))
+        else {
+            return;
+        };
+        if let Some(reaction) = message
+            .reactions
+            .iter_mut()
+            .find(|reaction| reaction.emoji == emoji)
+        {
+            if !reaction.me {
+                reaction.count = reaction.count.saturating_add(1);
+            }
+            reaction.me = true;
+        } else {
+            message.reactions.push(ReactionInfo {
+                emoji,
+                count: 1,
+                me: true,
+            });
+        }
+    }
+
+    fn remove_reaction(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: &super::ReactionEmoji,
+    ) {
+        let Some(message) = self
+            .messages
+            .get_mut(&channel_id)
+            .and_then(|messages| messages.iter_mut().find(|message| message.id == message_id))
+        else {
+            return;
+        };
+        if let Some(reaction) = message
+            .reactions
+            .iter_mut()
+            .find(|reaction| &reaction.emoji == emoji)
+        {
+            if reaction.me {
+                reaction.count = reaction.count.saturating_sub(1);
+            }
+            reaction.me = false;
+        }
+        message.reactions.retain(|reaction| reaction.count > 0);
     }
 
     fn merge_message_history(
@@ -617,6 +711,8 @@ impl DiscordState {
                 reference: message.reference.clone(),
                 reply: message.reply.clone(),
                 poll: message.poll.clone(),
+                pinned: message.pinned,
+                reactions: message.reactions.clone(),
                 content: message.content.clone(),
                 mentions: message.mentions.clone(),
                 attachments: message.attachments.clone(),
@@ -668,6 +764,12 @@ impl DiscordState {
             if let Some(poll) = update.poll {
                 existing.poll = Some(poll);
             }
+            if let Some(pinned) = update.pinned {
+                existing.pinned = pinned;
+            }
+            if let Some(reactions) = update.reactions {
+                existing.reactions = reactions;
+            }
             if let Some(content) = update.content {
                 existing.content = Some(content);
             }
@@ -703,6 +805,8 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
     if incoming.poll.is_some() || existing.poll.is_none() {
         existing.poll = incoming.poll.clone();
     }
+    existing.pinned = incoming.pinned;
+    existing.reactions = incoming.reactions.clone();
 
     if let Some(content) = &incoming.content {
         let existing_is_empty = existing
@@ -767,8 +871,8 @@ mod tests {
     use crate::discord::{
         AppEvent, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
         DiscordState, MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
-        MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
-        RoleInfo,
+        MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji,
+        ReactionInfo, ReplyInfo, RoleInfo,
     };
 
     #[test]
@@ -1813,6 +1917,8 @@ mod tests {
             channel_id,
             before: None,
             messages: vec![MessageInfo {
+                pinned: false,
+                reactions: Vec::new(),
                 content: Some(String::new()),
                 ..message_info(channel_id, 20, "")
             }],
@@ -1867,6 +1973,41 @@ mod tests {
     }
 
     #[test]
+    fn history_merge_clears_reactions_from_authoritative_history() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![MessageInfo {
+                reactions: vec![ReactionInfo {
+                    emoji: ReactionEmoji::Unicode("👍".to_owned()),
+                    count: 2,
+                    me: true,
+                }],
+                ..message_info(channel_id, 20, "hello")
+            }],
+        });
+        assert_eq!(state.messages_for_channel(channel_id)[0].reactions.len(), 1);
+
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![MessageInfo {
+                reactions: Vec::new(),
+                ..message_info(channel_id, 20, "hello")
+            }],
+        });
+
+        assert!(
+            state.messages_for_channel(channel_id)[0]
+                .reactions
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn stores_and_merges_message_attachments() {
         let channel_id: Id<ChannelMarker> = Id::new(10);
         let mut state = DiscordState::default();
@@ -1891,6 +2032,8 @@ mod tests {
             channel_id,
             before: None,
             messages: vec![MessageInfo {
+                pinned: false,
+                reactions: Vec::new(),
                 content: Some(String::new()),
                 attachments: Vec::new(),
                 ..message_info(channel_id, 20, "")
@@ -2624,6 +2767,50 @@ mod tests {
         assert_eq!(member.status, PresenceStatus::Online);
     }
 
+    #[test]
+    fn current_user_reaction_events_update_cached_reaction_summary() {
+        let mut state = DiscordState::default();
+        let channel_id = Id::new(2);
+        let message_id = Id::new(1);
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        state.apply_event(&AppEvent::CurrentUserReactionAdd {
+            channel_id,
+            message_id,
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        });
+        let message = state.messages_for_channel(channel_id)[0];
+        assert_eq!(message.reactions.len(), 1);
+        assert_eq!(message.reactions[0].count, 1);
+        assert!(message.reactions[0].me);
+
+        state.apply_event(&AppEvent::CurrentUserReactionRemove {
+            channel_id,
+            message_id,
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        });
+        assert!(
+            state.messages_for_channel(channel_id)[0]
+                .reactions
+                .is_empty()
+        );
+    }
+
     fn message_info(channel_id: Id<ChannelMarker>, message_id: u64, content: &str) -> MessageInfo {
         MessageInfo {
             guild_id: None,
@@ -2636,6 +2823,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some(content.to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
@@ -2655,6 +2844,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some(content.to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),

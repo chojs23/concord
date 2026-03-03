@@ -17,7 +17,7 @@ use twilight_model::{
 use crate::{AppError, Result};
 
 use super::{
-    ReactionEmoji,
+    MessageInfo, ReactionEmoji, ReactionUserInfo,
     events::AppEvent,
     gateway::{GatewayCommand, run_gateway},
     rest::DiscordRest,
@@ -35,7 +35,7 @@ pub struct DiscordClient {
 impl DiscordClient {
     pub fn new(token: String) -> Result<Self> {
         let http = Arc::new(http_client_for_token(&token)?);
-        let rest = DiscordRest::new(http);
+        let rest = DiscordRest::new(http, token.clone());
         let (events_tx, _) = broadcast::channel(512);
         let (gateway_commands_tx, gateway_commands_rx) = mpsc::unbounded_channel();
 
@@ -129,6 +129,63 @@ impl DiscordClient {
         emoji: &ReactionEmoji,
     ) -> Result<()> {
         self.rest.add_reaction(channel_id, message_id, emoji).await
+    }
+
+    pub async fn remove_current_user_reaction(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: &ReactionEmoji,
+    ) -> Result<()> {
+        self.rest
+            .remove_current_user_reaction(channel_id, message_id, emoji)
+            .await
+    }
+
+    pub async fn load_reaction_users(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: &ReactionEmoji,
+    ) -> Result<Vec<ReactionUserInfo>> {
+        self.rest
+            .load_reaction_users(channel_id, message_id, emoji)
+            .await
+    }
+
+    pub async fn load_pinned_messages(
+        &self,
+        channel_id: Id<ChannelMarker>,
+    ) -> Result<Vec<MessageInfo>> {
+        Ok(self
+            .rest
+            .load_pinned_messages(channel_id)
+            .await?
+            .into_iter()
+            .map(MessageInfo::from_message)
+            .collect())
+    }
+
+    pub async fn set_message_pinned(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        pinned: bool,
+    ) -> Result<()> {
+        self.rest
+            .set_message_pinned(channel_id, message_id, pinned)
+            .await
+    }
+
+    pub async fn vote_poll(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        answer_ids: &[u8],
+    ) -> Result<()> {
+        self.rest
+            .vote_poll(channel_id, message_id, answer_ids)
+            .await
     }
 }
 

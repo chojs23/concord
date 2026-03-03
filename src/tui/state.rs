@@ -5,11 +5,13 @@ use twilight_model::id::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{
     AppCommand, AppEvent, AttachmentInfo, ChannelRecipientState, ChannelState, CustomEmojiInfo,
     DiscordState, GuildFolder, GuildMemberState, GuildState, MentionInfo, MessageInfo,
-    MessageSnapshotInfo, MessageState, PresenceStatus, ReactionEmoji, RoleState,
+    MessageSnapshotInfo, MessageState, PresenceStatus, ReactionEmoji, ReactionInfo,
+    ReactionUsersInfo, RoleState,
 };
 use crate::logging;
 
@@ -33,12 +35,17 @@ pub enum MessageActionKind {
     OpenThread,
     DownloadImage,
     AddReaction,
+    RemoveReaction(usize),
+    ShowReactionUsers,
+    LoadPinnedMessages,
+    SetPinned(bool),
+    VotePollAnswer(u8),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageActionItem {
     pub kind: MessageActionKind,
-    pub label: &'static str,
+    pub label: String,
     pub enabled: bool,
 }
 
@@ -157,6 +164,24 @@ pub struct EmojiReactionPickerState {
     message_id: Id<MessageMarker>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReactionUsersPopupState {
+    channel_id: Id<ChannelMarker>,
+    message_id: Id<MessageMarker>,
+    reactions: Vec<ReactionUsersInfo>,
+    scroll: usize,
+}
+
+impl ReactionUsersPopupState {
+    pub fn reactions(&self) -> &[ReactionUsersInfo] {
+        &self.reactions
+    }
+
+    pub fn scroll(&self) -> usize {
+        self.scroll
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OlderHistoryRequestState {
     Requested { before: Id<MessageMarker> },
@@ -199,6 +224,7 @@ pub struct DashboardState {
     reply_target_message_id: Option<Id<MessageMarker>>,
     message_action_menu: Option<MessageActionMenuState>,
     emoji_reaction_picker: Option<EmojiReactionPickerState>,
+    reaction_users_popup: Option<ReactionUsersPopupState>,
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
     last_error: Option<String>,
@@ -252,6 +278,7 @@ impl DashboardState {
             reply_target_message_id: None,
             message_action_menu: None,
             emoji_reaction_picker: None,
+            reaction_users_popup: None,
             current_user: None,
             current_user_id: None,
             last_error: None,
@@ -292,6 +319,20 @@ impl DashboardState {
             }
             AppEvent::StatusMessage { message } => {
                 self.last_status = Some(message.clone());
+                self.last_error = None;
+            }
+            AppEvent::ReactionUsersLoaded {
+                channel_id,
+                message_id,
+                reactions,
+            } => {
+                self.reaction_users_popup = Some(ReactionUsersPopupState {
+                    channel_id: *channel_id,
+                    message_id: *message_id,
+                    reactions: reactions.clone(),
+                    scroll: 0,
+                });
+                self.last_status = Some("loaded reacted users".to_owned());
                 self.last_error = None;
             }
             AppEvent::MessageHistoryLoadFailed {
@@ -369,6 +410,14 @@ impl DashboardState {
         self.emoji_reaction_picker.is_some()
     }
 
+    pub fn is_reaction_users_popup_open(&self) -> bool {
+        self.reaction_users_popup.is_some()
+    }
+
+    pub fn reaction_users_popup(&self) -> Option<&ReactionUsersPopupState> {
+        self.reaction_users_popup.as_ref()
+    }
+
     pub fn emoji_reaction_items(&self) -> Vec<EmojiReactionItem> {
         let mut items: Vec<EmojiReactionItem> = EMOJI_REACTION_ITEMS
             .iter()
@@ -405,6 +454,34 @@ impl DashboardState {
 
     pub fn close_emoji_reaction_picker(&mut self) {
         self.emoji_reaction_picker = None;
+    }
+
+    pub fn close_reaction_users_popup(&mut self) {
+        self.reaction_users_popup = None;
+    }
+
+    pub fn scroll_reaction_users_popup_down(&mut self) {
+        if let Some(popup) = &mut self.reaction_users_popup {
+            popup.scroll = popup.scroll.saturating_add(1);
+        }
+    }
+
+    pub fn scroll_reaction_users_popup_up(&mut self) {
+        if let Some(popup) = &mut self.reaction_users_popup {
+            popup.scroll = popup.scroll.saturating_sub(1);
+        }
+    }
+
+    pub fn page_reaction_users_popup_down(&mut self) {
+        if let Some(popup) = &mut self.reaction_users_popup {
+            popup.scroll = popup.scroll.saturating_add(10);
+        }
+    }
+
+    pub fn page_reaction_users_popup_up(&mut self) {
+        if let Some(popup) = &mut self.reaction_users_popup {
+            popup.scroll = popup.scroll.saturating_sub(10);
+        }
     }
 
     pub fn move_message_action_down(&mut self) {
@@ -445,7 +522,7 @@ impl DashboardState {
         };
         let mut actions = vec![MessageActionItem {
             kind: MessageActionKind::Reply,
-            label: "Reply",
+            label: "Reply".to_owned(),
             enabled: true,
         }];
 
@@ -453,22 +530,64 @@ impl DashboardState {
         if self.thread_summary_for_message(message).is_some() {
             actions.push(MessageActionItem {
                 kind: MessageActionKind::OpenThread,
-                label: "Open thread",
+                label: "Open thread".to_owned(),
                 enabled: true,
             });
         }
         if capabilities.has_image {
             actions.push(MessageActionItem {
                 kind: MessageActionKind::DownloadImage,
-                label: "Download image",
+                label: "Download image".to_owned(),
                 enabled: true,
             });
         }
         actions.push(MessageActionItem {
             kind: MessageActionKind::AddReaction,
-            label: "Add reaction",
+            label: "Add reaction".to_owned(),
             enabled: true,
         });
+        actions.push(MessageActionItem {
+            kind: MessageActionKind::LoadPinnedMessages,
+            label: "Show pinned messages".to_owned(),
+            enabled: true,
+        });
+        actions.push(MessageActionItem {
+            kind: MessageActionKind::SetPinned(!message.pinned),
+            label: if message.pinned {
+                "Unpin message".to_owned()
+            } else {
+                "Pin message".to_owned()
+            },
+            enabled: true,
+        });
+        if !message.reactions.is_empty() {
+            actions.push(MessageActionItem {
+                kind: MessageActionKind::ShowReactionUsers,
+                label: "Show reacted users".to_owned(),
+                enabled: true,
+            });
+        }
+        for (index, reaction) in message.reactions.iter().enumerate() {
+            if reaction.me {
+                actions.push(MessageActionItem {
+                    kind: MessageActionKind::RemoveReaction(index),
+                    label: format!("Remove {} reaction", reaction.emoji.status_label()),
+                    enabled: true,
+                });
+            }
+        }
+        if std::env::var_os("CONCORD_EXPERIMENTAL_POLL_VOTE").is_some()
+            && let Some(poll) = &message.poll
+            && !poll.results_finalized.unwrap_or(false)
+        {
+            for answer in &poll.answers {
+                actions.push(MessageActionItem {
+                    kind: MessageActionKind::VotePollAnswer(answer.answer_id),
+                    label: format!("Vote poll: {}", answer.text),
+                    enabled: true,
+                });
+            }
+        }
         actions
     }
 
@@ -533,6 +652,82 @@ impl DashboardState {
                 self.open_emoji_reaction_picker();
                 self.close_message_action_menu();
                 None
+            }
+            MessageActionKind::RemoveReaction(index) => {
+                let message = self.selected_message_state()?;
+                let channel_id = message.channel_id;
+                let message_id = message.id;
+                let reaction = message.reactions.get(index)?.clone();
+                self.close_message_action_menu();
+                Some(AppCommand::RemoveReaction {
+                    channel_id,
+                    message_id,
+                    emoji: reaction.emoji,
+                })
+            }
+            MessageActionKind::ShowReactionUsers => {
+                let message = self.selected_message_state()?;
+                let channel_id = message.channel_id;
+                let message_id = message.id;
+                let reactions = message
+                    .reactions
+                    .iter()
+                    .map(|reaction| reaction.emoji.clone())
+                    .collect::<Vec<_>>();
+                if reactions.is_empty() {
+                    self.close_message_action_menu();
+                    return None;
+                }
+                self.close_message_action_menu();
+                Some(AppCommand::LoadReactionUsers {
+                    channel_id,
+                    message_id,
+                    reactions,
+                })
+            }
+            MessageActionKind::LoadPinnedMessages => {
+                let channel_id = self.selected_message_state()?.channel_id;
+                self.close_message_action_menu();
+                Some(AppCommand::LoadPinnedMessages { channel_id })
+            }
+            MessageActionKind::SetPinned(pinned) => {
+                let message = self.selected_message_state()?;
+                let channel_id = message.channel_id;
+                let message_id = message.id;
+                self.close_message_action_menu();
+                Some(AppCommand::SetMessagePinned {
+                    channel_id,
+                    message_id,
+                    pinned,
+                })
+            }
+            MessageActionKind::VotePollAnswer(answer_id) => {
+                let message = self.selected_message_state()?;
+                let channel_id = message.channel_id;
+                let message_id = message.id;
+                let poll = message.poll.as_ref()?;
+                let mut answer_ids = if poll.allow_multiselect {
+                    poll.answers
+                        .iter()
+                        .filter(|answer| answer.me_voted && answer.answer_id != answer_id)
+                        .map(|answer| answer.answer_id)
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
+                if !poll
+                    .answers
+                    .iter()
+                    .any(|answer| answer.answer_id == answer_id && answer.me_voted)
+                {
+                    answer_ids.push(answer_id);
+                }
+                self.close_message_action_menu();
+                Some(AppCommand::VotePoll {
+                    channel_id,
+                    message_id,
+                    answer_ids,
+                })
             }
         }
     }
@@ -2363,6 +2558,7 @@ where
     } else {
         0
     };
+    let reaction_lines = reaction_line_count(&message.reactions, content_width);
 
     if let Some(snapshot) = message.forwarded_snapshots.first() {
         let metadata_line =
@@ -2373,11 +2569,49 @@ where
                 + kind_line
                 + primary_lines
                 + forwarded_snapshot_line_count(snapshot, content_width, &render_snapshot_text)
-                + metadata_line)
+                + metadata_line
+                + reaction_lines)
                 .max(1);
     }
 
-    1 + (reply_line + poll_lines + kind_line + primary_lines).max(1)
+    1 + (reply_line + poll_lines + kind_line + primary_lines + reaction_lines).max(1)
+}
+
+fn reaction_line_count(reactions: &[ReactionInfo], width: usize) -> usize {
+    let chips = reactions
+        .iter()
+        .filter(|reaction| reaction.count > 0)
+        .map(|reaction| {
+            let marker = if reaction.me { "●" } else { "○" };
+            format!(
+                "[{marker} {} {}]",
+                reaction.emoji.status_label(),
+                reaction.count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("  ");
+    if chips.is_empty() {
+        0
+    } else {
+        reaction_text_line_count(&chips, width)
+    }
+}
+
+fn reaction_text_line_count(value: &str, width: usize) -> usize {
+    let width = width.max(1);
+    let mut lines = 1;
+    let mut current_width = 0;
+    for grapheme in unicode_segmentation::UnicodeSegmentation::graphemes(value, true) {
+        let grapheme_width = grapheme.width();
+        if current_width > 0 && current_width + grapheme_width > width {
+            lines += 1;
+            current_width = grapheme_width;
+        } else {
+            current_width += grapheme_width;
+        }
+    }
+    lines
 }
 
 fn system_message_line_count(message: &MessageState) -> Option<usize> {
@@ -2743,8 +2977,8 @@ mod tests {
     use crate::discord::{
         AppCommand, AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
         GuildFolder, MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo,
-        MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReplyInfo,
-        RoleInfo,
+        MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
+        ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo,
     };
 
     #[test]
@@ -3399,6 +3633,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some("clip".to_owned()),
             mentions: Vec::new(),
             attachments: vec![video_attachment(1)],
@@ -3421,6 +3657,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some("hello\nworld".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
@@ -3443,6 +3681,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some("abcdefghijkl".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
@@ -3509,6 +3749,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
@@ -3537,6 +3779,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some("漢字仮名交じ".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
@@ -3559,6 +3803,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some("look".to_owned()),
             mentions: Vec::new(),
             attachments: vec![image_attachment(1)],
@@ -3581,6 +3827,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
@@ -3603,6 +3851,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
@@ -3631,6 +3881,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
@@ -3662,6 +3914,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
@@ -3684,6 +3938,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some("reply body".to_owned()),
             mentions: Vec::new(),
             attachments: vec![image_attachment(1)],
@@ -3714,6 +3970,8 @@ mod tests {
                 mentions: Vec::new(),
             }),
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some("asdf".to_owned()),
             mentions: Vec::new(),
             attachments: vec![image_attachment(1)],
@@ -3736,6 +3994,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: Some(poll_info(false)),
+            pinned: false,
+            reactions: Vec::new(),
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
@@ -3788,6 +4048,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: Some(poll_info(true)),
+            pinned: false,
+            reactions: Vec::new(),
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
@@ -3821,7 +4083,95 @@ mod tests {
 
         assert_eq!(
             actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
-            vec![MessageActionKind::Reply, MessageActionKind::AddReaction]
+            vec![
+                MessageActionKind::Reply,
+                MessageActionKind::AddReaction,
+                MessageActionKind::LoadPinnedMessages,
+                MessageActionKind::SetPinned(true),
+            ]
+        );
+    }
+
+    #[test]
+    fn reaction_message_actions_use_single_reacted_users_item() {
+        let mut state = state_with_reaction_message();
+        focus_messages(&mut state);
+
+        let actions = state.selected_message_action_items();
+
+        assert_eq!(
+            actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
+            vec![
+                MessageActionKind::Reply,
+                MessageActionKind::AddReaction,
+                MessageActionKind::LoadPinnedMessages,
+                MessageActionKind::SetPinned(true),
+                MessageActionKind::ShowReactionUsers,
+                MessageActionKind::RemoveReaction(0),
+            ]
+        );
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| action.label == "Show reacted users")
+                .count(),
+            1
+        );
+        assert!(!actions.iter().any(|action| action.label == "Show 👍 users"));
+    }
+
+    #[test]
+    fn show_reacted_users_action_loads_all_reaction_emojis() {
+        let mut state = state_with_reaction_message();
+        focus_messages(&mut state);
+        state.open_selected_message_actions();
+        for _ in 0..4 {
+            state.move_message_action_down();
+        }
+
+        let command = state.activate_selected_message_action();
+
+        assert_eq!(
+            command,
+            Some(AppCommand::LoadReactionUsers {
+                channel_id: Id::new(2),
+                message_id: Id::new(1),
+                reactions: vec![
+                    ReactionEmoji::Unicode("👍".to_owned()),
+                    ReactionEmoji::Custom {
+                        id: Id::new(50),
+                        name: Some("party".to_owned()),
+                        animated: false,
+                    },
+                ],
+            })
+        );
+        assert!(!state.is_message_action_menu_open());
+    }
+
+    #[test]
+    fn reaction_users_loaded_opens_popup_state() {
+        let mut state = state_with_messages(1);
+
+        state.push_event(AppEvent::ReactionUsersLoaded {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            reactions: vec![ReactionUsersInfo {
+                emoji: ReactionEmoji::Unicode("👍".to_owned()),
+                users: vec![ReactionUserInfo {
+                    user_id: Id::new(10),
+                    display_name: "neo".to_owned(),
+                }],
+            }],
+        });
+
+        assert!(state.is_reaction_users_popup_open());
+        assert_eq!(state.last_status(), Some("loaded reacted users"));
+        assert_eq!(
+            state
+                .reaction_users_popup()
+                .map(|popup| popup.reactions()[0].users[0].display_name.as_str()),
+            Some("neo")
         );
     }
 
@@ -3837,6 +4187,8 @@ mod tests {
                 MessageActionKind::Reply,
                 MessageActionKind::OpenThread,
                 MessageActionKind::AddReaction,
+                MessageActionKind::LoadPinnedMessages,
+                MessageActionKind::SetPinned(true),
             ]
         );
 
@@ -3861,6 +4213,8 @@ mod tests {
                     channel_id: Some(Id::new(10)),
                     message_id: None,
                 }),
+                pinned: false,
+                reactions: Vec::new(),
                 content: Some("old thread name".to_owned()),
                 ..message_info(Id::new(2), 2)
             }],
@@ -3929,7 +4283,12 @@ mod tests {
 
         assert_eq!(
             actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
-            vec![MessageActionKind::Reply, MessageActionKind::AddReaction]
+            vec![
+                MessageActionKind::Reply,
+                MessageActionKind::AddReaction,
+                MessageActionKind::LoadPinnedMessages,
+                MessageActionKind::SetPinned(true),
+            ]
         );
         assert!(!actions.iter().any(|action| action.label.contains("poll")));
     }
@@ -3963,7 +4322,38 @@ mod tests {
                 MessageActionKind::Reply,
                 MessageActionKind::DownloadImage,
                 MessageActionKind::AddReaction,
+                MessageActionKind::LoadPinnedMessages,
+                MessageActionKind::SetPinned(true),
             ]
+        );
+    }
+
+    #[test]
+    fn poll_vote_actions_require_experimental_opt_in() {
+        let mut state = state_with_messages(1);
+        focus_messages(&mut state);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: Some(poll_info(false)),
+            content: Some(String::new()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        assert!(
+            state
+                .selected_message_action_items()
+                .iter()
+                .all(|action| !matches!(action.kind, MessageActionKind::VotePollAnswer(_)))
         );
     }
 
@@ -5140,6 +5530,34 @@ mod tests {
         state_with_message_ids(1..=count)
     }
 
+    fn state_with_reaction_message() -> DashboardState {
+        let mut state = state_with_messages(1);
+        state.push_event(AppEvent::MessageHistoryLoaded {
+            channel_id: Id::new(2),
+            before: None,
+            messages: vec![MessageInfo {
+                reactions: vec![
+                    ReactionInfo {
+                        emoji: ReactionEmoji::Unicode("👍".to_owned()),
+                        count: 2,
+                        me: true,
+                    },
+                    ReactionInfo {
+                        emoji: ReactionEmoji::Custom {
+                            id: Id::new(50),
+                            name: Some("party".to_owned()),
+                            animated: false,
+                        },
+                        count: 1,
+                        me: false,
+                    },
+                ],
+                ..message_info(Id::new(2), 1)
+            }],
+        });
+        state
+    }
+
     fn state_with_custom_emojis() -> DashboardState {
         let guild_id = Id::new(1);
         let channel_id: Id<ChannelMarker> = Id::new(2);
@@ -5330,6 +5748,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some(content.to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
@@ -5470,6 +5890,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some(format!("msg {message_id}")),
             mentions: Vec::new(),
             attachments: Vec::new(),

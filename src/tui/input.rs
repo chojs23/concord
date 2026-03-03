@@ -9,6 +9,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return None;
     }
 
+    if state.is_reaction_users_popup_open() {
+        return handle_reaction_users_popup_key(state, key);
+    }
+
     if state.is_composing() {
         return handle_composer_key(state, key);
     }
@@ -124,6 +128,22 @@ fn handle_emoji_reaction_picker_key(
     None
 }
 
+fn handle_reaction_users_popup_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc => state.close_reaction_users_popup(),
+        KeyCode::Char('j') | KeyCode::Down => state.scroll_reaction_users_popup_down(),
+        KeyCode::Char('k') | KeyCode::Up => state.scroll_reaction_users_popup_up(),
+        KeyCode::PageDown => state.page_reaction_users_popup_down(),
+        KeyCode::PageUp => state.page_reaction_users_popup_up(),
+        _ => {}
+    }
+
+    None
+}
+
 fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match key.code {
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
@@ -160,7 +180,7 @@ mod tests {
     use crate::{
         discord::{
             AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, GuildFolder,
-            PresenceStatus, ReactionEmoji,
+            PresenceStatus, ReactionEmoji, ReactionUserInfo, ReactionUsersInfo,
         },
         tui::state::{
             ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind,
@@ -859,6 +879,37 @@ mod tests {
         assert_eq!(command, None);
         assert!(!state.is_emoji_reaction_picker_open());
         assert_eq!(state.selected_message(), 1);
+    }
+
+    #[test]
+    fn reaction_users_popup_is_modal_and_escape_closes_it() {
+        let mut state = state_with_messages(2);
+        focus_messages(&mut state);
+        state.push_event(AppEvent::ReactionUsersLoaded {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            reactions: vec![ReactionUsersInfo {
+                emoji: ReactionEmoji::Unicode("👍".to_owned()),
+                users: vec![ReactionUserInfo {
+                    user_id: Id::new(10),
+                    display_name: "neo".to_owned(),
+                }],
+            }],
+        });
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+
+        assert_eq!(state.selected_message(), 1);
+        assert!(state.is_reaction_users_popup_open());
+        assert_eq!(
+            state.reaction_users_popup().map(|popup| popup.scroll()),
+            Some(1)
+        );
+
+        let command = handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert_eq!(command, None);
+        assert!(!state.is_reaction_users_popup_open());
     }
 
     fn state_with_folder() -> DashboardState {

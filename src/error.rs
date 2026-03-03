@@ -21,6 +21,8 @@ pub enum AppError {
     Http(#[from] twilight_http::Error),
     #[error("failed to decode Discord response body")]
     DeserializeBody(#[from] twilight_http::response::DeserializeBodyError),
+    #[error("Discord request failed: {0}")]
+    DiscordRequest(String),
     #[error("terminal I/O failed")]
     Io(#[from] std::io::Error),
     #[error("QR login failed: {0}")]

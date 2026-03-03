@@ -11,7 +11,7 @@ use tokio::time::{Duration, timeout};
 
 use crate::{
     DiscordClient, Result,
-    discord::{AppCommand, AppEvent, MessageInfo},
+    discord::{AppCommand, AppEvent, MessageInfo, ReactionUsersInfo},
     logging, token_store, tui,
 };
 
@@ -198,9 +198,16 @@ fn start_command_loop(
                     message_id,
                     emoji,
                 } => match client.add_reaction(channel_id, message_id, &emoji).await {
-                    Ok(()) => client.publish_event(AppEvent::StatusMessage {
-                        message: format!("added {} reaction", emoji.status_label()),
-                    }),
+                    Ok(()) => {
+                        client.publish_event(AppEvent::CurrentUserReactionAdd {
+                            channel_id,
+                            message_id,
+                            emoji: emoji.clone(),
+                        });
+                        client.publish_event(AppEvent::StatusMessage {
+                            message: format!("added {} reaction", emoji.status_label()),
+                        });
+                    }
                     Err(error) => {
                         logging::error("app", format!("add reaction failed: {error}"));
                         client.publish_event(AppEvent::GatewayError {
@@ -208,9 +215,159 @@ fn start_command_loop(
                         });
                     }
                 },
+                AppCommand::RemoveReaction {
+                    channel_id,
+                    message_id,
+                    emoji,
+                } => match client
+                    .remove_current_user_reaction(channel_id, message_id, &emoji)
+                    .await
+                {
+                    Ok(()) => {
+                        client.publish_event(AppEvent::CurrentUserReactionRemove {
+                            channel_id,
+                            message_id,
+                            emoji: emoji.clone(),
+                        });
+                        client.publish_event(AppEvent::StatusMessage {
+                            message: format!("removed {} reaction", emoji.status_label()),
+                        });
+                    }
+                    Err(error) => {
+                        logging::error("app", format!("remove reaction failed: {error}"));
+                        client.publish_event(AppEvent::GatewayError {
+                            message: format!("remove reaction failed: {error}"),
+                        });
+                    }
+                },
+                AppCommand::LoadReactionUsers {
+                    channel_id,
+                    message_id,
+                    reactions,
+                } => {
+                    let mut loaded_reactions = Vec::with_capacity(reactions.len());
+                    let mut failed = false;
+                    for emoji in reactions {
+                        match client
+                            .load_reaction_users(channel_id, message_id, &emoji)
+                            .await
+                        {
+                            Ok(users) => loaded_reactions.push(ReactionUsersInfo { emoji, users }),
+                            Err(error) => {
+                                logging::error(
+                                    "app",
+                                    format!("load reaction users failed: {error}"),
+                                );
+                                client.publish_event(AppEvent::GatewayError {
+                                    message: format!("load reaction users failed: {error}"),
+                                });
+                                failed = true;
+                                break;
+                            }
+                        }
+                    }
+                    if !failed {
+                        client.publish_event(AppEvent::ReactionUsersLoaded {
+                            channel_id,
+                            message_id,
+                            reactions: loaded_reactions,
+                        });
+                    }
+                }
+                AppCommand::LoadPinnedMessages { channel_id } => {
+                    match client.load_pinned_messages(channel_id).await {
+                        Ok(messages) => client.publish_event(AppEvent::StatusMessage {
+                            message: format_pinned_messages(&messages),
+                        }),
+                        Err(error) => {
+                            logging::error("app", format!("load pinned messages failed: {error}"));
+                            client.publish_event(AppEvent::GatewayError {
+                                message: format!("load pinned messages failed: {error}"),
+                            });
+                        }
+                    }
+                }
+                AppCommand::SetMessagePinned {
+                    channel_id,
+                    message_id,
+                    pinned,
+                } => match client
+                    .set_message_pinned(channel_id, message_id, pinned)
+                    .await
+                {
+                    Ok(()) => {
+                        client.publish_event(AppEvent::MessagePinnedUpdate {
+                            channel_id,
+                            message_id,
+                            pinned,
+                        });
+                        client.publish_event(AppEvent::StatusMessage {
+                            message: if pinned {
+                                "pinned message".to_owned()
+                            } else {
+                                "unpinned message".to_owned()
+                            },
+                        });
+                    }
+                    Err(error) => {
+                        logging::error("app", format!("set pin failed: {error}"));
+                        client.publish_event(AppEvent::GatewayError {
+                            message: format!("set pin failed: {error}"),
+                        });
+                    }
+                },
+                AppCommand::VotePoll {
+                    channel_id,
+                    message_id,
+                    answer_ids,
+                } => match client.vote_poll(channel_id, message_id, &answer_ids).await {
+                    Ok(()) => client.publish_event(AppEvent::StatusMessage {
+                        message: "submitted poll vote".to_owned(),
+                    }),
+                    Err(error) => {
+                        logging::error("app", format!("poll vote failed: {error}"));
+                        client.publish_event(AppEvent::GatewayError {
+                            message: format!("poll vote failed: {error}"),
+                        });
+                    }
+                },
             }
         }
     })
+}
+
+fn format_pinned_messages(messages: &[MessageInfo]) -> String {
+    if messages.is_empty() {
+        return "no pinned messages".to_owned();
+    }
+    let items = messages
+        .iter()
+        .take(5)
+        .map(|message| {
+            let content = message
+                .content
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .unwrap_or("<empty message>");
+            format!("{}: {}", message.author, truncate_status(content, 40))
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    if messages.len() > 5 {
+        format!("pinned messages: {items} and {} more", messages.len() - 5)
+    } else {
+        format!("pinned messages: {items}")
+    }
+}
+
+fn truncate_status(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 async fn fetch_attachment_preview(url: &str) -> std::result::Result<Vec<u8>, String> {

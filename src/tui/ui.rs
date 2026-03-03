@@ -24,7 +24,7 @@ use super::{
 };
 use crate::discord::{
     AttachmentInfo, ChannelState, MessageKind, MessageSnapshotInfo, MessageState, PollInfo,
-    PresenceStatus, ReplyInfo,
+    PresenceStatus, ReactionInfo, ReactionUsersInfo, ReplyInfo,
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -37,6 +37,7 @@ const MESSAGE_AVATAR_OFFSET: u16 = 3;
 const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
 const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
 const MAX_EMOJI_REACTION_VISIBLE_ITEMS: usize = 10;
+const MAX_REACTION_USERS_VISIBLE_LINES: usize = 14;
 const EMOJI_REACTION_IMAGE_WIDTH: u16 = 2;
 
 #[derive(Clone)]
@@ -187,6 +188,7 @@ pub fn render(
     render_footer(frame, areas.footer, state);
     render_message_action_menu(frame, areas.messages, state);
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
+    render_reaction_users_popup(frame, areas.messages, state);
 }
 
 fn dashboard_areas(area: Rect) -> DashboardAreas {
@@ -599,6 +601,9 @@ fn format_message_content_lines(
     if let Some(snapshot) = message.forwarded_snapshots.first() {
         lines.extend(format_forwarded_snapshot(snapshot, state, width));
     }
+    if !message.reactions.is_empty() {
+        lines.extend(format_reaction_lines(&message.reactions, width));
+    }
 
     if lines.is_empty() {
         lines.push(MessageContentLine::plain(if message.content.is_some() {
@@ -609,6 +614,31 @@ fn format_message_content_lines(
     }
 
     lines
+}
+
+fn format_reaction_lines(reactions: &[ReactionInfo], width: usize) -> Vec<MessageContentLine> {
+    let chips = reactions
+        .iter()
+        .filter(|reaction| reaction.count > 0)
+        .map(format_reaction_chip)
+        .collect::<Vec<_>>()
+        .join("  ");
+    if chips.is_empty() {
+        return Vec::new();
+    }
+    wrap_text_lines(&chips, width)
+        .into_iter()
+        .map(MessageContentLine::accent)
+        .collect()
+}
+
+fn format_reaction_chip(reaction: &ReactionInfo) -> String {
+    let marker = if reaction.me { "●" } else { "○" };
+    format!(
+        "[{marker} {} {}]",
+        reaction.emoji.status_label(),
+        reaction.count
+    )
 }
 
 pub(crate) fn wrapped_text_line_count(value: &str, width: usize) -> usize {
@@ -1354,7 +1384,9 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
 }
 
 fn footer_hint(state: &DashboardState) -> &'static str {
-    if state.is_emoji_reaction_picker_open() {
+    if state.is_reaction_users_popup_open() {
+        "esc close reacted users"
+    } else if state.is_emoji_reaction_picker_open() {
         "j/k choose emoji | enter/space react | esc close"
     } else if state.is_message_action_menu_open() {
         "j/k choose action | enter select | esc close | q quit"
@@ -1430,6 +1462,27 @@ fn render_emoji_reaction_picker(
     );
 }
 
+fn render_reaction_users_popup(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    let Some(popup_state) = state.reaction_users_popup() else {
+        return;
+    };
+
+    let max_visible_lines = reaction_users_visible_line_count(area);
+    let lines = reaction_users_popup_lines(
+        popup_state.reactions(),
+        popup_state.scroll(),
+        max_visible_lines,
+    );
+    let popup = centered_rect(area, 58, (lines.len() as u16).saturating_add(2));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel_block("Reacted users", true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
 fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width.saturating_sub(2)).max(1);
     let height = height.min(area.height.saturating_sub(2)).max(1);
@@ -1439,6 +1492,12 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
         width,
         height,
     }
+}
+
+fn reaction_users_visible_line_count(area: Rect) -> usize {
+    usize::from(area.height)
+        .saturating_sub(5)
+        .min(MAX_REACTION_USERS_VISIBLE_LINES)
 }
 
 fn message_action_menu_lines(actions: &[MessageActionItem], selected: usize) -> Vec<Line<'static>> {
@@ -1472,6 +1531,64 @@ fn message_action_menu_lines(actions: &[MessageActionItem], selected: usize) -> 
         "Enter select · Esc close",
         Style::default().fg(DIM),
     )));
+    lines
+}
+
+fn reaction_users_popup_lines(
+    reactions: &[ReactionUsersInfo],
+    scroll: usize,
+    max_visible_lines: usize,
+) -> Vec<Line<'static>> {
+    let data_lines = reaction_users_popup_data_lines(reactions);
+    let visible_lines = max_visible_lines.min(data_lines.len());
+    let scroll = scroll.min(data_lines.len().saturating_sub(visible_lines));
+    let has_hidden_before = scroll > 0;
+    let has_hidden_after = scroll.saturating_add(visible_lines) < data_lines.len();
+    let mut lines = data_lines
+        .into_iter()
+        .skip(scroll)
+        .take(visible_lines)
+        .collect::<Vec<_>>();
+    let hint = match (has_hidden_before, has_hidden_after) {
+        (true, true) => "j/k scroll · more above/below · Esc close",
+        (true, false) => "j/k scroll · more above · Esc close",
+        (false, true) => "j/k scroll · more below · Esc close",
+        (false, false) => "Esc close",
+    };
+    lines.push(Line::from(Span::styled(hint, Style::default().fg(DIM))));
+    lines
+}
+
+fn reaction_users_popup_data_lines(reactions: &[ReactionUsersInfo]) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    if reactions.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No reactions found",
+            Style::default().fg(DIM),
+        )));
+    }
+
+    for reaction in reactions {
+        let count = reaction.users.len();
+        let user_label = if count == 1 { "user" } else { "users" };
+        lines.push(Line::from(Span::styled(
+            format!("{} · {count} {user_label}", reaction.emoji.status_label()),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )));
+        if reaction.users.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  no users found",
+                Style::default().fg(DIM),
+            )));
+        } else {
+            lines.extend(
+                reaction
+                    .users
+                    .iter()
+                    .map(|user| Line::from(Span::raw(format!("  {}", user.display_name)))),
+            );
+        }
+    }
     lines
 }
 
@@ -1748,13 +1865,15 @@ mod tests {
         format_message_content_lines, format_message_sent_time, format_unix_millis_with_offset,
         highlight_style, inline_image_preview_area, inline_image_preview_row, member_display_label,
         mention_highlight_style, message_action_menu_lines, message_item_lines,
-        message_viewport_lines, sync_view_heights, wrap_text_lines,
+        message_viewport_lines, reaction_users_popup_lines, reaction_users_visible_line_count,
+        sync_view_heights, wrap_text_lines,
     };
     use crate::{
         discord::{
             AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientState, ChannelState,
             GuildMemberState, MemberInfo, MentionInfo, MessageKind, MessageSnapshotInfo,
-            MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReplyInfo,
+            MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
+            ReactionUserInfo, ReactionUsersInfo, ReplyInfo,
         },
         tui::{
             format::truncate_display_width,
@@ -2425,16 +2544,32 @@ mod tests {
     }
 
     #[test]
+    fn message_content_renders_reaction_chips_below_message() {
+        let mut message = message_with_attachment(Some("hello".to_owned()), image_attachment());
+        message.attachments.clear();
+        message.reactions = vec![ReactionInfo {
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+            count: 3,
+            me: true,
+        }];
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(line_texts(&lines), vec!["hello", "[● 👍 3]"]);
+        assert_eq!(lines[1].style, Style::default().fg(ACCENT));
+    }
+
+    #[test]
     fn message_action_menu_marks_selected_and_disabled_actions() {
         let actions = vec![
             MessageActionItem {
                 kind: MessageActionKind::Reply,
-                label: "Reply",
+                label: "Reply".to_owned(),
                 enabled: true,
             },
             MessageActionItem {
                 kind: MessageActionKind::DownloadImage,
-                label: "Download image",
+                label: "Download image".to_owned(),
                 enabled: false,
             },
         ];
@@ -2477,6 +2612,84 @@ mod tests {
                 "› :party: Party",
                 "Enter/Space react · Esc close"
             ]
+        );
+    }
+
+    #[test]
+    fn reaction_users_popup_groups_users_by_reaction() {
+        let lines = reaction_users_popup_lines(
+            &[
+                ReactionUsersInfo {
+                    emoji: ReactionEmoji::Unicode("👍".to_owned()),
+                    users: vec![
+                        ReactionUserInfo {
+                            user_id: Id::new(10),
+                            display_name: "neo".to_owned(),
+                        },
+                        ReactionUserInfo {
+                            user_id: Id::new(11),
+                            display_name: "trinity".to_owned(),
+                        },
+                    ],
+                },
+                ReactionUsersInfo {
+                    emoji: ReactionEmoji::Custom {
+                        id: Id::new(50),
+                        name: Some("party".to_owned()),
+                        animated: false,
+                    },
+                    users: Vec::new(),
+                },
+            ],
+            0,
+            10,
+        );
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec![
+                "👍 · 2 users",
+                "  neo",
+                "  trinity",
+                ":party: · 0 users",
+                "  no users found",
+                "Esc close",
+            ]
+        );
+    }
+
+    #[test]
+    fn reaction_users_popup_scrolls_long_lists() {
+        let reactions = vec![ReactionUsersInfo {
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+            users: (1..=6)
+                .map(|id| ReactionUserInfo {
+                    user_id: Id::new(id),
+                    display_name: format!("user-{id}"),
+                })
+                .collect(),
+        }];
+
+        let lines = reaction_users_popup_lines(&reactions, 3, 3);
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec![
+                "  user-3",
+                "  user-4",
+                "  user-5",
+                "j/k scroll · more above/below · Esc close",
+            ]
+        );
+    }
+
+    #[test]
+    fn reaction_users_popup_reserves_footer_space_in_short_areas() {
+        assert_eq!(reaction_users_visible_line_count(Rect::new(0, 0, 20, 5)), 0);
+        assert_eq!(reaction_users_visible_line_count(Rect::new(0, 0, 20, 6)), 1);
+        assert_eq!(
+            reaction_users_visible_line_count(Rect::new(0, 0, 20, 40)),
+            14
         );
     }
 
@@ -2953,6 +3166,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content,
             mentions: Vec::new(),
             attachments: vec![attachment],
@@ -3040,6 +3255,8 @@ mod tests {
             reference: None,
             reply: None,
             poll: None,
+            pinned: false,
+            reactions: Vec::new(),
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
