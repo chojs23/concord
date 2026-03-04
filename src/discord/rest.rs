@@ -165,11 +165,6 @@ impl DiscordRest {
         message_id: Id<MessageMarker>,
         answer_ids: &[u8],
     ) -> Result<()> {
-        if std::env::var_os("CONCORD_EXPERIMENTAL_POLL_VOTE").is_none() {
-            return Err(AppError::DiscordRequest(
-                "poll voting uses an undocumented user-token endpoint; set CONCORD_EXPERIMENTAL_POLL_VOTE=1 to enable".to_owned(),
-            ));
-        }
         let url = format!(
             "https://discord.com/api/v9/channels/{}/polls/{}/answers/@me",
             channel_id.get(),

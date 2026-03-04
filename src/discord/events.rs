@@ -397,6 +397,11 @@ pub enum AppEvent {
         message_id: Id<MessageMarker>,
         pinned: bool,
     },
+    CurrentUserPollVoteUpdate {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        answer_ids: Vec<u8>,
+    },
     ReactionUsersLoaded {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,

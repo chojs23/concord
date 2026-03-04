@@ -321,9 +321,16 @@ fn start_command_loop(
                     message_id,
                     answer_ids,
                 } => match client.vote_poll(channel_id, message_id, &answer_ids).await {
-                    Ok(()) => client.publish_event(AppEvent::StatusMessage {
-                        message: "submitted poll vote".to_owned(),
-                    }),
+                    Ok(()) => {
+                        client.publish_event(AppEvent::CurrentUserPollVoteUpdate {
+                            channel_id,
+                            message_id,
+                            answer_ids,
+                        });
+                        client.publish_event(AppEvent::StatusMessage {
+                            message: "updated poll vote".to_owned(),
+                        });
+                    }
                     Err(error) => {
                         logging::error("app", format!("poll vote failed: {error}"));
                         client.publish_event(AppEvent::GatewayError {

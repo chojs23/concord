@@ -364,6 +364,11 @@ impl DiscordState {
                     reactions: None,
                 },
             ),
+            AppEvent::CurrentUserPollVoteUpdate {
+                channel_id,
+                message_id,
+                answer_ids,
+            } => self.update_current_user_poll_vote(*channel_id, *message_id, answer_ids),
             AppEvent::MessageDelete {
                 channel_id,
                 message_id,
@@ -681,6 +686,45 @@ impl DiscordState {
             reaction.me = false;
         }
         message.reactions.retain(|reaction| reaction.count > 0);
+    }
+
+    fn update_current_user_poll_vote(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        answer_ids: &[u8],
+    ) {
+        let Some(poll) = self
+            .messages
+            .get_mut(&channel_id)
+            .and_then(|messages| messages.iter_mut().find(|message| message.id == message_id))
+            .and_then(|message| message.poll.as_mut())
+        else {
+            return;
+        };
+
+        let mut added_votes = 0u64;
+        let mut removed_votes = 0u64;
+        for answer in &mut poll.answers {
+            let next_me_voted = answer_ids.contains(&answer.answer_id);
+            match (answer.me_voted, next_me_voted) {
+                (false, true) => {
+                    answer.vote_count = Some(answer.vote_count.unwrap_or(0).saturating_add(1));
+                    added_votes = added_votes.saturating_add(1);
+                }
+                (true, false) => {
+                    answer.vote_count = Some(answer.vote_count.unwrap_or(0).saturating_sub(1));
+                    removed_votes = removed_votes.saturating_add(1);
+                }
+                _ => {}
+            }
+            answer.me_voted = next_me_voted;
+        }
+        if let Some(total_votes) = &mut poll.total_votes {
+            *total_votes = total_votes
+                .saturating_add(added_votes)
+                .saturating_sub(removed_votes);
+        }
     }
 
     fn merge_message_history(
@@ -1618,6 +1662,104 @@ mod tests {
         assert_eq!(poll.results_finalized, Some(true));
         assert_eq!(poll.answers[0].vote_count, Some(5));
         assert_eq!(poll.answers[1].vote_count, Some(3));
+    }
+
+    #[test]
+    fn current_user_poll_vote_update_refreshes_cached_poll_counts() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let message_id = Id::new(20);
+        let author_id = Id::new(99);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: Some(poll_info()),
+            content: Some(String::new()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        state.apply_event(&AppEvent::CurrentUserPollVoteUpdate {
+            channel_id,
+            message_id,
+            answer_ids: vec![2],
+        });
+        let poll = state.messages_for_channel(channel_id)[0]
+            .poll
+            .as_ref()
+            .expect("poll should be cached");
+        assert_eq!(poll.answers[0].vote_count, Some(1));
+        assert!(!poll.answers[0].me_voted);
+        assert_eq!(poll.answers[1].vote_count, Some(2));
+        assert!(poll.answers[1].me_voted);
+        assert_eq!(poll.total_votes, Some(3));
+
+        state.apply_event(&AppEvent::CurrentUserPollVoteUpdate {
+            channel_id,
+            message_id,
+            answer_ids: Vec::new(),
+        });
+        let poll = state.messages_for_channel(channel_id)[0]
+            .poll
+            .as_ref()
+            .expect("poll should be cached");
+        assert_eq!(poll.answers[0].vote_count, Some(1));
+        assert!(!poll.answers[0].me_voted);
+        assert_eq!(poll.answers[1].vote_count, Some(1));
+        assert!(!poll.answers[1].me_voted);
+        assert_eq!(poll.total_votes, Some(2));
+    }
+
+    #[test]
+    fn current_user_poll_vote_update_handles_missing_answer_counts() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let message_id = Id::new(20);
+        let author_id = Id::new(99);
+        let mut state = DiscordState::default();
+        let mut poll = poll_info();
+        poll.answers[1].vote_count = None;
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: Some(poll),
+            content: Some(String::new()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        state.apply_event(&AppEvent::CurrentUserPollVoteUpdate {
+            channel_id,
+            message_id,
+            answer_ids: vec![2],
+        });
+
+        let poll = state.messages_for_channel(channel_id)[0]
+            .poll
+            .as_ref()
+            .expect("poll should be cached");
+        assert_eq!(poll.answers[0].vote_count, Some(1));
+        assert!(!poll.answers[0].me_voted);
+        assert_eq!(poll.answers[1].vote_count, Some(1));
+        assert!(poll.answers[1].me_voted);
+        assert_eq!(poll.total_votes, Some(3));
     }
 
     #[test]

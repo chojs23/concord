@@ -576,14 +576,17 @@ impl DashboardState {
                 });
             }
         }
-        if std::env::var_os("CONCORD_EXPERIMENTAL_POLL_VOTE").is_some()
-            && let Some(poll) = &message.poll
+        if let Some(poll) = &message.poll
             && !poll.results_finalized.unwrap_or(false)
         {
             for answer in &poll.answers {
                 actions.push(MessageActionItem {
                     kind: MessageActionKind::VotePollAnswer(answer.answer_id),
-                    label: format!("Vote poll: {}", answer.text),
+                    label: if answer.me_voted {
+                        format!("Remove poll vote: {}", answer.text)
+                    } else {
+                        format!("Vote poll: {}", answer.text)
+                    },
                     enabled: true,
                 });
             }
@@ -4259,7 +4262,7 @@ mod tests {
     }
 
     #[test]
-    fn message_action_items_do_not_add_poll_actions_for_poll_messages() {
+    fn poll_vote_actions_are_available_by_default() {
         let mut state = state_with_messages(1);
         focus_messages(&mut state);
         state.push_event(AppEvent::MessageCreate {
@@ -4288,9 +4291,12 @@ mod tests {
                 MessageActionKind::AddReaction,
                 MessageActionKind::LoadPinnedMessages,
                 MessageActionKind::SetPinned(true),
+                MessageActionKind::VotePollAnswer(1),
+                MessageActionKind::VotePollAnswer(2),
             ]
         );
-        assert!(!actions.iter().any(|action| action.label.contains("poll")));
+        assert_eq!(actions[4].label, "Remove poll vote: Soup");
+        assert_eq!(actions[5].label, "Vote poll: Noodles");
     }
 
     #[test]
@@ -4324,12 +4330,14 @@ mod tests {
                 MessageActionKind::AddReaction,
                 MessageActionKind::LoadPinnedMessages,
                 MessageActionKind::SetPinned(true),
+                MessageActionKind::VotePollAnswer(1),
+                MessageActionKind::VotePollAnswer(2),
             ]
         );
     }
 
     #[test]
-    fn poll_vote_actions_require_experimental_opt_in() {
+    fn poll_vote_action_can_remove_existing_vote() {
         let mut state = state_with_messages(1);
         focus_messages(&mut state);
         state.push_event(AppEvent::MessageCreate {
@@ -4348,12 +4356,20 @@ mod tests {
             attachments: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
+        state.open_selected_message_actions();
+        for _ in 0..4 {
+            state.move_message_action_down();
+        }
 
-        assert!(
-            state
-                .selected_message_action_items()
-                .iter()
-                .all(|action| !matches!(action.kind, MessageActionKind::VotePollAnswer(_)))
+        let command = state.activate_selected_message_action();
+
+        assert_eq!(
+            command,
+            Some(AppCommand::VotePoll {
+                channel_id: Id::new(2),
+                message_id: Id::new(1),
+                answer_ids: Vec::new(),
+            })
         );
     }
 
