@@ -18,8 +18,8 @@ use super::{
     format::{RenderedText, TextHighlight, truncate_display_width, truncate_text},
     state::{
         ChannelPaneEntry, DashboardState, EmojiReactionItem, FocusPane, GuildPaneEntry,
-        MemberEntry, MemberGroup, MessageActionItem, ThreadSummary, folder_color, presence_color,
-        presence_marker,
+        MemberEntry, MemberGroup, MessageActionItem, PollVotePickerItem, ThreadSummary,
+        folder_color, presence_color, presence_marker,
     },
 };
 use crate::discord::{
@@ -187,6 +187,7 @@ pub fn render(
     render_members(frame, areas.members, state);
     render_footer(frame, areas.footer, state);
     render_message_action_menu(frame, areas.messages, state);
+    render_poll_vote_picker(frame, areas.messages, state);
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
     render_reaction_users_popup(frame, areas.messages, state);
 }
@@ -1386,6 +1387,8 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
 fn footer_hint(state: &DashboardState) -> &'static str {
     if state.is_reaction_users_popup_open() {
         "esc close reacted users"
+    } else if state.is_poll_vote_picker_open() {
+        "j/k choose answer | space toggle | enter vote | esc close"
     } else if state.is_emoji_reaction_picker_open() {
         "j/k choose emoji | enter/space react | esc close"
     } else if state.is_message_action_menu_open() {
@@ -1462,6 +1465,25 @@ fn render_emoji_reaction_picker(
     );
 }
 
+fn render_poll_vote_picker(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    let Some(answers) = state.poll_vote_picker_items() else {
+        return;
+    };
+    if answers.is_empty() {
+        return;
+    }
+
+    let selected = state.selected_poll_vote_picker_index().unwrap_or(0);
+    let popup = centered_rect(area, 58, (answers.len() as u16).saturating_add(4));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(poll_vote_picker_lines(answers, selected))
+            .block(panel_block("Choose poll votes", true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
 fn render_reaction_users_popup(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let Some(popup_state) = state.reaction_users_popup() else {
         return;
@@ -1529,6 +1551,32 @@ fn message_action_menu_lines(actions: &[MessageActionItem], selected: usize) -> 
         .collect();
     lines.push(Line::from(Span::styled(
         "Enter select · Esc close",
+        Style::default().fg(DIM),
+    )));
+    lines
+}
+
+fn poll_vote_picker_lines(answers: &[PollVotePickerItem], selected: usize) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = answers
+        .iter()
+        .enumerate()
+        .map(|(index, answer)| {
+            let marker = if index == selected { "› " } else { "  " };
+            let checkbox = if answer.selected { "[x]" } else { "[ ]" };
+            let mut style = Style::default();
+            if index == selected {
+                style = style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            Line::from(vec![
+                Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(format!("{checkbox} {}", answer.label), style),
+            ])
+        })
+        .collect();
+    lines.push(Line::from(Span::styled(
+        "Space toggle · Enter vote · Esc close",
         Style::default().fg(DIM),
     )));
     lines
@@ -1865,8 +1913,8 @@ mod tests {
         format_message_content_lines, format_message_sent_time, format_unix_millis_with_offset,
         highlight_style, inline_image_preview_area, inline_image_preview_row, member_display_label,
         mention_highlight_style, message_action_menu_lines, message_item_lines,
-        message_viewport_lines, reaction_users_popup_lines, reaction_users_visible_line_count,
-        sync_view_heights, wrap_text_lines,
+        message_viewport_lines, poll_vote_picker_lines, reaction_users_popup_lines,
+        reaction_users_visible_line_count, sync_view_heights, wrap_text_lines,
     };
     use crate::{
         discord::{
@@ -1879,6 +1927,7 @@ mod tests {
             format::truncate_display_width,
             state::{
                 DashboardState, EmojiReactionItem, FocusPane, MessageActionItem, MessageActionKind,
+                PollVotePickerItem,
             },
         },
     };
@@ -2611,6 +2660,33 @@ mod tests {
                 "  👍 Thumbs up",
                 "› :party: Party",
                 "Enter/Space react · Esc close"
+            ]
+        );
+    }
+
+    #[test]
+    fn poll_vote_picker_marks_selected_and_checked_answers() {
+        let answers = vec![
+            PollVotePickerItem {
+                answer_id: 1,
+                label: "Soup".to_owned(),
+                selected: true,
+            },
+            PollVotePickerItem {
+                answer_id: 2,
+                label: "Noodles".to_owned(),
+                selected: false,
+            },
+        ];
+
+        let lines = poll_vote_picker_lines(&answers, 1);
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec![
+                "  [x] Soup",
+                "› [ ] Noodles",
+                "Space toggle · Enter vote · Esc close",
             ]
         );
     }

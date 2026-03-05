@@ -40,6 +40,7 @@ pub enum MessageActionKind {
     LoadPinnedMessages,
     SetPinned(bool),
     VotePollAnswer(u8),
+    OpenPollVotePicker,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,6 +54,13 @@ pub struct MessageActionItem {
 pub struct EmojiReactionItem {
     pub emoji: ReactionEmoji,
     pub label: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PollVotePickerItem {
+    pub answer_id: u8,
+    pub label: String,
+    pub selected: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -165,6 +173,20 @@ pub struct EmojiReactionPickerState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PollVotePickerState {
+    selected: usize,
+    channel_id: Id<ChannelMarker>,
+    message_id: Id<MessageMarker>,
+    answers: Vec<PollVotePickerItem>,
+}
+
+impl PollVotePickerState {
+    pub fn answers(&self) -> &[PollVotePickerItem] {
+        &self.answers
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReactionUsersPopupState {
     channel_id: Id<ChannelMarker>,
     message_id: Id<MessageMarker>,
@@ -224,6 +246,7 @@ pub struct DashboardState {
     reply_target_message_id: Option<Id<MessageMarker>>,
     message_action_menu: Option<MessageActionMenuState>,
     emoji_reaction_picker: Option<EmojiReactionPickerState>,
+    poll_vote_picker: Option<PollVotePickerState>,
     reaction_users_popup: Option<ReactionUsersPopupState>,
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
@@ -278,6 +301,7 @@ impl DashboardState {
             reply_target_message_id: None,
             message_action_menu: None,
             emoji_reaction_picker: None,
+            poll_vote_picker: None,
             reaction_users_popup: None,
             current_user: None,
             current_user_id: None,
@@ -410,6 +434,16 @@ impl DashboardState {
         self.emoji_reaction_picker.is_some()
     }
 
+    pub fn is_poll_vote_picker_open(&self) -> bool {
+        self.poll_vote_picker.is_some()
+    }
+
+    pub fn poll_vote_picker_items(&self) -> Option<&[PollVotePickerItem]> {
+        self.poll_vote_picker
+            .as_ref()
+            .map(PollVotePickerState::answers)
+    }
+
     pub fn is_reaction_users_popup_open(&self) -> bool {
         self.reaction_users_popup.is_some()
     }
@@ -454,6 +488,10 @@ impl DashboardState {
 
     pub fn close_emoji_reaction_picker(&mut self) {
         self.emoji_reaction_picker = None;
+    }
+
+    pub fn close_poll_vote_picker(&mut self) {
+        self.poll_vote_picker = None;
     }
 
     pub fn close_reaction_users_popup(&mut self) {
@@ -514,6 +552,33 @@ impl DashboardState {
         if let Some(picker) = &mut self.emoji_reaction_picker {
             picker.selected = picker.selected.saturating_sub(1);
         }
+    }
+
+    pub fn move_poll_vote_picker_down(&mut self) {
+        if let Some(picker) = &mut self.poll_vote_picker {
+            picker.selected = (picker.selected + 1).min(picker.answers.len().saturating_sub(1));
+        }
+    }
+
+    pub fn move_poll_vote_picker_up(&mut self) {
+        if let Some(picker) = &mut self.poll_vote_picker {
+            picker.selected = picker.selected.saturating_sub(1);
+        }
+    }
+
+    pub fn toggle_selected_poll_vote_answer(&mut self) {
+        if let Some(picker) = &mut self.poll_vote_picker {
+            let index = picker.selected.min(picker.answers.len().saturating_sub(1));
+            if let Some(answer) = picker.answers.get_mut(index) {
+                answer.selected = !answer.selected;
+            }
+        }
+    }
+
+    pub fn selected_poll_vote_picker_index(&self) -> Option<usize> {
+        self.poll_vote_picker
+            .as_ref()
+            .map(|picker| picker.selected.min(picker.answers.len().saturating_sub(1)))
     }
 
     pub fn selected_message_action_items(&self) -> Vec<MessageActionItem> {
@@ -579,16 +644,24 @@ impl DashboardState {
         if let Some(poll) = &message.poll
             && !poll.results_finalized.unwrap_or(false)
         {
-            for answer in &poll.answers {
+            if poll.allow_multiselect {
                 actions.push(MessageActionItem {
-                    kind: MessageActionKind::VotePollAnswer(answer.answer_id),
-                    label: if answer.me_voted {
-                        format!("Remove poll vote: {}", answer.text)
-                    } else {
-                        format!("Vote poll: {}", answer.text)
-                    },
+                    kind: MessageActionKind::OpenPollVotePicker,
+                    label: "Choose poll votes".to_owned(),
                     enabled: true,
                 });
+            } else {
+                for answer in &poll.answers {
+                    actions.push(MessageActionItem {
+                        kind: MessageActionKind::VotePollAnswer(answer.answer_id),
+                        label: if answer.me_voted {
+                            format!("Remove poll vote: {}", answer.text)
+                        } else {
+                            format!("Vote poll: {}", answer.text)
+                        },
+                        enabled: true,
+                    });
+                }
             }
         }
         actions
@@ -704,6 +777,11 @@ impl DashboardState {
                     pinned,
                 })
             }
+            MessageActionKind::OpenPollVotePicker => {
+                self.open_poll_vote_picker();
+                self.close_message_action_menu();
+                None
+            }
             MessageActionKind::VotePollAnswer(answer_id) => {
                 let message = self.selected_message_state()?;
                 let channel_id = message.channel_id;
@@ -747,6 +825,22 @@ impl DashboardState {
         Some(command)
     }
 
+    pub fn activate_poll_vote_picker(&mut self) -> Option<AppCommand> {
+        let picker = self.poll_vote_picker.clone()?;
+        let answer_ids = picker
+            .answers
+            .iter()
+            .filter(|answer| answer.selected)
+            .map(|answer| answer.answer_id)
+            .collect::<Vec<_>>();
+        self.close_poll_vote_picker();
+        Some(AppCommand::VotePoll {
+            channel_id: picker.channel_id,
+            message_id: picker.message_id,
+            answer_ids,
+        })
+    }
+
     fn open_emoji_reaction_picker(&mut self) {
         if let Some(message) = self.selected_message_state() {
             self.emoji_reaction_picker = Some(EmojiReactionPickerState {
@@ -756,6 +850,27 @@ impl DashboardState {
                     .or_else(|| self.selected_channel_guild_id()),
                 channel_id: message.channel_id,
                 message_id: message.id,
+            });
+        }
+    }
+
+    fn open_poll_vote_picker(&mut self) {
+        if let Some(message) = self.selected_message_state()
+            && let Some(poll) = &message.poll
+        {
+            self.poll_vote_picker = Some(PollVotePickerState {
+                selected: 0,
+                channel_id: message.channel_id,
+                message_id: message.id,
+                answers: poll
+                    .answers
+                    .iter()
+                    .map(|answer| PollVotePickerItem {
+                        answer_id: answer.answer_id,
+                        label: answer.text.clone(),
+                        selected: answer.me_voted,
+                    })
+                    .collect(),
             });
         }
     }
@@ -4369,6 +4484,61 @@ mod tests {
                 channel_id: Id::new(2),
                 message_id: Id::new(1),
                 answer_ids: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn multi_select_poll_action_opens_picker_and_submits_selected_answers() {
+        let mut state = state_with_messages(1);
+        focus_messages(&mut state);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: Some(poll_info(true)),
+            content: Some(String::new()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let actions = state.selected_message_action_items();
+        assert_eq!(actions[4].kind, MessageActionKind::OpenPollVotePicker);
+        assert_eq!(actions[4].label, "Choose poll votes");
+
+        state.open_selected_message_actions();
+        for _ in 0..4 {
+            state.move_message_action_down();
+        }
+        assert_eq!(state.activate_selected_message_action(), None);
+        assert!(state.is_poll_vote_picker_open());
+        assert_eq!(
+            state.poll_vote_picker_items().map(|items| {
+                items
+                    .iter()
+                    .map(|item| (item.answer_id, item.selected))
+                    .collect::<Vec<_>>()
+            }),
+            Some(vec![(1, true), (2, false)])
+        );
+
+        state.move_poll_vote_picker_down();
+        state.toggle_selected_poll_vote_answer();
+        let command = state.activate_poll_vote_picker();
+
+        assert_eq!(
+            command,
+            Some(AppCommand::VotePoll {
+                channel_id: Id::new(2),
+                message_id: Id::new(1),
+                answer_ids: vec![1, 2],
             })
         );
     }

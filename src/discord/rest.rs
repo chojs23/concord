@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use reqwest::header::AUTHORIZATION;
-use serde_json::json;
+use serde_json::{Value, json};
 use twilight_http::Client as HttpClient;
 use twilight_http::request::channel::reaction::RequestReactionType;
 use twilight_model::{
@@ -170,14 +170,10 @@ impl DiscordRest {
             channel_id.get(),
             message_id.get()
         );
-        let answer_ids = answer_ids
-            .iter()
-            .map(|answer_id| answer_id.to_string())
-            .collect::<Vec<_>>();
         self.raw_http
             .put(url)
             .header(AUTHORIZATION, &self.token)
-            .json(&json!({ "answer_ids": answer_ids }))
+            .json(&poll_vote_request_body(answer_ids))
             .send()
             .await
             .map_err(|error| {
@@ -187,6 +183,10 @@ impl DiscordRest {
             .map_err(|error| AppError::DiscordRequest(format!("poll vote failed: {error}")))?;
         Ok(())
     }
+}
+
+fn poll_vote_request_body(answer_ids: &[u8]) -> Value {
+    json!({ "answer_ids": answer_ids })
 }
 
 pub fn request_reaction_type(emoji: &ReactionEmoji) -> RequestReactionType<'_> {
@@ -230,7 +230,10 @@ mod tests {
         AppError,
         discord::{
             ReactionEmoji,
-            rest::{next_reaction_users_after, request_reaction_type, validate_message_content},
+            rest::{
+                next_reaction_users_after, poll_vote_request_body, request_reaction_type,
+                validate_message_content,
+            },
         },
     };
 
@@ -284,5 +287,17 @@ mod tests {
         );
         assert_eq!(next_reaction_users_after(99, Some(last_user_id)), None);
         assert_eq!(next_reaction_users_after(100, None), None);
+    }
+
+    #[test]
+    fn poll_vote_request_body_uses_numeric_answer_ids() {
+        assert_eq!(
+            poll_vote_request_body(&[1, 2]),
+            serde_json::json!({ "answer_ids": [1, 2] })
+        );
+        assert_eq!(
+            poll_vote_request_body(&[]),
+            serde_json::json!({ "answer_ids": [] })
+        );
     }
 }

@@ -17,6 +17,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_composer_key(state, key);
     }
 
+    if state.is_poll_vote_picker_open() {
+        return handle_poll_vote_picker_key(state, key);
+    }
+
     if state.is_emoji_reaction_picker_open() {
         return handle_emoji_reaction_picker_key(state, key);
     }
@@ -128,6 +132,19 @@ fn handle_emoji_reaction_picker_key(
     None
 }
 
+fn handle_poll_vote_picker_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc => state.close_poll_vote_picker(),
+        KeyCode::Char('j') | KeyCode::Down => state.move_poll_vote_picker_down(),
+        KeyCode::Char('k') | KeyCode::Up => state.move_poll_vote_picker_up(),
+        KeyCode::Char(' ') => state.toggle_selected_poll_vote_answer(),
+        KeyCode::Enter => return state.activate_poll_vote_picker(),
+        _ => {}
+    }
+
+    None
+}
+
 fn handle_reaction_users_popup_key(
     state: &mut DashboardState,
     key: KeyEvent,
@@ -180,7 +197,8 @@ mod tests {
     use crate::{
         discord::{
             AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, GuildFolder,
-            PresenceStatus, ReactionEmoji, ReactionUserInfo, ReactionUsersInfo,
+            PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionUserInfo,
+            ReactionUsersInfo,
         },
         tui::state::{
             ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind,
@@ -912,6 +930,46 @@ mod tests {
         assert!(!state.is_reaction_users_popup_open());
     }
 
+    #[test]
+    fn multiselect_poll_picker_toggles_and_submits_selected_answers() {
+        let mut state = state_with_multiselect_poll();
+        focus_messages(&mut state);
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        for _ in 0..4 {
+            handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        assert_eq!(command, None);
+        assert!(state.is_poll_vote_picker_open());
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        );
+        let command = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert_eq!(
+            command,
+            Some(AppCommand::VotePoll {
+                channel_id: Id::new(2),
+                message_id: Id::new(1),
+                answer_ids: vec![1, 2],
+            })
+        );
+        assert!(!state.is_poll_vote_picker_open());
+    }
+
     fn state_with_folder() -> DashboardState {
         let first_guild = Id::new(1);
         let second_guild = Id::new(2);
@@ -1105,6 +1163,46 @@ mod tests {
                 forwarded_snapshots: Vec::new(),
             });
         }
+        state
+    }
+
+    fn state_with_multiselect_poll() -> DashboardState {
+        let mut state = state_with_messages(1);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: Some(PollInfo {
+                question: "Pick foods".to_owned(),
+                answers: vec![
+                    PollAnswerInfo {
+                        answer_id: 1,
+                        text: "Soup".to_owned(),
+                        vote_count: Some(2),
+                        me_voted: true,
+                    },
+                    PollAnswerInfo {
+                        answer_id: 2,
+                        text: "Noodles".to_owned(),
+                        vote_count: Some(1),
+                        me_voted: false,
+                    },
+                ],
+                allow_multiselect: true,
+                results_finalized: Some(false),
+                total_votes: Some(3),
+            }),
+            content: Some("msg 1".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
         state
     }
 
