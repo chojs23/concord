@@ -574,6 +574,8 @@ fn format_message_content_lines(
         return system_lines;
     }
 
+    let renders_poll_card = message.reply.is_none() && message.poll.is_some();
+
     if let Some(line) = message
         .reply
         .as_ref()
@@ -581,12 +583,26 @@ fn format_message_content_lines(
     {
         lines.push(line);
     } else if let Some(poll) = message.poll.as_ref() {
-        lines.extend(format_poll_lines(poll, width));
+        let content = message
+            .content
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                state.render_user_mentions_with_highlights(
+                    message.guild_id,
+                    &message.mentions,
+                    value,
+                )
+            });
+        lines.extend(format_poll_lines(poll, content, width));
     } else if let Some(line) = format_message_kind_line(message.message_kind) {
         lines.push(line);
     }
 
-    if let Some(value) = message.content.as_deref().filter(|value| !value.is_empty()) {
+    let standalone_content = (!renders_poll_card)
+        .then(|| message.content.as_deref().filter(|value| !value.is_empty()))
+        .flatten();
+    if let Some(value) = standalone_content {
         lines.extend(wrap_rendered_text_lines(
             state.render_user_mentions_with_highlights(message.guild_id, &message.mentions, value),
             width,
@@ -808,16 +824,33 @@ fn highlights_for_range(
         .collect()
 }
 
-fn format_poll_lines(poll: &PollInfo, width: usize) -> Vec<MessageContentLine> {
+fn format_poll_lines(
+    poll: &PollInfo,
+    content: Option<RenderedText>,
+    width: usize,
+) -> Vec<MessageContentLine> {
+    let inner_width = poll_card_inner_width(width);
     let helper = if poll.allow_multiselect {
         "Select one or more answers"
     } else {
         "Select one answer"
     };
-    let mut lines = vec![
-        MessageContentLine::plain(truncate_text(&poll.question, width)),
-        MessageContentLine::dim(truncate_text(helper, width)),
-    ];
+    let mut lines = vec![MessageContentLine::accent(poll_box_border('╭', '╮', width))];
+    lines.push(poll_box_line(
+        MessageContentLine::plain(truncate_display_width(&poll.question, inner_width)),
+        inner_width,
+    ));
+    if let Some(content) = content {
+        lines.extend(
+            wrap_rendered_text_lines(content, inner_width, Style::default())
+                .into_iter()
+                .map(|line| poll_box_line(line, inner_width)),
+        );
+    }
+    lines.push(poll_box_line(
+        MessageContentLine::dim(truncate_display_width(helper, inner_width)),
+        inner_width,
+    ));
     let counted_votes = poll
         .answers
         .iter()
@@ -825,16 +858,49 @@ fn format_poll_lines(poll: &PollInfo, width: usize) -> Vec<MessageContentLine> {
         .sum::<u64>();
     let total_votes = poll.total_votes.unwrap_or(counted_votes);
     lines.extend(poll.answers.iter().enumerate().map(|(index, answer)| {
-        MessageContentLine::plain(truncate_text(
-            &format_poll_answer(index, answer, total_votes),
-            width,
-        ))
+        poll_box_line(
+            MessageContentLine::plain(truncate_display_width(
+                &format_poll_answer(index, answer, total_votes),
+                inner_width,
+            )),
+            inner_width,
+        )
     }));
-    lines.push(MessageContentLine::dim(truncate_text(
-        &format_poll_footer(poll, total_votes),
-        width,
-    )));
+    lines.push(poll_box_line(
+        MessageContentLine::dim(truncate_display_width(
+            &format_poll_footer(poll, total_votes),
+            inner_width,
+        )),
+        inner_width,
+    ));
+    lines.push(MessageContentLine::accent(poll_box_border('╰', '╯', width)));
     lines
+}
+
+pub(crate) fn poll_card_inner_width(width: usize) -> usize {
+    poll_box_width(width).saturating_sub(4).max(1)
+}
+
+fn poll_box_width(width: usize) -> usize {
+    width.clamp(4, 72)
+}
+
+fn poll_box_border(left: char, right: char, width: usize) -> String {
+    let width = poll_box_width(width);
+    format!("{left}{}{right}", "─".repeat(width.saturating_sub(2)))
+}
+
+fn poll_box_line(mut line: MessageContentLine, inner_width: usize) -> MessageContentLine {
+    let prefix = "│ ";
+    let suffix = " │";
+    let padding = inner_width.saturating_sub(line.text.width());
+    let shift = prefix.len();
+    for highlight in &mut line.mention_highlights {
+        highlight.start = highlight.start.saturating_add(shift);
+        highlight.end = highlight.end.saturating_add(shift);
+    }
+    line.text = format!("{prefix}{}{}{suffix}", line.text, " ".repeat(padding));
+    line
 }
 
 fn format_poll_result_lines(poll: Option<&PollInfo>, width: usize) -> Vec<MessageContentLine> {
@@ -1913,8 +1979,9 @@ mod tests {
         format_message_content_lines, format_message_sent_time, format_unix_millis_with_offset,
         highlight_style, inline_image_preview_area, inline_image_preview_row, member_display_label,
         mention_highlight_style, message_action_menu_lines, message_item_lines,
-        message_viewport_lines, poll_vote_picker_lines, reaction_users_popup_lines,
-        reaction_users_visible_line_count, sync_view_heights, wrap_text_lines,
+        message_viewport_lines, poll_box_border, poll_card_inner_width, poll_vote_picker_lines,
+        reaction_users_popup_lines, reaction_users_visible_line_count, sync_view_heights,
+        wrap_text_lines,
     };
     use crate::{
         discord::{
@@ -2566,18 +2633,23 @@ mod tests {
         message.attachments.clear();
         message.poll = Some(poll_info(false));
 
-        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+        let width = 40;
+        let lines = format_message_content_lines(&message, &DashboardState::new(), width);
+        let texts = line_texts(&lines);
 
+        assert_eq!(texts[0], poll_box_border('╭', '╮', width));
+        assert_eq!(texts[1], poll_test_line("What should we eat?", width));
+        assert_eq!(texts[2], poll_test_line("Select one answer", width));
+        assert_eq!(texts[3], poll_test_line("  ◉ 1. Soup  2 votes  66%", width));
         assert_eq!(
-            line_texts(&lines),
-            vec![
-                "What should we eat?",
-                "Select one answer",
-                "  ◉ 1. Soup  2 votes  66%",
-                "  ◯ 2. Noodles  1 votes  33%",
-                "3 votes · Results may still change"
-            ]
+            texts[4],
+            poll_test_line("  ◯ 2. Noodles  1 votes  33%", width)
         );
+        assert_eq!(
+            texts[5],
+            poll_test_line("3 votes · Results may still change", width)
+        );
+        assert_eq!(texts[6], poll_box_border('╰', '╯', width));
     }
 
     #[test]
@@ -2588,8 +2660,44 @@ mod tests {
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
-        assert_eq!(lines[1].text, "Select one or more answers");
-        assert_eq!(lines[1].style, Style::default().fg(DIM));
+        assert!(lines[2].text.starts_with("│ Select one or more answers"));
+        assert_eq!(lines[2].style, Style::default().fg(DIM));
+    }
+
+    #[test]
+    fn poll_message_places_body_inside_box() {
+        let mut message =
+            message_with_attachment(Some("Please vote <@10>".to_owned()), image_attachment());
+        message.attachments.clear();
+        message.poll = Some(poll_info(false));
+        let state = state_with_member(10, "alice");
+
+        let lines = format_message_content_lines(&message, &state, 40);
+
+        assert_eq!(lines[1].text, poll_test_line("What should we eat?", 40));
+        assert_eq!(lines[2].text, poll_test_line("Please vote @alice", 40));
+        assert!(lines[3].text.starts_with("│ Select one answer"));
+    }
+
+    #[test]
+    fn poll_message_body_highlights_mentions_inside_box() {
+        let mut message =
+            message_with_attachment(Some("<@10> please vote".to_owned()), image_attachment());
+        message.attachments.clear();
+        message.mentions = vec![mention_info(10, "server alias")];
+        message.poll = Some(poll_info(false));
+        let mut state = state_with_member(10, "server alias");
+        state.push_event(AppEvent::Ready {
+            user: "server alias".to_owned(),
+            user_id: Some(Id::new(10)),
+        });
+
+        let lines = format_message_content_lines(&message, &state, 40);
+        let spans = lines[2].spans();
+
+        assert_eq!(spans[0].content.as_ref(), "│ ");
+        assert_eq!(spans[1].content.as_ref(), "@server alias");
+        assert_eq!(spans[1].style.bg, mention_highlight_style().bg);
     }
 
     #[test]
@@ -3436,6 +3544,12 @@ mod tests {
 
     fn line_texts(lines: &[MessageContentLine]) -> Vec<&str> {
         lines.iter().map(|line| line.text.as_str()).collect()
+    }
+
+    fn poll_test_line(text: &str, width: usize) -> String {
+        let inner_width = poll_card_inner_width(width);
+        let padding = inner_width.saturating_sub(text.width());
+        format!("│ {text}{} │", " ".repeat(padding))
     }
 
     fn line_texts_from_ratatui(lines: &[ratatui::text::Line<'_>]) -> Vec<String> {

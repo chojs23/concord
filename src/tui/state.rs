@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::discord::{
     AppCommand, AppEvent, AttachmentInfo, ChannelRecipientState, ChannelState, CustomEmojiInfo,
     DiscordState, GuildFolder, GuildMemberState, GuildState, MentionInfo, MessageInfo,
-    MessageSnapshotInfo, MessageState, PresenceStatus, ReactionEmoji, ReactionInfo,
+    MessageSnapshotInfo, MessageState, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
     ReactionUsersInfo, RoleState,
 };
 use crate::logging;
@@ -2657,8 +2657,14 @@ where
         return 1 + system_lines.max(1);
     }
 
+    let renders_poll_card = message.reply.is_none() && message.poll.is_some();
+    let primary_content = if renders_poll_card {
+        None
+    } else {
+        message.content.as_deref()
+    };
     let primary_lines = message_primary_line_count(
-        message.content.as_deref(),
+        primary_content,
         &message.attachments,
         content_width,
         &render_text,
@@ -2667,11 +2673,18 @@ where
         message.reply.is_none() && message.poll.is_none() && !message.message_kind.is_regular(),
     );
     let reply_line = usize::from(message.reply.is_some());
-    let poll_lines = if message.reply.is_none() {
+    let poll_lines = if renders_poll_card {
         message
             .poll
             .as_ref()
-            .map(|poll| 3 + poll.answers.len())
+            .map(|poll| {
+                poll_card_line_count(
+                    poll,
+                    message.content.as_deref(),
+                    content_width,
+                    &render_text,
+                )
+            })
             .unwrap_or(0)
     } else {
         0
@@ -2714,6 +2727,21 @@ fn reaction_line_count(reactions: &[ReactionInfo], width: usize) -> usize {
     } else {
         reaction_text_line_count(&chips, width)
     }
+}
+
+fn poll_card_line_count(
+    poll: &PollInfo,
+    content: Option<&str>,
+    content_width: usize,
+    render_text: &dyn Fn(&str) -> String,
+) -> usize {
+    let inner_width = super::ui::poll_card_inner_width(content_width);
+    let content_lines = content
+        .filter(|value| !value.is_empty())
+        .map(|value| super::ui::wrapped_text_line_count(&render_text(value), inner_width))
+        .unwrap_or(0);
+
+    2 + content_lines + 3 + poll.answers.len()
 }
 
 fn reaction_text_line_count(value: &str, width: usize) -> usize {
@@ -4120,7 +4148,23 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
+    }
+
+    #[test]
+    fn poll_message_body_counts_inside_card_height() {
+        let mut message = height_test_message("Please vote");
+        message.poll = Some(poll_info(false));
+
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
+    }
+
+    #[test]
+    fn wrapped_poll_message_body_counts_inside_card_height() {
+        let mut message = height_test_message("abcdefghijkl");
+        message.poll = Some(poll_info(false));
+
+        assert_eq!(message_rendered_height(&message, 10, 16, 3), 10);
     }
 
     #[test]
@@ -4174,7 +4218,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
     }
 
     #[test]
