@@ -1165,30 +1165,46 @@ fn visible_avatar_targets(state: &DashboardState, layout: ImagePreviewLayout) ->
 }
 
 fn visible_emoji_image_targets(state: &DashboardState) -> Vec<EmojiImageTarget> {
-    if !state.is_emoji_reaction_picker_open() {
-        return Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut targets: Vec<EmojiImageTarget> = Vec::new();
+
+    // Picker emojis (existing behaviour).
+    if state.is_emoji_reaction_picker_open() {
+        let reactions = state.emoji_reaction_items();
+        if !reactions.is_empty() {
+            let selected = state
+                .selected_emoji_reaction_index()
+                .unwrap_or(0)
+                .min(reactions.len().saturating_sub(1));
+            let visible_items = reactions.len().clamp(1, MAX_EMOJI_REACTION_VISIBLE_ITEMS);
+            let visible_range =
+                emoji_reaction_visible_range(reactions.len(), selected, visible_items);
+            for reaction in &reactions[visible_range] {
+                if let Some(url) = reaction.custom_image_url()
+                    && seen.insert(url.clone())
+                {
+                    targets.push(EmojiImageTarget { url });
+                }
+            }
+        }
     }
 
-    let reactions = state.emoji_reaction_items();
-    if reactions.is_empty() {
-        return Vec::new();
+    // Custom-emoji reactions on currently visible messages so they can be
+    // overlaid as inline images below each message body.
+    for message in state.visible_messages() {
+        for reaction in &message.reactions {
+            if reaction.count == 0 {
+                continue;
+            }
+            if let Some(url) = reaction.emoji.custom_image_url()
+                && seen.insert(url.clone())
+            {
+                targets.push(EmojiImageTarget { url });
+            }
+        }
     }
 
-    let selected = state
-        .selected_emoji_reaction_index()
-        .unwrap_or(0)
-        .min(reactions.len().saturating_sub(1));
-    let visible_items = reactions.len().clamp(1, MAX_EMOJI_REACTION_VISIBLE_ITEMS);
-    let visible_range = emoji_reaction_visible_range(reactions.len(), selected, visible_items);
-
-    reactions[visible_range]
-        .iter()
-        .filter_map(|reaction| {
-            reaction
-                .custom_image_url()
-                .map(|url| EmojiImageTarget { url })
-        })
-        .collect()
+    targets
 }
 
 fn emoji_reaction_visible_range(

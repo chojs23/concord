@@ -24,7 +24,7 @@ use super::{
 };
 use crate::discord::{
     AttachmentInfo, ChannelState, MessageKind, MessageSnapshotInfo, MessageState, PollInfo,
-    PresenceStatus, ReactionInfo, ReactionUsersInfo, ReplyInfo,
+    PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUsersInfo, ReplyInfo,
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -159,6 +159,7 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
     state.set_channel_view_height(panel_content_height(areas.channels, "Channels"));
     state.set_message_view_height(message_list_area(areas.messages, state).height as usize);
     state.set_member_view_height(panel_content_height(areas.members, "Members"));
+    state.set_reaction_users_popup_view_height(reaction_users_visible_line_count(areas.messages));
 }
 
 pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewLayout {
@@ -183,7 +184,14 @@ pub fn render(
 
     render_guilds(frame, areas.guilds, state);
     render_channels(frame, areas.channels, state);
-    render_messages(frame, areas.messages, state, image_previews, avatar_images);
+    render_messages(
+        frame,
+        areas.messages,
+        state,
+        image_previews,
+        avatar_images,
+        &emoji_images,
+    );
     render_members(frame, areas.members, state);
     render_footer(frame, areas.footer, state);
     render_message_action_menu(frame, areas.messages, state);
@@ -343,6 +351,7 @@ fn render_messages(
     state: &DashboardState,
     image_previews: Vec<ImagePreview<'_>>,
     avatar_images: Vec<AvatarImage>,
+    emoji_images: &[EmojiReactionImage<'_>],
 ) {
     let title_text = state
         .selected_channel_state()
@@ -372,6 +381,15 @@ fn render_messages(
             frame.render_widget(RatatuiImage::new(&avatar.protocol), area);
         }
     }
+    render_inline_reaction_emojis(
+        frame,
+        message_areas.list,
+        &messages,
+        state,
+        content_width,
+        &image_previews,
+        emoji_images,
+    );
     let mut previous_preview_rows = 0usize;
     for image_preview in image_previews.into_iter() {
         let row = inline_image_preview_row(
@@ -391,6 +409,90 @@ fn render_messages(
             previous_preview_rows.saturating_add(image_preview.preview_height as usize);
     }
     render_composer(frame, message_areas.composer, state);
+}
+
+/// Walks visible messages in render order, computes the absolute (row, col) of
+/// each custom-emoji reaction image overlay, and paints it on top of the
+/// already-rendered message text. Mirrors `visible_avatar_targets`'s row
+/// accounting in `mod.rs`: each message contributes
+/// `base_lines + preview_height` rendered rows, with the first message
+/// optionally clipped at the top by `state.message_line_scroll()`.
+fn render_inline_reaction_emojis(
+    frame: &mut Frame,
+    list: Rect,
+    messages: &[&MessageState],
+    state: &DashboardState,
+    content_width: usize,
+    image_previews: &[ImagePreview<'_>],
+    emoji_images: &[EmojiReactionImage<'_>],
+) {
+    if emoji_images.is_empty() || list.height == 0 || list.width <= MESSAGE_AVATAR_OFFSET {
+        return;
+    }
+
+    let list_top = list.y as isize;
+    let list_bottom = list_top + list.height as isize;
+    let list_left = list.x as isize;
+    let list_right = list_left + list.width as isize;
+    let avatar_offset = MESSAGE_AVATAR_OFFSET as isize;
+
+    let mut rendered_rows: isize = 0;
+
+    for (index, message) in messages.iter().enumerate() {
+        if rendered_rows >= list.height as isize {
+            break;
+        }
+        let line_offset = if index == 0 {
+            state.message_line_scroll() as isize
+        } else {
+            0
+        };
+        let base_rows = state.message_base_line_count_for_width(message, content_width) as isize;
+        let preview_height = preview_height_for_message(image_previews, index) as isize;
+
+        let layout = lay_out_reaction_chips(&message.reactions, content_width);
+        if !layout.slots.is_empty() {
+            // Reactions live in the last `layout.lines.len()` rows of the
+            // message's base content (header + body), before the preview
+            // spacer. Their first row is therefore at:
+            //     message_top + (base_rows - reaction_lines)
+            let message_top = rendered_rows - line_offset;
+            let reaction_strip_top =
+                message_top + base_rows.saturating_sub(layout.lines.len() as isize);
+
+            for slot in layout.slots {
+                let row_in_list = reaction_strip_top + slot.line as isize;
+                if row_in_list < 0 || row_in_list >= list.height as isize {
+                    continue;
+                }
+                let Some(image) = emoji_images.iter().find(|img| img.url == slot.url) else {
+                    continue;
+                };
+                let absolute_row = list_top + row_in_list;
+                let absolute_col = list_left + avatar_offset + slot.col as isize;
+                if absolute_col >= list_right {
+                    continue;
+                }
+                let max_width = (list_right - absolute_col).max(0) as u16;
+                let image_width = EMOJI_REACTION_IMAGE_WIDTH.min(max_width);
+                if image_width == 0 {
+                    continue;
+                }
+                let image_area = Rect {
+                    x: absolute_col as u16,
+                    y: absolute_row as u16,
+                    width: image_width,
+                    height: 1,
+                };
+                if image_area.y >= list_bottom as u16 {
+                    continue;
+                }
+                frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+            }
+        }
+
+        rendered_rows = rendered_rows.saturating_add((base_rows + preview_height) - line_offset);
+    }
 }
 
 fn render_image_preview(frame: &mut Frame, area: Rect, image_preview: ImagePreviewState<'_>) {
@@ -634,28 +736,111 @@ fn format_message_content_lines(
 }
 
 fn format_reaction_lines(reactions: &[ReactionInfo], width: usize) -> Vec<MessageContentLine> {
-    let chips = reactions
-        .iter()
-        .filter(|reaction| reaction.count > 0)
-        .map(format_reaction_chip)
-        .collect::<Vec<_>>()
-        .join("  ");
-    if chips.is_empty() {
-        return Vec::new();
-    }
-    wrap_text_lines(&chips, width)
+    lay_out_reaction_chips(reactions, width)
+        .lines
         .into_iter()
         .map(MessageContentLine::accent)
         .collect()
 }
 
-fn format_reaction_chip(reaction: &ReactionInfo) -> String {
-    let marker = if reaction.me { "●" } else { "○" };
-    format!(
-        "[{marker} {} {}]",
-        reaction.emoji.status_label(),
-        reaction.count
-    )
+/// Position of a custom-emoji image overlay relative to the start of a
+/// message's reaction strip.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ReactionImageSlot {
+    pub(crate) line: u16,
+    pub(crate) col: u16,
+    pub(crate) url: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ReactionLayout {
+    pub(crate) lines: Vec<String>,
+    pub(crate) slots: Vec<ReactionImageSlot>,
+}
+
+/// Builds a single chip's text plus the chip-internal column offset where its
+/// image overlay should land (if any). Custom-emoji chips reserve a fixed
+/// `EMOJI_REACTION_IMAGE_WIDTH` of spaces in place of the textual `:name:`
+/// label so that loading the image later does not reflow the row.
+fn build_reaction_chip(reaction: &ReactionInfo) -> (String, Option<usize>, Option<String>) {
+    let count = reaction.count;
+    match &reaction.emoji {
+        ReactionEmoji::Unicode(emoji) => {
+            let chip = if reaction.me {
+                format!("[● {emoji} {count}]")
+            } else {
+                format!("[{emoji} {count}]")
+            };
+            (chip, None, None)
+        }
+        ReactionEmoji::Custom { .. } => {
+            let url = reaction.emoji.custom_image_url();
+            let placeholder = " ".repeat(EMOJI_REACTION_IMAGE_WIDTH as usize);
+            let prefix = if reaction.me { "[● " } else { "[" };
+            let chip = format!("{prefix}{placeholder} {count}]");
+            let image_offset = prefix.width();
+            (chip, Some(image_offset), url)
+        }
+    }
+}
+
+/// Lays out reaction chips for a message, wrapping at chip boundaries so a
+/// chip is never split across rows. Returns both the rendered text rows and
+/// the absolute (line, col) position of every custom-emoji image overlay,
+/// relative to the first reaction row.
+pub(crate) fn lay_out_reaction_chips(
+    reactions: &[ReactionInfo],
+    width: usize,
+) -> ReactionLayout {
+    let width = width.max(1);
+    let chips: Vec<(String, Option<usize>, Option<String>)> = reactions
+        .iter()
+        .filter(|reaction| reaction.count > 0)
+        .map(build_reaction_chip)
+        .collect();
+    if chips.is_empty() {
+        return ReactionLayout::default();
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut slots: Vec<ReactionImageSlot> = Vec::new();
+    let mut current = String::new();
+    let mut current_width: usize = 0;
+
+    for (chip_text, image_offset, url) in chips {
+        let chip_width = chip_text.width();
+        let separator_width = if current_width == 0 { 0 } else { 2 };
+        let projected = current_width + separator_width + chip_width;
+        let needs_wrap = current_width > 0 && projected > width;
+        if needs_wrap {
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+
+        let chip_start_col = if current_width == 0 {
+            0usize
+        } else {
+            current.push_str("  ");
+            current_width += 2;
+            current_width
+        };
+        current.push_str(&chip_text);
+        current_width += chip_width;
+
+        if let (Some(offset), Some(url)) = (image_offset, url) {
+            slots.push(ReactionImageSlot {
+                line: u16::try_from(lines.len()).unwrap_or(u16::MAX),
+                col: u16::try_from(chip_start_col + offset).unwrap_or(u16::MAX),
+                url,
+            });
+        }
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    ReactionLayout { lines, slots }
 }
 
 pub(crate) fn wrapped_text_line_count(value: &str, width: usize) -> usize {
@@ -1555,18 +1740,27 @@ fn render_reaction_users_popup(frame: &mut Frame, area: Rect, state: &DashboardS
         return;
     };
 
+    // Compute the popup's eventual inner width up front so we can pre-truncate
+    // every line to fit. Without this, ratatui's `Wrap` would split a long
+    // username across rows and the wrap continuation overlaps neighbouring
+    // lines, producing the trailing-fragment artefact reported by users.
+    const POPUP_TARGET_WIDTH: u16 = 58;
+    let popup_width = POPUP_TARGET_WIDTH
+        .min(area.width.saturating_sub(2))
+        .max(1);
+    let inner_width = usize::from(popup_width.saturating_sub(2));
+
     let max_visible_lines = reaction_users_visible_line_count(area);
     let lines = reaction_users_popup_lines(
         popup_state.reactions(),
         popup_state.scroll(),
         max_visible_lines,
+        inner_width,
     );
-    let popup = centered_rect(area, 58, (lines.len() as u16).saturating_add(2));
+    let popup = centered_rect(area, POPUP_TARGET_WIDTH, (lines.len() as u16).saturating_add(2));
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("Reacted users", true))
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(lines).block(panel_block("Reacted users", true)),
         popup,
     );
 }
@@ -1652,25 +1846,68 @@ fn reaction_users_popup_lines(
     reactions: &[ReactionUsersInfo],
     scroll: usize,
     max_visible_lines: usize,
+    inner_width: usize,
 ) -> Vec<Line<'static>> {
     let data_lines = reaction_users_popup_data_lines(reactions);
     let visible_lines = max_visible_lines.min(data_lines.len());
     let scroll = scroll.min(data_lines.len().saturating_sub(visible_lines));
     let has_hidden_before = scroll > 0;
     let has_hidden_after = scroll.saturating_add(visible_lines) < data_lines.len();
-    let mut lines = data_lines
+    let mut lines: Vec<Line<'static>> = data_lines
         .into_iter()
         .skip(scroll)
         .take(visible_lines)
-        .collect::<Vec<_>>();
+        .map(|line| truncate_line_to_display_width(line, inner_width))
+        .collect();
     let hint = match (has_hidden_before, has_hidden_after) {
         (true, true) => "j/k scroll · more above/below · Esc close",
         (true, false) => "j/k scroll · more above · Esc close",
         (false, true) => "j/k scroll · more below · Esc close",
         (false, false) => "Esc close",
     };
-    lines.push(Line::from(Span::styled(hint, Style::default().fg(DIM))));
+    lines.push(truncate_line_to_display_width(
+        Line::from(Span::styled(hint, Style::default().fg(DIM))),
+        inner_width,
+    ));
     lines
+}
+
+/// Clamps the visible width of a `Line` to `max_width` columns by truncating
+/// each contained span, then pads the remainder with explicit spaces so the
+/// rendered line covers exactly `max_width` cells.
+///
+/// Truncation prevents `Paragraph` from wrapping a long line and bleeding the
+/// continuation onto adjacent rows. Padding to the full width ensures every
+/// cell in the popup row is painted by `Paragraph` — Windows Terminal under
+/// WSL does not always clear the right-hand cell of a wide grapheme (Korean,
+/// emoji) when ratatui's diff sends a default-style space via `Clear`. Writing
+/// an explicit styled space through the paragraph fixes the residue.
+fn truncate_line_to_display_width(line: Line<'static>, max_width: usize) -> Line<'static> {
+    if max_width == 0 {
+        return Line::default();
+    }
+    let mut remaining = max_width;
+    let mut new_spans: Vec<Span<'static>> = Vec::with_capacity(line.spans.len() + 1);
+    for span in line.spans {
+        if remaining == 0 {
+            break;
+        }
+        if span.content.width() <= remaining {
+            remaining = remaining.saturating_sub(span.content.width());
+            new_spans.push(span);
+            continue;
+        }
+        let truncated = truncate_display_width(&span.content, remaining);
+        remaining = remaining.saturating_sub(truncated.width());
+        new_spans.push(Span::styled(truncated, span.style));
+    }
+    if remaining > 0 {
+        new_spans.push(Span::styled(" ".repeat(remaining), line.style));
+    }
+    let mut truncated = Line::from(new_spans);
+    truncated.style = line.style;
+    truncated.alignment = line.alignment;
+    truncated
 }
 
 fn reaction_users_popup_data_lines(reactions: &[ReactionUsersInfo]) -> Vec<Line<'static>> {
@@ -2717,6 +2954,88 @@ mod tests {
     }
 
     #[test]
+    fn lay_out_reaction_chips_unicode_only_emits_no_image_slots() {
+        let reactions = vec![
+            ReactionInfo {
+                emoji: ReactionEmoji::Unicode("👍".to_owned()),
+                count: 3,
+                me: true,
+            },
+            ReactionInfo {
+                emoji: ReactionEmoji::Unicode("❤".to_owned()),
+                count: 1,
+                me: false,
+            },
+        ];
+
+        let layout = super::lay_out_reaction_chips(&reactions, 200);
+
+        assert_eq!(layout.lines, vec!["[● 👍 3]  [❤ 1]"]);
+        assert!(layout.slots.is_empty());
+    }
+
+    #[test]
+    fn lay_out_reaction_chips_custom_emoji_reserves_image_slot() {
+        let reactions = vec![
+            ReactionInfo {
+                emoji: ReactionEmoji::Unicode("👍".to_owned()),
+                count: 2,
+                me: false,
+            },
+            ReactionInfo {
+                emoji: ReactionEmoji::Custom {
+                    id: Id::new(42),
+                    name: Some("party".to_owned()),
+                    animated: false,
+                },
+                count: 1,
+                me: true,
+            },
+        ];
+
+        let layout = super::lay_out_reaction_chips(&reactions, 200);
+
+        // First line concatenates both chips with two spaces; the custom-emoji
+        // chip reserves two cells of spaces in place of the textual `:name:`.
+        assert_eq!(layout.lines, vec!["[👍 2]  [●    1]"]);
+        assert_eq!(layout.slots.len(), 1);
+        let slot = &layout.slots[0];
+        assert_eq!(slot.line, 0);
+        // "[👍 2]" is 6 cells, plus "  " separator = 8 cells of preceding text.
+        // Inside the chip "[● " is 3 cells, so the image starts at col 8 + 3 = 11.
+        assert_eq!(slot.col, 11);
+        assert!(slot.url.contains("42.png"));
+    }
+
+    #[test]
+    fn lay_out_reaction_chips_wraps_at_chip_boundary() {
+        let reactions = (0..3)
+            .map(|i| ReactionInfo {
+                emoji: ReactionEmoji::Custom {
+                    id: Id::new(100 + i),
+                    name: Some(format!("e{i}")),
+                    animated: false,
+                },
+                count: i + 1,
+                me: false,
+            })
+            .collect::<Vec<_>>();
+
+        // Each chip width: "[" + 2 placeholder spaces + " " + count + "]" = 6.
+        // Two chips with separator = 6 + 2 + 6 = 14. Three would be 14 + 2 + 6 = 22.
+        let layout = super::lay_out_reaction_chips(&reactions, 14);
+
+        assert_eq!(layout.lines.len(), 2);
+        // First two chips on line 0, third chip on line 1.
+        assert_eq!(layout.slots.len(), 3);
+        assert_eq!(layout.slots[0].line, 0);
+        assert_eq!(layout.slots[1].line, 0);
+        assert_eq!(layout.slots[2].line, 1);
+        // Third chip starts at col 0 of the wrapped second line, image at col 1.
+        assert_eq!(layout.slots[2].col, 1);
+    }
+
+    #[test]
     fn message_action_menu_marks_selected_and_disabled_actions() {
         let actions = vec![
             MessageActionItem {
@@ -2827,10 +3146,15 @@ mod tests {
             ],
             0,
             10,
+            56,
         );
 
+        let trimmed = line_texts_from_ratatui(&lines)
+            .into_iter()
+            .map(|line| line.trim_end().to_owned())
+            .collect::<Vec<_>>();
         assert_eq!(
-            line_texts_from_ratatui(&lines),
+            trimmed,
             vec![
                 "👍 · 2 users",
                 "  neo",
@@ -2854,10 +3178,14 @@ mod tests {
                 .collect(),
         }];
 
-        let lines = reaction_users_popup_lines(&reactions, 3, 3);
+        let lines = reaction_users_popup_lines(&reactions, 3, 3, 56);
 
+        let trimmed = line_texts_from_ratatui(&lines)
+            .into_iter()
+            .map(|line| line.trim_end().to_owned())
+            .collect::<Vec<_>>();
         assert_eq!(
-            line_texts_from_ratatui(&lines),
+            trimmed,
             vec![
                 "  user-3",
                 "  user-4",
@@ -2865,6 +3193,191 @@ mod tests {
                 "j/k scroll · more above/below · Esc close",
             ]
         );
+    }
+
+    #[test]
+    fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::ReactionUsersLoaded {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            reactions: vec![
+                ReactionUsersInfo {
+                    emoji: ReactionEmoji::Unicode("👍".to_owned()),
+                    users: vec![
+                        ReactionUserInfo {
+                            user_id: Id::new(1),
+                            display_name: "갱생케가".to_owned(),
+                        },
+                        ReactionUserInfo {
+                            user_id: Id::new(2),
+                            display_name: "하나비".to_owned(),
+                        },
+                        ReactionUserInfo {
+                            user_id: Id::new(3),
+                            display_name: "슬기인뎅".to_owned(),
+                        },
+                        ReactionUserInfo {
+                            user_id: Id::new(4),
+                            display_name: "won".to_owned(),
+                        },
+                    ],
+                },
+                ReactionUsersInfo {
+                    emoji: ReactionEmoji::Unicode("❤️".to_owned()),
+                    users: vec![ReactionUserInfo {
+                        user_id: Id::new(5),
+                        display_name: "파닥파닥( 40%..? )".to_owned(),
+                    }],
+                },
+            ],
+        });
+
+        // Use a wide terminal so the popup's full POPUP_TARGET_WIDTH (58)
+        // applies and line truncation should never trigger.
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+
+        terminal
+            .draw(|frame| {
+                sync_view_heights(frame.area(), &mut state);
+                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new());
+            })
+            .expect("first draw");
+
+        // Scroll the popup down past the long username, then back up. The
+        // reported bug appeared after the long username was rendered and the
+        // user scrolled up through earlier names — that is the diff path the
+        // popup must survive without bleeding the wrap continuation onto
+        // neighbouring rows.
+        for _ in 0..6 {
+            state.scroll_reaction_users_popup_down();
+        }
+        terminal
+            .draw(|frame| {
+                sync_view_heights(frame.area(), &mut state);
+                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new());
+            })
+            .expect("second draw");
+        for _ in 0..6 {
+            state.scroll_reaction_users_popup_up();
+        }
+        terminal
+            .draw(|frame| {
+                sync_view_heights(frame.area(), &mut state);
+                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new());
+            })
+            .expect("third draw");
+
+        let buffer = terminal.backend().buffer();
+        let dump = (0..buffer.area.height)
+            .map(|row| {
+                (0..buffer.area.width)
+                    .map(|col| buffer[(col, row)].symbol().to_owned())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        // The reported artefact was the trailing fragment "? )" from
+        // "파닥파닥( 40%..? )" appearing on rows that should hold a different
+        // (shorter) name. After scrolling, count the number of rows whose
+        // popup-content section ends with the long username's tail. Only the
+        // single row that actually renders that user should match — any other
+        // matches indicate wrap continuation has bled across rows.
+        let trailing_matches = dump
+            .iter()
+            .filter(|line| line.contains("? )"))
+            .count();
+        assert!(
+            trailing_matches <= 1,
+            "popup buffer contained '? )' fragment on {trailing_matches} rows; expected at most 1.\nDump:\n{}",
+            dump.join("\n")
+        );
+    }
+
+    #[test]
+    fn reaction_users_popup_buffer_stays_clean_in_narrow_terminal() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::ReactionUsersLoaded {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            reactions: vec![ReactionUsersInfo {
+                emoji: ReactionEmoji::Unicode("👍".to_owned()),
+                users: vec![
+                    ReactionUserInfo {
+                        user_id: Id::new(1),
+                        display_name: "won".to_owned(),
+                    },
+                    ReactionUserInfo {
+                        user_id: Id::new(2),
+                        display_name: "파닥파닥( 40%..? )".to_owned(),
+                    },
+                ],
+            }],
+        });
+
+        // Narrow terminal that would force the popup down to a width where
+        // the long name no longer fits without wrapping. Pre-truncation must
+        // turn the long name into an ellipsis, never split it across rows.
+        let backend = TestBackend::new(40, 25);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+        terminal
+            .draw(|frame| {
+                sync_view_heights(frame.area(), &mut state);
+                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new());
+            })
+            .expect("draw");
+
+        let buffer = terminal.backend().buffer();
+        let dump = (0..buffer.area.height)
+            .map(|row| {
+                (0..buffer.area.width)
+                    .map(|col| buffer[(col, row)].symbol().to_owned())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        let trailing_matches = dump.iter().filter(|line| line.contains("? )")).count();
+        assert!(
+            trailing_matches <= 1,
+            "popup buffer contained '? )' fragment on {trailing_matches} rows; expected at most 1.\nDump:\n{}",
+            dump.join("\n")
+        );
+    }
+
+    #[test]
+    fn reaction_users_popup_truncates_long_lines_to_fit_width() {
+        let reactions = vec![ReactionUsersInfo {
+            emoji: ReactionEmoji::Unicode("❤️".to_owned()),
+            users: vec![
+                ReactionUserInfo {
+                    user_id: Id::new(1),
+                    display_name: "won".to_owned(),
+                },
+                ReactionUserInfo {
+                    user_id: Id::new(2),
+                    display_name: "파닥파닥( 40%..? )".to_owned(),
+                },
+            ],
+        }];
+
+        // Inner width that is narrower than the long Korean+ASCII display name
+        // forces the popup logic to truncate. Without truncation, ratatui's
+        // wrap would split the long name and the wrap continuation would bleed
+        // onto adjacent rows.
+        let lines = reaction_users_popup_lines(&reactions, 0, 4, 12);
+
+        for line in &lines {
+            assert!(
+                line.width() <= 12,
+                "line {:?} exceeded inner width",
+                line_texts_from_ratatui(std::slice::from_ref(line))
+            );
+        }
     }
 
     #[test]

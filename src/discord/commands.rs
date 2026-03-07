@@ -23,6 +23,18 @@ impl ReactionEmoji {
                 .unwrap_or_else(|| ":custom:".to_owned()),
         }
     }
+
+    pub fn custom_image_url(&self) -> Option<String> {
+        let Self::Custom { id, animated, .. } = self else {
+            return None;
+        };
+        let extension = if *animated { "gif" } else { "png" };
+        Some(format!(
+            "https://cdn.discordapp.com/emojis/{}.{}",
+            id.get(),
+            extension
+        ))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

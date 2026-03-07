@@ -5,7 +5,6 @@ use twilight_model::id::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
-use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{
     AppCommand, AppEvent, AttachmentInfo, ChannelRecipientState, ChannelState, CustomEmojiInfo,
@@ -75,15 +74,7 @@ pub struct ThreadSummary {
 
 impl EmojiReactionItem {
     pub fn custom_image_url(&self) -> Option<String> {
-        let ReactionEmoji::Custom { id, animated, .. } = self.emoji else {
-            return None;
-        };
-        let extension = if animated { "gif" } else { "png" };
-        Some(format!(
-            "https://cdn.discordapp.com/emojis/{}.{}",
-            id.get(),
-            extension
-        ))
+        self.emoji.custom_image_url()
     }
 }
 
@@ -192,6 +183,7 @@ pub struct ReactionUsersPopupState {
     message_id: Id<MessageMarker>,
     reactions: Vec<ReactionUsersInfo>,
     scroll: usize,
+    view_height: usize,
 }
 
 impl ReactionUsersPopupState {
@@ -201,6 +193,28 @@ impl ReactionUsersPopupState {
 
     pub fn scroll(&self) -> usize {
         self.scroll
+    }
+
+    /// Total renderable data lines for the current reactions, mirroring the
+    /// layout produced by `reaction_users_popup_data_lines` in `ui.rs` so the
+    /// scroll bound here stays in sync with what the user actually sees.
+    pub fn data_line_count(&self) -> usize {
+        if self.reactions.is_empty() {
+            return 1;
+        }
+        self.reactions
+            .iter()
+            .map(|reaction| 1 + reaction.users.len().max(1))
+            .sum()
+    }
+
+    fn max_scroll(&self) -> usize {
+        let visible = self.view_height.min(self.data_line_count());
+        self.data_line_count().saturating_sub(visible)
+    }
+
+    fn clamp_scroll(&mut self) {
+        self.scroll = self.scroll.min(self.max_scroll());
     }
 }
 
@@ -355,6 +369,7 @@ impl DashboardState {
                     message_id: *message_id,
                     reactions: reactions.clone(),
                     scroll: 0,
+                    view_height: 0,
                 });
                 self.last_status = Some("loaded reacted users".to_owned());
                 self.last_error = None;
@@ -501,6 +516,7 @@ impl DashboardState {
     pub fn scroll_reaction_users_popup_down(&mut self) {
         if let Some(popup) = &mut self.reaction_users_popup {
             popup.scroll = popup.scroll.saturating_add(1);
+            popup.clamp_scroll();
         }
     }
 
@@ -513,12 +529,20 @@ impl DashboardState {
     pub fn page_reaction_users_popup_down(&mut self) {
         if let Some(popup) = &mut self.reaction_users_popup {
             popup.scroll = popup.scroll.saturating_add(10);
+            popup.clamp_scroll();
         }
     }
 
     pub fn page_reaction_users_popup_up(&mut self) {
         if let Some(popup) = &mut self.reaction_users_popup {
             popup.scroll = popup.scroll.saturating_sub(10);
+        }
+    }
+
+    pub fn set_reaction_users_popup_view_height(&mut self, height: usize) {
+        if let Some(popup) = &mut self.reaction_users_popup {
+            popup.view_height = height;
+            popup.clamp_scroll();
         }
     }
 
@@ -2709,24 +2733,7 @@ where
 }
 
 fn reaction_line_count(reactions: &[ReactionInfo], width: usize) -> usize {
-    let chips = reactions
-        .iter()
-        .filter(|reaction| reaction.count > 0)
-        .map(|reaction| {
-            let marker = if reaction.me { "●" } else { "○" };
-            format!(
-                "[{marker} {} {}]",
-                reaction.emoji.status_label(),
-                reaction.count
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("  ");
-    if chips.is_empty() {
-        0
-    } else {
-        reaction_text_line_count(&chips, width)
-    }
+    crate::tui::ui::lay_out_reaction_chips(reactions, width).lines.len()
 }
 
 fn poll_card_line_count(
@@ -2744,21 +2751,6 @@ fn poll_card_line_count(
     2 + content_lines + 3 + poll.answers.len()
 }
 
-fn reaction_text_line_count(value: &str, width: usize) -> usize {
-    let width = width.max(1);
-    let mut lines = 1;
-    let mut current_width = 0;
-    for grapheme in unicode_segmentation::UnicodeSegmentation::graphemes(value, true) {
-        let grapheme_width = grapheme.width();
-        if current_width > 0 && current_width + grapheme_width > width {
-            lines += 1;
-            current_width = grapheme_width;
-        } else {
-            current_width += grapheme_width;
-        }
-    }
-    lines
-}
 
 fn system_message_line_count(message: &MessageState) -> Option<usize> {
     match message.message_kind.code() {
@@ -4334,6 +4326,43 @@ mod tests {
                 .reaction_users_popup()
                 .map(|popup| popup.reactions()[0].users[0].display_name.as_str()),
             Some("neo")
+        );
+    }
+
+    #[test]
+    fn reaction_users_popup_scroll_down_clamps_at_bottom() {
+        let mut state = state_with_messages(1);
+        state.push_event(AppEvent::ReactionUsersLoaded {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            reactions: vec![ReactionUsersInfo {
+                emoji: ReactionEmoji::Unicode("👍".to_owned()),
+                users: (1..=6)
+                    .map(|id| ReactionUserInfo {
+                        user_id: Id::new(id),
+                        display_name: format!("user-{id}"),
+                    })
+                    .collect(),
+            }],
+        });
+        // 1 header + 6 users = 7 data lines. With a 3-line viewport the
+        // furthest the user can scroll is 4.
+        state.set_reaction_users_popup_view_height(3);
+
+        for _ in 0..50 {
+            state.scroll_reaction_users_popup_down();
+        }
+        assert_eq!(
+            state.reaction_users_popup().map(|popup| popup.scroll()),
+            Some(4)
+        );
+
+        // A single 'k' press should now move the scroll back, not be eaten by
+        // the inflated counter.
+        state.scroll_reaction_users_popup_up();
+        assert_eq!(
+            state.reaction_users_popup().map(|popup| popup.scroll()),
+            Some(3)
         );
     }
 
