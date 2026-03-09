@@ -17,9 +17,9 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     format::{RenderedText, TextHighlight, truncate_display_width, truncate_text},
     state::{
-        ChannelPaneEntry, DashboardState, EmojiReactionItem, FocusPane, GuildPaneEntry,
-        MemberEntry, MemberGroup, MessageActionItem, PollVotePickerItem, ThreadSummary,
-        folder_color, presence_color, presence_marker,
+        ChannelActionItem, ChannelPaneEntry, ChannelThreadItem, DashboardState, EmojiReactionItem,
+        FocusPane, GuildPaneEntry, MemberEntry, MemberGroup, MessageActionItem,
+        PollVotePickerItem, ThreadSummary, folder_color, presence_color, presence_marker,
     },
 };
 use crate::discord::{
@@ -195,6 +195,7 @@ pub fn render(
     render_members(frame, areas.members, state);
     render_footer(frame, areas.footer, state);
     render_message_action_menu(frame, areas.messages, state);
+    render_channel_action_menu(frame, areas.messages, state);
     render_poll_vote_picker(frame, areas.messages, state);
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
     render_reaction_users_popup(frame, areas.messages, state);
@@ -1644,6 +1645,14 @@ fn footer_hint(state: &DashboardState) -> &'static str {
         "j/k choose emoji | enter/space react | esc close"
     } else if state.is_message_action_menu_open() {
         "j/k choose action | enter select | esc close | q quit"
+    } else if state.is_channel_action_menu_open() {
+        if state.is_channel_action_threads_phase() {
+            "j/k choose thread | enter open | esc/← back | q quit"
+        } else {
+            "j/k choose action | enter select | esc close | q quit"
+        }
+    } else if state.focus() == FocusPane::Channels {
+        "tab/1-4 focus | j/k move | enter/space open | ←/→ category | a actions | i write | q quit"
     } else {
         "tab/1-4 focus | j/k move | J/K scroll | enter/space action/tree | ←/→ close/open | i write | esc cancel | q quit"
     }
@@ -1665,6 +1674,49 @@ fn render_message_action_menu(frame: &mut Frame, area: Rect, state: &DashboardSt
     frame.render_widget(
         Paragraph::new(message_action_menu_lines(&actions, selected))
             .block(panel_block("Message actions", true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+fn render_channel_action_menu(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    if !state.is_channel_action_menu_open() {
+        return;
+    }
+
+    let title_suffix = state
+        .channel_action_menu_title()
+        .map(|name| format!(" — {name}"))
+        .unwrap_or_default();
+
+    if state.is_channel_action_threads_phase() {
+        let threads = state.channel_action_thread_items();
+        let selected = state.selected_channel_action_index().unwrap_or(0);
+        let row_count = threads.len().max(1) as u16;
+        let popup = centered_rect(area, 54, row_count.saturating_add(4));
+        frame.render_widget(Clear, popup);
+        frame.render_widget(
+            Paragraph::new(channel_thread_menu_lines(&threads, selected))
+                .block(panel_block_owned(format!("Threads{title_suffix}"), true))
+                .wrap(Wrap { trim: false }),
+            popup,
+        );
+        return;
+    }
+
+    let actions = state.selected_channel_action_items();
+    if actions.is_empty() {
+        return;
+    }
+    let selected = state.selected_channel_action_index().unwrap_or(0);
+    let popup = centered_rect(area, 54, (actions.len() as u16).saturating_add(4));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(channel_action_menu_lines(&actions, selected))
+            .block(panel_block_owned(
+                format!("Channel actions{title_suffix}"),
+                true,
+            ))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -1811,6 +1863,78 @@ fn message_action_menu_lines(actions: &[MessageActionItem], selected: usize) -> 
         .collect();
     lines.push(Line::from(Span::styled(
         "Enter select · Esc close",
+        Style::default().fg(DIM),
+    )));
+    lines
+}
+
+fn channel_action_menu_lines(actions: &[ChannelActionItem], selected: usize) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| {
+            let marker = if index == selected { "› " } else { "  " };
+            let mut style = if action.enabled {
+                Style::default()
+            } else {
+                Style::default().fg(DIM)
+            };
+            if index == selected {
+                style = style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            Line::from(vec![
+                Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(action.label.clone(), style),
+            ])
+        })
+        .collect();
+    lines.push(Line::from(Span::styled(
+        "Enter select · Esc close",
+        Style::default().fg(DIM),
+    )));
+    lines
+}
+
+fn channel_thread_menu_lines(
+    threads: &[ChannelThreadItem],
+    selected: usize,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = if threads.is_empty() {
+        vec![Line::from(Span::styled(
+            "  (no threads)".to_owned(),
+            Style::default().fg(DIM),
+        ))]
+    } else {
+        threads
+            .iter()
+            .enumerate()
+            .map(|(index, thread)| {
+                let marker = if index == selected { "› " } else { "  " };
+                let mut suffix = String::new();
+                if thread.archived {
+                    suffix.push_str(" [archived]");
+                }
+                if thread.locked {
+                    suffix.push_str(" [locked]");
+                }
+                let mut style = Style::default();
+                if index == selected {
+                    style = style
+                        .bg(Color::Rgb(40, 45, 90))
+                        .add_modifier(Modifier::BOLD);
+                }
+                Line::from(vec![
+                    Span::styled(marker, Style::default().fg(ACCENT)),
+                    Span::styled(format!("» {}", thread.label), style),
+                    Span::styled(suffix, Style::default().fg(DIM)),
+                ])
+            })
+            .collect()
+    };
+    lines.push(Line::from(Span::styled(
+        "Enter open · Esc back",
         Style::default().fg(DIM),
     )));
     lines

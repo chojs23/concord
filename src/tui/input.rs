@@ -29,9 +29,16 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_message_action_menu_key(state, key);
     }
 
+    if state.is_channel_action_menu_open() {
+        return handle_channel_action_menu_key(state, key);
+    }
+
     match key.code {
         KeyCode::Char('q') => state.quit(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
+        KeyCode::Char('a') if state.focus() == FocusPane::Channels => {
+            state.open_selected_channel_actions();
+        }
         KeyCode::Char('i') => state.start_composer(),
         KeyCode::Char('1') => state.focus_pane(FocusPane::Guilds),
         KeyCode::Char('2') => state.focus_pane(FocusPane::Channels),
@@ -111,6 +118,23 @@ fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
         KeyCode::Char('j') | KeyCode::Down => state.move_message_action_down(),
         KeyCode::Char('k') | KeyCode::Up => state.move_message_action_up(),
         KeyCode::Enter | KeyCode::Char(' ') => return state.activate_selected_message_action(),
+        _ => {}
+    }
+
+    None
+}
+
+fn handle_channel_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    match key.code {
+        // Esc steps back to the action list when viewing threads, otherwise
+        // closes the menu entirely.
+        KeyCode::Esc => state.back_channel_action_menu(),
+        KeyCode::Left if state.is_channel_action_threads_phase() => {
+            state.back_channel_action_menu()
+        }
+        KeyCode::Char('j') | KeyCode::Down => state.move_channel_action_down(),
+        KeyCode::Char('k') | KeyCode::Up => state.move_channel_action_up(),
+        KeyCode::Enter | KeyCode::Char(' ') => return state.activate_selected_channel_action(),
         _ => {}
     }
 

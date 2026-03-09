@@ -49,6 +49,26 @@ pub struct MessageActionItem {
     pub enabled: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChannelActionKind {
+    ShowThreads,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChannelActionItem {
+    pub kind: ChannelActionKind,
+    pub label: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChannelThreadItem {
+    pub channel_id: Id<ChannelMarker>,
+    pub label: String,
+    pub archived: bool,
+    pub locked: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmojiReactionItem {
     pub emoji: ReactionEmoji,
@@ -156,6 +176,18 @@ pub struct MessageActionMenuState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+enum ChannelActionMenuState {
+    Actions {
+        channel_id: Id<ChannelMarker>,
+        selected: usize,
+    },
+    Threads {
+        channel_id: Id<ChannelMarker>,
+        selected: usize,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmojiReactionPickerState {
     selected: usize,
     guild_id: Option<Id<GuildMarker>>,
@@ -259,6 +291,7 @@ pub struct DashboardState {
     composer_active: bool,
     reply_target_message_id: Option<Id<MessageMarker>>,
     message_action_menu: Option<MessageActionMenuState>,
+    channel_action_menu: Option<ChannelActionMenuState>,
     emoji_reaction_picker: Option<EmojiReactionPickerState>,
     poll_vote_picker: Option<PollVotePickerState>,
     reaction_users_popup: Option<ReactionUsersPopupState>,
@@ -314,6 +347,7 @@ impl DashboardState {
             composer_active: false,
             reply_target_message_id: None,
             message_action_menu: None,
+            channel_action_menu: None,
             emoji_reaction_picker: None,
             poll_vote_picker: None,
             reaction_users_popup: None,
@@ -445,6 +479,26 @@ impl DashboardState {
         self.message_action_menu.is_some()
     }
 
+    pub fn is_channel_action_menu_open(&self) -> bool {
+        self.channel_action_menu.is_some()
+    }
+
+    pub fn is_channel_action_threads_phase(&self) -> bool {
+        matches!(
+            self.channel_action_menu,
+            Some(ChannelActionMenuState::Threads { .. })
+        )
+    }
+
+    pub fn channel_action_menu_title(&self) -> Option<String> {
+        let channel_id = match self.channel_action_menu.as_ref()? {
+            ChannelActionMenuState::Actions { channel_id, .. }
+            | ChannelActionMenuState::Threads { channel_id, .. } => *channel_id,
+        };
+        let channel = self.discord.channel(channel_id)?;
+        Some(format!("#{}", channel.name))
+    }
+
     pub fn is_emoji_reaction_picker_open(&self) -> bool {
         self.emoji_reaction_picker.is_some()
     }
@@ -499,6 +553,170 @@ impl DashboardState {
 
     pub fn close_message_action_menu(&mut self) {
         self.message_action_menu = None;
+    }
+
+    pub fn open_selected_channel_actions(&mut self) {
+        if self.focus != FocusPane::Channels {
+            return;
+        }
+        let Some(channel_id) = self.selected_channel_cursor_id() else {
+            return;
+        };
+        let Some(channel) = self.discord.channel(channel_id) else {
+            return;
+        };
+        if channel.is_category() || channel.is_thread() {
+            return;
+        }
+        self.channel_action_menu = Some(ChannelActionMenuState::Actions {
+            channel_id,
+            selected: 0,
+        });
+    }
+
+    pub fn close_channel_action_menu(&mut self) {
+        self.channel_action_menu = None;
+    }
+
+    pub fn back_channel_action_menu(&mut self) {
+        if let Some(ChannelActionMenuState::Threads { channel_id, .. }) =
+            self.channel_action_menu.as_ref()
+        {
+            let channel_id = *channel_id;
+            self.channel_action_menu = Some(ChannelActionMenuState::Actions {
+                channel_id,
+                selected: 0,
+            });
+        } else {
+            self.channel_action_menu = None;
+        }
+    }
+
+    pub fn selected_channel_action_items(&self) -> Vec<ChannelActionItem> {
+        let channel_id = match self.channel_action_menu.as_ref() {
+            Some(ChannelActionMenuState::Actions { channel_id, .. }) => *channel_id,
+            _ => return Vec::new(),
+        };
+        let thread_count = self
+            .channels()
+            .into_iter()
+            .filter(|c| c.is_thread() && c.parent_id == Some(channel_id))
+            .count();
+        let label = if thread_count == 0 {
+            "Show threads (none)".to_owned()
+        } else {
+            format!("Show threads ({thread_count})")
+        };
+        vec![ChannelActionItem {
+            kind: ChannelActionKind::ShowThreads,
+            label,
+            enabled: thread_count > 0,
+        }]
+    }
+
+    pub fn channel_action_thread_items(&self) -> Vec<ChannelThreadItem> {
+        let channel_id = match self.channel_action_menu.as_ref() {
+            Some(ChannelActionMenuState::Threads { channel_id, .. }) => *channel_id,
+            _ => return Vec::new(),
+        };
+        let mut threads: Vec<&ChannelState> = self
+            .channels()
+            .into_iter()
+            .filter(|c| c.is_thread() && c.parent_id == Some(channel_id))
+            .collect();
+        sort_channels(&mut threads);
+        threads
+            .into_iter()
+            .map(|c| ChannelThreadItem {
+                channel_id: c.id,
+                label: c.name.clone(),
+                archived: c.thread_archived.unwrap_or(false),
+                locked: c.thread_locked.unwrap_or(false),
+            })
+            .collect()
+    }
+
+    pub fn selected_channel_action_index(&self) -> Option<usize> {
+        match self.channel_action_menu.as_ref()? {
+            ChannelActionMenuState::Actions { selected, .. } => Some(
+                (*selected).min(self.selected_channel_action_items().len().saturating_sub(1)),
+            ),
+            ChannelActionMenuState::Threads { selected, .. } => Some(
+                (*selected).min(self.channel_action_thread_items().len().saturating_sub(1)),
+            ),
+        }
+    }
+
+    pub fn move_channel_action_down(&mut self) {
+        let len = match self.channel_action_menu.as_ref() {
+            Some(ChannelActionMenuState::Actions { .. }) => {
+                self.selected_channel_action_items().len()
+            }
+            Some(ChannelActionMenuState::Threads { .. }) => {
+                self.channel_action_thread_items().len()
+            }
+            None => return,
+        };
+        if len == 0 {
+            return;
+        }
+        if let Some(menu) = self.channel_action_menu.as_mut() {
+            let selected = match menu {
+                ChannelActionMenuState::Actions { selected, .. }
+                | ChannelActionMenuState::Threads { selected, .. } => selected,
+            };
+            *selected = (*selected + 1).min(len - 1);
+        }
+    }
+
+    pub fn move_channel_action_up(&mut self) {
+        if let Some(menu) = self.channel_action_menu.as_mut() {
+            let selected = match menu {
+                ChannelActionMenuState::Actions { selected, .. }
+                | ChannelActionMenuState::Threads { selected, .. } => selected,
+            };
+            *selected = selected.saturating_sub(1);
+        }
+    }
+
+    pub fn activate_selected_channel_action(&mut self) -> Option<AppCommand> {
+        let menu = self.channel_action_menu.clone()?;
+        match menu {
+            ChannelActionMenuState::Actions {
+                channel_id,
+                selected,
+            } => {
+                let items = self.selected_channel_action_items();
+                let item = items.get(selected.min(items.len().saturating_sub(1)))?.clone();
+                if !item.enabled {
+                    return None;
+                }
+                match item.kind {
+                    ChannelActionKind::ShowThreads => {
+                        self.channel_action_menu = Some(ChannelActionMenuState::Threads {
+                            channel_id,
+                            selected: 0,
+                        });
+                        None
+                    }
+                }
+            }
+            ChannelActionMenuState::Threads { .. } => {
+                let items = self.channel_action_thread_items();
+                let index = self.selected_channel_action_index()?;
+                let item = items.get(index)?.clone();
+                let guild_id = self
+                    .discord
+                    .channel(item.channel_id)
+                    .and_then(|c| c.guild_id);
+                self.activate_channel(item.channel_id);
+                self.close_channel_action_menu();
+                guild_id.map(|guild_id| AppCommand::SubscribeGuildChannel {
+                    guild_id,
+                    channel_id: item.channel_id,
+                })
+            }
+        }
     }
 
     pub fn close_emoji_reaction_picker(&mut self) {
@@ -1151,6 +1369,11 @@ impl DashboardState {
 
     pub fn channel_pane_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
         let mut channels = self.channels();
+        // Threads are reached through the channel action menu instead of
+        // appearing as top-level entries; without this filter their parent
+        // channel would not be in `category_ids`, so the roots filter below
+        // would let them through and render them under the channel list.
+        channels.retain(|channel| !channel.is_thread());
         if self.active_guild == ActiveGuildScope::DirectMessages {
             sort_direct_message_channels(&mut channels);
             return channels
@@ -3109,8 +3332,8 @@ mod tests {
     use twilight_model::id::{Id, marker::ChannelMarker, marker::UserMarker};
 
     use super::{
-        ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildBranch, GuildPaneEntry,
-        MessageActionKind, MessageState, message_rendered_height, presence_marker,
+        ChannelActionKind, ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildBranch,
+        GuildPaneEntry, MessageActionKind, MessageState, message_rendered_height, presence_marker,
     };
     use crate::discord::{
         AppCommand, AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
@@ -4447,6 +4670,78 @@ mod tests {
                 reply_to: None,
             })
         );
+    }
+
+    #[test]
+    fn channel_pane_excludes_threads() {
+        let state = state_with_thread_created_message();
+        let entries = state.channel_pane_entries();
+        let channel_ids: Vec<Id<ChannelMarker>> = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ChannelPaneEntry::Channel { state, .. } => Some(state.id),
+                ChannelPaneEntry::CategoryHeader { .. } => None,
+            })
+            .collect();
+        assert!(channel_ids.contains(&Id::new(2)));
+        assert!(!channel_ids.contains(&Id::new(10)));
+    }
+
+    #[test]
+    fn channel_action_menu_lists_threads_for_selected_channel() {
+        let mut state = state_with_thread_created_message();
+        focus_channels(&mut state);
+        state.open_selected_channel_actions();
+
+        assert!(state.is_channel_action_menu_open());
+        let actions = state.selected_channel_action_items();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].kind, ChannelActionKind::ShowThreads);
+        assert!(actions[0].enabled);
+
+        let command = state.activate_selected_channel_action();
+        assert_eq!(command, None);
+        assert!(state.is_channel_action_threads_phase());
+
+        let threads = state.channel_action_thread_items();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].channel_id, Id::new(10));
+        assert_eq!(threads[0].label, "release notes");
+    }
+
+    #[test]
+    fn channel_action_menu_open_thread_activates_and_subscribes() {
+        let mut state = state_with_thread_created_message();
+        focus_channels(&mut state);
+        state.open_selected_channel_actions();
+        state.activate_selected_channel_action();
+        let command = state.activate_selected_channel_action();
+
+        assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
+        assert!(!state.is_channel_action_menu_open());
+        assert_eq!(
+            command,
+            Some(AppCommand::SubscribeGuildChannel {
+                guild_id: Id::new(1),
+                channel_id: Id::new(10),
+            })
+        );
+    }
+
+    #[test]
+    fn channel_action_menu_back_returns_to_actions_phase() {
+        let mut state = state_with_thread_created_message();
+        focus_channels(&mut state);
+        state.open_selected_channel_actions();
+        state.activate_selected_channel_action();
+        assert!(state.is_channel_action_threads_phase());
+
+        state.back_channel_action_menu();
+        assert!(state.is_channel_action_menu_open());
+        assert!(!state.is_channel_action_threads_phase());
+
+        state.back_channel_action_menu();
+        assert!(!state.is_channel_action_menu_open());
     }
 
     #[test]
