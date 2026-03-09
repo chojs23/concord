@@ -815,10 +815,14 @@ fn parse_member_list_update(data: &Value) -> Vec<AppEvent> {
         return Vec::new();
     };
 
+    // A single GUILD_MEMBER_LIST_UPDATE event can carry SYNC ops for several
+    // ranges (e.g. `[0,99]` plus `[100,199]`). We previously dropped every
+    // SYNC whose range did not start at zero, which left members past the
+    // first chunk invisible in larger guilds.
     let mut events = Vec::new();
     for op in ops {
         match op.get("op").and_then(Value::as_str) {
-            Some("SYNC") if sync_range_starts_at_zero(op) => {
+            Some("SYNC") => {
                 if let Some(items) = op.get("items").and_then(Value::as_array) {
                     for item in items {
                         events.extend(parse_member_list_item(guild_id, item));
@@ -835,14 +839,6 @@ fn parse_member_list_update(data: &Value) -> Vec<AppEvent> {
     }
 
     events
-}
-
-fn sync_range_starts_at_zero(op: &Value) -> bool {
-    op.get("range")
-        .and_then(Value::as_array)
-        .and_then(|range| range.first())
-        .and_then(Value::as_u64)
-        == Some(0)
 }
 
 fn parse_member_list_item(guild_id: Id<GuildMarker>, item: &Value) -> Vec<AppEvent> {
@@ -1528,6 +1524,62 @@ mod tests {
                 if *guild_id == Id::new(10)
                     && *user_id == Id::new(20)
                     && *status == PresenceStatus::Idle
+        )));
+    }
+
+    #[test]
+    fn raw_member_list_update_processes_all_sync_ranges() {
+        // Discord can ship more than one SYNC chunk in a single
+        // GUILD_MEMBER_LIST_UPDATE — e.g. range [0,99] plus [100,199] — and
+        // we need members from every chunk, not just the first.
+        let events = parse_user_account_event(
+            &json!({
+                "t": "GUILD_MEMBER_LIST_UPDATE",
+                "d": {
+                    "guild_id": "10",
+                    "ops": [
+                        {
+                            "op": "SYNC",
+                            "range": [0, 99],
+                            "items": [{
+                                "member": {
+                                    "user": { "id": "20", "username": "alice" },
+                                    "roles": [],
+                                    "presence": { "status": "online" }
+                                }
+                            }]
+                        },
+                        {
+                            "op": "SYNC",
+                            "range": [100, 199],
+                            "items": [{
+                                "member": {
+                                    "user": { "id": "21", "username": "bob" },
+                                    "roles": [],
+                                    "presence": { "status": "idle" }
+                                }
+                            }]
+                        }
+                    ]
+                }
+            })
+            .to_string(),
+        );
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::GuildMemberUpsert { guild_id, member }
+                if *guild_id == Id::new(10) && member.user_id == Id::new(20)
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::GuildMemberUpsert { guild_id, member }
+                if *guild_id == Id::new(10) && member.user_id == Id::new(21)
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::PresenceUpdate { user_id, status, .. }
+                if *user_id == Id::new(21) && *status == PresenceStatus::Idle
         )));
     }
 
