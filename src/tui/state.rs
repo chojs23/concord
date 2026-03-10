@@ -1359,6 +1359,28 @@ impl DashboardState {
         }
     }
 
+    /// Picks a channel suitable for sending a guild op-37 subscription so
+    /// Discord starts shipping `GUILD_MEMBER_LIST_UPDATE` events. Member-list
+    /// updates only flow once the client subscribes to *some* channel in the
+    /// guild; this lets the sidebar populate before the user opens a channel.
+    pub fn guild_member_list_channel(
+        &self,
+        guild_id: Id<GuildMarker>,
+    ) -> Option<Id<ChannelMarker>> {
+        let mut candidates: Vec<&ChannelState> = self
+            .discord
+            .channels_for_guild(Some(guild_id))
+            .into_iter()
+            .filter(|channel| {
+                !channel.is_category()
+                    && !channel.is_thread()
+                    && !matches!(channel.kind.as_str(), "voice" | "GuildVoice")
+            })
+            .collect();
+        sort_channels(&mut candidates);
+        candidates.first().map(|channel| channel.id)
+    }
+
     pub fn channels(&self) -> Vec<&ChannelState> {
         match self.active_guild {
             ActiveGuildScope::Unset => Vec::new(),
@@ -4669,6 +4691,18 @@ mod tests {
                 content: "hi".to_owned(),
                 reply_to: None,
             })
+        );
+    }
+
+    #[test]
+    fn guild_member_list_channel_skips_threads_and_categories() {
+        let state = state_with_thread_created_message();
+        // The fixture's guild has channel id=2 (`general`) plus thread id=10
+        // (`release notes`). The subscription anchor must be the parent text
+        // channel, not the thread.
+        assert_eq!(
+            state.guild_member_list_channel(Id::new(1)),
+            Some(Id::new(2))
         );
     }
 

@@ -247,17 +247,40 @@ async fn run_dashboard(
         }
 
         if let Some(guild_id) = next_member_request(state.selected_guild_id(), &mut member_requests)
-            && commands
+        {
+            if commands
                 .send(AppCommand::LoadGuildMembers { guild_id })
                 .await
                 .is_err()
-        {
-            member_requests.remove(&guild_id);
-            logging::error("tui", "command channel closed");
-            state.push_event(AppEvent::GatewayError {
-                message: "command channel closed".to_owned(),
-            });
-            dirty = true;
+            {
+                member_requests.remove(&guild_id);
+                logging::error("tui", "command channel closed");
+                state.push_event(AppEvent::GatewayError {
+                    message: "command channel closed".to_owned(),
+                });
+                dirty = true;
+            }
+
+            // The op-8 RequestGuildMembers above is unreliable for user
+            // tokens in larger guilds. Send an op-37 subscription against any
+            // text channel as well so Discord starts streaming
+            // `GUILD_MEMBER_LIST_UPDATE` events into the sidebar even before
+            // the user opens a channel.
+            if let Some(channel_id) = state.guild_member_list_channel(guild_id)
+                && commands
+                    .send(AppCommand::SubscribeGuildChannel {
+                        guild_id,
+                        channel_id,
+                    })
+                    .await
+                    .is_err()
+            {
+                logging::error("tui", "command channel closed");
+                state.push_event(AppEvent::GatewayError {
+                    message: "command channel closed".to_owned(),
+                });
+                dirty = true;
+            }
         }
     }
 
