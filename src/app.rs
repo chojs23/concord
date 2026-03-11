@@ -127,6 +127,18 @@ fn start_command_loop(
                         client.publish_event(AppEvent::GatewayError { message });
                     }
                 }
+                AppCommand::UpdateMemberListSubscription {
+                    guild_id,
+                    channel_id,
+                    ranges,
+                } => {
+                    if let Err(message) =
+                        client.update_member_list_subscription(guild_id, channel_id, ranges)
+                    {
+                        logging::error("app", &message);
+                        client.publish_event(AppEvent::GatewayError { message });
+                    }
+                }
                 AppCommand::LoadAttachmentPreview { url } => {
                     match timeout(ATTACHMENT_PREVIEW_TIMEOUT, fetch_attachment_preview(&url)).await
                     {

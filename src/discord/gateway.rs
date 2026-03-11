@@ -40,6 +40,11 @@ pub enum GatewayCommand {
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
     },
+    UpdateMemberListSubscription {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        ranges: Vec<(u32, u32)>,
+    },
 }
 
 pub async fn run_gateway(
@@ -143,7 +148,7 @@ fn handle_gateway_command(
             guild_id,
             channel_id,
         } => {
-            let payload = guild_channel_subscribe_payload(guild_id, channel_id);
+            let payload = guild_channel_subscribe_payload(guild_id, channel_id, &[(0, 99)]);
             match sender.send(payload) {
                 Ok(()) => logging::debug(
                     "gateway",
@@ -157,6 +162,30 @@ fn handle_gateway_command(
                     logging::debug(
                         "gateway",
                         format!("subscribe guild channel failed: {error}"),
+                    );
+                }
+            }
+        }
+        GatewayCommand::UpdateMemberListSubscription {
+            guild_id,
+            channel_id,
+            ranges,
+        } => {
+            let payload = guild_channel_subscribe_payload(guild_id, channel_id, &ranges);
+            match sender.send(payload) {
+                Ok(()) => logging::debug(
+                    "gateway",
+                    format!(
+                        "updated member list ranges: guild={} channel={} ranges={:?}",
+                        guild_id.get(),
+                        channel_id.get(),
+                        ranges
+                    ),
+                ),
+                Err(error) => {
+                    logging::debug(
+                        "gateway",
+                        format!("update member list ranges failed: {error}"),
                     );
                 }
             }
@@ -177,7 +206,9 @@ fn direct_message_subscribe_payload(channel_id: Id<ChannelMarker>) -> String {
 fn guild_channel_subscribe_payload(
     guild_id: Id<GuildMarker>,
     channel_id: Id<ChannelMarker>,
+    ranges: &[(u32, u32)],
 ) -> String {
+    let ranges_json: Vec<[u32; 2]> = ranges.iter().map(|(start, end)| [*start, *end]).collect();
     json!({
         "op": 37,
         "d": {
@@ -187,7 +218,7 @@ fn guild_channel_subscribe_payload(
                     "activities": true,
                     "threads": true,
                     "channels": {
-                        channel_id.to_string(): [[0, 99]],
+                        channel_id.to_string(): ranges_json,
                     },
                 },
             },
@@ -1459,6 +1490,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_str(&guild_channel_subscribe_payload(
             Id::<twilight_model::id::marker::GuildMarker>::new(10),
             Id::<twilight_model::id::marker::ChannelMarker>::new(20),
+            &[(0, 99)],
         ))
         .expect("payload should be valid json");
 
@@ -1479,6 +1511,21 @@ mod tests {
                     }
                 }
             })
+        );
+    }
+
+    #[test]
+    fn guild_channel_subscribe_payload_emits_extended_member_ranges() {
+        let payload: serde_json::Value = serde_json::from_str(&guild_channel_subscribe_payload(
+            Id::<twilight_model::id::marker::GuildMarker>::new(10),
+            Id::<twilight_model::id::marker::ChannelMarker>::new(20),
+            &[(0, 99), (100, 199), (200, 299)],
+        ))
+        .expect("payload should be valid json");
+
+        assert_eq!(
+            payload["d"]["subscriptions"]["10"]["channels"]["20"],
+            json!([[0, 99], [100, 199], [200, 299]])
         );
     }
 

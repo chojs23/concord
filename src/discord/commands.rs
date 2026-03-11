@@ -53,6 +53,13 @@ pub enum AppCommand {
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
     },
+    /// Resubscribe an active op-37 channel subscription with a wider set of
+    /// member-list ranges as the user scrolls through the member sidebar.
+    UpdateMemberListSubscription {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        ranges: Vec<(u32, u32)>,
+    },
     LoadAttachmentPreview {
         url: String,
     },

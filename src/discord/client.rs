@@ -102,6 +102,21 @@ impl DiscordClient {
             .map_err(|_| "gateway command channel closed".to_owned())
     }
 
+    pub fn update_member_list_subscription(
+        &self,
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        ranges: Vec<(u32, u32)>,
+    ) -> std::result::Result<(), String> {
+        self.gateway_commands_tx
+            .send(GatewayCommand::UpdateMemberListSubscription {
+                guild_id,
+                channel_id,
+                ranges,
+            })
+            .map_err(|_| "gateway command channel closed".to_owned())
+    }
+
     pub async fn send_message(
         &self,
         channel_id: Id<ChannelMarker>,

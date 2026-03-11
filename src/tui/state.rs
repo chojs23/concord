@@ -1359,6 +1359,54 @@ impl DashboardState {
         }
     }
 
+    /// Returns the active guild plus the channel concord should attach the
+    /// op-37 member-list subscription to. Prefers the user's currently open
+    /// channel and falls back to the first text channel in the guild so the
+    /// sidebar still updates while no channel is selected.
+    pub fn member_list_subscription_target(
+        &self,
+    ) -> Option<(Id<GuildMarker>, Id<ChannelMarker>)> {
+        let guild_id = match self.active_guild {
+            ActiveGuildScope::Guild(guild_id) => guild_id,
+            ActiveGuildScope::DirectMessages | ActiveGuildScope::Unset => return None,
+        };
+        let channel_id = self
+            .active_channel_id
+            .filter(|channel_id| {
+                self.discord
+                    .channel(*channel_id)
+                    .is_some_and(|c| !c.is_thread())
+            })
+            .or_else(|| self.guild_member_list_channel(guild_id))?;
+        Some((guild_id, channel_id))
+    }
+
+    /// Highest 100-member bucket the user has scrolled the member sidebar
+    /// into. Bucket 0 covers indexes 0..=99, bucket 1 covers 100..=199, etc.
+    pub fn member_subscription_top_bucket(&self) -> u32 {
+        let scroll = u32::try_from(self.member_scroll).unwrap_or(u32::MAX);
+        let view = u32::try_from(self.member_view_height).unwrap_or(0);
+        scroll.saturating_add(view) / 100
+    }
+
+    /// op-37 channel ranges that cover the member viewport plus a small
+    /// trailing window. We anchor `[0, 99]` so the top of the sidebar always
+    /// stays populated, then add up to two more buckets near the visible end
+    /// so presence events keep flowing as the user scrolls. Capped at four
+    /// ranges total because Discord rejects oversized channel range lists.
+    pub fn member_subscription_ranges(&self) -> Vec<(u32, u32)> {
+        let top = self.member_subscription_top_bucket();
+        if top <= 2 {
+            return (0..=top).map(|b| (b * 100, b * 100 + 99)).collect();
+        }
+        let near_start = top.saturating_sub(1);
+        vec![
+            (0, 99),
+            (near_start * 100, near_start * 100 + 99),
+            (top * 100, top * 100 + 99),
+        ]
+    }
+
     /// Picks a channel suitable for sending a guild op-37 subscription so
     /// Discord starts shipping `GUILD_MEMBER_LIST_UPDATE` events. Member-list
     /// updates only flow once the client subscribes to *some* channel in the
@@ -4691,6 +4739,49 @@ mod tests {
                 content: "hi".to_owned(),
                 reply_to: None,
             })
+        );
+    }
+
+    #[test]
+    fn member_subscription_ranges_grow_with_viewport() {
+        let mut state = state_with_thread_created_message();
+        state.set_member_view_height(20);
+        // Default scroll 0, viewport ends at 20 → bucket 0.
+        assert_eq!(state.member_subscription_ranges(), vec![(0, 99)]);
+
+        state.member_scroll = 100;
+        state.member_view_height = 20;
+        // Viewport ends at 120 → bucket 1, contiguous coverage.
+        assert_eq!(
+            state.member_subscription_ranges(),
+            vec![(0, 99), (100, 199)]
+        );
+
+        state.member_scroll = 480;
+        state.member_view_height = 30;
+        // Viewport ends at 510 → bucket 5, anchor [0,99] plus the two buckets
+        // around the visible end so we never exceed the four-range cap.
+        assert_eq!(
+            state.member_subscription_ranges(),
+            vec![(0, 99), (400, 499), (500, 599)]
+        );
+    }
+
+    #[test]
+    fn member_list_subscription_target_uses_active_channel_or_fallback() {
+        let mut state = state_with_thread_created_message();
+        // The fixture activates `general` (id=2) on guild=1.
+        assert_eq!(
+            state.member_list_subscription_target(),
+            Some((Id::new(1), Id::new(2)))
+        );
+
+        // Switching the active channel to a thread must fall back to the
+        // parent text channel — Discord rejects op-37 ranges against threads.
+        state.activate_channel(Id::new(10));
+        assert_eq!(
+            state.member_list_subscription_target(),
+            Some((Id::new(1), Id::new(2)))
         );
     }
 

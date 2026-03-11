@@ -105,6 +105,7 @@ async fn run_dashboard(
     let (preview_decode_tx, mut preview_decode_rx) = mpsc::unbounded_channel();
     let mut history_requests = HashMap::new();
     let mut member_requests = HashSet::new();
+    let mut last_member_subscription: Option<(Id<GuildMarker>, Id<ChannelMarker>, u32)> = None;
     let mut last_history_channel = None;
     let mut image_targets = Vec::new();
     let mut avatar_targets = Vec::new();
@@ -280,6 +281,41 @@ async fn run_dashboard(
                     message: "command channel closed".to_owned(),
                 });
                 dirty = true;
+            }
+        }
+
+        // Resubscribe the member-list ranges whenever the user scrolls into a
+        // new 100-member bucket so Discord keeps shipping fresh member rows
+        // and presence events for what's actually visible.
+        if let Some((guild_id, channel_id)) = state.member_list_subscription_target() {
+            let bucket = state.member_subscription_top_bucket();
+            let needs_update = match last_member_subscription {
+                Some((prev_guild, prev_channel, prev_bucket)) => {
+                    prev_guild != guild_id
+                        || prev_channel != channel_id
+                        || prev_bucket != bucket
+                }
+                None => bucket > 0,
+            };
+            if needs_update {
+                let ranges = state.member_subscription_ranges();
+                if commands
+                    .send(AppCommand::UpdateMemberListSubscription {
+                        guild_id,
+                        channel_id,
+                        ranges,
+                    })
+                    .await
+                    .is_err()
+                {
+                    logging::error("tui", "command channel closed");
+                    state.push_event(AppEvent::GatewayError {
+                        message: "command channel closed".to_owned(),
+                    });
+                    dirty = true;
+                } else {
+                    last_member_subscription = Some((guild_id, channel_id, bucket));
+                }
             }
         }
     }
