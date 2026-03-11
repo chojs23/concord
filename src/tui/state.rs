@@ -2023,19 +2023,25 @@ impl DashboardState {
         let roles = self.discord.roles_for_guild(guild_id);
         let hoisted_roles = sorted_hoisted_roles(&roles);
         let mut groups: Vec<MemberGroup<'_>> = Vec::new();
-        let mut grouped_members: HashSet<Id<UserMarker>> = HashSet::new();
+        let mut grouped_online: HashSet<Id<UserMarker>> = HashSet::new();
 
+        // Hoisted role groups list only online members (online/idle/dnd) to
+        // mirror the official Discord client's sidebar; offline members from
+        // any role roll up into the bottom "Offline" group instead.
         for role in hoisted_roles {
             let mut entries: Vec<&GuildMemberState> = members
                 .iter()
-                .filter(|member| primary_hoisted_role(member, &roles) == Some(role.id))
                 .copied()
+                .filter(|member| {
+                    is_online_status(member.status)
+                        && primary_hoisted_role(member, &roles) == Some(role.id)
+                })
                 .collect();
             if entries.is_empty() {
                 continue;
             }
             sort_member_entries(&mut entries);
-            grouped_members.extend(entries.iter().map(|member| member.user_id));
+            grouped_online.extend(entries.iter().map(|member| member.user_id));
             groups.push(MemberGroup {
                 label: role.name.clone(),
                 color: role.color,
@@ -2043,16 +2049,32 @@ impl DashboardState {
             });
         }
 
-        let mut ungrouped: Vec<&GuildMemberState> = members
-            .into_iter()
-            .filter(|member| !grouped_members.contains(&member.user_id))
+        let mut online_unroled: Vec<&GuildMemberState> = members
+            .iter()
+            .copied()
+            .filter(|member| {
+                is_online_status(member.status) && !grouped_online.contains(&member.user_id)
+            })
             .collect();
-        if !ungrouped.is_empty() {
-            sort_member_entries(&mut ungrouped);
+        if !online_unroled.is_empty() {
+            sort_member_entries(&mut online_unroled);
             groups.push(MemberGroup {
-                label: "Members".to_owned(),
+                label: "Online".to_owned(),
                 color: None,
-                entries: ungrouped.into_iter().map(MemberEntry::Guild).collect(),
+                entries: online_unroled.into_iter().map(MemberEntry::Guild).collect(),
+            });
+        }
+
+        let mut offline: Vec<&GuildMemberState> = members
+            .into_iter()
+            .filter(|member| !is_online_status(member.status))
+            .collect();
+        if !offline.is_empty() {
+            sort_member_entries(&mut offline);
+            groups.push(MemberGroup {
+                label: "Offline".to_owned(),
+                color: None,
+                entries: offline.into_iter().map(MemberEntry::Guild).collect(),
             });
         }
 
@@ -3310,6 +3332,13 @@ pub fn presence_color(status: PresenceStatus) -> Color {
     }
 }
 
+fn is_online_status(status: PresenceStatus) -> bool {
+    matches!(
+        status,
+        PresenceStatus::Online | PresenceStatus::Idle | PresenceStatus::DoNotDisturb
+    )
+}
+
 fn sorted_hoisted_roles<'a>(roles: &'a [&'a RoleState]) -> Vec<&'a RoleState> {
     let mut roles: Vec<&RoleState> = roles.iter().copied().filter(|role| role.hoist).collect();
     roles.sort_by(|left, right| role_display_order(left, right));
@@ -3681,7 +3710,7 @@ mod tests {
     }
 
     #[test]
-    fn member_groups_keep_unroled_guild_members_in_members_group() {
+    fn member_groups_split_role_online_and_offline_buckets() {
         let guild_id = Id::new(1);
         let admin_role = Id::new(100);
         let mut state = DashboardState::new();
@@ -3712,16 +3741,33 @@ mod tests {
                     role_ids: vec![admin_role],
                 },
                 MemberInfo {
+                    user_id: Id::new(11),
+                    display_name: "amy".to_owned(),
+                    is_bot: false,
+                    avatar_url: None,
+                    role_ids: vec![admin_role],
+                },
+                MemberInfo {
                     user_id: Id::new(20),
                     display_name: "bob".to_owned(),
                     is_bot: false,
                     avatar_url: None,
                     role_ids: Vec::new(),
                 },
+                MemberInfo {
+                    user_id: Id::new(21),
+                    display_name: "ben".to_owned(),
+                    is_bot: false,
+                    avatar_url: None,
+                    role_ids: Vec::new(),
+                },
             ],
             presences: vec![
+                // Admin online, admin offline, no-role online, no-role offline
                 (Id::new(10), PresenceStatus::Online),
-                (Id::new(20), PresenceStatus::Offline),
+                (Id::new(11), PresenceStatus::Offline),
+                (Id::new(20), PresenceStatus::Idle),
+                (Id::new(21), PresenceStatus::Offline),
             ],
             roles: vec![RoleInfo {
                 id: admin_role,
@@ -3735,11 +3781,104 @@ mod tests {
         state.confirm_selected_guild();
 
         let groups = state.members_grouped();
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.label.clone())
+                .collect::<Vec<_>>(),
+            vec!["Admin".to_owned(), "Online".to_owned(), "Offline".to_owned()]
+        );
+
+        // Admin role group only carries the online admin (alice); the offline
+        // admin (amy) belongs to the Offline bucket.
+        let admin_names: Vec<_> = groups[0]
+            .entries
+            .iter()
+            .map(|m| m.display_name().to_owned())
+            .collect();
+        assert_eq!(admin_names, vec!["alice".to_owned()]);
+
+        // Online group lists members with no hoisted role who aren't offline.
+        let online_names: Vec<_> = groups[1]
+            .entries
+            .iter()
+            .map(|m| m.display_name().to_owned())
+            .collect();
+        assert_eq!(online_names, vec!["bob".to_owned()]);
+
+        // Offline group merges everyone offline regardless of role.
+        let offline_names: Vec<_> = groups[2]
+            .entries
+            .iter()
+            .map(|m| m.display_name().to_owned())
+            .collect();
+        assert_eq!(offline_names, vec!["amy".to_owned(), "ben".to_owned()]);
+    }
+
+    #[test]
+    fn member_groups_treat_idle_and_dnd_as_online() {
+        let guild_id = Id::new(1);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: Id::new(2),
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                recipients: None,
+            }],
+            members: vec![
+                MemberInfo {
+                    user_id: Id::new(10),
+                    display_name: "idle".to_owned(),
+                    is_bot: false,
+                    avatar_url: None,
+                    role_ids: Vec::new(),
+                },
+                MemberInfo {
+                    user_id: Id::new(11),
+                    display_name: "dnd".to_owned(),
+                    is_bot: false,
+                    avatar_url: None,
+                    role_ids: Vec::new(),
+                },
+                MemberInfo {
+                    user_id: Id::new(12),
+                    display_name: "unknown".to_owned(),
+                    is_bot: false,
+                    avatar_url: None,
+                    role_ids: Vec::new(),
+                },
+            ],
+            presences: vec![
+                (Id::new(10), PresenceStatus::Idle),
+                (Id::new(11), PresenceStatus::DoNotDisturb),
+                // Unknown is treated as offline (Discord defaults to offline
+                // when the gateway has not delivered a presence yet).
+                (Id::new(12), PresenceStatus::Unknown),
+            ],
+            roles: Vec::new(),
+            emojis: Vec::new(),
+        });
+        state.confirm_selected_guild();
+
+        let groups = state.members_grouped();
         assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0].label, "Admin");
-        assert_eq!(groups[0].entries[0].display_name(), "alice");
-        assert_eq!(groups[1].label, "Members");
-        assert_eq!(groups[1].entries[0].display_name(), "bob");
+        assert_eq!(groups[0].label, "Online");
+        assert_eq!(groups[0].entries.len(), 2);
+        assert_eq!(groups[1].label, "Offline");
+        assert_eq!(groups[1].entries.len(), 1);
+        assert_eq!(groups[1].entries[0].display_name(), "unknown");
     }
 
     #[test]
