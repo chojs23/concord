@@ -5,9 +5,11 @@ use std::{
 
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc};
+use futures::StreamExt;
 use twilight_gateway::{
-    EventTypeFlags, MessageSender, Shard, StreamExt, error::ReceiveMessageErrorType,
+    EventTypeFlags, Message, MessageSender, Shard, error::ReceiveMessageErrorType, parse,
 };
+use twilight_model::gateway::event::Event;
 use twilight_model::{
     gateway::{Intents, ShardId, payload::outgoing::RequestGuildMembers},
     id::{
@@ -66,36 +68,83 @@ pub async fn run_gateway(
                     None => commands_closed = true,
                 }
             }
-            item = shard.next_event(EventTypeFlags::all()) => {
+            item = shard.next() => {
                 let Some(item) = item else {
                     break;
                 };
 
+                // Twilight's `next_event` filters by `EventTypeFlags`, which
+                // means event types it does not model (e.g. user-account-only
+                // dispatches like `GUILD_MEMBER_LIST_UPDATE`,
+                // `READY_SUPPLEMENTAL`) are silently dropped. Going through
+                // the raw `Stream` and falling back to `parse_user_account_event`
+                // for unknown types keeps those payloads available.
                 match item {
-                    Ok(event) => {
-                        logging::debug("gateway", format!("ok: {:?}", event.kind()));
-                        for event in map_event(event) {
-                            let _ = tx.send(event);
+                    Ok(Message::Close(frame)) => {
+                        for app_event in map_event(Event::GatewayClose(frame)) {
+                            let _ = tx.send(app_event);
+                        }
+                    }
+                    Ok(Message::Text(json)) => {
+                        match parse(json.clone(), EventTypeFlags::all()) {
+                            Ok(Some(gateway_event)) => {
+                                let event: Event = gateway_event.into();
+                                logging::debug(
+                                    "gateway",
+                                    format!("ok: {:?}", event.kind()),
+                                );
+                                for app_event in map_event(event) {
+                                    let _ = tx.send(app_event);
+                                }
+                            }
+                            Ok(None) => {
+                                // Twilight does not recognise this dispatch;
+                                // try to rebuild it from raw JSON ourselves.
+                                let started = Instant::now();
+                                let events = parse_user_account_event(&json);
+                                logging::timing(
+                                    "gateway",
+                                    "raw dispatch parse",
+                                    started.elapsed(),
+                                );
+                                for app_event in events {
+                                    let _ = tx.send(app_event);
+                                }
+                            }
+                            Err(error) => {
+                                if let ReceiveMessageErrorType::Deserializing { event } =
+                                    error.kind()
+                                {
+                                    logging::debug(
+                                        "gateway",
+                                        format!("deserialize fallback: {event}"),
+                                    );
+                                    let started = Instant::now();
+                                    let events = parse_user_account_event(event);
+                                    logging::timing(
+                                        "gateway",
+                                        "fallback total",
+                                        started.elapsed(),
+                                    );
+                                    if events.is_empty() {
+                                        logging::debug(
+                                            "gateway",
+                                            "fallback emitted no app events",
+                                        );
+                                    }
+                                    for app_event in events {
+                                        let _ = tx.send(app_event);
+                                    }
+                                } else {
+                                    logging::error("gateway", error.to_string());
+                                    let _ = tx.send(AppEvent::GatewayError {
+                                        message: error.to_string(),
+                                    });
+                                }
+                            }
                         }
                     }
                     Err(error) => {
-                        // User-account payloads diverge from twilight's bot-shaped structs.
-                        // For events we can rebuild from raw JSON, do so. Other deserialize
-                        // failures are silently dropped instead of spamming the footer.
-                        if let ReceiveMessageErrorType::Deserializing { event } = error.kind() {
-                            logging::debug("gateway", format!("deserialize fallback: {event}"));
-                            let started = Instant::now();
-                            let mut events = parse_user_account_event(event);
-                            logging::timing("gateway", "fallback total", started.elapsed());
-                            if events.is_empty() {
-                                logging::debug("gateway", "fallback emitted no app events");
-                            }
-                            for app_event in events.drain(..) {
-                                let _ = tx.send(app_event);
-                            }
-                            continue;
-                        }
-
                         logging::error("gateway", error.to_string());
                         let _ = tx.send(AppEvent::GatewayError {
                             message: error.to_string(),
