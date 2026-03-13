@@ -7,9 +7,9 @@ use twilight_model::id::{
 
 use super::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
-    GuildFolder, MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
-    MessageSnapshotInfo, PollInfo, PresenceStatus, ReactionInfo, ReplyInfo, RoleInfo,
-    UserProfileInfo,
+    FriendStatus, GuildFolder, MemberInfo, MentionInfo, MessageInfo, MessageKind,
+    MessageReferenceInfo, MessageSnapshotInfo, PollInfo, PresenceStatus, ReactionInfo, ReplyInfo,
+    RoleInfo, UserProfileInfo,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -177,6 +177,10 @@ pub struct DiscordState {
     /// Cached profile lookups so the profile popup can render instantly when
     /// the same user is opened again.
     user_profiles: BTreeMap<Id<UserMarker>, UserProfileInfo>,
+    /// Friend / blocked / pending request state delivered through READY's
+    /// `relationships` array. Used to colour the profile popup's friend
+    /// indicator and to enrich `UserProfileInfo` on insert.
+    relationships: BTreeMap<Id<UserMarker>, FriendStatus>,
     max_messages_per_channel: usize,
 }
 
@@ -206,6 +210,7 @@ impl DiscordState {
             custom_emojis: BTreeMap::new(),
             guild_folders: Vec::new(),
             user_profiles: BTreeMap::new(),
+            relationships: BTreeMap::new(),
             max_messages_per_channel,
         }
     }
@@ -420,7 +425,22 @@ impl DiscordState {
                 self.guild_folders = folders.clone();
             }
             AppEvent::UserProfileLoaded { profile } => {
-                self.user_profiles.insert(profile.user_id, profile.clone());
+                let mut profile = profile.clone();
+                profile.friend_status = self
+                    .relationships
+                    .get(&profile.user_id)
+                    .copied()
+                    .unwrap_or(FriendStatus::None);
+                self.user_profiles.insert(profile.user_id, profile);
+            }
+            AppEvent::RelationshipsLoaded { relationships } => {
+                self.relationships.clear();
+                for (user_id, status) in relationships {
+                    self.relationships.insert(*user_id, *status);
+                    if let Some(profile) = self.user_profiles.get_mut(user_id) {
+                        profile.friend_status = *status;
+                    }
+                }
             }
             AppEvent::Ready { .. }
             | AppEvent::GatewayError { .. }

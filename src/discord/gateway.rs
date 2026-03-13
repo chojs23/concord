@@ -22,9 +22,9 @@ use twilight_model::{
 };
 
 use super::{
-    AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, GuildFolder, MemberInfo,
-    MentionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo,
-    PresenceStatus, ReplyInfo, RoleInfo,
+    AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, FriendStatus, GuildFolder,
+    MemberInfo, MentionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+    PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
     events::default_avatar_url,
     events::{AppEvent, AttachmentUpdate, map_event},
 };
@@ -402,6 +402,21 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
         }
     }
     stats.private_channels_duration = private_channels_started.elapsed();
+
+    // User-account READY ships the friend list as `relationships`. Capture
+    // it as a single event so the profile popup can show friend / pending /
+    // blocked badges without an extra REST round trip.
+    if let Some(relationships) = data.get("relationships").and_then(Value::as_array) {
+        let parsed: Vec<(Id<UserMarker>, FriendStatus)> = relationships
+            .iter()
+            .filter_map(parse_relationship_entry)
+            .collect();
+        if !parsed.is_empty() {
+            events.push(AppEvent::RelationshipsLoaded {
+                relationships: parsed,
+            });
+        }
+    }
 
     // Guild folder ordering and grouping live in the legacy `user_settings`
     // payload (the modern `user_settings_proto` blob is base64+protobuf and is
@@ -1470,6 +1485,29 @@ fn presence_user_id(value: &Value) -> Option<Id<UserMarker>> {
         .or_else(|| value.get("user_id"))
         .or_else(|| value.get("id"))
         .and_then(parse_id::<UserMarker>)
+}
+
+fn parse_relationship_entry(value: &Value) -> Option<(Id<UserMarker>, FriendStatus)> {
+    // READY's `relationships` array uses ids on the entry itself for the
+    // target user. Older shards may nest it under `user.id`; check both.
+    let user_id = value
+        .get("id")
+        .and_then(parse_id::<UserMarker>)
+        .or_else(|| {
+            value
+                .get("user")
+                .and_then(|user| user.get("id"))
+                .and_then(parse_id::<UserMarker>)
+        })?;
+    let kind = value.get("type").and_then(Value::as_u64)?;
+    let status = match kind {
+        1 => FriendStatus::Friend,
+        2 => FriendStatus::Blocked,
+        3 => FriendStatus::IncomingRequest,
+        4 => FriendStatus::OutgoingRequest,
+        _ => return None,
+    };
+    Some((user_id, status))
 }
 
 fn parse_status(value: &str) -> PresenceStatus {
