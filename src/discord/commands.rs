@@ -1,6 +1,6 @@
 use twilight_model::id::{
     Id,
-    marker::{ChannelMarker, EmojiMarker, GuildMarker, MessageMarker},
+    marker::{ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -102,5 +102,9 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
         answer_ids: Vec<u8>,
+    },
+    LoadUserProfile {
+        user_id: Id<UserMarker>,
+        guild_id: Option<Id<GuildMarker>>,
     },
 }

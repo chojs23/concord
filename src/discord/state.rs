@@ -9,6 +9,7 @@ use super::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
     GuildFolder, MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
     MessageSnapshotInfo, PollInfo, PresenceStatus, ReactionInfo, ReplyInfo, RoleInfo,
+    UserProfileInfo,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -173,6 +174,9 @@ pub struct DiscordState {
     /// User's `guild_folders` setting in display order. Empty until READY
     /// delivers it; the dashboard falls back to a flat guild list.
     guild_folders: Vec<GuildFolder>,
+    /// Cached profile lookups so the profile popup can render instantly when
+    /// the same user is opened again.
+    user_profiles: BTreeMap<Id<UserMarker>, UserProfileInfo>,
     max_messages_per_channel: usize,
 }
 
@@ -201,6 +205,7 @@ impl DiscordState {
             roles: BTreeMap::new(),
             custom_emojis: BTreeMap::new(),
             guild_folders: Vec::new(),
+            user_profiles: BTreeMap::new(),
             max_messages_per_channel,
         }
     }
@@ -414,18 +419,26 @@ impl DiscordState {
             AppEvent::GuildFoldersUpdate { folders } => {
                 self.guild_folders = folders.clone();
             }
+            AppEvent::UserProfileLoaded { profile } => {
+                self.user_profiles.insert(profile.user_id, profile.clone());
+            }
             AppEvent::Ready { .. }
             | AppEvent::GatewayError { .. }
             | AppEvent::StatusMessage { .. }
             | AppEvent::ReactionUsersLoaded { .. }
             | AppEvent::AttachmentPreviewLoaded { .. }
             | AppEvent::AttachmentPreviewLoadFailed { .. }
+            | AppEvent::UserProfileLoadFailed { .. }
             | AppEvent::GatewayClosed => {}
         }
     }
 
     pub fn guild_folders(&self) -> &[GuildFolder] {
         &self.guild_folders
+    }
+
+    pub fn user_profile(&self, user_id: Id<UserMarker>) -> Option<&UserProfileInfo> {
+        self.user_profiles.get(&user_id)
     }
 
     pub fn guilds(&self) -> Vec<&GuildState> {

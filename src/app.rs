@@ -350,6 +350,20 @@ fn start_command_loop(
                         });
                     }
                 },
+                AppCommand::LoadUserProfile { user_id, guild_id } => {
+                    match client.load_user_profile(user_id, guild_id).await {
+                        Ok(profile) => {
+                            client.publish_event(AppEvent::UserProfileLoaded { profile });
+                        }
+                        Err(error) => {
+                            logging::error("app", format!("load user profile failed: {error}"));
+                            client.publish_event(AppEvent::UserProfileLoadFailed {
+                                user_id,
+                                message: error.to_string(),
+                            });
+                        }
+                    }
+                }
             }
         }
     })

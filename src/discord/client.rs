@@ -10,14 +10,14 @@ use twilight_model::{
     channel::Message,
     id::{
         Id,
-        marker::{ChannelMarker, GuildMarker, MessageMarker},
+        marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
     },
 };
 
 use crate::{AppError, Result};
 
 use super::{
-    MessageInfo, ReactionEmoji, ReactionUserInfo,
+    MessageInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
     events::AppEvent,
     gateway::{GatewayCommand, run_gateway},
     rest::DiscordRest,
@@ -201,6 +201,14 @@ impl DiscordClient {
         self.rest
             .vote_poll(channel_id, message_id, answer_ids)
             .await
+    }
+
+    pub async fn load_user_profile(
+        &self,
+        user_id: Id<UserMarker>,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> Result<UserProfileInfo> {
+        self.rest.load_user_profile(user_id, guild_id).await
     }
 }
 

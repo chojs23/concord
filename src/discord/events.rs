@@ -424,7 +424,53 @@ pub enum AppEvent {
         url: String,
         message: String,
     },
+    UserProfileLoaded {
+        profile: UserProfileInfo,
+    },
+    UserProfileLoadFailed {
+        user_id: Id<UserMarker>,
+        message: String,
+    },
     GatewayClosed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum FriendStatus {
+    None,
+    Friend,
+    Blocked,
+    IncomingRequest,
+    OutgoingRequest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MutualGuildInfo {
+    pub guild_id: Id<GuildMarker>,
+    pub nick: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserProfileInfo {
+    pub user_id: Id<UserMarker>,
+    pub username: String,
+    pub global_name: Option<String>,
+    pub guild_nick: Option<String>,
+    pub avatar_url: Option<String>,
+    pub bio: Option<String>,
+    pub pronouns: Option<String>,
+    pub mutual_guilds: Vec<MutualGuildInfo>,
+    pub mutual_friends_count: u32,
+    pub friend_status: FriendStatus,
+    pub note: Option<String>,
+}
+
+impl UserProfileInfo {
+    pub fn display_name(&self) -> &str {
+        self.guild_nick
+            .as_deref()
+            .or(self.global_name.as_deref())
+            .unwrap_or(&self.username)
+    }
 }
 
 impl AppEvent {

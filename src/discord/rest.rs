@@ -9,13 +9,16 @@ use twilight_model::{
     channel::message::ReactionType,
     id::{
         Id,
-        marker::{ChannelMarker, MessageMarker, UserMarker},
+        marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
     },
 };
 
 use crate::{
     AppError, Result,
-    discord::{ReactionEmoji, ReactionUserInfo, events::reaction_user_info},
+    discord::{
+        FriendStatus, MutualGuildInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
+        events::reaction_user_info,
+    },
 };
 
 const REACTION_USERS_PAGE_LIMIT: u16 = 100;
@@ -159,6 +162,70 @@ impl DiscordRest {
         Ok(())
     }
 
+    pub async fn load_user_profile(
+        &self,
+        user_id: Id<UserMarker>,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> Result<UserProfileInfo> {
+        let mut url = format!(
+            "https://discord.com/api/v9/users/{}/profile?with_mutual_guilds=true&with_mutual_friends_count=true",
+            user_id.get()
+        );
+        if let Some(guild_id) = guild_id {
+            url.push_str(&format!("&guild_id={}", guild_id.get()));
+        }
+        let response = self
+            .raw_http
+            .get(url)
+            .header(AUTHORIZATION, &self.token)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("user profile request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| AppError::DiscordRequest(format!("user profile failed: {error}")))?;
+        let body: Value = response.json().await.map_err(|error| {
+            AppError::DiscordRequest(format!("user profile decode failed: {error}"))
+        })?;
+
+        let note = self.load_user_note(user_id).await.unwrap_or(None);
+
+        Ok(parse_user_profile_response(user_id, &body, note))
+    }
+
+    /// Returns the user's saved note, or `None` if Discord responds 404
+    /// (no note set). Other errors propagate.
+    async fn load_user_note(&self, user_id: Id<UserMarker>) -> Result<Option<String>> {
+        let url = format!(
+            "https://discord.com/api/v9/users/@me/notes/{}",
+            user_id.get()
+        );
+        let response = self
+            .raw_http
+            .get(url)
+            .header(AUTHORIZATION, &self.token)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("user note request failed: {error}"))
+            })?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let response = response.error_for_status().map_err(|error| {
+            AppError::DiscordRequest(format!("user note failed: {error}"))
+        })?;
+        let body: Value = response.json().await.map_err(|error| {
+            AppError::DiscordRequest(format!("user note decode failed: {error}"))
+        })?;
+        Ok(body
+            .get("note")
+            .and_then(Value::as_str)
+            .filter(|note| !note.is_empty())
+            .map(str::to_owned))
+    }
+
     pub async fn vote_poll(
         &self,
         channel_id: Id<ChannelMarker>,
@@ -187,6 +254,101 @@ impl DiscordRest {
 
 fn poll_vote_request_body(answer_ids: &[u8]) -> Value {
     json!({ "answer_ids": answer_ids })
+}
+
+/// Builds the dashboard's `UserProfileInfo` from Discord's
+/// `/users/{id}/profile` JSON. Friend status is left as `None` here — the
+/// caller fills it in from cached relationship data.
+fn parse_user_profile_response(
+    user_id: Id<UserMarker>,
+    body: &Value,
+    note: Option<String>,
+) -> UserProfileInfo {
+    let user = body.get("user");
+    let username = user
+        .and_then(|user| user.get("username"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let global_name = user
+        .and_then(|user| user.get("global_name"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let avatar_url = user.and_then(profile_avatar_url);
+    let user_profile = body.get("user_profile");
+    let bio = user_profile
+        .and_then(|profile| profile.get("bio"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let pronouns = user_profile
+        .and_then(|profile| profile.get("pronouns"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let mutual_guilds = body
+        .get("mutual_guilds")
+        .and_then(Value::as_array)
+        .map(|array| {
+            array
+                .iter()
+                .filter_map(|entry| {
+                    let guild_id = entry
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .and_then(|raw| raw.parse::<u64>().ok())
+                        .and_then(|raw| Id::<GuildMarker>::new_checked(raw))?;
+                    let nick = entry
+                        .get("nick")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_owned);
+                    Some(MutualGuildInfo { guild_id, nick })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mutual_friends_count = body
+        .get("mutual_friends_count")
+        .and_then(Value::as_u64)
+        .map(|value| u32::try_from(value).unwrap_or(u32::MAX))
+        .unwrap_or(0);
+    let guild_nick = body
+        .get("guild_member")
+        .and_then(|member| member.get("nick"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+
+    UserProfileInfo {
+        user_id,
+        username,
+        global_name,
+        guild_nick,
+        avatar_url,
+        bio,
+        pronouns,
+        mutual_guilds,
+        mutual_friends_count,
+        friend_status: FriendStatus::None,
+        note,
+    }
+}
+
+fn profile_avatar_url(user: &Value) -> Option<String> {
+    let user_id = user
+        .get("id")
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse::<u64>().ok())?;
+    let hash = user
+        .get("avatar")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())?;
+    let extension = if hash.starts_with("a_") { "gif" } else { "png" };
+    Some(format!(
+        "https://cdn.discordapp.com/avatars/{user_id}/{hash}.{extension}"
+    ))
 }
 
 pub fn request_reaction_type(emoji: &ReactionEmoji) -> RequestReactionType<'_> {
