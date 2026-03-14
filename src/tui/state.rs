@@ -10,7 +10,7 @@ use crate::discord::{
     AppCommand, AppEvent, AttachmentInfo, ChannelRecipientState, ChannelState, CustomEmojiInfo,
     DiscordState, GuildFolder, GuildMemberState, GuildState, MentionInfo, MessageInfo,
     MessageSnapshotInfo, MessageState, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
-    ReactionUsersInfo, RoleState,
+    ReactionUsersInfo, RoleState, UserProfileInfo,
 };
 use crate::logging;
 
@@ -36,6 +36,7 @@ pub enum MessageActionKind {
     AddReaction,
     RemoveReaction(usize),
     ShowReactionUsers,
+    ShowProfile,
     LoadPinnedMessages,
     SetPinned(bool),
     VotePollAnswer(u8),
@@ -176,6 +177,12 @@ pub struct MessageActionMenuState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct UserProfilePopupState {
+    user_id: Id<UserMarker>,
+    guild_id: Option<Id<GuildMarker>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum ChannelActionMenuState {
     Actions {
         channel_id: Id<ChannelMarker>,
@@ -292,6 +299,7 @@ pub struct DashboardState {
     reply_target_message_id: Option<Id<MessageMarker>>,
     message_action_menu: Option<MessageActionMenuState>,
     channel_action_menu: Option<ChannelActionMenuState>,
+    user_profile_popup: Option<UserProfilePopupState>,
     emoji_reaction_picker: Option<EmojiReactionPickerState>,
     poll_vote_picker: Option<PollVotePickerState>,
     reaction_users_popup: Option<ReactionUsersPopupState>,
@@ -348,6 +356,7 @@ impl DashboardState {
             reply_target_message_id: None,
             message_action_menu: None,
             channel_action_menu: None,
+            user_profile_popup: None,
             emoji_reaction_picker: None,
             poll_vote_picker: None,
             reaction_users_popup: None,
@@ -481,6 +490,44 @@ impl DashboardState {
 
     pub fn is_channel_action_menu_open(&self) -> bool {
         self.channel_action_menu.is_some()
+    }
+
+    pub fn is_user_profile_popup_open(&self) -> bool {
+        self.user_profile_popup.is_some()
+    }
+
+    /// Opens the profile popup for `user_id`. Returns
+    /// `AppCommand::LoadUserProfile` to fetch fresh data when nothing is
+    /// cached yet — the popup itself shows a loading state in the meantime.
+    pub fn open_user_profile_popup(
+        &mut self,
+        user_id: Id<UserMarker>,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> Option<AppCommand> {
+        self.user_profile_popup = Some(UserProfilePopupState {
+            user_id,
+            guild_id,
+        });
+        if self.discord.user_profile(user_id).is_some() {
+            None
+        } else {
+            Some(AppCommand::LoadUserProfile { user_id, guild_id })
+        }
+    }
+
+    pub fn close_user_profile_popup(&mut self) {
+        self.user_profile_popup = None;
+    }
+
+    pub fn user_profile_popup_data(&self) -> Option<&UserProfileInfo> {
+        let popup = self.user_profile_popup.as_ref()?;
+        self.discord.user_profile(popup.user_id)
+    }
+
+    pub fn guild_name(&self, guild_id: Id<GuildMarker>) -> Option<&str> {
+        self.discord
+            .guild(guild_id)
+            .map(|state| state.name.as_str())
     }
 
     pub fn is_channel_action_threads_phase(&self) -> bool {
@@ -854,6 +901,11 @@ impl DashboardState {
             enabled: true,
         });
         actions.push(MessageActionItem {
+            kind: MessageActionKind::ShowProfile,
+            label: "Show profile".to_owned(),
+            enabled: true,
+        });
+        actions.push(MessageActionItem {
             kind: MessageActionKind::LoadPinnedMessages,
             label: "Show pinned messages".to_owned(),
             enabled: true,
@@ -982,6 +1034,13 @@ impl DashboardState {
                     message_id,
                     emoji: reaction.emoji,
                 })
+            }
+            MessageActionKind::ShowProfile => {
+                let message = self.selected_message_state()?;
+                let user_id = message.author_id;
+                let guild_id = message.guild_id;
+                self.close_message_action_menu();
+                return self.open_user_profile_popup(user_id, guild_id);
             }
             MessageActionKind::ShowReactionUsers => {
                 let message = self.selected_message_state()?;
@@ -4672,6 +4731,7 @@ mod tests {
             vec![
                 MessageActionKind::Reply,
                 MessageActionKind::AddReaction,
+                MessageActionKind::ShowProfile,
                 MessageActionKind::LoadPinnedMessages,
                 MessageActionKind::SetPinned(true),
             ]
@@ -4690,6 +4750,7 @@ mod tests {
             vec![
                 MessageActionKind::Reply,
                 MessageActionKind::AddReaction,
+                MessageActionKind::ShowProfile,
                 MessageActionKind::LoadPinnedMessages,
                 MessageActionKind::SetPinned(true),
                 MessageActionKind::ShowReactionUsers,
@@ -4711,7 +4772,7 @@ mod tests {
         let mut state = state_with_reaction_message();
         focus_messages(&mut state);
         state.open_selected_message_actions();
-        for _ in 0..4 {
+        for _ in 0..5 {
             state.move_message_action_down();
         }
 
@@ -4810,6 +4871,7 @@ mod tests {
                 MessageActionKind::Reply,
                 MessageActionKind::OpenThread,
                 MessageActionKind::AddReaction,
+                MessageActionKind::ShowProfile,
                 MessageActionKind::LoadPinnedMessages,
                 MessageActionKind::SetPinned(true),
             ]
@@ -5036,14 +5098,15 @@ mod tests {
             vec![
                 MessageActionKind::Reply,
                 MessageActionKind::AddReaction,
+                MessageActionKind::ShowProfile,
                 MessageActionKind::LoadPinnedMessages,
                 MessageActionKind::SetPinned(true),
                 MessageActionKind::VotePollAnswer(1),
                 MessageActionKind::VotePollAnswer(2),
             ]
         );
-        assert_eq!(actions[4].label, "Remove poll vote: Soup");
-        assert_eq!(actions[5].label, "Vote poll: Noodles");
+        assert_eq!(actions[5].label, "Remove poll vote: Soup");
+        assert_eq!(actions[6].label, "Vote poll: Noodles");
     }
 
     #[test]
@@ -5075,6 +5138,7 @@ mod tests {
                 MessageActionKind::Reply,
                 MessageActionKind::DownloadImage,
                 MessageActionKind::AddReaction,
+                MessageActionKind::ShowProfile,
                 MessageActionKind::LoadPinnedMessages,
                 MessageActionKind::SetPinned(true),
                 MessageActionKind::VotePollAnswer(1),
@@ -5104,7 +5168,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         });
         state.open_selected_message_actions();
-        for _ in 0..4 {
+        for _ in 0..5 {
             state.move_message_action_down();
         }
 
@@ -5142,11 +5206,11 @@ mod tests {
         });
 
         let actions = state.selected_message_action_items();
-        assert_eq!(actions[4].kind, MessageActionKind::OpenPollVotePicker);
-        assert_eq!(actions[4].label, "Choose poll votes");
+        assert_eq!(actions[5].kind, MessageActionKind::OpenPollVotePicker);
+        assert_eq!(actions[5].label, "Choose poll votes");
 
         state.open_selected_message_actions();
-        for _ in 0..4 {
+        for _ in 0..5 {
             state.move_message_action_down();
         }
         assert_eq!(state.activate_selected_message_action(), None);

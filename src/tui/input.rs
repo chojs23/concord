@@ -33,6 +33,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_channel_action_menu_key(state, key);
     }
 
+    if state.is_user_profile_popup_open() {
+        return handle_user_profile_popup_key(state, key);
+    }
+
     match key.code {
         KeyCode::Char('q') => state.quit(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
@@ -121,6 +125,13 @@ fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
         _ => {}
     }
 
+    None
+}
+
+fn handle_user_profile_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+        state.close_user_profile_popup();
+    }
     None
 }
 
@@ -962,7 +973,7 @@ mod tests {
             &mut state,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         );
-        for _ in 0..4 {
+        for _ in 0..5 {
             handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         }
 

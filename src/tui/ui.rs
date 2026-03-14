@@ -23,8 +23,9 @@ use super::{
     },
 };
 use crate::discord::{
-    AttachmentInfo, ChannelState, MessageKind, MessageSnapshotInfo, MessageState, PollInfo,
-    PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUsersInfo, ReplyInfo,
+    AttachmentInfo, ChannelState, FriendStatus, MessageKind, MessageSnapshotInfo, MessageState,
+    PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUsersInfo, ReplyInfo,
+    UserProfileInfo,
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -199,6 +200,7 @@ pub fn render(
     render_poll_vote_picker(frame, areas.messages, state);
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
     render_reaction_users_popup(frame, areas.messages, state);
+    render_user_profile_popup(frame, areas.messages, state);
 }
 
 fn dashboard_areas(area: Rect) -> DashboardAreas {
@@ -1643,6 +1645,8 @@ fn footer_hint(state: &DashboardState) -> &'static str {
         "j/k choose answer | space toggle | enter vote | esc close"
     } else if state.is_emoji_reaction_picker_open() {
         "j/k choose emoji | enter/space react | esc close"
+    } else if state.is_user_profile_popup_open() {
+        "esc close profile"
     } else if state.is_message_action_menu_open() {
         "j/k choose action | enter select | esc close | q quit"
     } else if state.is_channel_action_menu_open() {
@@ -1785,6 +1789,161 @@ fn render_poll_vote_picker(frame: &mut Frame, area: Rect, state: &DashboardState
             .wrap(Wrap { trim: false }),
         popup,
     );
+}
+
+fn render_user_profile_popup(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    if !state.is_user_profile_popup_open() {
+        return;
+    }
+
+    const POPUP_WIDTH: u16 = 60;
+    const POPUP_HEIGHT: u16 = 24;
+    let width = POPUP_WIDTH.min(area.width.saturating_sub(2)).max(8);
+    let height = POPUP_HEIGHT.min(area.height.saturating_sub(2)).max(6);
+    let popup = centered_rect(area, width, height);
+    frame.render_widget(Clear, popup);
+
+    let lines = match state.user_profile_popup_data() {
+        Some(profile) => user_profile_popup_lines(profile, state, popup.width.saturating_sub(2)),
+        None => vec![Line::from(Span::styled(
+            "Loading profile...",
+            Style::default().fg(DIM),
+        ))],
+    };
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel_block("Profile", true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+fn user_profile_popup_lines(
+    profile: &UserProfileInfo,
+    state: &DashboardState,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let inner_width = usize::from(width.max(8));
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    let display_name = profile.display_name().to_owned();
+    lines.push(Line::from(Span::styled(
+        truncate_display_width(&display_name, inner_width),
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        truncate_display_width(&format!("@{}", profile.username), inner_width),
+        Style::default().fg(DIM),
+    )));
+
+    if let Some(pronouns) = profile.pronouns.as_deref() {
+        lines.push(Line::from(Span::styled(
+            truncate_display_width(pronouns, inner_width),
+            Style::default().fg(DIM),
+        )));
+    }
+
+    let (badge_label, badge_color) = friend_status_badge(profile.friend_status);
+    lines.push(Line::from(Span::styled(
+        badge_label,
+        Style::default().fg(badge_color).add_modifier(Modifier::BOLD),
+    )));
+
+    lines.push(Line::from(Span::raw(String::new())));
+    push_section_header(&mut lines, "ABOUT ME");
+    push_wrapped_paragraph(
+        &mut lines,
+        profile
+            .bio
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("(no bio)"),
+        inner_width,
+    );
+
+    lines.push(Line::from(Span::raw(String::new())));
+    push_section_header(&mut lines, "NOTE");
+    push_wrapped_paragraph(
+        &mut lines,
+        profile
+            .note
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("(no note)"),
+        inner_width,
+    );
+
+    lines.push(Line::from(Span::raw(String::new())));
+    push_section_header(
+        &mut lines,
+        &format!("MUTUAL SERVERS ({})", profile.mutual_guilds.len()),
+    );
+    if profile.mutual_guilds.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (none)".to_owned(),
+            Style::default().fg(DIM),
+        )));
+    } else {
+        for entry in &profile.mutual_guilds {
+            let name = state
+                .guild_name(entry.guild_id)
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("guild-{}", entry.guild_id.get()));
+            let line = match entry.nick.as_deref() {
+                Some(nick) => format!("  • {name} — {nick}"),
+                None => format!("  • {name}"),
+            };
+            lines.push(Line::from(Span::raw(truncate_display_width(
+                &line,
+                inner_width,
+            ))));
+        }
+    }
+
+    lines.push(Line::from(Span::raw(String::new())));
+    push_section_header(
+        &mut lines,
+        &format!("MUTUAL FRIENDS ({})", profile.mutual_friends_count),
+    );
+
+    lines.push(Line::from(Span::raw(String::new())));
+    lines.push(Line::from(Span::styled(
+        "Esc close",
+        Style::default().fg(DIM),
+    )));
+    lines
+}
+
+fn friend_status_badge(status: FriendStatus) -> (String, Color) {
+    match status {
+        FriendStatus::Friend => ("● Friend".to_owned(), Color::Green),
+        FriendStatus::IncomingRequest => ("● Incoming friend request".to_owned(), Color::Yellow),
+        FriendStatus::OutgoingRequest => ("● Outgoing friend request".to_owned(), Color::Yellow),
+        FriendStatus::Blocked => ("● Blocked".to_owned(), Color::Red),
+        FriendStatus::None => ("● Not friends".to_owned(), DIM),
+    }
+}
+
+fn push_section_header(lines: &mut Vec<Line<'static>>, label: &str) {
+    lines.push(Line::from(Span::styled(
+        label.to_owned(),
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+    )));
+}
+
+fn push_wrapped_paragraph(lines: &mut Vec<Line<'static>>, text: &str, width: usize) {
+    for line in text.split('\n') {
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            lines.push(Line::from(Span::raw(String::new())));
+        } else {
+            lines.push(Line::from(Span::raw(truncate_display_width(
+                trimmed, width,
+            ))));
+        }
+    }
 }
 
 fn render_reaction_users_popup(frame: &mut Frame, area: Rect, state: &DashboardState) {
