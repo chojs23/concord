@@ -33,6 +33,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_channel_action_menu_key(state, key);
     }
 
+    if state.is_member_action_menu_open() {
+        return handle_member_action_menu_key(state, key);
+    }
+
     if state.is_user_profile_popup_open() {
         return handle_user_profile_popup_key(state, key);
     }
@@ -42,6 +46,9 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
         KeyCode::Char('a') if state.focus() == FocusPane::Channels => {
             state.open_selected_channel_actions();
+        }
+        KeyCode::Char('a') if state.focus() == FocusPane::Members => {
+            state.open_selected_member_actions();
         }
         KeyCode::Char('i') => state.start_composer(),
         KeyCode::Char('1') => state.focus_pane(FocusPane::Guilds),
@@ -131,6 +138,17 @@ fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
 fn handle_user_profile_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
         state.close_user_profile_popup();
+    }
+    None
+}
+
+fn handle_member_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc => state.close_member_action_menu(),
+        KeyCode::Char('j') | KeyCode::Down => state.move_member_action_down(),
+        KeyCode::Char('k') | KeyCode::Up => state.move_member_action_up(),
+        KeyCode::Enter | KeyCode::Char(' ') => return state.activate_selected_member_action(),
+        _ => {}
     }
     None
 }

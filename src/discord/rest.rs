@@ -298,7 +298,7 @@ fn parse_user_profile_response(
                         .get("id")
                         .and_then(Value::as_str)
                         .and_then(|raw| raw.parse::<u64>().ok())
-                        .and_then(|raw| Id::<GuildMarker>::new_checked(raw))?;
+                        .and_then(Id::<GuildMarker>::new_checked)?;
                     let nick = entry
                         .get("nick")
                         .and_then(Value::as_str)

@@ -18,7 +18,7 @@ use super::{
     format::{RenderedText, TextHighlight, truncate_display_width, truncate_text},
     state::{
         ChannelActionItem, ChannelPaneEntry, ChannelThreadItem, DashboardState, EmojiReactionItem,
-        FocusPane, GuildPaneEntry, MemberEntry, MemberGroup, MessageActionItem,
+        FocusPane, GuildPaneEntry, MemberActionItem, MemberEntry, MemberGroup, MessageActionItem,
         PollVotePickerItem, ThreadSummary, folder_color, presence_color, presence_marker,
     },
 };
@@ -197,6 +197,7 @@ pub fn render(
     render_footer(frame, areas.footer, state);
     render_message_action_menu(frame, areas.messages, state);
     render_channel_action_menu(frame, areas.messages, state);
+    render_member_action_menu(frame, areas.messages, state);
     render_poll_vote_picker(frame, areas.messages, state);
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
     render_reaction_users_popup(frame, areas.messages, state);
@@ -1655,6 +1656,10 @@ fn footer_hint(state: &DashboardState) -> &'static str {
         } else {
             "j/k choose action | enter select | esc close | q quit"
         }
+    } else if state.is_member_action_menu_open() {
+        "j/k choose action | enter select | esc close | q quit"
+    } else if state.focus() == FocusPane::Members {
+        "tab/1-4 focus | j/k move | a actions | i write | q quit"
     } else if state.focus() == FocusPane::Channels {
         "tab/1-4 focus | j/k move | enter/space open | ←/→ category | a actions | i write | q quit"
     } else {
@@ -1789,6 +1794,58 @@ fn render_poll_vote_picker(frame: &mut Frame, area: Rect, state: &DashboardState
             .wrap(Wrap { trim: false }),
         popup,
     );
+}
+
+fn render_member_action_menu(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    if !state.is_member_action_menu_open() {
+        return;
+    }
+    let actions = state.selected_member_action_items();
+    if actions.is_empty() {
+        return;
+    }
+    let selected = state.selected_member_action_index().unwrap_or(0);
+    let title = state
+        .member_action_menu_title()
+        .map(|name| format!("Member actions — {name}"))
+        .unwrap_or_else(|| "Member actions".to_owned());
+    let popup = centered_rect(area, 48, (actions.len() as u16).saturating_add(4));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(member_action_menu_lines(&actions, selected))
+            .block(panel_block_owned(title, true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+fn member_action_menu_lines(actions: &[MemberActionItem], selected: usize) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| {
+            let marker = if index == selected { "› " } else { "  " };
+            let mut style = if action.enabled {
+                Style::default()
+            } else {
+                Style::default().fg(DIM)
+            };
+            if index == selected {
+                style = style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            Line::from(vec![
+                Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(action.label.clone(), style),
+            ])
+        })
+        .collect();
+    lines.push(Line::from(Span::styled(
+        "Enter select · Esc close",
+        Style::default().fg(DIM),
+    )));
+    lines
 }
 
 fn render_user_profile_popup(frame: &mut Frame, area: Rect, state: &DashboardState) {

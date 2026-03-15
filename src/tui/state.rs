@@ -62,6 +62,18 @@ pub struct ChannelActionItem {
     pub enabled: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemberActionKind {
+    ShowProfile,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemberActionItem {
+    pub kind: MemberActionKind,
+    pub label: String,
+    pub enabled: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelThreadItem {
     pub channel_id: Id<ChannelMarker>,
@@ -183,6 +195,13 @@ struct UserProfilePopupState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct MemberActionMenuState {
+    user_id: Id<UserMarker>,
+    guild_id: Option<Id<GuildMarker>>,
+    selected: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum ChannelActionMenuState {
     Actions {
         channel_id: Id<ChannelMarker>,
@@ -299,6 +318,7 @@ pub struct DashboardState {
     reply_target_message_id: Option<Id<MessageMarker>>,
     message_action_menu: Option<MessageActionMenuState>,
     channel_action_menu: Option<ChannelActionMenuState>,
+    member_action_menu: Option<MemberActionMenuState>,
     user_profile_popup: Option<UserProfilePopupState>,
     emoji_reaction_picker: Option<EmojiReactionPickerState>,
     poll_vote_picker: Option<PollVotePickerState>,
@@ -356,6 +376,7 @@ impl DashboardState {
             reply_target_message_id: None,
             message_action_menu: None,
             channel_action_menu: None,
+            member_action_menu: None,
             user_profile_popup: None,
             emoji_reaction_picker: None,
             poll_vote_picker: None,
@@ -494,6 +515,94 @@ impl DashboardState {
 
     pub fn is_user_profile_popup_open(&self) -> bool {
         self.user_profile_popup.is_some()
+    }
+
+    pub fn is_member_action_menu_open(&self) -> bool {
+        self.member_action_menu.is_some()
+    }
+
+    pub fn member_action_menu_title(&self) -> Option<String> {
+        let menu = self.member_action_menu.as_ref()?;
+        let entries = self.flattened_members();
+        let entry = entries.iter().find(|m| m.user_id() == menu.user_id)?;
+        Some(entry.display_name())
+    }
+
+    pub fn open_selected_member_actions(&mut self) {
+        if self.focus != FocusPane::Members {
+            return;
+        }
+        let entries = self.flattened_members();
+        let Some(entry) = entries.get(self.selected_member()) else {
+            return;
+        };
+        let user_id = entry.user_id();
+        // For DM/group-DM panes there is no guild context; pass it through so
+        // the profile fetch can omit `guild_id` and skip the guild_member
+        // section gracefully.
+        let guild_id = match self.active_guild {
+            ActiveGuildScope::Guild(guild_id) => Some(guild_id),
+            ActiveGuildScope::DirectMessages | ActiveGuildScope::Unset => None,
+        };
+        self.member_action_menu = Some(MemberActionMenuState {
+            user_id,
+            guild_id,
+            selected: 0,
+        });
+    }
+
+    pub fn close_member_action_menu(&mut self) {
+        self.member_action_menu = None;
+    }
+
+    pub fn selected_member_action_items(&self) -> Vec<MemberActionItem> {
+        if self.member_action_menu.is_none() {
+            return Vec::new();
+        }
+        vec![MemberActionItem {
+            kind: MemberActionKind::ShowProfile,
+            label: "Show profile".to_owned(),
+            enabled: true,
+        }]
+    }
+
+    pub fn selected_member_action_index(&self) -> Option<usize> {
+        let menu = self.member_action_menu.as_ref()?;
+        Some(
+            menu.selected
+                .min(self.selected_member_action_items().len().saturating_sub(1)),
+        )
+    }
+
+    pub fn move_member_action_down(&mut self) {
+        let len = self.selected_member_action_items().len();
+        if len == 0 {
+            return;
+        }
+        if let Some(menu) = self.member_action_menu.as_mut() {
+            menu.selected = (menu.selected + 1).min(len - 1);
+        }
+    }
+
+    pub fn move_member_action_up(&mut self) {
+        if let Some(menu) = self.member_action_menu.as_mut() {
+            menu.selected = menu.selected.saturating_sub(1);
+        }
+    }
+
+    pub fn activate_selected_member_action(&mut self) -> Option<AppCommand> {
+        let menu = self.member_action_menu.clone()?;
+        let items = self.selected_member_action_items();
+        let item = items.get(menu.selected.min(items.len().saturating_sub(1)))?.clone();
+        if !item.enabled {
+            return None;
+        }
+        match item.kind {
+            MemberActionKind::ShowProfile => {
+                self.close_member_action_menu();
+                self.open_user_profile_popup(menu.user_id, menu.guild_id)
+            }
+        }
     }
 
     /// Opens the profile popup for `user_id`. Returns
@@ -1040,7 +1149,7 @@ impl DashboardState {
                 let user_id = message.author_id;
                 let guild_id = message.guild_id;
                 self.close_message_action_menu();
-                return self.open_user_profile_popup(user_id, guild_id);
+                self.open_user_profile_popup(user_id, guild_id)
             }
             MessageActionKind::ShowReactionUsers => {
                 let message = self.selected_message_state()?;
@@ -3267,6 +3376,13 @@ pub enum MemberEntry<'a> {
 }
 
 impl MemberEntry<'_> {
+    pub fn user_id(self) -> Id<UserMarker> {
+        match self {
+            Self::Guild(member) => member.user_id,
+            Self::Recipient(recipient) => recipient.user_id,
+        }
+    }
+
     pub fn display_name(self) -> String {
         match self {
             Self::Guild(member) => member.display_name.clone(),
