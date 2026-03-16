@@ -106,6 +106,9 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Channels => {
             return state.confirm_selected_channel_command();
         }
+        KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Members => {
+            return state.show_selected_member_profile();
+        }
         KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Messages => {
             state.open_selected_message_actions()
         }

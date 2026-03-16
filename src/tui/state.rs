@@ -528,6 +528,22 @@ impl DashboardState {
         Some(entry.display_name())
     }
 
+    /// Direct shortcut from the member pane: open the profile popup for the
+    /// currently selected member without going through the action menu.
+    pub fn show_selected_member_profile(&mut self) -> Option<AppCommand> {
+        if self.focus != FocusPane::Members {
+            return None;
+        }
+        let entries = self.flattened_members();
+        let entry = entries.get(self.selected_member())?;
+        let user_id = entry.user_id();
+        let guild_id = match self.active_guild {
+            ActiveGuildScope::Guild(guild_id) => Some(guild_id),
+            ActiveGuildScope::DirectMessages | ActiveGuildScope::Unset => None,
+        };
+        self.open_user_profile_popup(user_id, guild_id)
+    }
+
     pub fn open_selected_member_actions(&mut self) {
         if self.focus != FocusPane::Members {
             return;

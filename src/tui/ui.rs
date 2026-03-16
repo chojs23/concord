@@ -1659,7 +1659,7 @@ fn footer_hint(state: &DashboardState) -> &'static str {
     } else if state.is_member_action_menu_open() {
         "j/k choose action | enter select | esc close | q quit"
     } else if state.focus() == FocusPane::Members {
-        "tab/1-4 focus | j/k move | a actions | i write | q quit"
+        "tab/1-4 focus | j/k move | enter/space profile | a actions | i write | q quit"
     } else if state.focus() == FocusPane::Channels {
         "tab/1-4 focus | j/k move | enter/space open | ←/→ category | a actions | i write | q quit"
     } else {
