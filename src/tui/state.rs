@@ -649,6 +649,15 @@ impl DashboardState {
         self.discord.user_profile(popup.user_id)
     }
 
+    /// URL of the avatar image to render into the open profile popup. None
+    /// when the popup is closed, the profile has not loaded yet, or the user
+    /// has no avatar attachment.
+    pub fn user_profile_popup_avatar_url(&self) -> Option<&str> {
+        self.user_profile_popup_data()?
+            .avatar_url
+            .as_deref()
+    }
+
     pub fn guild_name(&self, guild_id: Id<GuildMarker>) -> Option<&str> {
         self.discord
             .guild(guild_id)

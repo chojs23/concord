@@ -180,6 +180,7 @@ pub fn render(
     image_previews: Vec<ImagePreview<'_>>,
     avatar_images: Vec<AvatarImage>,
     emoji_images: Vec<EmojiReactionImage<'_>>,
+    profile_avatar: Option<AvatarImage>,
 ) {
     let areas = dashboard_areas(frame.area());
 
@@ -201,7 +202,7 @@ pub fn render(
     render_poll_vote_picker(frame, areas.messages, state);
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
     render_reaction_users_popup(frame, areas.messages, state);
-    render_user_profile_popup(frame, areas.messages, state);
+    render_user_profile_popup(frame, areas.messages, state, profile_avatar);
 }
 
 fn dashboard_areas(area: Rect) -> DashboardAreas {
@@ -1848,31 +1849,69 @@ fn member_action_menu_lines(actions: &[MemberActionItem], selected: usize) -> Ve
     lines
 }
 
-fn render_user_profile_popup(frame: &mut Frame, area: Rect, state: &DashboardState) {
+fn render_user_profile_popup(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+    avatar: Option<AvatarImage>,
+) {
     if !state.is_user_profile_popup_open() {
         return;
     }
 
     const POPUP_WIDTH: u16 = 60;
     const POPUP_HEIGHT: u16 = 24;
+    const AVATAR_CELL_WIDTH: u16 = 8;
+    const AVATAR_CELL_HEIGHT: u16 = 4;
     let width = POPUP_WIDTH.min(area.width.saturating_sub(2)).max(8);
     let height = POPUP_HEIGHT.min(area.height.saturating_sub(2)).max(6);
     let popup = centered_rect(area, width, height);
     frame.render_widget(Clear, popup);
 
+    let block = panel_block("Profile", true);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    // The avatar sits inside the inner area; reserve a fixed column gutter
+    // so the text section starts cleanly to its right.
+    let has_avatar = avatar.is_some()
+        && state.user_profile_popup_avatar_url().is_some()
+        && inner.width > AVATAR_CELL_WIDTH + 2;
+    let text_area = if has_avatar {
+        let gutter = AVATAR_CELL_WIDTH + 2;
+        Rect {
+            x: inner.x + gutter,
+            y: inner.y,
+            width: inner.width.saturating_sub(gutter),
+            height: inner.height,
+        }
+    } else {
+        inner
+    };
+
     let lines = match state.user_profile_popup_data() {
-        Some(profile) => user_profile_popup_lines(profile, state, popup.width.saturating_sub(2)),
+        Some(profile) => {
+            user_profile_popup_lines(profile, state, text_area.width.saturating_sub(0))
+        }
         None => vec![Line::from(Span::styled(
             "Loading profile...",
             Style::default().fg(DIM),
         ))],
     };
     frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("Profile", true))
-            .wrap(Wrap { trim: false }),
-        popup,
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        text_area,
     );
+
+    if let Some(avatar) = avatar.filter(|_| has_avatar) {
+        let avatar_area = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: AVATAR_CELL_WIDTH.min(inner.width),
+            height: AVATAR_CELL_HEIGHT.min(inner.height),
+        };
+        frame.render_widget(RatatuiImage::new(&avatar.protocol), avatar_area);
+    }
 }
 
 fn user_profile_popup_lines(
@@ -3583,7 +3622,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 sync_view_heights(frame.area(), &mut state);
-                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new());
+                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new(), None);
             })
             .expect("first draw");
 
@@ -3598,7 +3637,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 sync_view_heights(frame.area(), &mut state);
-                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new());
+                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new(), None);
             })
             .expect("second draw");
         for _ in 0..6 {
@@ -3607,7 +3646,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 sync_view_heights(frame.area(), &mut state);
-                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new());
+                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new(), None);
             })
             .expect("third draw");
 
@@ -3668,7 +3707,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 sync_view_heights(frame.area(), &mut state);
-                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new());
+                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new(), None);
             })
             .expect("draw");
 

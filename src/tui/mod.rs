@@ -42,6 +42,8 @@ use ui::{AvatarImage, EmojiReactionImage, ImagePreview, ImagePreviewLayout, Imag
 const IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
 const AVATAR_PREVIEW_WIDTH: u16 = 2;
 const AVATAR_PREVIEW_HEIGHT: u16 = 2;
+const PROFILE_POPUP_AVATAR_WIDTH: u16 = 8;
+const PROFILE_POPUP_AVATAR_HEIGHT: u16 = 4;
 const EMOJI_REACTION_THUMB_WIDTH: u16 = 2;
 const EMOJI_REACTION_THUMB_HEIGHT: u16 = 1;
 const MAX_EMOJI_REACTION_VISIBLE_ITEMS: usize = 10;
@@ -128,12 +130,16 @@ async fn run_dashboard(
                 let image_previews = image_previews.render_state(&image_targets);
                 let rendered_avatars = avatar_images.render_state(&avatar_targets);
                 let rendered_emojis = emoji_images.render_state(&emoji_targets);
+                let popup_avatar = state
+                    .user_profile_popup_avatar_url()
+                    .and_then(|url| avatar_images.popup_avatar_image(url));
                 ui::render(
                     frame,
                     &state,
                     image_previews,
                     rendered_avatars,
                     rendered_emojis,
+                    popup_avatar,
                 );
             })?;
             dirty = false;
@@ -158,6 +164,19 @@ async fn run_dashboard(
                     dirty = true;
                     break;
                 }
+                dirty = true;
+            }
+            // Profile popup avatar isn't part of the message-pane targets, so
+            // schedule its fetch separately. The cache is URL-keyed and will
+            // dedupe with anything already requested for messages.
+            if let Some(url) = state.user_profile_popup_avatar_url().map(str::to_owned)
+                && let Some(command) = avatar_images.next_request_for_url(&url)
+                && commands.send(command).await.is_err()
+            {
+                logging::error("tui", "command channel closed");
+                state.push_event(AppEvent::GatewayError {
+                    message: "command channel closed".to_owned(),
+                });
                 dirty = true;
             }
             for command in emoji_images.next_requests(&emoji_targets) {
@@ -802,6 +821,40 @@ impl AvatarImageCache {
             }
         }
         commands
+    }
+
+    /// Schedules an out-of-band avatar fetch (used by the profile popup,
+    /// whose URL does not appear in the message-pane avatar targets).
+    fn next_request_for_url(&mut self, url: &str) -> Option<AppCommand> {
+        if self.entries.contains_key(url) {
+            return None;
+        }
+        self.entries.insert(url.to_owned(), AvatarImageEntry::Loading);
+        Some(AppCommand::LoadAttachmentPreview {
+            url: url.to_owned(),
+        })
+    }
+
+    /// Renders a freshly sized protocol for the profile popup. The cache is
+    /// keyed by URL, so this reuses any image already fetched by the message
+    /// pane and naturally requests when the popup opens an unseen avatar.
+    fn popup_avatar_image(&self, url: &str) -> Option<AvatarImage> {
+        let picker = self.picker.as_ref()?;
+        let AvatarImageEntry::Ready { image } = self.entries.get(url)? else {
+            return None;
+        };
+        let render_info = ImagePreviewRenderInfo {
+            message_index: 0,
+            preview_width: PROFILE_POPUP_AVATAR_WIDTH,
+            preview_height: PROFILE_POPUP_AVATAR_HEIGHT,
+            visible_preview_height: PROFILE_POPUP_AVATAR_HEIGHT,
+            top_clip_rows: 0,
+        };
+        clipped_preview_protocol(picker, image, render_info).map(|protocol| AvatarImage {
+            row: 0,
+            visible_height: PROFILE_POPUP_AVATAR_HEIGHT,
+            protocol,
+        })
     }
 
     fn record_event(&mut self, event: &AppEvent) {
