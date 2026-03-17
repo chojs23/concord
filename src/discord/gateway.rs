@@ -325,6 +325,8 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         }
         "GUILD_MEMBER_LIST_UPDATE" => parse_member_list_update(data),
         "GUILD_MEMBERS_CHUNK" => parse_member_chunk(data),
+        "RELATIONSHIP_ADD" => parse_relationship_add(data).into_iter().collect(),
+        "RELATIONSHIP_REMOVE" => parse_relationship_remove(data).into_iter().collect(),
         "GUILD_MEMBER_REMOVE" => parse_member_remove(data).into_iter().collect(),
         "PRESENCE_UPDATE" => parse_presence_update(data),
         _ => Vec::new(),
@@ -1487,6 +1489,23 @@ fn presence_user_id(value: &Value) -> Option<Id<UserMarker>> {
         .and_then(parse_id::<UserMarker>)
 }
 
+fn parse_relationship_add(data: &Value) -> Option<AppEvent> {
+    let (user_id, status) = parse_relationship_entry(data)?;
+    Some(AppEvent::RelationshipUpsert { user_id, status })
+}
+
+fn parse_relationship_remove(data: &Value) -> Option<AppEvent> {
+    let user_id = data
+        .get("id")
+        .and_then(parse_id::<UserMarker>)
+        .or_else(|| {
+            data.get("user")
+                .and_then(|user| user.get("id"))
+                .and_then(parse_id::<UserMarker>)
+        })?;
+    Some(AppEvent::RelationshipRemove { user_id })
+}
+
 fn parse_relationship_entry(value: &Value) -> Option<(Id<UserMarker>, FriendStatus)> {
     // READY's `relationships` array uses ids on the entry itself for the
     // target user. Older shards may nest it under `user.id`; check both.
@@ -1536,8 +1555,8 @@ mod tests {
         parse_message_create, parse_message_update, parse_user_account_event,
     };
     use crate::discord::{
-        AppEvent, AttachmentUpdate, MentionInfo, MessageKind, PollAnswerInfo, PollInfo,
-        PresenceStatus, ReplyInfo,
+        AppEvent, AttachmentUpdate, FriendStatus, MentionInfo, MessageKind, PollAnswerInfo,
+        PollInfo, PresenceStatus, ReplyInfo,
     };
 
     #[test]
@@ -1771,6 +1790,43 @@ mod tests {
                     && *user_id == Id::new(30)
                     && *status == PresenceStatus::DoNotDisturb
         )));
+    }
+
+    #[test]
+    fn relationship_add_emits_friend_upsert() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "RELATIONSHIP_ADD",
+                "d": {
+                    "id": "20",
+                    "type": 1,
+                    "user": {"id": "20", "username": "alice"}
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AppEvent::RelationshipUpsert { user_id, status }
+                if *user_id == Id::new(20) && *status == FriendStatus::Friend
+        ));
+    }
+
+    #[test]
+    fn relationship_remove_emits_event() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "RELATIONSHIP_REMOVE",
+                "d": {"id": "20", "type": 3}
+            })
+            .to_string(),
+        );
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AppEvent::RelationshipRemove { user_id } if *user_id == Id::new(20)
+        ));
     }
 
     #[test]

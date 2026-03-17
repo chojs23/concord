@@ -442,6 +442,18 @@ impl DiscordState {
                     }
                 }
             }
+            AppEvent::RelationshipUpsert { user_id, status } => {
+                self.relationships.insert(*user_id, *status);
+                if let Some(profile) = self.user_profiles.get_mut(user_id) {
+                    profile.friend_status = *status;
+                }
+            }
+            AppEvent::RelationshipRemove { user_id } => {
+                self.relationships.remove(user_id);
+                if let Some(profile) = self.user_profiles.get_mut(user_id) {
+                    profile.friend_status = FriendStatus::None;
+                }
+            }
             AppEvent::Ready { .. }
             | AppEvent::GatewayError { .. }
             | AppEvent::StatusMessage { .. }
@@ -459,6 +471,10 @@ impl DiscordState {
 
     pub fn user_profile(&self, user_id: Id<UserMarker>) -> Option<&UserProfileInfo> {
         self.user_profiles.get(&user_id)
+    }
+
+    pub fn guild(&self, guild_id: Id<GuildMarker>) -> Option<&GuildState> {
+        self.guilds.get(&guild_id)
     }
 
     pub fn guilds(&self) -> Vec<&GuildState> {

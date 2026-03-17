@@ -434,6 +434,13 @@ pub enum AppEvent {
     RelationshipsLoaded {
         relationships: Vec<(Id<UserMarker>, FriendStatus)>,
     },
+    RelationshipUpsert {
+        user_id: Id<UserMarker>,
+        status: FriendStatus,
+    },
+    RelationshipRemove {
+        user_id: Id<UserMarker>,
+    },
     GatewayClosed,
 }
 
