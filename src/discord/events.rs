@@ -302,6 +302,7 @@ pub enum AppEvent {
     GuildCreate {
         guild_id: Id<GuildMarker>,
         name: String,
+        member_count: Option<u64>,
         channels: Vec<ChannelInfo>,
         members: Vec<MemberInfo>,
         presences: Vec<(Id<UserMarker>, PresenceStatus)>,
@@ -366,6 +367,10 @@ pub enum AppEvent {
         message_id: Id<MessageMarker>,
     },
     GuildMemberUpsert {
+        guild_id: Id<GuildMarker>,
+        member: MemberInfo,
+    },
+    GuildMemberAdd {
         guild_id: Id<GuildMarker>,
         member: MemberInfo,
     },
@@ -807,7 +812,7 @@ pub fn map_event(event: Event) -> Vec<AppEvent> {
             message_id: message.id,
         }],
         Event::MemberChunk(chunk) => member_chunk_events(&chunk),
-        Event::MemberAdd(member_add) => vec![member_upsert_from_add(&member_add)],
+        Event::MemberAdd(member_add) => vec![member_add_from_add(&member_add)],
         Event::MemberUpdate(update) => vec![member_upsert_from_update(&update)],
         Event::MemberRemove(remove) => vec![AppEvent::GuildMemberRemove {
             guild_id: remove.guild_id,
@@ -861,6 +866,7 @@ fn map_guild_create(guild: GuildCreatePayload) -> Option<AppEvent> {
     Some(AppEvent::GuildCreate {
         guild_id: guild.id,
         name: guild.name,
+        member_count: guild.member_count,
         channels,
         members,
         presences,
@@ -1005,8 +1011,8 @@ fn member_info(member: &TwilightMember) -> MemberInfo {
     }
 }
 
-fn member_upsert_from_add(payload: &MemberAdd) -> AppEvent {
-    AppEvent::GuildMemberUpsert {
+fn member_add_from_add(payload: &MemberAdd) -> AppEvent {
+    AppEvent::GuildMemberAdd {
         guild_id: payload.guild_id,
         member: member_info(&payload.member),
     }

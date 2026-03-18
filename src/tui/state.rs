@@ -613,7 +613,9 @@ impl DashboardState {
     pub fn activate_selected_member_action(&mut self) -> Option<AppCommand> {
         let menu = self.member_action_menu.clone()?;
         let items = self.selected_member_action_items();
-        let item = items.get(menu.selected.min(items.len().saturating_sub(1)))?.clone();
+        let item = items
+            .get(menu.selected.min(items.len().saturating_sub(1)))?
+            .clone();
         if !item.enabled {
             return None;
         }
@@ -658,9 +660,7 @@ impl DashboardState {
     /// when the popup is closed, the profile has not loaded yet, or the user
     /// has no avatar attachment.
     pub fn user_profile_popup_avatar_url(&self) -> Option<&str> {
-        self.user_profile_popup_data()?
-            .avatar_url
-            .as_deref()
+        self.user_profile_popup_data()?.avatar_url.as_deref()
     }
 
     /// Index of the currently highlighted mutual-server line, if the user has
@@ -718,9 +718,9 @@ impl DashboardState {
         // this session).
         self.discord.guild(guild_id)?;
         self.activate_guild(ActiveGuildScope::Guild(guild_id));
-        if let Some(index) = self.guild_pane_entries().iter().position(|entry| {
-            matches!(entry, GuildPaneEntry::Guild { state, .. } if state.id == guild_id)
-        }) {
+        if let Some(index) = self.guild_pane_entries().iter().position(
+            |entry| matches!(entry, GuildPaneEntry::Guild { state, .. } if state.id == guild_id),
+        ) {
             self.selected_guild = index;
         }
         self.close_user_profile_popup();
@@ -888,12 +888,12 @@ impl DashboardState {
 
     pub fn selected_channel_action_index(&self) -> Option<usize> {
         match self.channel_action_menu.as_ref()? {
-            ChannelActionMenuState::Actions { selected, .. } => Some(
-                (*selected).min(self.selected_channel_action_items().len().saturating_sub(1)),
-            ),
-            ChannelActionMenuState::Threads { selected, .. } => Some(
-                (*selected).min(self.channel_action_thread_items().len().saturating_sub(1)),
-            ),
+            ChannelActionMenuState::Actions { selected, .. } => {
+                Some((*selected).min(self.selected_channel_action_items().len().saturating_sub(1)))
+            }
+            ChannelActionMenuState::Threads { selected, .. } => {
+                Some((*selected).min(self.channel_action_thread_items().len().saturating_sub(1)))
+            }
         }
     }
 
@@ -937,7 +937,9 @@ impl DashboardState {
                 selected,
             } => {
                 let items = self.selected_channel_action_items();
-                let item = items.get(selected.min(items.len().saturating_sub(1)))?.clone();
+                let item = items
+                    .get(selected.min(items.len().saturating_sub(1)))?
+                    .clone();
                 if !item.enabled {
                     return None;
                 }
@@ -1625,9 +1627,7 @@ impl DashboardState {
     /// op-37 member-list subscription to. Prefers the user's currently open
     /// channel and falls back to the first text channel in the guild so the
     /// sidebar still updates while no channel is selected.
-    pub fn member_list_subscription_target(
-        &self,
-    ) -> Option<(Id<GuildMarker>, Id<ChannelMarker>)> {
+    pub fn member_list_subscription_target(&self) -> Option<(Id<GuildMarker>, Id<ChannelMarker>)> {
         let guild_id = match self.active_guild {
             ActiveGuildScope::Guild(guild_id) => guild_id,
             ActiveGuildScope::DirectMessages | ActiveGuildScope::Unset => return None,
@@ -2341,6 +2341,22 @@ impl DashboardState {
         }
 
         groups
+    }
+
+    pub fn member_panel_title(&self) -> String {
+        let Some(guild_id) = self.selected_guild_id() else {
+            return "Members".to_owned();
+        };
+        let Some(member_count) = self
+            .discord
+            .guild(guild_id)
+            .and_then(|guild| guild.member_count)
+        else {
+            return "Members".to_owned();
+        };
+
+        let loaded = self.discord.members_for_guild(guild_id).len();
+        format!("Members {loaded}/{member_count} loaded")
     }
 
     fn selected_channel_recipient_group(&self) -> Vec<MemberGroup<'_>> {
@@ -3310,7 +3326,9 @@ where
 }
 
 fn reaction_line_count(reactions: &[ReactionInfo], width: usize) -> usize {
-    crate::tui::ui::lay_out_reaction_chips(reactions, width).lines.len()
+    crate::tui::ui::lay_out_reaction_chips(reactions, width)
+        .lines
+        .len()
 }
 
 fn poll_card_line_count(
@@ -3327,7 +3345,6 @@ fn poll_card_line_count(
 
     2 + content_lines + 3 + poll.answers.len()
 }
-
 
 fn system_message_line_count(message: &MessageState) -> Option<usize> {
     match message.message_kind.code() {
@@ -3762,6 +3779,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
@@ -3864,6 +3882,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id: Id::new(2),
@@ -3974,6 +3993,67 @@ mod tests {
     }
 
     #[test]
+    fn member_panel_title_separates_loaded_and_total_members() {
+        let guild_id = Id::new(1);
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: Some(100),
+            channels: Vec::new(),
+            members: vec![MemberInfo {
+                user_id: Id::new(10),
+                display_name: "alice".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            }],
+            presences: vec![(Id::new(10), PresenceStatus::Online)],
+            roles: Vec::new(),
+            emojis: Vec::new(),
+        });
+        state.confirm_selected_guild();
+
+        assert_eq!(state.member_panel_title(), "Members 1/100 loaded");
+        assert_eq!(state.flattened_members().len(), 1);
+    }
+
+    #[test]
+    fn member_panel_title_stays_plain_without_guild_total_or_in_direct_messages() {
+        let mut guild_state = DashboardState::new();
+        guild_state.push_event(AppEvent::GuildCreate {
+            guild_id: Id::new(1),
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: Vec::new(),
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+        });
+        guild_state.confirm_selected_guild();
+        assert_eq!(guild_state.member_panel_title(), "Members");
+
+        let mut dm_state = DashboardState::new();
+        dm_state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id: Id::new(20),
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "alice".to_owned(),
+            kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: None,
+        }));
+        dm_state.confirm_selected_guild();
+        assert_eq!(dm_state.member_panel_title(), "Members");
+    }
+
+    #[test]
     fn unknown_presence_uses_neutral_member_marker() {
         assert_eq!(presence_marker(PresenceStatus::Unknown), ' ');
     }
@@ -3987,6 +4067,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id: Id::new(2),
@@ -4055,7 +4136,11 @@ mod tests {
                 .iter()
                 .map(|group| group.label.clone())
                 .collect::<Vec<_>>(),
-            vec!["Admin".to_owned(), "Online".to_owned(), "Offline".to_owned()]
+            vec![
+                "Admin".to_owned(),
+                "Online".to_owned(),
+                "Offline".to_owned()
+            ]
         );
 
         // Admin role group only carries the online admin (alice); the offline
@@ -4092,6 +4177,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id: Id::new(2),
@@ -4323,6 +4409,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
@@ -6368,6 +6455,7 @@ mod tests {
             state.push_event(AppEvent::GuildCreate {
                 guild_id,
                 name: name.to_owned(),
+                member_count: None,
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),
@@ -6392,6 +6480,7 @@ mod tests {
             state.push_event(AppEvent::GuildCreate {
                 guild_id: Id::new(id),
                 name: format!("guild {id}"),
+                member_count: None,
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),
@@ -6425,6 +6514,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels,
             members: Vec::new(),
             presences: Vec::new(),
@@ -6455,6 +6545,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
@@ -6496,6 +6587,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
@@ -6540,6 +6632,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![
                 ChannelInfo {
                     guild_id: Some(guild_id),
@@ -6658,6 +6751,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
@@ -6719,6 +6813,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
@@ -6768,6 +6863,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![
                 ChannelInfo {
                     guild_id: Some(guild_id),
@@ -6868,6 +6964,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
@@ -7033,6 +7130,7 @@ mod tests {
             state.push_event(AppEvent::GuildCreate {
                 guild_id,
                 name: name.to_owned(),
+                member_count: None,
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),

@@ -3,9 +3,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use futures::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc};
-use futures::StreamExt;
 use twilight_gateway::{
     EventTypeFlags, Message, MessageSender, Shard, error::ReceiveMessageErrorType, parse,
 };
@@ -320,9 +320,8 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         "MESSAGE_CREATE" => parse_message_create(data).into_iter().collect(),
         "MESSAGE_UPDATE" => parse_message_update(data).into_iter().collect(),
         "MESSAGE_DELETE" => parse_message_delete(data).into_iter().collect(),
-        "GUILD_MEMBER_ADD" | "GUILD_MEMBER_UPDATE" => {
-            parse_member_upsert(data).into_iter().collect()
-        }
+        "GUILD_MEMBER_ADD" => parse_member_add(data).into_iter().collect(),
+        "GUILD_MEMBER_UPDATE" => parse_member_upsert(data).into_iter().collect(),
         "GUILD_MEMBER_LIST_UPDATE" => parse_member_list_update(data),
         "GUILD_MEMBERS_CHUNK" => parse_member_chunk(data),
         "RELATIONSHIP_ADD" => parse_relationship_add(data).into_iter().collect(),
@@ -612,6 +611,7 @@ fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         .and_then(Value::as_array)
         .map(|items| items.iter().filter_map(parse_member_info).collect())
         .unwrap_or_default();
+    let member_count = data.get("member_count").and_then(Value::as_u64);
 
     let presences = data
         .get("presences")
@@ -634,6 +634,7 @@ fn parse_guild_create(data: &Value) -> Option<AppEvent> {
     Some(AppEvent::GuildCreate {
         guild_id,
         name,
+        member_count,
         channels,
         members,
         presences,
@@ -872,6 +873,12 @@ fn parse_member_upsert(data: &Value) -> Option<AppEvent> {
     let guild_id = parse_id::<GuildMarker>(data.get("guild_id")?)?;
     let member = parse_member_info(data)?;
     Some(AppEvent::GuildMemberUpsert { guild_id, member })
+}
+
+fn parse_member_add(data: &Value) -> Option<AppEvent> {
+    let guild_id = parse_id::<GuildMarker>(data.get("guild_id")?)?;
+    let member = parse_member_info(data)?;
+    Some(AppEvent::GuildMemberAdd { guild_id, member })
 }
 
 fn parse_member_chunk(data: &Value) -> Vec<AppEvent> {
@@ -2272,6 +2279,7 @@ mod tests {
         let event = parse_guild_create(&json!({
             "id": "1",
             "name": "guild",
+            "member_count": 123,
             "channels": [],
             "members": [],
             "presences": [],
@@ -2291,9 +2299,15 @@ mod tests {
         }))
         .expect("guild create should parse");
 
-        let AppEvent::GuildCreate { emojis, .. } = event else {
+        let AppEvent::GuildCreate {
+            member_count,
+            emojis,
+            ..
+        } = event
+        else {
             panic!("expected guild create event");
         };
+        assert_eq!(member_count, Some(123));
         assert_eq!(emojis.len(), 2);
         assert_eq!(emojis[0].id, Id::new(50));
         assert_eq!(emojis[0].name, "party");
@@ -2422,6 +2436,33 @@ mod tests {
                 if *guild_id == Id::new(1)
                     && *user_id == Id::new(20)
                     && *status == PresenceStatus::Idle
+        ));
+    }
+
+    #[test]
+    fn raw_member_add_keeps_real_join_semantics() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "GUILD_MEMBER_ADD",
+                "d": {
+                    "guild_id": "1",
+                    "nick": "Alice Nick",
+                    "user": {
+                        "id": "10",
+                        "username": "alice"
+                    }
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AppEvent::GuildMemberAdd { guild_id, member }
+                if *guild_id == Id::new(1)
+                    && member.user_id == Id::new(10)
+                    && member.display_name == "Alice Nick"
         ));
     }
 

@@ -1041,6 +1041,7 @@ mod tests {
             state.push_event(AppEvent::GuildCreate {
                 guild_id,
                 name: name.to_owned(),
+                member_count: None,
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),
@@ -1097,6 +1098,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![
                 ChannelInfo {
                     guild_id: Some(guild_id),
@@ -1186,6 +1188,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
@@ -1276,6 +1279,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
@@ -1329,6 +1333,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,

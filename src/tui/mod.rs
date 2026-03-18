@@ -310,9 +310,7 @@ async fn run_dashboard(
             let bucket = state.member_subscription_top_bucket();
             let needs_update = match last_member_subscription {
                 Some((prev_guild, prev_channel, prev_bucket)) => {
-                    prev_guild != guild_id
-                        || prev_channel != channel_id
-                        || prev_bucket != bucket
+                    prev_guild != guild_id || prev_channel != channel_id || prev_bucket != bucket
                 }
                 None => bucket > 0,
             };
@@ -829,7 +827,8 @@ impl AvatarImageCache {
         if self.entries.contains_key(url) {
             return None;
         }
-        self.entries.insert(url.to_owned(), AvatarImageEntry::Loading);
+        self.entries
+            .insert(url.to_owned(), AvatarImageEntry::Loading);
         Some(AppCommand::LoadAttachmentPreview {
             url: url.to_owned(),
         })
@@ -2237,6 +2236,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
@@ -2293,6 +2293,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,

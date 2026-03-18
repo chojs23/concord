@@ -213,9 +213,9 @@ impl DiscordRest {
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let response = response.error_for_status().map_err(|error| {
-            AppError::DiscordRequest(format!("user note failed: {error}"))
-        })?;
+        let response = response
+            .error_for_status()
+            .map_err(|error| AppError::DiscordRequest(format!("user note failed: {error}")))?;
         let body: Value = response.json().await.map_err(|error| {
             AppError::DiscordRequest(format!("user note decode failed: {error}"))
         })?;

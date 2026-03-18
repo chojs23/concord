@@ -793,10 +793,7 @@ fn build_reaction_chip(reaction: &ReactionInfo) -> (String, Option<usize>, Optio
 /// chip is never split across rows. Returns both the rendered text rows and
 /// the absolute (line, col) position of every custom-emoji image overlay,
 /// relative to the first reaction row.
-pub(crate) fn lay_out_reaction_chips(
-    reactions: &[ReactionInfo],
-    width: usize,
-) -> ReactionLayout {
+pub(crate) fn lay_out_reaction_chips(reactions: &[ReactionInfo], width: usize) -> ReactionLayout {
     let width = width.max(1);
     let chips: Vec<(String, Option<usize>, Option<String>)> = reactions
         .iter()
@@ -1548,7 +1545,7 @@ fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
 
     frame.render_widget(
         Paragraph::new(lines)
-            .block(panel_block("Members", focused))
+            .block(panel_block_owned(state.member_panel_title(), focused))
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -1901,10 +1898,7 @@ fn render_user_profile_popup(
             Style::default().fg(DIM),
         ))],
     };
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        text_area,
-    );
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), text_area);
 
     if let Some(avatar) = avatar.filter(|_| has_avatar) {
         let avatar_area = Rect {
@@ -1948,7 +1942,9 @@ fn user_profile_popup_lines(
     let (badge_label, badge_color) = friend_status_badge(profile.friend_status);
     lines.push(Line::from(Span::styled(
         badge_label,
-        Style::default().fg(badge_color).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(badge_color)
+            .add_modifier(Modifier::BOLD),
     )));
 
     lines.push(Line::from(Span::raw(String::new())));
@@ -2067,9 +2063,7 @@ fn render_reaction_users_popup(frame: &mut Frame, area: Rect, state: &DashboardS
     // username across rows and the wrap continuation overlaps neighbouring
     // lines, producing the trailing-fragment artefact reported by users.
     const POPUP_TARGET_WIDTH: u16 = 58;
-    let popup_width = POPUP_TARGET_WIDTH
-        .min(area.width.saturating_sub(2))
-        .max(1);
+    let popup_width = POPUP_TARGET_WIDTH.min(area.width.saturating_sub(2)).max(1);
     let inner_width = usize::from(popup_width.saturating_sub(2));
 
     let max_visible_lines = reaction_users_visible_line_count(area);
@@ -2079,7 +2073,11 @@ fn render_reaction_users_popup(frame: &mut Frame, area: Rect, state: &DashboardS
         max_visible_lines,
         inner_width,
     );
-    let popup = centered_rect(area, POPUP_TARGET_WIDTH, (lines.len() as u16).saturating_add(2));
+    let popup = centered_rect(
+        area,
+        POPUP_TARGET_WIDTH,
+        (lines.len() as u16).saturating_add(2),
+    );
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(lines).block(panel_block("Reacted users", true)),
@@ -2167,10 +2165,7 @@ fn channel_action_menu_lines(actions: &[ChannelActionItem], selected: usize) -> 
     lines
 }
 
-fn channel_thread_menu_lines(
-    threads: &[ChannelThreadItem],
-    selected: usize,
-) -> Vec<Line<'static>> {
+fn channel_thread_menu_lines(threads: &[ChannelThreadItem], selected: usize) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = if threads.is_empty() {
         vec![Line::from(Span::styled(
             "  (no threads)".to_owned(),
@@ -3680,10 +3675,7 @@ mod tests {
         // popup-content section ends with the long username's tail. Only the
         // single row that actually renders that user should match — any other
         // matches indicate wrap continuation has bled across rows.
-        let trailing_matches = dump
-            .iter()
-            .filter(|line| line.contains("? )"))
-            .count();
+        let trailing_matches = dump.iter().filter(|line| line.contains("? )")).count();
         assert!(
             trailing_matches <= 1,
             "popup buffer contained '? )' fragment on {trailing_matches} rows; expected at most 1.\nDump:\n{}",
@@ -4274,6 +4266,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
@@ -4396,6 +4389,7 @@ mod tests {
         state.push_event(AppEvent::GuildCreate {
             guild_id: Id::new(1),
             name: "guild".to_owned(),
+            member_count: None,
             channels: Vec::new(),
             members: vec![member_info(user_id, display_name)],
             presences: vec![(Id::new(user_id), PresenceStatus::Online)],

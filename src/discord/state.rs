@@ -18,6 +18,7 @@ const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
 pub struct GuildState {
     pub id: Id<GuildMarker>,
     pub name: String,
+    pub member_count: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -220,6 +221,7 @@ impl DiscordState {
             AppEvent::GuildCreate {
                 guild_id,
                 name,
+                member_count,
                 channels,
                 members,
                 presences,
@@ -231,6 +233,7 @@ impl DiscordState {
                     GuildState {
                         id: *guild_id,
                         name: name.clone(),
+                        member_count: *member_count,
                     },
                 );
 
@@ -384,6 +387,16 @@ impl DiscordState {
                 message_id,
                 ..
             } => self.delete_message(*channel_id, *message_id),
+            AppEvent::GuildMemberAdd { guild_id, member } => {
+                let entry = self.members.entry(*guild_id).or_default();
+                let was_known = entry.contains_key(&member.user_id);
+                let previous_status = entry.get(&member.user_id).map(|m| m.status);
+                upsert_member(entry, member, previous_status);
+                if !was_known {
+                    self.increment_guild_member_count(*guild_id);
+                }
+                self.refresh_message_author_display_name(*guild_id, member);
+            }
             AppEvent::GuildMemberUpsert { guild_id, member } => {
                 let entry = self.members.entry(*guild_id).or_default();
                 let previous_status = entry.get(&member.user_id).map(|m| m.status);
@@ -391,8 +404,13 @@ impl DiscordState {
                 self.refresh_message_author_display_name(*guild_id, member);
             }
             AppEvent::GuildMemberRemove { guild_id, user_id } => {
-                if let Some(entry) = self.members.get_mut(guild_id) {
-                    entry.remove(user_id);
+                let removed = self
+                    .members
+                    .get_mut(guild_id)
+                    .and_then(|entry| entry.remove(user_id))
+                    .is_some();
+                if removed {
+                    self.decrement_guild_member_count(*guild_id);
                 }
             }
             AppEvent::PresenceUpdate {
@@ -631,6 +649,26 @@ impl DiscordState {
                     recipient.status = status;
                 }
             }
+        }
+    }
+
+    fn increment_guild_member_count(&mut self, guild_id: Id<GuildMarker>) {
+        if let Some(count) = self
+            .guilds
+            .get_mut(&guild_id)
+            .and_then(|guild| guild.member_count.as_mut())
+        {
+            *count = count.saturating_add(1);
+        }
+    }
+
+    fn decrement_guild_member_count(&mut self, guild_id: Id<GuildMarker>) {
+        if let Some(count) = self
+            .guilds
+            .get_mut(&guild_id)
+            .and_then(|guild| guild.member_count.as_mut())
+        {
+            *count = count.saturating_sub(1);
         }
     }
 
@@ -979,6 +1017,7 @@ mod tests {
         state.apply_event(&AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
@@ -1030,6 +1069,7 @@ mod tests {
         state.apply_event(&AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id,
@@ -2661,6 +2701,7 @@ mod tests {
         state.apply_event(&AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: Some(100),
             channels: Vec::new(),
             members: vec![
                 MemberInfo {
@@ -2684,6 +2725,7 @@ mod tests {
         });
 
         let members = state.members_for_guild(guild_id);
+        assert_eq!(state.guild(guild_id).unwrap().member_count, Some(100));
         assert_eq!(members.len(), 2);
         let alice_state = members.iter().find(|m| m.user_id == alice).unwrap();
         assert_eq!(alice_state.status, PresenceStatus::Online);
@@ -2707,6 +2749,73 @@ mod tests {
     }
 
     #[test]
+    fn real_member_add_and_remove_update_known_member_count() {
+        let guild_id = Id::new(1);
+        let alice = Id::new(10);
+        let bob = Id::new(20);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: Some(1),
+            channels: Vec::new(),
+            members: vec![MemberInfo {
+                user_id: alice,
+                display_name: "alice".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            }],
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+        });
+
+        state.apply_event(&AppEvent::GuildMemberUpsert {
+            guild_id,
+            member: MemberInfo {
+                user_id: bob,
+                display_name: "bob".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            },
+        });
+        assert_eq!(state.guild(guild_id).unwrap().member_count, Some(1));
+
+        state.apply_event(&AppEvent::GuildMemberAdd {
+            guild_id,
+            member: MemberInfo {
+                user_id: bob,
+                display_name: "bob".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            },
+        });
+        assert_eq!(state.guild(guild_id).unwrap().member_count, Some(1));
+
+        state.apply_event(&AppEvent::GuildMemberAdd {
+            guild_id,
+            member: MemberInfo {
+                user_id: Id::new(30),
+                display_name: "carol".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            },
+        });
+        assert_eq!(state.guild(guild_id).unwrap().member_count, Some(2));
+
+        state.apply_event(&AppEvent::GuildMemberRemove {
+            guild_id,
+            user_id: Id::new(30),
+        });
+        assert_eq!(state.guild(guild_id).unwrap().member_count, Some(1));
+    }
+
+    #[test]
     fn guild_create_caches_roles_and_member_role_ids() {
         let guild_id = Id::new(1);
         let role_id = Id::new(90);
@@ -2716,6 +2825,7 @@ mod tests {
         state.apply_event(&AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: Vec::new(),
             members: vec![MemberInfo {
                 user_id,
@@ -2793,6 +2903,7 @@ mod tests {
         state.apply_event(&AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: Vec::new(),
             members: Vec::new(),
             presences: Vec::new(),
@@ -2821,6 +2932,7 @@ mod tests {
         state.apply_event(&AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: Vec::new(),
             members: Vec::new(),
             presences: Vec::new(),
@@ -2857,6 +2969,7 @@ mod tests {
         state.apply_event(&AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: Vec::new(),
             members: Vec::new(),
             presences: Vec::new(),
@@ -2894,6 +3007,7 @@ mod tests {
         state.apply_event(&AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            member_count: None,
             channels: Vec::new(),
             members: Vec::new(),
             presences: Vec::new(),
