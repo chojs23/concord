@@ -1648,7 +1648,7 @@ fn footer_hint(state: &DashboardState) -> &'static str {
     } else if state.is_emoji_reaction_picker_open() {
         "j/k choose emoji | enter/space react | esc close"
     } else if state.is_user_profile_popup_open() {
-        "esc close profile"
+        "j/k pick mutual server | enter open server | esc close"
     } else if state.is_message_action_menu_open() {
         "j/k choose action | enter select | esc close | q quit"
     } else if state.is_channel_action_menu_open() {
@@ -1890,9 +1890,12 @@ fn render_user_profile_popup(
     };
 
     let lines = match state.user_profile_popup_data() {
-        Some(profile) => {
-            user_profile_popup_lines(profile, state, text_area.width.saturating_sub(0))
-        }
+        Some(profile) => user_profile_popup_lines(
+            profile,
+            state,
+            text_area.width.saturating_sub(0),
+            state.user_profile_popup_mutual_cursor(),
+        ),
         None => vec![Line::from(Span::styled(
             "Loading profile...",
             Style::default().fg(DIM),
@@ -1918,6 +1921,7 @@ fn user_profile_popup_lines(
     profile: &UserProfileInfo,
     state: &DashboardState,
     width: u16,
+    mutual_cursor: Option<usize>,
 ) -> Vec<Line<'static>> {
     let inner_width = usize::from(width.max(8));
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -1982,19 +1986,30 @@ fn user_profile_popup_lines(
             Style::default().fg(DIM),
         )));
     } else {
-        for entry in &profile.mutual_guilds {
+        for (index, entry) in profile.mutual_guilds.iter().enumerate() {
             let name = state
                 .guild_name(entry.guild_id)
                 .map(str::to_owned)
                 .unwrap_or_else(|| format!("guild-{}", entry.guild_id.get()));
-            let line = match entry.nick.as_deref() {
-                Some(nick) => format!("  • {name} — {nick}"),
-                None => format!("  • {name}"),
+            let selected = mutual_cursor == Some(index);
+            let marker = if selected { "› " } else { "  " };
+            let body = match entry.nick.as_deref() {
+                Some(nick) => format!("• {name} — {nick}"),
+                None => format!("• {name}"),
             };
-            lines.push(Line::from(Span::raw(truncate_display_width(
-                &line,
-                inner_width,
-            ))));
+            let mut style = Style::default();
+            if selected {
+                style = style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            lines.push(Line::from(vec![
+                Span::styled(marker.to_owned(), Style::default().fg(ACCENT)),
+                Span::styled(
+                    truncate_display_width(&body, inner_width.saturating_sub(2)),
+                    style,
+                ),
+            ]));
         }
     }
 
@@ -2006,7 +2021,7 @@ fn user_profile_popup_lines(
 
     lines.push(Line::from(Span::raw(String::new())));
     lines.push(Line::from(Span::styled(
-        "Esc close",
+        "j/k pick · Enter open · Esc close",
         Style::default().fg(DIM),
     )));
     lines

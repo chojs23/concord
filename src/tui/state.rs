@@ -192,6 +192,10 @@ pub struct MessageActionMenuState {
 struct UserProfilePopupState {
     user_id: Id<UserMarker>,
     guild_id: Option<Id<GuildMarker>>,
+    /// `Some(index)` once the user has moved into the mutual server list with
+    /// j/k. `None` while the popup is purely informational. Enter on a
+    /// selected mutual server activates that guild and closes the popup.
+    mutual_cursor: Option<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -632,6 +636,7 @@ impl DashboardState {
         self.user_profile_popup = Some(UserProfilePopupState {
             user_id,
             guild_id,
+            mutual_cursor: None,
         });
         if self.discord.user_profile(user_id).is_some() {
             None
@@ -656,6 +661,70 @@ impl DashboardState {
         self.user_profile_popup_data()?
             .avatar_url
             .as_deref()
+    }
+
+    /// Index of the currently highlighted mutual-server line, if the user has
+    /// moved into the list with j/k. None while the cursor sits idle.
+    pub fn user_profile_popup_mutual_cursor(&self) -> Option<usize> {
+        let popup = self.user_profile_popup.as_ref()?;
+        let cursor = popup.mutual_cursor?;
+        let len = self.user_profile_popup_data()?.mutual_guilds.len();
+        if len == 0 {
+            None
+        } else {
+            Some(cursor.min(len - 1))
+        }
+    }
+
+    fn user_profile_popup_mutual_len(&self) -> usize {
+        self.user_profile_popup_data()
+            .map(|profile| profile.mutual_guilds.len())
+            .unwrap_or(0)
+    }
+
+    pub fn move_user_profile_popup_down(&mut self) {
+        let len = self.user_profile_popup_mutual_len();
+        if len == 0 {
+            return;
+        }
+        if let Some(popup) = self.user_profile_popup.as_mut() {
+            let next = popup.mutual_cursor.map(|c| c + 1).unwrap_or(0);
+            popup.mutual_cursor = Some(next.min(len - 1));
+        }
+    }
+
+    pub fn move_user_profile_popup_up(&mut self) {
+        if let Some(popup) = self.user_profile_popup.as_mut() {
+            popup.mutual_cursor = match popup.mutual_cursor {
+                Some(0) | None => Some(0),
+                Some(c) => Some(c - 1),
+            };
+        }
+    }
+
+    /// Activates the mutual server highlighted in the popup and closes the
+    /// popup. Returns None when no cursor is set or the data isn't loaded
+    /// yet — Enter then falls through to a no-op (the caller can still rely
+    /// on Esc to close).
+    pub fn activate_selected_user_profile_mutual(&mut self) -> Option<AppCommand> {
+        let cursor = self.user_profile_popup_mutual_cursor()?;
+        let guild_id = self
+            .user_profile_popup_data()?
+            .mutual_guilds
+            .get(cursor)?
+            .guild_id;
+        // Bail out if we don't actually know the guild yet (rare; the popup
+        // can list mutual_guilds whose GUILD_CREATE hasn't been delivered for
+        // this session).
+        self.discord.guild(guild_id)?;
+        self.activate_guild(ActiveGuildScope::Guild(guild_id));
+        if let Some(index) = self.guild_pane_entries().iter().position(|entry| {
+            matches!(entry, GuildPaneEntry::Guild { state, .. } if state.id == guild_id)
+        }) {
+            self.selected_guild = index;
+        }
+        self.close_user_profile_popup();
+        None
     }
 
     pub fn guild_name(&self, guild_id: Id<GuildMarker>) -> Option<&str> {

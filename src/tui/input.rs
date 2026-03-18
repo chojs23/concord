@@ -139,8 +139,14 @@ fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
 }
 
 fn handle_user_profile_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
-        state.close_user_profile_popup();
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => state.close_user_profile_popup(),
+        KeyCode::Char('j') | KeyCode::Down => state.move_user_profile_popup_down(),
+        KeyCode::Char('k') | KeyCode::Up => state.move_user_profile_popup_up(),
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            return state.activate_selected_user_profile_mutual();
+        }
+        _ => {}
     }
     None
 }
