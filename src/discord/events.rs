@@ -430,6 +430,7 @@ pub enum AppEvent {
         message: String,
     },
     UserProfileLoaded {
+        guild_id: Option<Id<GuildMarker>>,
         profile: UserProfileInfo,
     },
     UserProfileLoadFailed {

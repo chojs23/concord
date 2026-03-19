@@ -640,7 +640,7 @@ impl DashboardState {
             guild_id,
             mutual_cursor: None,
         });
-        if self.discord.user_profile(user_id).is_some() {
+        if self.discord.user_profile(user_id, guild_id).is_some() {
             None
         } else {
             Some(AppCommand::LoadUserProfile { user_id, guild_id })
@@ -653,7 +653,7 @@ impl DashboardState {
 
     pub fn user_profile_popup_data(&self) -> Option<&UserProfileInfo> {
         let popup = self.user_profile_popup.as_ref()?;
-        self.discord.user_profile(popup.user_id)
+        self.discord.user_profile(popup.user_id, popup.guild_id)
     }
 
     /// URL of the avatar image to render into the open profile popup. None
@@ -3714,7 +3714,10 @@ fn sort_direct_message_channels(channels: &mut [&ChannelState]) {
 
 #[cfg(test)]
 mod tests {
-    use twilight_model::id::{Id, marker::ChannelMarker, marker::UserMarker};
+    use twilight_model::id::{
+        Id,
+        marker::{ChannelMarker, GuildMarker, UserMarker},
+    };
 
     use super::{
         ChannelActionKind, ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildBranch,
@@ -3722,10 +3725,27 @@ mod tests {
     };
     use crate::discord::{
         AppCommand, AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
-        GuildFolder, MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo,
-        MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
-        ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo,
+        FriendStatus, GuildFolder, MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo,
+        MessageSnapshotInfo, MutualGuildInfo, PollAnswerInfo, PollInfo, PresenceStatus,
+        ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo,
+        UserProfileInfo,
     };
+
+    fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
+        UserProfileInfo {
+            user_id: Id::new(user_id),
+            username: format!("user-{user_id}"),
+            global_name: None,
+            guild_nick: guild_nick.map(str::to_owned),
+            avatar_url: None,
+            bio: None,
+            pronouns: None,
+            mutual_guilds: Vec::<MutualGuildInfo>::new(),
+            mutual_friends_count: 0,
+            friend_status: FriendStatus::None,
+            note: None,
+        }
+    }
 
     #[test]
     fn tracks_current_user_from_ready() {
@@ -3753,6 +3773,48 @@ mod tests {
 
         assert_eq!(state.focus(), FocusPane::Guilds);
         assert_eq!(state.focused_message_selection(), None);
+    }
+
+    #[test]
+    fn opening_profile_uses_cache_for_same_guild() {
+        let user_id: Id<UserMarker> = Id::new(10);
+        let guild_id: Id<GuildMarker> = Id::new(1);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::UserProfileLoaded {
+            guild_id: Some(guild_id),
+            profile: profile_info(user_id.get(), Some("guild nick")),
+        });
+
+        assert_eq!(state.open_user_profile_popup(user_id, Some(guild_id)), None);
+        assert_eq!(
+            state
+                .user_profile_popup_data()
+                .and_then(|profile| profile.guild_nick.as_deref()),
+            Some("guild nick")
+        );
+    }
+
+    #[test]
+    fn opening_profile_refetches_when_cached_for_different_guild() {
+        let user_id: Id<UserMarker> = Id::new(10);
+        let cached_guild: Id<GuildMarker> = Id::new(1);
+        let popup_guild: Id<GuildMarker> = Id::new(2);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::UserProfileLoaded {
+            guild_id: Some(cached_guild),
+            profile: profile_info(user_id.get(), Some("cached nick")),
+        });
+
+        assert_eq!(
+            state.open_user_profile_popup(user_id, Some(popup_guild)),
+            Some(AppCommand::LoadUserProfile {
+                user_id,
+                guild_id: Some(popup_guild),
+            })
+        );
+        assert!(state.user_profile_popup_data().is_none());
     }
 
     #[test]

@@ -155,6 +155,18 @@ pub struct GuildMemberState {
     pub status: PresenceStatus,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct UserProfileCacheKey {
+    user_id: Id<UserMarker>,
+    guild_id: Option<Id<GuildMarker>>,
+}
+
+impl UserProfileCacheKey {
+    fn new(user_id: Id<UserMarker>, guild_id: Option<Id<GuildMarker>>) -> Self {
+        Self { user_id, guild_id }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoleState {
     pub id: Id<RoleMarker>,
@@ -177,7 +189,7 @@ pub struct DiscordState {
     guild_folders: Vec<GuildFolder>,
     /// Cached profile lookups so the profile popup can render instantly when
     /// the same user is opened again.
-    user_profiles: BTreeMap<Id<UserMarker>, UserProfileInfo>,
+    user_profiles: BTreeMap<UserProfileCacheKey, UserProfileInfo>,
     /// Friend / blocked / pending request state delivered through READY's
     /// `relationships` array. Used to colour the profile popup's friend
     /// indicator and to enrich `UserProfileInfo` on insert.
@@ -442,33 +454,48 @@ impl DiscordState {
             AppEvent::GuildFoldersUpdate { folders } => {
                 self.guild_folders = folders.clone();
             }
-            AppEvent::UserProfileLoaded { profile } => {
+            AppEvent::UserProfileLoaded { guild_id, profile } => {
                 let mut profile = profile.clone();
                 profile.friend_status = self
                     .relationships
                     .get(&profile.user_id)
                     .copied()
                     .unwrap_or(FriendStatus::None);
-                self.user_profiles.insert(profile.user_id, profile);
+                self.user_profiles.insert(
+                    UserProfileCacheKey::new(profile.user_id, *guild_id),
+                    profile,
+                );
             }
             AppEvent::RelationshipsLoaded { relationships } => {
                 self.relationships.clear();
                 for (user_id, status) in relationships {
                     self.relationships.insert(*user_id, *status);
-                    if let Some(profile) = self.user_profiles.get_mut(user_id) {
+                    for profile in self
+                        .user_profiles
+                        .values_mut()
+                        .filter(|profile| profile.user_id == *user_id)
+                    {
                         profile.friend_status = *status;
                     }
                 }
             }
             AppEvent::RelationshipUpsert { user_id, status } => {
                 self.relationships.insert(*user_id, *status);
-                if let Some(profile) = self.user_profiles.get_mut(user_id) {
+                for profile in self
+                    .user_profiles
+                    .values_mut()
+                    .filter(|profile| profile.user_id == *user_id)
+                {
                     profile.friend_status = *status;
                 }
             }
             AppEvent::RelationshipRemove { user_id } => {
                 self.relationships.remove(user_id);
-                if let Some(profile) = self.user_profiles.get_mut(user_id) {
+                for profile in self
+                    .user_profiles
+                    .values_mut()
+                    .filter(|profile| profile.user_id == *user_id)
+                {
                     profile.friend_status = FriendStatus::None;
                 }
             }
@@ -487,8 +514,13 @@ impl DiscordState {
         &self.guild_folders
     }
 
-    pub fn user_profile(&self, user_id: Id<UserMarker>) -> Option<&UserProfileInfo> {
-        self.user_profiles.get(&user_id)
+    pub fn user_profile(
+        &self,
+        user_id: Id<UserMarker>,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> Option<&UserProfileInfo> {
+        self.user_profiles
+            .get(&UserProfileCacheKey::new(user_id, guild_id))
     }
 
     pub fn guild(&self, guild_id: Id<GuildMarker>) -> Option<&GuildState> {
@@ -1001,10 +1033,27 @@ mod tests {
 
     use crate::discord::{
         AppEvent, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
-        DiscordState, MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
-        MessageSnapshotInfo, MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji,
-        ReactionInfo, ReplyInfo, RoleInfo,
+        DiscordState, FriendStatus, MemberInfo, MentionInfo, MessageInfo, MessageKind,
+        MessageReferenceInfo, MessageSnapshotInfo, MessageState, MutualGuildInfo, PollAnswerInfo,
+        PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReplyInfo, RoleInfo,
+        UserProfileInfo,
     };
+
+    fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
+        UserProfileInfo {
+            user_id: Id::new(user_id),
+            username: format!("user-{user_id}"),
+            global_name: None,
+            guild_nick: guild_nick.map(str::to_owned),
+            avatar_url: None,
+            bio: None,
+            pronouns: None,
+            mutual_guilds: Vec::<MutualGuildInfo>::new(),
+            mutual_friends_count: 0,
+            friend_status: FriendStatus::None,
+            note: None,
+        }
+    }
 
     #[test]
     fn applies_guild_channels_and_messages() {
@@ -1057,6 +1106,37 @@ mod tests {
         assert_eq!(state.guilds().len(), 1);
         assert_eq!(state.channels_for_guild(Some(guild_id)).len(), 1);
         assert_eq!(state.messages_for_channel(channel_id).len(), 1);
+    }
+
+    #[test]
+    fn user_profile_cache_is_scoped_by_guild() {
+        let user_id = Id::new(10);
+        let guild_a = Id::new(1);
+        let guild_b = Id::new(2);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::UserProfileLoaded {
+            guild_id: Some(guild_a),
+            profile: profile_info(user_id.get(), Some("guild a nick")),
+        });
+        state.apply_event(&AppEvent::UserProfileLoaded {
+            guild_id: Some(guild_b),
+            profile: profile_info(user_id.get(), Some("guild b nick")),
+        });
+
+        assert_eq!(
+            state
+                .user_profile(user_id, Some(guild_a))
+                .and_then(|profile| profile.guild_nick.as_deref()),
+            Some("guild a nick")
+        );
+        assert_eq!(
+            state
+                .user_profile(user_id, Some(guild_b))
+                .and_then(|profile| profile.guild_nick.as_deref()),
+            Some("guild b nick")
+        );
+        assert!(state.user_profile(user_id, None).is_none());
     }
 
     #[test]
