@@ -359,6 +359,7 @@ fn start_command_loop(
                             logging::error("app", format!("load user profile failed: {error}"));
                             client.publish_event(AppEvent::UserProfileLoadFailed {
                                 user_id,
+                                guild_id,
                                 message: error.to_string(),
                             });
                         }

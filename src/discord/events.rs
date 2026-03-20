@@ -435,6 +435,7 @@ pub enum AppEvent {
     },
     UserProfileLoadFailed {
         user_id: Id<UserMarker>,
+        guild_id: Option<Id<GuildMarker>>,
         message: String,
     },
     RelationshipsLoaded {

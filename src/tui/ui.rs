@@ -1886,17 +1886,26 @@ fn render_user_profile_popup(
         inner
     };
 
-    let lines = match state.user_profile_popup_data() {
-        Some(profile) => user_profile_popup_lines(
+    let lines = if let Some(profile) = state.user_profile_popup_data() {
+        user_profile_popup_lines(
             profile,
             state,
             text_area.width.saturating_sub(0),
             state.user_profile_popup_mutual_cursor(),
-        ),
-        None => vec![Line::from(Span::styled(
+        )
+    } else if let Some(message) = state.user_profile_popup_load_error() {
+        vec![Line::from(Span::styled(
+            truncate_display_width(
+                &format!("Failed to load profile: {message}"),
+                text_area.width.into(),
+            ),
+            Style::default().fg(Color::Red),
+        ))]
+    } else {
+        vec![Line::from(Span::styled(
             "Loading profile...",
             Style::default().fg(DIM),
-        ))],
+        ))]
     };
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), text_area);
 

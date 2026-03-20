@@ -192,6 +192,7 @@ pub struct MessageActionMenuState {
 struct UserProfilePopupState {
     user_id: Id<UserMarker>,
     guild_id: Option<Id<GuildMarker>>,
+    load_error: Option<String>,
     /// `Some(index)` once the user has moved into the mutual server list with
     /// j/k. `None` while the popup is purely informational. Enter on a
     /// selected mutual server activates that guild and closes the popup.
@@ -455,6 +456,18 @@ impl DashboardState {
                 before,
                 messages,
             } => self.record_older_history_loaded(*channel_id, *before, messages),
+            AppEvent::UserProfileLoadFailed {
+                user_id,
+                guild_id,
+                message,
+            } => {
+                if let Some(popup) = self.user_profile_popup.as_mut()
+                    && popup.user_id == *user_id
+                    && popup.guild_id == *guild_id
+                {
+                    popup.load_error = Some(message.clone());
+                }
+            }
             AppEvent::GatewayClosed => {
                 self.last_error = Some("gateway closed".to_owned());
             }
@@ -638,6 +651,7 @@ impl DashboardState {
         self.user_profile_popup = Some(UserProfilePopupState {
             user_id,
             guild_id,
+            load_error: None,
             mutual_cursor: None,
         });
         if self.discord.user_profile(user_id, guild_id).is_some() {
@@ -654,6 +668,12 @@ impl DashboardState {
     pub fn user_profile_popup_data(&self) -> Option<&UserProfileInfo> {
         let popup = self.user_profile_popup.as_ref()?;
         self.discord.user_profile(popup.user_id, popup.guild_id)
+    }
+
+    pub fn user_profile_popup_load_error(&self) -> Option<&str> {
+        self.user_profile_popup
+            .as_ref()
+            .and_then(|popup| popup.load_error.as_deref())
     }
 
     /// URL of the avatar image to render into the open profile popup. None
@@ -3815,6 +3835,42 @@ mod tests {
             })
         );
         assert!(state.user_profile_popup_data().is_none());
+    }
+
+    #[test]
+    fn user_profile_load_failure_marks_open_popup_failed() {
+        let user_id: Id<UserMarker> = Id::new(10);
+        let guild_id: Id<GuildMarker> = Id::new(1);
+        let mut state = DashboardState::new();
+
+        state.open_user_profile_popup(user_id, Some(guild_id));
+        state.push_event(AppEvent::UserProfileLoadFailed {
+            user_id,
+            guild_id: Some(guild_id),
+            message: "network failed".to_owned(),
+        });
+
+        assert_eq!(
+            state.user_profile_popup_load_error(),
+            Some("network failed")
+        );
+    }
+
+    #[test]
+    fn user_profile_load_failure_ignores_stale_popup() {
+        let user_id: Id<UserMarker> = Id::new(10);
+        let open_guild: Id<GuildMarker> = Id::new(1);
+        let stale_guild: Id<GuildMarker> = Id::new(2);
+        let mut state = DashboardState::new();
+
+        state.open_user_profile_popup(user_id, Some(open_guild));
+        state.push_event(AppEvent::UserProfileLoadFailed {
+            user_id,
+            guild_id: Some(stale_guild),
+            message: "stale failure".to_owned(),
+        });
+
+        assert_eq!(state.user_profile_popup_load_error(), None);
     }
 
     #[test]
