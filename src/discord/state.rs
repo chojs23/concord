@@ -416,14 +416,10 @@ impl DiscordState {
                 self.refresh_message_author_display_name(*guild_id, member);
             }
             AppEvent::GuildMemberRemove { guild_id, user_id } => {
-                let removed = self
-                    .members
-                    .get_mut(guild_id)
-                    .and_then(|entry| entry.remove(user_id))
-                    .is_some();
-                if removed {
-                    self.decrement_guild_member_count(*guild_id);
+                if let Some(entry) = self.members.get_mut(guild_id) {
+                    entry.remove(user_id);
                 }
+                self.decrement_guild_member_count(*guild_id);
             }
             AppEvent::PresenceUpdate {
                 guild_id,
@@ -2893,6 +2889,31 @@ mod tests {
             user_id: Id::new(30),
         });
         assert_eq!(state.guild(guild_id).unwrap().member_count, Some(1));
+    }
+
+    #[test]
+    fn guild_member_remove_decrements_known_count_for_unloaded_member() {
+        let guild_id = Id::new(1);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: Some(3),
+            channels: Vec::new(),
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+        });
+
+        state.apply_event(&AppEvent::GuildMemberRemove {
+            guild_id,
+            user_id: Id::new(99),
+        });
+
+        assert_eq!(state.guild(guild_id).unwrap().member_count, Some(2));
+        assert!(state.members_for_guild(guild_id).is_empty());
     }
 
     #[test]
