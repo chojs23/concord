@@ -578,7 +578,7 @@ fn message_item_lines(
     let author = truncate_display_width(&author, author_width);
     let mut lines = vec![Line::from(vec![
         message_avatar_span(),
-        Span::styled(author, Style::default().fg(Color::Green).bold()),
+        Span::styled(author, message_author_style()),
         Span::raw(" "),
         Span::styled(sent_time, Style::default().fg(DIM)),
     ])];
@@ -589,6 +589,10 @@ fn message_item_lines(
     }));
     lines.extend(image_preview_spacer_lines(preview_height));
     lines.into_iter().skip(line_offset).collect()
+}
+
+fn message_author_style() -> Style {
+    Style::default().fg(Color::White).bold()
 }
 
 fn message_content_width(list: Rect) -> usize {
@@ -1891,6 +1895,7 @@ fn render_user_profile_popup(
             profile,
             state,
             text_area.width.saturating_sub(0),
+            state.user_profile_popup_status(),
             state.user_profile_popup_mutual_cursor(),
         )
     } else if let Some(message) = state.user_profile_popup_load_error() {
@@ -1924,6 +1929,7 @@ fn user_profile_popup_lines(
     profile: &UserProfileInfo,
     state: &DashboardState,
     width: u16,
+    status: PresenceStatus,
     mutual_cursor: Option<usize>,
 ) -> Vec<Line<'static>> {
     let inner_width = usize::from(width.max(8));
@@ -1932,9 +1938,7 @@ fn user_profile_popup_lines(
     let display_name = profile.display_name().to_owned();
     lines.push(Line::from(Span::styled(
         truncate_display_width(&display_name, inner_width),
-        Style::default()
-            .fg(Color::Green)
-            .add_modifier(Modifier::BOLD),
+        user_profile_display_name_style(status),
     )));
     lines.push(Line::from(Span::styled(
         truncate_display_width(&format!("@{}", profile.username), inner_width),
@@ -2030,6 +2034,12 @@ fn user_profile_popup_lines(
         Style::default().fg(DIM),
     )));
     lines
+}
+
+fn user_profile_display_name_style(status: PresenceStatus) -> Style {
+    Style::default()
+        .fg(presence_color(status))
+        .add_modifier(Modifier::BOLD)
 }
 
 fn friend_status_badge(status: FriendStatus) -> (String, Color) {
@@ -2613,17 +2623,19 @@ mod tests {
         emoji_reaction_picker_lines, footer_hint, format_message_content,
         format_message_content_lines, format_message_sent_time, format_unix_millis_with_offset,
         highlight_style, inline_image_preview_area, inline_image_preview_row, member_display_label,
-        mention_highlight_style, message_action_menu_lines, message_item_lines,
-        message_viewport_lines, poll_box_border, poll_card_inner_width, poll_vote_picker_lines,
-        reaction_users_popup_lines, reaction_users_visible_line_count, sync_view_heights,
+        mention_highlight_style, message_action_menu_lines, message_author_style,
+        message_item_lines, message_viewport_lines, poll_box_border, poll_card_inner_width,
+        poll_vote_picker_lines, reaction_users_popup_lines, reaction_users_visible_line_count,
+        sync_view_heights, user_profile_display_name_style, user_profile_popup_lines,
         wrap_text_lines,
     };
     use crate::{
         discord::{
             AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientState, ChannelState,
-            GuildMemberState, MemberInfo, MentionInfo, MessageKind, MessageSnapshotInfo,
-            MessageState, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
-            ReactionUserInfo, ReactionUsersInfo, ReplyInfo,
+            FriendStatus, GuildMemberState, MemberInfo, MentionInfo, MessageKind,
+            MessageSnapshotInfo, MessageState, MutualGuildInfo, PollAnswerInfo, PollInfo,
+            PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
+            ReplyInfo, UserProfileInfo,
         },
         tui::{
             format::truncate_display_width,
@@ -2717,6 +2729,38 @@ mod tests {
         assert_eq!(inactive_style.fg, Some(Color::Red));
         assert_eq!(active_style.fg, Some(Color::Red));
         assert!(active_style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn message_author_style_is_bold_white() {
+        let style = message_author_style();
+
+        assert_eq!(style.fg, Some(Color::White));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn user_profile_name_style_uses_presence_color() {
+        let style = user_profile_display_name_style(PresenceStatus::DoNotDisturb);
+
+        assert_eq!(style.fg, Some(Color::Red));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn user_profile_popup_styles_name_by_status() {
+        let profile = user_profile_info(10, "neo");
+        let state = DashboardState::new();
+
+        let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Idle, None);
+
+        assert_eq!(lines[0].spans[0].style.fg, Some(Color::Rgb(180, 140, 0)));
+        assert!(
+            lines[0].spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
     }
 
     #[test]
@@ -4415,6 +4459,22 @@ mod tests {
             is_bot: false,
             avatar_url: None,
             role_ids: Vec::new(),
+        }
+    }
+
+    fn user_profile_info(user_id: u64, username: &str) -> UserProfileInfo {
+        UserProfileInfo {
+            user_id: Id::new(user_id),
+            username: username.to_owned(),
+            global_name: None,
+            guild_nick: None,
+            avatar_url: None,
+            bio: None,
+            pronouns: None,
+            mutual_guilds: Vec::<MutualGuildInfo>::new(),
+            mutual_friends_count: 0,
+            friend_status: FriendStatus::None,
+            note: None,
         }
     }
 

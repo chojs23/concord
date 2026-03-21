@@ -676,6 +676,31 @@ impl DashboardState {
             .and_then(|popup| popup.load_error.as_deref())
     }
 
+    pub fn user_profile_popup_status(&self) -> PresenceStatus {
+        let Some(popup) = self.user_profile_popup.as_ref() else {
+            return PresenceStatus::Unknown;
+        };
+
+        if let Some(guild_id) = popup.guild_id
+            && let Some(status) = self
+                .discord
+                .members_for_guild(guild_id)
+                .into_iter()
+                .find(|member| member.user_id == popup.user_id)
+                .map(|member| member.status)
+        {
+            return status;
+        }
+
+        self.discord
+            .channels_for_guild(None)
+            .into_iter()
+            .flat_map(|channel| channel.recipients.iter())
+            .find(|recipient| recipient.user_id == popup.user_id)
+            .map(|recipient| recipient.status)
+            .unwrap_or(PresenceStatus::Unknown)
+    }
+
     /// URL of the avatar image to render into the open profile popup. None
     /// when the popup is closed, the profile has not loaded yet, or the user
     /// has no avatar attachment.
@@ -3871,6 +3896,66 @@ mod tests {
         });
 
         assert_eq!(state.user_profile_popup_load_error(), None);
+    }
+
+    #[test]
+    fn user_profile_popup_status_uses_cached_guild_member_status() {
+        let user_id: Id<UserMarker> = Id::new(10);
+        let guild_id: Id<GuildMarker> = Id::new(1);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: Vec::new(),
+            members: vec![MemberInfo {
+                user_id,
+                display_name: "neo".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            }],
+            presences: vec![(user_id, PresenceStatus::DoNotDisturb)],
+            roles: Vec::new(),
+            emojis: Vec::new(),
+        });
+        state.open_user_profile_popup(user_id, Some(guild_id));
+
+        assert_eq!(
+            state.user_profile_popup_status(),
+            PresenceStatus::DoNotDisturb
+        );
+    }
+
+    #[test]
+    fn user_profile_popup_status_uses_dm_recipient_status_without_guild() {
+        let user_id: Id<UserMarker> = Id::new(10);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id: Id::new(20),
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "neo".to_owned(),
+            kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: Some(vec![ChannelRecipientInfo {
+                user_id,
+                display_name: "neo".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                status: Some(PresenceStatus::Idle),
+            }]),
+        }));
+        state.open_user_profile_popup(user_id, None);
+
+        assert_eq!(state.user_profile_popup_status(), PresenceStatus::Idle);
     }
 
     #[test]
