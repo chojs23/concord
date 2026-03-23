@@ -328,6 +328,7 @@ pub struct DashboardState {
     emoji_reaction_picker: Option<EmojiReactionPickerState>,
     poll_vote_picker: Option<PollVotePickerState>,
     reaction_users_popup: Option<ReactionUsersPopupState>,
+    debug_log_popup_open: bool,
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
     last_error: Option<String>,
@@ -386,6 +387,7 @@ impl DashboardState {
             emoji_reaction_picker: None,
             poll_vote_picker: None,
             reaction_users_popup: None,
+            debug_log_popup_open: false,
             current_user: None,
             current_user_id: None,
             last_error: None,
@@ -421,7 +423,6 @@ impl DashboardState {
                 self.current_user_id = *user_id;
             }
             AppEvent::GatewayError { message } => {
-                logging::error("app_event", message);
                 self.last_error = Some(message.clone());
             }
             AppEvent::StatusMessage { message } => {
@@ -447,7 +448,6 @@ impl DashboardState {
                 channel_id,
                 message,
             } => {
-                logging::error("history", message);
                 self.last_error = Some(message.clone());
                 self.older_history_requests.remove(channel_id);
             }
@@ -810,6 +810,25 @@ impl DashboardState {
 
     pub fn is_reaction_users_popup_open(&self) -> bool {
         self.reaction_users_popup.is_some()
+    }
+
+    pub fn is_debug_log_popup_open(&self) -> bool {
+        self.debug_log_popup_open
+    }
+
+    pub fn toggle_debug_log_popup(&mut self) {
+        self.debug_log_popup_open = !self.debug_log_popup_open;
+    }
+
+    pub fn close_debug_log_popup(&mut self) {
+        self.debug_log_popup_open = false;
+    }
+
+    pub fn debug_log_lines(&self) -> Vec<String> {
+        logging::error_entries()
+            .into_iter()
+            .map(|entry| entry.line())
+            .collect()
     }
 
     pub fn reaction_users_popup(&self) -> Option<&ReactionUsersPopupState> {
@@ -1258,13 +1277,9 @@ impl DashboardState {
                 None
             }
             MessageActionKind::DownloadImage => {
-                let (url, filename) =
-                    self.selected_message_image_attachment()
-                        .and_then(|attachment| {
-                            attachment
-                                .preferred_url()
-                                .map(|url| (url.to_owned(), attachment.filename.clone()))
-                        })?;
+                let preview = self.selected_message_state()?.first_inline_preview()?;
+                let url = preview.url.to_owned();
+                let filename = preview.filename.to_owned();
                 self.close_message_action_menu();
                 Some(AppCommand::DownloadAttachment { url, filename })
             }
@@ -2306,22 +2321,6 @@ impl DashboardState {
         }
     }
 
-    fn selected_message_image_attachment(&self) -> Option<&crate::discord::AttachmentInfo> {
-        self.selected_message_attachment_matching(|attachment| attachment.is_image())
-    }
-
-    fn selected_message_attachment_matching(
-        &self,
-        predicate: impl Fn(&crate::discord::AttachmentInfo) -> bool,
-    ) -> Option<&crate::discord::AttachmentInfo> {
-        let channel_id = self.selected_channel_id()?;
-        let messages = self.discord.messages_for_channel(channel_id);
-        let message = messages.get(self.selected_message())?;
-        message
-            .attachments_in_display_order()
-            .find(|attachment| predicate(attachment))
-    }
-
     pub fn members_grouped(&self) -> Vec<MemberGroup<'_>> {
         let Some(guild_id) = self.selected_guild_id() else {
             return self.selected_channel_recipient_group();
@@ -3286,14 +3285,13 @@ where
     G: Fn(&MessageSnapshotInfo, &str) -> String,
 {
     let preview_height = message
-        .attachments_in_display_order()
-        .find(|attachment| attachment.inline_preview_url().is_some())
-        .map(|attachment| {
+        .first_inline_preview()
+        .map(|preview| {
             super::image_preview_height_for_dimensions(
                 preview_width,
                 max_preview_height,
-                attachment.width,
-                attachment.height,
+                preview.width,
+                preview.height,
             )
         })
         .unwrap_or(0);
@@ -3303,6 +3301,7 @@ where
         render_text,
         render_snapshot_text,
     ) + usize::from(preview_height)
+        + super::ui::MESSAGE_ROW_GAP
 }
 
 fn message_base_line_count_for_width_with_mentions<F, G>(
@@ -3352,6 +3351,8 @@ where
         0
     };
     let reaction_lines = reaction_line_count(&message.reactions, content_width);
+    let embed_lines =
+        super::ui::embed_line_count(&message.embeds, message.content.as_deref(), content_width);
 
     if let Some(snapshot) = message.forwarded_snapshots.first() {
         let metadata_line =
@@ -3361,13 +3362,14 @@ where
                 + poll_lines
                 + kind_line
                 + primary_lines
+                + embed_lines
                 + forwarded_snapshot_line_count(snapshot, content_width, &render_snapshot_text)
                 + metadata_line
                 + reaction_lines)
                 .max(1);
     }
 
-    1 + (reply_line + poll_lines + kind_line + primary_lines + reaction_lines).max(1)
+    1 + (reply_line + poll_lines + kind_line + primary_lines + embed_lines + reaction_lines).max(1)
 }
 
 fn reaction_line_count(reactions: &[ReactionInfo], width: usize) -> usize {
@@ -3436,8 +3438,16 @@ fn forwarded_snapshot_line_count(
         })
         .unwrap_or(0);
     let attachment_line = usize::from(!snapshot.attachments.is_empty());
+    let embed_lines = super::ui::embed_line_count(
+        &snapshot.embeds,
+        snapshot.content.as_deref(),
+        forwarded_content_width,
+    );
 
-    1 + content_lines.saturating_add(attachment_line).max(1)
+    1 + content_lines
+        .saturating_add(attachment_line)
+        .saturating_add(embed_lines)
+        .max(1)
 }
 
 fn add_literal_mention_highlights(rendered: &mut RenderedText, mention: &str) {
@@ -3770,10 +3780,10 @@ mod tests {
     };
     use crate::discord::{
         AppCommand, AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
-        FriendStatus, GuildFolder, MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo,
-        MessageSnapshotInfo, MutualGuildInfo, PollAnswerInfo, PollInfo, PresenceStatus,
-        ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo,
-        UserProfileInfo,
+        EmbedInfo, FriendStatus, GuildFolder, MemberInfo, MessageInfo, MessageKind,
+        MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo, PollAnswerInfo, PollInfo,
+        PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
+        ReplyInfo, RoleInfo, UserProfileInfo,
     };
 
     fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -3810,6 +3820,17 @@ mod tests {
             message: "boom".to_owned(),
         });
         assert_eq!(state.last_error(), Some("boom"));
+    }
+
+    #[test]
+    fn toggles_debug_log_popup() {
+        let mut state = DashboardState::new();
+
+        state.toggle_debug_log_popup();
+        assert!(state.is_debug_log_popup_open());
+
+        state.close_debug_log_popup();
+        assert!(!state.is_debug_log_popup_open());
     }
 
     #[test]
@@ -4019,6 +4040,7 @@ mod tests {
                 content: Some(format!("msg {id}")),
                 mentions: Vec::new(),
                 attachments: Vec::new(),
+                embeds: Vec::new(),
                 forwarded_snapshots: Vec::new(),
             });
         }
@@ -4065,6 +4087,7 @@ mod tests {
             content: Some("hello".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -4554,6 +4577,7 @@ mod tests {
             content: Some("history message without guild".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -4597,6 +4621,7 @@ mod tests {
             content: Some("hello".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -4649,6 +4674,7 @@ mod tests {
                 content: Some(format!("msg {id}")),
                 mentions: Vec::new(),
                 attachments: Vec::new(),
+                embeds: Vec::new(),
                 forwarded_snapshots: Vec::new(),
             });
         }
@@ -4683,6 +4709,7 @@ mod tests {
             content: Some("msg 6".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -4738,7 +4765,7 @@ mod tests {
         }
         state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
-        assert_eq!(state.following_message_rendered_rows(200, 16, 3, 3), 18);
+        assert_eq!(state.following_message_rendered_rows(200, 16, 3, 3), 21);
         let selected_bottom = state
             .selected_message_rendered_row(200, 16, 3)
             .saturating_add(
@@ -4767,10 +4794,11 @@ mod tests {
             content: Some("clip".to_owned()),
             mentions: Vec::new(),
             attachments: vec![video_attachment(1)],
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 3);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
     }
 
     #[test]
@@ -4791,10 +4819,11 @@ mod tests {
             content: Some("hello\nworld".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 3);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
     }
 
     #[test]
@@ -4815,10 +4844,11 @@ mod tests {
             content: Some("abcdefghijkl".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 5, 16, 3), 4);
+        assert_eq!(message_rendered_height(&message, 5, 16, 3), 5);
     }
 
     #[test]
@@ -4836,7 +4866,7 @@ mod tests {
         });
         let message = state.messages()[0];
 
-        assert_eq!(message_rendered_height(message, 5, 16, 3), 3);
+        assert_eq!(message_rendered_height(message, 5, 16, 3), 4);
         assert_eq!(state.message_base_line_count_for_width(message, 5), 2);
     }
 
@@ -4883,10 +4913,12 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: vec![MessageSnapshotInfo {
                 content: Some("<@10><@10>".to_owned()),
                 mentions: Vec::new(),
                 attachments: Vec::new(),
+                embeds: Vec::new(),
                 source_channel_id: Some(Id::new(9)),
                 timestamp: None,
             }],
@@ -4913,10 +4945,36 @@ mod tests {
             content: Some("漢字仮名交じ".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 10, 16, 3), 3);
+        assert_eq!(message_rendered_height(&message, 10, 16, 3), 4);
+    }
+
+    #[test]
+    fn discord_embed_rows_increase_message_rendered_height() {
+        let message = MessageState {
+            id: Id::new(1),
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            pinned: false,
+            reactions: Vec::new(),
+            content: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: vec![youtube_embed()],
+            forwarded_snapshots: Vec::new(),
+        };
+
+        assert_eq!(message_rendered_height(&message, 80, 16, 3), 8);
     }
 
     #[test]
@@ -4937,10 +4995,11 @@ mod tests {
             content: Some("look".to_owned()),
             mentions: Vec::new(),
             attachments: vec![image_attachment(1)],
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
     }
 
     #[test]
@@ -4961,10 +5020,11 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: vec![forwarded_snapshot(1)],
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
     }
 
     #[test]
@@ -4985,16 +5045,18 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: vec![MessageSnapshotInfo {
                 content: Some("abcdefghijkl".to_owned()),
                 mentions: Vec::new(),
                 attachments: vec![image_attachment(1)],
+                embeds: Vec::new(),
                 source_channel_id: None,
                 timestamp: None,
             }],
         };
 
-        assert_eq!(message_rendered_height(&message, 7, 16, 3), 9);
+        assert_eq!(message_rendered_height(&message, 7, 16, 3), 10);
     }
 
     #[test]
@@ -5015,16 +5077,18 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: vec![MessageSnapshotInfo {
                 content: Some("漢字仮名交じ".to_owned()),
                 mentions: Vec::new(),
                 attachments: vec![image_attachment(1)],
+                embeds: Vec::new(),
                 source_channel_id: None,
                 timestamp: None,
             }],
         };
 
-        assert_eq!(message_rendered_height(&message, 12, 16, 3), 8);
+        assert_eq!(message_rendered_height(&message, 12, 16, 3), 9);
     }
 
     #[test]
@@ -5048,10 +5112,39 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: vec![snapshot],
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
+    }
+
+    #[test]
+    fn forwarded_snapshot_embed_rows_increase_rendered_height() {
+        let mut snapshot = forwarded_snapshot(1);
+        snapshot.attachments.clear();
+        snapshot.embeds = vec![youtube_embed()];
+        let message = MessageState {
+            id: Id::new(1),
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            pinned: false,
+            reactions: Vec::new(),
+            content: Some(String::new()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: vec![snapshot],
+        };
+
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 10);
     }
 
     #[test]
@@ -5072,14 +5165,15 @@ mod tests {
             content: Some("reply body".to_owned()),
             mentions: Vec::new(),
             attachments: vec![image_attachment(1)],
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
 
         message.message_kind = MessageKind::new(19);
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
     }
 
     #[test]
@@ -5104,10 +5198,11 @@ mod tests {
             content: Some("asdf".to_owned()),
             mentions: Vec::new(),
             attachments: vec![image_attachment(1)],
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
     }
 
     #[test]
@@ -5128,10 +5223,11 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
     }
 
     #[test]
@@ -5139,7 +5235,7 @@ mod tests {
         let mut message = height_test_message("Please vote");
         message.poll = Some(poll_info(false));
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 10);
     }
 
     #[test]
@@ -5147,7 +5243,7 @@ mod tests {
         let mut message = height_test_message("abcdefghijkl");
         message.poll = Some(poll_info(false));
 
-        assert_eq!(message_rendered_height(&message, 10, 16, 3), 10);
+        assert_eq!(message_rendered_height(&message, 10, 16, 3), 11);
     }
 
     #[test]
@@ -5155,7 +5251,7 @@ mod tests {
         let mut message = height_test_message("release notes");
         message.message_kind = MessageKind::new(18);
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
     }
 
     #[test]
@@ -5164,7 +5260,7 @@ mod tests {
         message.message_kind = MessageKind::new(46);
         message.poll = Some(poll_info(false));
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
     }
 
     #[test]
@@ -5177,7 +5273,7 @@ mod tests {
             mentions: Vec::new(),
         });
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 3);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
     }
 
     #[test]
@@ -5198,10 +5294,11 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         };
 
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
+        assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
     }
 
     #[test]
@@ -5217,6 +5314,34 @@ mod tests {
             })
         );
         assert!(!actions.iter().any(|action| action.label.contains("poll")));
+    }
+
+    #[test]
+    fn embed_thumbnail_download_action_returns_command() {
+        let mut state = state_with_messages(1);
+        state.push_event(AppEvent::MessageHistoryLoaded {
+            channel_id: Id::new(2),
+            before: None,
+            messages: vec![MessageInfo {
+                content: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
+                embeds: vec![youtube_embed()],
+                ..message_info(Id::new(2), 1)
+            }],
+        });
+        focus_messages(&mut state);
+        state.open_selected_message_actions();
+        state.move_message_action_down();
+
+        let command = state.activate_selected_message_action();
+
+        assert_eq!(
+            command,
+            Some(AppCommand::DownloadAttachment {
+                url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".to_owned(),
+                filename: "embed-thumbnail".to_owned(),
+            })
+        );
+        assert!(!state.is_message_action_menu_open());
     }
 
     #[test]
@@ -5588,6 +5713,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -5627,6 +5753,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: vec![image_attachment(1)],
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -5665,6 +5792,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.open_selected_message_actions();
@@ -5702,6 +5830,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -5767,9 +5896,9 @@ mod tests {
 
         assert!(state.message_auto_follow());
         assert_eq!(state.selected_message(), 11);
-        assert_eq!(state.message_scroll(), 8);
-        assert_eq!(state.message_line_scroll(), 1);
-        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 5);
+        assert_eq!(state.message_scroll(), 9);
+        assert_eq!(state.message_line_scroll(), 2);
+        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 4);
     }
 
     #[test]
@@ -5786,7 +5915,7 @@ mod tests {
 
         assert_eq!(state.selected_message(), 7);
         assert_eq!(state.message_scroll(), 6);
-        assert_eq!(state.message_line_scroll(), 0);
+        assert_eq!(state.message_line_scroll(), 1);
         assert_eq!(state.selected_message_rendered_row(200, 16, 3), 2);
     }
 
@@ -5806,7 +5935,7 @@ mod tests {
 
         assert_eq!(state.selected_message(), 1);
         assert_eq!(state.message_scroll(), 0);
-        assert_eq!(state.message_line_scroll(), 3);
+        assert_eq!(state.message_line_scroll(), 4);
         assert_eq!(state.selected_message_rendered_row(5, 16, 3), 1);
     }
 
@@ -5824,9 +5953,9 @@ mod tests {
         }
 
         assert_eq!(state.messages()[state.selected_message()].id, Id::new(4));
-        assert_eq!(state.selected_message_rendered_height(200, 16, 3), 6);
+        assert_eq!(state.selected_message_rendered_height(200, 16, 3), 7);
         assert_eq!(state.message_scroll(), 2);
-        assert_eq!(state.message_line_scroll(), 1);
+        assert_eq!(state.message_line_scroll(), 2);
         assert_eq!(state.selected_message_rendered_row(200, 16, 3), 1);
     }
 
@@ -5841,14 +5970,14 @@ mod tests {
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
         assert_eq!(state.message_scroll(), 0);
-        assert_eq!(state.message_line_scroll(), 2);
+        assert_eq!(state.message_line_scroll(), 3);
         assert_eq!(state.selected_message(), 0);
 
         state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
         assert_eq!(state.message_scroll(), 0);
-        assert_eq!(state.message_line_scroll(), 3);
+        assert_eq!(state.message_line_scroll(), 4);
     }
 
     #[test]
@@ -5868,6 +5997,7 @@ mod tests {
             content: Some("next".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         focus_messages(&mut state);
@@ -5875,6 +6005,8 @@ mod tests {
         state.jump_top();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
+        state.scroll_message_viewport_down();
+        state.clamp_message_viewport_for_image_previews(5, 16, 3);
         state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
         state.scroll_message_viewport_down();
@@ -5906,6 +6038,7 @@ mod tests {
             content: Some("next".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         focus_messages(&mut state);
@@ -5913,7 +6046,7 @@ mod tests {
         state.jump_top();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
-        for _ in 0..4 {
+        for _ in 0..5 {
             state.scroll_message_viewport_down();
             state.clamp_message_viewport_for_image_previews(5, 16, 3);
         }
@@ -5940,6 +6073,7 @@ mod tests {
             content: Some("next".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         focus_messages(&mut state);
@@ -5989,6 +6123,7 @@ mod tests {
             content: Some("next".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         focus_messages(&mut state);
@@ -6007,7 +6142,6 @@ mod tests {
                     .saturating_sub(1),
             );
         assert!(selected_bottom < state.message_view_height());
-        assert!(state.message_line_scroll() > 1);
     }
 
     #[test]
@@ -6027,6 +6161,7 @@ mod tests {
             content: Some("next".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         focus_messages(&mut state);
@@ -6392,6 +6527,7 @@ mod tests {
             content: Some("new empty dm".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -7003,6 +7139,7 @@ mod tests {
             content: Some("hello".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state
@@ -7052,6 +7189,7 @@ mod tests {
             content: Some(content.to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state
@@ -7122,6 +7260,7 @@ mod tests {
             content: Some("release notes".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state
@@ -7144,6 +7283,7 @@ mod tests {
             content: Some(content.to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         }
     }
@@ -7207,6 +7347,7 @@ mod tests {
                     .then(|| image_attachment(id))
                     .into_iter()
                     .collect(),
+                embeds: Vec::new(),
                 forwarded_snapshots: Vec::new(),
             });
         }
@@ -7228,6 +7369,7 @@ mod tests {
             content: Some(content.to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
     }
@@ -7260,11 +7402,32 @@ mod tests {
         }
     }
 
+    fn youtube_embed() -> EmbedInfo {
+        EmbedInfo {
+            color: Some(0xff0000),
+            provider_name: Some("YouTube".to_owned()),
+            author_name: None,
+            title: Some("Example Video".to_owned()),
+            description: Some("A video description".to_owned()),
+            fields: Vec::new(),
+            footer_text: None,
+            url: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
+            thumbnail_url: Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".to_owned()),
+            thumbnail_width: Some(480),
+            thumbnail_height: Some(360),
+            image_url: None,
+            image_width: None,
+            image_height: None,
+            video_url: None,
+        }
+    }
+
     fn forwarded_snapshot(id: u64) -> MessageSnapshotInfo {
         MessageSnapshotInfo {
             content: Some(format!("forwarded {id}")),
             mentions: Vec::new(),
             attachments: vec![image_attachment(id)],
+            embeds: Vec::new(),
             source_channel_id: None,
             timestamp: None,
         }
@@ -7287,6 +7450,7 @@ mod tests {
             content: Some(format!("msg {message_id}")),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         }
     }

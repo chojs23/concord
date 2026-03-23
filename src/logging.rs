@@ -1,13 +1,35 @@
 use std::{
+    collections::VecDeque,
     env,
     fs::OpenOptions,
     io::Write,
     path::PathBuf,
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 static LOGGER: OnceLock<FileLogger> = OnceLock::new();
+static ERROR_LOG: OnceLock<Mutex<VecDeque<ErrorLogEntry>>> = OnceLock::new();
+
+const MAX_ERROR_LOG_ENTRIES: usize = 200;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ErrorLogEntry {
+    timestamp_millis: u128,
+    target: String,
+    message: String,
+}
+
+impl ErrorLogEntry {
+    pub fn line(&self) -> String {
+        format_log_line(
+            self.timestamp_millis,
+            Level::Error,
+            &self.target,
+            &self.message,
+        )
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Level {
@@ -72,7 +94,16 @@ pub fn debug(target: &str, message: impl AsRef<str>) {
 }
 
 pub fn error(target: &str, message: impl AsRef<str>) {
-    logger().write(Level::Error, target, message.as_ref());
+    let message = message.as_ref();
+    push_error_entry(target, message);
+    logger().write(Level::Error, target, message);
+}
+
+pub fn error_entries() -> Vec<ErrorLogEntry> {
+    error_log()
+        .lock()
+        .map(|entries| entries.iter().cloned().collect())
+        .unwrap_or_default()
 }
 
 pub fn timing(target: &str, message: impl AsRef<str>, duration: Duration) {
@@ -89,6 +120,24 @@ pub fn timing(target: &str, message: impl AsRef<str>, duration: Duration) {
 
 fn logger() -> &'static FileLogger {
     LOGGER.get_or_init(FileLogger::from_env)
+}
+
+fn error_log() -> &'static Mutex<VecDeque<ErrorLogEntry>> {
+    ERROR_LOG.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn push_error_entry(target: &str, message: &str) {
+    let Ok(mut entries) = error_log().lock() else {
+        return;
+    };
+    if entries.len() >= MAX_ERROR_LOG_ENTRIES {
+        entries.pop_front();
+    }
+    entries.push_back(ErrorLogEntry {
+        timestamp_millis: unix_timestamp_millis(),
+        target: target.to_owned(),
+        message: message.to_owned(),
+    });
 }
 
 fn log_path() -> Option<PathBuf> {
@@ -130,7 +179,19 @@ fn format_log_line(timestamp_millis: u128, level: Level, target: &str, message: 
 
 #[cfg(test)]
 mod tests {
-    use super::{Level, flag_enabled, format_log_line};
+    use std::sync::{Mutex, OnceLock};
+
+    use super::{Level, error, error_entries, error_log, flag_enabled, format_log_line};
+
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn test_lock() -> &'static Mutex<()> {
+        TEST_LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn clear_error_log() {
+        error_log().lock().expect("error log mutex").clear();
+    }
 
     #[test]
     fn parses_enabled_flags() {
@@ -148,5 +209,33 @@ mod tests {
             format_log_line(42, Level::Error, "gateway", "boom"),
             "42 [ERROR] gateway: boom"
         );
+    }
+
+    #[test]
+    fn error_records_current_process_entry() {
+        let _guard = test_lock().lock().expect("logging test mutex");
+        clear_error_log();
+
+        error("history", "request failed with status 403");
+
+        let entries = error_entries();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].line().contains("[ERROR] history"));
+        assert!(entries[0].line().contains("request failed with status 403"));
+    }
+
+    #[test]
+    fn error_entries_are_bounded_to_recent_entries() {
+        let _guard = test_lock().lock().expect("logging test mutex");
+        clear_error_log();
+
+        for index in 0..205 {
+            error("test", format!("entry {index}"));
+        }
+
+        let entries = error_entries();
+        assert_eq!(entries.len(), 200);
+        assert!(entries[0].line().contains("entry 5"));
+        assert!(entries[199].line().contains("entry 204"));
     }
 }

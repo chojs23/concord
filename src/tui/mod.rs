@@ -346,6 +346,7 @@ struct ImagePreviewTarget {
     preview_height: u16,
     visible_preview_height: u16,
     top_clip_rows: u16,
+    accent_color: Option<u32>,
     message_id: Id<MessageMarker>,
     url: String,
     filename: String,
@@ -501,6 +502,7 @@ impl ImagePreviewCache {
             previews.push(ImagePreview {
                 message_index: render_info.message_index,
                 preview_height: render_info.preview_height,
+                accent_color: render_info.accent_color,
                 state,
             });
         }
@@ -510,6 +512,7 @@ impl ImagePreviewCache {
                 previews.push(ImagePreview {
                     message_index: target.message_index,
                     preview_height: target.preview_height,
+                    accent_color: target.accent_color,
                     state: ImagePreviewState::Loading {
                         filename: target.filename.clone(),
                     },
@@ -792,6 +795,7 @@ impl AvatarImageCache {
                     preview_height: AVATAR_PREVIEW_HEIGHT,
                     visible_preview_height: target.visible_height,
                     top_clip_rows: target.top_clip_rows,
+                    accent_color: None,
                 };
                 clipped_preview_protocol(picker, image, render_info).map(|protocol| AvatarImage {
                     row: target.row,
@@ -848,6 +852,7 @@ impl AvatarImageCache {
             preview_height: PROFILE_POPUP_AVATAR_HEIGHT,
             visible_preview_height: PROFILE_POPUP_AVATAR_HEIGHT,
             top_clip_rows: 0,
+            accent_color: None,
         };
         clipped_preview_protocol(picker, image, render_info).map(|protocol| AvatarImage {
             row: 0,
@@ -975,6 +980,7 @@ impl EmojiImageCache {
                     preview_height: EMOJI_REACTION_THUMB_HEIGHT,
                     visible_preview_height: EMOJI_REACTION_THUMB_HEIGHT,
                     top_clip_rows: 0,
+                    accent_color: None,
                 };
                 if let Some(protocol) = clipped_preview_protocol(picker, &image, render_info) {
                     self.entries
@@ -1016,6 +1022,7 @@ impl ImagePreviewTarget {
             preview_height: self.preview_height,
             visible_preview_height: self.visible_preview_height,
             top_clip_rows: self.top_clip_rows,
+            accent_color: self.accent_color,
         }
     }
 }
@@ -1027,6 +1034,7 @@ struct ImagePreviewRenderInfo {
     preview_height: u16,
     visible_preview_height: u16,
     top_clip_rows: u16,
+    accent_color: Option<u32>,
 }
 
 impl ImagePreviewRenderInfo {
@@ -1185,19 +1193,20 @@ fn visible_image_preview_targets(
         let line_offset = usize::from(message_index == 0) * state.message_line_scroll();
         let base_rows = state.message_base_line_count_for_width(message, layout.content_width);
 
-        let Some((attachment, url)) = message
-            .attachments_in_display_order()
-            .find_map(|attachment| attachment.inline_preview_url().map(|url| (attachment, url)))
-        else {
-            rendered_rows = rendered_rows.saturating_add(base_rows.saturating_sub(line_offset));
+        let Some(preview) = message.first_inline_preview() else {
+            rendered_rows = rendered_rows.saturating_add(
+                base_rows
+                    .saturating_add(ui::MESSAGE_ROW_GAP)
+                    .saturating_sub(line_offset),
+            );
             continue;
         };
 
         let preview_height = image_preview_height_for_dimensions(
             layout.preview_width,
             layout.max_preview_height,
-            attachment.width,
-            attachment.height,
+            preview.width,
+            preview.height,
         );
         let preview_top = rendered_rows as isize + base_rows as isize - line_offset as isize;
         let preview_bottom = preview_top.saturating_add(preview_height as isize);
@@ -1211,15 +1220,17 @@ fn visible_image_preview_targets(
                 visible_preview_height: u16::try_from(visible_bottom - visible_top)
                     .unwrap_or(u16::MAX),
                 top_clip_rows: u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX),
+                accent_color: preview.accent_color,
                 message_id: message.id,
-                url: url.to_owned(),
-                filename: attachment.filename.clone(),
+                url: preview.url.to_owned(),
+                filename: preview.filename.to_owned(),
             });
         }
 
         rendered_rows = rendered_rows.saturating_add(
             base_rows
                 .saturating_add(preview_height as usize)
+                .saturating_add(ui::MESSAGE_ROW_GAP)
                 .saturating_sub(line_offset),
         );
     }
@@ -1254,20 +1265,20 @@ fn visible_avatar_targets(state: &DashboardState, layout: ImagePreviewLayout) ->
         }
 
         let preview_height = message
-            .attachments_in_display_order()
-            .find_map(|attachment| attachment.inline_preview_url().map(|_| attachment))
-            .map(|attachment| {
+            .first_inline_preview()
+            .map(|preview| {
                 image_preview_height_for_dimensions(
                     layout.preview_width,
                     layout.max_preview_height,
-                    attachment.width,
-                    attachment.height,
+                    preview.width,
+                    preview.height,
                 )
             })
             .unwrap_or(0);
         rendered_rows = rendered_rows.saturating_add(
             base_rows
                 .saturating_add(preview_height as usize)
+                .saturating_add(ui::MESSAGE_ROW_GAP)
                 .saturating_sub(line_offset),
         );
     }
@@ -1419,7 +1430,9 @@ fn next_member_request(
 
 #[cfg(test)]
 mod tests {
-    use crate::discord::{AttachmentInfo, ChannelInfo, CustomEmojiInfo, MessageSnapshotInfo};
+    use crate::discord::{
+        AttachmentInfo, ChannelInfo, CustomEmojiInfo, EmbedInfo, MessageSnapshotInfo,
+    };
 
     use super::*;
 
@@ -1689,6 +1702,7 @@ mod tests {
             content: Some("clip".to_owned()),
             mentions: Vec::new(),
             attachments: vec![video_attachment(2)],
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -1703,6 +1717,45 @@ mod tests {
         );
 
         assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn image_preview_targets_include_embed_thumbnail() {
+        let mut state = state_with_image_messages(1, &[]);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: vec![youtube_embed()],
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let targets = visible_image_preview_targets(
+            &state,
+            ImagePreviewLayout {
+                list_height: 8,
+                content_width: 200,
+                preview_width: 16,
+                max_preview_height: 3,
+            },
+        );
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
+        assert_eq!(
+            targets[0].url,
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"
+        );
+        assert_eq!(targets[0].filename, "embed-thumbnail");
     }
 
     #[test]
@@ -1722,6 +1775,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: vec![forwarded_snapshot(2)],
         });
 
@@ -2089,6 +2143,7 @@ mod tests {
             preview_height: 3,
             visible_preview_height: 3,
             top_clip_rows: 0,
+            accent_color: None,
         };
 
         let resized = preview_sized_image(&image, (10, 20), render_info)
@@ -2278,6 +2333,7 @@ mod tests {
                     .then(|| image_attachment(id))
                     .into_iter()
                     .collect(),
+                embeds: Vec::new(),
                 forwarded_snapshots: Vec::new(),
             });
         }
@@ -2331,6 +2387,7 @@ mod tests {
                 content: Some(format!("msg {id}")),
                 mentions: Vec::new(),
                 attachments: Vec::new(),
+                embeds: Vec::new(),
                 forwarded_snapshots: Vec::new(),
             });
         }
@@ -2349,6 +2406,7 @@ mod tests {
             preview_height: 3,
             visible_preview_height: 3,
             top_clip_rows: 0,
+            accent_color: None,
             message_id: Id::new(id),
             url: format!("https://cdn.discordapp.com/image-{id}.png"),
             filename: format!("image-{id}.png"),
@@ -2383,11 +2441,32 @@ mod tests {
         }
     }
 
+    fn youtube_embed() -> EmbedInfo {
+        EmbedInfo {
+            color: Some(0xff0000),
+            provider_name: Some("YouTube".to_owned()),
+            author_name: None,
+            title: Some("Example Video".to_owned()),
+            description: Some("A video description".to_owned()),
+            fields: Vec::new(),
+            footer_text: None,
+            url: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
+            thumbnail_url: Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".to_owned()),
+            thumbnail_width: Some(480),
+            thumbnail_height: Some(360),
+            image_url: None,
+            image_width: None,
+            image_height: None,
+            video_url: Some("https://www.youtube.com/embed/dQw4w9WgXcQ".to_owned()),
+        }
+    }
+
     fn forwarded_snapshot(id: u64) -> MessageSnapshotInfo {
         MessageSnapshotInfo {
             content: Some(format!("forwarded {id}")),
             mentions: Vec::new(),
             attachments: vec![image_attachment(id)],
+            embeds: Vec::new(),
             source_channel_id: None,
             timestamp: None,
         }

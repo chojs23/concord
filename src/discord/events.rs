@@ -129,6 +129,40 @@ pub struct AttachmentInfo {
     pub description: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmbedFieldInfo {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmbedInfo {
+    pub color: Option<u32>,
+    pub provider_name: Option<String>,
+    pub author_name: Option<String>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub fields: Vec<EmbedFieldInfo>,
+    pub footer_text: Option<String>,
+    pub url: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub thumbnail_width: Option<u64>,
+    pub thumbnail_height: Option<u64>,
+    pub image_url: Option<String>,
+    pub image_width: Option<u64>,
+    pub image_height: Option<u64>,
+    pub video_url: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InlinePreviewInfo<'a> {
+    pub url: &'a str,
+    pub filename: &'a str,
+    pub width: Option<u64>,
+    pub height: Option<u64>,
+    pub accent_color: Option<u32>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct MessageKind {
     code: u8,
@@ -213,6 +247,7 @@ pub struct MessageSnapshotInfo {
     pub content: Option<String>,
     pub mentions: Vec<MentionInfo>,
     pub attachments: Vec<AttachmentInfo>,
+    pub embeds: Vec<EmbedInfo>,
     pub source_channel_id: Option<Id<ChannelMarker>>,
     pub timestamp: Option<String>,
 }
@@ -284,6 +319,7 @@ pub struct MessageInfo {
     pub content: Option<String>,
     pub mentions: Vec<MentionInfo>,
     pub attachments: Vec<AttachmentInfo>,
+    pub embeds: Vec<EmbedInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
 }
 
@@ -341,6 +377,7 @@ pub enum AppEvent {
         content: Option<String>,
         mentions: Vec<MentionInfo>,
         attachments: Vec<AttachmentInfo>,
+        embeds: Vec<EmbedInfo>,
         forwarded_snapshots: Vec<MessageSnapshotInfo>,
     },
     MessageHistoryLoaded {
@@ -360,6 +397,7 @@ pub enum AppEvent {
         content: Option<String>,
         mentions: Option<Vec<MentionInfo>>,
         attachments: AttachmentUpdate,
+        embeds: Option<Vec<EmbedInfo>>,
     },
     MessageDelete {
         guild_id: Option<Id<GuildMarker>>,
@@ -507,6 +545,7 @@ impl AppEvent {
             content: message.content,
             mentions: message.mentions,
             attachments: message.attachments,
+            embeds: message.embeds,
             forwarded_snapshots: message.forwarded_snapshots,
         }
     }
@@ -544,6 +583,16 @@ impl AttachmentInfo {
         self.is_image().then(|| self.preferred_url()).flatten()
     }
 
+    pub fn inline_preview_info(&self) -> Option<InlinePreviewInfo<'_>> {
+        Some(InlinePreviewInfo {
+            url: self.inline_preview_url()?,
+            filename: self.filename.as_str(),
+            width: self.width,
+            height: self.height,
+            accent_color: None,
+        })
+    }
+
     pub fn from_attachment(attachment: Attachment) -> Self {
         Self {
             id: attachment.id,
@@ -557,6 +606,90 @@ impl AttachmentInfo {
             description: attachment.description,
         }
     }
+}
+
+impl EmbedInfo {
+    fn from_embed(embed: &Embed) -> Option<Self> {
+        if embed.kind == "poll_result" {
+            return None;
+        }
+
+        let info = Self {
+            color: embed.color,
+            provider_name: embed
+                .provider
+                .as_ref()
+                .and_then(|provider| provider.name.clone()),
+            author_name: embed.author.as_ref().map(|author| author.name.clone()),
+            title: embed.title.clone(),
+            description: embed.description.clone(),
+            fields: embed
+                .fields
+                .iter()
+                .map(|field| EmbedFieldInfo {
+                    name: field.name.clone(),
+                    value: field.value.clone(),
+                })
+                .collect(),
+            footer_text: embed.footer.as_ref().map(|footer| footer.text.clone()),
+            url: embed.url.clone(),
+            thumbnail_url: embed
+                .thumbnail
+                .as_ref()
+                .map(|thumbnail| thumbnail.url.clone()),
+            thumbnail_width: embed
+                .thumbnail
+                .as_ref()
+                .and_then(|thumbnail| thumbnail.width),
+            thumbnail_height: embed
+                .thumbnail
+                .as_ref()
+                .and_then(|thumbnail| thumbnail.height),
+            image_url: embed.image.as_ref().map(|image| image.url.clone()),
+            image_width: embed.image.as_ref().and_then(|image| image.width),
+            image_height: embed.image.as_ref().and_then(|image| image.height),
+            video_url: embed.video.as_ref().and_then(|video| video.url.clone()),
+        };
+
+        info.has_renderable_content().then_some(info)
+    }
+
+    fn has_renderable_content(&self) -> bool {
+        self.provider_name.is_some()
+            || self.author_name.is_some()
+            || self.title.is_some()
+            || self.description.is_some()
+            || !self.fields.is_empty()
+            || self.footer_text.is_some()
+            || self.url.is_some()
+            || self.thumbnail_url.is_some()
+            || self.image_url.is_some()
+            || self.video_url.is_some()
+    }
+
+    pub fn inline_preview_info(&self) -> Option<InlinePreviewInfo<'_>> {
+        if let Some(url) = self.thumbnail_url.as_deref() {
+            return Some(InlinePreviewInfo {
+                url,
+                filename: "embed-thumbnail",
+                width: self.thumbnail_width,
+                height: self.thumbnail_height,
+                accent_color: Some(self.color.unwrap_or(0xff0000)),
+            });
+        }
+
+        self.image_url.as_deref().map(|url| InlinePreviewInfo {
+            url,
+            filename: "embed-image",
+            width: self.image_width,
+            height: self.image_height,
+            accent_color: Some(self.color.unwrap_or(0xff0000)),
+        })
+    }
+}
+
+fn embed_infos(embeds: &[Embed]) -> Vec<EmbedInfo> {
+    embeds.iter().filter_map(EmbedInfo::from_embed).collect()
 }
 
 impl MessageSnapshotInfo {
@@ -574,6 +707,7 @@ impl MessageSnapshotInfo {
                 .into_iter()
                 .map(AttachmentInfo::from_attachment)
                 .collect(),
+            embeds: embed_infos(&message.embeds),
             source_channel_id,
             timestamp: Some(message.timestamp.iso_8601().to_string()),
         }
@@ -712,6 +846,7 @@ impl MessageInfo {
                 .into_iter()
                 .map(AttachmentInfo::from_attachment)
                 .collect(),
+            embeds: embed_infos(&message.embeds),
             forwarded_snapshots: message
                 .message_snapshots
                 .into_iter()
@@ -787,6 +922,7 @@ pub fn map_event(event: Event) -> Vec<AppEvent> {
                     .into_iter()
                     .map(AttachmentInfo::from_attachment)
                     .collect(),
+                embeds: embed_infos(&message.embeds),
                 forwarded_snapshots: message
                     .message_snapshots
                     .clone()
@@ -807,6 +943,7 @@ pub fn map_event(event: Event) -> Vec<AppEvent> {
             content: Some(message.content.clone()),
             mentions: Some(mention_infos(&message.mentions)),
             attachments: map_attachment_update(message.attachments.clone()),
+            embeds: Some(embed_infos(&message.embeds)),
         }],
         Event::MessageDelete(message) => vec![AppEvent::MessageDelete {
             guild_id: message.guild_id,

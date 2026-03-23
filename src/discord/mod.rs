@@ -12,10 +12,10 @@ pub use commands::AppCommand;
 pub use commands::ReactionEmoji;
 pub use events::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
-    FriendStatus, GuildFolder, MemberInfo, MentionInfo, MessageInfo, MessageKind,
-    MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo, PollAnswerInfo, PollInfo,
-    PresenceStatus, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo,
-    UserProfileInfo,
+    EmbedFieldInfo, EmbedInfo, FriendStatus, GuildFolder, InlinePreviewInfo, MemberInfo,
+    MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+    MutualGuildInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionInfo, ReactionUserInfo,
+    ReactionUsersInfo, ReplyInfo, RoleInfo, UserProfileInfo,
 };
 pub use state::{
     ChannelRecipientState, ChannelState, DiscordState, GuildMemberState, GuildState,

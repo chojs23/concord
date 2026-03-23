@@ -12,6 +12,7 @@ use tokio::time::{Duration, timeout};
 use crate::{
     DiscordClient, Result,
     discord::{AppCommand, AppEvent, MessageInfo, ReactionUsersInfo},
+    error::AppError,
     logging, token_store, tui,
 };
 
@@ -89,6 +90,7 @@ fn start_command_loop(
                         }
                         Err(error) => {
                             let message = format!("load message history failed: {error}");
+                            let detail = error.log_detail();
                             logging::timing(
                                 "history",
                                 format!(
@@ -98,7 +100,14 @@ fn start_command_loop(
                                 ),
                                 started.elapsed(),
                             );
-                            logging::error("history", &message);
+                            logging::error(
+                                "history",
+                                format!(
+                                    "channel={} before={} {message}; detail={detail}",
+                                    channel_id.get(),
+                                    before.map(|id| id.get()).unwrap_or_default()
+                                ),
+                            );
                             client.publish_event(AppEvent::MessageHistoryLoadFailed {
                                 channel_id,
                                 message,
@@ -170,7 +179,7 @@ fn start_command_loop(
                 } => match client.send_message(channel_id, &content, reply_to).await {
                     Ok(message) => client.publish_event(AppEvent::from_message(message)),
                     Err(error) => {
-                        logging::error("app", format!("send message failed: {error}"));
+                        log_app_error("send message failed", &error);
                         client.publish_event(AppEvent::GatewayError {
                             message: format!("send message failed: {error}"),
                         });
@@ -221,7 +230,7 @@ fn start_command_loop(
                         });
                     }
                     Err(error) => {
-                        logging::error("app", format!("add reaction failed: {error}"));
+                        log_app_error("add reaction failed", &error);
                         client.publish_event(AppEvent::GatewayError {
                             message: format!("add reaction failed: {error}"),
                         });
@@ -246,7 +255,7 @@ fn start_command_loop(
                         });
                     }
                     Err(error) => {
-                        logging::error("app", format!("remove reaction failed: {error}"));
+                        log_app_error("remove reaction failed", &error);
                         client.publish_event(AppEvent::GatewayError {
                             message: format!("remove reaction failed: {error}"),
                         });
@@ -266,10 +275,7 @@ fn start_command_loop(
                         {
                             Ok(users) => loaded_reactions.push(ReactionUsersInfo { emoji, users }),
                             Err(error) => {
-                                logging::error(
-                                    "app",
-                                    format!("load reaction users failed: {error}"),
-                                );
+                                log_app_error("load reaction users failed", &error);
                                 client.publish_event(AppEvent::GatewayError {
                                     message: format!("load reaction users failed: {error}"),
                                 });
@@ -292,7 +298,7 @@ fn start_command_loop(
                             message: format_pinned_messages(&messages),
                         }),
                         Err(error) => {
-                            logging::error("app", format!("load pinned messages failed: {error}"));
+                            log_app_error("load pinned messages failed", &error);
                             client.publish_event(AppEvent::GatewayError {
                                 message: format!("load pinned messages failed: {error}"),
                             });
@@ -322,7 +328,7 @@ fn start_command_loop(
                         });
                     }
                     Err(error) => {
-                        logging::error("app", format!("set pin failed: {error}"));
+                        log_app_error("set pin failed", &error);
                         client.publish_event(AppEvent::GatewayError {
                             message: format!("set pin failed: {error}"),
                         });
@@ -344,7 +350,7 @@ fn start_command_loop(
                         });
                     }
                     Err(error) => {
-                        logging::error("app", format!("poll vote failed: {error}"));
+                        log_app_error("poll vote failed", &error);
                         client.publish_event(AppEvent::GatewayError {
                             message: format!("poll vote failed: {error}"),
                         });
@@ -356,7 +362,7 @@ fn start_command_loop(
                             client.publish_event(AppEvent::UserProfileLoaded { guild_id, profile });
                         }
                         Err(error) => {
-                            logging::error("app", format!("load user profile failed: {error}"));
+                            log_app_error("load user profile failed", &error);
                             client.publish_event(AppEvent::UserProfileLoadFailed {
                                 user_id,
                                 guild_id,
@@ -368,6 +374,13 @@ fn start_command_loop(
             }
         }
     })
+}
+
+fn log_app_error(context: &str, error: &AppError) {
+    logging::error(
+        "app",
+        format!("{context}: {}; detail={}", error, error.log_detail()),
+    );
 }
 
 fn format_pinned_messages(messages: &[MessageInfo]) -> String {

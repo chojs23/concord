@@ -23,9 +23,9 @@ use super::{
     },
 };
 use crate::discord::{
-    AttachmentInfo, ChannelState, FriendStatus, MessageKind, MessageSnapshotInfo, MessageState,
-    PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUsersInfo, ReplyInfo,
-    UserProfileInfo,
+    AttachmentInfo, ChannelState, EmbedInfo, FriendStatus, MessageKind, MessageSnapshotInfo,
+    MessageState, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUsersInfo,
+    ReplyInfo, UserProfileInfo,
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -35,6 +35,8 @@ const IMAGE_PREVIEW_HEIGHT: u16 = 10;
 const IMAGE_PREVIEW_WIDTH: u16 = 72;
 const MESSAGE_AVATAR_PLACEHOLDER: &str = "oo";
 const MESSAGE_AVATAR_OFFSET: u16 = 3;
+pub(crate) const MESSAGE_ROW_GAP: usize = 1;
+const EMBED_PREVIEW_GUTTER_PREFIX: &str = "  ▎ ";
 const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
 const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
 const MAX_EMOJI_REACTION_VISIBLE_ITEMS: usize = 10;
@@ -46,6 +48,14 @@ struct MessageContentLine {
     text: String,
     style: Style,
     mention_highlights: Vec<TextHighlight>,
+    styled_prefixes: Vec<StyledPrefix>,
+}
+
+#[derive(Clone, Copy)]
+struct StyledPrefix {
+    start: usize,
+    len: usize,
+    style: Style,
 }
 
 impl MessageContentLine {
@@ -54,6 +64,7 @@ impl MessageContentLine {
             text,
             style: Style::default(),
             mention_highlights: Vec::new(),
+            styled_prefixes: Vec::new(),
         }
     }
 
@@ -62,6 +73,7 @@ impl MessageContentLine {
             text,
             style,
             mention_highlights,
+            styled_prefixes: Vec::new(),
         }
     }
 
@@ -70,6 +82,7 @@ impl MessageContentLine {
             text,
             style: Style::default().fg(DIM),
             mention_highlights: Vec::new(),
+            styled_prefixes: Vec::new(),
         }
     }
 
@@ -78,29 +91,65 @@ impl MessageContentLine {
             text,
             style: Style::default().fg(ACCENT),
             mention_highlights: Vec::new(),
+            styled_prefixes: Vec::new(),
         }
     }
 
     fn spans(&self) -> Vec<Span<'static>> {
         if self.mention_highlights.is_empty() {
-            return vec![Span::styled(self.text.clone(), self.style)];
+            return self.spans_without_mentions();
         }
 
         let mut spans = Vec::new();
         let mut cursor = 0usize;
         for highlight in &self.mention_highlights {
+            if highlight.end <= cursor {
+                continue;
+            }
             if highlight.start > cursor {
                 spans.push(Span::styled(
                     self.text[cursor..highlight.start].to_owned(),
                     self.style,
                 ));
             }
+            let start = highlight.start.max(cursor);
             spans.push(Span::styled(
-                self.text[highlight.start..highlight.end].to_owned(),
+                self.text[start..highlight.end].to_owned(),
                 self.style.patch(mention_highlight_style()),
             ));
             cursor = highlight.end;
         }
+        if cursor < self.text.len() {
+            spans.push(Span::styled(self.text[cursor..].to_owned(), self.style));
+        }
+        spans
+    }
+
+    fn spans_without_mentions(&self) -> Vec<Span<'static>> {
+        let mut spans = Vec::new();
+        let mut cursor = 0usize;
+        let mut prefixes = self.styled_prefixes.clone();
+        prefixes.sort_by_key(|prefix| prefix.start);
+
+        for prefix in prefixes {
+            let prefix_start = prefix.start.min(self.text.len());
+            let prefix_end = prefix_start.saturating_add(prefix.len).min(self.text.len());
+            if prefix_end <= cursor {
+                continue;
+            }
+            if prefix_start > cursor {
+                spans.push(Span::styled(
+                    self.text[cursor..prefix_start].to_owned(),
+                    self.style,
+                ));
+            }
+            spans.push(Span::styled(
+                self.text[prefix_start.max(cursor)..prefix_end].to_owned(),
+                prefix.style,
+            ));
+            cursor = prefix_end;
+        }
+
         if cursor < self.text.len() {
             spans.push(Span::styled(self.text[cursor..].to_owned(), self.style));
         }
@@ -111,6 +160,7 @@ impl MessageContentLine {
 pub struct ImagePreview<'a> {
     pub message_index: usize,
     pub preview_height: u16,
+    pub accent_color: Option<u32>,
     pub state: ImagePreviewState<'a>,
 }
 
@@ -203,6 +253,7 @@ pub fn render(
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
     render_reaction_users_popup(frame, areas.messages, state);
     render_user_profile_popup(frame, areas.messages, state, profile_avatar);
+    render_debug_log_popup(frame, areas.messages, state);
 }
 
 fn dashboard_areas(area: Rect) -> DashboardAreas {
@@ -405,9 +456,12 @@ fn render_messages(
             state.message_line_scroll(),
             previous_preview_rows,
         );
-        if let Some(preview_area) =
-            inline_image_preview_area(message_areas.list, row, image_preview.preview_height)
-        {
+        if let Some(preview_area) = inline_image_preview_area(
+            message_areas.list,
+            row,
+            image_preview.preview_height,
+            image_preview.accent_color,
+        ) {
             render_image_preview(frame, preview_area, image_preview.state);
         }
         previous_preview_rows =
@@ -453,7 +507,9 @@ fn render_inline_reaction_emojis(
             0
         };
         let base_rows = state.message_base_line_count_for_width(message, content_width) as isize;
-        let preview_height = preview_height_for_message(image_previews, index) as isize;
+        let preview_height = preview_for_message(image_previews, index)
+            .map(|preview| preview.preview_height)
+            .unwrap_or(0) as isize;
 
         let layout = lay_out_reaction_chips(&message.reactions, content_width);
         if !layout.slots.is_empty() {
@@ -496,7 +552,8 @@ fn render_inline_reaction_emojis(
             }
         }
 
-        rendered_rows = rendered_rows.saturating_add((base_rows + preview_height) - line_offset);
+        rendered_rows = rendered_rows
+            .saturating_add((base_rows + preview_height + MESSAGE_ROW_GAP as isize) - line_offset);
     }
 }
 
@@ -524,12 +581,13 @@ fn render_image_preview(frame: &mut Frame, area: Rect, image_preview: ImagePrevi
     }
 }
 
-fn preview_height_for_message(image_previews: &[ImagePreview<'_>], message_index: usize) -> u16 {
+fn preview_for_message<'a>(
+    image_previews: &'a [ImagePreview<'a>],
+    message_index: usize,
+) -> Option<&'a ImagePreview<'a>> {
     image_previews
         .iter()
         .find(|preview| preview.message_index == message_index)
-        .map(|preview| preview.preview_height)
-        .unwrap_or(0)
 }
 
 fn message_viewport_lines(
@@ -543,7 +601,8 @@ fn message_viewport_lines(
     for (index, message) in messages.iter().enumerate() {
         let author = message.author.clone();
         let content = format_message_content_lines(message, state, content_width.max(8));
-        let preview_height = preview_height_for_message(image_previews, index);
+        let preview = preview_for_message(image_previews, index);
+        let preview_height = preview.map(|preview| preview.preview_height).unwrap_or(0);
         let line_offset = usize::from(index == 0) * state.message_line_scroll();
         let item_lines = message_item_lines(
             author,
@@ -551,6 +610,7 @@ fn message_viewport_lines(
             content,
             content_width,
             preview_height,
+            preview.and_then(|preview| preview.accent_color),
             line_offset,
         );
         if selected == Some(index) {
@@ -568,6 +628,7 @@ fn message_item_lines(
     content: Vec<MessageContentLine>,
     content_width: usize,
     preview_height: u16,
+    preview_accent_color: Option<u32>,
     line_offset: usize,
 ) -> Vec<Line<'static>> {
     let sent_time_width = sent_time.as_str().width();
@@ -587,7 +648,11 @@ fn message_item_lines(
         spans.extend(line.spans());
         Line::from(spans)
     }));
-    lines.extend(image_preview_spacer_lines(preview_height));
+    lines.extend(image_preview_spacer_lines(
+        preview_height,
+        preview_accent_color,
+    ));
+    lines.push(Line::from(""));
     lines.into_iter().skip(line_offset).collect()
 }
 
@@ -659,8 +724,19 @@ fn format_unix_millis_with_offset(unix_millis: u64, offset: chrono::FixedOffset)
     Some(utc.with_timezone(&offset).format("%H:%M").to_string())
 }
 
-fn image_preview_spacer_lines(height: u16) -> Vec<Line<'static>> {
-    (0..height).map(|_| Line::from("")).collect()
+fn image_preview_spacer_lines(height: u16, accent_color: Option<u32>) -> Vec<Line<'static>> {
+    (0..height)
+        .map(|_| match accent_color {
+            Some(color) => Line::from(vec![
+                message_avatar_spacer_span(),
+                Span::styled(
+                    EMBED_PREVIEW_GUTTER_PREFIX,
+                    Style::default().fg(embed_color(color)),
+                ),
+            ]),
+            None => Line::from(""),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -720,6 +796,11 @@ fn format_message_content_lines(
             Style::default(),
         ));
     }
+    lines.extend(format_embed_lines(
+        &message.embeds,
+        message.content.as_deref(),
+        width,
+    ));
     if let Some(attachments) = attachment_summary {
         lines.push(MessageContentLine::accent(truncate_text(
             &attachments,
@@ -742,6 +823,148 @@ fn format_message_content_lines(
     }
 
     lines
+}
+
+pub(crate) fn embed_line_count(
+    embeds: &[EmbedInfo],
+    message_content: Option<&str>,
+    width: usize,
+) -> usize {
+    format_embed_lines(embeds, message_content, width).len()
+}
+
+fn format_embed_lines(
+    embeds: &[EmbedInfo],
+    message_content: Option<&str>,
+    width: usize,
+) -> Vec<MessageContentLine> {
+    embeds
+        .iter()
+        .flat_map(|embed| format_embed(embed, message_content, width))
+        .collect()
+}
+
+fn format_embed(
+    embed: &EmbedInfo,
+    message_content: Option<&str>,
+    width: usize,
+) -> Vec<MessageContentLine> {
+    const PREFIX: &str = "  ▎ ";
+    let inner_width = width.saturating_sub(PREFIX.width()).max(1);
+    let mut lines = Vec::new();
+
+    push_embed_text(
+        &mut lines,
+        embed.provider_name.as_deref(),
+        inner_width,
+        embed_provider_style(),
+    );
+    push_embed_text(
+        &mut lines,
+        embed.author_name.as_deref(),
+        inner_width,
+        embed_author_style(),
+    );
+    push_embed_text(
+        &mut lines,
+        embed.title.as_deref(),
+        inner_width,
+        embed_title_style(),
+    );
+    for field in &embed.fields {
+        push_embed_text(
+            &mut lines,
+            Some(field.name.as_str()),
+            inner_width,
+            embed_field_name_style(),
+        );
+        push_embed_text(
+            &mut lines,
+            Some(field.value.as_str()),
+            inner_width,
+            Style::default(),
+        );
+    }
+    push_embed_text(
+        &mut lines,
+        embed.footer_text.as_deref(),
+        inner_width,
+        embed_footer_style(),
+    );
+    for url in [&embed.url]
+        .into_iter()
+        .filter_map(|url| url.as_deref())
+        .filter(|url| !message_content.is_some_and(|content| content.contains(url)))
+    {
+        push_embed_text(&mut lines, Some(url), inner_width, embed_url_style());
+    }
+
+    lines
+        .into_iter()
+        .map(|line| prefix_message_content_line_with_style(PREFIX, embed_line_style(embed), line))
+        .collect()
+}
+
+fn push_embed_text(
+    lines: &mut Vec<MessageContentLine>,
+    value: Option<&str>,
+    width: usize,
+    style: Style,
+) {
+    let Some(value) = value.filter(|value| !value.is_empty()) else {
+        return;
+    };
+    lines.extend(
+        wrap_text_lines(value, width)
+            .into_iter()
+            .map(|line| MessageContentLine::styled_text(line, style, Vec::new())),
+    );
+}
+
+fn embed_provider_style() -> Style {
+    Style::default().fg(DIM).add_modifier(Modifier::ITALIC)
+}
+
+fn embed_author_style() -> Style {
+    Style::default().add_modifier(Modifier::ITALIC)
+}
+
+fn embed_title_style() -> Style {
+    Style::default()
+        .fg(Color::Blue)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn embed_field_name_style() -> Style {
+    Style::default()
+        .add_modifier(Modifier::BOLD)
+        .add_modifier(Modifier::UNDERLINED)
+}
+
+fn embed_footer_style() -> Style {
+    Style::default().fg(DIM).add_modifier(Modifier::ITALIC)
+}
+
+fn embed_url_style() -> Style {
+    Style::default()
+        .fg(Color::Blue)
+        .add_modifier(Modifier::UNDERLINED)
+}
+
+fn embed_line_style(embed: &EmbedInfo) -> Style {
+    Style::default().fg(embed_line_color(embed))
+}
+
+fn embed_line_color(embed: &EmbedInfo) -> Color {
+    embed.color.map(embed_color).unwrap_or(Color::Red)
+}
+
+fn embed_color(color: u32) -> Color {
+    Color::Rgb(
+        ((color >> 16) & 0xff) as u8,
+        ((color >> 8) & 0xff) as u8,
+        (color & 0xff) as u8,
+    )
 }
 
 fn format_reaction_lines(reactions: &[ReactionInfo], width: usize) -> Vec<MessageContentLine> {
@@ -906,7 +1129,32 @@ fn prefix_message_content_line(prefix: &str, mut line: MessageContentLine) -> Me
         highlight.start = highlight.start.saturating_add(shift);
         highlight.end = highlight.end.saturating_add(shift);
     }
+    for styled_prefix in &mut line.styled_prefixes {
+        styled_prefix.start = styled_prefix.start.saturating_add(shift);
+    }
     line.text.insert_str(0, prefix);
+    line
+}
+
+fn prefix_message_content_line_without_underline(
+    prefix: &str,
+    line: MessageContentLine,
+) -> MessageContentLine {
+    let style = line.style.remove_modifier(Modifier::UNDERLINED);
+    prefix_message_content_line_with_style(prefix, style, line)
+}
+
+fn prefix_message_content_line_with_style(
+    prefix: &str,
+    style: Style,
+    mut line: MessageContentLine,
+) -> MessageContentLine {
+    line = prefix_message_content_line(prefix, line);
+    line.styled_prefixes.push(StyledPrefix {
+        start: 0,
+        len: prefix.len(),
+        style,
+    });
     line
 }
 
@@ -1312,7 +1560,7 @@ fn format_forwarded_snapshot(
         lines.extend(
             wrap_rendered_text_lines(content, content_width, Style::default())
                 .into_iter()
-                .map(|line| prefix_message_content_line("│ ", line)),
+                .map(|line| prefix_message_content_line_without_underline("│ ", line)),
         );
     }
     if let Some(attachments) = attachment_summary {
@@ -1321,6 +1569,15 @@ fn format_forwarded_snapshot(
             width,
         )));
     }
+    lines.extend(
+        format_embed_lines(
+            &snapshot.embeds,
+            snapshot.content.as_deref(),
+            width.saturating_sub(2).max(1),
+        )
+        .into_iter()
+        .map(|line| prefix_message_content_line_without_underline("│ ", line)),
+    );
     if lines.len() == 1 {
         lines.push(MessageContentLine::plain("│ <empty message>".to_owned()));
     }
@@ -1642,7 +1899,9 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
 }
 
 fn footer_hint(state: &DashboardState) -> &'static str {
-    if state.is_reaction_users_popup_open() {
+    if state.is_debug_log_popup_open() {
+        "`/esc close debug logs"
+    } else if state.is_reaction_users_popup_open() {
         "esc close reacted users"
     } else if state.is_poll_vote_picker_open() {
         "j/k choose answer | space toggle | enter vote | esc close"
@@ -1663,9 +1922,9 @@ fn footer_hint(state: &DashboardState) -> &'static str {
     } else if state.focus() == FocusPane::Members {
         "tab/1-4 focus | j/k move | enter/space profile | a actions | i write | q quit"
     } else if state.focus() == FocusPane::Channels {
-        "tab/1-4 focus | j/k move | enter/space open | ←/→ category | a actions | i write | q quit"
+        "tab/1-4 focus | j/k move | enter/space open | ←/→ category | a actions | ` logs | i write | q quit"
     } else {
-        "tab/1-4 focus | j/k move | J/K scroll | enter/space action/tree | ←/→ close/open | i write | esc cancel | q quit"
+        "tab/1-4 focus | j/k move | J/K scroll | enter/space action/tree | ←/→ close/open | ` logs | i write | esc cancel | q quit"
     }
 }
 
@@ -2104,6 +2363,33 @@ fn render_reaction_users_popup(frame: &mut Frame, area: Rect, state: &DashboardS
     );
 }
 
+fn render_debug_log_popup(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    if !state.is_debug_log_popup_open() {
+        return;
+    }
+
+    const POPUP_TARGET_WIDTH: u16 = 78;
+    let popup_width = POPUP_TARGET_WIDTH.min(area.width.saturating_sub(2)).max(1);
+    let visible_log_lines = usize::from(area.height).saturating_sub(6).max(1);
+    let lines = debug_log_popup_lines(
+        state.debug_log_lines(),
+        visible_log_lines,
+        usize::from(popup_width.saturating_sub(2)),
+    );
+    let popup = centered_rect(
+        area,
+        POPUP_TARGET_WIDTH,
+        (lines.len() as u16).saturating_add(2),
+    );
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel_block("Debug logs", true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
 fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width.saturating_sub(2)).max(1);
     let height = height.min(area.height.saturating_sub(2)).max(1);
@@ -2119,6 +2405,40 @@ fn reaction_users_visible_line_count(area: Rect) -> usize {
     usize::from(area.height)
         .saturating_sub(5)
         .min(MAX_REACTION_USERS_VISIBLE_LINES)
+}
+
+fn debug_log_popup_lines(
+    entries: Vec<String>,
+    visible_log_lines: usize,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    let visible_log_lines = visible_log_lines.max(1);
+    let mut lines = Vec::new();
+    if entries.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No errors recorded in this process.",
+            Style::default().fg(DIM),
+        )));
+    } else {
+        let wrapped = entries
+            .into_iter()
+            .flat_map(|entry| wrap_text_lines(&entry, width))
+            .collect::<Vec<_>>();
+        let start = wrapped.len().saturating_sub(visible_log_lines);
+        for entry in wrapped.into_iter().skip(start) {
+            lines.push(Line::from(Span::styled(
+                entry,
+                Style::default().fg(Color::Red),
+            )));
+        }
+    }
+    lines.push(Line::from(Span::raw(String::new())));
+    lines.push(Line::from(Span::styled(
+        "Showing current-process ERROR logs only · ` / Esc close",
+        Style::default().fg(DIM),
+    )));
+    lines
 }
 
 fn message_action_menu_lines(actions: &[MessageActionItem], selected: usize) -> Vec<Line<'static>> {
@@ -2557,11 +2877,17 @@ fn inline_image_preview_row(
         .map(|message| state.message_base_line_count_for_width(message, content_width))
         .sum::<usize>()
         .saturating_add(previous_preview_rows)
+        .saturating_add(message_index.saturating_mul(MESSAGE_ROW_GAP))
         .saturating_sub(1);
     row as isize - line_offset as isize
 }
 
-fn inline_image_preview_area(list: Rect, row: isize, preview_height: u16) -> Option<Rect> {
+fn inline_image_preview_area(
+    list: Rect,
+    row: isize,
+    preview_height: u16,
+    accent_color: Option<u32>,
+) -> Option<Rect> {
     if preview_height == 0 {
         return None;
     }
@@ -2577,10 +2903,21 @@ fn inline_image_preview_area(list: Rect, row: isize, preview_height: u16) -> Opt
         return None;
     }
 
+    let gutter_width = accent_color
+        .map(|_| EMBED_PREVIEW_GUTTER_PREFIX.width() as u16)
+        .unwrap_or(0);
+    let x = list
+        .x
+        .saturating_add(content_offset)
+        .saturating_add(gutter_width);
+
     Some(Rect {
-        x: list.x.saturating_add(content_offset),
+        x,
         y: u16::try_from(visible_top).ok()?,
-        width: list.width.saturating_sub(content_offset),
+        width: list
+            .width
+            .saturating_sub(content_offset)
+            .saturating_sub(gutter_width),
         height: u16::try_from(visible_bottom - visible_top).ok()?,
     })
 }
@@ -2620,7 +2957,7 @@ mod tests {
     use super::{
         ACCENT, DIM, DISCORD_EPOCH_MILLIS, MemberEntry, MessageContentLine, channel_name_style,
         composer_content_line_count, composer_lines, composer_prompt_line_count, composer_text,
-        emoji_reaction_picker_lines, footer_hint, format_message_content,
+        debug_log_popup_lines, emoji_reaction_picker_lines, footer_hint, format_message_content,
         format_message_content_lines, format_message_sent_time, format_unix_millis_with_offset,
         highlight_style, inline_image_preview_area, inline_image_preview_row, member_display_label,
         mention_highlight_style, message_action_menu_lines, message_author_style,
@@ -2631,7 +2968,7 @@ mod tests {
     };
     use crate::{
         discord::{
-            AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientState, ChannelState,
+            AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientState, ChannelState, EmbedInfo,
             FriendStatus, GuildMemberState, MemberInfo, MentionInfo, MessageKind,
             MessageSnapshotInfo, MessageState, MutualGuildInfo, PollAnswerInfo, PollInfo,
             PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
@@ -2822,6 +3159,116 @@ mod tests {
     }
 
     #[test]
+    fn message_content_lines_render_discord_embed_preview() {
+        let mut message = message_with_content(Some(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned(),
+        ));
+        message.embeds = vec![youtube_embed()];
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec![
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "  ▎ YouTube",
+                "  ▎ Example Video",
+            ]
+        );
+        assert_eq!(lines[1].style.fg, Some(DIM));
+        assert!(lines[2].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(lines[2].style.fg, Some(Color::Blue));
+        let marker_spans = lines[1].spans();
+        assert_eq!(marker_spans[0].content.as_ref(), "  ▎ ");
+        assert_eq!(marker_spans[0].style.fg, Some(Color::Rgb(255, 0, 0)));
+        assert!(
+            !marker_spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::UNDERLINED)
+        );
+    }
+
+    #[test]
+    fn message_embed_hides_media_and_player_urls() {
+        let mut message = message_with_content(Some("watch this".to_owned()));
+        let mut embed = youtube_embed();
+        embed.video_url = Some("https://www.youtube.com/embed/dQw4w9WgXcQ".to_owned());
+        message.embeds = vec![embed];
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec![
+                "watch this",
+                "  ▎ YouTube",
+                "  ▎ Example Video",
+                "  ▎ https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            ]
+        );
+    }
+
+    #[test]
+    fn message_embed_url_underline_skips_marker() {
+        let mut message = message_with_content(Some("watch this".to_owned()));
+        let mut embed = youtube_embed();
+        embed.description = None;
+        embed.image_url = None;
+        message.embeds = vec![embed];
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+        let url_spans = lines[3].spans();
+
+        assert_eq!(
+            line_texts(&lines),
+            vec![
+                "watch this",
+                "  ▎ YouTube",
+                "  ▎ Example Video",
+                "  ▎ https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            ]
+        );
+        assert_eq!(url_spans[0].content.as_ref(), "  ▎ ");
+        assert_eq!(url_spans[0].style.fg, Some(Color::Rgb(255, 0, 0)));
+        assert!(
+            !url_spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::UNDERLINED)
+        );
+        assert_eq!(
+            url_spans[1].content.as_ref(),
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        );
+        assert!(
+            url_spans[1]
+                .style
+                .add_modifier
+                .contains(Modifier::UNDERLINED)
+        );
+    }
+
+    #[test]
+    fn message_embed_does_not_repeat_body_url() {
+        let mut message = message_with_content(Some(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned(),
+        ));
+        let mut embed = youtube_embed();
+        embed.title = None;
+        embed.description = None;
+        embed.image_url = None;
+        message.embeds = vec![embed];
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec!["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "  ▎ YouTube"]
+        );
+    }
+
+    #[test]
     fn message_content_preserves_explicit_newlines() {
         let mut message =
             message_with_attachment(Some("hello\nworld".to_owned()), image_attachment());
@@ -2907,12 +3354,13 @@ mod tests {
             format_message_content_lines(&message, &state, 200),
             40,
             0,
+            None,
             0,
         );
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
-            vec!["oo neo 00:00", "   hello @server alias"]
+            vec!["oo neo 00:00", "   hello @server alias", ""]
         );
         assert_eq!(lines[1].spans[2].content.as_ref(), "@server alias");
         assert_eq!(lines[1].spans[2].style.bg, mention_highlight_style().bg);
@@ -2936,12 +3384,13 @@ mod tests {
             format_message_content_lines(&message, &state, 200),
             40,
             0,
+            None,
             0,
         );
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
-            vec!["oo neo 00:00", "   hello @alice"]
+            vec!["oo neo 00:00", "   hello @alice", ""]
         );
         assert!(
             lines[1]
@@ -2968,12 +3417,13 @@ mod tests {
             format_message_content_lines(&message, &state, 200),
             40,
             0,
+            None,
             0,
         );
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
-            vec!["oo neo 00:00", "   ping @everyone"]
+            vec!["oo neo 00:00", "   ping @everyone", ""]
         );
         assert_eq!(lines[1].spans[2].content.as_ref(), "@everyone");
         assert_eq!(lines[1].spans[2].style.bg, mention_highlight_style().bg);
@@ -2997,12 +3447,13 @@ mod tests {
             format_message_content_lines(&message, &state, 200),
             40,
             0,
+            None,
             0,
         );
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
-            vec!["oo neo 00:00", "   @everyone hello @neo"]
+            vec!["oo neo 00:00", "   @everyone hello @neo", ""]
         );
         assert_eq!(lines[1].spans[1].content.as_ref(), "@everyone");
         assert_eq!(lines[1].spans[3].content.as_ref(), "@neo");
@@ -3027,12 +3478,13 @@ mod tests {
             format_message_content_lines(&message, &state, 200),
             40,
             0,
+            None,
             0,
         );
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
-            vec!["oo neo 00:00", "   ping @here"]
+            vec!["oo neo 00:00", "   ping @here", ""]
         );
         assert_eq!(lines[1].spans[2].content.as_ref(), "@here");
         assert_eq!(lines[1].spans[2].style.bg, mention_highlight_style().bg);
@@ -3056,12 +3508,13 @@ mod tests {
             format_message_content_lines(&message, &state, 200),
             40,
             0,
+            None,
             0,
         );
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
-            vec!["oo neo 00:00", "   hello @everyone"]
+            vec!["oo neo 00:00", "   hello @everyone", ""]
         );
         assert_eq!(lines[1].spans.len(), 3);
         assert_eq!(lines[1].spans[2].content.as_ref(), "@everyone");
@@ -3895,6 +4348,65 @@ mod tests {
     }
 
     #[test]
+    fn footer_hint_switches_for_debug_log_popup() {
+        let mut state = DashboardState::new();
+        state.toggle_debug_log_popup();
+
+        assert_eq!(footer_hint(&state), "`/esc close debug logs");
+    }
+
+    #[test]
+    fn debug_log_popup_shows_recent_errors() {
+        let lines = debug_log_popup_lines(
+            vec![
+                "1 [ERROR] first: old".to_owned(),
+                "2 [ERROR] second: recent".to_owned(),
+            ],
+            1,
+            80,
+        );
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec![
+                "2 [ERROR] second: recent",
+                "",
+                "Showing current-process ERROR logs only · ` / Esc close"
+            ]
+        );
+    }
+
+    #[test]
+    fn debug_log_popup_has_empty_state() {
+        let lines = debug_log_popup_lines(Vec::new(), 5, 80);
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec![
+                "No errors recorded in this process.",
+                "",
+                "Showing current-process ERROR logs only · ` / Esc close"
+            ]
+        );
+    }
+
+    #[test]
+    fn debug_log_popup_wraps_long_detail_lines() {
+        let lines = debug_log_popup_lines(
+            vec!["42 [ERROR] history: load message history failed: Discord HTTP request failed; detail=Discord returned HTTP 403; api_error=Missing Access; response_body_bytes=99".to_owned()],
+            4,
+            44,
+        );
+        let texts = line_texts_from_ratatui(&lines);
+        let joined = texts.join("");
+
+        assert!(
+            joined.contains("detail=Discord returned HTTP 403"),
+            "expected wrapped debug popup line to preserve HTTP detail: {texts:?}"
+        );
+    }
+
+    #[test]
     fn forwarded_snapshot_replaces_empty_message_placeholder() {
         let message =
             message_with_forwarded_snapshot(forwarded_snapshot(Some("forwarded text"), Vec::new()));
@@ -4044,6 +4556,44 @@ mod tests {
     }
 
     #[test]
+    fn forwarded_snapshot_renders_discord_embed_preview() {
+        let mut snapshot = forwarded_snapshot(
+            Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+            Vec::new(),
+        );
+        snapshot.embeds = vec![youtube_embed()];
+        let message = message_with_forwarded_snapshot(snapshot);
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec![
+                "↱ Forwarded",
+                "│ https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "│   ▎ YouTube",
+                "│   ▎ Example Video",
+            ]
+        );
+        let url_spans = lines[2].spans();
+        assert_eq!(url_spans[0].content.as_ref(), "│ ");
+        assert!(
+            !url_spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::UNDERLINED)
+        );
+        assert_eq!(url_spans[1].content.as_ref(), "  ▎ ");
+        assert_eq!(url_spans[1].style.fg, Some(Color::Rgb(255, 0, 0)));
+        assert!(
+            !url_spans[1]
+                .style
+                .add_modifier
+                .contains(Modifier::UNDERLINED)
+        );
+    }
+
+    #[test]
     fn image_preview_rows_are_part_of_the_message_item() {
         let lines = message_item_lines(
             "neo".to_owned(),
@@ -4051,10 +4601,27 @@ mod tests {
             vec![MessageContentLine::plain("look".to_owned())],
             14,
             3,
+            None,
             0,
         );
 
-        assert_eq!(lines.len(), 5);
+        assert_eq!(lines.len(), 6);
+    }
+
+    #[test]
+    fn embed_image_preview_rows_continue_embed_gutter() {
+        let lines = message_item_lines(
+            "neo".to_owned(),
+            "00:00".to_owned(),
+            vec![MessageContentLine::plain("look".to_owned())],
+            14,
+            2,
+            Some(0xff0000),
+            0,
+        );
+
+        assert_eq!(line_texts_from_ratatui(&lines)[2], "     ▎ ");
+        assert_eq!(lines[2].spans[1].style.fg, Some(Color::Rgb(255, 0, 0)));
     }
 
     #[test]
@@ -4065,12 +4632,13 @@ mod tests {
             vec![MessageContentLine::plain("look".to_owned())],
             14,
             0,
+            None,
             0,
         );
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
-            vec!["oo neo 00:00", "   look"]
+            vec!["oo neo 00:00", "   look", ""]
         );
     }
 
@@ -4086,12 +4654,13 @@ mod tests {
             ],
             14,
             0,
+            None,
             2,
         );
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
-            vec!["   second", "   third"]
+            vec!["   second", "   third", ""]
         );
     }
 
@@ -4103,6 +4672,7 @@ mod tests {
             vec![MessageContentLine::plain("plain text".to_owned())],
             14,
             0,
+            None,
             0,
         );
         let wide = message_item_lines(
@@ -4111,6 +4681,7 @@ mod tests {
             vec![MessageContentLine::plain("plain text".to_owned())],
             14,
             0,
+            None,
             0,
         );
 
@@ -4167,7 +4738,7 @@ mod tests {
         let visible_rows =
             message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, &[])
                 .into_iter()
-                .take(4)
+                .take(5)
                 .collect::<Vec<_>>();
         let visible_text = line_texts_from_ratatui(&visible_rows);
         let sent_time = format_message_sent_time(Id::new(1));
@@ -4175,9 +4746,10 @@ mod tests {
         assert!(visible_text[0].starts_with("oo "));
         assert!(visible_text[0].ends_with(&sent_time));
         assert!(visible_text[1].ends_with("selected"));
-        assert!(visible_text[2].starts_with("oo "));
-        assert!(visible_text[2].ends_with(&sent_time));
-        assert!(visible_text[3].ends_with("abcdefgh"));
+        assert_eq!(visible_text[2], "");
+        assert!(visible_text[3].starts_with("oo "));
+        assert!(visible_text[3].ends_with(&sent_time));
+        assert!(visible_text[4].ends_with("abcdefgh"));
     }
 
     #[test]
@@ -4196,6 +4768,7 @@ mod tests {
                 format!("oo . {sent_time}"),
                 "   abcdefgh".to_owned(),
                 "   ijkl".to_owned(),
+                "".to_owned(),
             ]
         );
         assert_eq!(lines[0].spans[0].style.bg, None);
@@ -4217,8 +4790,18 @@ mod tests {
         let area = Rect::new(10, 5, 80, 12);
 
         assert_eq!(
-            inline_image_preview_area(area, 2, 4),
+            inline_image_preview_area(area, 2, 4, None),
             Some(Rect::new(13, 8, 77, 4))
+        );
+    }
+
+    #[test]
+    fn embed_image_preview_area_leaves_room_for_gutter() {
+        let area = Rect::new(10, 5, 80, 12);
+
+        assert_eq!(
+            inline_image_preview_area(area, 2, 4, Some(0xff0000)),
+            Some(Rect::new(17, 8, 73, 4))
         );
     }
 
@@ -4234,10 +4817,10 @@ mod tests {
         let state = DashboardState::new();
         let row = inline_image_preview_row(&messages, &state, 2, 200, 0, 4);
 
-        assert_eq!(row, 12);
+        assert_eq!(row, 14);
         assert_eq!(
-            inline_image_preview_area(area, row, 4),
-            Some(Rect::new(13, 18, 77, 4))
+            inline_image_preview_area(area, row, 4, None),
+            Some(Rect::new(13, 20, 77, 3))
         );
     }
 
@@ -4258,7 +4841,7 @@ mod tests {
         let area = Rect::new(10, 5, 80, 6);
 
         assert_eq!(
-            inline_image_preview_area(area, 3, 4),
+            inline_image_preview_area(area, 3, 4, None),
             Some(Rect::new(13, 9, 77, 2))
         );
     }
@@ -4268,7 +4851,7 @@ mod tests {
         let area = Rect::new(10, 5, 80, 6);
 
         assert_eq!(
-            inline_image_preview_area(area, -2, 4),
+            inline_image_preview_area(area, -2, 4, None),
             Some(Rect::new(13, 5, 77, 3))
         );
     }
@@ -4277,14 +4860,14 @@ mod tests {
     fn inline_image_preview_area_returns_none_when_preview_starts_below_list() {
         let area = Rect::new(10, 5, 80, 6);
 
-        assert_eq!(inline_image_preview_area(area, 5, 4), None);
+        assert_eq!(inline_image_preview_area(area, 5, 4, None), None);
     }
 
     #[test]
     fn inline_image_preview_area_returns_none_when_preview_ends_above_list() {
         let area = Rect::new(10, 5, 80, 6);
 
-        assert_eq!(inline_image_preview_area(area, -5, 4), None);
+        assert_eq!(inline_image_preview_area(area, -5, 4, None), None);
     }
 
     fn message_with_attachment(
@@ -4307,7 +4890,34 @@ mod tests {
             content,
             mentions: Vec::new(),
             attachments: vec![attachment],
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
+        }
+    }
+
+    fn message_with_content(content: Option<String>) -> MessageState {
+        let mut message = message_with_attachment(content, image_attachment());
+        message.attachments.clear();
+        message
+    }
+
+    fn youtube_embed() -> EmbedInfo {
+        EmbedInfo {
+            color: Some(0xff0000),
+            provider_name: Some("YouTube".to_owned()),
+            author_name: None,
+            title: Some("Example Video".to_owned()),
+            description: Some("A video description".to_owned()),
+            fields: Vec::new(),
+            footer_text: None,
+            url: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
+            thumbnail_url: Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".to_owned()),
+            thumbnail_width: Some(480),
+            thumbnail_height: Some(360),
+            image_url: Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".to_owned()),
+            image_width: Some(480),
+            image_height: Some(360),
+            video_url: None,
         }
     }
 
@@ -4356,6 +4966,7 @@ mod tests {
             content: Some("hello".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state
@@ -4376,6 +4987,7 @@ mod tests {
             content: Some(content.to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
     }
@@ -4397,6 +5009,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: vec![snapshot],
         }
     }
@@ -4432,6 +5045,7 @@ mod tests {
             content: content.map(str::to_owned),
             mentions: Vec::new(),
             attachments,
+            embeds: Vec::new(),
             source_channel_id: None,
             timestamp: None,
         }

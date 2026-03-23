@@ -7,9 +7,9 @@ use twilight_model::id::{
 
 use super::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
-    FriendStatus, GuildFolder, MemberInfo, MentionInfo, MessageInfo, MessageKind,
-    MessageReferenceInfo, MessageSnapshotInfo, PollInfo, PresenceStatus, ReactionInfo, ReplyInfo,
-    RoleInfo, UserProfileInfo,
+    EmbedInfo, FriendStatus, GuildFolder, InlinePreviewInfo, MemberInfo, MentionInfo, MessageInfo,
+    MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PollInfo, PresenceStatus, ReactionInfo,
+    ReplyInfo, RoleInfo, UserProfileInfo,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -94,6 +94,7 @@ pub struct MessageState {
     pub content: Option<String>,
     pub mentions: Vec<MentionInfo>,
     pub attachments: Vec<AttachmentInfo>,
+    pub embeds: Vec<EmbedInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
 }
 
@@ -114,6 +115,21 @@ impl MessageState {
                 .iter()
                 .flat_map(|snapshot| snapshot.attachments.iter()),
         )
+    }
+
+    pub fn first_inline_preview(&self) -> Option<InlinePreviewInfo<'_>> {
+        self.attachments_in_display_order()
+            .find_map(AttachmentInfo::inline_preview_info)
+            .or_else(|| {
+                self.embeds
+                    .iter()
+                    .chain(
+                        self.forwarded_snapshots
+                            .iter()
+                            .flat_map(|snapshot| snapshot.embeds.iter()),
+                    )
+                    .find_map(EmbedInfo::inline_preview_info)
+            })
     }
 
     pub fn capabilities(&self) -> MessageCapabilities {
@@ -139,6 +155,9 @@ impl MessageState {
             } else {
                 capabilities.has_file = true;
             }
+        }
+        if self.first_inline_preview().is_some() {
+            capabilities.has_image = true;
         }
 
         capabilities
@@ -202,6 +221,7 @@ struct MessageUpdateFields {
     content: Option<String>,
     mentions: Option<Vec<MentionInfo>>,
     attachments: AttachmentUpdate,
+    embeds: Option<Vec<EmbedInfo>>,
     pinned: Option<bool>,
     reactions: Option<Vec<ReactionInfo>>,
 }
@@ -313,6 +333,7 @@ impl DiscordState {
                 content,
                 mentions,
                 attachments,
+                embeds,
                 forwarded_snapshots,
                 ..
             } => self.upsert_message(MessageState {
@@ -335,6 +356,7 @@ impl DiscordState {
                 content: content.clone(),
                 mentions: mentions.clone(),
                 attachments: attachments.clone(),
+                embeds: embeds.clone(),
                 forwarded_snapshots: forwarded_snapshots.clone(),
             }),
             AppEvent::MessageHistoryLoaded {
@@ -350,6 +372,7 @@ impl DiscordState {
                 content,
                 mentions,
                 attachments,
+                embeds,
                 ..
             } => self.update_message(
                 *channel_id,
@@ -359,6 +382,7 @@ impl DiscordState {
                     content: content.clone(),
                     mentions: mentions.clone(),
                     attachments: attachments.clone(),
+                    embeds: embeds.clone(),
                     pinned: None,
                     reactions: None,
                 },
@@ -385,6 +409,7 @@ impl DiscordState {
                     content: None,
                     mentions: None,
                     attachments: AttachmentUpdate::Unchanged,
+                    embeds: None,
                     pinned: Some(*pinned),
                     reactions: None,
                 },
@@ -875,6 +900,7 @@ impl DiscordState {
                 content: message.content.clone(),
                 mentions: message.mentions.clone(),
                 attachments: message.attachments.clone(),
+                embeds: message.embeds.clone(),
                 forwarded_snapshots: message.forwarded_snapshots.clone(),
             })
             .collect::<Vec<_>>();
@@ -935,6 +961,9 @@ impl DiscordState {
             if let Some(mentions) = update.mentions {
                 existing.mentions = mentions;
             }
+            if let Some(embeds) = update.embeds {
+                existing.embeds = embeds;
+            }
             match update.attachments {
                 AttachmentUpdate::Replace(attachments) => existing.attachments = attachments,
                 AttachmentUpdate::Unchanged => {}
@@ -980,6 +1009,9 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
     existing.mentions = incoming.mentions.clone();
     if !incoming.attachments.is_empty() || existing.attachments.is_empty() {
         existing.attachments = incoming.attachments.clone();
+    }
+    if !incoming.embeds.is_empty() || existing.embeds.is_empty() {
+        existing.embeds = incoming.embeds.clone();
     }
     if !incoming.forwarded_snapshots.is_empty() || existing.forwarded_snapshots.is_empty() {
         existing.forwarded_snapshots = incoming.forwarded_snapshots.clone();
@@ -1096,6 +1128,7 @@ mod tests {
             content: Some("hello".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -1185,6 +1218,7 @@ mod tests {
             content: Some("hello".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -1213,6 +1247,7 @@ mod tests {
             content: Some("hello".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::GuildMemberUpsert {
@@ -1484,6 +1519,7 @@ mod tests {
                 content: Some(format!("message {id}")),
                 mentions: Vec::new(),
                 attachments: Vec::new(),
+                embeds: Vec::new(),
                 forwarded_snapshots: Vec::new(),
             });
         }
@@ -1512,6 +1548,7 @@ mod tests {
             content: Some("reply".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -1540,6 +1577,7 @@ mod tests {
             content: Some("cached".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
@@ -1556,6 +1594,7 @@ mod tests {
             content: None,
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -1586,6 +1625,7 @@ mod tests {
             content: Some("hello <@10>".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
@@ -1602,6 +1642,7 @@ mod tests {
             content: Some("hello <@10>".to_owned()),
             mentions: vec![mention_info(10, "alice")],
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -1633,6 +1674,7 @@ mod tests {
             content: Some("asdf".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -1678,6 +1720,7 @@ mod tests {
             content: Some("asdf".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
@@ -1694,6 +1737,7 @@ mod tests {
             content: None,
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -1727,6 +1771,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -1758,6 +1803,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
@@ -1774,6 +1820,7 @@ mod tests {
             content: None,
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -1806,6 +1853,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         let mut updated_poll = poll_info();
@@ -1820,6 +1868,7 @@ mod tests {
             content: None,
             mentions: None,
             attachments: AttachmentUpdate::Unchanged,
+            embeds: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -1850,6 +1899,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -1907,6 +1957,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -1948,6 +1999,7 @@ mod tests {
             content: Some("hello <@10>".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageUpdate {
@@ -1958,6 +2010,7 @@ mod tests {
             content: Some("hello <@10>".to_owned()),
             mentions: Some(vec![mention_info(10, "alice")]),
             attachments: AttachmentUpdate::Unchanged,
+            embeds: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -1985,6 +2038,7 @@ mod tests {
             content: Some("hello <@10>".to_owned()),
             mentions: vec![mention_info(10, "alice")],
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageUpdate {
@@ -1995,6 +2049,7 @@ mod tests {
             content: None,
             mentions: None,
             attachments: AttachmentUpdate::Unchanged,
+            embeds: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -2022,6 +2077,7 @@ mod tests {
             content: Some("hello <@10>".to_owned()),
             mentions: vec![mention_info(10, "alice")],
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageUpdate {
@@ -2032,6 +2088,7 @@ mod tests {
             content: Some("hello".to_owned()),
             mentions: Some(Vec::new()),
             attachments: AttachmentUpdate::Unchanged,
+            embeds: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -2103,6 +2160,7 @@ mod tests {
             content: Some("hello".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
@@ -2119,6 +2177,7 @@ mod tests {
             content: None,
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageUpdate {
@@ -2129,6 +2188,7 @@ mod tests {
             content: None,
             mentions: None,
             attachments: AttachmentUpdate::Unchanged,
+            embeds: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -2155,6 +2215,7 @@ mod tests {
             content: Some("live".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
@@ -2218,6 +2279,7 @@ mod tests {
             content: Some("known".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
@@ -2255,6 +2317,7 @@ mod tests {
             content: Some("hello <@10>".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
@@ -2333,6 +2396,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
@@ -2372,6 +2436,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: vec![snapshot_info("forwarded text")],
         });
 
@@ -2403,6 +2468,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: vec![snapshot_info("live snapshot")],
         });
         state.apply_event(&AppEvent::MessageHistoryLoaded {
@@ -2437,6 +2503,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageUpdate {
@@ -2447,6 +2514,7 @@ mod tests {
             content: None,
             mentions: None,
             attachments: AttachmentUpdate::Unchanged,
+            embeds: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -2473,6 +2541,7 @@ mod tests {
             content: Some(String::new()),
             mentions: Vec::new(),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageUpdate {
@@ -2483,6 +2552,7 @@ mod tests {
             content: None,
             mentions: None,
             attachments: AttachmentUpdate::Replace(Vec::new()),
+            embeds: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -2577,6 +2647,7 @@ mod tests {
             content: Some("newest".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -2623,6 +2694,7 @@ mod tests {
             content: Some("new".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state.apply_event(&AppEvent::MessageCreate {
@@ -2639,6 +2711,7 @@ mod tests {
             content: Some("old".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -3192,6 +3265,7 @@ mod tests {
             content: Some("hello".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
 
@@ -3234,6 +3308,7 @@ mod tests {
             content: Some(content.to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         }
     }
@@ -3255,6 +3330,7 @@ mod tests {
             content: Some(content.to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         }
     }
@@ -3312,6 +3388,7 @@ mod tests {
             content: Some(content.to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             source_channel_id: None,
             timestamp: None,
         }

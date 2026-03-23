@@ -22,9 +22,9 @@ use twilight_model::{
 };
 
 use super::{
-    AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, FriendStatus, GuildFolder,
-    MemberInfo, MentionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
+    AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, EmbedFieldInfo, EmbedInfo,
+    FriendStatus, GuildFolder, MemberInfo, MentionInfo, MessageKind, MessageReferenceInfo,
+    MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
     events::default_avatar_url,
     events::{AppEvent, AttachmentUpdate, map_event},
 };
@@ -788,6 +788,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         .map(str::to_owned);
     let mentions = parse_mentions(data.get("mentions"));
     let attachments = parse_attachments(data.get("attachments"));
+    let embeds = parse_embeds(data.get("embeds"));
     let reply = data.get("referenced_message").and_then(parse_reply_info);
     let poll = data
         .get("poll")
@@ -815,6 +816,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         content,
         mentions,
         attachments,
+        embeds,
         forwarded_snapshots,
     })
 }
@@ -844,6 +846,7 @@ fn parse_message_update(data: &Value) -> Option<AppEvent> {
         .get("poll")
         .and_then(parse_poll_info)
         .or_else(|| parse_poll_result_embed(data.get("embeds")));
+    let embeds = data.get("embeds").map(|value| parse_embeds(Some(value)));
     let mentions = data
         .get("mentions")
         .map(|value| parse_mentions(Some(value)));
@@ -855,6 +858,7 @@ fn parse_message_update(data: &Value) -> Option<AppEvent> {
         content,
         mentions,
         attachments,
+        embeds,
     })
 }
 
@@ -981,6 +985,109 @@ fn parse_attachments(value: Option<&Value>) -> Vec<AttachmentInfo> {
         .and_then(Value::as_array)
         .map(|items| items.iter().filter_map(parse_attachment).collect())
         .unwrap_or_default()
+}
+
+fn parse_embeds(value: Option<&Value>) -> Vec<EmbedInfo> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(parse_embed).collect())
+        .unwrap_or_default()
+}
+
+fn parse_embed(value: &Value) -> Option<EmbedInfo> {
+    if value.get("type").and_then(Value::as_str) == Some("poll_result") {
+        return None;
+    }
+
+    let fields = value
+        .get("fields")
+        .and_then(Value::as_array)
+        .map(|fields| fields.iter().filter_map(parse_embed_field).collect())
+        .unwrap_or_default();
+    let embed = EmbedInfo {
+        color: value
+            .get("color")
+            .and_then(Value::as_u64)
+            .and_then(|color| u32::try_from(color).ok()),
+        provider_name: value
+            .get("provider")
+            .and_then(|provider| provider.get("name"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        author_name: value
+            .get("author")
+            .and_then(|author| author.get("name"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        title: value
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        description: value
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        fields,
+        footer_text: value
+            .get("footer")
+            .and_then(|footer| footer.get("text"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        url: value.get("url").and_then(Value::as_str).map(str::to_owned),
+        thumbnail_url: value
+            .get("thumbnail")
+            .and_then(|thumbnail| thumbnail.get("url"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        thumbnail_width: value
+            .get("thumbnail")
+            .and_then(|thumbnail| thumbnail.get("width"))
+            .and_then(Value::as_u64),
+        thumbnail_height: value
+            .get("thumbnail")
+            .and_then(|thumbnail| thumbnail.get("height"))
+            .and_then(Value::as_u64),
+        image_url: value
+            .get("image")
+            .and_then(|image| image.get("url"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        image_width: value
+            .get("image")
+            .and_then(|image| image.get("width"))
+            .and_then(Value::as_u64),
+        image_height: value
+            .get("image")
+            .and_then(|image| image.get("height"))
+            .and_then(Value::as_u64),
+        video_url: value
+            .get("video")
+            .and_then(|video| video.get("url"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    };
+
+    embed_has_renderable_content(&embed).then_some(embed)
+}
+
+fn parse_embed_field(value: &Value) -> Option<EmbedFieldInfo> {
+    Some(EmbedFieldInfo {
+        name: value.get("name")?.as_str()?.to_owned(),
+        value: value.get("value")?.as_str()?.to_owned(),
+    })
+}
+
+fn embed_has_renderable_content(embed: &EmbedInfo) -> bool {
+    embed.provider_name.is_some()
+        || embed.author_name.is_some()
+        || embed.title.is_some()
+        || embed.description.is_some()
+        || !embed.fields.is_empty()
+        || embed.footer_text.is_some()
+        || embed.url.is_some()
+        || embed.thumbnail_url.is_some()
+        || embed.image_url.is_some()
+        || embed.video_url.is_some()
 }
 
 fn parse_message_snapshots(
@@ -1218,6 +1325,7 @@ fn parse_message_snapshot(
         .and_then(Value::as_str)
         .map(str::to_owned);
     let attachments = parse_attachments(message.get("attachments"));
+    let embeds = parse_embeds(message.get("embeds"));
     let mentions = parse_mentions(message.get("mentions"));
     let timestamp = message
         .get("timestamp")
@@ -1226,6 +1334,7 @@ fn parse_message_snapshot(
 
     if content.as_deref().is_some_and(|value| !value.is_empty())
         || !attachments.is_empty()
+        || !embeds.is_empty()
         || source_channel_id.is_some()
         || timestamp.is_some()
     {
@@ -1233,6 +1342,7 @@ fn parse_message_snapshot(
             content,
             mentions,
             attachments,
+            embeds,
             source_channel_id,
             timestamp,
         })
@@ -2659,6 +2769,60 @@ mod tests {
         assert_eq!(attachments[0].content_type.as_deref(), Some("image/png"));
         assert_eq!(attachments[0].width, Some(640));
         assert_eq!(attachments[0].height, Some(480));
+    }
+
+    #[test]
+    fn message_create_parser_keeps_regular_embeds() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "content": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "embeds": [{
+                "type": "video",
+                "color": 16711680,
+                "provider": { "name": "YouTube" },
+                "title": "Example Video",
+                "description": "A video description",
+                "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "thumbnail": {
+                    "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+                    "width": 480,
+                    "height": 360
+                },
+                "image": {
+                    "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg",
+                    "width": 1280,
+                    "height": 720
+                },
+                "video": { "url": "https://www.youtube.com/embed/dQw4w9WgXcQ" }
+            }]
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { embeds, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(embeds.len(), 1);
+        assert_eq!(embeds[0].color, Some(16711680));
+        assert_eq!(embeds[0].provider_name.as_deref(), Some("YouTube"));
+        assert_eq!(embeds[0].title.as_deref(), Some("Example Video"));
+        assert_eq!(
+            embeds[0].thumbnail_url.as_deref(),
+            Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg")
+        );
+        assert_eq!(embeds[0].thumbnail_width, Some(480));
+        assert_eq!(embeds[0].thumbnail_height, Some(360));
+        assert_eq!(
+            embeds[0].image_url.as_deref(),
+            Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg")
+        );
+        assert_eq!(embeds[0].image_width, Some(1280));
+        assert_eq!(embeds[0].image_height, Some(720));
+        assert_eq!(
+            embeds[0].video_url.as_deref(),
+            Some("https://www.youtube.com/embed/dQw4w9WgXcQ")
+        );
     }
 
     #[test]

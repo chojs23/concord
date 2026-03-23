@@ -9,12 +9,21 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return None;
     }
 
+    if state.is_debug_log_popup_open() {
+        return handle_debug_log_popup_key(state, key);
+    }
+
     if state.is_reaction_users_popup_open() {
         return handle_reaction_users_popup_key(state, key);
     }
 
     if state.is_composing() {
         return handle_composer_key(state, key);
+    }
+
+    if key.code == KeyCode::Char('`') {
+        state.toggle_debug_log_popup();
+        return None;
     }
 
     if state.is_poll_vote_picker_open() {
@@ -217,6 +226,15 @@ fn handle_reaction_users_popup_key(
         KeyCode::Char('k') | KeyCode::Up => state.scroll_reaction_users_popup_up(),
         KeyCode::PageDown => state.page_reaction_users_popup_down(),
         KeyCode::PageUp => state.page_reaction_users_popup_up(),
+        _ => {}
+    }
+
+    None
+}
+
+fn handle_debug_log_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('`') => state.close_debug_log_popup(),
         _ => {}
     }
 
@@ -572,6 +590,59 @@ mod tests {
 
         assert_eq!(state.focus(), FocusPane::Messages);
         assert_eq!(state.composer_input(), "4");
+    }
+
+    #[test]
+    fn backtick_toggles_debug_log_popup() {
+        let mut state = DashboardState::new();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('`'), KeyModifiers::NONE),
+        );
+        assert!(state.is_debug_log_popup_open());
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('`'), KeyModifiers::NONE),
+        );
+        assert!(!state.is_debug_log_popup_open());
+    }
+
+    #[test]
+    fn esc_closes_debug_log_popup_modally() {
+        let mut state = state_with_messages(1);
+        focus_messages(&mut state);
+        state.toggle_debug_log_popup();
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert!(!state.is_debug_log_popup_open());
+        assert_eq!(state.focus(), FocusPane::Messages);
+    }
+
+    #[test]
+    fn backtick_types_while_composing() {
+        let mut state = state_with_channel_tree();
+        focus_channels(&mut state);
+        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+        );
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('`'), KeyModifiers::NONE),
+        );
+
+        assert!(state.is_composing());
+        assert!(!state.is_debug_log_popup_open());
+        assert_eq!(state.composer_input(), "`");
     }
 
     #[test]
@@ -1225,6 +1296,7 @@ mod tests {
                 content: Some(format!("msg {id}")),
                 mentions: Vec::new(),
                 attachments: Vec::new(),
+                embeds: Vec::new(),
                 forwarded_snapshots: Vec::new(),
             });
         }
@@ -1266,6 +1338,7 @@ mod tests {
             content: Some("msg 1".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state
@@ -1320,6 +1393,7 @@ mod tests {
             content: Some("msg 1".to_owned()),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state
@@ -1379,6 +1453,7 @@ mod tests {
                 height: Some(480),
                 description: None,
             }],
+            embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
         state
