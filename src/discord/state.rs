@@ -8,9 +8,25 @@ use twilight_model::id::{
 use super::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
     EmbedInfo, FriendStatus, GuildFolder, InlinePreviewInfo, MemberInfo, MentionInfo, MessageInfo,
-    MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PollInfo, PresenceStatus, ReactionInfo,
-    ReplyInfo, RoleInfo, UserProfileInfo,
+    MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PermissionOverwriteInfo,
+    PermissionOverwriteKind, PollInfo, PresenceStatus, ReactionInfo, ReplyInfo, RoleInfo,
+    UserProfileInfo,
 };
+
+/// Discord permission bits we currently care about. Mirrors a subset of
+/// `twilight_model::guild::Permissions` but kept inline so the state crate
+/// does not need to depend on twilight's bitflags.
+const PERMISSION_VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
+const PERMISSION_SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
+const PERMISSION_ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
+const PERMISSION_ADMINISTRATOR: u64 = 0x0000_0000_0000_0008;
+
+/// Sentinel returned by `effective_permissions_for_channel` when the data
+/// needed to compute the user's permissions is missing (no READY yet, no
+/// guild cached, no role cache, no membership entry, etc.). Callers that
+/// translate this into a boolean should default to "permissive" so the UI is
+/// not silently disabled while we are still hydrating state.
+const PERMISSIONS_UNKNOWN: u64 = u64::MAX;
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
 
@@ -19,6 +35,10 @@ pub struct GuildState {
     pub id: Id<GuildMarker>,
     pub name: String,
     pub member_count: Option<u64>,
+    /// Snowflake of the guild owner. Owners short-circuit permission checks
+    /// (they always see every channel). `None` until the GUILD_CREATE /
+    /// GUILD_UPDATE payload supplies it.
+    pub owner_id: Option<Id<UserMarker>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,6 +55,10 @@ pub struct ChannelState {
     pub thread_archived: Option<bool>,
     pub thread_locked: Option<bool>,
     pub recipients: Vec<ChannelRecipientState>,
+    /// Channel-level permission overrides used by `can_view_channel`. Threads
+    /// inherit from their parent channel, so this stays empty for threads
+    /// even after a payload arrives.
+    pub permission_overwrites: Vec<PermissionOverwriteInfo>,
 }
 
 impl ChannelState {
@@ -47,6 +71,10 @@ impl ChannelState {
             self.kind.as_str(),
             "thread" | "GuildPublicThread" | "GuildPrivateThread" | "GuildNewsThread"
         )
+    }
+
+    pub fn is_private_thread(&self) -> bool {
+        matches!(self.kind.as_str(), "GuildPrivateThread" | "private-thread")
     }
 }
 
@@ -193,6 +221,9 @@ pub struct RoleState {
     pub color: Option<u32>,
     pub position: i64,
     pub hoist: bool,
+    /// Discord permission bitfield for the role. Used to compute the
+    /// authenticated user's base permissions and detect ADMINISTRATOR.
+    pub permissions: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -213,6 +244,10 @@ pub struct DiscordState {
     /// `relationships` array. Used to colour the profile popup's friend
     /// indicator and to enrich `UserProfileInfo` on insert.
     relationships: BTreeMap<Id<UserMarker>, FriendStatus>,
+    /// Snowflake of the authenticated user. Captured from the READY payload
+    /// and consulted by `can_view_channel` to look up our own roles and
+    /// match member-level permission overwrites.
+    current_user_id: Option<Id<UserMarker>>,
     max_messages_per_channel: usize,
 }
 
@@ -244,6 +279,7 @@ impl DiscordState {
             guild_folders: Vec::new(),
             user_profiles: BTreeMap::new(),
             relationships: BTreeMap::new(),
+            current_user_id: None,
             max_messages_per_channel,
         }
     }
@@ -254,6 +290,7 @@ impl DiscordState {
                 guild_id,
                 name,
                 member_count,
+                owner_id,
                 channels,
                 members,
                 presences,
@@ -266,6 +303,7 @@ impl DiscordState {
                         id: *guild_id,
                         name: name.clone(),
                         member_count: *member_count,
+                        owner_id: *owner_id,
                     },
                 );
 
@@ -288,11 +326,15 @@ impl DiscordState {
             AppEvent::GuildUpdate {
                 guild_id,
                 name,
+                owner_id,
                 roles,
                 emojis,
             } => {
                 if let Some(guild) = self.guilds.get_mut(guild_id) {
                     guild.name = name.clone();
+                    if let Some(owner_id) = owner_id {
+                        guild.owner_id = Some(*owner_id);
+                    }
                 }
                 if let Some(roles) = roles {
                     self.roles.insert(*guild_id, role_map(roles));
@@ -520,8 +562,12 @@ impl DiscordState {
                     profile.friend_status = FriendStatus::None;
                 }
             }
-            AppEvent::Ready { .. }
-            | AppEvent::GatewayError { .. }
+            AppEvent::Ready { user_id, .. } => {
+                if let Some(user_id) = user_id {
+                    self.current_user_id = Some(*user_id);
+                }
+            }
+            AppEvent::GatewayError { .. }
             | AppEvent::StatusMessage { .. }
             | AppEvent::ReactionUsersLoaded { .. }
             | AppEvent::AttachmentPreviewLoaded { .. }
@@ -557,6 +603,216 @@ impl DiscordState {
             .values()
             .filter(|channel| channel.guild_id == guild_id)
             .collect()
+    }
+
+    /// Same as `channels_for_guild` but skips channels the authenticated user
+    /// cannot see. Use this when populating UI surfaces (sidebar, member-list
+    /// subscription targets) so we never present a channel that would 403
+    /// when fetched. DMs always pass through unchanged.
+    pub fn viewable_channels_for_guild(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> Vec<&ChannelState> {
+        self.channels
+            .values()
+            .filter(|channel| channel.guild_id == guild_id)
+            .filter(|channel| self.can_view_channel(channel))
+            .collect()
+    }
+
+    /// Snowflake of the authenticated user, captured during READY. `None`
+    /// before the gateway hands us a `READY` payload — callers that depend on
+    /// our identity (permission checks, mention detection) should treat the
+    /// missing case as "can't compute, fall back to permissive".
+    pub fn current_user_id(&self) -> Option<Id<UserMarker>> {
+        self.current_user_id
+    }
+
+    /// Whether the authenticated user has `VIEW_CHANNEL` for `channel`.
+    /// Thin wrapper over `effective_permissions_for_channel`; see that
+    /// function for the algorithm.
+    pub fn can_view_channel(&self, channel: &ChannelState) -> bool {
+        permission_set(
+            self.effective_permissions_for_channel(channel),
+            PERMISSION_VIEW_CHANNEL,
+        )
+    }
+
+    /// Whether the user can post messages in `channel`. Returns `true` for
+    /// DMs (no guild-style perms apply) and when the underlying permission
+    /// computation is "unknown" (state still hydrating).
+    pub fn can_send_in_channel(&self, channel: &ChannelState) -> bool {
+        let permissions = self.effective_permissions_for_channel(channel);
+        permission_set(permissions, PERMISSION_VIEW_CHANNEL)
+            && permission_set(permissions, PERMISSION_SEND_MESSAGES)
+    }
+
+    /// Whether the user can upload attachments in `channel`. Same fall-back
+    /// behavior as `can_send_in_channel`.
+    pub fn can_attach_in_channel(&self, channel: &ChannelState) -> bool {
+        let permissions = self.effective_permissions_for_channel(channel);
+        permission_set(permissions, PERMISSION_VIEW_CHANNEL)
+            && permission_set(permissions, PERMISSION_SEND_MESSAGES)
+            && permission_set(permissions, PERMISSION_ATTACH_FILES)
+    }
+
+    /// Compute the effective Discord permission bitfield for the
+    /// authenticated user in `channel`. Mirrors endcord's `perms.py`:
+    ///
+    /// 1. DMs and group DMs grant every permission — Discord does not apply
+    ///    guild-style overwrites to them.
+    /// 2. Threads inherit from their parent. A missing parent returns
+    ///    `PERMISSIONS_UNKNOWN` so callers default to "permissive".
+    /// 3. Owners and ADMINISTRATOR holders get the full bitfield.
+    /// 4. Otherwise: base permissions ← OR of `@everyone` and every role the
+    ///    member holds, then `@everyone` overwrite, then accumulated role
+    ///    overwrites (deny then allow), then member overwrite (deny then
+    ///    allow).
+    ///
+    /// When required data is missing the function returns
+    /// `PERMISSIONS_UNKNOWN` so callers can choose whether to render the
+    /// affordance optimistically (composer enabled) or pessimistically.
+    fn effective_permissions_for_channel(&self, channel: &ChannelState) -> u64 {
+        let Some(guild_id) = channel.guild_id else {
+            return u64::MAX;
+        };
+        if channel.is_private_thread() {
+            return self.private_thread_permissions_for_channel(guild_id);
+        }
+        if channel.is_thread() {
+            let Some(parent_id) = channel.parent_id else {
+                return PERMISSIONS_UNKNOWN;
+            };
+            let Some(parent) = self.channels.get(&parent_id) else {
+                return PERMISSIONS_UNKNOWN;
+            };
+            return self.effective_permissions_for_channel(parent);
+        }
+
+        let Some(my_id) = self.current_user_id else {
+            return PERMISSIONS_UNKNOWN;
+        };
+        let Some(guild) = self.guilds.get(&guild_id) else {
+            return PERMISSIONS_UNKNOWN;
+        };
+        if guild.owner_id == Some(my_id) {
+            return u64::MAX;
+        }
+        let Some(roles) = self.roles.get(&guild_id) else {
+            return PERMISSIONS_UNKNOWN;
+        };
+        let Some(member) = self.members.get(&guild_id).and_then(|m| m.get(&my_id)) else {
+            return PERMISSIONS_UNKNOWN;
+        };
+
+        let everyone_role_id: Id<RoleMarker> = Id::new(guild_id.get());
+        let mut base_permissions: u64 = roles
+            .get(&everyone_role_id)
+            .map(|role| role.permissions)
+            .unwrap_or(0);
+        for role_id in &member.role_ids {
+            if let Some(role) = roles.get(role_id) {
+                base_permissions |= role.permissions;
+            }
+        }
+        if base_permissions & PERMISSION_ADMINISTRATOR == PERMISSION_ADMINISTRATOR {
+            return u64::MAX;
+        }
+
+        let overwrites = &channel.permission_overwrites;
+        let guild_id_raw = guild_id.get();
+        let my_id_raw = my_id.get();
+
+        let mut perms = base_permissions;
+        if let Some(overwrite) = overwrites
+            .iter()
+            .find(|o| matches!(o.kind, PermissionOverwriteKind::Role) && o.id == guild_id_raw)
+        {
+            perms &= !overwrite.deny;
+            perms |= overwrite.allow;
+        }
+
+        let mut role_allow: u64 = 0;
+        let mut role_deny: u64 = 0;
+        let member_role_ids: Vec<u64> = member.role_ids.iter().map(|id| id.get()).collect();
+        for overwrite in overwrites {
+            if matches!(overwrite.kind, PermissionOverwriteKind::Role)
+                && overwrite.id != guild_id_raw
+                && member_role_ids.contains(&overwrite.id)
+            {
+                role_allow |= overwrite.allow;
+                role_deny |= overwrite.deny;
+            }
+        }
+        perms &= !role_deny;
+        perms |= role_allow;
+
+        if let Some(overwrite) = overwrites
+            .iter()
+            .find(|o| matches!(o.kind, PermissionOverwriteKind::Member) && o.id == my_id_raw)
+        {
+            perms &= !overwrite.deny;
+            perms |= overwrite.allow;
+        }
+
+        perms
+    }
+
+    fn private_thread_permissions_for_channel(&self, guild_id: Id<GuildMarker>) -> u64 {
+        let Some(my_id) = self.current_user_id else {
+            return 0;
+        };
+        let Some(guild) = self.guilds.get(&guild_id) else {
+            return 0;
+        };
+        if guild.owner_id == Some(my_id) {
+            return u64::MAX;
+        }
+        let Some(roles) = self.roles.get(&guild_id) else {
+            return 0;
+        };
+        let Some(member) = self.members.get(&guild_id).and_then(|m| m.get(&my_id)) else {
+            return 0;
+        };
+
+        let everyone_role_id: Id<RoleMarker> = Id::new(guild_id.get());
+        let mut base_permissions: u64 = roles
+            .get(&everyone_role_id)
+            .map(|role| role.permissions)
+            .unwrap_or(0);
+        for role_id in &member.role_ids {
+            if let Some(role) = roles.get(role_id) {
+                base_permissions |= role.permissions;
+            }
+        }
+        if base_permissions & PERMISSION_ADMINISTRATOR == PERMISSION_ADMINISTRATOR {
+            return u64::MAX;
+        }
+
+        0
+    }
+
+    /// Visible/hidden channel counts for a guild scope. DM scope reports
+    /// `(visible, 0)` since DMs are never hidden. Threads are excluded from
+    /// both sides — the debug-panel readout focuses on top-level channels
+    /// because those are what the user navigates by.
+    pub fn channel_visibility_stats(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> ChannelVisibilityStats {
+        let mut visible: usize = 0;
+        let mut hidden: usize = 0;
+        for channel in self.channels.values() {
+            if channel.guild_id != guild_id || channel.is_thread() {
+                continue;
+            }
+            if self.can_view_channel(channel) {
+                visible += 1;
+            } else {
+                hidden += 1;
+            }
+        }
+        ChannelVisibilityStats { visible, hidden }
     }
 
     pub fn messages_for_channel(&self, channel_id: Id<ChannelMarker>) -> Vec<&MessageState> {
@@ -672,6 +928,17 @@ impl DiscordState {
             .or_else(|| existing.map(|existing| existing.recipients.clone()))
             .unwrap_or_default();
 
+        // Threads do not own channel-level overwrites — `permitted` is decided
+        // by the parent. For everything else we take the newest payload as
+        // authoritative, since CHANNEL_UPDATE always carries the full array.
+        let permission_overwrites = if is_thread_kind(&channel.kind) {
+            existing
+                .map(|existing| existing.permission_overwrites.clone())
+                .unwrap_or_default()
+        } else {
+            channel.permission_overwrites.clone()
+        };
+
         self.channels.insert(
             channel.channel_id,
             ChannelState {
@@ -687,6 +954,7 @@ impl DiscordState {
                 thread_archived: channel.thread_archived,
                 thread_locked: channel.thread_locked,
                 recipients,
+                permission_overwrites,
             },
         );
     }
@@ -1049,22 +1317,55 @@ fn role_map(roles: &[RoleInfo]) -> BTreeMap<Id<RoleMarker>, RoleState> {
                     color: role.color,
                     position: role.position,
                     hoist: role.hoist,
+                    permissions: role.permissions,
                 },
             )
         })
         .collect()
 }
 
+/// Whether a Discord channel kind string represents a thread. Mirrors
+/// `ChannelState::is_thread` so that bare `ChannelInfo` inputs can be
+/// classified before they become a `ChannelState`.
+fn is_thread_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "thread"
+            | "GuildPublicThread"
+            | "GuildPrivateThread"
+            | "GuildNewsThread"
+            | "private-thread"
+    )
+}
+
+/// Test whether a permission bit is set in `bitfield`. Encapsulated so the
+/// permission-check call sites stay readable.
+fn permission_set(bitfield: u64, bit: u64) -> bool {
+    bitfield & bit == bit
+}
+
+/// Counts of viewable vs. permission-hidden channels for a single scope.
+/// Surfaced in the debug-log popup so the user can confirm whether a
+/// channel they expected to see is actually being filtered out.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ChannelVisibilityStats {
+    pub visible: usize,
+    pub hidden: usize,
+}
+
 #[cfg(test)]
 mod tests {
-    use twilight_model::id::{Id, marker::ChannelMarker};
+    use twilight_model::id::{
+        Id,
+        marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker},
+    };
 
     use crate::discord::{
-        AppEvent, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
-        DiscordState, FriendStatus, MemberInfo, MentionInfo, MessageInfo, MessageKind,
-        MessageReferenceInfo, MessageSnapshotInfo, MessageState, MutualGuildInfo, PollAnswerInfo,
-        PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReplyInfo, RoleInfo,
-        UserProfileInfo,
+        AppEvent, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, ChannelVisibilityStats,
+        CustomEmojiInfo, DiscordState, FriendStatus, MemberInfo, MentionInfo, MessageInfo,
+        MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MessageState, MutualGuildInfo,
+        PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus,
+        ReactionEmoji, ReactionInfo, ReplyInfo, RoleInfo, UserProfileInfo,
     };
 
     fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -1108,11 +1409,13 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: Vec::new(),
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.apply_event(&AppEvent::MessageCreate {
             guild_id: Some(guild_id),
@@ -1192,6 +1495,7 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: vec![MemberInfo {
                 user_id: author_id,
@@ -1203,6 +1507,7 @@ mod tests {
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.apply_event(&AppEvent::MessageCreate {
             guild_id: Some(guild_id),
@@ -1285,6 +1590,7 @@ mod tests {
             thread_archived: None,
             thread_locked: None,
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
 
         let channel = state.channel(channel_id).unwrap();
@@ -1317,6 +1623,7 @@ mod tests {
                 avatar_url: Some("https://cdn.discordapp.com/avatar.png".to_owned()),
                 status: Some(PresenceStatus::Online),
             }]),
+            permission_overwrites: Vec::new(),
         }));
 
         state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
@@ -1332,6 +1639,7 @@ mod tests {
             thread_archived: None,
             thread_locked: None,
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
 
         let channel = state.channel(channel_id).expect("channel should be stored");
@@ -1370,6 +1678,7 @@ mod tests {
                 avatar_url: None,
                 status: Some(PresenceStatus::Online),
             }]),
+            permission_overwrites: Vec::new(),
         }));
 
         state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
@@ -1391,6 +1700,7 @@ mod tests {
                 avatar_url: None,
                 status: None,
             }]),
+            permission_overwrites: Vec::new(),
         }));
 
         let channel = state.channel(channel_id).expect("channel should be stored");
@@ -1422,6 +1732,7 @@ mod tests {
                 avatar_url: None,
                 status: None,
             }]),
+            permission_overwrites: Vec::new(),
         }));
 
         let channel = state.channel(channel_id).expect("channel should be stored");
@@ -1452,6 +1763,7 @@ mod tests {
                 avatar_url: None,
                 status: None,
             }]),
+            permission_overwrites: Vec::new(),
         }));
 
         state.apply_event(&AppEvent::UserPresenceUpdate {
@@ -1487,6 +1799,7 @@ mod tests {
                 avatar_url: None,
                 status: None,
             }]),
+            permission_overwrites: Vec::new(),
         }));
 
         state.apply_event(&AppEvent::PresenceUpdate {
@@ -2679,6 +2992,7 @@ mod tests {
             thread_archived: None,
             thread_locked: None,
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
         state.apply_event(&AppEvent::MessageCreate {
             guild_id: None,
@@ -2741,6 +3055,7 @@ mod tests {
             thread_archived: None,
             thread_locked: None,
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
         state.apply_event(&AppEvent::MessageHistoryLoaded {
             channel_id,
@@ -2777,6 +3092,7 @@ mod tests {
             thread_archived: None,
             thread_locked: None,
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
         state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
             guild_id: None,
@@ -2791,6 +3107,7 @@ mod tests {
             thread_archived: None,
             thread_locked: None,
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
         state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
             guild_id: None,
@@ -2805,6 +3122,7 @@ mod tests {
             thread_archived: None,
             thread_locked: None,
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
 
         let channel = state.channel(channel_id).unwrap();
@@ -2831,6 +3149,7 @@ mod tests {
             thread_archived: Some(false),
             thread_locked: Some(false),
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
         state.apply_event(&AppEvent::ChannelDelete {
             guild_id: Some(guild_id),
@@ -2871,6 +3190,7 @@ mod tests {
             presences: vec![(alice, PresenceStatus::Online)],
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
 
         let members = state.members_for_guild(guild_id);
@@ -2919,6 +3239,7 @@ mod tests {
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
 
         state.apply_event(&AppEvent::GuildMemberUpsert {
@@ -2978,6 +3299,7 @@ mod tests {
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
 
         state.apply_event(&AppEvent::GuildMemberRemove {
@@ -3015,8 +3337,10 @@ mod tests {
                 color: Some(0xFFAA00),
                 position: 10,
                 hoist: true,
+                permissions: 0,
             }],
             emojis: Vec::new(),
+            owner_id: None,
         });
 
         let roles = state.roles_for_guild(guild_id);
@@ -3088,6 +3412,7 @@ mod tests {
                 animated: true,
                 available: true,
             }],
+            owner_id: None,
         });
 
         assert_eq!(state.custom_emojis_for_guild(guild_id).len(), 1);
@@ -3117,6 +3442,7 @@ mod tests {
                 animated: false,
                 available: true,
             }],
+            owner_id: None,
         });
         state.apply_event(&AppEvent::GuildEmojisUpdate {
             guild_id,
@@ -3154,6 +3480,7 @@ mod tests {
                 animated: false,
                 available: true,
             }],
+            owner_id: None,
         });
         state.apply_event(&AppEvent::GuildUpdate {
             guild_id,
@@ -3165,6 +3492,7 @@ mod tests {
                 animated: true,
                 available: true,
             }]),
+            owner_id: None,
         });
 
         let emojis = state.custom_emojis_for_guild(guild_id);
@@ -3192,12 +3520,14 @@ mod tests {
                 animated: false,
                 available: true,
             }],
+            owner_id: None,
         });
         state.apply_event(&AppEvent::GuildUpdate {
             guild_id,
             name: "guild renamed".to_owned(),
             roles: None,
             emojis: None,
+            owner_id: None,
         });
 
         let emojis = state.custom_emojis_for_guild(guild_id);
@@ -3289,6 +3619,749 @@ mod tests {
                 .reactions
                 .is_empty()
         );
+    }
+
+    // ===========================================================================
+    // can_view_channel / viewable_channels_for_guild
+    // ===========================================================================
+    //
+    // The tests below mirror the scenarios endcord covers in `perms.py`. They
+    // assemble a minimal guild (one channel, one member, one or two roles) and
+    // exercise each branch of the algorithm: owner, admin, @everyone deny,
+    // role allow override, member overwrite, and thread inheritance.
+
+    const VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
+    const SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
+    const ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
+    const ADMINISTRATOR: u64 = 0x0000_0000_0000_0008;
+
+    fn perm_role(id: u64, allow: u64, deny: u64) -> PermissionOverwriteInfo {
+        PermissionOverwriteInfo {
+            id,
+            kind: PermissionOverwriteKind::Role,
+            allow,
+            deny,
+        }
+    }
+
+    fn perm_member(id: u64, allow: u64, deny: u64) -> PermissionOverwriteInfo {
+        PermissionOverwriteInfo {
+            id,
+            kind: PermissionOverwriteKind::Member,
+            allow,
+            deny,
+        }
+    }
+
+    /// Build a single-guild state with one text channel, one member, and the
+    /// given role permissions / channel overwrites. The current user is set
+    /// from `READY` so permission lookups have an identity to consult.
+    fn guild_with_permissions(
+        owner_id: Id<UserMarker>,
+        my_id: Id<UserMarker>,
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        my_role_ids: Vec<Id<RoleMarker>>,
+        roles: Vec<RoleInfo>,
+        overwrites: Vec<PermissionOverwriteInfo>,
+    ) -> DiscordState {
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(my_id),
+        });
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: Some(1),
+            owner_id: Some(owner_id),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: Some(0),
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                recipients: None,
+                permission_overwrites: overwrites,
+            }],
+            members: vec![MemberInfo {
+                user_id: my_id,
+                display_name: "me".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: my_role_ids,
+            }],
+            presences: Vec::new(),
+            roles,
+            emojis: Vec::new(),
+        });
+        state
+    }
+
+    #[test]
+    fn dm_channels_are_always_viewable() {
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id: Id::new(99),
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "alice".to_owned(),
+            kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }));
+        let channels = state.viewable_channels_for_guild(None);
+        assert_eq!(channels.len(), 1);
+    }
+
+    #[test]
+    fn guild_owner_sees_everything_even_when_everyone_denies() {
+        let me = Id::new(10);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        // @everyone (role id == guild id) explicitly denies VIEW_CHANNEL — but
+        // the owner short-circuit must still grant access.
+        let state = guild_with_permissions(
+            me,
+            me,
+            guild,
+            channel,
+            vec![],
+            vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: 0,
+            }],
+            vec![perm_role(guild.get(), 0, VIEW_CHANNEL)],
+        );
+        let ch = state.channel(channel).expect("channel");
+        assert!(state.can_view_channel(ch));
+    }
+
+    #[test]
+    fn administrator_role_bypasses_channel_overwrites() {
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        let admin_role = Id::new(50);
+        let state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            channel,
+            vec![admin_role],
+            vec![
+                RoleInfo {
+                    id: Id::new(guild.get()),
+                    name: "@everyone".to_owned(),
+                    color: None,
+                    position: 0,
+                    hoist: false,
+                    permissions: 0,
+                },
+                RoleInfo {
+                    id: admin_role,
+                    name: "Admin".to_owned(),
+                    color: None,
+                    position: 1,
+                    hoist: false,
+                    permissions: ADMINISTRATOR,
+                },
+            ],
+            // Channel-level deny is irrelevant for ADMINISTRATOR holders.
+            vec![perm_role(guild.get(), 0, VIEW_CHANNEL)],
+        );
+        let ch = state.channel(channel).expect("channel");
+        assert!(state.can_view_channel(ch));
+    }
+
+    #[test]
+    fn everyone_deny_hides_channel_for_plain_member() {
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        // @everyone has VIEW_CHANNEL by default, but the channel-level
+        // overwrite revokes it — non-admin, non-owner user cannot see it.
+        let state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            channel,
+            vec![],
+            vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: VIEW_CHANNEL,
+            }],
+            vec![perm_role(guild.get(), 0, VIEW_CHANNEL)],
+        );
+        let ch = state.channel(channel).expect("channel");
+        assert!(!state.can_view_channel(ch));
+        assert!(state.viewable_channels_for_guild(Some(guild)).is_empty());
+    }
+
+    #[test]
+    fn role_allow_overrides_everyone_deny() {
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        let staff_role = Id::new(50);
+        let state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            channel,
+            vec![staff_role],
+            vec![
+                RoleInfo {
+                    id: Id::new(guild.get()),
+                    name: "@everyone".to_owned(),
+                    color: None,
+                    position: 0,
+                    hoist: false,
+                    permissions: VIEW_CHANNEL,
+                },
+                RoleInfo {
+                    id: staff_role,
+                    name: "Staff".to_owned(),
+                    color: None,
+                    position: 1,
+                    hoist: false,
+                    permissions: 0,
+                },
+            ],
+            vec![
+                perm_role(guild.get(), 0, VIEW_CHANNEL),
+                perm_role(staff_role.get(), VIEW_CHANNEL, 0),
+            ],
+        );
+        let ch = state.channel(channel).expect("channel");
+        assert!(state.can_view_channel(ch));
+    }
+
+    #[test]
+    fn member_overwrite_has_the_final_word() {
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        let staff_role = Id::new(50);
+        // Role-level grants VIEW, but the member-specific deny removes it.
+        let state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            channel,
+            vec![staff_role],
+            vec![
+                RoleInfo {
+                    id: Id::new(guild.get()),
+                    name: "@everyone".to_owned(),
+                    color: None,
+                    position: 0,
+                    hoist: false,
+                    permissions: 0,
+                },
+                RoleInfo {
+                    id: staff_role,
+                    name: "Staff".to_owned(),
+                    color: None,
+                    position: 1,
+                    hoist: false,
+                    permissions: VIEW_CHANNEL,
+                },
+            ],
+            vec![perm_member(me.get(), 0, VIEW_CHANNEL)],
+        );
+        let ch = state.channel(channel).expect("channel");
+        assert!(!state.can_view_channel(ch));
+    }
+
+    #[test]
+    fn threads_inherit_parent_permission() {
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let parent = Id::new(2);
+        let thread = Id::new(3);
+        // Parent denies VIEW_CHANNEL — the thread (which carries no overwrites
+        // of its own) must inherit the same answer.
+        let mut state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            parent,
+            vec![],
+            vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: VIEW_CHANNEL,
+            }],
+            vec![perm_role(guild.get(), 0, VIEW_CHANNEL)],
+        );
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(guild),
+            channel_id: thread,
+            parent_id: Some(parent),
+            position: None,
+            last_message_id: None,
+            name: "design-discussion".to_owned(),
+            kind: "GuildPublicThread".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: Some(false),
+            thread_locked: Some(false),
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }));
+        let thread_state = state.channel(thread).expect("thread");
+        assert!(!state.can_view_channel(thread_state));
+    }
+
+    #[test]
+    fn message_create_for_hidden_channel_does_not_promote_it() {
+        // Regression guard: a MESSAGE_CREATE for a permission-hidden channel
+        // must not flip the channel into the visible bucket. The message
+        // itself is still tracked (it's a real Discord message), but the
+        // sidebar must keep filtering the channel out and the visibility
+        // stats must continue to count it as hidden.
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        let mut state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            channel,
+            vec![],
+            vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: VIEW_CHANNEL,
+            }],
+            vec![perm_role(guild.get(), 0, VIEW_CHANNEL)],
+        );
+
+        // Sanity check: starts hidden.
+        assert_eq!(
+            state.channel_visibility_stats(Some(guild)),
+            ChannelVisibilityStats {
+                visible: 0,
+                hidden: 1,
+            }
+        );
+        assert!(state.viewable_channels_for_guild(Some(guild)).is_empty());
+
+        // A message arrives for the hidden channel — same author as a
+        // legitimate Discord push.
+        let message_id = Id::new(900);
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: Some(guild),
+            channel_id: channel,
+            message_id,
+            author_id: owner,
+            author: "owner".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::default(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("hidden chatter".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        // Channel must remain hidden — no permission promotion happened.
+        assert!(state.viewable_channels_for_guild(Some(guild)).is_empty());
+        assert_eq!(
+            state.channel_visibility_stats(Some(guild)),
+            ChannelVisibilityStats {
+                visible: 0,
+                hidden: 1,
+            }
+        );
+        // The underlying channel record still exists and the message was
+        // stored — gating is a sidebar concern, not a data-purge concern.
+        assert!(state.channel(channel).is_some());
+        assert_eq!(state.messages_for_channel(channel).len(), 1);
+    }
+
+    #[test]
+    fn cannot_send_when_role_overwrite_denies_send_messages() {
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        let state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            channel,
+            vec![],
+            vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                // VIEW + SEND globally, but channel overwrite revokes SEND.
+                permissions: VIEW_CHANNEL | SEND_MESSAGES,
+            }],
+            vec![perm_role(guild.get(), 0, SEND_MESSAGES)],
+        );
+        let ch = state.channel(channel).expect("channel");
+        assert!(state.can_view_channel(ch));
+        assert!(!state.can_send_in_channel(ch));
+    }
+
+    #[test]
+    fn cannot_send_when_view_channel_is_denied() {
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        let state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            channel,
+            vec![],
+            vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: VIEW_CHANNEL | SEND_MESSAGES,
+            }],
+            vec![perm_role(guild.get(), 0, VIEW_CHANNEL)],
+        );
+        let ch = state.channel(channel).expect("channel");
+        assert!(!state.can_view_channel(ch));
+        assert!(!state.can_send_in_channel(ch));
+    }
+
+    #[test]
+    fn cannot_attach_when_role_overwrite_denies_attach_files() {
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        let state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            channel,
+            vec![],
+            vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                // VIEW + SEND + ATTACH globally, channel revokes only ATTACH.
+                permissions: VIEW_CHANNEL | SEND_MESSAGES | ATTACH_FILES,
+            }],
+            vec![perm_role(guild.get(), 0, ATTACH_FILES)],
+        );
+        let ch = state.channel(channel).expect("channel");
+        assert!(state.can_send_in_channel(ch));
+        assert!(!state.can_attach_in_channel(ch));
+    }
+
+    #[test]
+    fn cannot_attach_when_send_messages_is_missing() {
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        let state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            channel,
+            vec![],
+            vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: VIEW_CHANNEL | ATTACH_FILES,
+            }],
+            Vec::new(),
+        );
+        let ch = state.channel(channel).expect("channel");
+        assert!(state.can_view_channel(ch));
+        assert!(!state.can_send_in_channel(ch));
+        assert!(!state.can_attach_in_channel(ch));
+    }
+
+    #[test]
+    fn owner_can_send_and_attach_unconditionally() {
+        let me = Id::new(10);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        let state = guild_with_permissions(
+            me,
+            me,
+            guild,
+            channel,
+            vec![],
+            vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: 0,
+            }],
+            vec![perm_role(
+                guild.get(),
+                0,
+                VIEW_CHANNEL | SEND_MESSAGES | ATTACH_FILES,
+            )],
+        );
+        let ch = state.channel(channel).expect("channel");
+        assert!(state.can_send_in_channel(ch));
+        assert!(state.can_attach_in_channel(ch));
+    }
+
+    #[test]
+    fn private_threads_are_hidden_without_membership_state() {
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let parent = Id::new(2);
+        let thread = Id::new(3);
+        let mut state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            parent,
+            vec![],
+            vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: VIEW_CHANNEL | SEND_MESSAGES,
+            }],
+            Vec::new(),
+        );
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(guild),
+            channel_id: thread,
+            parent_id: Some(parent),
+            position: None,
+            last_message_id: None,
+            name: "private planning".to_owned(),
+            kind: "GuildPrivateThread".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: Some(false),
+            thread_locked: Some(false),
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }));
+        let thread_state = state.channel(thread).expect("thread");
+        assert!(!state.can_view_channel(thread_state));
+        assert!(!state.can_send_in_channel(thread_state));
+    }
+
+    #[test]
+    fn private_threads_are_hidden_while_permission_state_is_missing() {
+        let guild = Id::new(1);
+        let thread = Id::new(3);
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(guild),
+            channel_id: thread,
+            parent_id: Some(Id::new(2)),
+            position: None,
+            last_message_id: None,
+            name: "private planning".to_owned(),
+            kind: "GuildPrivateThread".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: Some(false),
+            thread_locked: Some(false),
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }));
+
+        let thread_state = state.channel(thread).expect("thread");
+        assert!(!state.can_view_channel(thread_state));
+    }
+
+    #[test]
+    fn channel_visibility_stats_count_only_top_level() {
+        // Threads should not skew the stats — the user navigates by channel,
+        // and a thread under a hidden parent already inherits the parent's
+        // visibility.
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let visible_channel = Id::new(2);
+        let hidden_channel = Id::new(3);
+        let visible_thread = Id::new(20);
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(me),
+        });
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id: guild,
+            name: "guild".to_owned(),
+            member_count: Some(1),
+            owner_id: Some(owner),
+            channels: vec![
+                ChannelInfo {
+                    guild_id: Some(guild),
+                    channel_id: visible_channel,
+                    parent_id: None,
+                    position: Some(0),
+                    last_message_id: None,
+                    name: "general".to_owned(),
+                    kind: "GuildText".to_owned(),
+                    message_count: None,
+                    total_message_sent: None,
+                    thread_archived: None,
+                    thread_locked: None,
+                    recipients: None,
+                    permission_overwrites: Vec::new(),
+                },
+                ChannelInfo {
+                    guild_id: Some(guild),
+                    channel_id: hidden_channel,
+                    parent_id: None,
+                    position: Some(1),
+                    last_message_id: None,
+                    name: "secret".to_owned(),
+                    kind: "GuildText".to_owned(),
+                    message_count: None,
+                    total_message_sent: None,
+                    thread_archived: None,
+                    thread_locked: None,
+                    recipients: None,
+                    permission_overwrites: vec![perm_role(guild.get(), 0, VIEW_CHANNEL)],
+                },
+                ChannelInfo {
+                    guild_id: Some(guild),
+                    channel_id: visible_thread,
+                    parent_id: Some(visible_channel),
+                    position: None,
+                    last_message_id: None,
+                    name: "design".to_owned(),
+                    kind: "GuildPublicThread".to_owned(),
+                    message_count: None,
+                    total_message_sent: None,
+                    thread_archived: Some(false),
+                    thread_locked: Some(false),
+                    recipients: None,
+                    permission_overwrites: Vec::new(),
+                },
+            ],
+            members: vec![MemberInfo {
+                user_id: me,
+                display_name: "me".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            }],
+            presences: Vec::new(),
+            roles: vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: VIEW_CHANNEL,
+            }],
+            emojis: Vec::new(),
+        });
+
+        let stats = state.channel_visibility_stats(Some(guild));
+        assert_eq!(
+            stats,
+            ChannelVisibilityStats {
+                visible: 1,
+                hidden: 1,
+            },
+            "expected the thread to be excluded from both buckets"
+        );
+    }
+
+    #[test]
+    fn missing_current_user_id_falls_back_to_visible() {
+        // Until READY arrives we cannot decide — be permissive so the sidebar
+        // is not empty during the brief window between connect and READY.
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id: Id::new(1),
+            name: "guild".to_owned(),
+            member_count: None,
+            owner_id: Some(Id::new(99)),
+            channels: vec![ChannelInfo {
+                guild_id: Some(Id::new(1)),
+                channel_id: Id::new(2),
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                recipients: None,
+                permission_overwrites: vec![perm_role(1, 0, VIEW_CHANNEL)],
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: vec![RoleInfo {
+                id: Id::new(1),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: VIEW_CHANNEL,
+            }],
+            emojis: Vec::new(),
+        });
+        let ch = state.channel(Id::new(2)).expect("channel");
+        assert!(state.can_view_channel(ch));
     }
 
     fn message_info(channel_id: Id<ChannelMarker>, message_id: u64, content: &str) -> MessageInfo {

@@ -7,10 +7,10 @@ use twilight_model::id::{
 };
 
 use crate::discord::{
-    AppCommand, AppEvent, AttachmentInfo, ChannelRecipientState, ChannelState, CustomEmojiInfo,
-    DiscordState, GuildFolder, GuildMemberState, GuildState, MentionInfo, MessageInfo,
-    MessageSnapshotInfo, MessageState, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
-    ReactionUsersInfo, RoleState, UserProfileInfo,
+    AppCommand, AppEvent, AttachmentInfo, ChannelRecipientState, ChannelState,
+    ChannelVisibilityStats, CustomEmojiInfo, DiscordState, GuildFolder, GuildMemberState,
+    GuildState, MentionInfo, MessageInfo, MessageSnapshotInfo, MessageState, PollInfo,
+    PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUsersInfo, RoleState, UserProfileInfo,
 };
 use crate::logging;
 
@@ -831,6 +831,20 @@ impl DashboardState {
             .collect()
     }
 
+    /// Visible vs. permission-hidden channel counts for the active scope.
+    /// Surfaced in the debug-log popup so the user can verify whether a
+    /// missing channel is actually being filtered by `can_view_channel` or
+    /// just isn't in the cache. DM scope always reports `(N, 0)`.
+    pub fn debug_channel_visibility(&self) -> ChannelVisibilityStats {
+        match self.active_guild {
+            ActiveGuildScope::Unset => ChannelVisibilityStats::default(),
+            ActiveGuildScope::DirectMessages => self.discord.channel_visibility_stats(None),
+            ActiveGuildScope::Guild(guild_id) => {
+                self.discord.channel_visibility_stats(Some(guild_id))
+            }
+        }
+    }
+
     pub fn reaction_users_popup(&self) -> Option<&ReactionUsersPopupState> {
         self.reaction_users_popup.as_ref()
     }
@@ -1461,6 +1475,11 @@ impl DashboardState {
         let Some(message_id) = self.selected_message_state().map(|message| message.id) else {
             return;
         };
+        // Same gating as `start_composer` — replies are sends, so the channel
+        // must allow SEND_MESSAGES for the action to be useful.
+        if !self.can_send_in_selected_channel() {
+            return;
+        }
         self.composer_input.clear();
         self.reply_target_message_id = Some(message_id);
         self.composer_active = true;
@@ -1697,7 +1716,7 @@ impl DashboardState {
             .filter(|channel_id| {
                 self.discord
                     .channel(*channel_id)
-                    .is_some_and(|c| !c.is_thread())
+                    .is_some_and(|channel| self.is_member_list_subscription_channel(channel))
             })
             .or_else(|| self.guild_member_list_channel(guild_id))?;
         Some((guild_id, channel_id))
@@ -1739,23 +1758,31 @@ impl DashboardState {
     ) -> Option<Id<ChannelMarker>> {
         let mut candidates: Vec<&ChannelState> = self
             .discord
-            .channels_for_guild(Some(guild_id))
+            .viewable_channels_for_guild(Some(guild_id))
             .into_iter()
-            .filter(|channel| {
-                !channel.is_category()
-                    && !channel.is_thread()
-                    && !matches!(channel.kind.as_str(), "voice" | "GuildVoice")
-            })
+            .filter(|channel| self.is_member_list_subscription_channel(channel))
             .collect();
         sort_channels(&mut candidates);
         candidates.first().map(|channel| channel.id)
     }
 
+    fn is_member_list_subscription_channel(&self, channel: &ChannelState) -> bool {
+        !channel.is_category()
+            && !channel.is_thread()
+            && !matches!(channel.kind.as_str(), "voice" | "GuildVoice")
+            && self.discord.can_view_channel(channel)
+    }
+
     pub fn channels(&self) -> Vec<&ChannelState> {
         match self.active_guild {
             ActiveGuildScope::Unset => Vec::new(),
+            // DMs do not carry guild-style permissions; show every channel.
             ActiveGuildScope::DirectMessages => self.discord.channels_for_guild(None),
-            ActiveGuildScope::Guild(guild_id) => self.discord.channels_for_guild(Some(guild_id)),
+            // Filter to channels we have VIEW_CHANNEL on, otherwise the
+            // sidebar surfaces channels that REST refuses with 403.
+            ActiveGuildScope::Guild(guild_id) => {
+                self.discord.viewable_channels_for_guild(Some(guild_id))
+            }
         }
     }
 
@@ -1918,14 +1945,14 @@ impl DashboardState {
             .as_ref()
             .and_then(|reference| reference.channel_id)
             .and_then(|channel_id| self.discord.channel(channel_id))
-            .filter(|channel| channel.is_thread());
+            .filter(|channel| channel.is_thread() && self.discord.can_view_channel(channel));
         let thread = referenced_thread.or_else(|| {
             let thread_name = message.content.as_deref()?.trim();
             if thread_name.is_empty() {
                 return None;
             }
             self.discord
-                .channels_for_guild(message.guild_id)
+                .viewable_channels_for_guild(message.guild_id)
                 .into_iter()
                 .find(|channel| {
                     channel.is_thread()
@@ -2724,8 +2751,35 @@ impl DashboardState {
         self.focus = pane;
     }
 
+    /// Whether the user can post messages in the currently selected channel.
+    /// Returns `true` when no channel is selected so callers don't have to
+    /// special-case the empty state.
+    pub fn can_send_in_selected_channel(&self) -> bool {
+        match self.selected_channel_state() {
+            Some(channel) => self.discord.can_send_in_channel(channel),
+            None => true,
+        }
+    }
+
+    /// Whether the user can attach files in the currently selected channel.
+    /// Wired up so a future attachment picker can disable itself; the
+    /// composer doesn't expose attachment input today.
+    pub fn can_attach_in_selected_channel(&self) -> bool {
+        match self.selected_channel_state() {
+            Some(channel) => self.discord.can_attach_in_channel(channel),
+            None => true,
+        }
+    }
+
     pub fn start_composer(&mut self) {
         if self.selected_channel_id().is_none() {
+            return;
+        }
+        // Refusing here keeps the keymap simple: the same key that opens the
+        // composer in writable channels just no-ops in read-only ones, so the
+        // user never lands in a typing state for a channel that would 403 on
+        // submit.
+        if !self.can_send_in_selected_channel() {
             return;
         }
         self.reply_target_message_id = None;
@@ -2751,6 +2805,15 @@ impl DashboardState {
         let channel_id = self.selected_channel_id()?;
         let content = self.composer_input.trim().to_owned();
         if content.is_empty() {
+            return None;
+        }
+        // Defense in depth: the channel could have lost SEND_MESSAGES while
+        // the composer was open (role change, channel overwrite update). Drop
+        // the message rather than fire a request that would 403.
+        if !self.can_send_in_selected_channel() {
+            self.composer_input.clear();
+            self.composer_active = false;
+            self.reply_target_message_id = None;
             return None;
         }
 
@@ -2793,12 +2856,29 @@ impl DashboardState {
                     channel.guild_id.is_none() && !channel.is_category()
                 }
                 ActiveGuildScope::Guild(guild_id) => {
-                    channel.guild_id == Some(guild_id) && !channel.is_category()
+                    channel.guild_id == Some(guild_id)
+                        && !channel.is_category()
+                        && self.discord.can_view_channel(channel)
                 }
             });
         if self.active_channel_id.is_some() && !active_channel_is_valid {
-            self.active_channel_id = None;
+            self.clear_active_channel();
         }
+    }
+
+    fn clear_active_channel(&mut self) {
+        self.active_channel_id = None;
+        self.selected_message = 0;
+        self.message_scroll = 0;
+        self.message_line_scroll = 0;
+        self.message_keep_selection_visible = true;
+        self.message_auto_follow = true;
+        self.cancel_composer();
+        self.close_message_action_menu();
+        self.close_channel_action_menu();
+        self.close_emoji_reaction_picker();
+        self.close_poll_vote_picker();
+        self.close_reaction_users_popup();
     }
 
     fn clamp_list_viewports(&mut self) {
@@ -3775,15 +3855,17 @@ mod tests {
     };
 
     use super::{
-        ChannelActionKind, ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildBranch,
-        GuildPaneEntry, MessageActionKind, MessageState, message_rendered_height, presence_marker,
+        ActiveGuildScope, ChannelActionKind, ChannelBranch, ChannelPaneEntry, DashboardState,
+        FocusPane, GuildBranch, GuildPaneEntry, MessageActionKind, MessageState,
+        message_rendered_height, presence_marker,
     };
     use crate::discord::{
-        AppCommand, AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
-        EmbedInfo, FriendStatus, GuildFolder, MemberInfo, MessageInfo, MessageKind,
-        MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo, PollAnswerInfo, PollInfo,
-        PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
-        ReplyInfo, RoleInfo, UserProfileInfo,
+        AppCommand, AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientInfo,
+        ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, FriendStatus, GuildFolder, MemberInfo,
+        MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo,
+        PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus,
+        ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo,
+        UserProfileInfo,
     };
 
     fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -3940,6 +4022,7 @@ mod tests {
             presences: vec![(user_id, PresenceStatus::DoNotDisturb)],
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.open_user_profile_popup(user_id, Some(guild_id));
 
@@ -3973,6 +4056,7 @@ mod tests {
                 avatar_url: None,
                 status: Some(PresenceStatus::Idle),
             }]),
+            permission_overwrites: Vec::new(),
         }));
         state.open_user_profile_popup(user_id, None);
 
@@ -4017,11 +4101,13 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: Vec::new(),
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -4072,6 +4158,7 @@ mod tests {
             thread_archived: None,
             thread_locked: None,
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
         state.push_event(AppEvent::MessageCreate {
             guild_id: None,
@@ -4122,6 +4209,7 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: vec![
                 MemberInfo {
@@ -4146,8 +4234,10 @@ mod tests {
                 color: Some(0xFFAA00),
                 position: 10,
                 hoist: true,
+                permissions: 0,
             }],
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
 
@@ -4197,6 +4287,7 @@ mod tests {
                     status: Some(PresenceStatus::Online),
                 },
             ]),
+            permission_overwrites: Vec::new(),
         }));
 
         state.confirm_selected_guild();
@@ -4237,6 +4328,7 @@ mod tests {
             presences: vec![(Id::new(10), PresenceStatus::Online)],
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
 
@@ -4256,6 +4348,7 @@ mod tests {
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         guild_state.confirm_selected_guild();
         assert_eq!(guild_state.member_panel_title(), "Members");
@@ -4274,6 +4367,7 @@ mod tests {
             thread_archived: None,
             thread_locked: None,
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
         dm_state.confirm_selected_guild();
         assert_eq!(dm_state.member_panel_title(), "Members");
@@ -4307,6 +4401,7 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: vec![
                 MemberInfo {
@@ -4351,8 +4446,10 @@ mod tests {
                 color: Some(0xFFAA00),
                 position: 10,
                 hoist: true,
+                permissions: 0,
             }],
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
 
@@ -4417,6 +4514,7 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: vec![
                 MemberInfo {
@@ -4450,6 +4548,7 @@ mod tests {
             ],
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
 
@@ -4485,6 +4584,7 @@ mod tests {
                 avatar_url: None,
                 status: Some(PresenceStatus::DoNotDisturb),
             }]),
+            permission_overwrites: Vec::new(),
         }));
 
         state.confirm_selected_guild();
@@ -4604,6 +4704,7 @@ mod tests {
             thread_archived: None,
             thread_locked: None,
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -4651,11 +4752,13 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: Vec::new(),
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -4886,6 +4989,7 @@ mod tests {
             thread_archived: None,
             thread_locked: None,
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
         state.push_event(AppEvent::GuildMemberUpsert {
             guild_id: Id::new(2),
@@ -5547,6 +5651,274 @@ mod tests {
     }
 
     #[test]
+    fn start_composer_refused_in_read_only_channel() {
+        let mut state = state_with_read_only_channel();
+        state.start_composer();
+        assert!(
+            !state.is_composing(),
+            "composer must not open when SEND_MESSAGES is denied"
+        );
+    }
+
+    #[test]
+    fn submit_composer_drops_message_when_send_revoked_after_open() {
+        // Open the composer with SEND_MESSAGES granted, type something, then
+        // simulate a permission overwrite arriving that revokes SEND. Submit
+        // must refuse rather than silently fire a request that would 403.
+        let mut state = state_with_writable_channel();
+        state.start_composer();
+        state.push_composer_char('h');
+        state.push_composer_char('i');
+        assert!(state.is_composing());
+
+        // Apply a CHANNEL_UPDATE that strips SEND_MESSAGES via a channel
+        // overwrite on @everyone (role id == guild id == 1).
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: None,
+            permission_overwrites: vec![PermissionOverwriteInfo {
+                id: 1,
+                kind: PermissionOverwriteKind::Role,
+                allow: 0,
+                deny: 0x800,
+            }],
+        }));
+        assert_eq!(state.submit_composer(), None);
+        assert!(!state.is_composing());
+    }
+
+    #[test]
+    fn active_channel_is_cleared_when_view_permission_is_revoked() {
+        let mut state = state_with_writable_channel();
+        state.start_composer();
+        assert_eq!(state.selected_channel_id(), Some(Id::new(2)));
+        assert!(state.is_composing());
+
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: None,
+            permission_overwrites: vec![PermissionOverwriteInfo {
+                id: 1,
+                kind: PermissionOverwriteKind::Role,
+                allow: 0,
+                deny: 0x400,
+            }],
+        }));
+
+        assert_eq!(state.selected_channel_id(), None);
+        assert!(!state.is_composing());
+        assert!(state.channel_pane_entries().is_empty());
+    }
+
+    #[test]
+    fn debug_channel_visibility_reports_active_guild_counts() {
+        // The fixture's channel denies VIEW_CHANNEL on @everyone, so it
+        // shows up in the hidden bucket.
+        let state = state_with_view_denied_channel();
+        let stats = state.debug_channel_visibility();
+        assert_eq!(
+            stats,
+            ChannelVisibilityStats {
+                visible: 0,
+                hidden: 1,
+            }
+        );
+    }
+
+    /// Build a guild with a single channel where @everyone keeps
+    /// VIEW_CHANNEL but loses SEND_MESSAGES — i.e. an announcement-style
+    /// "read-only" channel that the user can read but not post in.
+    fn state_with_read_only_channel() -> DashboardState {
+        guild_state_with_overwrites(vec![PermissionOverwriteInfo {
+            id: 1,
+            kind: PermissionOverwriteKind::Role,
+            allow: 0,
+            deny: 0x800,
+        }])
+    }
+
+    /// Build a guild with a single channel that is fully hidden — used to
+    /// verify the visibility stats accounting.
+    fn state_with_view_denied_channel() -> DashboardState {
+        guild_state_with_overwrites(vec![PermissionOverwriteInfo {
+            id: 1,
+            kind: PermissionOverwriteKind::Role,
+            allow: 0,
+            deny: 0x400,
+        }])
+    }
+
+    /// Build a guild with a single channel where @everyone has VIEW + SEND
+    /// (no overwrites), so the composer should open and submit normally.
+    fn state_with_writable_channel() -> DashboardState {
+        guild_state_with_overwrites(Vec::new())
+    }
+
+    fn state_with_hidden_and_visible_channels() -> DashboardState {
+        let me: Id<UserMarker> = Id::new(10);
+        let owner: Id<UserMarker> = Id::new(11);
+        let guild: Id<GuildMarker> = Id::new(1);
+        let hidden: Id<ChannelMarker> = Id::new(2);
+        let visible: Id<ChannelMarker> = Id::new(3);
+        let voice: Id<ChannelMarker> = Id::new(4);
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(me),
+        });
+        state.push_event(AppEvent::GuildCreate {
+            guild_id: guild,
+            name: "guild".to_owned(),
+            member_count: Some(1),
+            owner_id: Some(owner),
+            channels: vec![
+                ChannelInfo {
+                    guild_id: Some(guild),
+                    channel_id: hidden,
+                    parent_id: None,
+                    position: Some(0),
+                    last_message_id: None,
+                    name: "secret".to_owned(),
+                    kind: "GuildText".to_owned(),
+                    message_count: None,
+                    total_message_sent: None,
+                    thread_archived: None,
+                    thread_locked: None,
+                    recipients: None,
+                    permission_overwrites: vec![PermissionOverwriteInfo {
+                        id: guild.get(),
+                        kind: PermissionOverwriteKind::Role,
+                        allow: 0,
+                        deny: 0x400,
+                    }],
+                },
+                ChannelInfo {
+                    guild_id: Some(guild),
+                    channel_id: visible,
+                    parent_id: None,
+                    position: Some(1),
+                    last_message_id: None,
+                    name: "general".to_owned(),
+                    kind: "GuildText".to_owned(),
+                    message_count: None,
+                    total_message_sent: None,
+                    thread_archived: None,
+                    thread_locked: None,
+                    recipients: None,
+                    permission_overwrites: Vec::new(),
+                },
+                ChannelInfo {
+                    guild_id: Some(guild),
+                    channel_id: voice,
+                    parent_id: None,
+                    position: Some(2),
+                    last_message_id: None,
+                    name: "voice".to_owned(),
+                    kind: "GuildVoice".to_owned(),
+                    message_count: None,
+                    total_message_sent: None,
+                    thread_archived: None,
+                    thread_locked: None,
+                    recipients: None,
+                    permission_overwrites: Vec::new(),
+                },
+            ],
+            members: vec![MemberInfo {
+                user_id: me,
+                display_name: "me".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            }],
+            presences: Vec::new(),
+            roles: vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: 0x400,
+            }],
+            emojis: Vec::new(),
+        });
+        state.activate_guild(ActiveGuildScope::Guild(guild));
+        state
+    }
+
+    fn guild_state_with_overwrites(overwrites: Vec<PermissionOverwriteInfo>) -> DashboardState {
+        let me: Id<UserMarker> = Id::new(10);
+        let owner: Id<UserMarker> = Id::new(11);
+        let guild: Id<GuildMarker> = Id::new(1);
+        let channel: Id<ChannelMarker> = Id::new(2);
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(me),
+        });
+        state.push_event(AppEvent::GuildCreate {
+            guild_id: guild,
+            name: "guild".to_owned(),
+            member_count: Some(1),
+            owner_id: Some(owner),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild),
+                channel_id: channel,
+                parent_id: None,
+                position: Some(0),
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                recipients: None,
+                permission_overwrites: overwrites,
+            }],
+            members: vec![MemberInfo {
+                user_id: me,
+                display_name: "me".to_owned(),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            }],
+            presences: Vec::new(),
+            roles: vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: 0x400 | 0x800, // VIEW + SEND
+            }],
+            emojis: Vec::new(),
+        });
+        state.activate_guild(ActiveGuildScope::Guild(guild));
+        state.activate_channel(channel);
+        state
+    }
+
+    #[test]
     fn composer_sends_to_opened_thread_channel() {
         let mut state = state_with_thread_created_message();
         focus_messages(&mut state);
@@ -5620,6 +5992,31 @@ mod tests {
         assert_eq!(
             state.guild_member_list_channel(Id::new(1)),
             Some(Id::new(2))
+        );
+    }
+
+    #[test]
+    fn member_list_subscription_fallback_skips_hidden_channels() {
+        let state = state_with_hidden_and_visible_channels();
+
+        assert_eq!(
+            state.guild_member_list_channel(Id::new(1)),
+            Some(Id::new(3))
+        );
+        assert_eq!(
+            state.member_list_subscription_target(),
+            Some((Id::new(1), Id::new(3)))
+        );
+    }
+
+    #[test]
+    fn member_list_subscription_target_skips_active_voice_channel() {
+        let mut state = state_with_hidden_and_visible_channels();
+        state.activate_channel(Id::new(4));
+
+        assert_eq!(
+            state.member_list_subscription_target(),
+            Some((Id::new(1), Id::new(3)))
         );
     }
 
@@ -6496,6 +6893,7 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }));
         }
         state.confirm_selected_guild();
@@ -6800,6 +7198,7 @@ mod tests {
                 presences: Vec::new(),
                 roles: Vec::new(),
                 emojis: Vec::new(),
+                owner_id: None,
             });
         }
         state.push_event(AppEvent::GuildFoldersUpdate {
@@ -6825,6 +7224,7 @@ mod tests {
                 presences: Vec::new(),
                 roles: Vec::new(),
                 emojis: Vec::new(),
+                owner_id: None,
             });
         }
         state
@@ -6847,6 +7247,7 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             })
             .collect();
 
@@ -6859,6 +7260,7 @@ mod tests {
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state
@@ -6898,11 +7300,13 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members,
             presences,
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state
@@ -6940,6 +7344,7 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members,
             presences: vec![
@@ -6954,8 +7359,10 @@ mod tests {
                 color: None,
                 position: 1,
                 hoist: true,
+                permissions: 0,
             }],
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state
@@ -6986,6 +7393,7 @@ mod tests {
                     thread_archived: None,
                     thread_locked: None,
                     recipients: None,
+                    permission_overwrites: Vec::new(),
                 },
                 ChannelInfo {
                     guild_id: Some(guild_id),
@@ -7000,6 +7408,7 @@ mod tests {
                     thread_archived: None,
                     thread_locked: None,
                     recipients: None,
+                    permission_overwrites: Vec::new(),
                 },
                 ChannelInfo {
                     guild_id: Some(guild_id),
@@ -7014,12 +7423,14 @@ mod tests {
                     thread_archived: None,
                     thread_locked: None,
                     recipients: None,
+                    permission_overwrites: Vec::new(),
                 },
             ],
             members: Vec::new(),
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state
@@ -7045,6 +7456,7 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }));
         }
         state
@@ -7104,6 +7516,7 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -7122,6 +7535,7 @@ mod tests {
                     available: false,
                 },
             ],
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -7167,11 +7581,13 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: Vec::new(),
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -7219,6 +7635,7 @@ mod tests {
                     thread_archived: None,
                     thread_locked: None,
                     recipients: None,
+                    permission_overwrites: Vec::new(),
                 },
                 ChannelInfo {
                     guild_id: Some(guild_id),
@@ -7233,12 +7650,14 @@ mod tests {
                     thread_archived: Some(false),
                     thread_locked: Some(false),
                     recipients: None,
+                    permission_overwrites: Vec::new(),
                 },
             ],
             members: Vec::new(),
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -7321,11 +7740,13 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: Vec::new(),
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -7503,6 +7924,7 @@ mod tests {
                 presences: Vec::new(),
                 roles: Vec::new(),
                 emojis: Vec::new(),
+                owner_id: None,
             });
         }
         state.push_event(AppEvent::GuildFoldersUpdate {

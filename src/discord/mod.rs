@@ -14,10 +14,11 @@ pub use events::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
     EmbedFieldInfo, EmbedInfo, FriendStatus, GuildFolder, InlinePreviewInfo, MemberInfo,
     MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    MutualGuildInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionInfo, ReactionUserInfo,
-    ReactionUsersInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+    MutualGuildInfo, PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo,
+    PresenceStatus, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo,
+    UserProfileInfo,
 };
 pub use state::{
-    ChannelRecipientState, ChannelState, DiscordState, GuildMemberState, GuildState,
-    MessageCapabilities, MessageState, RoleState,
+    ChannelRecipientState, ChannelState, ChannelVisibilityStats, DiscordState, GuildMemberState,
+    GuildState, MessageCapabilities, MessageState, RoleState,
 };

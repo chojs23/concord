@@ -23,9 +23,9 @@ use super::{
     },
 };
 use crate::discord::{
-    AttachmentInfo, ChannelState, EmbedInfo, FriendStatus, MessageKind, MessageSnapshotInfo,
-    MessageState, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUsersInfo,
-    ReplyInfo, UserProfileInfo,
+    AttachmentInfo, ChannelState, ChannelVisibilityStats, EmbedInfo, FriendStatus, MessageKind,
+    MessageSnapshotInfo, MessageState, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
+    ReactionUsersInfo, ReplyInfo, UserProfileInfo,
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -1712,6 +1712,17 @@ fn composer_text(state: &DashboardState, width: u16) -> String {
             "group-dm" | "Group" => channel.name.clone(),
             _ => format!("#{}", channel.name),
         };
+        // Tell the user up-front if the keymap won't open the composer here,
+        // so they don't repeatedly press `i` and wonder why nothing happens.
+        if !state.can_send_in_selected_channel() {
+            return format!("read-only · cannot send messages in {label}");
+        }
+        // SEND is allowed but ATTACH isn't — flag it so a future attachment
+        // picker has a coherent UX, and the user knows uploads will be
+        // refused before they try.
+        if !state.can_attach_in_selected_channel() {
+            return format!("press i to write in {label} (attachments disabled)");
+        }
         return format!("press i to write in {label}");
     }
 
@@ -2373,6 +2384,7 @@ fn render_debug_log_popup(frame: &mut Frame, area: Rect, state: &DashboardState)
     let visible_log_lines = usize::from(area.height).saturating_sub(6).max(1);
     let lines = debug_log_popup_lines(
         state.debug_log_lines(),
+        state.debug_channel_visibility(),
         visible_log_lines,
         usize::from(popup_width.saturating_sub(2)),
     );
@@ -2409,12 +2421,27 @@ fn reaction_users_visible_line_count(area: Rect) -> usize {
 
 fn debug_log_popup_lines(
     entries: Vec<String>,
+    channel_visibility: ChannelVisibilityStats,
     visible_log_lines: usize,
     width: usize,
 ) -> Vec<Line<'static>> {
     let width = width.max(1);
     let visible_log_lines = visible_log_lines.max(1);
     let mut lines = Vec::new();
+
+    // Header line: visible vs. permission-hidden channels for the active
+    // scope. Helps the user diagnose "why is this channel missing" without
+    // diving into the logs.
+    let visibility_text = format!(
+        "Channels: {} visible · {} hidden by permissions",
+        channel_visibility.visible, channel_visibility.hidden,
+    );
+    lines.push(Line::from(Span::styled(
+        visibility_text,
+        Style::default().fg(ACCENT),
+    )));
+    lines.push(Line::from(Span::raw(String::new())));
+
     if entries.is_empty() {
         lines.push(Line::from(Span::styled(
             "No errors recorded in this process.",
@@ -2968,11 +2995,11 @@ mod tests {
     };
     use crate::{
         discord::{
-            AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientState, ChannelState, EmbedInfo,
-            FriendStatus, GuildMemberState, MemberInfo, MentionInfo, MessageKind,
-            MessageSnapshotInfo, MessageState, MutualGuildInfo, PollAnswerInfo, PollInfo,
-            PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
-            ReplyInfo, UserProfileInfo,
+            AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientState, ChannelState,
+            ChannelVisibilityStats, EmbedInfo, FriendStatus, GuildMemberState, MemberInfo,
+            MentionInfo, MessageKind, MessageSnapshotInfo, MessageState, MutualGuildInfo,
+            PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
+            ReactionUserInfo, ReactionUsersInfo, ReplyInfo, UserProfileInfo,
         },
         tui::{
             format::truncate_display_width,
@@ -3628,6 +3655,7 @@ mod tests {
             thread_archived: Some(false),
             thread_locked: Some(false),
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
 
         let lines = format_message_content_lines(&message, &state, 200);
@@ -4362,6 +4390,10 @@ mod tests {
                 "1 [ERROR] first: old".to_owned(),
                 "2 [ERROR] second: recent".to_owned(),
             ],
+            ChannelVisibilityStats {
+                visible: 12,
+                hidden: 3,
+            },
             1,
             80,
         );
@@ -4369,6 +4401,8 @@ mod tests {
         assert_eq!(
             line_texts_from_ratatui(&lines),
             vec![
+                "Channels: 12 visible · 3 hidden by permissions",
+                "",
                 "2 [ERROR] second: recent",
                 "",
                 "Showing current-process ERROR logs only · ` / Esc close"
@@ -4378,11 +4412,13 @@ mod tests {
 
     #[test]
     fn debug_log_popup_has_empty_state() {
-        let lines = debug_log_popup_lines(Vec::new(), 5, 80);
+        let lines = debug_log_popup_lines(Vec::new(), ChannelVisibilityStats::default(), 5, 80);
 
         assert_eq!(
             line_texts_from_ratatui(&lines),
             vec![
+                "Channels: 0 visible · 0 hidden by permissions",
+                "",
                 "No errors recorded in this process.",
                 "",
                 "Showing current-process ERROR logs only · ` / Esc close"
@@ -4394,6 +4430,7 @@ mod tests {
     fn debug_log_popup_wraps_long_detail_lines() {
         let lines = debug_log_popup_lines(
             vec!["42 [ERROR] history: load message history failed: Discord HTTP request failed; detail=Discord returned HTTP 403; api_error=Missing Access; response_body_bytes=99".to_owned()],
+            ChannelVisibilityStats::default(),
             4,
             44,
         );
@@ -4484,6 +4521,7 @@ mod tests {
             thread_archived: None,
             thread_locked: None,
             recipients: None,
+            permission_overwrites: Vec::new(),
         }));
         state.push_event(AppEvent::GuildMemberUpsert {
             guild_id: Id::new(2),
@@ -4539,6 +4577,7 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             },
         ));
         let mut snapshot = forwarded_snapshot(Some("hello"), Vec::new());
@@ -4943,11 +4982,13 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: Vec::new(),
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -5062,6 +5103,7 @@ mod tests {
             presences: vec![(Id::new(user_id), PresenceStatus::Online)],
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state
     }
@@ -5123,6 +5165,7 @@ mod tests {
                     status: *status,
                 })
                 .collect(),
+            permission_overwrites: Vec::new(),
         }
     }
 

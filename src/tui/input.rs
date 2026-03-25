@@ -1118,6 +1118,7 @@ mod tests {
                 presences: Vec::new(),
                 roles: Vec::new(),
                 emojis: Vec::new(),
+                owner_id: None,
             });
         }
         state.push_event(AppEvent::GuildFoldersUpdate {
@@ -1184,6 +1185,7 @@ mod tests {
                     thread_archived: None,
                     thread_locked: None,
                     recipients: None,
+                    permission_overwrites: Vec::new(),
                 },
                 ChannelInfo {
                     guild_id: Some(guild_id),
@@ -1198,6 +1200,7 @@ mod tests {
                     thread_archived: None,
                     thread_locked: None,
                     recipients: None,
+                    permission_overwrites: Vec::new(),
                 },
                 ChannelInfo {
                     guild_id: Some(guild_id),
@@ -1212,12 +1215,14 @@ mod tests {
                     thread_archived: None,
                     thread_locked: None,
                     recipients: None,
+                    permission_overwrites: Vec::new(),
                 },
             ],
             members: Vec::new(),
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state
@@ -1246,6 +1251,7 @@ mod tests {
                 avatar_url: None,
                 status: Some(PresenceStatus::Online),
             }]),
+            permission_overwrites: Vec::new(),
         }));
         state.confirm_selected_guild();
         state
@@ -1273,11 +1279,13 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: Vec::new(),
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -1366,6 +1374,7 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: Vec::new(),
             presences: Vec::new(),
@@ -1376,6 +1385,7 @@ mod tests {
                 animated: false,
                 available: true,
             }],
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();
@@ -1421,11 +1431,13 @@ mod tests {
                 thread_archived: None,
                 thread_locked: None,
                 recipients: None,
+                permission_overwrites: Vec::new(),
             }],
             members: Vec::new(),
             presences: Vec::new(),
             roles: Vec::new(),
             emojis: Vec::new(),
+            owner_id: None,
         });
         state.confirm_selected_guild();
         state.confirm_selected_channel();

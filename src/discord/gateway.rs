@@ -26,7 +26,9 @@ use super::{
     FriendStatus, GuildFolder, MemberInfo, MentionInfo, MessageKind, MessageReferenceInfo,
     MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
     events::default_avatar_url,
-    events::{AppEvent, AttachmentUpdate, map_event},
+    events::{
+        AppEvent, AttachmentUpdate, PermissionOverwriteInfo, PermissionOverwriteKind, map_event,
+    },
 };
 use crate::logging;
 
@@ -631,10 +633,13 @@ fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         .map(|items| items.iter().filter_map(parse_custom_emoji).collect())
         .unwrap_or_default();
 
+    let owner_id = data.get("owner_id").and_then(parse_id::<UserMarker>);
+
     Some(AppEvent::GuildCreate {
         guild_id,
         name,
         member_count,
+        owner_id,
         channels,
         members,
         presences,
@@ -659,6 +664,17 @@ fn parse_role_info(value: &Value) -> Option<RoleInfo> {
         .filter(|value| *value != 0);
     let position = value.get("position").and_then(Value::as_i64).unwrap_or(0);
     let hoist = value.get("hoist").and_then(Value::as_bool).unwrap_or(false);
+    // Discord serializes `permissions` as a string-encoded 64-bit bitfield.
+    // Numeric form is also accepted as a fallback for older payloads / tests.
+    let permissions = value
+        .get("permissions")
+        .and_then(|value| {
+            value
+                .as_str()
+                .and_then(|s| s.parse::<u64>().ok())
+                .or_else(|| value.as_u64())
+        })
+        .unwrap_or(0);
 
     Some(RoleInfo {
         id,
@@ -666,6 +682,7 @@ fn parse_role_info(value: &Value) -> Option<RoleInfo> {
         color,
         position,
         hoist,
+        permissions,
     })
 }
 
@@ -719,9 +736,11 @@ fn parse_guild_update(data: &Value) -> Option<AppEvent> {
         .get("roles")
         .and_then(Value::as_array)
         .map(|items| items.iter().filter_map(parse_role_info).collect());
+    let owner_id = data.get("owner_id").and_then(parse_id::<UserMarker>);
     Some(AppEvent::GuildUpdate {
         guild_id,
         name,
+        owner_id,
         roles,
         emojis,
     })
@@ -1435,7 +1454,9 @@ fn parse_channel_info(
         Some(3) => "group-dm".to_owned(),
         Some(4) => "category".to_owned(),
         Some(5) => "announcement".to_owned(),
-        Some(10..=12) => "thread".to_owned(),
+        Some(10) => "GuildNewsThread".to_owned(),
+        Some(11) => "GuildPublicThread".to_owned(),
+        Some(12) => "GuildPrivateThread".to_owned(),
         Some(13) => "stage".to_owned(),
         Some(15) => "forum".to_owned(),
         Some(other) => format!("type-{other}"),
@@ -1468,6 +1489,17 @@ fn parse_channel_info(
         None
     };
 
+    let permission_overwrites = value
+        .get("permission_overwrites")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(parse_permission_overwrite)
+                .collect()
+        })
+        .unwrap_or_default();
+
     Some(ChannelInfo {
         guild_id,
         channel_id,
@@ -1487,6 +1519,43 @@ fn parse_channel_info(
             .and_then(|metadata| metadata.get("locked"))
             .and_then(Value::as_bool),
         recipients,
+        permission_overwrites,
+    })
+}
+
+/// Parse one entry from a channel's `permission_overwrites` array. Discord
+/// serializes the bitfields as decimal strings; the numeric fallback keeps
+/// the parser tolerant of synthetic payloads (used in tests).
+fn parse_permission_overwrite(value: &Value) -> Option<PermissionOverwriteInfo> {
+    let id = value.get("id").and_then(|value| {
+        value
+            .as_str()
+            .and_then(|s| s.parse::<u64>().ok())
+            .or_else(|| value.as_u64())
+    })?;
+    let kind = match value.get("type").and_then(Value::as_u64)? {
+        0 => PermissionOverwriteKind::Role,
+        1 => PermissionOverwriteKind::Member,
+        // Forward-compat: ignore unknown overwrite kinds so we neither grant
+        // nor deny VIEW_CHANNEL based on a discriminant we can't interpret.
+        _ => return None,
+    };
+    let parse_bits = |key: &str| -> u64 {
+        value
+            .get(key)
+            .and_then(|value| {
+                value
+                    .as_str()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .or_else(|| value.as_u64())
+            })
+            .unwrap_or(0)
+    };
+    Some(PermissionOverwriteInfo {
+        id,
+        kind,
+        allow: parse_bits("allow"),
+        deny: parse_bits("deny"),
     })
 }
 
@@ -2249,7 +2318,7 @@ mod tests {
         )
         .expect("thread channel should parse");
 
-        assert_eq!(channel.kind, "thread");
+        assert_eq!(channel.kind, "GuildPublicThread");
         assert_eq!(channel.message_count, Some(12));
         assert_eq!(channel.total_message_sent, Some(14));
         assert_eq!(channel.thread_archived, Some(true));
@@ -2273,7 +2342,7 @@ mod tests {
                     && channel.guild_id == Some(Id::new(1))
                     && channel.parent_id == Some(Id::new(2))
                     && channel.name == "release notes"
-                    && channel.kind == "thread"
+                    && channel.kind == "GuildPublicThread"
                     && channel.message_count == Some(12)
                     && channel.total_message_sent == Some(14)
                     && channel.thread_archived == Some(false)
@@ -2296,7 +2365,7 @@ mod tests {
             [AppEvent::ChannelUpsert(channel)]
                 if channel.channel_id == Id::new(10)
                     && channel.name == "renamed thread"
-                    && channel.kind == "thread"
+                    && channel.kind == "GuildPublicThread"
         ));
     }
 
@@ -2476,7 +2545,7 @@ mod tests {
 
         assert_eq!(channels.len(), 1);
         assert_eq!(channels[0].channel_id, Id::new(10));
-        assert_eq!(channels[0].kind, "thread");
+        assert_eq!(channels[0].kind, "GuildPublicThread");
         assert_eq!(channels[0].name, "release notes");
     }
 
@@ -2664,6 +2733,7 @@ mod tests {
             name,
             roles,
             emojis,
+            ..
         } = event
         else {
             panic!("expected guild update event");

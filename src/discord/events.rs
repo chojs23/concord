@@ -3,6 +3,7 @@ use twilight_model::{
     channel::{
         Attachment, Channel, Message,
         message::{Embed, EmojiReactionType, Mention, MessageSnapshot, Reaction},
+        permission_overwrite::{PermissionOverwrite, PermissionOverwriteType},
     },
     gateway::{
         payload::incoming::{
@@ -61,6 +62,29 @@ pub struct ChannelInfo {
     pub thread_archived: Option<bool>,
     pub thread_locked: Option<bool>,
     pub recipients: Option<Vec<ChannelRecipientInfo>>,
+    /// Channel-level permission overrides. The empty default means a
+    /// gateway/REST payload that omitted the field is treated as "no
+    /// channel-specific overrides", which matches Discord's behavior of
+    /// inheriting from the guild base permissions.
+    pub permission_overwrites: Vec<PermissionOverwriteInfo>,
+}
+
+/// Whether a `PermissionOverwriteInfo` targets a role or an individual member.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PermissionOverwriteKind {
+    Role,
+    Member,
+}
+
+/// A single channel-level allow/deny pair against either a role or a member.
+/// IDs are stored raw because the same field can refer to a role id, a member
+/// id, or the guild id (the `@everyone` role is keyed by the guild snowflake).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PermissionOverwriteInfo {
+    pub id: u64,
+    pub kind: PermissionOverwriteKind,
+    pub allow: u64,
+    pub deny: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -88,6 +112,10 @@ pub struct RoleInfo {
     pub color: Option<u32>,
     pub position: i64,
     pub hoist: bool,
+    /// Discord permission bitfield carried by this role. Used by
+    /// `DiscordState::can_view_channel` to compute base permissions and
+    /// detect ADMINISTRATOR.
+    pub permissions: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -339,6 +367,9 @@ pub enum AppEvent {
         guild_id: Id<GuildMarker>,
         name: String,
         member_count: Option<u64>,
+        /// Snowflake of the guild owner. The owner short-circuits permission
+        /// checks (sees every channel regardless of overwrites).
+        owner_id: Option<Id<UserMarker>>,
         channels: Vec<ChannelInfo>,
         members: Vec<MemberInfo>,
         presences: Vec<(Id<UserMarker>, PresenceStatus)>,
@@ -348,6 +379,7 @@ pub enum AppEvent {
     GuildUpdate {
         guild_id: Id<GuildMarker>,
         name: String,
+        owner_id: Option<Id<UserMarker>>,
         roles: Option<Vec<RoleInfo>>,
         emojis: Option<Vec<CustomEmojiInfo>>,
     },
@@ -867,6 +899,7 @@ pub fn map_event(event: Event) -> Vec<AppEvent> {
         Event::GuildUpdate(guild) => vec![AppEvent::GuildUpdate {
             guild_id: guild.id,
             name: guild.name.clone(),
+            owner_id: Some(guild.owner_id),
             roles: Some(guild.roles.iter().map(role_info).collect()),
             emojis: Some(guild.emojis.iter().map(custom_emoji_info).collect()),
         }],
@@ -1006,6 +1039,7 @@ fn map_guild_create(guild: GuildCreatePayload) -> Option<AppEvent> {
         guild_id: guild.id,
         name: guild.name,
         member_count: guild.member_count,
+        owner_id: Some(guild.owner_id),
         channels,
         members,
         presences,
@@ -1028,7 +1062,26 @@ fn role_info(role: &TwilightRole) -> RoleInfo {
         color,
         position: role.position,
         hoist: role.hoist,
+        permissions: role.permissions.bits(),
     }
+}
+
+fn permission_overwrite_info(overwrite: &PermissionOverwrite) -> Option<PermissionOverwriteInfo> {
+    let kind = match overwrite.kind {
+        PermissionOverwriteType::Member => PermissionOverwriteKind::Member,
+        PermissionOverwriteType::Role => PermissionOverwriteKind::Role,
+        // Discord occasionally adds new overwrite kinds (synced threads, etc.).
+        // We have no way to interpret an unknown discriminant, so the safer
+        // option is to drop the entry; treating it as Role/Member could either
+        // grant or deny access incorrectly.
+        _ => return None,
+    };
+    Some(PermissionOverwriteInfo {
+        id: overwrite.id.get(),
+        kind,
+        allow: overwrite.allow.bits(),
+        deny: overwrite.deny.bits(),
+    })
 }
 
 fn role_color(color: u32) -> Option<u32> {
@@ -1077,6 +1130,16 @@ fn channel_info(channel: &Channel) -> ChannelInfo {
             .recipients
             .as_ref()
             .map(|recipients| recipients.iter().map(channel_recipient_info).collect()),
+        permission_overwrites: channel
+            .permission_overwrites
+            .as_ref()
+            .map(|overwrites| {
+                overwrites
+                    .iter()
+                    .filter_map(permission_overwrite_info)
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -1438,6 +1501,7 @@ mod tests {
                 name,
                 roles: Some(roles),
                 emojis: Some(emojis),
+                ..
             }] if *guild_id == Id::new(10)
                 && name == "Renamed Guild"
                 && roles.is_empty()
