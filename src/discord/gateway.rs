@@ -3927,8 +3927,8 @@ mod tests {
                     "users": [
                         {
                             "id": "20",
-                            "username": "muri",
-                            "global_name": "딱구형",
+                            "username": "asdf",
+                            "global_name": "global",
                             "discriminator": "0",
                         }
                     ],
@@ -3951,12 +3951,12 @@ mod tests {
                 _ => None,
             })
             .expect("dm channel upsert should be emitted");
-        assert_eq!(dm.name, "딱구형");
+        assert_eq!(dm.name, "global");
         let recipients = dm.recipients.as_ref().expect("recipients hydrated");
         assert_eq!(recipients.len(), 1);
         assert_eq!(recipients[0].user_id, Id::new(20));
-        assert_eq!(recipients[0].display_name, "딱구형");
-        assert_eq!(recipients[0].username.as_deref(), Some("muri"));
+        assert_eq!(recipients[0].display_name, "global");
+        assert_eq!(recipients[0].username.as_deref(), Some("asdf"));
     }
 
     #[test]
