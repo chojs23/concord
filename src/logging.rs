@@ -1,12 +1,14 @@
 use std::{
     collections::VecDeque,
     env,
-    fs::OpenOptions,
-    io::Write,
     path::PathBuf,
     sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+#[cfg(not(test))]
+use std::{fs::OpenOptions, io::Write};
+
+use chrono::{DateTime, Utc};
 
 static LOGGER: OnceLock<FileLogger> = OnceLock::new();
 static ERROR_LOG: OnceLock<Mutex<VecDeque<ErrorLogEntry>>> = OnceLock::new();
@@ -49,6 +51,7 @@ impl Level {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, allow(dead_code))]
 struct FileLogger {
     path: Option<PathBuf>,
     debug_enabled: bool,
@@ -62,6 +65,7 @@ impl FileLogger {
         }
     }
 
+    #[cfg(not(test))]
     fn write(&self, level: Level, target: &str, message: &str) {
         if !self.should_write(level) {
             return;
@@ -81,6 +85,15 @@ impl FileLogger {
         }
     }
 
+    /// During `cargo test` we never want to touch the real log file because
+    /// the unit tests below intentionally call `error(...)` with synthetic
+    /// targets ("test", "history") to exercise the in-memory queue. Without
+    /// this guard those entries would be appended to `$HOME/.concord/concord.log`
+    /// and pollute the user's debug-log popup on the next run.
+    #[cfg(test)]
+    fn write(&self, _level: Level, _target: &str, _message: &str) {}
+
+    #[cfg_attr(test, allow(dead_code))]
     fn should_write(&self, level: Level) -> bool {
         match level {
             Level::Error => true,
@@ -174,7 +187,23 @@ fn unix_timestamp_millis() -> u128 {
 }
 
 fn format_log_line(timestamp_millis: u128, level: Level, target: &str, message: &str) -> String {
-    format!("{timestamp_millis} [{}] {target}: {message}", level.label())
+    format!(
+        "{} [{}] {target}: {message}",
+        format_log_timestamp(timestamp_millis),
+        level.label(),
+    )
+}
+
+/// Renders a millisecond Unix timestamp as `YYYY-MM-DD HH:MM:SS UTC` so the
+/// debug log popup is human-readable. Falls back to the raw value if the
+/// timestamp does not fit in `i64` (essentially never, but keeps the logger
+/// infallible).
+fn format_log_timestamp(timestamp_millis: u128) -> String {
+    i64::try_from(timestamp_millis)
+        .ok()
+        .and_then(DateTime::<Utc>::from_timestamp_millis)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+        .unwrap_or_else(|| timestamp_millis.to_string())
 }
 
 #[cfg(test)]
@@ -207,7 +236,16 @@ mod tests {
     fn formats_log_line_with_level_and_target() {
         assert_eq!(
             format_log_line(42, Level::Error, "gateway", "boom"),
-            "42 [ERROR] gateway: boom"
+            "1970-01-01 00:00:00 UTC [ERROR] gateway: boom"
+        );
+    }
+
+    #[test]
+    fn format_log_timestamp_renders_iso_utc() {
+        // 1777738972130 ms since epoch -> 2026-05-02 16:22:52 UTC.
+        assert_eq!(
+            super::format_log_timestamp(1_777_738_972_130),
+            "2026-05-02 16:22:52 UTC"
         );
     }
 

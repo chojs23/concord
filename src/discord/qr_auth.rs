@@ -16,10 +16,12 @@ use tokio_tungstenite::{
     tungstenite::{Message, client::IntoClientRequest, http::HeaderValue},
 };
 
+use super::auth_http::{
+    DISCORD_LOGIN_REFERER, DISCORD_ORIGIN, DISCORD_WEB_USER_AGENT, discord_web_client,
+};
+
 const REMOTE_AUTH_URL: &str = "wss://remote-auth-gateway.discord.gg/?v=2";
 const TICKET_EXCHANGE_URL: &str = "https://discord.com/api/v10/users/@me/remote-auth/login";
-const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-                          (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 
 #[derive(Clone, Debug)]
 pub enum QrEvent {
@@ -64,8 +66,11 @@ async fn run(tx: &mpsc::Sender<QrEvent>) -> Result<Option<String>, String> {
     let mut request = REMOTE_AUTH_URL.into_client_request().map_err(err)?;
     {
         let headers = request.headers_mut();
-        headers.insert("Origin", HeaderValue::from_static("https://discord.com"));
-        headers.insert("User-Agent", HeaderValue::from_static(USER_AGENT));
+        headers.insert("Origin", HeaderValue::from_static(DISCORD_ORIGIN));
+        headers.insert(
+            "User-Agent",
+            HeaderValue::from_static(DISCORD_WEB_USER_AGENT),
+        );
     }
 
     let (ws, _) = connect_async(request).await.map_err(err)?;
@@ -258,10 +263,7 @@ async fn exchange_ticket(
         encrypted_token: String,
     }
 
-    let client = reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .build()
-        .map_err(err)?;
+    let client = discord_web_client().map_err(err)?;
 
     let response = send_ticket_exchange(&client, ticket, fingerprint)
         .await
@@ -284,8 +286,8 @@ async fn send_ticket_exchange(
 ) -> Result<reqwest::Response, reqwest::Error> {
     let mut request = client
         .post(TICKET_EXCHANGE_URL)
-        .header("Origin", "https://discord.com")
-        .header("Referer", "https://discord.com/login")
+        .header("Origin", DISCORD_ORIGIN)
+        .header("Referer", DISCORD_LOGIN_REFERER)
         .json(&json!({ "ticket": ticket }));
     if let Some(fp) = fingerprint {
         request = request.header("X-Fingerprint", fp);

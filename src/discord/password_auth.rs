@@ -2,11 +2,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{sync::mpsc, task::JoinHandle};
 
+use super::auth_http::{discord_login_headers, discord_web_client};
+
 const LOGIN_URL: &str = "https://discord.com/api/v9/auth/login";
 const MFA_VERIFY_URL: &str = "https://discord.com/api/v9/auth/mfa";
 const MFA_SMS_SEND_URL: &str = "https://discord.com/api/v9/auth/mfa/sms/send";
-const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-                          (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 
 #[derive(Clone, Debug)]
 pub enum PasswordAuthEvent {
@@ -122,7 +122,7 @@ enum LoginOutcome {
 async fn login_with_password(login: &str, password: &str) -> Result<LoginOutcome, String> {
     let response = http_client()
         .post(LOGIN_URL)
-        .headers(auth_headers())
+        .headers(discord_login_headers())
         .json(&json!({
             "login": normalize_login_identifier(login),
             "password": password,
@@ -152,7 +152,7 @@ async fn send_mfa_sms(ticket: &str) -> Result<Option<String>, String> {
 
     let response = http_client()
         .post(MFA_SMS_SEND_URL)
-        .headers(auth_headers())
+        .headers(discord_login_headers())
         .json(&json!({ "ticket": ticket }))
         .send()
         .await
@@ -182,7 +182,7 @@ async fn verify_mfa(
     let url = format!("{MFA_VERIFY_URL}/{}", method.endpoint_name());
     let response = http_client()
         .post(url)
-        .headers(auth_headers())
+        .headers(discord_login_headers())
         .json(&json!({
             "code": code.trim(),
             "login_instance_id": login_instance_id,
@@ -206,25 +206,7 @@ async fn verify_mfa(
 }
 
 fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .build()
-        .expect("reqwest client builder with static user agent cannot fail")
-}
-
-fn auth_headers() -> reqwest::header::HeaderMap {
-    use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, HeaderMap, HeaderValue, ORIGIN, REFERER};
-
-    let mut headers = HeaderMap::new();
-    headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
-    headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
-    headers.insert(ORIGIN, HeaderValue::from_static("https://discord.com"));
-    headers.insert(
-        REFERER,
-        HeaderValue::from_static("https://discord.com/login"),
-    );
-    headers.insert("X-Discord-Locale", HeaderValue::from_static("en-US"));
-    headers
+    discord_web_client().expect("reqwest client builder with static user agent cannot fail")
 }
 
 fn parse_login_success(body: &str) -> Result<LoginOutcome, String> {

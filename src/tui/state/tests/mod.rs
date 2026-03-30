@@ -1,0 +1,3427 @@
+mod fixtures;
+
+use fixtures::*;
+
+use twilight_model::id::{
+    Id,
+    marker::{ChannelMarker, GuildMarker, UserMarker},
+};
+
+use super::{
+    ChannelActionKind, ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildBranch,
+    GuildPaneEntry, MessageActionKind, MessageState, message_rendered_height, presence_marker,
+};
+use crate::discord::{
+    AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, ChannelVisibilityStats,
+    CustomEmojiInfo, FriendStatus, MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo,
+    MessageSnapshotInfo, MutualGuildInfo, PermissionOverwriteInfo, PermissionOverwriteKind,
+    PresenceStatus, ReactionEmoji, ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo,
+    UserProfileInfo,
+};
+
+fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
+    UserProfileInfo {
+        user_id: Id::new(user_id),
+        username: format!("user-{user_id}"),
+        global_name: None,
+        guild_nick: guild_nick.map(str::to_owned),
+        avatar_url: None,
+        bio: None,
+        pronouns: None,
+        mutual_guilds: Vec::<MutualGuildInfo>::new(),
+        mutual_friends_count: 0,
+        friend_status: FriendStatus::None,
+        note: None,
+    }
+}
+
+#[test]
+fn tracks_current_user_from_ready() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    assert_eq!(state.current_user(), Some("neo"));
+    assert_eq!(state.current_user_id, Some(Id::new(10)));
+}
+
+#[test]
+fn captures_last_gateway_error() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GatewayError {
+        message: "boom".to_owned(),
+    });
+    assert_eq!(state.last_error(), Some("boom"));
+}
+
+#[test]
+fn toggles_debug_log_popup() {
+    let mut state = DashboardState::new();
+
+    state.toggle_debug_log_popup();
+    assert!(state.is_debug_log_popup_open());
+
+    state.close_debug_log_popup();
+    assert!(!state.is_debug_log_popup_open());
+}
+
+#[test]
+fn dashboard_starts_without_message_focus() {
+    let state = DashboardState::new();
+
+    assert_eq!(state.focus(), FocusPane::Guilds);
+    assert_eq!(state.focused_message_selection(), None);
+}
+
+#[test]
+fn opening_profile_uses_cache_for_same_guild() {
+    let user_id: Id<UserMarker> = Id::new(10);
+    let guild_id: Id<GuildMarker> = Id::new(1);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::UserProfileLoaded {
+        guild_id: Some(guild_id),
+        profile: profile_info(user_id.get(), Some("guild nick")),
+    });
+
+    assert_eq!(state.open_user_profile_popup(user_id, Some(guild_id)), None);
+    assert_eq!(
+        state
+            .user_profile_popup_data()
+            .and_then(|profile| profile.guild_nick.as_deref()),
+        Some("guild nick")
+    );
+}
+
+#[test]
+fn opening_profile_refetches_when_cached_for_different_guild() {
+    let user_id: Id<UserMarker> = Id::new(10);
+    let cached_guild: Id<GuildMarker> = Id::new(1);
+    let popup_guild: Id<GuildMarker> = Id::new(2);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::UserProfileLoaded {
+        guild_id: Some(cached_guild),
+        profile: profile_info(user_id.get(), Some("cached nick")),
+    });
+
+    assert_eq!(
+        state.open_user_profile_popup(user_id, Some(popup_guild)),
+        Some(AppCommand::LoadUserProfile {
+            user_id,
+            guild_id: Some(popup_guild),
+        })
+    );
+    assert!(state.user_profile_popup_data().is_none());
+}
+
+#[test]
+fn user_profile_load_failure_marks_open_popup_failed() {
+    let user_id: Id<UserMarker> = Id::new(10);
+    let guild_id: Id<GuildMarker> = Id::new(1);
+    let mut state = DashboardState::new();
+
+    state.open_user_profile_popup(user_id, Some(guild_id));
+    state.push_event(AppEvent::UserProfileLoadFailed {
+        user_id,
+        guild_id: Some(guild_id),
+        message: "network failed".to_owned(),
+    });
+
+    assert_eq!(
+        state.user_profile_popup_load_error(),
+        Some("network failed")
+    );
+}
+
+#[test]
+fn user_profile_load_failure_ignores_stale_popup() {
+    let user_id: Id<UserMarker> = Id::new(10);
+    let open_guild: Id<GuildMarker> = Id::new(1);
+    let stale_guild: Id<GuildMarker> = Id::new(2);
+    let mut state = DashboardState::new();
+
+    state.open_user_profile_popup(user_id, Some(open_guild));
+    state.push_event(AppEvent::UserProfileLoadFailed {
+        user_id,
+        guild_id: Some(stale_guild),
+        message: "stale failure".to_owned(),
+    });
+
+    assert_eq!(state.user_profile_popup_load_error(), None);
+}
+
+#[test]
+fn user_profile_popup_status_uses_cached_guild_member_status() {
+    let user_id: Id<UserMarker> = Id::new(10);
+    let guild_id: Id<GuildMarker> = Id::new(1);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: Vec::new(),
+        members: vec![MemberInfo {
+            user_id,
+            display_name: "neo".to_owned(),
+            username: None,
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+        }],
+        presences: vec![(user_id, PresenceStatus::DoNotDisturb)],
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.open_user_profile_popup(user_id, Some(guild_id));
+
+    assert_eq!(
+        state.user_profile_popup_status(),
+        PresenceStatus::DoNotDisturb
+    );
+}
+
+#[test]
+fn user_profile_popup_status_uses_dm_recipient_status_without_guild() {
+    let user_id: Id<UserMarker> = Id::new(10);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: None,
+        channel_id: Id::new(20),
+        parent_id: None,
+        position: None,
+        last_message_id: None,
+        name: "neo".to_owned(),
+        kind: "dm".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        recipients: Some(vec![ChannelRecipientInfo {
+            user_id,
+            display_name: "neo".to_owned(),
+            username: None,
+            is_bot: false,
+            avatar_url: None,
+            status: Some(PresenceStatus::Idle),
+        }]),
+        permission_overwrites: Vec::new(),
+    }));
+    state.open_user_profile_popup(user_id, None);
+
+    assert_eq!(state.user_profile_popup_status(), PresenceStatus::Idle);
+}
+
+#[test]
+fn cycle_focus_uses_four_top_level_panes() {
+    let mut state = DashboardState::new();
+
+    assert_eq!(state.focus(), FocusPane::Guilds);
+    state.cycle_focus();
+    assert_eq!(state.focus(), FocusPane::Channels);
+    state.cycle_focus();
+    assert_eq!(state.focus(), FocusPane::Messages);
+    state.cycle_focus();
+    assert_eq!(state.focus(), FocusPane::Members);
+    state.cycle_focus();
+    assert_eq!(state.focus(), FocusPane::Guilds);
+}
+
+#[test]
+fn loaded_messages_are_unselected_until_message_pane_is_focused() {
+    let guild_id = Id::new(1);
+    let channel_id: Id<ChannelMarker> = Id::new(2);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    for id in 1..=2u64 {
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(guild_id),
+            channel_id,
+            message_id: Id::new(id),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some(format!("msg {id}")),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+    }
+
+    assert_eq!(state.selected_message(), 1);
+    assert_eq!(state.focused_message_selection(), None);
+
+    while state.focus() != FocusPane::Messages {
+        state.cycle_focus();
+    }
+    assert_eq!(state.focused_message_selection(), Some(0));
+}
+
+#[test]
+fn startup_events_do_not_auto_open_direct_messages() {
+    let channel_id: Id<ChannelMarker> = Id::new(20);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: None,
+        channel_id,
+        parent_id: None,
+        position: None,
+        last_message_id: Some(Id::new(30)),
+        name: "neo".to_owned(),
+        kind: "dm".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        recipients: None,
+        permission_overwrites: Vec::new(),
+    }));
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: None,
+        channel_id,
+        message_id: Id::new(30),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("hello".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+
+    assert_eq!(state.selected_channel_id(), None);
+    assert_eq!(state.selected_channel_state(), None);
+    assert!(state.channel_pane_entries().is_empty());
+    assert!(state.messages().is_empty());
+}
+
+#[test]
+fn member_groups_use_roles_and_status_sorted_entries() {
+    let guild_id = Id::new(1);
+    let alice: Id<UserMarker> = Id::new(10);
+    let bob: Id<UserMarker> = Id::new(20);
+    let admin_role = Id::new(100);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id: Id::new(2),
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: vec![
+            MemberInfo {
+                user_id: bob,
+                display_name: "bob".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: vec![admin_role],
+            },
+            MemberInfo {
+                user_id: alice,
+                display_name: "alice".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: vec![admin_role],
+            },
+        ],
+        presences: vec![(alice, PresenceStatus::Online), (bob, PresenceStatus::Idle)],
+        roles: vec![RoleInfo {
+            id: admin_role,
+            name: "Admin".to_owned(),
+            color: Some(0xFFAA00),
+            position: 10,
+            hoist: true,
+            permissions: 0,
+        }],
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+
+    let groups = state.members_grouped();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].label, "Admin");
+    assert_eq!(groups[0].color, Some(0xFFAA00));
+    assert_eq!(
+        groups[0]
+            .entries
+            .iter()
+            .map(|member| member.display_name())
+            .collect::<Vec<_>>(),
+        vec!["alice".to_owned(), "bob".to_owned()],
+    );
+}
+
+#[test]
+fn member_groups_show_selected_group_dm_recipients() {
+    let mut state = DashboardState::new();
+    let channel_id = Id::new(20);
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: None,
+        channel_id,
+        parent_id: None,
+        position: None,
+        last_message_id: None,
+        name: "project chat".to_owned(),
+        kind: "group-dm".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        recipients: Some(vec![
+            ChannelRecipientInfo {
+                user_id: Id::new(30),
+                display_name: "bob".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                status: Some(PresenceStatus::Idle),
+            },
+            ChannelRecipientInfo {
+                user_id: Id::new(10),
+                display_name: "alice".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                status: Some(PresenceStatus::Online),
+            },
+        ]),
+        permission_overwrites: Vec::new(),
+    }));
+
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+
+    let groups = state.members_grouped();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].label, "Members");
+    assert_eq!(
+        groups[0]
+            .entries
+            .iter()
+            .map(|member| (member.display_name(), member.status()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("alice".to_owned(), PresenceStatus::Online),
+            ("bob".to_owned(), PresenceStatus::Idle),
+        ],
+    );
+}
+
+#[test]
+fn member_panel_title_separates_loaded_and_total_members() {
+    let guild_id = Id::new(1);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: Some(100),
+        channels: Vec::new(),
+        members: vec![MemberInfo {
+            user_id: Id::new(10),
+            display_name: "alice".to_owned(),
+            username: None,
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+        }],
+        presences: vec![(Id::new(10), PresenceStatus::Online)],
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+
+    assert_eq!(state.member_panel_title(), "Members 1/100 loaded");
+    assert_eq!(state.flattened_members().len(), 1);
+}
+
+#[test]
+fn member_panel_title_stays_plain_without_guild_total_or_in_direct_messages() {
+    let mut guild_state = DashboardState::new();
+    guild_state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: Vec::new(),
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    guild_state.confirm_selected_guild();
+    assert_eq!(guild_state.member_panel_title(), "Members");
+
+    let mut dm_state = DashboardState::new();
+    dm_state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: None,
+        channel_id: Id::new(20),
+        parent_id: None,
+        position: None,
+        last_message_id: None,
+        name: "alice".to_owned(),
+        kind: "dm".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        recipients: None,
+        permission_overwrites: Vec::new(),
+    }));
+    dm_state.confirm_selected_guild();
+    assert_eq!(dm_state.member_panel_title(), "Members");
+}
+
+#[test]
+fn unknown_presence_uses_neutral_member_marker() {
+    assert_eq!(presence_marker(PresenceStatus::Unknown), ' ');
+}
+
+#[test]
+fn member_groups_split_role_online_and_offline_buckets() {
+    let guild_id = Id::new(1);
+    let admin_role = Id::new(100);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id: Id::new(2),
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: vec![
+            MemberInfo {
+                user_id: Id::new(10),
+                display_name: "alice".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: vec![admin_role],
+            },
+            MemberInfo {
+                user_id: Id::new(11),
+                display_name: "amy".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: vec![admin_role],
+            },
+            MemberInfo {
+                user_id: Id::new(20),
+                display_name: "bob".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            },
+            MemberInfo {
+                user_id: Id::new(21),
+                display_name: "ben".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            },
+        ],
+        presences: vec![
+            // Admin online, admin offline, no-role online, no-role offline
+            (Id::new(10), PresenceStatus::Online),
+            (Id::new(11), PresenceStatus::Offline),
+            (Id::new(20), PresenceStatus::Idle),
+            (Id::new(21), PresenceStatus::Offline),
+        ],
+        roles: vec![RoleInfo {
+            id: admin_role,
+            name: "Admin".to_owned(),
+            color: Some(0xFFAA00),
+            position: 10,
+            hoist: true,
+            permissions: 0,
+        }],
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+
+    let groups = state.members_grouped();
+    assert_eq!(
+        groups
+            .iter()
+            .map(|group| group.label.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            "Admin".to_owned(),
+            "Online".to_owned(),
+            "Offline".to_owned()
+        ]
+    );
+
+    // Admin role group only carries the online admin (alice); the offline
+    // admin (amy) belongs to the Offline bucket.
+    let admin_names: Vec<_> = groups[0]
+        .entries
+        .iter()
+        .map(|m| m.display_name().to_owned())
+        .collect();
+    assert_eq!(admin_names, vec!["alice".to_owned()]);
+
+    // Online group lists members with no hoisted role who aren't offline.
+    let online_names: Vec<_> = groups[1]
+        .entries
+        .iter()
+        .map(|m| m.display_name().to_owned())
+        .collect();
+    assert_eq!(online_names, vec!["bob".to_owned()]);
+
+    // Offline group merges everyone offline regardless of role.
+    let offline_names: Vec<_> = groups[2]
+        .entries
+        .iter()
+        .map(|m| m.display_name().to_owned())
+        .collect();
+    assert_eq!(offline_names, vec!["amy".to_owned(), "ben".to_owned()]);
+}
+
+#[test]
+fn member_groups_treat_idle_and_dnd_as_online() {
+    let guild_id = Id::new(1);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id: Id::new(2),
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: vec![
+            MemberInfo {
+                user_id: Id::new(10),
+                display_name: "idle".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            },
+            MemberInfo {
+                user_id: Id::new(11),
+                display_name: "dnd".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            },
+            MemberInfo {
+                user_id: Id::new(12),
+                display_name: "unknown".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            },
+        ],
+        presences: vec![
+            (Id::new(10), PresenceStatus::Idle),
+            (Id::new(11), PresenceStatus::DoNotDisturb),
+            // Unknown is treated as offline (Discord defaults to offline
+            // when the gateway has not delivered a presence yet).
+            (Id::new(12), PresenceStatus::Unknown),
+        ],
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+
+    let groups = state.members_grouped();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0].label, "Online");
+    assert_eq!(groups[0].entries.len(), 2);
+    assert_eq!(groups[1].label, "Offline");
+    assert_eq!(groups[1].entries.len(), 1);
+    assert_eq!(groups[1].entries[0].display_name(), "unknown");
+}
+
+#[test]
+fn member_groups_show_selected_dm_recipient() {
+    let mut state = DashboardState::new();
+    let channel_id = Id::new(20);
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: None,
+        channel_id,
+        parent_id: None,
+        position: None,
+        last_message_id: None,
+        name: "alice".to_owned(),
+        kind: "dm".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        recipients: Some(vec![ChannelRecipientInfo {
+            user_id: Id::new(10),
+            display_name: "alice".to_owned(),
+            username: None,
+            is_bot: false,
+            avatar_url: None,
+            status: Some(PresenceStatus::DoNotDisturb),
+        }]),
+        permission_overwrites: Vec::new(),
+    }));
+
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+
+    let groups = state.members_grouped();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].label, "Members");
+    assert_eq!(groups[0].entries.len(), 1);
+    assert_eq!(groups[0].entries[0].display_name(), "alice");
+    assert_eq!(groups[0].entries[0].status(), PresenceStatus::DoNotDisturb);
+}
+
+#[test]
+fn emoji_picker_items_include_available_custom_emojis_for_selected_message_guild() {
+    let state = state_with_custom_emojis();
+
+    let items = state.emoji_reaction_items();
+
+    assert_eq!(items.len(), 9);
+    assert_eq!(items[0].emoji, ReactionEmoji::Unicode("👍".to_owned()));
+    assert_eq!(items[8].label, "Party Time");
+    assert_eq!(
+        items[8].emoji,
+        ReactionEmoji::Custom {
+            id: Id::new(50),
+            name: Some("party_time".to_owned()),
+            animated: true,
+        }
+    );
+}
+
+#[test]
+fn custom_emoji_reaction_items_expose_cdn_image_url() {
+    let state = state_with_custom_emojis();
+
+    let items = state.emoji_reaction_items();
+
+    assert_eq!(
+        items[8].custom_image_url().as_deref(),
+        Some("https://cdn.discordapp.com/emojis/50.gif")
+    );
+    assert_eq!(items[0].custom_image_url(), None);
+}
+
+#[test]
+fn emoji_picker_items_include_custom_emojis_from_update_event() {
+    let guild_id = Id::new(1);
+    let mut state = state_with_messages(1);
+
+    state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id,
+        emojis: vec![CustomEmojiInfo {
+            id: Id::new(60),
+            name: "wave".to_owned(),
+            animated: false,
+            available: true,
+        }],
+    });
+
+    let items = state.emoji_reaction_items();
+
+    assert_eq!(items.len(), 9);
+    assert_eq!(items[8].label, "Wave");
+    assert_eq!(
+        items[8].emoji,
+        ReactionEmoji::Custom {
+            id: Id::new(60),
+            name: Some("wave".to_owned()),
+            animated: false,
+        }
+    );
+}
+
+#[test]
+fn emoji_picker_uses_channel_guild_when_selected_message_lacks_guild_id() {
+    let mut state = state_with_custom_emojis();
+
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: None,
+        channel_id: Id::new(2),
+        message_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("history message without guild".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+
+    let items = state.emoji_reaction_items();
+
+    assert_eq!(items.len(), 9);
+    assert_eq!(items[8].label, "Party Time");
+}
+
+#[test]
+fn emoji_picker_items_stay_unicode_only_for_direct_messages() {
+    let mut state = DashboardState::new();
+    let channel_id = Id::new(20);
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: None,
+        channel_id,
+        parent_id: None,
+        position: None,
+        last_message_id: None,
+        name: "neo".to_owned(),
+        kind: "dm".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        recipients: None,
+        permission_overwrites: Vec::new(),
+    }));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: None,
+        channel_id,
+        message_id: Id::new(1),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("hello".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+
+    assert_eq!(state.emoji_reaction_items().len(), 8);
+}
+
+#[test]
+fn message_creation_keeps_viewport_on_latest() {
+    let guild_id = Id::new(1);
+    let channel_id: Id<ChannelMarker> = Id::new(2);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    for id in 1..=3u64 {
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(guild_id),
+            channel_id,
+            message_id: Id::new(id),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some(format!("msg {id}")),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+    }
+
+    assert_eq!(state.selected_message(), 2);
+}
+
+#[test]
+fn message_scroll_preserves_position_when_not_following() {
+    let mut state = state_with_messages(5);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(6);
+
+    assert_eq!(state.selected_message(), 4);
+    assert!(state.message_auto_follow());
+
+    state.move_up();
+    assert_eq!(state.selected_message(), 3);
+    assert!(!state.message_auto_follow());
+
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(6),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("msg 6".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+
+    assert_eq!(state.selected_message(), 3);
+    assert_eq!(state.messages()[state.selected_message()].id, Id::new(4));
+    assert!(!state.message_auto_follow());
+}
+
+#[test]
+fn message_auto_follow_can_jump_back_to_latest() {
+    let mut state = state_with_messages(5);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(6);
+
+    state.move_up();
+    assert!(!state.message_auto_follow());
+
+    state.toggle_message_auto_follow();
+
+    assert!(state.message_auto_follow());
+    assert_eq!(state.selected_message(), 4);
+}
+
+#[test]
+fn image_preview_rows_keep_latest_message_visible_when_auto_following() {
+    let mut state = state_with_image_messages(6, &[1]);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(6);
+
+    assert_eq!(state.message_scroll(), 0);
+
+    state.clamp_message_viewport_for_image_previews(200, 16, 3);
+
+    assert!(state.message_scroll() > 0 || state.message_line_scroll() > 0);
+    let selected_bottom = state
+        .selected_message_rendered_row(200, 16, 3)
+        .saturating_add(
+            state
+                .selected_message_rendered_height(200, 16, 3)
+                .saturating_sub(1),
+        );
+    assert!(selected_bottom < state.message_view_height());
+}
+
+#[test]
+fn image_preview_scrolloff_keeps_selected_message_visible() {
+    let mut state = state_with_image_messages(8, &[5, 6, 7]);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(14);
+
+    while state.selected_message() > 3 {
+        state.move_up();
+    }
+    state.clamp_message_viewport_for_image_previews(200, 16, 3);
+
+    assert_eq!(state.following_message_rendered_rows(200, 16, 3, 3), 21);
+    let selected_bottom = state
+        .selected_message_rendered_row(200, 16, 3)
+        .saturating_add(
+            state
+                .selected_message_rendered_height(200, 16, 3)
+                .saturating_sub(1),
+        );
+    assert!(selected_bottom < state.message_view_height());
+}
+
+#[test]
+fn video_attachment_does_not_reserve_image_preview_rows() {
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some("clip".to_owned()),
+        mentions: Vec::new(),
+        attachments: vec![video_attachment(1)],
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    };
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
+}
+
+#[test]
+fn explicit_newlines_increase_message_rendered_height() {
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some("hello\nworld".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    };
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
+}
+
+#[test]
+fn wrapped_content_increases_message_rendered_height() {
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some("abcdefghijkl".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    };
+
+    assert_eq!(message_rendered_height(&message, 5, 16, 3), 5);
+}
+
+#[test]
+fn rendered_mentions_affect_message_height() {
+    let mut state = state_with_single_message_content("<@10><@10>");
+    state.push_event(AppEvent::GuildMemberUpsert {
+        guild_id: Id::new(1),
+        member: MemberInfo {
+            user_id: Id::new(10),
+            display_name: "a".to_owned(),
+            username: None,
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+        },
+    });
+    let message = state.messages()[0];
+
+    assert_eq!(message_rendered_height(message, 5, 16, 3), 4);
+    assert_eq!(state.message_base_line_count_for_width(message, 5), 2);
+}
+
+#[test]
+fn forwarded_mentions_affect_height_from_source_channel_guild() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(2)),
+        channel_id: Id::new(9),
+        parent_id: None,
+        position: None,
+        last_message_id: None,
+        name: "source".to_owned(),
+        kind: "GuildText".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        recipients: None,
+        permission_overwrites: Vec::new(),
+    }));
+    state.push_event(AppEvent::GuildMemberUpsert {
+        guild_id: Id::new(2),
+        member: MemberInfo {
+            user_id: Id::new(10),
+            display_name: "a".to_owned(),
+            username: None,
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+        },
+    });
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some(String::new()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: vec![MessageSnapshotInfo {
+            content: Some("<@10><@10>".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            source_channel_id: Some(Id::new(9)),
+            timestamp: None,
+        }],
+    };
+
+    assert_eq!(state.message_base_line_count_for_width(&message, 7), 4);
+}
+
+#[test]
+fn wide_content_increases_message_rendered_height_by_terminal_width() {
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some("漢字仮名交じ".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    };
+
+    assert_eq!(message_rendered_height(&message, 10, 16, 3), 4);
+}
+
+#[test]
+fn discord_embed_rows_increase_message_rendered_height() {
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: vec![youtube_embed()],
+        forwarded_snapshots: Vec::new(),
+    };
+
+    assert_eq!(message_rendered_height(&message, 80, 16, 3), 8);
+}
+
+#[test]
+fn image_attachment_summary_reserves_text_row_before_preview() {
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some("look".to_owned()),
+        mentions: Vec::new(),
+        attachments: vec![image_attachment(1)],
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    };
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
+}
+
+#[test]
+fn forwarded_image_attachment_reserves_preview_rows() {
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some(String::new()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: vec![forwarded_snapshot(1)],
+    };
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
+}
+
+#[test]
+fn forwarded_snapshot_wrapped_content_increases_rendered_height() {
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some(String::new()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: vec![MessageSnapshotInfo {
+            content: Some("abcdefghijkl".to_owned()),
+            mentions: Vec::new(),
+            attachments: vec![image_attachment(1)],
+            embeds: Vec::new(),
+            source_channel_id: None,
+            timestamp: None,
+        }],
+    };
+
+    assert_eq!(message_rendered_height(&message, 7, 16, 3), 10);
+}
+
+#[test]
+fn forwarded_snapshot_wide_content_uses_terminal_width() {
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some(String::new()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: vec![MessageSnapshotInfo {
+            content: Some("漢字仮名交じ".to_owned()),
+            mentions: Vec::new(),
+            attachments: vec![image_attachment(1)],
+            embeds: Vec::new(),
+            source_channel_id: None,
+            timestamp: None,
+        }],
+    };
+
+    assert_eq!(message_rendered_height(&message, 12, 16, 3), 9);
+}
+
+#[test]
+fn forwarded_metadata_reserves_card_row() {
+    let mut snapshot = forwarded_snapshot(1);
+    snapshot.source_channel_id = Some(Id::new(2));
+    snapshot.timestamp = Some("2026-04-30T12:34:56.000000+00:00".to_owned());
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some(String::new()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: vec![snapshot],
+    };
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
+}
+
+#[test]
+fn forwarded_snapshot_embed_rows_increase_rendered_height() {
+    let mut snapshot = forwarded_snapshot(1);
+    snapshot.attachments.clear();
+    snapshot.embeds = vec![youtube_embed()];
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some(String::new()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: vec![snapshot],
+    };
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 10);
+}
+
+#[test]
+fn non_default_message_kind_reserves_label_row() {
+    let mut message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some("reply body".to_owned()),
+        mentions: Vec::new(),
+        attachments: vec![image_attachment(1)],
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    };
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
+
+    message.message_kind = MessageKind::new(19);
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
+}
+
+#[test]
+fn reply_preview_reserves_connector_row_without_extra_type_label() {
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: MessageKind::new(19),
+        reference: None,
+        reply: Some(ReplyInfo {
+            author: "casey".to_owned(),
+            content: Some("looks good".to_owned()),
+            mentions: Vec::new(),
+        }),
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some("asdf".to_owned()),
+        mentions: Vec::new(),
+        attachments: vec![image_attachment(1)],
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    };
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
+}
+
+#[test]
+fn poll_message_reserves_question_and_answer_rows() {
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: Some(poll_info(false)),
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some(String::new()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    };
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
+}
+
+#[test]
+fn poll_message_body_counts_inside_card_height() {
+    let mut message = height_test_message("Please vote");
+    message.poll = Some(poll_info(false));
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 10);
+}
+
+#[test]
+fn wrapped_poll_message_body_counts_inside_card_height() {
+    let mut message = height_test_message("abcdefghijkl");
+    message.poll = Some(poll_info(false));
+
+    assert_eq!(message_rendered_height(&message, 10, 16, 3), 11);
+}
+
+#[test]
+fn thread_created_message_reserves_system_card_rows() {
+    let mut message = height_test_message("release notes");
+    message.message_kind = MessageKind::new(18);
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
+}
+
+#[test]
+fn poll_result_message_reserves_result_card_rows() {
+    let mut message = height_test_message("");
+    message.message_kind = MessageKind::new(46);
+    message.poll = Some(poll_info(false));
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
+}
+
+#[test]
+fn thread_starter_message_reserves_system_card_rows() {
+    let mut message = height_test_message("");
+    message.message_kind = MessageKind::new(21);
+    message.reply = Some(ReplyInfo {
+        author: "alice".to_owned(),
+        content: Some("original topic".to_owned()),
+        mentions: Vec::new(),
+    });
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
+}
+
+#[test]
+fn multiselect_poll_message_uses_same_card_height() {
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: Some(poll_info(true)),
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some(String::new()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    };
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
+}
+
+#[test]
+fn message_action_items_reflect_selected_message_capabilities() {
+    let mut state = state_with_image_messages(1, &[1]);
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+
+    assert!(
+        actions
+            .iter()
+            .any(|action| { action.kind == MessageActionKind::DownloadImage && action.enabled })
+    );
+    assert!(!actions.iter().any(|action| action.label.contains("poll")));
+}
+
+#[test]
+fn embed_thumbnail_download_action_returns_command() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            content: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
+            embeds: vec![youtube_embed()],
+            ..message_info(Id::new(2), 1)
+        }],
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+    state.move_message_action_down();
+
+    let command = state.activate_selected_message_action();
+
+    assert_eq!(
+        command,
+        Some(AppCommand::DownloadAttachment {
+            url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".to_owned(),
+            filename: "embed-thumbnail".to_owned(),
+        })
+    );
+    assert!(!state.is_message_action_menu_open());
+}
+
+#[test]
+fn normal_message_actions_do_not_include_poll_or_image_actions() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+
+    assert_eq!(
+        actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
+        vec![
+            MessageActionKind::Reply,
+            MessageActionKind::AddReaction,
+            MessageActionKind::ShowProfile,
+            MessageActionKind::LoadPinnedMessages,
+            MessageActionKind::SetPinned(true),
+        ]
+    );
+}
+
+#[test]
+fn reaction_message_actions_use_single_reacted_users_item() {
+    let mut state = state_with_reaction_message();
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+
+    assert_eq!(
+        actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
+        vec![
+            MessageActionKind::Reply,
+            MessageActionKind::AddReaction,
+            MessageActionKind::ShowProfile,
+            MessageActionKind::LoadPinnedMessages,
+            MessageActionKind::SetPinned(true),
+            MessageActionKind::ShowReactionUsers,
+            MessageActionKind::RemoveReaction(0),
+        ]
+    );
+    assert_eq!(
+        actions
+            .iter()
+            .filter(|action| action.label == "Show reacted users")
+            .count(),
+        1
+    );
+    assert!(!actions.iter().any(|action| action.label == "Show 👍 users"));
+}
+
+#[test]
+fn show_reacted_users_action_loads_all_reaction_emojis() {
+    let mut state = state_with_reaction_message();
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+    for _ in 0..5 {
+        state.move_message_action_down();
+    }
+
+    let command = state.activate_selected_message_action();
+
+    assert_eq!(
+        command,
+        Some(AppCommand::LoadReactionUsers {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            reactions: vec![
+                ReactionEmoji::Unicode("👍".to_owned()),
+                ReactionEmoji::Custom {
+                    id: Id::new(50),
+                    name: Some("party".to_owned()),
+                    animated: false,
+                },
+            ],
+        })
+    );
+    assert!(!state.is_message_action_menu_open());
+}
+
+#[test]
+fn reaction_users_loaded_opens_popup_state() {
+    let mut state = state_with_messages(1);
+
+    state.push_event(AppEvent::ReactionUsersLoaded {
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        reactions: vec![ReactionUsersInfo {
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+            users: vec![ReactionUserInfo {
+                user_id: Id::new(10),
+                display_name: "neo".to_owned(),
+            }],
+        }],
+    });
+
+    assert!(state.is_reaction_users_popup_open());
+    assert_eq!(state.last_status(), Some("loaded reacted users"));
+    assert_eq!(
+        state
+            .reaction_users_popup()
+            .map(|popup| popup.reactions()[0].users[0].display_name.as_str()),
+        Some("neo")
+    );
+}
+
+#[test]
+fn reaction_users_popup_scroll_down_clamps_at_bottom() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::ReactionUsersLoaded {
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        reactions: vec![ReactionUsersInfo {
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+            users: (1..=6)
+                .map(|id| ReactionUserInfo {
+                    user_id: Id::new(id),
+                    display_name: format!("user-{id}"),
+                })
+                .collect(),
+        }],
+    });
+    // 1 header + 6 users = 7 data lines. With a 3-line viewport the
+    // furthest the user can scroll is 4.
+    state.set_reaction_users_popup_view_height(3);
+
+    for _ in 0..50 {
+        state.scroll_reaction_users_popup_down();
+    }
+    assert_eq!(
+        state.reaction_users_popup().map(|popup| popup.scroll()),
+        Some(4)
+    );
+
+    // A single 'k' press should now move the scroll back, not be eaten by
+    // the inflated counter.
+    state.scroll_reaction_users_popup_up();
+    assert_eq!(
+        state.reaction_users_popup().map(|popup| popup.scroll()),
+        Some(3)
+    );
+}
+
+#[test]
+fn thread_created_message_action_opens_cached_thread() {
+    let mut state = state_with_thread_created_message();
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+    assert_eq!(
+        actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
+        vec![
+            MessageActionKind::Reply,
+            MessageActionKind::OpenThread,
+            MessageActionKind::AddReaction,
+            MessageActionKind::ShowProfile,
+            MessageActionKind::LoadPinnedMessages,
+            MessageActionKind::SetPinned(true),
+        ]
+    );
+
+    state.open_selected_message_actions();
+    state.move_message_action_down();
+    let command = state.activate_selected_message_action();
+
+    assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
+    assert_eq!(command, None);
+}
+
+#[test]
+fn history_loaded_thread_created_message_opens_reference_thread_after_rename() {
+    let mut state = state_with_thread_created_message();
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            message_kind: MessageKind::new(18),
+            reference: Some(MessageReferenceInfo {
+                guild_id: Some(Id::new(1)),
+                channel_id: Some(Id::new(10)),
+                message_id: None,
+            }),
+            pinned: false,
+            reactions: Vec::new(),
+            content: Some("old thread name".to_owned()),
+            ..message_info(Id::new(2), 2)
+        }],
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.jump_bottom();
+
+    let actions = state.selected_message_action_items();
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.kind == MessageActionKind::OpenThread)
+    );
+
+    state.open_selected_message_actions();
+    state.move_message_action_down();
+    state.activate_selected_message_action();
+
+    assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
+}
+
+#[test]
+fn start_composer_refused_in_read_only_channel() {
+    let mut state = state_with_read_only_channel();
+    state.start_composer();
+    assert!(
+        !state.is_composing(),
+        "composer must not open when SEND_MESSAGES is denied"
+    );
+}
+
+#[test]
+fn submit_composer_drops_message_when_send_revoked_after_open() {
+    // Open the composer with SEND_MESSAGES granted, type something, then
+    // simulate a permission overwrite arriving that revokes SEND. Submit
+    // must refuse rather than silently fire a request that would 403.
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    state.push_composer_char('h');
+    state.push_composer_char('i');
+    assert!(state.is_composing());
+
+    // Apply a CHANNEL_UPDATE that strips SEND_MESSAGES via a channel
+    // overwrite on @everyone (role id == guild id == 1).
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        parent_id: None,
+        position: Some(0),
+        last_message_id: None,
+        name: "general".to_owned(),
+        kind: "GuildText".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        recipients: None,
+        permission_overwrites: vec![PermissionOverwriteInfo {
+            id: 1,
+            kind: PermissionOverwriteKind::Role,
+            allow: 0,
+            deny: 0x800,
+        }],
+    }));
+    assert_eq!(state.submit_composer(), None);
+    assert!(!state.is_composing());
+}
+
+#[test]
+fn active_channel_is_cleared_when_view_permission_is_revoked() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    assert_eq!(state.selected_channel_id(), Some(Id::new(2)));
+    assert!(state.is_composing());
+
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        parent_id: None,
+        position: Some(0),
+        last_message_id: None,
+        name: "general".to_owned(),
+        kind: "GuildText".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        recipients: None,
+        permission_overwrites: vec![PermissionOverwriteInfo {
+            id: 1,
+            kind: PermissionOverwriteKind::Role,
+            allow: 0,
+            deny: 0x400,
+        }],
+    }));
+
+    assert_eq!(state.selected_channel_id(), None);
+    assert!(!state.is_composing());
+    assert!(state.channel_pane_entries().is_empty());
+}
+
+#[test]
+fn debug_channel_visibility_reports_active_guild_counts() {
+    // The fixture's channel denies VIEW_CHANNEL on @everyone, so it
+    // shows up in the hidden bucket.
+    let state = state_with_view_denied_channel();
+    let stats = state.debug_channel_visibility();
+    assert_eq!(
+        stats,
+        ChannelVisibilityStats {
+            visible: 0,
+            hidden: 1,
+        }
+    );
+}
+
+#[test]
+fn typing_at_sign_at_start_opens_mention_picker() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+
+    assert_eq!(state.composer_mention_query(), Some(""));
+    assert!(!state.composer_mention_candidates().is_empty());
+}
+
+#[test]
+fn typing_at_sign_after_letter_does_not_trigger_picker() {
+    // `me@` should not open the picker — the user is mid-word, not
+    // starting a fresh mention.
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    for ch in "me".chars() {
+        state.push_composer_char(ch);
+    }
+    state.push_composer_char('@');
+
+    assert_eq!(state.composer_mention_query(), None);
+    assert_eq!(state.composer_input(), "me@");
+}
+
+#[test]
+fn typing_after_at_filters_candidates_by_substring() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('s');
+
+    assert_eq!(state.composer_mention_query(), Some("s"));
+    let names: Vec<_> = state
+        .composer_mention_candidates()
+        .into_iter()
+        .map(|entry| entry.display_name)
+        .collect();
+    assert!(
+        names.iter().all(|name| name.to_lowercase().contains('s')),
+        "expected only `s` matches, got {names:?}"
+    );
+    assert!(names.iter().any(|name| name == "Sally"));
+    assert!(names.iter().any(|name| name == "Sammy"));
+    assert!(!names.iter().any(|name| name == "Bob"));
+}
+
+#[test]
+fn backspace_shrinks_query_then_closes_picker() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('s');
+
+    state.pop_composer_char();
+    assert_eq!(state.composer_mention_query(), Some(""));
+    assert_eq!(state.composer_input(), "@");
+
+    state.pop_composer_char();
+    assert_eq!(state.composer_mention_query(), None);
+    assert_eq!(state.composer_input(), "");
+}
+
+#[test]
+fn confirm_inserts_display_name_and_submit_expands_to_wire_format() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('s');
+    // First match (alphabetical within "starts_with s") is "Sally" (id 20).
+    assert!(state.confirm_composer_mention());
+    assert_eq!(state.composer_input(), "@Sally ");
+    assert_eq!(state.composer_mention_query(), None);
+
+    state.push_composer_char('h');
+    state.push_composer_char('i');
+
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(2),
+            content: "<@20> hi".to_owned(),
+            reply_to: None,
+        })
+    );
+}
+
+#[test]
+fn move_selection_navigates_filtered_list() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('s');
+    let candidates = state.composer_mention_candidates();
+    assert!(candidates.len() >= 2);
+
+    state.move_composer_mention_selection(1);
+    assert_eq!(state.composer_mention_selected(), 1);
+
+    state.move_composer_mention_selection(-5);
+    assert_eq!(state.composer_mention_selected(), 0);
+}
+
+#[test]
+fn cancel_picker_keeps_typed_text() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('s');
+
+    state.cancel_composer_mention();
+    assert_eq!(state.composer_mention_query(), None);
+    assert_eq!(state.composer_input(), "@s");
+}
+
+#[test]
+fn typing_footer_resolves_one_user_to_alias() {
+    let mut state = state_with_writable_channel_and_members();
+    state.push_event(AppEvent::TypingStart {
+        channel_id: Id::new(2),
+        user_id: Id::new(20),
+    });
+
+    assert_eq!(
+        state.typing_footer_for_selected_channel(),
+        Some("Sally is typing\u{2026}".to_owned())
+    );
+}
+
+#[test]
+fn typing_footer_excludes_current_user() {
+    let mut state = state_with_writable_channel_and_members();
+    // user_id 10 is the local user in the fixture's READY event.
+    state.push_event(AppEvent::TypingStart {
+        channel_id: Id::new(2),
+        user_id: Id::new(10),
+    });
+
+    assert_eq!(state.typing_footer_for_selected_channel(), None);
+}
+
+#[test]
+fn typing_footer_pluralizes_at_two_three_and_more_typers() {
+    let mut state = state_with_writable_channel_and_members();
+    state.push_event(AppEvent::TypingStart {
+        channel_id: Id::new(2),
+        user_id: Id::new(20),
+    });
+    state.push_event(AppEvent::TypingStart {
+        channel_id: Id::new(2),
+        user_id: Id::new(21),
+    });
+    let footer = state
+        .typing_footer_for_selected_channel()
+        .expect("two typers should produce a footer");
+    // Newest typer first, so id 21 (Sammy) leads.
+    assert_eq!(footer, "Sammy and Sally are typing\u{2026}");
+
+    state.push_event(AppEvent::TypingStart {
+        channel_id: Id::new(2),
+        user_id: Id::new(22),
+    });
+    let footer = state
+        .typing_footer_for_selected_channel()
+        .expect("three typers should produce a footer");
+    assert_eq!(footer, "Bob, Sammy, and Sally are typing\u{2026}");
+
+    state.push_event(AppEvent::TypingStart {
+        channel_id: Id::new(2),
+        user_id: Id::new(23),
+    });
+    let footer = state
+        .typing_footer_for_selected_channel()
+        .expect("four typers should still produce a footer");
+    assert_eq!(footer, "Several people are typing\u{2026}");
+}
+
+#[test]
+fn picker_matches_alias_with_multibyte_query() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('A');
+
+    let candidates = state.composer_mention_candidates();
+    assert!(
+        candidates.iter().any(|entry| entry.display_name == "Alias"),
+        "alias `Alias` must surface when typing `A`, got {:?}",
+        candidates
+            .iter()
+            .map(|c| c.display_name.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn picker_matches_username_when_alias_does_not_contain_query() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('A');
+    state.push_composer_char('l');
+
+    let candidates = state.composer_mention_candidates();
+    assert!(
+        candidates
+            .iter()
+            .any(|entry| entry.username.as_deref() == Some("Alias123")),
+        "username `Alias123` must match query `Al`, got {:?}",
+        candidates
+            .iter()
+            .map(|c| (c.display_name.clone(), c.username.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn picker_ranks_alias_prefix_above_username_prefix() {
+    // `s` should put display-name matches (Sally, Sammy) before any
+    // username-only match. We don't have a username-only `s` match in the
+    // fixture, but we still verify alias rows come first when both have
+    // candidates.
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('s');
+
+    let candidates = state.composer_mention_candidates();
+    let names: Vec<_> = candidates.iter().map(|c| c.display_name.clone()).collect();
+    assert!(
+        names
+            .first()
+            .map(|name| name.starts_with('S'))
+            .unwrap_or(false),
+        "alias-prefix matches must lead the list, got {names:?}"
+    );
+}
+
+#[test]
+fn composer_sends_to_opened_thread_channel() {
+    let mut state = state_with_thread_created_message();
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+    state.move_message_action_down();
+    state.activate_selected_message_action();
+
+    state.start_composer();
+    state.push_composer_char('h');
+    state.push_composer_char('i');
+
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(10),
+            content: "hi".to_owned(),
+            reply_to: None,
+        })
+    );
+}
+
+#[test]
+fn member_subscription_ranges_grow_with_viewport() {
+    let mut state = state_with_thread_created_message();
+    state.set_member_view_height(20);
+    // Default scroll 0, viewport ends at 20 → bucket 0.
+    assert_eq!(state.member_subscription_ranges(), vec![(0, 99)]);
+
+    state.member_scroll = 100;
+    state.member_view_height = 20;
+    // Viewport ends at 120 → bucket 1, contiguous coverage.
+    assert_eq!(
+        state.member_subscription_ranges(),
+        vec![(0, 99), (100, 199)]
+    );
+
+    state.member_scroll = 480;
+    state.member_view_height = 30;
+    // Viewport ends at 510 → bucket 5, anchor [0,99] plus the two buckets
+    // around the visible end so we never exceed the four-range cap.
+    assert_eq!(
+        state.member_subscription_ranges(),
+        vec![(0, 99), (400, 499), (500, 599)]
+    );
+}
+
+#[test]
+fn member_list_subscription_target_uses_active_channel_or_fallback() {
+    let mut state = state_with_thread_created_message();
+    // The fixture activates `general` (id=2) on guild=1.
+    assert_eq!(
+        state.member_list_subscription_target(),
+        Some((Id::new(1), Id::new(2)))
+    );
+
+    // Switching the active channel to a thread must fall back to the
+    // parent text channel — Discord rejects op-37 ranges against threads.
+    state.activate_channel(Id::new(10));
+    assert_eq!(
+        state.member_list_subscription_target(),
+        Some((Id::new(1), Id::new(2)))
+    );
+}
+
+#[test]
+fn guild_member_list_channel_skips_threads_and_categories() {
+    let state = state_with_thread_created_message();
+    // The fixture's guild has channel id=2 (`general`) plus thread id=10
+    // (`release notes`). The subscription anchor must be the parent text
+    // channel, not the thread.
+    assert_eq!(
+        state.guild_member_list_channel(Id::new(1)),
+        Some(Id::new(2))
+    );
+}
+
+#[test]
+fn member_list_subscription_fallback_skips_hidden_channels() {
+    let state = state_with_hidden_and_visible_channels();
+
+    assert_eq!(
+        state.guild_member_list_channel(Id::new(1)),
+        Some(Id::new(3))
+    );
+    assert_eq!(
+        state.member_list_subscription_target(),
+        Some((Id::new(1), Id::new(3)))
+    );
+}
+
+#[test]
+fn member_list_subscription_target_skips_active_voice_channel() {
+    let mut state = state_with_hidden_and_visible_channels();
+    state.activate_channel(Id::new(4));
+
+    assert_eq!(
+        state.member_list_subscription_target(),
+        Some((Id::new(1), Id::new(3)))
+    );
+}
+
+#[test]
+fn channel_pane_excludes_threads() {
+    let state = state_with_thread_created_message();
+    let entries = state.channel_pane_entries();
+    let channel_ids: Vec<Id<ChannelMarker>> = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            ChannelPaneEntry::Channel { state, .. } => Some(state.id),
+            ChannelPaneEntry::CategoryHeader { .. } => None,
+        })
+        .collect();
+    assert!(channel_ids.contains(&Id::new(2)));
+    assert!(!channel_ids.contains(&Id::new(10)));
+}
+
+#[test]
+fn channel_action_menu_lists_threads_for_selected_channel() {
+    let mut state = state_with_thread_created_message();
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+
+    assert!(state.is_channel_action_menu_open());
+    let actions = state.selected_channel_action_items();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].kind, ChannelActionKind::ShowThreads);
+    assert!(actions[0].enabled);
+
+    let command = state.activate_selected_channel_action();
+    assert_eq!(command, None);
+    assert!(state.is_channel_action_threads_phase());
+
+    let threads = state.channel_action_thread_items();
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].channel_id, Id::new(10));
+    assert_eq!(threads[0].label, "release notes");
+}
+
+#[test]
+fn channel_action_menu_open_thread_activates_and_subscribes() {
+    let mut state = state_with_thread_created_message();
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+    state.activate_selected_channel_action();
+    let command = state.activate_selected_channel_action();
+
+    assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
+    assert!(!state.is_channel_action_menu_open());
+    assert_eq!(
+        command,
+        Some(AppCommand::SubscribeGuildChannel {
+            guild_id: Id::new(1),
+            channel_id: Id::new(10),
+        })
+    );
+}
+
+#[test]
+fn channel_action_menu_back_returns_to_actions_phase() {
+    let mut state = state_with_thread_created_message();
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+    state.activate_selected_channel_action();
+    assert!(state.is_channel_action_threads_phase());
+
+    state.back_channel_action_menu();
+    assert!(state.is_channel_action_menu_open());
+    assert!(!state.is_channel_action_threads_phase());
+
+    state.back_channel_action_menu();
+    assert!(!state.is_channel_action_menu_open());
+}
+
+#[test]
+fn poll_vote_actions_are_available_by_default() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: Some(poll_info(false)),
+        content: Some(String::new()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+
+    let actions = state.selected_message_action_items();
+
+    assert_eq!(
+        actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
+        vec![
+            MessageActionKind::Reply,
+            MessageActionKind::AddReaction,
+            MessageActionKind::ShowProfile,
+            MessageActionKind::LoadPinnedMessages,
+            MessageActionKind::SetPinned(true),
+            MessageActionKind::VotePollAnswer(1),
+            MessageActionKind::VotePollAnswer(2),
+        ]
+    );
+    assert_eq!(actions[5].label, "Remove poll vote: Soup");
+    assert_eq!(actions[6].label, "Vote poll: Noodles");
+}
+
+#[test]
+fn message_action_items_keep_image_action_for_poll_messages() {
+    let mut state = state_with_image_messages(1, &[1]);
+    state.focus_pane(FocusPane::Messages);
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: Some(poll_info(false)),
+        content: Some(String::new()),
+        mentions: Vec::new(),
+        attachments: vec![image_attachment(1)],
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+
+    let actions = state.selected_message_action_items();
+
+    assert_eq!(
+        actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
+        vec![
+            MessageActionKind::Reply,
+            MessageActionKind::DownloadImage,
+            MessageActionKind::AddReaction,
+            MessageActionKind::ShowProfile,
+            MessageActionKind::LoadPinnedMessages,
+            MessageActionKind::SetPinned(true),
+            MessageActionKind::VotePollAnswer(1),
+            MessageActionKind::VotePollAnswer(2),
+        ]
+    );
+}
+
+#[test]
+fn poll_vote_action_can_remove_existing_vote() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: Some(poll_info(false)),
+        content: Some(String::new()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    state.open_selected_message_actions();
+    for _ in 0..5 {
+        state.move_message_action_down();
+    }
+
+    let command = state.activate_selected_message_action();
+
+    assert_eq!(
+        command,
+        Some(AppCommand::VotePoll {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            answer_ids: Vec::new(),
+        })
+    );
+}
+
+#[test]
+fn multi_select_poll_action_opens_picker_and_submits_selected_answers() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: Some(poll_info(true)),
+        content: Some(String::new()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+
+    let actions = state.selected_message_action_items();
+    assert_eq!(actions[5].kind, MessageActionKind::OpenPollVotePicker);
+    assert_eq!(actions[5].label, "Choose poll votes");
+
+    state.open_selected_message_actions();
+    for _ in 0..5 {
+        state.move_message_action_down();
+    }
+    assert_eq!(state.activate_selected_message_action(), None);
+    assert!(state.is_poll_vote_picker_open());
+    assert_eq!(
+        state.poll_vote_picker_items().map(|items| {
+            items
+                .iter()
+                .map(|item| (item.answer_id, item.selected))
+                .collect::<Vec<_>>()
+        }),
+        Some(vec![(1, true), (2, false)])
+    );
+
+    state.move_poll_vote_picker_down();
+    state.toggle_selected_poll_vote_answer();
+    let command = state.activate_poll_vote_picker();
+
+    assert_eq!(
+        command,
+        Some(AppCommand::VotePoll {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            answer_ids: vec![1, 2],
+        })
+    );
+}
+
+#[test]
+fn message_scroll_uses_scrolloff() {
+    let mut state = state_with_messages(12);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(7);
+
+    assert_eq!(state.message_scroll(), 5);
+
+    state.move_up();
+    state.move_up();
+    assert_eq!(state.selected_message(), 9);
+    assert_eq!(state.message_scroll(), 5);
+
+    state.move_up();
+    assert_eq!(state.selected_message(), 8);
+    assert_eq!(state.message_scroll(), 5);
+}
+
+#[test]
+fn message_auto_follow_keeps_latest_message_at_bottom_after_rendered_clamp() {
+    let mut state = state_with_messages(12);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(7);
+
+    state.clamp_message_viewport_for_image_previews(200, 16, 3);
+
+    assert!(state.message_auto_follow());
+    assert_eq!(state.selected_message(), 11);
+    assert_eq!(state.message_scroll(), 9);
+    assert_eq!(state.message_line_scroll(), 2);
+    assert_eq!(state.selected_message_rendered_row(200, 16, 3), 4);
+}
+
+#[test]
+fn message_selection_centers_selected_message_when_possible() {
+    let mut state = state_with_messages(12);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(7);
+    state.clamp_message_viewport_for_image_previews(200, 16, 3);
+
+    for _ in 0..4 {
+        state.move_up();
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
+    }
+
+    assert_eq!(state.selected_message(), 7);
+    assert_eq!(state.message_scroll(), 6);
+    assert_eq!(state.message_line_scroll(), 1);
+    assert_eq!(state.selected_message_rendered_row(200, 16, 3), 2);
+}
+
+#[test]
+fn message_selection_centers_with_line_offset_inside_previous_message() {
+    let mut state = state_with_single_message_content("abcdefghijkl");
+    for id in 2..=5 {
+        push_text_message(&mut state, id, &format!("msg {id}"));
+    }
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(5);
+    state.jump_top();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    state.move_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    assert_eq!(state.selected_message(), 1);
+    assert_eq!(state.message_scroll(), 0);
+    assert_eq!(state.message_line_scroll(), 4);
+    assert_eq!(state.selected_message_rendered_row(5, 16, 3), 1);
+}
+
+#[test]
+fn message_selection_centers_with_image_preview_height() {
+    let mut state = state_with_image_messages(8, &[4]);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(9);
+    state.jump_top();
+    state.clamp_message_viewport_for_image_previews(200, 16, 3);
+
+    for _ in 0..3 {
+        state.move_down();
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
+    }
+
+    assert_eq!(state.messages()[state.selected_message()].id, Id::new(4));
+    assert_eq!(state.selected_message_rendered_height(200, 16, 3), 7);
+    assert_eq!(state.message_scroll(), 2);
+    assert_eq!(state.message_line_scroll(), 2);
+    assert_eq!(state.selected_message_rendered_row(200, 16, 3), 1);
+}
+
+#[test]
+fn message_viewport_scrolls_by_rendered_line() {
+    let mut state = state_with_single_message_content("abcdefghijkl");
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    state.scroll_message_viewport_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    assert_eq!(state.message_scroll(), 0);
+    assert_eq!(state.message_line_scroll(), 3);
+    assert_eq!(state.selected_message(), 0);
+
+    state.scroll_message_viewport_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    assert_eq!(state.message_scroll(), 0);
+    assert_eq!(state.message_line_scroll(), 4);
+}
+
+#[test]
+fn viewport_scroll_moves_to_next_message_after_current_message() {
+    let mut state = state_with_single_message_content("abcdefghijkl");
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("next".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.jump_top();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    state.scroll_message_viewport_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+    state.scroll_message_viewport_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+    state.scroll_message_viewport_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+    state.scroll_message_viewport_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+    state.scroll_message_viewport_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    assert_eq!(state.message_scroll(), 1);
+    assert_eq!(state.message_line_scroll(), 0);
+    assert_eq!(state.selected_message(), 0);
+}
+
+#[test]
+fn focused_message_selection_returns_none_when_viewport_scrolled_past_selection() {
+    let mut state = state_with_single_message_content("abcdefghijkl");
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("next".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.jump_top();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    for _ in 0..5 {
+        state.scroll_message_viewport_down();
+        state.clamp_message_viewport_for_image_previews(5, 16, 3);
+    }
+
+    assert_eq!(state.message_scroll(), 1);
+    assert_eq!(state.selected_message(), 0);
+    assert_eq!(state.focused_message_selection(), None);
+}
+
+#[test]
+fn viewport_scrolls_by_rendered_line_when_selected_message_is_below_top() {
+    let mut state = state_with_single_message_content("abcdefghijkl");
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("next".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.jump_top();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    state.scroll_message_viewport_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+    state.scroll_message_viewport_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    assert_eq!(state.message_scroll(), 0);
+    assert_eq!(state.message_line_scroll(), 2);
+    assert_eq!(state.selected_message(), 0);
+
+    state.move_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    assert_eq!(state.selected_message(), 1);
+    let selected_bottom = state
+        .selected_message_rendered_row(5, 16, 3)
+        .saturating_add(
+            state
+                .selected_message_rendered_height(5, 16, 3)
+                .saturating_sub(1),
+        );
+    assert!(selected_bottom < state.message_view_height());
+}
+
+#[test]
+fn tall_message_clamp_keeps_next_selected_message_visible() {
+    let mut state =
+        state_with_single_message_content("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz");
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("next".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.jump_top();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    state.move_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    let selected_bottom = state
+        .selected_message_rendered_row(5, 16, 3)
+        .saturating_add(
+            state
+                .selected_message_rendered_height(5, 16, 3)
+                .saturating_sub(1),
+        );
+    assert!(selected_bottom < state.message_view_height());
+}
+
+#[test]
+fn viewport_scroll_up_enters_previous_long_message_at_last_line() {
+    let mut state = state_with_single_message_content("abcdefghijkl");
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("next".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.jump_top();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+    for _ in 0..3 {
+        state.scroll_message_viewport_down();
+        state.clamp_message_viewport_for_image_previews(5, 16, 3);
+    }
+
+    state.scroll_message_viewport_up();
+
+    assert_eq!(state.message_scroll(), 0);
+    assert_eq!(state.message_line_scroll(), 2);
+    assert_eq!(state.selected_message(), 0);
+}
+
+#[test]
+fn shared_scroll_helper_keeps_three_rows_below_cursor_when_scrolling_starts() {
+    let height = 10;
+    let scroll = super::clamp_list_scroll(7, 0, height, 20);
+
+    assert_eq!(scroll, 1);
+    assert_eq!(height - 1 - (7 - scroll), 3);
+}
+
+#[test]
+fn shared_scroll_helper_moves_one_row_near_bottom() {
+    let mut scroll = 0usize;
+
+    for cursor in 0..20 {
+        let next_scroll = super::clamp_list_scroll(cursor, scroll, 7, 20);
+        assert!(
+            next_scroll <= scroll.saturating_add(1),
+            "cursor {cursor} moved scroll from {scroll} to {next_scroll}",
+        );
+        scroll = next_scroll;
+    }
+}
+
+#[test]
+fn guild_scroll_uses_scrolloff() {
+    let mut state = state_with_many_guilds(8);
+    state.focus_pane(FocusPane::Guilds);
+    state.set_guild_view_height(7);
+
+    state.jump_bottom();
+    assert_eq!(state.selected_guild(), 8);
+    assert_eq!(state.guild_scroll(), 2);
+
+    state.move_up();
+    state.move_up();
+    assert_eq!(state.selected_guild(), 6);
+    assert_eq!(state.guild_scroll(), 2);
+
+    state.move_up();
+    assert_eq!(state.selected_guild(), 5);
+    assert_eq!(state.guild_scroll(), 2);
+}
+
+#[test]
+fn channel_scroll_uses_scrolloff() {
+    let mut state = state_with_many_channels(8);
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(7);
+
+    state.jump_bottom();
+    assert_eq!(state.selected_channel(), 7);
+    assert_eq!(state.channel_scroll(), 1);
+
+    state.move_up();
+    state.move_up();
+    assert_eq!(state.selected_channel(), 5);
+    assert_eq!(state.channel_scroll(), 1);
+
+    state.move_up();
+    assert_eq!(state.selected_channel(), 4);
+    assert_eq!(state.channel_scroll(), 1);
+}
+
+#[test]
+fn member_scroll_uses_scrolloff() {
+    let mut state = state_with_members(8);
+    state.focus_pane(FocusPane::Members);
+    state.set_member_view_height(7);
+
+    state.jump_bottom();
+    assert_eq!(state.selected_member(), 7);
+    assert_eq!(state.member_scroll(), 2);
+
+    state.move_up();
+    state.move_up();
+    assert_eq!(state.selected_member(), 5);
+    assert_eq!(state.member_scroll(), 2);
+
+    state.move_up();
+    assert_eq!(state.selected_member(), 4);
+    assert_eq!(state.member_scroll(), 2);
+}
+
+#[test]
+fn member_half_page_scrolls_by_rendered_lines() {
+    let mut state = state_with_grouped_members();
+    state.focus_pane(FocusPane::Members);
+    state.set_member_view_height(9);
+
+    assert_eq!(state.selected_member(), 0);
+    assert_eq!(state.selected_member_line(), 1);
+
+    state.half_page_down();
+    assert_eq!(state.selected_member(), 2);
+    assert_eq!(state.selected_member_line(), 5);
+
+    state.half_page_up();
+    assert_eq!(state.selected_member(), 0);
+    assert_eq!(state.selected_member_line(), 1);
+}
+
+#[test]
+fn half_page_scrolls_all_list_panes() {
+    let mut guild_state = state_with_many_guilds(8);
+    guild_state.focus_pane(FocusPane::Guilds);
+    guild_state.set_guild_view_height(9);
+    guild_state.half_page_down();
+    assert_eq!(guild_state.selected_guild(), 5);
+
+    let mut channel_state = state_with_many_channels(8);
+    channel_state.focus_pane(FocusPane::Channels);
+    channel_state.set_channel_view_height(9);
+    channel_state.half_page_down();
+    assert_eq!(channel_state.selected_channel(), 4);
+
+    let mut member_state = state_with_members(8);
+    member_state.focus_pane(FocusPane::Members);
+    member_state.set_member_view_height(9);
+    member_state.half_page_down();
+    assert_eq!(member_state.selected_member(), 4);
+}
+
+#[test]
+fn message_half_page_up_disables_follow() {
+    let mut state = state_with_messages(10);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(9);
+
+    state.half_page_up();
+
+    assert_eq!(state.selected_message(), 5);
+    assert!(!state.message_auto_follow());
+}
+
+#[test]
+fn message_jump_bottom_does_not_enable_auto_follow() {
+    let mut state = state_with_messages(10);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(9);
+
+    state.move_up();
+    assert!(!state.message_auto_follow());
+
+    state.jump_bottom();
+
+    assert_eq!(state.selected_message(), 9);
+    assert!(!state.message_auto_follow());
+}
+
+#[test]
+fn message_half_page_down_keeps_follow_state() {
+    let mut state = state_with_messages(10);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(9);
+
+    state.half_page_down();
+    assert!(state.message_auto_follow());
+
+    state.move_up();
+    assert!(!state.message_auto_follow());
+
+    state.half_page_down();
+    assert!(!state.message_auto_follow());
+}
+
+#[test]
+fn history_load_preserves_manual_scroll_position_by_message_id() {
+    let channel_id: Id<ChannelMarker> = Id::new(2);
+    let mut state = state_with_message_ids([10, 11, 12, 13, 14]);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.move_up();
+    state.move_up();
+
+    let selected_id = state.messages()[state.selected_message()].id;
+    let scroll_id = state.messages()[state.message_scroll()].id;
+
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id,
+        before: None,
+        messages: vec![message_info(channel_id, 5)],
+    });
+
+    assert_eq!(state.messages()[state.selected_message()].id, selected_id);
+    assert_eq!(state.messages()[state.message_scroll()].id, scroll_id);
+    assert!(!state.message_auto_follow());
+}
+
+#[test]
+fn older_history_request_waits_for_loaded_page() {
+    let channel_id: Id<ChannelMarker> = Id::new(2);
+    let mut state = state_with_message_ids([10, 11, 12]);
+    state.focus_pane(FocusPane::Messages);
+    state.jump_top();
+
+    assert_eq!(
+        state.next_older_history_command(),
+        Some(AppCommand::LoadMessageHistory {
+            channel_id,
+            before: Some(Id::new(10)),
+        })
+    );
+    assert_eq!(state.next_older_history_command(), None);
+
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id,
+        before: Some(Id::new(10)),
+        messages: vec![message_info(channel_id, 5)],
+    });
+
+    state.move_up();
+    assert_eq!(
+        state.next_older_history_command(),
+        Some(AppCommand::LoadMessageHistory {
+            channel_id,
+            before: Some(Id::new(5)),
+        })
+    );
+}
+
+#[test]
+fn older_history_request_advances_after_cache_limit_retention() {
+    let channel_id: Id<ChannelMarker> = Id::new(2);
+    let mut state = state_with_message_ids(10..=209);
+    state.focus_pane(FocusPane::Messages);
+    state.jump_top();
+
+    assert_eq!(
+        state.next_older_history_command(),
+        Some(AppCommand::LoadMessageHistory {
+            channel_id,
+            before: Some(Id::new(10)),
+        })
+    );
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id,
+        before: Some(Id::new(10)),
+        messages: vec![message_info(channel_id, 5)],
+    });
+
+    assert_eq!(
+        state.messages().last().map(|message| message.id),
+        Some(Id::new(209))
+    );
+
+    state.move_up();
+
+    assert_eq!(
+        state.next_older_history_command(),
+        Some(AppCommand::LoadMessageHistory {
+            channel_id,
+            before: Some(Id::new(5)),
+        })
+    );
+}
+
+#[test]
+fn empty_older_history_page_marks_cursor_exhausted() {
+    let channel_id: Id<ChannelMarker> = Id::new(2);
+    let mut state = state_with_message_ids([10, 11, 12]);
+    state.focus_pane(FocusPane::Messages);
+    state.jump_top();
+
+    assert_eq!(
+        state.next_older_history_command(),
+        Some(AppCommand::LoadMessageHistory {
+            channel_id,
+            before: Some(Id::new(10)),
+        })
+    );
+
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id,
+        before: Some(Id::new(10)),
+        messages: Vec::new(),
+    });
+
+    assert_eq!(state.next_older_history_command(), None);
+}
+
+#[test]
+fn direct_messages_are_sorted_by_latest_message_id() {
+    let mut state = state_with_direct_messages();
+    state.confirm_selected_guild();
+
+    assert_eq!(channel_entry_names(&state), vec!["new", "old", "empty"]);
+}
+
+#[test]
+fn direct_message_selection_waits_for_channel_confirmation() {
+    let mut state = state_with_direct_messages();
+
+    state.confirm_selected_guild();
+    assert_eq!(state.selected_channel_id(), None);
+
+    state.confirm_selected_channel();
+    assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
+}
+
+#[test]
+fn direct_message_sorting_uses_channel_id_fallback() {
+    let mut state = DashboardState::new();
+    for (channel_id, name) in [(Id::new(10), "older-id"), (Id::new(30), "newer-id")] {
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: name.to_owned(),
+            kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }));
+    }
+    state.confirm_selected_guild();
+
+    assert_eq!(channel_entry_names(&state), vec!["newer-id", "older-id"]);
+}
+
+#[test]
+fn direct_message_cursor_stays_on_same_channel_after_recency_sort() {
+    let mut state = state_with_direct_messages();
+    state.confirm_selected_guild();
+    state.focus_pane(FocusPane::Channels);
+    state.move_down();
+
+    assert_eq!(state.selected_channel(), 1);
+    assert_eq!(channel_entry_names(&state), vec!["new", "old", "empty"]);
+
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: None,
+        channel_id: Id::new(30),
+        message_id: Id::new(300),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("new empty dm".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+
+    assert_eq!(channel_entry_names(&state), vec!["empty", "new", "old"]);
+    assert_eq!(state.selected_channel(), 2);
+}
+
+#[test]
+fn channel_tree_groups_category_children() {
+    let state = state_with_channel_tree();
+    let entries = state.channel_pane_entries();
+
+    assert!(matches!(
+        entries[0],
+        ChannelPaneEntry::CategoryHeader {
+            collapsed: false,
+            ..
+        }
+    ));
+    assert!(matches!(
+        entries[1],
+        ChannelPaneEntry::Channel {
+            branch: ChannelBranch::Middle,
+            ..
+        }
+    ));
+    assert!(matches!(
+        entries[2],
+        ChannelPaneEntry::Channel {
+            branch: ChannelBranch::Last,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn selected_channel_category_can_be_closed_and_opened() {
+    let mut state = state_with_channel_tree();
+
+    assert_eq!(state.channel_pane_entries().len(), 3);
+    assert_eq!(state.selected_channel_id(), None);
+
+    state.close_selected_channel_category();
+    let closed_entries = state.channel_pane_entries();
+    assert_eq!(closed_entries.len(), 1);
+    assert!(matches!(
+        closed_entries[0],
+        ChannelPaneEntry::CategoryHeader {
+            collapsed: true,
+            ..
+        }
+    ));
+
+    state.open_selected_channel_category();
+    assert_eq!(state.channel_pane_entries().len(), 3);
+}
+
+#[test]
+fn selected_channel_child_can_close_parent_category() {
+    let mut state = state_with_channel_tree();
+    state.selected_channel = 1;
+
+    state.toggle_selected_channel_category();
+    let entries = state.channel_pane_entries();
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(
+        entries[0],
+        ChannelPaneEntry::CategoryHeader {
+            collapsed: true,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn moving_guild_cursor_does_not_activate_guild() {
+    let mut state = state_with_two_guilds();
+    state.focus_pane(FocusPane::Guilds);
+
+    state.confirm_selected_guild();
+    let active_guild = state.selected_guild_id();
+    assert!(active_guild.is_some());
+
+    state.move_down();
+    assert_eq!(state.selected_guild, 2);
+    assert_eq!(state.selected_guild_id(), active_guild);
+
+    state.confirm_selected_guild();
+    assert_ne!(state.selected_guild_id(), active_guild);
+}
+
+#[test]
+fn active_guild_entry_tracks_confirmed_guild() {
+    let mut state = state_with_two_guilds();
+    state.focus_pane(FocusPane::Guilds);
+
+    {
+        let entries = state.guild_pane_entries();
+        assert!(!state.is_active_guild_entry(&entries[0]));
+        assert!(!state.is_active_guild_entry(&entries[1]));
+        assert!(!state.is_active_guild_entry(&entries[2]));
+    }
+
+    state.confirm_selected_guild();
+    {
+        let entries = state.guild_pane_entries();
+        assert!(!state.is_active_guild_entry(&entries[0]));
+        assert!(state.is_active_guild_entry(&entries[1]));
+        assert!(!state.is_active_guild_entry(&entries[2]));
+    }
+
+    state.move_down();
+    {
+        let entries = state.guild_pane_entries();
+        assert!(state.is_active_guild_entry(&entries[1]));
+        assert!(!state.is_active_guild_entry(&entries[2]));
+    }
+
+    state.confirm_selected_guild();
+    let entries = state.guild_pane_entries();
+    assert!(!state.is_active_guild_entry(&entries[1]));
+    assert!(state.is_active_guild_entry(&entries[2]));
+}
+
+#[test]
+fn moving_channel_cursor_does_not_activate_channel() {
+    let mut state = state_with_channel_tree();
+    let random_id = Id::new(12);
+    state.focus_pane(FocusPane::Channels);
+
+    assert_eq!(state.selected_channel_id(), None);
+
+    state.move_down();
+    state.move_down();
+    assert_eq!(state.selected_channel, 2);
+    assert_eq!(state.selected_channel_id(), None);
+
+    state.confirm_selected_channel();
+    assert_eq!(state.selected_channel_id(), Some(random_id));
+}
+
+#[test]
+fn active_channel_entry_tracks_confirmed_channel() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+
+    {
+        let entries = state.channel_pane_entries();
+        assert!(!state.is_active_channel_entry(&entries[0]));
+        assert!(!state.is_active_channel_entry(&entries[1]));
+        assert!(!state.is_active_channel_entry(&entries[2]));
+    }
+
+    state.move_down();
+    state.confirm_selected_channel();
+    {
+        let entries = state.channel_pane_entries();
+        assert!(!state.is_active_channel_entry(&entries[0]));
+        assert!(state.is_active_channel_entry(&entries[1]));
+        assert!(!state.is_active_channel_entry(&entries[2]));
+    }
+
+    state.move_down();
+    {
+        let entries = state.channel_pane_entries();
+        assert!(state.is_active_channel_entry(&entries[1]));
+        assert!(!state.is_active_channel_entry(&entries[2]));
+    }
+
+    state.confirm_selected_channel();
+    let entries = state.channel_pane_entries();
+    assert!(!state.is_active_channel_entry(&entries[1]));
+    assert!(state.is_active_channel_entry(&entries[2]));
+}
+
+#[test]
+fn selected_folder_can_be_closed_and_opened() {
+    let mut state = state_with_folder(Some(42));
+
+    assert_eq!(state.guild_pane_entries().len(), 4);
+    state.close_selected_folder();
+    let closed_entries = state.guild_pane_entries();
+    assert_eq!(closed_entries.len(), 2);
+    assert!(matches!(
+        closed_entries[1],
+        GuildPaneEntry::FolderHeader {
+            collapsed: true,
+            ..
+        }
+    ));
+
+    state.open_selected_folder();
+    let open_entries = state.guild_pane_entries();
+    assert_eq!(open_entries.len(), 4);
+    assert!(matches!(
+        open_entries[1],
+        GuildPaneEntry::FolderHeader {
+            collapsed: false,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn folder_children_use_middle_and_last_branches() {
+    let state = state_with_folder(Some(42));
+
+    let entries = state.guild_pane_entries();
+    assert!(matches!(
+        entries[2],
+        GuildPaneEntry::Guild {
+            branch: GuildBranch::Middle,
+            ..
+        }
+    ));
+    assert!(matches!(
+        entries[3],
+        GuildPaneEntry::Guild {
+            branch: GuildBranch::Last,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn folder_without_id_can_be_closed() {
+    let mut state = state_with_folder(None);
+
+    state.close_selected_folder();
+    let entries = state.guild_pane_entries();
+    assert_eq!(entries.len(), 2);
+    assert!(matches!(
+        entries[1],
+        GuildPaneEntry::FolderHeader {
+            collapsed: true,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn selected_folder_child_can_close_parent() {
+    let mut state = state_with_folder(Some(42));
+    state.selected_guild = 2;
+
+    state.toggle_selected_folder();
+    let entries = state.guild_pane_entries();
+    assert_eq!(entries.len(), 2);
+    assert!(matches!(
+        entries[1],
+        GuildPaneEntry::FolderHeader {
+            collapsed: true,
+            ..
+        }
+    ));
+}
+
+fn channel_entry_names(state: &DashboardState) -> Vec<&str> {
+    state
+        .channel_pane_entries()
+        .into_iter()
+        .filter_map(|entry| match entry {
+            ChannelPaneEntry::Channel { state, .. } => Some(state.name.as_str()),
+            ChannelPaneEntry::CategoryHeader { .. } => None,
+        })
+        .collect()
+}

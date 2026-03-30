@@ -50,13 +50,14 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_user_profile_popup_key(state, key);
     }
 
+    let focus = state.focus();
     match key.code {
         KeyCode::Char('q') => state.quit(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
-        KeyCode::Char('a') if state.focus() == FocusPane::Channels => {
+        KeyCode::Char('a') if focus == FocusPane::Channels => {
             state.open_selected_channel_actions();
         }
-        KeyCode::Char('a') if state.focus() == FocusPane::Members => {
+        KeyCode::Char('a') if focus == FocusPane::Members => {
             state.open_selected_member_actions();
         }
         KeyCode::Char('i') => state.start_composer(),
@@ -65,16 +66,12 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('3') => state.focus_pane(FocusPane::Messages),
         KeyCode::Char('4') => state.focus_pane(FocusPane::Members),
         KeyCode::Char('j') | KeyCode::Down => state.move_down(),
-        KeyCode::Char('J') if state.focus() == FocusPane::Messages => {
-            state.scroll_message_viewport_down()
-        }
+        KeyCode::Char('J') if focus == FocusPane::Messages => state.scroll_message_viewport_down(),
         KeyCode::Char('k') | KeyCode::Up => {
             state.move_up();
             return state.next_older_history_command();
         }
-        KeyCode::Char('K') if state.focus() == FocusPane::Messages => {
-            state.scroll_message_viewport_up()
-        }
+        KeyCode::Char('K') if focus == FocusPane::Messages => state.scroll_message_viewport_up(),
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.half_page_down()
         }
@@ -92,7 +89,7 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
             state.jump_top();
         }
         KeyCode::Home => {
-            if state.focus() == FocusPane::Messages {
+            if focus == FocusPane::Messages {
                 state.scroll_message_viewport_top();
             } else {
                 state.jump_top();
@@ -100,7 +97,7 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         }
         KeyCode::Char('G') => state.jump_bottom(),
         KeyCode::End => {
-            if state.focus() == FocusPane::Messages {
+            if focus == FocusPane::Messages {
                 state.scroll_message_viewport_bottom();
             } else {
                 state.jump_bottom();
@@ -109,26 +106,22 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Tab => state.cycle_focus(),
         // Tree headers act like a small tree: Enter/Space toggles, Right
         // opens, and Left closes. Anywhere else these keys are no-ops.
-        KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Guilds => {
+        KeyCode::Enter | KeyCode::Char(' ') if focus == FocusPane::Guilds => {
             state.confirm_selected_guild()
         }
-        KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Channels => {
+        KeyCode::Enter | KeyCode::Char(' ') if focus == FocusPane::Channels => {
             return state.confirm_selected_channel_command();
         }
-        KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Members => {
+        KeyCode::Enter | KeyCode::Char(' ') if focus == FocusPane::Members => {
             return state.show_selected_member_profile();
         }
-        KeyCode::Enter | KeyCode::Char(' ') if state.focus() == FocusPane::Messages => {
+        KeyCode::Enter | KeyCode::Char(' ') if focus == FocusPane::Messages => {
             state.open_selected_message_actions()
         }
-        KeyCode::Right if state.focus() == FocusPane::Guilds => state.open_selected_folder(),
-        KeyCode::Left if state.focus() == FocusPane::Guilds => state.close_selected_folder(),
-        KeyCode::Right if state.focus() == FocusPane::Channels => {
-            state.open_selected_channel_category()
-        }
-        KeyCode::Left if state.focus() == FocusPane::Channels => {
-            state.close_selected_channel_category()
-        }
+        KeyCode::Right if focus == FocusPane::Guilds => state.open_selected_folder(),
+        KeyCode::Left if focus == FocusPane::Guilds => state.close_selected_folder(),
+        KeyCode::Right if focus == FocusPane::Channels => state.open_selected_channel_category(),
+        KeyCode::Left if focus == FocusPane::Channels => state.close_selected_channel_category(),
         _ => {}
     }
 
@@ -138,9 +131,9 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
 fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match key.code {
         KeyCode::Esc => state.close_message_action_menu(),
-        KeyCode::Char('j') | KeyCode::Down => state.move_message_action_down(),
-        KeyCode::Char('k') | KeyCode::Up => state.move_message_action_up(),
-        KeyCode::Enter | KeyCode::Char(' ') => return state.activate_selected_message_action(),
+        code if is_down_key(code) => state.move_message_action_down(),
+        code if is_up_key(code) => state.move_message_action_up(),
+        code if is_confirm_key(code) => return state.activate_selected_message_action(),
         _ => {}
     }
 
@@ -150,9 +143,9 @@ fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
 fn handle_user_profile_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => state.close_user_profile_popup(),
-        KeyCode::Char('j') | KeyCode::Down => state.move_user_profile_popup_down(),
-        KeyCode::Char('k') | KeyCode::Up => state.move_user_profile_popup_up(),
-        KeyCode::Enter | KeyCode::Char(' ') => {
+        code if is_down_key(code) => state.move_user_profile_popup_down(),
+        code if is_up_key(code) => state.move_user_profile_popup_up(),
+        code if is_confirm_key(code) => {
             return state.activate_selected_user_profile_mutual();
         }
         _ => {}
@@ -163,9 +156,9 @@ fn handle_user_profile_popup_key(state: &mut DashboardState, key: KeyEvent) -> O
 fn handle_member_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match key.code {
         KeyCode::Esc => state.close_member_action_menu(),
-        KeyCode::Char('j') | KeyCode::Down => state.move_member_action_down(),
-        KeyCode::Char('k') | KeyCode::Up => state.move_member_action_up(),
-        KeyCode::Enter | KeyCode::Char(' ') => return state.activate_selected_member_action(),
+        code if is_down_key(code) => state.move_member_action_down(),
+        code if is_up_key(code) => state.move_member_action_up(),
+        code if is_confirm_key(code) => return state.activate_selected_member_action(),
         _ => {}
     }
     None
@@ -179,9 +172,9 @@ fn handle_channel_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
         KeyCode::Left if state.is_channel_action_threads_phase() => {
             state.back_channel_action_menu()
         }
-        KeyCode::Char('j') | KeyCode::Down => state.move_channel_action_down(),
-        KeyCode::Char('k') | KeyCode::Up => state.move_channel_action_up(),
-        KeyCode::Enter | KeyCode::Char(' ') => return state.activate_selected_channel_action(),
+        code if is_down_key(code) => state.move_channel_action_down(),
+        code if is_up_key(code) => state.move_channel_action_up(),
+        code if is_confirm_key(code) => return state.activate_selected_channel_action(),
         _ => {}
     }
 
@@ -194,9 +187,9 @@ fn handle_emoji_reaction_picker_key(
 ) -> Option<AppCommand> {
     match key.code {
         KeyCode::Esc => state.close_emoji_reaction_picker(),
-        KeyCode::Char('j') | KeyCode::Down => state.move_emoji_reaction_down(),
-        KeyCode::Char('k') | KeyCode::Up => state.move_emoji_reaction_up(),
-        KeyCode::Enter | KeyCode::Char(' ') => return state.activate_selected_emoji_reaction(),
+        code if is_down_key(code) => state.move_emoji_reaction_down(),
+        code if is_up_key(code) => state.move_emoji_reaction_up(),
+        code if is_confirm_key(code) => return state.activate_selected_emoji_reaction(),
         _ => {}
     }
 
@@ -206,8 +199,8 @@ fn handle_emoji_reaction_picker_key(
 fn handle_poll_vote_picker_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match key.code {
         KeyCode::Esc => state.close_poll_vote_picker(),
-        KeyCode::Char('j') | KeyCode::Down => state.move_poll_vote_picker_down(),
-        KeyCode::Char('k') | KeyCode::Up => state.move_poll_vote_picker_up(),
+        code if is_down_key(code) => state.move_poll_vote_picker_down(),
+        code if is_up_key(code) => state.move_poll_vote_picker_up(),
         KeyCode::Char(' ') => state.toggle_selected_poll_vote_answer(),
         KeyCode::Enter => return state.activate_poll_vote_picker(),
         _ => {}
@@ -222,8 +215,8 @@ fn handle_reaction_users_popup_key(
 ) -> Option<AppCommand> {
     match key.code {
         KeyCode::Esc => state.close_reaction_users_popup(),
-        KeyCode::Char('j') | KeyCode::Down => state.scroll_reaction_users_popup_down(),
-        KeyCode::Char('k') | KeyCode::Up => state.scroll_reaction_users_popup_up(),
+        code if is_down_key(code) => state.scroll_reaction_users_popup_down(),
+        code if is_up_key(code) => state.scroll_reaction_users_popup_up(),
         KeyCode::PageDown => state.page_reaction_users_popup_down(),
         KeyCode::PageUp => state.page_reaction_users_popup_up(),
         _ => {}
@@ -241,7 +234,24 @@ fn handle_debug_log_popup_key(state: &mut DashboardState, key: KeyEvent) -> Opti
     None
 }
 
+fn is_down_key(code: KeyCode) -> bool {
+    matches!(code, KeyCode::Char('j') | KeyCode::Down)
+}
+
+fn is_up_key(code: KeyCode) -> bool {
+    matches!(code, KeyCode::Char('k') | KeyCode::Up)
+}
+
+fn is_confirm_key(code: KeyCode) -> bool {
+    matches!(code, KeyCode::Enter | KeyCode::Char(' '))
+}
+
 fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    if state.composer_mention_query().is_some()
+        && let Some(command) = handle_mention_picker_key(state, key)
+    {
+        return command;
+    }
     match key.code {
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
             state.push_composer_char('\n');
@@ -268,6 +278,49 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
     }
 }
 
+/// Returns `Some(None)` to mean "the picker absorbed this key, don't fall
+/// through to the regular composer handler", and `None` to mean "let the
+/// composer handle this key normally."
+fn handle_mention_picker_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<Option<AppCommand>> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Up => {
+            state.move_composer_mention_selection(-1);
+            Some(None)
+        }
+        KeyCode::Down => {
+            state.move_composer_mention_selection(1);
+            Some(None)
+        }
+        KeyCode::Char('p') if ctrl => {
+            state.move_composer_mention_selection(-1);
+            Some(None)
+        }
+        KeyCode::Char('n') if ctrl => {
+            state.move_composer_mention_selection(1);
+            Some(None)
+        }
+        // Both Tab and Enter confirm the highlighted mention. Enter only
+        // submits the message when the picker is closed.
+        KeyCode::Tab | KeyCode::Enter => {
+            if state.confirm_composer_mention() {
+                Some(None)
+            } else {
+                state.cancel_composer_mention();
+                Some(None)
+            }
+        }
+        KeyCode::Esc => {
+            state.cancel_composer_mention();
+            Some(None)
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -288,7 +341,7 @@ mod tests {
     #[test]
     fn enter_and_space_toggle_selected_folder() {
         let mut state = state_with_folder();
-        focus_guilds(&mut state);
+        state.focus_pane(FocusPane::Guilds);
 
         handle_key(
             &mut state,
@@ -306,7 +359,7 @@ mod tests {
     #[test]
     fn enter_and_space_toggle_selected_channel_category() {
         let mut state = state_with_channel_tree();
-        focus_channels(&mut state);
+        state.focus_pane(FocusPane::Channels);
 
         handle_key(
             &mut state,
@@ -324,7 +377,7 @@ mod tests {
     #[test]
     fn movement_waits_for_enter_to_activate_channel() {
         let mut state = state_with_channel_tree();
-        focus_channels(&mut state);
+        state.focus_pane(FocusPane::Channels);
 
         assert_eq!(state.selected_channel_id(), None);
 
@@ -362,7 +415,7 @@ mod tests {
     #[test]
     fn enter_on_direct_message_subscribes_channel() {
         let mut state = state_with_direct_message("dm");
-        focus_channels(&mut state);
+        state.focus_pane(FocusPane::Channels);
 
         let command = handle_key(
             &mut state,
@@ -381,7 +434,7 @@ mod tests {
     #[test]
     fn enter_on_group_direct_message_subscribes_channel() {
         let mut state = state_with_direct_message("group-dm");
-        focus_channels(&mut state);
+        state.focus_pane(FocusPane::Channels);
 
         let command = handle_key(
             &mut state,
@@ -399,7 +452,7 @@ mod tests {
     #[test]
     fn message_keys_use_scroll_controls() {
         let mut state = state_with_messages(10);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         state.set_message_view_height(9);
 
         handle_key(
@@ -434,7 +487,7 @@ mod tests {
     #[test]
     fn message_top_scroll_requests_older_history_once() {
         let mut state = state_with_messages(3);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
 
         handle_key(
             &mut state,
@@ -458,7 +511,7 @@ mod tests {
     #[test]
     fn message_viewport_scroll_keys_do_not_change_selection_or_request_history() {
         let mut state = state_with_messages(1);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         state.clamp_message_viewport_for_image_previews(2, 16, 3);
         let selected = state.selected_message();
 
@@ -481,7 +534,7 @@ mod tests {
     #[test]
     fn message_home_end_scroll_viewport_without_changing_selection() {
         let mut state = state_with_messages(10);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         state.set_message_view_height(5);
         state.clamp_message_viewport_for_image_previews(200, 16, 3);
         let selected = state.selected_message();
@@ -498,7 +551,7 @@ mod tests {
     #[test]
     fn page_keys_scroll_non_message_panes() {
         let mut state = state_with_channel_tree();
-        focus_channels(&mut state);
+        state.focus_pane(FocusPane::Channels);
         state.set_channel_view_height(9);
 
         handle_key(
@@ -525,7 +578,7 @@ mod tests {
         assert!(!state.is_composing());
 
         let mut state = state_with_channel_tree();
-        focus_channels(&mut state);
+        state.focus_pane(FocusPane::Channels);
         handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         handle_key(
             &mut state,
@@ -572,7 +625,7 @@ mod tests {
     #[test]
     fn number_keys_type_digits_while_composing() {
         let mut state = state_with_channel_tree();
-        focus_channels(&mut state);
+        state.focus_pane(FocusPane::Channels);
         handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         handle_key(
             &mut state,
@@ -612,7 +665,7 @@ mod tests {
     #[test]
     fn esc_closes_debug_log_popup_modally() {
         let mut state = state_with_messages(1);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         state.toggle_debug_log_popup();
 
         handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
@@ -624,7 +677,7 @@ mod tests {
     #[test]
     fn backtick_types_while_composing() {
         let mut state = state_with_channel_tree();
-        focus_channels(&mut state);
+        state.focus_pane(FocusPane::Channels);
         handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         handle_key(
             &mut state,
@@ -648,7 +701,7 @@ mod tests {
     #[test]
     fn shift_enter_inserts_newline_while_composing() {
         let mut state = state_with_channel_tree();
-        focus_channels(&mut state);
+        state.focus_pane(FocusPane::Channels);
         handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         handle_key(
             &mut state,
@@ -678,7 +731,7 @@ mod tests {
     #[test]
     fn enter_submits_multiline_composer() {
         let mut state = state_with_channel_tree();
-        focus_channels(&mut state);
+        state.focus_pane(FocusPane::Channels);
         handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         handle_key(
             &mut state,
@@ -721,7 +774,7 @@ mod tests {
     #[test]
     fn o_key_is_reserved_for_future_attachment_actions() {
         let mut state = state_with_messages(1);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
 
         let command = handle_key(
             &mut state,
@@ -734,7 +787,7 @@ mod tests {
     #[test]
     fn enter_and_space_open_message_action_menu() {
         let mut state = state_with_messages(1);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
 
         handle_key(
             &mut state,
@@ -755,7 +808,7 @@ mod tests {
     #[test]
     fn message_action_menu_navigation_is_modal() {
         let mut state = state_with_messages(2);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         handle_key(
             &mut state,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
@@ -777,7 +830,7 @@ mod tests {
     #[test]
     fn message_action_menu_reply_opens_composer() {
         let mut state = state_with_messages(1);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         handle_key(
             &mut state,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
@@ -819,7 +872,7 @@ mod tests {
     #[test]
     fn canceling_reply_composer_clears_reply_target() {
         let mut state = state_with_messages(1);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         handle_key(
             &mut state,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
@@ -856,7 +909,7 @@ mod tests {
     #[test]
     fn message_action_menu_download_image_returns_command() {
         let mut state = state_with_image_message();
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         handle_key(
             &mut state,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
@@ -881,7 +934,7 @@ mod tests {
     #[test]
     fn message_action_menu_add_reaction_opens_emoji_picker() {
         let mut state = state_with_messages(1);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         handle_key(
             &mut state,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
@@ -905,7 +958,7 @@ mod tests {
     #[test]
     fn emoji_picker_selection_returns_reaction_command() {
         let mut state = state_with_messages(1);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         open_emoji_picker(&mut state);
 
         handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
@@ -930,7 +983,7 @@ mod tests {
     #[test]
     fn emoji_picker_space_selects_reaction() {
         let mut state = state_with_messages(1);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         open_emoji_picker(&mut state);
 
         handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
@@ -953,7 +1006,7 @@ mod tests {
     #[test]
     fn emoji_picker_selection_returns_custom_reaction_command() {
         let mut state = state_with_custom_emoji_message();
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         open_emoji_picker(&mut state);
 
         for _ in 0..8 {
@@ -981,7 +1034,7 @@ mod tests {
     #[test]
     fn emoji_picker_vim_and_arrow_keys_move_selection() {
         let mut state = state_with_messages(1);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         open_emoji_picker(&mut state);
 
         handle_key(
@@ -1021,7 +1074,7 @@ mod tests {
     #[test]
     fn escape_closes_emoji_picker_without_reacting() {
         let mut state = state_with_messages(2);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         open_emoji_picker(&mut state);
 
         handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
@@ -1035,7 +1088,7 @@ mod tests {
     #[test]
     fn reaction_users_popup_is_modal_and_escape_closes_it() {
         let mut state = state_with_messages(2);
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         state.push_event(AppEvent::ReactionUsersLoaded {
             channel_id: Id::new(2),
             message_id: Id::new(1),
@@ -1066,7 +1119,7 @@ mod tests {
     #[test]
     fn multiselect_poll_picker_toggles_and_submits_selected_answers() {
         let mut state = state_with_multiselect_poll();
-        focus_messages(&mut state);
+        state.focus_pane(FocusPane::Messages);
         handle_key(
             &mut state,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
@@ -1131,19 +1184,6 @@ mod tests {
         });
         state
     }
-
-    fn focus_guilds(state: &mut DashboardState) {
-        while state.focus() != FocusPane::Guilds {
-            state.cycle_focus();
-        }
-    }
-
-    fn focus_channels(state: &mut DashboardState) {
-        while state.focus() != FocusPane::Channels {
-            state.cycle_focus();
-        }
-    }
-
     fn assert_selected_folder_collapsed(state: &DashboardState, expected: bool) {
         let entries = state.guild_pane_entries();
         assert!(matches!(
@@ -1247,6 +1287,7 @@ mod tests {
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(30),
                 display_name: "alice".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 status: Some(PresenceStatus::Online),
@@ -1470,13 +1511,6 @@ mod tests {
         });
         state
     }
-
-    fn focus_messages(state: &mut DashboardState) {
-        while state.focus() != FocusPane::Messages {
-            state.cycle_focus();
-        }
-    }
-
     fn open_emoji_picker(state: &mut DashboardState) {
         handle_key(state, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         handle_key(state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));

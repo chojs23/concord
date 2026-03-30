@@ -81,16 +81,28 @@ pub struct RenderedText {
 pub struct TextHighlight {
     pub start: usize,
     pub end: usize,
+    pub kind: TextHighlightKind,
+}
+
+/// Style class for a mention highlight. The renderer maps each kind to a
+/// distinct background colour so the user can tell at a glance whether they
+/// were the target or just a witness.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextHighlightKind {
+    /// The current user is being notified (`<@me>`, `@everyone`, `@here`).
+    SelfMention,
+    /// Some other user is being mentioned. Subdued background; informational.
+    OtherMention,
 }
 
 pub fn render_user_mentions_with_highlights<F, H>(
     value: &str,
     mut resolve_name: F,
-    mut should_highlight: H,
+    mut highlight_kind: H,
 ) -> RenderedText
 where
     F: FnMut(u64) -> Option<String>,
-    H: FnMut(u64) -> bool,
+    H: FnMut(u64) -> Option<TextHighlightKind>,
 {
     if !value.contains("<@") {
         return RenderedText {
@@ -118,10 +130,11 @@ where
                 rendered.push('@');
                 rendered.push_str(&name);
                 let highlight_end = rendered.len();
-                if should_highlight(user_id) {
+                if let Some(kind) = highlight_kind(user_id) {
                     highlights.push(TextHighlight {
                         start: highlight_start,
                         end: highlight_end,
+                        kind,
                     });
                 }
             }

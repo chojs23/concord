@@ -1,4 +1,10 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::time::{Duration, Instant};
+
+/// Typing indicators stay visible for this long after the latest TYPING_START
+/// from a given user — matches Discord's documented 10-second window so the
+/// label tracks what other clients show.
+const TYPING_INDICATOR_TTL: Duration = Duration::from_secs(10);
 
 use twilight_model::id::{
     Id,
@@ -82,6 +88,9 @@ impl ChannelState {
 pub struct ChannelRecipientState {
     pub user_id: Id<UserMarker>,
     pub display_name: String,
+    /// Discord login handle. Mirrors `ChannelRecipientInfo::username`; the
+    /// @-mention picker matches against this in addition to `display_name`.
+    pub username: Option<String>,
     pub is_bot: bool,
     pub avatar_url: Option<String>,
     pub status: PresenceStatus,
@@ -95,6 +104,7 @@ impl ChannelRecipientState {
         Self {
             user_id: recipient.user_id,
             display_name: recipient.display_name.clone(),
+            username: recipient.username.clone(),
             is_bot: recipient.is_bot,
             avatar_url: recipient.avatar_url.clone(),
             status: recipient
@@ -196,6 +206,9 @@ impl MessageState {
 pub struct GuildMemberState {
     pub user_id: Id<UserMarker>,
     pub display_name: String,
+    /// Discord login handle. Mirrors `MemberInfo::username`; the @-mention
+    /// picker matches against this in addition to `display_name`.
+    pub username: Option<String>,
     pub is_bot: bool,
     pub avatar_url: Option<String>,
     pub role_ids: Vec<Id<RoleMarker>>,
@@ -248,6 +261,10 @@ pub struct DiscordState {
     /// and consulted by `can_view_channel` to look up our own roles and
     /// match member-level permission overwrites.
     current_user_id: Option<Id<UserMarker>>,
+    /// Most recent TYPING_START arrival per (channel, user). Discord renews
+    /// the indicator every ~10 seconds; readers prune stale entries via
+    /// `typing_users` so the map stays small.
+    typing: BTreeMap<Id<ChannelMarker>, BTreeMap<Id<UserMarker>, Instant>>,
     max_messages_per_channel: usize,
 }
 
@@ -280,6 +297,7 @@ impl DiscordState {
             user_profiles: BTreeMap::new(),
             relationships: BTreeMap::new(),
             current_user_id: None,
+            typing: BTreeMap::new(),
             max_messages_per_channel,
         }
     }
@@ -502,6 +520,7 @@ impl DiscordState {
                         GuildMemberState {
                             user_id: *user_id,
                             display_name: format!("user-{}", user_id.get()),
+                            username: None,
                             is_bot: false,
                             avatar_url: None,
                             role_ids: Vec::new(),
@@ -513,6 +532,21 @@ impl DiscordState {
             }
             AppEvent::UserPresenceUpdate { user_id, status } => {
                 self.update_channel_recipient_presence(*user_id, *status);
+            }
+            AppEvent::TypingStart {
+                channel_id,
+                user_id,
+            } => {
+                // Record (or refresh) the typing entry, then sweep this
+                // channel's stale entries while we already hold the mutable
+                // borrow. Read paths see only fresh entries.
+                let now = Instant::now();
+                let bucket = self.typing.entry(*channel_id).or_default();
+                bucket.insert(*user_id, now);
+                bucket.retain(|_, started| now.duration_since(*started) <= TYPING_INDICATOR_TTL);
+                if bucket.is_empty() {
+                    self.typing.remove(channel_id);
+                }
             }
             AppEvent::GuildFoldersUpdate { folders } => {
                 self.guild_folders = folders.clone();
@@ -579,6 +613,27 @@ impl DiscordState {
 
     pub fn guild_folders(&self) -> &[GuildFolder] {
         &self.guild_folders
+    }
+
+    /// Returns the user IDs that have typed in `channel_id` within the TTL
+    /// window, sorted by most-recent activity first. Read-only so render
+    /// paths can call it without taking a mutable borrow on the whole
+    /// `DiscordState`; pruning of stale entries happens lazily on the next
+    /// `TYPING_START` for the same channel.
+    pub fn typing_users(&self, channel_id: Id<ChannelMarker>) -> Vec<Id<UserMarker>> {
+        let now = Instant::now();
+        let Some(channel_typers) = self.typing.get(&channel_id) else {
+            return Vec::new();
+        };
+        let mut fresh: Vec<(Id<UserMarker>, Instant)> = channel_typers
+            .iter()
+            .filter(|(_, started)| now.duration_since(**started) <= TYPING_INDICATOR_TTL)
+            .map(|(user_id, started)| (*user_id, *started))
+            .collect();
+        // Newest typer first so the "X is typing…" label tends to surface the
+        // person who just hit a key.
+        fresh.sort_by(|a, b| b.1.cmp(&a.1));
+        fresh.into_iter().map(|(user_id, _)| user_id).collect()
     }
 
     pub fn user_profile(
@@ -657,7 +712,7 @@ impl DiscordState {
     }
 
     /// Compute the effective Discord permission bitfield for the
-    /// authenticated user in `channel`. Mirrors endcord's `perms.py`:
+    /// authenticated user in `channel`.
     ///
     /// 1. DMs and group DMs grant every permission — Discord does not apply
     ///    guild-style overwrites to them.
@@ -1297,6 +1352,7 @@ fn upsert_member(
         GuildMemberState {
             user_id: member.user_id,
             display_name: member.display_name.clone(),
+            username: member.username.clone(),
             is_bot: member.is_bot,
             avatar_url: member.avatar_url.clone(),
             role_ids: member.role_ids.clone(),
@@ -1500,6 +1556,7 @@ mod tests {
             members: vec![MemberInfo {
                 user_id: author_id,
                 display_name: "server alias".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 role_ids: Vec::new(),
@@ -1560,6 +1617,7 @@ mod tests {
             member: MemberInfo {
                 user_id: author_id,
                 display_name: "server alias".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 role_ids: Vec::new(),
@@ -1619,6 +1677,7 @@ mod tests {
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(20),
                 display_name: "alice".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: Some("https://cdn.discordapp.com/avatar.png".to_owned()),
                 status: Some(PresenceStatus::Online),
@@ -1674,6 +1733,7 @@ mod tests {
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(20),
                 display_name: "alice".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 status: Some(PresenceStatus::Online),
@@ -1696,6 +1756,7 @@ mod tests {
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(20),
                 display_name: "alice renamed".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 status: None,
@@ -1728,6 +1789,7 @@ mod tests {
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(20),
                 display_name: "alice".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 status: None,
@@ -1759,6 +1821,7 @@ mod tests {
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(20),
                 display_name: "alice".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 status: None,
@@ -1795,6 +1858,7 @@ mod tests {
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(20),
                 display_name: "alice".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 status: None,
@@ -3175,6 +3239,7 @@ mod tests {
                 MemberInfo {
                     user_id: alice,
                     display_name: "alice".to_owned(),
+                    username: None,
                     is_bot: false,
                     avatar_url: None,
                     role_ids: Vec::new(),
@@ -3182,6 +3247,7 @@ mod tests {
                 MemberInfo {
                     user_id: bob,
                     display_name: "bob".to_owned(),
+                    username: None,
                     is_bot: false,
                     avatar_url: None,
                     role_ids: Vec::new(),
@@ -3232,6 +3298,7 @@ mod tests {
             members: vec![MemberInfo {
                 user_id: alice,
                 display_name: "alice".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 role_ids: Vec::new(),
@@ -3247,6 +3314,7 @@ mod tests {
             member: MemberInfo {
                 user_id: bob,
                 display_name: "bob".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 role_ids: Vec::new(),
@@ -3259,6 +3327,7 @@ mod tests {
             member: MemberInfo {
                 user_id: bob,
                 display_name: "bob".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 role_ids: Vec::new(),
@@ -3271,6 +3340,7 @@ mod tests {
             member: MemberInfo {
                 user_id: Id::new(30),
                 display_name: "carol".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 role_ids: Vec::new(),
@@ -3326,6 +3396,7 @@ mod tests {
             members: vec![MemberInfo {
                 user_id,
                 display_name: "alice".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 role_ids: vec![role_id],
@@ -3363,6 +3434,7 @@ mod tests {
                 member: MemberInfo {
                     user_id,
                     display_name: display_name.to_owned(),
+                    username: None,
                     is_bot: false,
                     avatar_url: None,
                     role_ids: Vec::new(),
@@ -3546,6 +3618,7 @@ mod tests {
             member: MemberInfo {
                 user_id: user,
                 display_name: "alice".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 role_ids: Vec::new(),
@@ -3561,6 +3634,7 @@ mod tests {
             member: MemberInfo {
                 user_id: user,
                 display_name: "alice-renamed".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 role_ids: Vec::new(),
@@ -3620,15 +3694,6 @@ mod tests {
                 .is_empty()
         );
     }
-
-    // ===========================================================================
-    // can_view_channel / viewable_channels_for_guild
-    // ===========================================================================
-    //
-    // The tests below mirror the scenarios endcord covers in `perms.py`. They
-    // assemble a minimal guild (one channel, one member, one or two roles) and
-    // exercise each branch of the algorithm: owner, admin, @everyone deny,
-    // role allow override, member overwrite, and thread inheritance.
 
     const VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
     const SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
@@ -3693,6 +3758,7 @@ mod tests {
             members: vec![MemberInfo {
                 user_id: my_id,
                 display_name: "me".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 role_ids: my_role_ids,
@@ -4296,6 +4362,7 @@ mod tests {
             members: vec![MemberInfo {
                 user_id: me,
                 display_name: "me".to_owned(),
+                username: None,
                 is_bot: false,
                 avatar_url: None,
                 role_ids: Vec::new(),
@@ -4429,6 +4496,7 @@ mod tests {
     fn mention_info(user_id: u64, display_name: &str) -> MentionInfo {
         MentionInfo {
             user_id: Id::new(user_id),
+            guild_nick: None,
             display_name: display_name.to_owned(),
         }
     }

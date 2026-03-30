@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, NaiveDate};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Rect},
@@ -15,11 +15,14 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    format::{RenderedText, TextHighlight, truncate_display_width, truncate_text},
+    format::{
+        RenderedText, TextHighlight, TextHighlightKind, truncate_display_width, truncate_text,
+    },
     state::{
         ChannelActionItem, ChannelPaneEntry, ChannelThreadItem, DashboardState, EmojiReactionItem,
-        FocusPane, GuildPaneEntry, MemberActionItem, MemberEntry, MemberGroup, MessageActionItem,
-        PollVotePickerItem, ThreadSummary, folder_color, presence_color, presence_marker,
+        FocusPane, GuildPaneEntry, MAX_MENTION_PICKER_VISIBLE, MemberActionItem, MemberEntry,
+        MemberGroup, MentionPickerEntry, MessageActionItem, PollVotePickerItem, ThreadSummary,
+        folder_color, presence_color, presence_marker,
     },
 };
 use crate::discord::{
@@ -115,7 +118,7 @@ impl MessageContentLine {
             let start = highlight.start.max(cursor);
             spans.push(Span::styled(
                 self.text[start..highlight.end].to_owned(),
-                self.style.patch(mention_highlight_style()),
+                self.style.patch(mention_highlight_style(highlight.kind)),
             ));
             cursor = highlight.end;
         }
@@ -201,7 +204,16 @@ struct DashboardAreas {
 
 struct MessageAreas {
     list: Rect,
+    /// One-row strip rendered between the message list and the composer when
+    /// somebody else is typing in the selected channel. Width is zero when
+    /// nobody is typing so the message list reclaims the row.
+    typing: Rect,
     composer: Rect,
+}
+
+struct UserProfilePopupText {
+    lines: Vec<Line<'static>>,
+    selected_line: Option<usize>,
 }
 
 pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
@@ -427,7 +439,14 @@ fn render_messages(
     let selected = state.focused_message_selection();
     let content_width = message_content_width(message_areas.list);
 
-    let lines = message_viewport_lines(&messages, selected, state, content_width, &image_previews);
+    let lines = message_viewport_lines(
+        &messages,
+        selected,
+        state,
+        content_width,
+        message_areas.list.width as usize,
+        &image_previews,
+    );
 
     frame.render_widget(Paragraph::new(lines), message_areas.list);
     for avatar in avatar_images {
@@ -467,7 +486,25 @@ fn render_messages(
         previous_preview_rows =
             previous_preview_rows.saturating_add(image_preview.preview_height as usize);
     }
+    render_typing_footer(frame, message_areas.typing, state);
     render_composer(frame, message_areas.composer, state);
+    render_composer_mention_picker(frame, message_areas, state);
+}
+
+fn render_typing_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    if area.height == 0 {
+        return;
+    }
+    // The text might already be `None` if the only typer was the local user
+    // and `message_areas` reserved the strip on a stale read. Render the
+    // footer if and only if we still have a label to show.
+    let Some(text) = state.typing_footer_for_selected_channel() else {
+        return;
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(text, Style::default().fg(DIM)))),
+        area,
+    );
 }
 
 /// Walks visible messages in render order, computes the absolute (row, col) of
@@ -506,7 +543,11 @@ fn render_inline_reaction_emojis(
         } else {
             0
         };
-        let base_rows = state.message_base_line_count_for_width(message, content_width) as isize;
+        let global_index = state.message_scroll().saturating_add(index);
+        let separator_lines = state.message_extra_top_lines(global_index) as isize;
+        let body_base_rows =
+            state.message_base_line_count_for_width(message, content_width) as isize;
+        let block_rows = body_base_rows + separator_lines;
         let preview_height = preview_for_message(image_previews, index)
             .map(|preview| preview.preview_height)
             .unwrap_or(0) as isize;
@@ -515,11 +556,13 @@ fn render_inline_reaction_emojis(
         if !layout.slots.is_empty() {
             // Reactions live in the last `layout.lines.len()` rows of the
             // message's base content (header + body), before the preview
-            // spacer. Their first row is therefore at:
-            //     message_top + (base_rows - reaction_lines)
+            // spacer. The body starts after the optional date separator,
+            // so the reaction strip begins at:
+            //     body_top + (body_base_rows - reaction_lines)
             let message_top = rendered_rows - line_offset;
+            let body_top = message_top + separator_lines;
             let reaction_strip_top =
-                message_top + base_rows.saturating_sub(layout.lines.len() as isize);
+                body_top + body_base_rows.saturating_sub(layout.lines.len() as isize);
 
             for slot in layout.slots {
                 let row_in_list = reaction_strip_top + slot.line as isize;
@@ -553,7 +596,7 @@ fn render_inline_reaction_emojis(
         }
 
         rendered_rows = rendered_rows
-            .saturating_add((base_rows + preview_height + MESSAGE_ROW_GAP as isize) - line_offset);
+            .saturating_add((block_rows + preview_height + MESSAGE_ROW_GAP as isize) - line_offset);
     }
 }
 
@@ -595,6 +638,7 @@ fn message_viewport_lines(
     selected: Option<usize>,
     state: &DashboardState,
     content_width: usize,
+    list_width: usize,
     image_previews: &[ImagePreview<'_>],
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
@@ -603,7 +647,19 @@ fn message_viewport_lines(
         let content = format_message_content_lines(message, state, content_width.max(8));
         let preview = preview_for_message(image_previews, index);
         let preview_height = preview.map(|preview| preview.preview_height).unwrap_or(0);
+
+        let global_index = state.message_scroll().saturating_add(index);
+        let separator_line = state
+            .message_starts_new_day_at(global_index)
+            .then(|| date_separator_line(message.id, list_width));
+        let separator_lines = usize::from(separator_line.is_some());
         let line_offset = usize::from(index == 0) * state.message_line_scroll();
+        let body_skip = line_offset.saturating_sub(separator_lines);
+
+        if let Some(line) = separator_line.filter(|_| line_offset == 0) {
+            lines.push(line);
+        }
+
         let item_lines = message_item_lines(
             author,
             format_message_sent_time(message.id),
@@ -611,7 +667,7 @@ fn message_viewport_lines(
             content_width,
             preview_height,
             preview.and_then(|preview| preview.accent_color),
-            line_offset,
+            body_skip,
         );
         if selected == Some(index) {
             lines.extend(item_lines.into_iter().map(highlight_message_line));
@@ -715,6 +771,43 @@ fn format_unix_millis_local_time(unix_millis: u64) -> Option<String> {
     let unix_millis = i64::try_from(unix_millis).ok()?;
     let utc = DateTime::from_timestamp_millis(unix_millis)?;
     Some(utc.with_timezone(&Local).format("%H:%M").to_string())
+}
+
+fn message_local_date(message_id: Id<MessageMarker>) -> NaiveDate {
+    let unix_millis = (message_id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS;
+    i64::try_from(unix_millis)
+        .ok()
+        .and_then(DateTime::from_timestamp_millis)
+        .map(|dt| dt.with_timezone(&Local).date_naive())
+        .unwrap_or_else(|| NaiveDate::from_ymd_opt(2015, 1, 1).expect("static date is valid"))
+}
+
+/// Returns true when a message at `current` should be preceded by a date
+/// separator because its local-date differs from the previous visible message.
+/// Returns false when there is no previous message so the channel's earliest
+/// visible message does not gain a separator on its own.
+pub(crate) fn message_starts_new_day(
+    current: Id<MessageMarker>,
+    previous: Option<Id<MessageMarker>>,
+) -> bool {
+    match previous {
+        None => false,
+        Some(prev) => message_local_date(current) != message_local_date(prev),
+    }
+}
+
+fn date_separator_line(message_id: Id<MessageMarker>, width: usize) -> Line<'static> {
+    let date = message_local_date(message_id);
+    let label = format!(" {} ", date.format("%Y-%m-%d"));
+    let label_width = label.as_str().width();
+    let total = width.max(label_width.saturating_add(2));
+    let dashes = total.saturating_sub(label_width);
+    let left = dashes / 2;
+    let right = dashes.saturating_sub(left);
+    Line::from(Span::styled(
+        format!("{}{}{}", "─".repeat(left), label, "─".repeat(right)),
+        Style::default().fg(DIM),
+    ))
 }
 
 #[cfg(test)]
@@ -1118,6 +1211,7 @@ fn truncate_rendered_text(rendered: RenderedText, limit: usize) -> RenderedText 
         .map(|highlight| TextHighlight {
             start: highlight.start,
             end: highlight.end.min(cutoff),
+            kind: highlight.kind,
         })
         .collect();
     RenderedText { text, highlights }
@@ -1258,6 +1352,7 @@ fn highlights_for_range(
             (highlight_start < highlight_end).then(|| TextHighlight {
                 start: highlight_start.saturating_sub(start),
                 end: highlight_end.saturating_sub(start),
+                kind: highlight.kind,
             })
         })
         .collect()
@@ -1658,7 +1753,9 @@ fn active_text_style(active: bool, style: Style) -> Style {
 }
 
 fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    let prompt = composer_lines(state, area.width);
+    let inner_width = composer_inner_width(area.width);
+    let prompt = composer_lines(state, inner_width);
+    let border_color = if state.is_composing() { ACCENT } else { DIM };
 
     frame.render_widget(
         Paragraph::new(prompt)
@@ -1670,13 +1767,107 @@ fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
             .block(
                 Block::default()
                     .title(" Message Input ")
-                    .borders(Borders::TOP)
-                    .border_style(Style::default().fg(DIM))
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(border_color))
                     .title_style(Style::default().fg(Color::White).bold()),
             )
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn render_composer_mention_picker(
+    frame: &mut Frame,
+    message_areas: MessageAreas,
+    state: &DashboardState,
+) {
+    if state.composer_mention_query().is_none() {
+        return;
+    }
+    let candidates = state.composer_mention_candidates();
+    if candidates.is_empty() {
+        return;
+    }
+    let Some(area) = mention_picker_area(message_areas, candidates.len()) else {
+        return;
+    };
+    frame.render_widget(Clear, area);
+    let inner_width = area.width.saturating_sub(2) as usize;
+    let lines = mention_picker_lines(&candidates, state.composer_mention_selected(), inner_width);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(DIM))
+        .title(" mention ")
+        .title_style(Style::default().fg(Color::White).bold());
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// Picks a rectangle directly above the composer for the picker. Returns
+/// `None` when there isn't enough room (very short terminal) so the caller
+/// can silently skip drawing.
+fn mention_picker_area(message_areas: MessageAreas, candidate_count: usize) -> Option<Rect> {
+    let composer = message_areas.composer;
+    let messages = message_areas.list;
+    if composer.x < messages.x || composer.width == 0 {
+        return None;
+    }
+    // 1 row per candidate + 2 for the bordered block.
+    let desired_height = (candidate_count.min(MAX_MENTION_PICKER_VISIBLE) as u16).saturating_add(2);
+    let available_above = composer.y.saturating_sub(messages.y);
+    let height = desired_height.min(available_above);
+    if height < 3 {
+        return None;
+    }
+    let width = composer.width.clamp(20, 48).min(messages.width);
+    let x = composer.x;
+    let y = composer.y.saturating_sub(height);
+    Some(Rect {
+        x,
+        y,
+        width,
+        height,
+    })
+}
+
+fn mention_picker_lines(
+    candidates: &[MentionPickerEntry],
+    selected: usize,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let max_label_width = width.saturating_sub(4).max(1);
+    candidates
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let cursor = if index == selected { "› " } else { "  " };
+            let bot_marker = if entry.is_bot { " [BOT]" } else { "" };
+            // Show the raw username next to the alias when they differ so the
+            // user can see which row matched their query when they typed
+            // against the username instead of the alias.
+            let username_hint = entry
+                .username
+                .as_deref()
+                .filter(|name| !name.eq_ignore_ascii_case(&entry.display_name))
+                .map(|name| format!(" @{name}"))
+                .unwrap_or_default();
+            let label = format!("{}{bot_marker}{username_hint}", entry.display_name);
+            let label = truncate_display_width(&label, max_label_width);
+            let mut row_style = Style::default().fg(presence_color(entry.status));
+            if index == selected {
+                row_style = row_style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            Line::from(vec![
+                Span::styled(cursor, Style::default().fg(ACCENT)),
+                Span::styled(presence_marker(entry.status).to_string(), row_style),
+                Span::styled(" ", row_style),
+                Span::styled(label, row_style),
+            ])
+        })
+        .collect()
 }
 
 fn composer_lines(state: &DashboardState, width: u16) -> Vec<Line<'static>> {
@@ -2160,8 +2351,8 @@ fn render_user_profile_popup(
         inner
     };
 
-    let lines = if let Some(profile) = state.user_profile_popup_data() {
-        user_profile_popup_lines(
+    let popup_text = if let Some(profile) = state.user_profile_popup_data() {
+        user_profile_popup_text(
             profile,
             state,
             text_area.width.saturating_sub(0),
@@ -2169,19 +2360,30 @@ fn render_user_profile_popup(
             state.user_profile_popup_mutual_cursor(),
         )
     } else if let Some(message) = state.user_profile_popup_load_error() {
-        vec![Line::from(Span::styled(
-            truncate_display_width(
-                &format!("Failed to load profile: {message}"),
-                text_area.width.into(),
-            ),
-            Style::default().fg(Color::Red),
-        ))]
+        UserProfilePopupText {
+            lines: vec![Line::from(Span::styled(
+                truncate_display_width(
+                    &format!("Failed to load profile: {message}"),
+                    text_area.width.into(),
+                ),
+                Style::default().fg(Color::Red),
+            ))],
+            selected_line: None,
+        }
     } else {
-        vec![Line::from(Span::styled(
-            "Loading profile...",
-            Style::default().fg(DIM),
-        ))]
+        UserProfilePopupText {
+            lines: vec![Line::from(Span::styled(
+                "Loading profile...",
+                Style::default().fg(DIM),
+            ))],
+            selected_line: None,
+        }
     };
+    let lines = user_profile_popup_visible_lines(
+        popup_text.lines,
+        popup_text.selected_line,
+        text_area.height as usize,
+    );
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), text_area);
 
     if let Some(avatar) = avatar.filter(|_| has_avatar) {
@@ -2195,6 +2397,7 @@ fn render_user_profile_popup(
     }
 }
 
+#[cfg(test)]
 fn user_profile_popup_lines(
     profile: &UserProfileInfo,
     state: &DashboardState,
@@ -2202,8 +2405,19 @@ fn user_profile_popup_lines(
     status: PresenceStatus,
     mutual_cursor: Option<usize>,
 ) -> Vec<Line<'static>> {
+    user_profile_popup_text(profile, state, width, status, mutual_cursor).lines
+}
+
+fn user_profile_popup_text(
+    profile: &UserProfileInfo,
+    state: &DashboardState,
+    width: u16,
+    status: PresenceStatus,
+    mutual_cursor: Option<usize>,
+) -> UserProfilePopupText {
     let inner_width = usize::from(width.max(8));
     let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut selected_line = None;
 
     let display_name = profile.display_name().to_owned();
     lines.push(Line::from(Span::styled(
@@ -2278,6 +2492,7 @@ fn user_profile_popup_lines(
             };
             let mut style = Style::default();
             if selected {
+                selected_line = Some(lines.len());
                 style = style
                     .bg(Color::Rgb(40, 45, 90))
                     .add_modifier(Modifier::BOLD);
@@ -2303,7 +2518,32 @@ fn user_profile_popup_lines(
         "j/k pick · Enter open · Esc close",
         Style::default().fg(DIM),
     )));
+    UserProfilePopupText {
+        lines,
+        selected_line,
+    }
+}
+
+fn user_profile_popup_visible_lines(
+    lines: Vec<Line<'static>>,
+    selected_line: Option<usize>,
+    visible_height: usize,
+) -> Vec<Line<'static>> {
+    if visible_height == 0 {
+        return Vec::new();
+    }
+
+    let max_scroll = lines.len().saturating_sub(visible_height);
+    let scroll = selected_line
+        .map(|line| line.saturating_add(1).saturating_sub(visible_height))
+        .unwrap_or(0)
+        .min(max_scroll);
+
     lines
+        .into_iter()
+        .skip(scroll)
+        .take(visible_height)
+        .collect()
 }
 
 fn user_profile_display_name_style(status: PresenceStatus) -> Style {
@@ -2706,7 +2946,8 @@ fn emoji_reaction_picker_lines(
 ) -> Vec<Line<'static>> {
     let selected = selected.min(reactions.len().saturating_sub(1));
     let visible_items = max_visible_items.max(1).min(reactions.len().max(1));
-    let visible_range = emoji_reaction_visible_range(reactions.len(), selected, visible_items);
+    let visible_range =
+        super::selection::visible_item_range(reactions.len(), selected, visible_items);
 
     let mut lines: Vec<Line<'static>> = reactions[visible_range.clone()]
         .iter()
@@ -2736,19 +2977,6 @@ fn emoji_reaction_picker_lines(
     lines
 }
 
-fn emoji_reaction_visible_range(
-    reactions_len: usize,
-    selected: usize,
-    visible_items: usize,
-) -> std::ops::Range<usize> {
-    let start = selected
-        .saturating_add(1)
-        .saturating_sub(visible_items)
-        .min(reactions_len.saturating_sub(visible_items));
-    let end = (start + visible_items).min(reactions_len);
-    start..end
-}
-
 fn render_emoji_reaction_images(
     frame: &mut Frame,
     area: Rect,
@@ -2762,7 +2990,8 @@ fn render_emoji_reaction_images(
     }
 
     let selected = selected.min(reactions.len().saturating_sub(1));
-    let visible_range = emoji_reaction_visible_range(reactions.len(), selected, visible_items);
+    let visible_range =
+        super::selection::visible_item_range(reactions.len(), selected, visible_items);
     for (offset, reaction) in reactions[visible_range].iter().enumerate() {
         let Some(url) = reaction.custom_image_url() else {
             continue;
@@ -2837,10 +3066,18 @@ fn highlight_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
-fn mention_highlight_style() -> Style {
-    Style::default()
-        .bg(Color::Rgb(92, 76, 35))
-        .fg(Color::Yellow)
+fn mention_highlight_style(kind: TextHighlightKind) -> Style {
+    match kind {
+        // The current user got pinged — Discord paints this gold/yellow.
+        TextHighlightKind::SelfMention => Style::default()
+            .bg(Color::Rgb(92, 76, 35))
+            .fg(Color::Yellow),
+        // Someone else was pinged — render with Discord's softer blue tint so
+        // the user can see the chip without the "you" alarm colour.
+        TextHighlightKind::OtherMention => Style::default()
+            .bg(Color::Rgb(40, 50, 92))
+            .fg(Color::Rgb(193, 206, 247)),
+    }
 }
 
 fn panel_block(title: &'static str, focused: bool) -> Block<'static> {
@@ -2865,9 +3102,18 @@ fn message_list_area(area: Rect, state: &DashboardState) -> Rect {
 
 fn message_areas(area: Rect, state: &DashboardState) -> MessageAreas {
     let composer_height = composer_height(area, state);
-    let [list, composer] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(composer_height)]).areas(area);
-    MessageAreas { list, composer }
+    let typing_height: u16 = state.typing_footer_for_selected_channel().is_some().into();
+    let [list, typing, composer] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(typing_height),
+        Constraint::Length(composer_height),
+    ])
+    .areas(area);
+    MessageAreas {
+        list,
+        typing,
+        composer,
+    }
 }
 
 fn inline_image_preview_height(area: Rect, visible: bool) -> u16 {
@@ -2900,8 +3146,13 @@ fn inline_image_preview_row(
 ) -> isize {
     let row = messages
         .iter()
+        .enumerate()
         .take(message_index.saturating_add(1))
-        .map(|message| state.message_base_line_count_for_width(message, content_width))
+        .map(|(local_idx, message)| {
+            let global = state.message_scroll().saturating_add(local_idx);
+            state.message_base_line_count_for_width(message, content_width)
+                + state.message_extra_top_lines(global)
+        })
         .sum::<usize>()
         .saturating_add(previous_preview_rows)
         .saturating_add(message_index.saturating_mul(MESSAGE_ROW_GAP))
@@ -2951,11 +3202,15 @@ fn inline_image_preview_area(
 
 fn composer_height(area: Rect, state: &DashboardState) -> u16 {
     let content_lines = if state.is_composing() || !state.composer_input().is_empty() {
-        composer_content_line_count(state, area.width)
+        composer_content_line_count(state, composer_inner_width(area.width))
     } else {
         1
     };
-    MIN_MESSAGE_INPUT_HEIGHT.max(content_lines.saturating_add(1))
+    MIN_MESSAGE_INPUT_HEIGHT.max(content_lines.saturating_add(2))
+}
+
+fn composer_inner_width(width: u16) -> u16 {
+    width.saturating_sub(2).max(1)
 }
 
 fn composer_content_line_count(state: &DashboardState, width: u16) -> u16 {
@@ -2978,20 +3233,22 @@ mod tests {
         layout::Rect,
         style::{Color, Modifier, Style},
     };
-    use twilight_model::id::Id;
+    use twilight_model::id::{Id, marker::MessageMarker};
     use unicode_width::UnicodeWidthStr;
 
     use super::{
-        ACCENT, DIM, DISCORD_EPOCH_MILLIS, MemberEntry, MessageContentLine, channel_name_style,
+        ACCENT, DIM, DISCORD_EPOCH_MILLIS, MemberEntry, MessageContentLine,
+        SNOWFLAKE_TIMESTAMP_SHIFT, TextHighlightKind, channel_name_style,
         composer_content_line_count, composer_lines, composer_prompt_line_count, composer_text,
-        debug_log_popup_lines, emoji_reaction_picker_lines, footer_hint, format_message_content,
-        format_message_content_lines, format_message_sent_time, format_unix_millis_with_offset,
-        highlight_style, inline_image_preview_area, inline_image_preview_row, member_display_label,
-        mention_highlight_style, message_action_menu_lines, message_author_style,
-        message_item_lines, message_viewport_lines, poll_box_border, poll_card_inner_width,
+        date_separator_line, debug_log_popup_lines, emoji_reaction_picker_lines, footer_hint,
+        format_message_content, format_message_content_lines, format_message_sent_time,
+        format_unix_millis_with_offset, highlight_style, inline_image_preview_area,
+        inline_image_preview_row, member_display_label, mention_highlight_style,
+        message_action_menu_lines, message_author_style, message_item_lines,
+        message_starts_new_day, message_viewport_lines, poll_box_border, poll_card_inner_width,
         poll_vote_picker_lines, reaction_users_popup_lines, reaction_users_visible_line_count,
         sync_view_heights, user_profile_display_name_style, user_profile_popup_lines,
-        wrap_text_lines,
+        user_profile_popup_text, user_profile_popup_visible_lines, wrap_text_lines,
     };
     use crate::{
         discord::{
@@ -3030,7 +3287,7 @@ mod tests {
 
         sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
 
-        assert_eq!(state.message_view_height(), 13);
+        assert_eq!(state.message_view_height(), 12);
     }
 
     #[test]
@@ -3125,6 +3382,27 @@ mod tests {
                 .add_modifier
                 .contains(Modifier::BOLD)
         );
+    }
+
+    #[test]
+    fn user_profile_popup_visible_lines_follow_selected_mutual_server() {
+        let mut profile = user_profile_info(10, "neo");
+        profile.mutual_guilds = (1_u64..=12)
+            .map(|id| MutualGuildInfo {
+                guild_id: Id::new(id),
+                nick: None,
+            })
+            .collect();
+        let state = DashboardState::new();
+        let popup_text =
+            user_profile_popup_text(&profile, &state, 40, PresenceStatus::Online, Some(10));
+
+        let visible =
+            user_profile_popup_visible_lines(popup_text.lines, popup_text.selected_line, 6);
+        let texts = line_texts_from_ratatui(&visible);
+
+        assert!(texts.iter().any(|line| line == "› • guild-11"));
+        assert!(!texts.iter().any(|line| line == "  • guild-1"));
     }
 
     #[test]
@@ -3390,11 +3668,17 @@ mod tests {
             vec!["oo neo 00:00", "   hello @server alias", ""]
         );
         assert_eq!(lines[1].spans[2].content.as_ref(), "@server alias");
-        assert_eq!(lines[1].spans[2].style.bg, mention_highlight_style().bg);
+        assert_eq!(
+            lines[1].spans[2].style.bg,
+            mention_highlight_style(TextHighlightKind::SelfMention).bg
+        );
     }
 
     #[test]
-    fn message_content_does_not_highlight_other_user_mentions() {
+    fn message_content_highlights_other_user_mentions_with_softer_color() {
+        // Discord still paints non-self mentions, just with a calmer tint than
+        // the gold "you" highlight, so the user can tell whether they were the
+        // one being pinged at a glance.
         let mut message =
             message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
         message.attachments.clear();
@@ -3419,11 +3703,15 @@ mod tests {
             line_texts_from_ratatui(&lines),
             vec!["oo neo 00:00", "   hello @alice", ""]
         );
-        assert!(
-            lines[1]
-                .spans
-                .iter()
-                .all(|span| span.style.bg != mention_highlight_style().bg)
+        assert_eq!(lines[1].spans[2].content.as_ref(), "@alice");
+        assert_eq!(
+            lines[1].spans[2].style.bg,
+            mention_highlight_style(TextHighlightKind::OtherMention).bg
+        );
+        assert_ne!(
+            lines[1].spans[2].style.bg,
+            mention_highlight_style(TextHighlightKind::SelfMention).bg,
+            "other-user mentions must not look like a self-mention notification"
         );
     }
 
@@ -3453,7 +3741,10 @@ mod tests {
             vec!["oo neo 00:00", "   ping @everyone", ""]
         );
         assert_eq!(lines[1].spans[2].content.as_ref(), "@everyone");
-        assert_eq!(lines[1].spans[2].style.bg, mention_highlight_style().bg);
+        assert_eq!(
+            lines[1].spans[2].style.bg,
+            mention_highlight_style(TextHighlightKind::SelfMention).bg
+        );
     }
 
     #[test]
@@ -3484,8 +3775,14 @@ mod tests {
         );
         assert_eq!(lines[1].spans[1].content.as_ref(), "@everyone");
         assert_eq!(lines[1].spans[3].content.as_ref(), "@neo");
-        assert_eq!(lines[1].spans[1].style.bg, mention_highlight_style().bg);
-        assert_eq!(lines[1].spans[3].style.bg, mention_highlight_style().bg);
+        assert_eq!(
+            lines[1].spans[1].style.bg,
+            mention_highlight_style(TextHighlightKind::SelfMention).bg
+        );
+        assert_eq!(
+            lines[1].spans[3].style.bg,
+            mention_highlight_style(TextHighlightKind::SelfMention).bg
+        );
     }
 
     #[test]
@@ -3514,7 +3811,10 @@ mod tests {
             vec!["oo neo 00:00", "   ping @here", ""]
         );
         assert_eq!(lines[1].spans[2].content.as_ref(), "@here");
-        assert_eq!(lines[1].spans[2].style.bg, mention_highlight_style().bg);
+        assert_eq!(
+            lines[1].spans[2].style.bg,
+            mention_highlight_style(TextHighlightKind::SelfMention).bg
+        );
     }
 
     #[test]
@@ -3545,7 +3845,10 @@ mod tests {
         );
         assert_eq!(lines[1].spans.len(), 3);
         assert_eq!(lines[1].spans[2].content.as_ref(), "@everyone");
-        assert_eq!(lines[1].spans[2].style.bg, mention_highlight_style().bg);
+        assert_eq!(
+            lines[1].spans[2].style.bg,
+            mention_highlight_style(TextHighlightKind::SelfMention).bg
+        );
     }
 
     #[test]
@@ -3555,6 +3858,19 @@ mod tests {
         message.attachments.clear();
         message.mentions = vec![mention_info(10, "username")];
         let state = state_with_member(10, "server alias");
+
+        let lines = format_message_content_lines(&message, &state, 200);
+
+        assert_eq!(line_texts(&lines), vec!["hello @server alias"]);
+    }
+
+    #[test]
+    fn message_content_prefers_message_mention_nick_over_cached_member_name() {
+        let mut message =
+            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
+        message.attachments.clear();
+        message.mentions = vec![mention_info_with_nick(10, "server alias")];
+        let state = state_with_member(10, "username");
 
         let lines = format_message_content_lines(&message, &state, 200);
 
@@ -3857,7 +4173,10 @@ mod tests {
 
         assert_eq!(spans[0].content.as_ref(), "│ ");
         assert_eq!(spans[1].content.as_ref(), "@server alias");
-        assert_eq!(spans[1].style.bg, mention_highlight_style().bg);
+        assert_eq!(
+            spans[1].style.bg,
+            mention_highlight_style(TextHighlightKind::SelfMention).bg
+        );
     }
 
     #[test]
@@ -4741,6 +5060,7 @@ mod tests {
         let member = GuildMemberState {
             user_id: Id::new(10),
             display_name: "漢字仮名交じり文章".to_owned(),
+            username: None,
             is_bot: false,
             avatar_url: None,
             role_ids: Vec::new(),
@@ -4763,6 +5083,41 @@ mod tests {
         );
     }
 
+    fn snowflake_for_unix_ms(unix_ms: u64) -> Id<MessageMarker> {
+        let raw = (unix_ms - DISCORD_EPOCH_MILLIS) << SNOWFLAKE_TIMESTAMP_SHIFT;
+        Id::new(raw.max(1))
+    }
+
+    #[test]
+    fn date_separator_appears_when_local_date_changes() {
+        // 24h apart at noon UTC guarantees different local dates regardless of
+        // the test runner's timezone.
+        let day_one = snowflake_for_unix_ms(1_743_465_600_000); // 2026-04-01 00:00:00 UTC + 12h ≈ noon
+        let day_two = snowflake_for_unix_ms(1_743_465_600_000 + 24 * 60 * 60 * 1000);
+
+        assert!(!message_starts_new_day(day_one, None));
+        assert!(!message_starts_new_day(day_one, Some(day_one)));
+        assert!(message_starts_new_day(day_two, Some(day_one)));
+    }
+
+    #[test]
+    fn date_separator_line_centers_label_within_full_width() {
+        let id = snowflake_for_unix_ms(1_743_508_800_000); // arbitrary timestamp
+        let line = date_separator_line(id, 30);
+        let text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(text.width(), 30);
+        assert!(text.contains(' '));
+        assert!(text.starts_with('─'));
+        assert!(text.ends_with('─'));
+        // The label is "YYYY-MM-DD" wrapped in spaces, so 12 chars.
+        let label_chars = text.matches(char::is_numeric).count();
+        assert_eq!(label_chars, 8);
+    }
+
     #[test]
     fn message_viewport_lines_keep_rows_from_tall_following_message() {
         let mut selected = message_with_attachment(Some("selected".to_owned()), image_attachment());
@@ -4775,7 +5130,7 @@ mod tests {
         let messages = [&selected, &tall_following];
 
         let visible_rows =
-            message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, &[])
+            message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, 80, &[])
                 .into_iter()
                 .take(5)
                 .collect::<Vec<_>>();
@@ -4798,7 +5153,7 @@ mod tests {
         message.attachments.clear();
         let messages = [&message];
 
-        let lines = message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, &[]);
+        let lines = message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, 80, &[]);
         let sent_time = format_message_sent_time(Id::new(1));
 
         assert_eq!(
@@ -5112,6 +5467,7 @@ mod tests {
         MemberInfo {
             user_id: Id::new(user_id),
             display_name: display_name.to_owned(),
+            username: None,
             is_bot: false,
             avatar_url: None,
             role_ids: Vec::new(),
@@ -5137,7 +5493,16 @@ mod tests {
     fn mention_info(user_id: u64, display_name: &str) -> MentionInfo {
         MentionInfo {
             user_id: Id::new(user_id),
+            guild_nick: None,
             display_name: display_name.to_owned(),
+        }
+    }
+
+    fn mention_info_with_nick(user_id: u64, nick: &str) -> MentionInfo {
+        MentionInfo {
+            user_id: Id::new(user_id),
+            guild_nick: Some(nick.to_owned()),
+            display_name: nick.to_owned(),
         }
     }
 
@@ -5160,6 +5525,7 @@ mod tests {
                 .map(|(index, status)| ChannelRecipientState {
                     user_id: Id::new(100 + u64::try_from(index).expect("index should fit u64")),
                     display_name: format!("recipient {index}"),
+                    username: None,
                     is_bot: false,
                     avatar_url: None,
                     status: *status,

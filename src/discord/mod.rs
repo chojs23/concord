@@ -1,3 +1,4 @@
+mod auth_http;
 mod client;
 mod commands;
 mod events;

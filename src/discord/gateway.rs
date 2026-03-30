@@ -1,23 +1,23 @@
 use std::{
     collections::BTreeMap,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
+use rand::Rng;
 use serde_json::{Value, json};
-use tokio::sync::{broadcast, mpsc};
-use twilight_gateway::{
-    EventTypeFlags, Message, MessageSender, Shard, error::ReceiveMessageErrorType, parse,
+use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::time::sleep;
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{Message as WsMessage, protocol::CloseFrame},
 };
-use twilight_model::gateway::event::Event;
-use twilight_model::{
-    gateway::{Intents, ShardId, payload::outgoing::RequestGuildMembers},
-    id::{
-        Id,
-        marker::{
-            AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, RoleMarker,
-            UserMarker,
-        },
+use twilight_model::id::{
+    Id,
+    marker::{
+        AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, RoleMarker,
+        UserMarker,
     },
 };
 
@@ -26,9 +26,7 @@ use super::{
     FriendStatus, GuildFolder, MemberInfo, MentionInfo, MessageKind, MessageReferenceInfo,
     MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
     events::default_avatar_url,
-    events::{
-        AppEvent, AttachmentUpdate, PermissionOverwriteInfo, PermissionOverwriteKind, map_event,
-    },
+    events::{AppEvent, AttachmentUpdate, PermissionOverwriteInfo, PermissionOverwriteKind},
 };
 use crate::logging;
 
@@ -51,197 +49,525 @@ pub enum GatewayCommand {
     },
 }
 
+/// Discord user-account gateway endpoint. We pin to `v=9` because the v9
+/// dispatch shapes line up with everything `parse_user_account_event` already
+/// understands. `compress=false` keeps the wire human-readable; switching to
+/// `zlib-stream` is a follow-up.
+const GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=9&encoding=json";
+
+/// Bitmask Discord checks before delivering user-account-only payloads such as
+/// `READY_SUPPLEMENTAL.merged_presences.friends` and per-friend
+/// `PRESENCE_UPDATE` dispatches. Without these bits set Discord assumes the
+/// session is a bot and silently drops friend presence streaming.
+///
+/// We deliberately copy arikawa/ningen's set rather than reaching for the
+/// modern client's full bitmask. The extra modern bits (USER_SETTINGS_PROTO,
+/// CLIENT_STATE_V2, PASSIVE_GUILD_UPDATE, …) tell Discord to send things in
+/// formats we don't decode yet — most painfully `user_settings_proto` instead
+/// of the legacy JSON `user_settings.guild_folders`, which would leave the
+/// sidebar with no folder grouping and unstable ordering.
+///
+/// Bits enabled (sum 253):
+///   0  LAZY_USER_NOTIFICATIONS
+///   2  VERSIONED_READ_STATES
+///   3  VERSIONED_USER_GUILD_SETTINGS
+///   4  DEDUPE_USER_OBJECTS
+///   5  PRIORITIZED_READY_PAYLOAD
+///   6  MULTIPLE_GUILD_EXPERIMENT_POPULATIONS
+///   7  NON_CHANNEL_READ_STATES
+const USER_ACCOUNT_CAPABILITIES: u64 = 253;
+
+const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
+    (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const BROWSER_VERSION: &str = "120.0.0.0";
+const CLIENT_BUILD_NUMBER: u64 = 250000;
+
+const RECONNECT_BASE_DELAY: Duration = Duration::from_millis(500);
+const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
+
+type GatewayStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Shared, lockable WebSocket sink. Both the heartbeat task and the main
+/// dispatch loop need to send over the same connection, so the sink lives
+/// behind a `Mutex<Arc<…>>` instead of being moved into either side.
+type WriterHandle = Arc<Mutex<futures::stream::SplitSink<GatewayStream, WsMessage>>>;
+
+/// What to do after one connection lifecycle ends.
+enum ConnectionOutcome {
+    /// The websocket dropped or Discord asked us to reconnect; try to RESUME
+    /// using the saved session_id + sequence number.
+    Resume,
+    /// Authentication failed or Discord told us the session is dead; throw
+    /// the saved session away and start over with a fresh IDENTIFY.
+    Reidentify,
+    /// The downstream consumers went away — stop the loop entirely.
+    Stop,
+}
+
+/// Mutable session bookkeeping that survives reconnects. We only persist what
+/// op-6 RESUME needs (session_id + last seq) plus the resume URL Discord
+/// hands us in READY.
+#[derive(Default)]
+struct SessionState {
+    session_id: Option<String>,
+    resume_url: Option<String>,
+    last_sequence: Option<u64>,
+}
+
+impl SessionState {
+    fn clear(&mut self) {
+        self.session_id = None;
+        self.resume_url = None;
+        self.last_sequence = None;
+    }
+
+    fn can_resume(&self) -> bool {
+        self.session_id.is_some()
+    }
+
+    fn next_url(&self) -> String {
+        match self.resume_url.as_deref() {
+            // Discord embeds `?v=...&encoding=...` already, but it costs
+            // nothing to append our own and helps when the resume URL is bare.
+            Some(url) if !url.is_empty() => format!("{url}/?v=9&encoding=json"),
+            _ => GATEWAY_URL.to_owned(),
+        }
+    }
+}
+
 pub async fn run_gateway(
     token: String,
     tx: broadcast::Sender<AppEvent>,
     mut commands: mpsc::UnboundedReceiver<GatewayCommand>,
 ) {
-    let intents = gateway_intents();
-
-    let mut shard = Shard::new(ShardId::ONE, token, intents);
-    let sender = shard.sender();
-    let mut commands_closed = false;
+    let mut session = SessionState::default();
+    let mut backoff = RECONNECT_BASE_DELAY;
 
     loop {
-        tokio::select! {
-            maybe_command = commands.recv(), if !commands_closed => {
-                match maybe_command {
-                    Some(command) => handle_gateway_command(&sender, command, &tx),
-                    None => commands_closed = true,
-                }
+        let outcome = match connect_and_run(&token, &tx, &mut commands, &mut session).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                logging::error("gateway", format!("connection error: {error}"));
+                let _ = tx.send(AppEvent::GatewayError {
+                    message: format!("connection error: {error}"),
+                });
+                ConnectionOutcome::Resume
             }
-            item = shard.next() => {
-                let Some(item) = item else {
-                    break;
-                };
+        };
 
-                // Twilight's `next_event` filters by `EventTypeFlags`, which
-                // means event types it does not model (e.g. user-account-only
-                // dispatches like `GUILD_MEMBER_LIST_UPDATE`,
-                // `READY_SUPPLEMENTAL`) are silently dropped. Going through
-                // the raw `Stream` and falling back to `parse_user_account_event`
-                // for unknown types keeps those payloads available.
-                match item {
-                    Ok(Message::Close(frame)) => {
-                        for app_event in map_event(Event::GatewayClose(frame)) {
-                            let _ = tx.send(app_event);
-                        }
-                    }
-                    Ok(Message::Text(json)) => {
-                        match parse(json.clone(), EventTypeFlags::all()) {
-                            Ok(Some(gateway_event)) => {
-                                let event: Event = gateway_event.into();
-                                logging::debug(
-                                    "gateway",
-                                    format!("ok: {:?}", event.kind()),
-                                );
-                                for app_event in map_event(event) {
-                                    let _ = tx.send(app_event);
-                                }
-                            }
-                            Ok(None) => {
-                                // Twilight does not recognise this dispatch;
-                                // try to rebuild it from raw JSON ourselves.
-                                let started = Instant::now();
-                                let events = parse_user_account_event(&json);
-                                logging::timing(
-                                    "gateway",
-                                    "raw dispatch parse",
-                                    started.elapsed(),
-                                );
-                                for app_event in events {
-                                    let _ = tx.send(app_event);
-                                }
-                            }
-                            Err(error) => {
-                                if let ReceiveMessageErrorType::Deserializing { event } =
-                                    error.kind()
-                                {
-                                    logging::debug(
-                                        "gateway",
-                                        format!("deserialize fallback: {event}"),
-                                    );
-                                    let started = Instant::now();
-                                    let events = parse_user_account_event(event);
-                                    logging::timing(
-                                        "gateway",
-                                        "fallback total",
-                                        started.elapsed(),
-                                    );
-                                    if events.is_empty() {
-                                        logging::debug(
-                                            "gateway",
-                                            "fallback emitted no app events",
-                                        );
-                                    }
-                                    for app_event in events {
-                                        let _ = tx.send(app_event);
-                                    }
-                                } else {
-                                    logging::error("gateway", error.to_string());
-                                    let _ = tx.send(AppEvent::GatewayError {
-                                        message: error.to_string(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        logging::error("gateway", error.to_string());
-                        let _ = tx.send(AppEvent::GatewayError {
-                            message: error.to_string(),
-                        });
-                    }
+        match outcome {
+            ConnectionOutcome::Stop => break,
+            ConnectionOutcome::Resume => {
+                if !session.can_resume() {
+                    // No saved session, fall through to a clean IDENTIFY.
                 }
             }
+            ConnectionOutcome::Reidentify => session.clear(),
         }
+
+        // Exponential backoff with full jitter so a flapping network doesn't
+        // hammer Discord. Successful sessions reset the delay below.
+        let jitter = rand::thread_rng().gen_range(0..=backoff.as_millis() as u64);
+        let delay = Duration::from_millis(jitter);
+        logging::debug(
+            "gateway",
+            format!("reconnecting in {}ms", delay.as_millis()),
+        );
+        sleep(delay).await;
+        backoff = (backoff * 2).min(RECONNECT_MAX_DELAY);
     }
 
     let _ = tx.send(AppEvent::GatewayClosed);
 }
 
-fn handle_gateway_command(
-    sender: &MessageSender,
-    command: GatewayCommand,
+async fn connect_and_run(
+    token: &str,
     tx: &broadcast::Sender<AppEvent>,
-) {
-    match command {
-        GatewayCommand::RequestGuildMembers { guild_id } => {
-            let request = RequestGuildMembers::builder(guild_id).query("", None);
-            match sender.command(&request) {
-                Ok(()) => logging::debug(
-                    "gateway",
-                    format!("requested guild members: guild={}", guild_id.get()),
+    commands: &mut mpsc::UnboundedReceiver<GatewayCommand>,
+    session: &mut SessionState,
+) -> Result<ConnectionOutcome, String> {
+    let url = session.next_url();
+    logging::debug("gateway", format!("connecting to {url}"));
+
+    let (ws, _response) = connect_async(&url)
+        .await
+        .map_err(|error| format!("websocket connect failed: {error}"))?;
+    let (writer, mut reader) = ws.split();
+    let writer = Arc::new(Mutex::new(writer));
+
+    // Discord must speak first with op-10 HELLO carrying heartbeat_interval.
+    // If the first frame is anything else, fail fast and try a clean
+    // re-identify.
+    let hello_frame = match reader.next().await {
+        Some(Ok(WsMessage::Text(text))) => text,
+        Some(Ok(WsMessage::Close(frame))) => {
+            logging::debug(
+                "gateway",
+                format!(
+                    "closed before HELLO: code={:?} reason={:?}",
+                    frame.as_ref().map(|f| u16::from(f.code)),
+                    frame.as_ref().map(|f| f.reason.as_str())
                 ),
-                Err(error) => {
-                    let message = format!("request guild members failed: {error}");
-                    logging::error("gateway", &message);
-                    let _ = tx.send(AppEvent::GatewayError { message });
+            );
+            return Ok(ConnectionOutcome::Reidentify);
+        }
+        Some(Ok(_)) => return Err("unexpected non-text frame before HELLO".to_owned()),
+        Some(Err(error)) => return Err(format!("read HELLO failed: {error}")),
+        None => return Err("connection closed before HELLO".to_owned()),
+    };
+    let hello: Value =
+        serde_json::from_str(&hello_frame).map_err(|error| format!("HELLO parse: {error}"))?;
+    if hello.get("op").and_then(Value::as_u64) != Some(10) {
+        return Err(format!(
+            "first frame was not HELLO: {}",
+            hello.get("op").and_then(Value::as_u64).unwrap_or_default()
+        ));
+    }
+    let heartbeat_interval_ms = hello
+        .get("d")
+        .and_then(|d| d.get("heartbeat_interval"))
+        .and_then(Value::as_u64)
+        .unwrap_or(41250);
+    let heartbeat_interval = Duration::from_millis(heartbeat_interval_ms);
+
+    // Either resume with the saved session or send a fresh IDENTIFY. RESUME
+    // tells Discord to replay missed dispatches (good for transient drops);
+    // IDENTIFY rebuilds the world from scratch.
+    if session.can_resume() {
+        let payload = build_resume_payload(token, session);
+        send_text(&writer, payload).await?;
+        logging::debug("gateway", "RESUME sent");
+    } else {
+        let payload = build_identify_payload(token);
+        send_text(&writer, payload).await?;
+        logging::debug("gateway", "IDENTIFY sent");
+    }
+
+    // Background heartbeat task driven by Discord's interval. We jitter the
+    // first beat per the API recommendation. The task reads the latest seq
+    // from a shared atomic via the sequence cell.
+    let writer_for_heartbeat = Arc::clone(&writer);
+    let sequence_cell: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(session.last_sequence));
+    let sequence_for_heartbeat = Arc::clone(&sequence_cell);
+    let initial_jitter = {
+        let jitter_ms =
+            rand::thread_rng().gen_range(0..=heartbeat_interval.as_millis().min(2_000) as u64);
+        Duration::from_millis(jitter_ms)
+    };
+    let heartbeat_task = tokio::spawn(async move {
+        sleep(initial_jitter).await;
+        loop {
+            let seq = *sequence_for_heartbeat.lock().await;
+            let payload = json!({"op": 1, "d": seq}).to_string();
+            if send_text(&writer_for_heartbeat, payload).await.is_err() {
+                break;
+            }
+            sleep(heartbeat_interval).await;
+        }
+    });
+
+    // Main loop: race incoming frames against outgoing user commands. The
+    // heartbeat task is already running on its own cadence in the background.
+    let outcome = loop {
+        tokio::select! {
+            biased;
+
+            maybe_command = commands.recv() => {
+                match maybe_command {
+                    Some(command) => {
+                        if let Err(error) = dispatch_command(&writer, command).await {
+                            logging::debug(
+                                "gateway",
+                                format!("command send failed: {error}"),
+                            );
+                        }
+                    }
+                    None => break ConnectionOutcome::Stop,
+                }
+            }
+            frame = reader.next() => {
+                match frame {
+                    Some(Ok(WsMessage::Text(text))) => {
+                        let value: Value = match serde_json::from_str(&text) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                logging::debug(
+                                    "gateway",
+                                    format!("ignoring non-JSON frame: {error}"),
+                                );
+                                continue;
+                            }
+                        };
+                        match handle_frame(value, &text, session, &sequence_cell, tx, &writer).await {
+                            FrameOutcome::Continue => {}
+                            FrameOutcome::Resume => break ConnectionOutcome::Resume,
+                            FrameOutcome::Reidentify => break ConnectionOutcome::Reidentify,
+                        }
+                    }
+                    Some(Ok(WsMessage::Binary(_))) => {
+                        // Compression isn't enabled in the IDENTIFY, so binary
+                        // frames are unexpected. Log and ignore rather than
+                        // panic on bad input.
+                        logging::debug("gateway", "ignoring unexpected binary frame");
+                    }
+                    Some(Ok(WsMessage::Ping(payload))) => {
+                        let mut writer = writer.lock().await;
+                        if writer.send(WsMessage::Pong(payload)).await.is_err() {
+                            break ConnectionOutcome::Resume;
+                        }
+                    }
+                    Some(Ok(WsMessage::Pong(_))) | Some(Ok(WsMessage::Frame(_))) => {}
+                    Some(Ok(WsMessage::Close(frame))) => {
+                        let outcome = close_outcome(frame.as_ref());
+                        log_close(frame.as_ref());
+                        break outcome;
+                    }
+                    Some(Err(error)) => {
+                        logging::debug(
+                            "gateway",
+                            format!("websocket read error: {error}"),
+                        );
+                        break ConnectionOutcome::Resume;
+                    }
+                    None => break ConnectionOutcome::Resume,
                 }
             }
         }
-        GatewayCommand::SubscribeDirectMessage { channel_id } => {
-            let payload = direct_message_subscribe_payload(channel_id);
-            match sender.send(payload) {
-                Ok(()) => logging::debug(
-                    "gateway",
-                    format!("subscribed to direct message: channel={}", channel_id.get()),
-                ),
-                Err(error) => {
-                    logging::debug(
-                        "gateway",
-                        format!("subscribe direct message failed: {error}"),
-                    );
-                }
+    };
+
+    heartbeat_task.abort();
+    Ok(outcome)
+}
+
+enum FrameOutcome {
+    Continue,
+    Resume,
+    Reidentify,
+}
+
+async fn handle_frame(
+    value: Value,
+    raw: &str,
+    session: &mut SessionState,
+    sequence_cell: &Arc<Mutex<Option<u64>>>,
+    tx: &broadcast::Sender<AppEvent>,
+    writer: &WriterHandle,
+) -> FrameOutcome {
+    let op = value.get("op").and_then(Value::as_u64).unwrap_or_default();
+    match op {
+        // Dispatch
+        0 => {
+            if let Some(seq) = value.get("s").and_then(Value::as_u64) {
+                session.last_sequence = Some(seq);
+                *sequence_cell.lock().await = Some(seq);
             }
+            let dispatch_type = value.get("t").and_then(Value::as_str).unwrap_or("");
+            // Capture the session_id and resume_url from READY so a later
+            // disconnect can RESUME instead of redoing the heavy initial sync.
+            if dispatch_type == "READY"
+                && let Some(d) = value.get("d")
+            {
+                session.session_id = d
+                    .get("session_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                session.resume_url = d
+                    .get("resume_gateway_url")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+            }
+            let started = Instant::now();
+            let events = parse_user_account_event(raw);
+            logging::timing("gateway", "dispatch parse", started.elapsed());
+            for app_event in events {
+                let _ = tx.send(app_event);
+            }
+            FrameOutcome::Continue
+        }
+        // Heartbeat request from Discord — answer immediately even though our
+        // background task is pacing things.
+        1 => {
+            let seq = *sequence_cell.lock().await;
+            let payload = json!({"op": 1, "d": seq}).to_string();
+            let _ = send_text(writer, payload).await;
+            FrameOutcome::Continue
+        }
+        // Reconnect — Discord wants us to drop and resume. Saved
+        // session_id + seq makes the resume cheap.
+        7 => {
+            logging::debug("gateway", "RECONNECT requested");
+            FrameOutcome::Resume
+        }
+        // Invalid Session — `d` is a bool that says whether the session is
+        // resumable. Anything else means we have to throw it away.
+        9 => {
+            let resumable = value.get("d").and_then(Value::as_bool).unwrap_or(false);
+            logging::debug("gateway", format!("INVALID_SESSION resumable={resumable}"));
+            if resumable {
+                FrameOutcome::Resume
+            } else {
+                FrameOutcome::Reidentify
+            }
+        }
+        // Heartbeat ack — just drop, no action needed.
+        11 => FrameOutcome::Continue,
+        other => {
+            logging::debug("gateway", format!("unhandled gateway op={other}"));
+            FrameOutcome::Continue
+        }
+    }
+}
+
+fn close_outcome(frame: Option<&CloseFrame>) -> ConnectionOutcome {
+    let Some(frame) = frame else {
+        return ConnectionOutcome::Resume;
+    };
+    // Per Discord's documented close codes: anything outside 4000-4009 is a
+    // hard fail (auth, intent mismatch, sharding) where RESUME would just be
+    // rejected, so we re-IDENTIFY from scratch.
+    let code = u16::from(frame.code);
+    match code {
+        4000..=4009 => ConnectionOutcome::Resume,
+        _ => ConnectionOutcome::Reidentify,
+    }
+}
+
+fn log_close(frame: Option<&CloseFrame>) {
+    if let Some(frame) = frame {
+        logging::debug(
+            "gateway",
+            format!(
+                "websocket closed: code={} reason={:?}",
+                u16::from(frame.code),
+                frame.reason.as_str()
+            ),
+        );
+    } else {
+        logging::debug("gateway", "websocket closed without frame");
+    }
+}
+
+async fn dispatch_command(writer: &WriterHandle, command: GatewayCommand) -> Result<(), String> {
+    let payload = match command {
+        GatewayCommand::RequestGuildMembers { guild_id } => {
+            logging::debug(
+                "gateway",
+                format!("requesting guild members: guild={}", guild_id.get()),
+            );
+            json!({
+                "op": 8,
+                "d": {
+                    "guild_id": guild_id.to_string(),
+                    "query": "",
+                    "limit": 0,
+                    "presences": true,
+                },
+            })
+            .to_string()
+        }
+        GatewayCommand::SubscribeDirectMessage { channel_id } => {
+            logging::debug(
+                "gateway",
+                format!("subscribing to DM: channel={}", channel_id.get()),
+            );
+            direct_message_subscribe_payload(channel_id)
         }
         GatewayCommand::SubscribeGuildChannel {
             guild_id,
             channel_id,
         } => {
-            let payload = guild_channel_subscribe_payload(guild_id, channel_id, &[(0, 99)]);
-            match sender.send(payload) {
-                Ok(()) => logging::debug(
-                    "gateway",
-                    format!(
-                        "subscribed to guild channel: guild={} channel={}",
-                        guild_id.get(),
-                        channel_id.get()
-                    ),
+            logging::debug(
+                "gateway",
+                format!(
+                    "subscribing to guild channel: guild={} channel={}",
+                    guild_id.get(),
+                    channel_id.get()
                 ),
-                Err(error) => {
-                    logging::debug(
-                        "gateway",
-                        format!("subscribe guild channel failed: {error}"),
-                    );
-                }
-            }
+            );
+            guild_channel_subscribe_payload(guild_id, channel_id, &[(0, 99)])
         }
         GatewayCommand::UpdateMemberListSubscription {
             guild_id,
             channel_id,
             ranges,
         } => {
-            let payload = guild_channel_subscribe_payload(guild_id, channel_id, &ranges);
-            match sender.send(payload) {
-                Ok(()) => logging::debug(
-                    "gateway",
-                    format!(
-                        "updated member list ranges: guild={} channel={} ranges={:?}",
-                        guild_id.get(),
-                        channel_id.get(),
-                        ranges
-                    ),
+            logging::debug(
+                "gateway",
+                format!(
+                    "updating member list ranges: guild={} channel={} ranges={:?}",
+                    guild_id.get(),
+                    channel_id.get(),
+                    ranges
                 ),
-                Err(error) => {
-                    logging::debug(
-                        "gateway",
-                        format!("update member list ranges failed: {error}"),
-                    );
-                }
-            }
+            );
+            guild_channel_subscribe_payload(guild_id, channel_id, &ranges)
         }
-    }
+    };
+    send_text(writer, payload).await
+}
+
+async fn send_text(writer: &WriterHandle, payload: String) -> Result<(), String> {
+    let mut writer = writer.lock().await;
+    writer
+        .send(WsMessage::Text(payload.into()))
+        .await
+        .map_err(|error| format!("websocket send failed: {error}"))
+}
+
+fn build_identify_payload(token: &str) -> String {
+    json!({
+        "op": 2,
+        "d": {
+            "token": token,
+            "capabilities": USER_ACCOUNT_CAPABILITIES,
+            "properties": {
+                "os": "Linux",
+                "browser": "Chrome",
+                "device": "",
+                "system_locale": "en-US",
+                "browser_user_agent": BROWSER_USER_AGENT,
+                "browser_version": BROWSER_VERSION,
+                "os_version": "",
+                "referrer": "",
+                "referring_domain": "",
+                "referrer_current": "",
+                "referring_domain_current": "",
+                "release_channel": "stable",
+                "client_build_number": CLIENT_BUILD_NUMBER,
+                "client_event_source": Value::Null,
+            },
+            "presence": {
+                "status": "unknown",
+                "since": 0,
+                "activities": [],
+                "afk": false,
+            },
+            "compress": false,
+            "client_state": {
+                "guild_versions": {},
+                "highest_last_message_id": "0",
+                "read_state_version": 0,
+                "user_guild_settings_version": -1,
+                "user_settings_version": -1,
+                "private_channels_version": "0",
+                "api_code_version": 0,
+            },
+        },
+    })
+    .to_string()
+}
+
+fn build_resume_payload(token: &str, session: &SessionState) -> String {
+    json!({
+        "op": 6,
+        "d": {
+            "token": token,
+            "session_id": session.session_id.as_deref().unwrap_or_default(),
+            "seq": session.last_sequence.unwrap_or_default(),
+        },
+    })
+    .to_string()
 }
 
 fn direct_message_subscribe_payload(channel_id: Id<ChannelMarker>) -> String {
@@ -276,15 +602,6 @@ fn guild_channel_subscribe_payload(
         },
     })
     .to_string()
-}
-
-fn gateway_intents() -> Intents {
-    Intents::GUILDS
-        | Intents::GUILD_EMOJIS_AND_STICKERS
-        | Intents::GUILD_MESSAGES
-        | Intents::DIRECT_MESSAGES
-        | Intents::GUILD_MEMBERS
-        | Intents::MESSAGE_CONTENT
 }
 
 /// Best-effort fallback that rebuilds the dashboard's domain events directly
@@ -330,6 +647,7 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         "RELATIONSHIP_REMOVE" => parse_relationship_remove(data).into_iter().collect(),
         "GUILD_MEMBER_REMOVE" => parse_member_remove(data).into_iter().collect(),
         "PRESENCE_UPDATE" => parse_presence_update(data),
+        "TYPING_START" => parse_typing_start(data).into_iter().collect(),
         _ => Vec::new(),
     }
 }
@@ -390,6 +708,25 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
         merged_presences.extend(presences.iter().filter_map(parse_presence_entry));
     }
 
+    // With DEDUPE_USER_OBJECTS in capabilities (bit 4), Discord ships every
+    // referenced user once at the top of READY's `users` array and replaces
+    // each private channel's full `recipients` array with `recipient_ids`.
+    // Index those users by id once so DM hydration below is O(1) per
+    // recipient.
+    let users_by_id: BTreeMap<Id<UserMarker>, &Value> = data
+        .get("users")
+        .and_then(Value::as_array)
+        .map(|users| {
+            users
+                .iter()
+                .filter_map(|user| {
+                    let id = parse_id::<UserMarker>(user.get("id")?)?;
+                    Some((id, user))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     // User-account READY also lists DM and group-DM channels under
     // `private_channels`. They have no `guild_id` and never come through
     // `GUILD_CREATE`, so we surface them as standalone channel upserts.
@@ -398,6 +735,7 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
         stats.private_channels = privates.len();
         for channel in privates {
             if let Some(mut info) = parse_channel_info(channel, None) {
+                hydrate_dm_recipients_from_ids(&mut info, channel, &users_by_id);
                 apply_recipient_presences(&mut info, &merged_presences);
                 add_current_user_to_group_dm(&mut info, current_user.as_ref());
                 events.push(AppEvent::ChannelUpsert(info));
@@ -560,6 +898,55 @@ fn apply_recipient_presences(
     }
 }
 
+/// Resolves a private channel's `recipient_ids` against READY's deduplicated
+/// `users` array. With `DEDUPE_USER_OBJECTS` enabled Discord no longer
+/// inlines the full recipient objects in private channels, so without this
+/// step DM rows render as `dm-{channel_id}` and the recipient sidebar is
+/// empty.
+fn hydrate_dm_recipients_from_ids(
+    channel: &mut ChannelInfo,
+    raw: &Value,
+    users_by_id: &BTreeMap<Id<UserMarker>, &Value>,
+) {
+    if !matches!(channel.kind.as_str(), "dm" | "group-dm") {
+        return;
+    }
+    if channel
+        .recipients
+        .as_ref()
+        .is_some_and(|recipients| !recipients.is_empty())
+    {
+        return;
+    }
+    let Some(ids) = raw.get("recipient_ids").and_then(Value::as_array) else {
+        return;
+    };
+    let resolved: Vec<ChannelRecipientInfo> = ids
+        .iter()
+        .filter_map(parse_id::<UserMarker>)
+        .filter_map(|user_id| {
+            let user = users_by_id.get(&user_id)?;
+            parse_channel_recipient_info(user)
+        })
+        .collect();
+    if resolved.is_empty() {
+        return;
+    }
+    // The previous `parse_channel_info` couldn't see the recipients, so its
+    // name was a synthetic `dm-{channel_id}`. Rebuild the human-readable
+    // label now using the same global_name → username preference the rest of
+    // the parser uses.
+    let synthetic_label = format!("dm-{}", channel.channel_id.get());
+    if channel.name == synthetic_label {
+        channel.name = resolved
+            .iter()
+            .map(|recipient| recipient.display_name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+    }
+    channel.recipients = Some(resolved);
+}
+
 fn add_current_user_to_group_dm(
     channel: &mut ChannelInfo,
     current_user: Option<&ChannelRecipientInfo>,
@@ -584,8 +971,16 @@ fn add_current_user_to_group_dm(
 
 fn parse_guild_create(data: &Value) -> Option<AppEvent> {
     let guild_id = parse_id::<GuildMarker>(data.get("id")?)?;
-    let name = data
-        .get("name")
+    // With user-account `capabilities` containing LAZY_USER_NOTIFICATIONS
+    // (bit 0), Discord nests the guild's name / icon / owner_id under a
+    // `properties` sub-object instead of placing them at the root. Fall back
+    // to that location so guilds don't all render as "unknown".
+    let properties = data.get("properties");
+    let lookup = |key: &str| -> Option<&Value> {
+        data.get(key)
+            .or_else(|| properties.and_then(|p| p.get(key)))
+    };
+    let name = lookup("name")
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_owned();
@@ -633,7 +1028,7 @@ fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         .map(|items| items.iter().filter_map(parse_custom_emoji).collect())
         .unwrap_or_default();
 
-    let owner_id = data.get("owner_id").and_then(parse_id::<UserMarker>);
+    let owner_id = lookup("owner_id").and_then(parse_id::<UserMarker>);
 
     Some(AppEvent::GuildCreate {
         guild_id,
@@ -723,8 +1118,15 @@ fn parse_guild_emojis_update(data: &Value) -> Option<AppEvent> {
 
 fn parse_guild_update(data: &Value) -> Option<AppEvent> {
     let guild_id = parse_id::<GuildMarker>(data.get("id")?)?;
-    let name = data
-        .get("name")
+    // Same lazy-mode caveat as `parse_guild_create`: with capabilities such
+    // as LAZY_USER_NOTIFICATIONS enabled, name/owner_id can ride inside a
+    // `properties` sub-object instead of at the root.
+    let properties = data.get("properties");
+    let lookup = |key: &str| -> Option<&Value> {
+        data.get(key)
+            .or_else(|| properties.and_then(|p| p.get(key)))
+    };
+    let name = lookup("name")
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_owned();
@@ -736,7 +1138,7 @@ fn parse_guild_update(data: &Value) -> Option<AppEvent> {
         .get("roles")
         .and_then(Value::as_array)
         .map(|items| items.iter().filter_map(parse_role_info).collect());
-    let owner_id = data.get("owner_id").and_then(parse_id::<UserMarker>);
+    let owner_id = lookup("owner_id").and_then(parse_id::<UserMarker>);
     Some(AppEvent::GuildUpdate {
         guild_id,
         name,
@@ -1169,6 +1571,7 @@ fn parse_mention_info(value: &Value) -> Option<MentionInfo> {
         .filter(|value| !value.is_empty());
     Some(MentionInfo {
         user_id,
+        guild_nick: nick.map(str::to_owned),
         display_name: nick.or(global_name).or(username)?.to_owned(),
     })
 }
@@ -1426,6 +1829,27 @@ fn parse_presence_update(data: &Value) -> Vec<AppEvent> {
     }
 }
 
+/// Discord's TYPING_START shape: `{ channel_id, guild_id?, user_id,
+/// timestamp, member? }`. Guild channels carry the typer's user_id directly,
+/// while DMs sometimes only embed it under `member.user.id`. We accept both
+/// and ignore the timestamp (state stamps its own Instant on receive).
+fn parse_typing_start(data: &Value) -> Option<AppEvent> {
+    let channel_id = parse_id::<ChannelMarker>(data.get("channel_id")?)?;
+    let user_id = data
+        .get("user_id")
+        .and_then(parse_id::<UserMarker>)
+        .or_else(|| {
+            data.get("member")
+                .and_then(|member| member.get("user"))
+                .and_then(|user| user.get("id"))
+                .and_then(parse_id::<UserMarker>)
+        })?;
+    Some(AppEvent::TypingStart {
+        channel_id,
+        user_id,
+    })
+}
+
 fn parse_channel_info(
     value: &Value,
     default_guild: Option<Id<GuildMarker>>,
@@ -1597,6 +2021,7 @@ fn parse_channel_recipient_info(value: &Value) -> Option<ChannelRecipientInfo> {
     Some(ChannelRecipientInfo {
         user_id,
         display_name,
+        username: username.map(str::to_owned),
         is_bot,
         avatar_url: raw_user_avatar_url(user_id, value),
         status,
@@ -1624,6 +2049,7 @@ fn parse_member_info(value: &Value) -> Option<MemberInfo> {
     Some(MemberInfo {
         user_id,
         display_name,
+        username: username.map(str::to_owned),
         is_bot,
         avatar_url: raw_user_avatar_url(user_id, user),
         role_ids: value
@@ -1732,13 +2158,13 @@ fn parse_id<M>(value: &Value) -> Option<Id<M>> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use twilight_model::gateway::Intents;
     use twilight_model::id::Id;
 
     use super::{
-        direct_message_subscribe_payload, gateway_intents, guild_channel_subscribe_payload,
-        parse_channel_info, parse_guild_create, parse_guild_emojis_update, parse_guild_update,
-        parse_message_create, parse_message_update, parse_user_account_event,
+        SessionState, USER_ACCOUNT_CAPABILITIES, build_identify_payload, build_resume_payload,
+        direct_message_subscribe_payload, guild_channel_subscribe_payload, parse_channel_info,
+        parse_guild_create, parse_guild_emojis_update, parse_guild_update, parse_message_create,
+        parse_message_update, parse_user_account_event,
     };
     use crate::discord::{
         AppEvent, AttachmentUpdate, FriendStatus, MentionInfo, MessageKind, PollAnswerInfo,
@@ -1746,16 +2172,39 @@ mod tests {
     };
 
     #[test]
-    fn startup_intents_include_message_content() {
-        let intents = gateway_intents();
+    fn identify_payload_carries_user_account_capabilities() {
+        let payload: serde_json::Value =
+            serde_json::from_str(&build_identify_payload("dummy-token"))
+                .expect("identify payload should be valid json");
+        assert_eq!(payload["op"].as_u64(), Some(2));
+        assert_eq!(
+            payload["d"]["capabilities"].as_u64(),
+            Some(USER_ACCOUNT_CAPABILITIES)
+        );
+        // Browser-style fingerprint is what unlocks friend presence streaming
+        // for user accounts.
+        assert!(
+            payload["d"]["properties"]["browser_user_agent"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Chrome")
+        );
+        assert_eq!(payload["d"]["compress"].as_bool(), Some(false));
+    }
 
-        assert!(intents.contains(Intents::GUILDS));
-        assert!(intents.contains(Intents::GUILD_MESSAGES));
-        assert!(intents.contains(Intents::GUILD_EMOJIS_AND_STICKERS));
-        assert!(intents.contains(Intents::DIRECT_MESSAGES));
-        assert!(intents.contains(Intents::GUILD_MEMBERS));
-        assert!(intents.contains(Intents::MESSAGE_CONTENT));
-        assert!(!intents.contains(Intents::GUILD_PRESENCES));
+    #[test]
+    fn resume_payload_uses_saved_session_id_and_seq() {
+        let session = SessionState {
+            session_id: Some("sess-123".to_owned()),
+            last_sequence: Some(42),
+            ..SessionState::default()
+        };
+        let payload: serde_json::Value =
+            serde_json::from_str(&build_resume_payload("dummy-token", &session))
+                .expect("resume payload should be valid json");
+        assert_eq!(payload["op"].as_u64(), Some(6));
+        assert_eq!(payload["d"]["session_id"].as_str(), Some("sess-123"));
+        assert_eq!(payload["d"]["seq"].as_u64(), Some(42));
     }
 
     #[test]
@@ -3014,7 +3463,7 @@ mod tests {
         assert_eq!(
             mentions,
             vec![
-                mention_info(40, "Alpha Nick"),
+                mention_info_with_nick(40, "Alpha Nick"),
                 mention_info(41, "Beta Global"),
                 mention_info(42, "gamma"),
             ]
@@ -3339,7 +3788,16 @@ mod tests {
     fn mention_info(user_id: u64, display_name: &str) -> MentionInfo {
         MentionInfo {
             user_id: Id::new(user_id),
+            guild_nick: None,
             display_name: display_name.to_owned(),
+        }
+    }
+
+    fn mention_info_with_nick(user_id: u64, nick: &str) -> MentionInfo {
+        MentionInfo {
+            user_id: Id::new(user_id),
+            guild_nick: Some(nick.to_owned()),
+            display_name: nick.to_owned(),
         }
     }
 
@@ -3354,5 +3812,175 @@ mod tests {
             "total_message_sent": 14,
             "thread_metadata": { "archived": false, "locked": false }
         })
+    }
+
+    #[test]
+    fn parse_guild_create_reads_name_from_lazy_properties_object() {
+        // With user-account capabilities containing LAZY_USER_NOTIFICATIONS,
+        // Discord nests guild metadata under `properties` instead of placing
+        // `name` / `owner_id` at the root. Concord must look in both places
+        // or every guild renders as "unknown".
+        let event = parse_guild_create(&json!({
+            "id": "100",
+            "member_count": 7,
+            "channels": [],
+            "roles": [],
+            "emojis": [],
+            "properties": {
+                "name": "Lazy Server",
+                "owner_id": "42",
+            },
+        }))
+        .expect("guild_create payload should map");
+
+        let AppEvent::GuildCreate {
+            guild_id,
+            name,
+            owner_id,
+            member_count,
+            ..
+        } = event
+        else {
+            panic!("expected GuildCreate event");
+        };
+        assert_eq!(guild_id, Id::new(100));
+        assert_eq!(name, "Lazy Server");
+        assert_eq!(owner_id, Some(Id::new(42)));
+        assert_eq!(member_count, Some(7));
+    }
+
+    #[test]
+    fn parse_guild_create_prefers_root_name_when_both_locations_set() {
+        // Guard against future Discord shape drift: if both root-level and
+        // nested name are present, the root wins (matches what the official
+        // client does).
+        let event = parse_guild_create(&json!({
+            "id": "100",
+            "name": "Root Name",
+            "properties": {"name": "Properties Name"},
+        }))
+        .expect("guild_create payload should map");
+
+        let AppEvent::GuildCreate { name, .. } = event else {
+            panic!("expected GuildCreate event");
+        };
+        assert_eq!(name, "Root Name");
+    }
+
+    #[test]
+    fn typing_start_extracts_channel_and_user_from_dm_payload() {
+        // DM TYPING_START omits guild_id and embeds user_id directly.
+        let events = parse_user_account_event(
+            &json!({
+                "t": "TYPING_START",
+                "d": {
+                    "channel_id": "12345",
+                    "user_id": "99",
+                    "timestamp": 1_700_000_000
+                }
+            })
+            .to_string(),
+        );
+        assert!(matches!(
+            events.as_slice(),
+            [AppEvent::TypingStart { channel_id, user_id }]
+                if *channel_id == Id::new(12345) && *user_id == Id::new(99)
+        ));
+    }
+
+    #[test]
+    fn typing_start_falls_back_to_member_user_id_when_top_level_missing() {
+        // Some guild TYPING_START payloads only embed the user id under
+        // `member.user.id`. Make sure we still surface the typer.
+        let events = parse_user_account_event(
+            &json!({
+                "t": "TYPING_START",
+                "d": {
+                    "channel_id": "55",
+                    "guild_id": "77",
+                    "member": {
+                        "user": { "id": "42" }
+                    },
+                    "timestamp": 1_700_000_000
+                }
+            })
+            .to_string(),
+        );
+        assert!(matches!(
+            events.as_slice(),
+            [AppEvent::TypingStart { channel_id, user_id }]
+                if *channel_id == Id::new(55) && *user_id == Id::new(42)
+        ));
+    }
+
+    #[test]
+    fn ready_hydrates_dm_recipients_from_dedupe_user_ids() {
+        // With DEDUPE_USER_OBJECTS in capabilities, READY puts users at the
+        // top level once and each private channel only carries
+        // `recipient_ids`. The dashboard must still show the peer's name
+        // and not `dm-{channel_id}`.
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY",
+                "d": {
+                    "user": { "id": "10", "username": "me" },
+                    "users": [
+                        {
+                            "id": "20",
+                            "username": "muri",
+                            "global_name": "딱구형",
+                            "discriminator": "0",
+                        }
+                    ],
+                    "private_channels": [
+                        {
+                            "id": "12345",
+                            "type": 1,
+                            "recipient_ids": ["20"]
+                        }
+                    ]
+                }
+            })
+            .to_string(),
+        );
+
+        let dm = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::ChannelUpsert(info) if info.kind == "dm" => Some(info),
+                _ => None,
+            })
+            .expect("dm channel upsert should be emitted");
+        assert_eq!(dm.name, "딱구형");
+        let recipients = dm.recipients.as_ref().expect("recipients hydrated");
+        assert_eq!(recipients.len(), 1);
+        assert_eq!(recipients[0].user_id, Id::new(20));
+        assert_eq!(recipients[0].display_name, "딱구형");
+        assert_eq!(recipients[0].username.as_deref(), Some("muri"));
+    }
+
+    #[test]
+    fn parse_guild_update_reads_name_from_lazy_properties_object() {
+        let event = parse_guild_update(&json!({
+            "id": "100",
+            "properties": {
+                "name": "Renamed Lazy",
+                "owner_id": "9",
+            },
+        }))
+        .expect("guild_update payload should map");
+
+        let AppEvent::GuildUpdate {
+            guild_id,
+            name,
+            owner_id,
+            ..
+        } = event
+        else {
+            panic!("expected GuildUpdate event");
+        };
+        assert_eq!(guild_id, Id::new(100));
+        assert_eq!(name, "Renamed Lazy");
+        assert_eq!(owner_id, Some(Id::new(9)));
     }
 }

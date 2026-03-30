@@ -1,285 +1,59 @@
 use std::collections::{HashMap, HashSet};
 
-use ratatui::style::Color;
 use twilight_model::id::{
     Id,
-    marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
+    marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
 use crate::discord::{
-    AppCommand, AppEvent, AttachmentInfo, ChannelRecipientState, ChannelState,
-    ChannelVisibilityStats, CustomEmojiInfo, DiscordState, GuildFolder, GuildMemberState,
-    GuildState, MentionInfo, MessageInfo, MessageSnapshotInfo, MessageState, PollInfo,
-    PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUsersInfo, RoleState, UserProfileInfo,
+    AppCommand, AppEvent, ChannelState, ChannelVisibilityStats, DiscordState, GuildFolder,
+    GuildState, MentionInfo, MessageInfo, MessageSnapshotInfo, MessageState, PresenceStatus,
+    UserProfileInfo,
 };
 use crate::logging;
 
 use super::format::{
-    RenderedText, TextHighlight, render_user_mentions, render_user_mentions_with_highlights,
+    RenderedText, TextHighlightKind, render_user_mentions, render_user_mentions_with_highlights,
 };
 
-const SCROLL_OFF: usize = 3;
+mod composer;
+mod emoji;
+mod member_grouping;
+mod message_render;
+mod model;
+mod popups;
+mod presentation;
+mod scroll;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FocusPane {
-    Guilds,
-    Channels,
-    Messages,
-    Members,
-}
+use composer::{
+    MentionCompletion, build_mention_candidates, expand_mention_completions, is_mention_query_char,
+    move_mention_selection, should_start_mention_query,
+};
+use emoji::{custom_emoji_reaction_item, unicode_emoji_reaction_items};
+use member_grouping::{channel_recipient_group, flatten_member_groups, guild_member_groups};
+use message_render::{
+    add_literal_mention_highlights, message_base_line_count_for_width_with_mentions,
+    message_rendered_height_with_mentions, normalize_text_highlights,
+};
+use popups::{ChannelActionMenuState, MemberActionMenuState, UserProfilePopupState};
+use presentation::{is_direct_message_channel, sort_channels, sort_direct_message_channels};
+use scroll::{
+    SCROLL_OFF, clamp_list_scroll, clamp_selected_index, close_collapsed_key, last_index,
+    move_index_down, move_index_down_by, move_index_up, move_index_up_by, open_collapsed_key,
+    pane_content_height, toggle_collapsed_key,
+};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MessageActionKind {
-    Reply,
-    OpenThread,
-    DownloadImage,
-    AddReaction,
-    RemoveReaction(usize),
-    ShowReactionUsers,
-    ShowProfile,
-    LoadPinnedMessages,
-    SetPinned(bool),
-    VotePollAnswer(u8),
-    OpenPollVotePicker,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MessageActionItem {
-    pub kind: MessageActionKind,
-    pub label: String,
-    pub enabled: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ChannelActionKind {
-    ShowThreads,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChannelActionItem {
-    pub kind: ChannelActionKind,
-    pub label: String,
-    pub enabled: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MemberActionKind {
-    ShowProfile,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MemberActionItem {
-    pub kind: MemberActionKind,
-    pub label: String,
-    pub enabled: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChannelThreadItem {
-    pub channel_id: Id<ChannelMarker>,
-    pub label: String,
-    pub archived: bool,
-    pub locked: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EmojiReactionItem {
-    pub emoji: ReactionEmoji,
-    pub label: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PollVotePickerItem {
-    pub answer_id: u8,
-    pub label: String,
-    pub selected: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ThreadSummary {
-    pub channel_id: Id<ChannelMarker>,
-    pub name: String,
-    pub message_count: Option<u64>,
-    pub total_message_sent: Option<u64>,
-    pub archived: Option<bool>,
-    pub locked: Option<bool>,
-}
-
-impl EmojiReactionItem {
-    pub fn custom_image_url(&self) -> Option<String> {
-        self.emoji.custom_image_url()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct UnicodeEmojiReactionItem {
-    emoji: &'static str,
-    label: &'static str,
-}
-
-const EMOJI_REACTION_ITEMS: &[UnicodeEmojiReactionItem] = &[
-    UnicodeEmojiReactionItem {
-        emoji: "👍",
-        label: "Thumbs up",
-    },
-    UnicodeEmojiReactionItem {
-        emoji: "❤️",
-        label: "Heart",
-    },
-    UnicodeEmojiReactionItem {
-        emoji: "😂",
-        label: "Laugh",
-    },
-    UnicodeEmojiReactionItem {
-        emoji: "🎉",
-        label: "Celebrate",
-    },
-    UnicodeEmojiReactionItem {
-        emoji: "😮",
-        label: "Surprised",
-    },
-    UnicodeEmojiReactionItem {
-        emoji: "😢",
-        label: "Sad",
-    },
-    UnicodeEmojiReactionItem {
-        emoji: "🙏",
-        label: "Thanks",
-    },
-    UnicodeEmojiReactionItem {
-        emoji: "👀",
-        label: "Looking",
-    },
-];
-
-fn custom_emoji_reaction_item(emoji: &CustomEmojiInfo) -> EmojiReactionItem {
-    EmojiReactionItem {
-        emoji: ReactionEmoji::Custom {
-            id: emoji.id,
-            name: Some(emoji.name.clone()),
-            animated: emoji.animated,
-        },
-        label: custom_emoji_label(&emoji.name),
-    }
-}
-
-fn custom_emoji_label(name: &str) -> String {
-    let words: Vec<String> = name
-        .split('_')
-        .filter(|word| !word.is_empty())
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
-                None => String::new(),
-            }
-        })
-        .collect();
-
-    if words.is_empty() {
-        name.to_owned()
-    } else {
-        words.join(" ")
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MessageActionMenuState {
-    selected: usize,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct UserProfilePopupState {
-    user_id: Id<UserMarker>,
-    guild_id: Option<Id<GuildMarker>>,
-    load_error: Option<String>,
-    /// `Some(index)` once the user has moved into the mutual server list with
-    /// j/k. `None` while the popup is purely informational. Enter on a
-    /// selected mutual server activates that guild and closes the popup.
-    mutual_cursor: Option<usize>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct MemberActionMenuState {
-    user_id: Id<UserMarker>,
-    guild_id: Option<Id<GuildMarker>>,
-    selected: usize,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ChannelActionMenuState {
-    Actions {
-        channel_id: Id<ChannelMarker>,
-        selected: usize,
-    },
-    Threads {
-        channel_id: Id<ChannelMarker>,
-        selected: usize,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EmojiReactionPickerState {
-    selected: usize,
-    guild_id: Option<Id<GuildMarker>>,
-    channel_id: Id<ChannelMarker>,
-    message_id: Id<MessageMarker>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PollVotePickerState {
-    selected: usize,
-    channel_id: Id<ChannelMarker>,
-    message_id: Id<MessageMarker>,
-    answers: Vec<PollVotePickerItem>,
-}
-
-impl PollVotePickerState {
-    pub fn answers(&self) -> &[PollVotePickerItem] {
-        &self.answers
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReactionUsersPopupState {
-    channel_id: Id<ChannelMarker>,
-    message_id: Id<MessageMarker>,
-    reactions: Vec<ReactionUsersInfo>,
-    scroll: usize,
-    view_height: usize,
-}
-
-impl ReactionUsersPopupState {
-    pub fn reactions(&self) -> &[ReactionUsersInfo] {
-        &self.reactions
-    }
-
-    pub fn scroll(&self) -> usize {
-        self.scroll
-    }
-
-    /// Total renderable data lines for the current reactions, mirroring the
-    /// layout produced by `reaction_users_popup_data_lines` in `ui.rs` so the
-    /// scroll bound here stays in sync with what the user actually sees.
-    pub fn data_line_count(&self) -> usize {
-        if self.reactions.is_empty() {
-            return 1;
-        }
-        self.reactions
-            .iter()
-            .map(|reaction| 1 + reaction.users.len().max(1))
-            .sum()
-    }
-
-    fn max_scroll(&self) -> usize {
-        let visible = self.view_height.min(self.data_line_count());
-        self.data_line_count().saturating_sub(visible)
-    }
-
-    fn clamp_scroll(&mut self) {
-        self.scroll = self.scroll.min(self.max_scroll());
-    }
-}
+pub use composer::{MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry};
+pub use member_grouping::{MemberEntry, MemberGroup};
+pub use model::{
+    ChannelActionItem, ChannelActionKind, ChannelBranch, ChannelPaneEntry, ChannelThreadItem,
+    EmojiReactionItem, FocusPane, GuildBranch, GuildPaneEntry, MemberActionItem, MemberActionKind,
+    MessageActionItem, MessageActionKind, PollVotePickerItem, ThreadSummary,
+};
+pub use popups::{
+    EmojiReactionPickerState, MessageActionMenuState, PollVotePickerState, ReactionUsersPopupState,
+};
+pub use presentation::{folder_color, presence_color, presence_marker};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OlderHistoryRequestState {
@@ -321,6 +95,15 @@ pub struct DashboardState {
     composer_input: String,
     composer_active: bool,
     reply_target_message_id: Option<Id<MessageMarker>>,
+    /// Set when the user is in the middle of an `@mention` autocomplete. The
+    /// stored string is the characters typed *after* the `@` and is used to
+    /// filter the candidate list. `None` means the picker is closed.
+    composer_mention_query: Option<String>,
+    composer_mention_selected: usize,
+    /// Records `@displayname` substrings that the picker inserted, so the
+    /// composer can rewrite them to Discord's `<@USER_ID>` wire format on
+    /// submit even though the visible text is still the friendly form.
+    composer_mention_completions: Vec<MentionCompletion>,
     message_action_menu: Option<MessageActionMenuState>,
     channel_action_menu: Option<ChannelActionMenuState>,
     member_action_menu: Option<MemberActionMenuState>,
@@ -380,6 +163,9 @@ impl DashboardState {
             composer_input: String::new(),
             composer_active: false,
             reply_target_message_id: None,
+            composer_mention_query: None,
+            composer_mention_selected: 0,
+            composer_mention_completions: Vec::new(),
             message_action_menu: None,
             channel_action_menu: None,
             member_action_menu: None,
@@ -601,25 +387,22 @@ impl DashboardState {
 
     pub fn selected_member_action_index(&self) -> Option<usize> {
         let menu = self.member_action_menu.as_ref()?;
-        Some(
-            menu.selected
-                .min(self.selected_member_action_items().len().saturating_sub(1)),
-        )
+        Some(clamp_selected_index(
+            menu.selected,
+            self.selected_member_action_items().len(),
+        ))
     }
 
     pub fn move_member_action_down(&mut self) {
         let len = self.selected_member_action_items().len();
-        if len == 0 {
-            return;
-        }
         if let Some(menu) = self.member_action_menu.as_mut() {
-            menu.selected = (menu.selected + 1).min(len - 1);
+            move_index_down(&mut menu.selected, len);
         }
     }
 
     pub fn move_member_action_up(&mut self) {
         if let Some(menu) = self.member_action_menu.as_mut() {
-            menu.selected = menu.selected.saturating_sub(1);
+            move_index_up(&mut menu.selected);
         }
     }
 
@@ -627,7 +410,7 @@ impl DashboardState {
         let menu = self.member_action_menu.clone()?;
         let items = self.selected_member_action_items();
         let item = items
-            .get(menu.selected.min(items.len().saturating_sub(1)))?
+            .get(clamp_selected_index(menu.selected, items.len()))?
             .clone();
         if !item.enabled {
             return None;
@@ -850,14 +633,7 @@ impl DashboardState {
     }
 
     pub fn emoji_reaction_items(&self) -> Vec<EmojiReactionItem> {
-        let mut items: Vec<EmojiReactionItem> = EMOJI_REACTION_ITEMS
-            .iter()
-            .map(|item| EmojiReactionItem {
-                emoji: ReactionEmoji::Unicode(item.emoji.to_owned()),
-                label: item.label.to_owned(),
-            })
-            .collect();
-
+        let mut items = unicode_emoji_reaction_items();
         let guild_id = self.picker_guild_id();
 
         if let Some(guild_id) = guild_id {
@@ -966,12 +742,14 @@ impl DashboardState {
 
     pub fn selected_channel_action_index(&self) -> Option<usize> {
         match self.channel_action_menu.as_ref()? {
-            ChannelActionMenuState::Actions { selected, .. } => {
-                Some((*selected).min(self.selected_channel_action_items().len().saturating_sub(1)))
-            }
-            ChannelActionMenuState::Threads { selected, .. } => {
-                Some((*selected).min(self.channel_action_thread_items().len().saturating_sub(1)))
-            }
+            ChannelActionMenuState::Actions { selected, .. } => Some(clamp_selected_index(
+                *selected,
+                self.selected_channel_action_items().len(),
+            )),
+            ChannelActionMenuState::Threads { selected, .. } => Some(clamp_selected_index(
+                *selected,
+                self.channel_action_thread_items().len(),
+            )),
         }
     }
 
@@ -985,15 +763,12 @@ impl DashboardState {
             }
             None => return,
         };
-        if len == 0 {
-            return;
-        }
         if let Some(menu) = self.channel_action_menu.as_mut() {
             let selected = match menu {
                 ChannelActionMenuState::Actions { selected, .. }
                 | ChannelActionMenuState::Threads { selected, .. } => selected,
             };
-            *selected = (*selected + 1).min(len - 1);
+            move_index_down(selected, len);
         }
     }
 
@@ -1003,7 +778,7 @@ impl DashboardState {
                 ChannelActionMenuState::Actions { selected, .. }
                 | ChannelActionMenuState::Threads { selected, .. } => selected,
             };
-            *selected = selected.saturating_sub(1);
+            move_index_up(selected);
         }
     }
 
@@ -1016,7 +791,7 @@ impl DashboardState {
             } => {
                 let items = self.selected_channel_action_items();
                 let item = items
-                    .get(selected.min(items.len().saturating_sub(1)))?
+                    .get(clamp_selected_index(selected, items.len()))?
                     .clone();
                 if !item.enabled {
                     return None;
@@ -1096,51 +871,45 @@ impl DashboardState {
 
     pub fn move_message_action_down(&mut self) {
         let actions_len = self.selected_message_action_items().len();
-        if actions_len == 0 {
-            return;
-        }
         if let Some(menu) = &mut self.message_action_menu {
-            menu.selected = (menu.selected + 1).min(actions_len - 1);
+            move_index_down(&mut menu.selected, actions_len);
         }
     }
 
     pub fn move_message_action_up(&mut self) {
         if let Some(menu) = &mut self.message_action_menu {
-            menu.selected = menu.selected.saturating_sub(1);
+            move_index_up(&mut menu.selected);
         }
     }
 
     pub fn move_emoji_reaction_down(&mut self) {
         let reactions_len = self.emoji_reaction_items().len();
-        if reactions_len == 0 {
-            return;
-        }
         if let Some(picker) = &mut self.emoji_reaction_picker {
-            picker.selected = (picker.selected + 1).min(reactions_len - 1);
+            move_index_down(&mut picker.selected, reactions_len);
         }
     }
 
     pub fn move_emoji_reaction_up(&mut self) {
         if let Some(picker) = &mut self.emoji_reaction_picker {
-            picker.selected = picker.selected.saturating_sub(1);
+            move_index_up(&mut picker.selected);
         }
     }
 
     pub fn move_poll_vote_picker_down(&mut self) {
         if let Some(picker) = &mut self.poll_vote_picker {
-            picker.selected = (picker.selected + 1).min(picker.answers.len().saturating_sub(1));
+            move_index_down(&mut picker.selected, picker.answers.len());
         }
     }
 
     pub fn move_poll_vote_picker_up(&mut self) {
         if let Some(picker) = &mut self.poll_vote_picker {
-            picker.selected = picker.selected.saturating_sub(1);
+            move_index_up(&mut picker.selected);
         }
     }
 
     pub fn toggle_selected_poll_vote_answer(&mut self) {
         if let Some(picker) = &mut self.poll_vote_picker {
-            let index = picker.selected.min(picker.answers.len().saturating_sub(1));
+            let index = clamp_selected_index(picker.selected, picker.answers.len());
             if let Some(answer) = picker.answers.get_mut(index) {
                 answer.selected = !answer.selected;
             }
@@ -1150,7 +919,7 @@ impl DashboardState {
     pub fn selected_poll_vote_picker_index(&self) -> Option<usize> {
         self.poll_vote_picker
             .as_ref()
-            .map(|picker| picker.selected.min(picker.answers.len().saturating_sub(1)))
+            .map(|picker| clamp_selected_index(picker.selected, picker.answers.len()))
     }
 
     pub fn selected_message_action_items(&self) -> Vec<MessageActionItem> {
@@ -1246,8 +1015,7 @@ impl DashboardState {
 
     pub fn selected_message_action_index(&self) -> Option<usize> {
         self.message_action_menu.as_ref().map(|menu| {
-            menu.selected
-                .min(self.selected_message_action_items().len().saturating_sub(1))
+            clamp_selected_index(menu.selected, self.selected_message_action_items().len())
         })
     }
 
@@ -1257,11 +1025,9 @@ impl DashboardState {
     }
 
     pub fn selected_emoji_reaction_index(&self) -> Option<usize> {
-        self.emoji_reaction_picker.as_ref().map(|picker| {
-            picker
-                .selected
-                .min(self.emoji_reaction_items().len().saturating_sub(1))
-        })
+        self.emoji_reaction_picker
+            .as_ref()
+            .map(|picker| clamp_selected_index(picker.selected, self.emoji_reaction_items().len()))
     }
 
     pub fn selected_emoji_reaction(&self) -> Option<EmojiReactionItem> {
@@ -1507,7 +1273,11 @@ impl DashboardState {
         let folders = self.discord.guild_folders();
 
         if folders.is_empty() {
-            for guild in by_id.values() {
+            // Iterating `by_id.values()` here is non-deterministic because
+            // it's a HashMap, which makes the sidebar shuffle on every render.
+            // Fall back to the discord state's own (insertion-ordered) guild
+            // list so the order stays stable until folder data arrives.
+            for guild in self.discord.guilds() {
                 entries.push(GuildPaneEntry::Guild {
                     state: guild,
                     branch: GuildBranch::None,
@@ -1564,7 +1334,10 @@ impl DashboardState {
             }
         }
 
-        for guild in by_id.values() {
+        // Same reasoning as the folder-empty branch above: walk the discord
+        // state's BTreeMap-backed list so the trailing "ungrouped" guilds
+        // appear in a stable, deterministic order.
+        for guild in self.discord.guilds() {
             if !placed.contains(&guild.id) {
                 entries.push(GuildPaneEntry::Guild {
                     state: guild,
@@ -1577,8 +1350,7 @@ impl DashboardState {
     }
 
     pub fn selected_guild(&self) -> usize {
-        self.selected_guild
-            .min(self.guild_pane_entries().len().saturating_sub(1))
+        clamp_selected_index(self.selected_guild, self.guild_pane_entries().len())
     }
 
     #[cfg(test)]
@@ -1630,22 +1402,20 @@ impl DashboardState {
     /// nothing if the cursor isn't on a folder header.
     pub fn toggle_selected_folder(&mut self) {
         let folder_key = self.selected_folder_key();
-        if let Some(key) = folder_key
-            && !self.collapsed_folders.insert(key.clone())
-        {
-            self.collapsed_folders.remove(&key);
+        if let Some(key) = folder_key {
+            toggle_collapsed_key(&mut self.collapsed_folders, key);
         }
     }
 
     pub fn open_selected_folder(&mut self) {
         if let Some(key) = self.selected_folder_key() {
-            self.collapsed_folders.remove(&key);
+            open_collapsed_key(&mut self.collapsed_folders, &key);
         }
     }
 
     pub fn close_selected_folder(&mut self) {
         if let Some(key) = self.selected_folder_key() {
-            self.collapsed_folders.insert(key);
+            close_collapsed_key(&mut self.collapsed_folders, key);
         }
     }
 
@@ -1865,8 +1635,7 @@ impl DashboardState {
     }
 
     pub fn selected_channel(&self) -> usize {
-        self.selected_channel
-            .min(self.channel_pane_entries().len().saturating_sub(1))
+        clamp_selected_index(self.selected_channel, self.channel_pane_entries().len())
     }
 
     fn selected_channel_cursor_id(&self) -> Option<Id<ChannelMarker>> {
@@ -1920,6 +1689,52 @@ impl DashboardState {
     pub fn selected_channel_state(&self) -> Option<&ChannelState> {
         self.active_channel_id
             .and_then(|channel_id| self.discord.channel(channel_id))
+    }
+
+    /// Builds the "X is typing…" line for the currently selected channel, or
+    /// `None` when nobody is typing (or the only typer is us). Resolution
+    /// order for each user: cached guild member alias → DM recipient
+    /// display name → `user-{id}` fallback. Caps at three names and
+    /// collapses to "Several people are typing…" beyond that.
+    pub fn typing_footer_for_selected_channel(&self) -> Option<String> {
+        let channel_id = self.selected_channel_id()?;
+        let channel = self.discord.channel(channel_id)?;
+        let guild_id = channel.guild_id;
+        let typers: Vec<Id<UserMarker>> = self
+            .discord
+            .typing_users(channel_id)
+            .into_iter()
+            .filter(|user_id| Some(*user_id) != self.current_user_id)
+            .collect();
+        if typers.is_empty() {
+            return None;
+        }
+
+        let resolve_name = |user_id: Id<UserMarker>| -> String {
+            if let Some(name) =
+                guild_id.and_then(|guild_id| self.discord.member_display_name(guild_id, user_id))
+            {
+                return name.to_owned();
+            }
+            if let Some(recipient) = channel
+                .recipients
+                .iter()
+                .find(|recipient| recipient.user_id == user_id)
+            {
+                return recipient.display_name.clone();
+            }
+            format!("user-{}", user_id.get())
+        };
+
+        let total = typers.len();
+        let names: Vec<String> = typers.iter().take(3).copied().map(resolve_name).collect();
+        let footer = match total {
+            1 => format!("{} is typing…", names[0]),
+            2 => format!("{} and {} are typing…", names[0], names[1]),
+            3 => format!("{}, {}, and {} are typing…", names[0], names[1], names[2]),
+            _ => "Several people are typing…".to_owned(),
+        };
+        Some(footer)
     }
 
     pub fn channel_label(&self, channel_id: Id<ChannelMarker>) -> String {
@@ -1991,7 +1806,13 @@ impl DashboardState {
         let mut rendered = render_user_mentions_with_highlights(
             value,
             |user_id| self.resolve_mention_display_name(guild_id, mentions, user_id),
-            |user_id| current_user_id == Some(user_id),
+            |user_id| {
+                if current_user_id == Some(user_id) {
+                    Some(TextHighlightKind::SelfMention)
+                } else {
+                    Some(TextHighlightKind::OtherMention)
+                }
+            },
         );
         if current_user_id.is_some() {
             add_literal_mention_highlights(&mut rendered, "@everyone");
@@ -2007,16 +1828,19 @@ impl DashboardState {
         mentions: &[MentionInfo],
         user_id: u64,
     ) -> Option<String> {
+        let mention = mentions
+            .iter()
+            .find(|mention| mention.user_id.get() == user_id);
+        if let Some(guild_nick) = mention.and_then(|mention| mention.guild_nick.as_deref()) {
+            return Some(guild_nick.to_owned());
+        }
         if let Some(display_name) = guild_id.and_then(|guild_id| {
             let user_id = Id::<UserMarker>::new(user_id);
             self.discord.member_display_name(guild_id, user_id)
         }) {
             return Some(display_name.to_owned());
         }
-        mentions
-            .iter()
-            .find(|mention| mention.user_id.get() == user_id)
-            .map(|mention| mention.display_name.clone())
+        mention.map(|mention| mention.display_name.clone())
     }
 
     pub(crate) fn forwarded_snapshot_mention_guild_id(
@@ -2040,20 +1864,18 @@ impl DashboardState {
         let Some(category_id) = self.selected_channel_category_id() else {
             return;
         };
-        if !self.collapsed_channel_categories.insert(category_id) {
-            self.collapsed_channel_categories.remove(&category_id);
-        }
+        toggle_collapsed_key(&mut self.collapsed_channel_categories, category_id);
     }
 
     pub fn open_selected_channel_category(&mut self) {
         if let Some(category_id) = self.selected_channel_category_id() {
-            self.collapsed_channel_categories.remove(&category_id);
+            open_collapsed_key(&mut self.collapsed_channel_categories, &category_id);
         }
     }
 
     pub fn close_selected_channel_category(&mut self) {
         if let Some(category_id) = self.selected_channel_category_id() {
-            self.collapsed_channel_categories.insert(category_id);
+            close_collapsed_key(&mut self.collapsed_channel_categories, category_id);
         }
     }
 
@@ -2143,8 +1965,7 @@ impl DashboardState {
     }
 
     pub fn selected_message(&self) -> usize {
-        self.selected_message
-            .min(self.messages().len().saturating_sub(1))
+        clamp_selected_index(self.selected_message, self.messages().len())
     }
 
     pub fn selected_message_state(&self) -> Option<&MessageState> {
@@ -2194,9 +2015,31 @@ impl DashboardState {
         self.messages().first().map(|message| message.id)
     }
 
-    #[cfg(test)]
-    pub fn message_scroll(&self) -> usize {
+    pub(crate) fn message_scroll(&self) -> usize {
         self.message_scroll
+    }
+
+    /// Returns true when the message at `index` (within `self.messages()`)
+    /// should be preceded by a date separator because its local date differs
+    /// from the previous message's. The first message in the loaded history
+    /// receives no separator on its own — the renderer waits for an actual
+    /// day boundary between two visible messages.
+    pub(crate) fn message_starts_new_day_at(&self, index: usize) -> bool {
+        let messages = self.messages();
+        let Some(current) = messages.get(index) else {
+            return false;
+        };
+        let previous_id = index
+            .checked_sub(1)
+            .and_then(|prev_index| messages.get(prev_index).map(|message| message.id));
+        super::ui::message_starts_new_day(current.id, previous_id)
+    }
+
+    /// Number of extra rows that the message at `index` reserves above its
+    /// avatar/header line. Today this is 1 when a date separator should
+    /// appear, 0 otherwise.
+    pub(crate) fn message_extra_top_lines(&self, index: usize) -> usize {
+        usize::from(self.message_starts_new_day_at(index))
     }
 
     #[cfg(test)]
@@ -2307,18 +2150,12 @@ impl DashboardState {
             }
 
             if selected_row < upper_scrolloff && self.message_scroll > 0 {
-                let previous_height = self
-                    .messages()
-                    .get(self.message_scroll.saturating_sub(1))
-                    .map(|message| {
-                        self.message_rendered_height(
-                            message,
-                            content_width,
-                            preview_width,
-                            max_preview_height,
-                        )
-                    })
-                    .unwrap_or(0);
+                let previous_height = self.message_rendered_height_at(
+                    self.message_scroll.saturating_sub(1),
+                    content_width,
+                    preview_width,
+                    max_preview_height,
+                );
                 let candidate_bottom = selected_bottom.saturating_add(previous_height);
                 if candidate_bottom < height {
                     self.scroll_message_viewport_up_one_row(
@@ -2354,64 +2191,7 @@ impl DashboardState {
         };
         let members = self.discord.members_for_guild(guild_id);
         let roles = self.discord.roles_for_guild(guild_id);
-        let hoisted_roles = sorted_hoisted_roles(&roles);
-        let mut groups: Vec<MemberGroup<'_>> = Vec::new();
-        let mut grouped_online: HashSet<Id<UserMarker>> = HashSet::new();
-
-        // Hoisted role groups list only online members (online/idle/dnd) to
-        // mirror the official Discord client's sidebar; offline members from
-        // any role roll up into the bottom "Offline" group instead.
-        for role in hoisted_roles {
-            let mut entries: Vec<&GuildMemberState> = members
-                .iter()
-                .copied()
-                .filter(|member| {
-                    is_online_status(member.status)
-                        && primary_hoisted_role(member, &roles) == Some(role.id)
-                })
-                .collect();
-            if entries.is_empty() {
-                continue;
-            }
-            sort_member_entries(&mut entries);
-            grouped_online.extend(entries.iter().map(|member| member.user_id));
-            groups.push(MemberGroup {
-                label: role.name.clone(),
-                color: role.color,
-                entries: entries.into_iter().map(MemberEntry::Guild).collect(),
-            });
-        }
-
-        let mut online_unroled: Vec<&GuildMemberState> = members
-            .iter()
-            .copied()
-            .filter(|member| {
-                is_online_status(member.status) && !grouped_online.contains(&member.user_id)
-            })
-            .collect();
-        if !online_unroled.is_empty() {
-            sort_member_entries(&mut online_unroled);
-            groups.push(MemberGroup {
-                label: "Online".to_owned(),
-                color: None,
-                entries: online_unroled.into_iter().map(MemberEntry::Guild).collect(),
-            });
-        }
-
-        let mut offline: Vec<&GuildMemberState> = members
-            .into_iter()
-            .filter(|member| !is_online_status(member.status))
-            .collect();
-        if !offline.is_empty() {
-            sort_member_entries(&mut offline);
-            groups.push(MemberGroup {
-                label: "Offline".to_owned(),
-                color: None,
-                entries: offline.into_iter().map(MemberEntry::Guild).collect(),
-            });
-        }
-
-        groups
+        guild_member_groups(members, roles)
     }
 
     pub fn member_panel_title(&self) -> String {
@@ -2434,29 +2214,15 @@ impl DashboardState {
         let Some(channel) = self.selected_channel_state() else {
             return Vec::new();
         };
-        if !is_direct_message_channel(channel) || channel.recipients.is_empty() {
-            return Vec::new();
-        }
-
-        let mut recipients: Vec<&ChannelRecipientState> = channel.recipients.iter().collect();
-        sort_recipient_entries(&mut recipients);
-        vec![MemberGroup {
-            label: "Members".to_owned(),
-            color: None,
-            entries: recipients.into_iter().map(MemberEntry::Recipient).collect(),
-        }]
+        channel_recipient_group(channel)
     }
 
     pub fn flattened_members(&self) -> Vec<MemberEntry<'_>> {
-        self.members_grouped()
-            .into_iter()
-            .flat_map(|group| group.entries)
-            .collect()
+        flatten_member_groups(self.members_grouped())
     }
 
     pub fn selected_member(&self) -> usize {
-        self.selected_member
-            .min(self.flattened_members().len().saturating_sub(1))
+        clamp_selected_index(self.selected_member, self.flattened_members().len())
     }
 
     pub fn focused_member_selection_line(&self) -> Option<usize> {
@@ -2478,11 +2244,6 @@ impl DashboardState {
         pane_content_height(self.member_view_height)
     }
 
-    #[cfg(test)]
-    pub fn selected_member_line_for_test(&self) -> usize {
-        self.selected_member_line()
-    }
-
     pub fn set_member_view_height(&mut self, height: usize) {
         self.member_view_height = height;
         self.clamp_member_viewport();
@@ -2491,32 +2252,24 @@ impl DashboardState {
     pub fn move_down(&mut self) {
         match self.focus {
             FocusPane::Guilds => {
-                self.selected_guild = self
-                    .selected_guild
-                    .saturating_add(1)
-                    .min(self.guild_pane_entries().len().saturating_sub(1));
+                let len = self.guild_pane_entries().len();
+                move_index_down(&mut self.selected_guild, len);
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
-                self.selected_channel = self
-                    .selected_channel
-                    .saturating_add(1)
-                    .min(self.channel_pane_entries().len().saturating_sub(1));
+                let len = self.channel_pane_entries().len();
+                move_index_down(&mut self.selected_channel, len);
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
-                self.selected_message = self
-                    .selected_message
-                    .saturating_add(1)
-                    .min(self.messages().len().saturating_sub(1));
+                let len = self.messages().len();
+                move_index_down(&mut self.selected_message, len);
                 self.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
             }
             FocusPane::Members => {
-                self.selected_member = self
-                    .selected_member
-                    .saturating_add(1)
-                    .min(self.flattened_members().len().saturating_sub(1));
+                let len = self.flattened_members().len();
+                move_index_down(&mut self.selected_member, len);
                 self.clamp_member_viewport();
             }
         }
@@ -2525,21 +2278,21 @@ impl DashboardState {
     pub fn move_up(&mut self) {
         match self.focus {
             FocusPane::Guilds => {
-                self.selected_guild = self.selected_guild.saturating_sub(1);
+                move_index_up(&mut self.selected_guild);
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
-                self.selected_channel = self.selected_channel.saturating_sub(1);
+                move_index_up(&mut self.selected_channel);
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
                 self.message_auto_follow = false;
-                self.selected_message = self.selected_message.saturating_sub(1);
+                move_index_up(&mut self.selected_message);
                 self.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
             }
             FocusPane::Members => {
-                self.selected_member = self.selected_member.saturating_sub(1);
+                move_index_up(&mut self.selected_member);
                 self.clamp_member_viewport();
             }
         }
@@ -2571,20 +2324,20 @@ impl DashboardState {
     pub fn jump_bottom(&mut self) {
         match self.focus {
             FocusPane::Guilds => {
-                self.selected_guild = self.guild_pane_entries().len().saturating_sub(1);
+                self.selected_guild = last_index(self.guild_pane_entries().len());
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
-                self.selected_channel = self.channel_pane_entries().len().saturating_sub(1);
+                self.selected_channel = last_index(self.channel_pane_entries().len());
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
-                self.selected_message = self.messages().len().saturating_sub(1);
+                self.selected_message = last_index(self.messages().len());
                 self.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
             }
             FocusPane::Members => {
-                self.selected_member = self.flattened_members().len().saturating_sub(1);
+                self.selected_member = last_index(self.flattened_members().len());
                 self.clamp_member_viewport();
             }
         }
@@ -2594,26 +2347,20 @@ impl DashboardState {
         match self.focus {
             FocusPane::Guilds => {
                 let distance = pane_content_height(self.guild_view_height) / 2;
-                self.selected_guild = self
-                    .selected_guild
-                    .saturating_add(distance.max(1))
-                    .min(self.guild_pane_entries().len().saturating_sub(1));
+                let len = self.guild_pane_entries().len();
+                move_index_down_by(&mut self.selected_guild, len, distance.max(1));
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 let distance = pane_content_height(self.channel_view_height) / 2;
-                self.selected_channel = self
-                    .selected_channel
-                    .saturating_add(distance.max(1))
-                    .min(self.channel_pane_entries().len().saturating_sub(1));
+                let len = self.channel_pane_entries().len();
+                move_index_down_by(&mut self.selected_channel, len, distance.max(1));
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
                 let distance = self.message_content_height() / 2;
-                self.selected_message = self
-                    .selected_message
-                    .saturating_add(distance.max(1))
-                    .min(self.messages().len().saturating_sub(1));
+                let len = self.messages().len();
+                move_index_down_by(&mut self.selected_message, len, distance.max(1));
                 self.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
             }
@@ -2631,12 +2378,12 @@ impl DashboardState {
         match self.focus {
             FocusPane::Guilds => {
                 let distance = pane_content_height(self.guild_view_height) / 2;
-                self.selected_guild = self.selected_guild.saturating_sub(distance.max(1));
+                move_index_up_by(&mut self.selected_guild, distance.max(1));
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 let distance = pane_content_height(self.channel_view_height) / 2;
-                self.selected_channel = self.selected_channel.saturating_sub(distance.max(1));
+                move_index_up_by(&mut self.selected_channel, distance.max(1));
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
@@ -2715,18 +2462,13 @@ impl DashboardState {
         let mut remaining = height;
         for index in (0..self.messages().len()).rev() {
             let message_height = self
-                .messages()
-                .get(index)
-                .map(|message| {
-                    self.message_rendered_height(
-                        message,
-                        self.message_content_width,
-                        self.message_preview_width,
-                        self.message_max_preview_height,
-                    )
-                    .max(1)
-                })
-                .unwrap_or(1);
+                .message_rendered_height_at(
+                    index,
+                    self.message_content_width,
+                    self.message_preview_width,
+                    self.message_max_preview_height,
+                )
+                .max(1);
             if message_height >= remaining {
                 self.message_scroll = index;
                 self.message_line_scroll = message_height.saturating_sub(remaining);
@@ -2791,19 +2533,65 @@ impl DashboardState {
         self.composer_active = false;
         self.composer_input.clear();
         self.reply_target_message_id = None;
+        self.reset_mention_picker_state();
     }
 
     pub fn push_composer_char(&mut self, value: char) {
+        // The `@` key triggers the picker only at the start of a word so that
+        // typing inside an email or another @mention doesn't reopen the popup
+        // unexpectedly.
+        if value == '@' {
+            let triggers_picker = should_start_mention_query(&self.composer_input);
+            self.composer_input.push('@');
+            if triggers_picker {
+                self.composer_mention_query = Some(String::new());
+            } else {
+                self.composer_mention_query = None;
+            }
+            self.composer_mention_selected = 0;
+            return;
+        }
+
+        if let Some(query) = self.composer_mention_query.as_mut() {
+            // Discord-style mention queries accept letters, digits, and the
+            // characters that show up in usernames or display names. Any other
+            // character commits the user to a literal `@text` and closes the
+            // picker.
+            if is_mention_query_char(value) {
+                query.push(value);
+                self.composer_input.push(value);
+                self.composer_mention_selected = 0;
+                return;
+            }
+            self.composer_mention_query = None;
+            self.composer_mention_selected = 0;
+        }
         self.composer_input.push(value);
     }
 
     pub fn pop_composer_char(&mut self) {
+        if let Some(query) = self.composer_mention_query.as_mut() {
+            if query.pop().is_some() {
+                self.composer_input.pop();
+                self.composer_mention_selected = 0;
+                return;
+            }
+            // Query was empty so the popped character is the `@` that opened
+            // the picker. Drop it and close.
+            self.composer_input.pop();
+            self.composer_mention_query = None;
+            self.composer_mention_selected = 0;
+            return;
+        }
         self.composer_input.pop();
+        self.invalidate_dropped_mention_completions();
     }
 
     pub fn submit_composer(&mut self) -> Option<AppCommand> {
         let channel_id = self.selected_channel_id()?;
-        let content = self.composer_input.trim().to_owned();
+        let expanded =
+            expand_mention_completions(&self.composer_input, &self.composer_mention_completions);
+        let content = expanded.trim().to_owned();
         if content.is_empty() {
             return None;
         }
@@ -2814,17 +2602,105 @@ impl DashboardState {
             self.composer_input.clear();
             self.composer_active = false;
             self.reply_target_message_id = None;
+            self.reset_mention_picker_state();
             return None;
         }
 
         self.composer_input.clear();
         self.composer_active = false;
+        self.reset_mention_picker_state();
         let reply_to = self.reply_target_message_id.take();
         Some(AppCommand::SendMessage {
             channel_id,
             content,
             reply_to,
         })
+    }
+
+    /// Returns the characters typed after the `@` if the picker is open.
+    pub fn composer_mention_query(&self) -> Option<&str> {
+        self.composer_mention_query.as_deref()
+    }
+
+    pub fn composer_mention_selected(&self) -> usize {
+        self.composer_mention_selected
+    }
+
+    /// Builds the visible list of suggestions for the picker. Returns at most
+    /// `MAX_MENTION_PICKER_VISIBLE` entries, ordered by best match across the
+    /// member's display name AND username: prefix matches beat substring
+    /// matches, alias matches beat username matches at the same rank, and
+    /// ties are broken alphabetically by display name.
+    pub fn composer_mention_candidates(&self) -> Vec<MentionPickerEntry> {
+        let Some(query) = self.composer_mention_query.as_deref() else {
+            return Vec::new();
+        };
+        build_mention_candidates(query, self.flattened_members())
+    }
+
+    pub fn move_composer_mention_selection(&mut self, delta: isize) {
+        if self.composer_mention_query.is_none() {
+            return;
+        }
+        let len = self.composer_mention_candidates().len();
+        self.composer_mention_selected =
+            move_mention_selection(self.composer_mention_selected, len, delta);
+    }
+
+    /// Confirms the currently highlighted mention. Replaces the trailing
+    /// `@query` with `@displayname ` (so the user sees what they wrote) and
+    /// records the byte range so `submit_composer` can rewrite it to
+    /// `<@USER_ID>` later. Returns `false` when the picker has no candidate
+    /// to apply.
+    pub fn confirm_composer_mention(&mut self) -> bool {
+        let Some(query) = self.composer_mention_query.clone() else {
+            return false;
+        };
+        let candidates = self.composer_mention_candidates();
+        let Some(entry) = candidates.get(self.composer_mention_selected) else {
+            return false;
+        };
+        let entry = entry.clone();
+
+        // Drop the trailing `@<query>` exactly: `@` is one ASCII byte and the
+        // query was built from user characters that may be multi-byte.
+        let suffix_byte_count = '@'.len_utf8() + query.len();
+        let new_len = self.composer_input.len().saturating_sub(suffix_byte_count);
+        self.composer_input.truncate(new_len);
+
+        let start = self.composer_input.len();
+        self.composer_input.push('@');
+        self.composer_input.push_str(&entry.display_name);
+        let end = self.composer_input.len();
+        self.composer_input.push(' ');
+
+        self.composer_mention_completions.push(MentionCompletion {
+            byte_start: start,
+            byte_end: end,
+            user_id: entry.user_id,
+        });
+        self.composer_mention_query = None;
+        self.composer_mention_selected = 0;
+        true
+    }
+
+    /// Closes the picker without inserting anything. The literal `@query`
+    /// stays in the composer.
+    pub fn cancel_composer_mention(&mut self) {
+        self.composer_mention_query = None;
+        self.composer_mention_selected = 0;
+    }
+
+    fn reset_mention_picker_state(&mut self) {
+        self.composer_mention_query = None;
+        self.composer_mention_selected = 0;
+        self.composer_mention_completions.clear();
+    }
+
+    fn invalidate_dropped_mention_completions(&mut self) {
+        let len = self.composer_input.len();
+        self.composer_mention_completions
+            .retain(|completion| completion.byte_end <= len);
     }
 
     fn clamp_selection_indices(&mut self) {
@@ -2889,7 +2765,7 @@ impl DashboardState {
 
     fn clamp_guild_viewport(&mut self) {
         let entries_len = self.guild_pane_entries().len();
-        self.selected_guild = self.selected_guild.min(entries_len.saturating_sub(1));
+        self.selected_guild = clamp_selected_index(self.selected_guild, entries_len);
         self.guild_scroll = clamp_list_scroll(
             self.selected_guild,
             self.guild_scroll,
@@ -2900,7 +2776,7 @@ impl DashboardState {
 
     fn clamp_channel_viewport(&mut self) {
         let entries_len = self.channel_pane_entries().len();
-        self.selected_channel = self.selected_channel.min(entries_len.saturating_sub(1));
+        self.selected_channel = clamp_selected_index(self.selected_channel, entries_len);
         self.channel_scroll = clamp_list_scroll(
             self.selected_channel,
             self.channel_scroll,
@@ -3007,18 +2883,8 @@ impl DashboardState {
         let mut remaining = height;
         for index in (0..self.messages().len()).rev() {
             let message_height = self
-                .messages()
-                .get(index)
-                .map(|message| {
-                    self.message_rendered_height(
-                        message,
-                        content_width,
-                        preview_width,
-                        max_preview_height,
-                    )
-                    .max(1)
-                })
-                .unwrap_or(1);
+                .message_rendered_height_at(index, content_width, preview_width, max_preview_height)
+                .max(1);
             if message_height >= remaining {
                 self.message_scroll = index;
                 self.message_line_scroll = message_height.saturating_sub(remaining);
@@ -3084,16 +2950,11 @@ impl DashboardState {
     ) -> bool {
         let selected = self.selected_message();
         let height = self.message_content_height();
-        let Some(selected_message) = self.messages().get(selected).copied() else {
+        if self.messages().get(selected).is_none() {
             return false;
-        };
+        }
         let selected_height = self
-            .message_rendered_height(
-                selected_message,
-                content_width,
-                preview_width,
-                max_preview_height,
-            )
+            .message_rendered_height_at(selected, content_width, preview_width, max_preview_height)
             .max(1);
         let mut top = selected;
         let mut offset = 0usize;
@@ -3101,12 +2962,12 @@ impl DashboardState {
 
         while remaining > 0 && top > 0 {
             let previous_index = top.saturating_sub(1);
-            let Some(previous_message) = self.messages().get(previous_index).copied() else {
+            if self.messages().get(previous_index).is_none() {
                 break;
-            };
+            }
             let previous_height = self
-                .message_rendered_height(
-                    previous_message,
+                .message_rendered_height_at(
+                    previous_index,
                     content_width,
                     preview_width,
                     max_preview_height,
@@ -3134,16 +2995,17 @@ impl DashboardState {
 
     fn message_viewport_has_rows_below(&self, top: usize, offset: usize, height: usize) -> bool {
         let mut visible_rows = 0usize;
-        for (index, message) in self.messages().into_iter().skip(top).enumerate() {
+        for offset_from_top in 0..self.messages().len().saturating_sub(top) {
+            let global_index = top + offset_from_top;
             let message_height = self
-                .message_rendered_height(
-                    message,
+                .message_rendered_height_at(
+                    global_index,
                     self.message_content_width,
                     self.message_preview_width,
                     self.message_max_preview_height,
                 )
                 .max(1);
-            let visible_height = if index == 0 {
+            let visible_height = if offset_from_top == 0 {
                 message_height.saturating_sub(offset)
             } else {
                 message_height
@@ -3163,12 +3025,17 @@ impl DashboardState {
         max_preview_height: u16,
     ) {
         let messages_len = self.messages().len();
-        let Some(message) = self.messages().get(self.message_scroll).copied() else {
+        if self.messages().get(self.message_scroll).is_none() {
             self.message_line_scroll = 0;
             return;
-        };
+        }
         let height = self
-            .message_rendered_height(message, content_width, preview_width, max_preview_height)
+            .message_rendered_height_at(
+                self.message_scroll,
+                content_width,
+                preview_width,
+                max_preview_height,
+            )
             .max(1);
         if self.message_line_scroll.saturating_add(1) < height {
             self.message_line_scroll = self.message_line_scroll.saturating_add(1);
@@ -3193,18 +3060,13 @@ impl DashboardState {
         }
         self.message_scroll = self.message_scroll.saturating_sub(1);
         self.message_line_scroll = self
-            .messages()
-            .get(self.message_scroll)
-            .map(|message| {
-                self.message_rendered_height(
-                    message,
-                    content_width,
-                    preview_width,
-                    max_preview_height,
-                )
-                .saturating_sub(1)
-            })
-            .unwrap_or(0);
+            .message_rendered_height_at(
+                self.message_scroll,
+                content_width,
+                preview_width,
+                max_preview_height,
+            )
+            .saturating_sub(1);
     }
 
     fn normalize_message_line_scroll(
@@ -3213,13 +3075,17 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) {
-        let Some(message) = self.messages().get(self.message_scroll).copied() else {
+        if self.messages().get(self.message_scroll).is_none() {
             self.message_line_scroll = 0;
             return;
-        };
-
+        }
         let height = self
-            .message_rendered_height(message, content_width, preview_width, max_preview_height)
+            .message_rendered_height_at(
+                self.message_scroll,
+                content_width,
+                preview_width,
+                max_preview_height,
+            )
             .max(1);
         self.message_line_scroll = self.message_line_scroll.min(height.saturating_sub(1));
     }
@@ -3234,20 +3100,17 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) -> usize {
-        let messages = self.messages();
-        let row = messages
-            .iter()
-            .skip(self.message_scroll)
-            .take(self.selected_message.saturating_sub(self.message_scroll))
-            .map(|message| {
-                self.message_rendered_height(
-                    message,
+        let span = self.selected_message.saturating_sub(self.message_scroll);
+        let row: usize = (0..span)
+            .map(|offset| {
+                self.message_rendered_height_at(
+                    self.message_scroll + offset,
                     content_width,
                     preview_width,
                     max_preview_height,
                 )
             })
-            .sum::<usize>();
+            .sum();
         row.saturating_sub(self.message_line_scroll)
     }
 
@@ -3257,17 +3120,15 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) -> usize {
-        self.messages()
-            .get(self.selected_message)
-            .map(|message| {
-                self.message_rendered_height(
-                    message,
-                    content_width,
-                    preview_width,
-                    max_preview_height,
-                )
-            })
-            .unwrap_or(1)
+        if self.messages().get(self.selected_message).is_none() {
+            return 1;
+        }
+        self.message_rendered_height_at(
+            self.selected_message,
+            content_width,
+            preview_width,
+            max_preview_height,
+        )
     }
 
     fn following_message_rendered_rows(
@@ -3277,13 +3138,14 @@ impl DashboardState {
         max_preview_height: u16,
         count: usize,
     ) -> usize {
-        self.messages()
-            .iter()
-            .skip(self.selected_message.saturating_add(1))
-            .take(count)
-            .map(|message| {
-                self.message_rendered_height(
-                    message,
+        let messages_len = self.messages().len();
+        let start = self.selected_message.saturating_add(1);
+        (0..count)
+            .map(|offset| start + offset)
+            .take_while(|&index| index < messages_len)
+            .map(|index| {
+                self.message_rendered_height_at(
+                    index,
                     content_width,
                     preview_width,
                     max_preview_height,
@@ -3333,6 +3195,25 @@ impl DashboardState {
             },
         )
     }
+
+    /// Same as `message_rendered_height` but also accounts for an optional
+    /// date-separator line above the message body. Use this everywhere the
+    /// caller knows the message's index inside `self.messages()` so scroll
+    /// math stays consistent with what the renderer actually paints.
+    fn message_rendered_height_at(
+        &self,
+        index: usize,
+        content_width: usize,
+        preview_width: u16,
+        max_preview_height: u16,
+    ) -> usize {
+        let messages = self.messages();
+        let Some(message) = messages.get(index).copied() else {
+            return 0;
+        };
+        self.message_rendered_height(message, content_width, preview_width, max_preview_height)
+            + self.message_extra_top_lines(index)
+    }
 }
 
 #[cfg(test)]
@@ -3352,4621 +3233,11 @@ fn message_rendered_height(
     )
 }
 
-fn message_rendered_height_with_mentions<F, G>(
-    message: &MessageState,
-    content_width: usize,
-    preview_width: u16,
-    max_preview_height: u16,
-    render_text: F,
-    render_snapshot_text: G,
-) -> usize
-where
-    F: Fn(&str) -> String,
-    G: Fn(&MessageSnapshotInfo, &str) -> String,
-{
-    let preview_height = message
-        .first_inline_preview()
-        .map(|preview| {
-            super::image_preview_height_for_dimensions(
-                preview_width,
-                max_preview_height,
-                preview.width,
-                preview.height,
-            )
-        })
-        .unwrap_or(0);
-    message_base_line_count_for_width_with_mentions(
-        message,
-        content_width,
-        render_text,
-        render_snapshot_text,
-    ) + usize::from(preview_height)
-        + super::ui::MESSAGE_ROW_GAP
-}
-
-fn message_base_line_count_for_width_with_mentions<F, G>(
-    message: &MessageState,
-    content_width: usize,
-    render_text: F,
-    render_snapshot_text: G,
-) -> usize
-where
-    F: Fn(&str) -> String,
-    G: Fn(&MessageSnapshotInfo, &str) -> String,
-{
-    if let Some(system_lines) = system_message_line_count(message) {
-        return 1 + system_lines.max(1);
-    }
-
-    let renders_poll_card = message.reply.is_none() && message.poll.is_some();
-    let primary_content = if renders_poll_card {
-        None
-    } else {
-        message.content.as_deref()
-    };
-    let primary_lines = message_primary_line_count(
-        primary_content,
-        &message.attachments,
-        content_width,
-        &render_text,
-    );
-    let kind_line = usize::from(
-        message.reply.is_none() && message.poll.is_none() && !message.message_kind.is_regular(),
-    );
-    let reply_line = usize::from(message.reply.is_some());
-    let poll_lines = if renders_poll_card {
-        message
-            .poll
-            .as_ref()
-            .map(|poll| {
-                poll_card_line_count(
-                    poll,
-                    message.content.as_deref(),
-                    content_width,
-                    &render_text,
-                )
-            })
-            .unwrap_or(0)
-    } else {
-        0
-    };
-    let reaction_lines = reaction_line_count(&message.reactions, content_width);
-    let embed_lines =
-        super::ui::embed_line_count(&message.embeds, message.content.as_deref(), content_width);
-
-    if let Some(snapshot) = message.forwarded_snapshots.first() {
-        let metadata_line =
-            usize::from(snapshot.source_channel_id.is_some() || snapshot.timestamp.is_some());
-        return 1
-            + (reply_line
-                + poll_lines
-                + kind_line
-                + primary_lines
-                + embed_lines
-                + forwarded_snapshot_line_count(snapshot, content_width, &render_snapshot_text)
-                + metadata_line
-                + reaction_lines)
-                .max(1);
-    }
-
-    1 + (reply_line + poll_lines + kind_line + primary_lines + embed_lines + reaction_lines).max(1)
-}
-
-fn reaction_line_count(reactions: &[ReactionInfo], width: usize) -> usize {
-    crate::tui::ui::lay_out_reaction_chips(reactions, width)
-        .lines
-        .len()
-}
-
-fn poll_card_line_count(
-    poll: &PollInfo,
-    content: Option<&str>,
-    content_width: usize,
-    render_text: &dyn Fn(&str) -> String,
-) -> usize {
-    let inner_width = super::ui::poll_card_inner_width(content_width);
-    let content_lines = content
-        .filter(|value| !value.is_empty())
-        .map(|value| super::ui::wrapped_text_line_count(&render_text(value), inner_width))
-        .unwrap_or(0);
-
-    2 + content_lines + 3 + poll.answers.len()
-}
-
-fn system_message_line_count(message: &MessageState) -> Option<usize> {
-    match message.message_kind.code() {
-        8..=11 => Some(1),
-        18 => Some(3),
-        21 => Some(2),
-        46 => Some(match message.poll.as_ref() {
-            Some(poll) if poll.total_votes.is_some() => 4,
-            Some(_) => 3,
-            None => 2,
-        }),
-        _ => None,
-    }
-}
-
-fn message_primary_line_count(
-    content: Option<&str>,
-    attachments: &[AttachmentInfo],
-    content_width: usize,
-    render_text: &dyn Fn(&str) -> String,
-) -> usize {
-    content
-        .filter(|value| !value.is_empty())
-        .map(|value| super::ui::wrapped_text_line_count(&render_text(value), content_width))
-        .unwrap_or(0)
-        + usize::from(!attachments.is_empty())
-}
-
-fn forwarded_snapshot_line_count(
-    snapshot: &MessageSnapshotInfo,
-    content_width: usize,
-    render_text: &dyn Fn(&MessageSnapshotInfo, &str) -> String,
-) -> usize {
-    let forwarded_content_width = content_width.saturating_sub(2).max(1);
-    let content_lines = snapshot
-        .content
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .map(|value| {
-            super::ui::wrapped_text_line_count(
-                &render_text(snapshot, value),
-                forwarded_content_width,
-            )
-        })
-        .unwrap_or(0);
-    let attachment_line = usize::from(!snapshot.attachments.is_empty());
-    let embed_lines = super::ui::embed_line_count(
-        &snapshot.embeds,
-        snapshot.content.as_deref(),
-        forwarded_content_width,
-    );
-
-    1 + content_lines
-        .saturating_add(attachment_line)
-        .saturating_add(embed_lines)
-        .max(1)
-}
-
-fn add_literal_mention_highlights(rendered: &mut RenderedText, mention: &str) {
-    let mut cursor = 0usize;
-    while let Some(relative_start) = rendered.text[cursor..].find(mention) {
-        let start = cursor.saturating_add(relative_start);
-        let end = start.saturating_add(mention.len());
-        if is_literal_mention_boundary(&rendered.text, start, end) {
-            rendered.highlights.push(TextHighlight { start, end });
-        }
-        cursor = end;
-    }
-}
-
-fn normalize_text_highlights(highlights: &mut Vec<TextHighlight>) {
-    highlights.sort_by_key(|highlight| (highlight.start, highlight.end));
-    let mut normalized: Vec<TextHighlight> = Vec::new();
-    for highlight in highlights.drain(..) {
-        let Some(last) = normalized.last_mut() else {
-            normalized.push(highlight);
-            continue;
-        };
-        if highlight.start <= last.end {
-            last.end = last.end.max(highlight.end);
-        } else {
-            normalized.push(highlight);
-        }
-    }
-    *highlights = normalized;
-}
-
-fn is_literal_mention_boundary(value: &str, start: usize, end: usize) -> bool {
-    let before = value[..start].chars().next_back();
-    let after = value[end..].chars().next();
-    !before.is_some_and(is_literal_mention_word_char)
-        && !after.is_some_and(is_literal_mention_word_char)
-}
-
-fn is_literal_mention_word_char(value: char) -> bool {
-    value.is_ascii_alphanumeric() || value == '_'
-}
-
-fn pane_content_height(height: usize) -> usize {
-    height.max(1)
-}
-
-fn clamp_list_scroll(cursor: usize, mut scroll: usize, height: usize, len: usize) -> usize {
-    if len == 0 {
-        return 0;
-    }
-
-    let max_scroll = len.saturating_sub(height);
-    scroll = scroll.min(max_scroll);
-    let scrolloff = SCROLL_OFF.min(height.saturating_sub(1) / 2);
-
-    let lower_bound = scroll
-        .saturating_add(height)
-        .saturating_sub(1)
-        .saturating_sub(scrolloff);
-    if cursor > lower_bound {
-        scroll = cursor
-            .saturating_add(1)
-            .saturating_add(scrolloff)
-            .saturating_sub(height);
-    }
-
-    let upper_bound = scroll.saturating_add(scrolloff);
-    if cursor < upper_bound {
-        scroll = cursor.saturating_sub(scrolloff);
-    }
-
-    scroll.min(max_scroll)
-}
-
 impl Default for DashboardState {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[derive(Debug)]
-pub struct MemberGroup<'a> {
-    pub label: String,
-    pub color: Option<u32>,
-    pub entries: Vec<MemberEntry<'a>>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum MemberEntry<'a> {
-    Guild(&'a GuildMemberState),
-    Recipient(&'a ChannelRecipientState),
-}
-
-impl MemberEntry<'_> {
-    pub fn user_id(self) -> Id<UserMarker> {
-        match self {
-            Self::Guild(member) => member.user_id,
-            Self::Recipient(recipient) => recipient.user_id,
-        }
-    }
-
-    pub fn display_name(self) -> String {
-        match self {
-            Self::Guild(member) => member.display_name.clone(),
-            Self::Recipient(recipient) => recipient.display_name.clone(),
-        }
-    }
-
-    pub fn is_bot(self) -> bool {
-        match self {
-            Self::Guild(member) => member.is_bot,
-            Self::Recipient(recipient) => recipient.is_bot,
-        }
-    }
-
-    pub fn status(self) -> PresenceStatus {
-        match self {
-            Self::Guild(member) => member.status,
-            Self::Recipient(recipient) => recipient.status,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ChannelPaneEntry<'a> {
-    CategoryHeader {
-        state: &'a ChannelState,
-        collapsed: bool,
-    },
-    Channel {
-        state: &'a ChannelState,
-        branch: ChannelBranch,
-    },
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum ChannelBranch {
-    None,
-    Middle,
-    Last,
-}
-
-impl ChannelBranch {
-    pub fn prefix(self) -> &'static str {
-        match self {
-            Self::None => "",
-            Self::Middle => "├ ",
-            Self::Last => "└ ",
-        }
-    }
-
-    fn is_category_child(self) -> bool {
-        !matches!(self, Self::None)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum GuildPaneEntry<'a> {
-    DirectMessages,
-    FolderHeader {
-        folder: &'a GuildFolder,
-        collapsed: bool,
-    },
-    Guild {
-        state: &'a GuildState,
-        branch: GuildBranch,
-    },
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum GuildBranch {
-    None,
-    Middle,
-    Last,
-}
-
-impl GuildBranch {
-    pub fn prefix(self) -> &'static str {
-        match self {
-            Self::None => "",
-            Self::Middle => "├ ",
-            Self::Last => "└ ",
-        }
-    }
-
-    fn is_folder_child(self) -> bool {
-        !matches!(self, Self::None)
-    }
-}
-
-impl GuildPaneEntry<'_> {
-    pub fn label(&self) -> &str {
-        match self {
-            Self::DirectMessages => "Direct Messages",
-            Self::FolderHeader { folder, .. } => folder.name.as_deref().unwrap_or("Folder"),
-            Self::Guild { state, .. } => state.name.as_str(),
-        }
-    }
-}
-
-/// Convert a Discord folder color (24-bit RGB integer) to a ratatui color.
-/// Falls back to a neutral cyan when the color is missing or zero so
-/// uncolored folders still read as folder headers.
-pub fn folder_color(color: Option<u32>) -> Color {
-    match color {
-        Some(value) if value != 0 => {
-            let r = ((value >> 16) & 0xFF) as u8;
-            let g = ((value >> 8) & 0xFF) as u8;
-            let b = (value & 0xFF) as u8;
-            Color::Rgb(r, g, b)
-        }
-        _ => Color::Cyan,
-    }
-}
-
-pub fn presence_color(status: PresenceStatus) -> Color {
-    match status {
-        PresenceStatus::Online => Color::Green,
-        PresenceStatus::Idle => Color::Rgb(180, 140, 0),
-        PresenceStatus::DoNotDisturb => Color::Red,
-        PresenceStatus::Offline => Color::DarkGray,
-        PresenceStatus::Unknown => Color::DarkGray,
-    }
-}
-
-fn is_online_status(status: PresenceStatus) -> bool {
-    matches!(
-        status,
-        PresenceStatus::Online | PresenceStatus::Idle | PresenceStatus::DoNotDisturb
-    )
-}
-
-fn sorted_hoisted_roles<'a>(roles: &'a [&'a RoleState]) -> Vec<&'a RoleState> {
-    let mut roles: Vec<&RoleState> = roles.iter().copied().filter(|role| role.hoist).collect();
-    roles.sort_by(|left, right| role_display_order(left, right));
-    roles
-}
-
-fn primary_hoisted_role(member: &GuildMemberState, roles: &[&RoleState]) -> Option<Id<RoleMarker>> {
-    member
-        .role_ids
-        .iter()
-        .filter_map(|role_id| roles.iter().find(|role| role.id == *role_id).copied())
-        .filter(|role| role.hoist)
-        .min_by(|left, right| role_display_order(left, right))
-        .map(|role| role.id)
-}
-
-fn role_display_order(left: &RoleState, right: &RoleState) -> std::cmp::Ordering {
-    right
-        .position
-        .cmp(&left.position)
-        .then(left.id.get().cmp(&right.id.get()))
-}
-
-fn sort_member_entries(entries: &mut [&GuildMemberState]) {
-    entries.sort_by(|left, right| {
-        member_status_rank(left.status)
-            .cmp(&member_status_rank(right.status))
-            .then_with(|| {
-                left.display_name
-                    .to_lowercase()
-                    .cmp(&right.display_name.to_lowercase())
-            })
-    });
-}
-
-fn sort_recipient_entries(entries: &mut [&ChannelRecipientState]) {
-    entries.sort_by(|left, right| {
-        member_status_rank(left.status)
-            .cmp(&member_status_rank(right.status))
-            .then_with(|| {
-                left.display_name
-                    .to_lowercase()
-                    .cmp(&right.display_name.to_lowercase())
-            })
-    });
-}
-
-fn is_direct_message_channel(channel: &ChannelState) -> bool {
-    matches!(
-        channel.kind.as_str(),
-        "dm" | "Private" | "group-dm" | "Group"
-    )
-}
-
-fn member_status_rank(status: PresenceStatus) -> u8 {
-    match status {
-        PresenceStatus::Online => 0,
-        PresenceStatus::Idle => 1,
-        PresenceStatus::DoNotDisturb => 2,
-        PresenceStatus::Offline => 3,
-        PresenceStatus::Unknown => 4,
-    }
-}
-
-pub fn presence_marker(status: PresenceStatus) -> char {
-    match status {
-        PresenceStatus::Online => '●',
-        PresenceStatus::Idle => '◐',
-        PresenceStatus::DoNotDisturb => '⊘',
-        PresenceStatus::Offline => '○',
-        PresenceStatus::Unknown => ' ',
-    }
-}
-
-fn sort_channels(channels: &mut [&ChannelState]) {
-    channels.sort_by_key(|channel| (channel.position.unwrap_or(i32::MAX), channel.id));
-}
-
-fn sort_direct_message_channels(channels: &mut [&ChannelState]) {
-    channels.sort_by(|left, right| {
-        right
-            .last_message_id
-            .cmp(&left.last_message_id)
-            .then_with(|| right.id.cmp(&left.id))
-    });
-}
-
 #[cfg(test)]
-mod tests {
-    use twilight_model::id::{
-        Id,
-        marker::{ChannelMarker, GuildMarker, UserMarker},
-    };
-
-    use super::{
-        ActiveGuildScope, ChannelActionKind, ChannelBranch, ChannelPaneEntry, DashboardState,
-        FocusPane, GuildBranch, GuildPaneEntry, MessageActionKind, MessageState,
-        message_rendered_height, presence_marker,
-    };
-    use crate::discord::{
-        AppCommand, AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientInfo,
-        ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, FriendStatus, GuildFolder, MemberInfo,
-        MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo,
-        PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus,
-        ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo,
-        UserProfileInfo,
-    };
-
-    fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
-        UserProfileInfo {
-            user_id: Id::new(user_id),
-            username: format!("user-{user_id}"),
-            global_name: None,
-            guild_nick: guild_nick.map(str::to_owned),
-            avatar_url: None,
-            bio: None,
-            pronouns: None,
-            mutual_guilds: Vec::<MutualGuildInfo>::new(),
-            mutual_friends_count: 0,
-            friend_status: FriendStatus::None,
-            note: None,
-        }
-    }
-
-    #[test]
-    fn tracks_current_user_from_ready() {
-        let mut state = DashboardState::new();
-        state.push_event(AppEvent::Ready {
-            user: "neo".to_owned(),
-            user_id: Some(Id::new(10)),
-        });
-        assert_eq!(state.current_user(), Some("neo"));
-        assert_eq!(state.current_user_id, Some(Id::new(10)));
-    }
-
-    #[test]
-    fn captures_last_gateway_error() {
-        let mut state = DashboardState::new();
-        state.push_event(AppEvent::GatewayError {
-            message: "boom".to_owned(),
-        });
-        assert_eq!(state.last_error(), Some("boom"));
-    }
-
-    #[test]
-    fn toggles_debug_log_popup() {
-        let mut state = DashboardState::new();
-
-        state.toggle_debug_log_popup();
-        assert!(state.is_debug_log_popup_open());
-
-        state.close_debug_log_popup();
-        assert!(!state.is_debug_log_popup_open());
-    }
-
-    #[test]
-    fn dashboard_starts_without_message_focus() {
-        let state = DashboardState::new();
-
-        assert_eq!(state.focus(), FocusPane::Guilds);
-        assert_eq!(state.focused_message_selection(), None);
-    }
-
-    #[test]
-    fn opening_profile_uses_cache_for_same_guild() {
-        let user_id: Id<UserMarker> = Id::new(10);
-        let guild_id: Id<GuildMarker> = Id::new(1);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::UserProfileLoaded {
-            guild_id: Some(guild_id),
-            profile: profile_info(user_id.get(), Some("guild nick")),
-        });
-
-        assert_eq!(state.open_user_profile_popup(user_id, Some(guild_id)), None);
-        assert_eq!(
-            state
-                .user_profile_popup_data()
-                .and_then(|profile| profile.guild_nick.as_deref()),
-            Some("guild nick")
-        );
-    }
-
-    #[test]
-    fn opening_profile_refetches_when_cached_for_different_guild() {
-        let user_id: Id<UserMarker> = Id::new(10);
-        let cached_guild: Id<GuildMarker> = Id::new(1);
-        let popup_guild: Id<GuildMarker> = Id::new(2);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::UserProfileLoaded {
-            guild_id: Some(cached_guild),
-            profile: profile_info(user_id.get(), Some("cached nick")),
-        });
-
-        assert_eq!(
-            state.open_user_profile_popup(user_id, Some(popup_guild)),
-            Some(AppCommand::LoadUserProfile {
-                user_id,
-                guild_id: Some(popup_guild),
-            })
-        );
-        assert!(state.user_profile_popup_data().is_none());
-    }
-
-    #[test]
-    fn user_profile_load_failure_marks_open_popup_failed() {
-        let user_id: Id<UserMarker> = Id::new(10);
-        let guild_id: Id<GuildMarker> = Id::new(1);
-        let mut state = DashboardState::new();
-
-        state.open_user_profile_popup(user_id, Some(guild_id));
-        state.push_event(AppEvent::UserProfileLoadFailed {
-            user_id,
-            guild_id: Some(guild_id),
-            message: "network failed".to_owned(),
-        });
-
-        assert_eq!(
-            state.user_profile_popup_load_error(),
-            Some("network failed")
-        );
-    }
-
-    #[test]
-    fn user_profile_load_failure_ignores_stale_popup() {
-        let user_id: Id<UserMarker> = Id::new(10);
-        let open_guild: Id<GuildMarker> = Id::new(1);
-        let stale_guild: Id<GuildMarker> = Id::new(2);
-        let mut state = DashboardState::new();
-
-        state.open_user_profile_popup(user_id, Some(open_guild));
-        state.push_event(AppEvent::UserProfileLoadFailed {
-            user_id,
-            guild_id: Some(stale_guild),
-            message: "stale failure".to_owned(),
-        });
-
-        assert_eq!(state.user_profile_popup_load_error(), None);
-    }
-
-    #[test]
-    fn user_profile_popup_status_uses_cached_guild_member_status() {
-        let user_id: Id<UserMarker> = Id::new(10);
-        let guild_id: Id<GuildMarker> = Id::new(1);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: Vec::new(),
-            members: vec![MemberInfo {
-                user_id,
-                display_name: "neo".to_owned(),
-                is_bot: false,
-                avatar_url: None,
-                role_ids: Vec::new(),
-            }],
-            presences: vec![(user_id, PresenceStatus::DoNotDisturb)],
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.open_user_profile_popup(user_id, Some(guild_id));
-
-        assert_eq!(
-            state.user_profile_popup_status(),
-            PresenceStatus::DoNotDisturb
-        );
-    }
-
-    #[test]
-    fn user_profile_popup_status_uses_dm_recipient_status_without_guild() {
-        let user_id: Id<UserMarker> = Id::new(10);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-            guild_id: None,
-            channel_id: Id::new(20),
-            parent_id: None,
-            position: None,
-            last_message_id: None,
-            name: "neo".to_owned(),
-            kind: "dm".to_owned(),
-            message_count: None,
-            total_message_sent: None,
-            thread_archived: None,
-            thread_locked: None,
-            recipients: Some(vec![ChannelRecipientInfo {
-                user_id,
-                display_name: "neo".to_owned(),
-                is_bot: false,
-                avatar_url: None,
-                status: Some(PresenceStatus::Idle),
-            }]),
-            permission_overwrites: Vec::new(),
-        }));
-        state.open_user_profile_popup(user_id, None);
-
-        assert_eq!(state.user_profile_popup_status(), PresenceStatus::Idle);
-    }
-
-    #[test]
-    fn cycle_focus_uses_four_top_level_panes() {
-        let mut state = DashboardState::new();
-
-        assert_eq!(state.focus(), FocusPane::Guilds);
-        state.cycle_focus();
-        assert_eq!(state.focus(), FocusPane::Channels);
-        state.cycle_focus();
-        assert_eq!(state.focus(), FocusPane::Messages);
-        state.cycle_focus();
-        assert_eq!(state.focus(), FocusPane::Members);
-        state.cycle_focus();
-        assert_eq!(state.focus(), FocusPane::Guilds);
-    }
-
-    #[test]
-    fn loaded_messages_are_unselected_until_message_pane_is_focused() {
-        let guild_id = Id::new(1);
-        let channel_id: Id<ChannelMarker> = Id::new(2);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id,
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: Vec::new(),
-            }],
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-        state.confirm_selected_channel();
-        for id in 1..=2u64 {
-            state.push_event(AppEvent::MessageCreate {
-                guild_id: Some(guild_id),
-                channel_id,
-                message_id: Id::new(id),
-                author_id: Id::new(99),
-                author: "neo".to_owned(),
-                author_avatar_url: None,
-                message_kind: crate::discord::MessageKind::regular(),
-                reference: None,
-                reply: None,
-                poll: None,
-                content: Some(format!("msg {id}")),
-                mentions: Vec::new(),
-                attachments: Vec::new(),
-                embeds: Vec::new(),
-                forwarded_snapshots: Vec::new(),
-            });
-        }
-
-        assert_eq!(state.selected_message(), 1);
-        assert_eq!(state.focused_message_selection(), None);
-
-        while state.focus() != FocusPane::Messages {
-            state.cycle_focus();
-        }
-        assert_eq!(state.focused_message_selection(), Some(0));
-    }
-
-    #[test]
-    fn startup_events_do_not_auto_open_direct_messages() {
-        let channel_id: Id<ChannelMarker> = Id::new(20);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-            guild_id: None,
-            channel_id,
-            parent_id: None,
-            position: None,
-            last_message_id: Some(Id::new(30)),
-            name: "neo".to_owned(),
-            kind: "dm".to_owned(),
-            message_count: None,
-            total_message_sent: None,
-            thread_archived: None,
-            thread_locked: None,
-            recipients: None,
-            permission_overwrites: Vec::new(),
-        }));
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: None,
-            channel_id,
-            message_id: Id::new(30),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("hello".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-
-        assert_eq!(state.selected_channel_id(), None);
-        assert_eq!(state.selected_channel_state(), None);
-        assert!(state.channel_pane_entries().is_empty());
-        assert!(state.messages().is_empty());
-    }
-
-    #[test]
-    fn member_groups_use_roles_and_status_sorted_entries() {
-        let guild_id = Id::new(1);
-        let alice: Id<UserMarker> = Id::new(10);
-        let bob: Id<UserMarker> = Id::new(20);
-        let admin_role = Id::new(100);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id: Id::new(2),
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: Vec::new(),
-            }],
-            members: vec![
-                MemberInfo {
-                    user_id: bob,
-                    display_name: "bob".to_owned(),
-                    is_bot: false,
-                    avatar_url: None,
-                    role_ids: vec![admin_role],
-                },
-                MemberInfo {
-                    user_id: alice,
-                    display_name: "alice".to_owned(),
-                    is_bot: false,
-                    avatar_url: None,
-                    role_ids: vec![admin_role],
-                },
-            ],
-            presences: vec![(alice, PresenceStatus::Online), (bob, PresenceStatus::Idle)],
-            roles: vec![RoleInfo {
-                id: admin_role,
-                name: "Admin".to_owned(),
-                color: Some(0xFFAA00),
-                position: 10,
-                hoist: true,
-                permissions: 0,
-            }],
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-
-        let groups = state.members_grouped();
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].label, "Admin");
-        assert_eq!(groups[0].color, Some(0xFFAA00));
-        assert_eq!(
-            groups[0]
-                .entries
-                .iter()
-                .map(|member| member.display_name())
-                .collect::<Vec<_>>(),
-            vec!["alice".to_owned(), "bob".to_owned()],
-        );
-    }
-
-    #[test]
-    fn member_groups_show_selected_group_dm_recipients() {
-        let mut state = DashboardState::new();
-        let channel_id = Id::new(20);
-        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-            guild_id: None,
-            channel_id,
-            parent_id: None,
-            position: None,
-            last_message_id: None,
-            name: "project chat".to_owned(),
-            kind: "group-dm".to_owned(),
-            message_count: None,
-            total_message_sent: None,
-            thread_archived: None,
-            thread_locked: None,
-            recipients: Some(vec![
-                ChannelRecipientInfo {
-                    user_id: Id::new(30),
-                    display_name: "bob".to_owned(),
-                    is_bot: false,
-                    avatar_url: None,
-                    status: Some(PresenceStatus::Idle),
-                },
-                ChannelRecipientInfo {
-                    user_id: Id::new(10),
-                    display_name: "alice".to_owned(),
-                    is_bot: false,
-                    avatar_url: None,
-                    status: Some(PresenceStatus::Online),
-                },
-            ]),
-            permission_overwrites: Vec::new(),
-        }));
-
-        state.confirm_selected_guild();
-        state.confirm_selected_channel();
-
-        let groups = state.members_grouped();
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].label, "Members");
-        assert_eq!(
-            groups[0]
-                .entries
-                .iter()
-                .map(|member| (member.display_name(), member.status()))
-                .collect::<Vec<_>>(),
-            vec![
-                ("alice".to_owned(), PresenceStatus::Online),
-                ("bob".to_owned(), PresenceStatus::Idle),
-            ],
-        );
-    }
-
-    #[test]
-    fn member_panel_title_separates_loaded_and_total_members() {
-        let guild_id = Id::new(1);
-        let mut state = DashboardState::new();
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: Some(100),
-            channels: Vec::new(),
-            members: vec![MemberInfo {
-                user_id: Id::new(10),
-                display_name: "alice".to_owned(),
-                is_bot: false,
-                avatar_url: None,
-                role_ids: Vec::new(),
-            }],
-            presences: vec![(Id::new(10), PresenceStatus::Online)],
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-
-        assert_eq!(state.member_panel_title(), "Members 1/100 loaded");
-        assert_eq!(state.flattened_members().len(), 1);
-    }
-
-    #[test]
-    fn member_panel_title_stays_plain_without_guild_total_or_in_direct_messages() {
-        let mut guild_state = DashboardState::new();
-        guild_state.push_event(AppEvent::GuildCreate {
-            guild_id: Id::new(1),
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: Vec::new(),
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        guild_state.confirm_selected_guild();
-        assert_eq!(guild_state.member_panel_title(), "Members");
-
-        let mut dm_state = DashboardState::new();
-        dm_state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-            guild_id: None,
-            channel_id: Id::new(20),
-            parent_id: None,
-            position: None,
-            last_message_id: None,
-            name: "alice".to_owned(),
-            kind: "dm".to_owned(),
-            message_count: None,
-            total_message_sent: None,
-            thread_archived: None,
-            thread_locked: None,
-            recipients: None,
-            permission_overwrites: Vec::new(),
-        }));
-        dm_state.confirm_selected_guild();
-        assert_eq!(dm_state.member_panel_title(), "Members");
-    }
-
-    #[test]
-    fn unknown_presence_uses_neutral_member_marker() {
-        assert_eq!(presence_marker(PresenceStatus::Unknown), ' ');
-    }
-
-    #[test]
-    fn member_groups_split_role_online_and_offline_buckets() {
-        let guild_id = Id::new(1);
-        let admin_role = Id::new(100);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id: Id::new(2),
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: Vec::new(),
-            }],
-            members: vec![
-                MemberInfo {
-                    user_id: Id::new(10),
-                    display_name: "alice".to_owned(),
-                    is_bot: false,
-                    avatar_url: None,
-                    role_ids: vec![admin_role],
-                },
-                MemberInfo {
-                    user_id: Id::new(11),
-                    display_name: "amy".to_owned(),
-                    is_bot: false,
-                    avatar_url: None,
-                    role_ids: vec![admin_role],
-                },
-                MemberInfo {
-                    user_id: Id::new(20),
-                    display_name: "bob".to_owned(),
-                    is_bot: false,
-                    avatar_url: None,
-                    role_ids: Vec::new(),
-                },
-                MemberInfo {
-                    user_id: Id::new(21),
-                    display_name: "ben".to_owned(),
-                    is_bot: false,
-                    avatar_url: None,
-                    role_ids: Vec::new(),
-                },
-            ],
-            presences: vec![
-                // Admin online, admin offline, no-role online, no-role offline
-                (Id::new(10), PresenceStatus::Online),
-                (Id::new(11), PresenceStatus::Offline),
-                (Id::new(20), PresenceStatus::Idle),
-                (Id::new(21), PresenceStatus::Offline),
-            ],
-            roles: vec![RoleInfo {
-                id: admin_role,
-                name: "Admin".to_owned(),
-                color: Some(0xFFAA00),
-                position: 10,
-                hoist: true,
-                permissions: 0,
-            }],
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-
-        let groups = state.members_grouped();
-        assert_eq!(
-            groups
-                .iter()
-                .map(|group| group.label.clone())
-                .collect::<Vec<_>>(),
-            vec![
-                "Admin".to_owned(),
-                "Online".to_owned(),
-                "Offline".to_owned()
-            ]
-        );
-
-        // Admin role group only carries the online admin (alice); the offline
-        // admin (amy) belongs to the Offline bucket.
-        let admin_names: Vec<_> = groups[0]
-            .entries
-            .iter()
-            .map(|m| m.display_name().to_owned())
-            .collect();
-        assert_eq!(admin_names, vec!["alice".to_owned()]);
-
-        // Online group lists members with no hoisted role who aren't offline.
-        let online_names: Vec<_> = groups[1]
-            .entries
-            .iter()
-            .map(|m| m.display_name().to_owned())
-            .collect();
-        assert_eq!(online_names, vec!["bob".to_owned()]);
-
-        // Offline group merges everyone offline regardless of role.
-        let offline_names: Vec<_> = groups[2]
-            .entries
-            .iter()
-            .map(|m| m.display_name().to_owned())
-            .collect();
-        assert_eq!(offline_names, vec!["amy".to_owned(), "ben".to_owned()]);
-    }
-
-    #[test]
-    fn member_groups_treat_idle_and_dnd_as_online() {
-        let guild_id = Id::new(1);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id: Id::new(2),
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: Vec::new(),
-            }],
-            members: vec![
-                MemberInfo {
-                    user_id: Id::new(10),
-                    display_name: "idle".to_owned(),
-                    is_bot: false,
-                    avatar_url: None,
-                    role_ids: Vec::new(),
-                },
-                MemberInfo {
-                    user_id: Id::new(11),
-                    display_name: "dnd".to_owned(),
-                    is_bot: false,
-                    avatar_url: None,
-                    role_ids: Vec::new(),
-                },
-                MemberInfo {
-                    user_id: Id::new(12),
-                    display_name: "unknown".to_owned(),
-                    is_bot: false,
-                    avatar_url: None,
-                    role_ids: Vec::new(),
-                },
-            ],
-            presences: vec![
-                (Id::new(10), PresenceStatus::Idle),
-                (Id::new(11), PresenceStatus::DoNotDisturb),
-                // Unknown is treated as offline (Discord defaults to offline
-                // when the gateway has not delivered a presence yet).
-                (Id::new(12), PresenceStatus::Unknown),
-            ],
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-
-        let groups = state.members_grouped();
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0].label, "Online");
-        assert_eq!(groups[0].entries.len(), 2);
-        assert_eq!(groups[1].label, "Offline");
-        assert_eq!(groups[1].entries.len(), 1);
-        assert_eq!(groups[1].entries[0].display_name(), "unknown");
-    }
-
-    #[test]
-    fn member_groups_show_selected_dm_recipient() {
-        let mut state = DashboardState::new();
-        let channel_id = Id::new(20);
-        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-            guild_id: None,
-            channel_id,
-            parent_id: None,
-            position: None,
-            last_message_id: None,
-            name: "alice".to_owned(),
-            kind: "dm".to_owned(),
-            message_count: None,
-            total_message_sent: None,
-            thread_archived: None,
-            thread_locked: None,
-            recipients: Some(vec![ChannelRecipientInfo {
-                user_id: Id::new(10),
-                display_name: "alice".to_owned(),
-                is_bot: false,
-                avatar_url: None,
-                status: Some(PresenceStatus::DoNotDisturb),
-            }]),
-            permission_overwrites: Vec::new(),
-        }));
-
-        state.confirm_selected_guild();
-        state.confirm_selected_channel();
-
-        let groups = state.members_grouped();
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].label, "Members");
-        assert_eq!(groups[0].entries.len(), 1);
-        assert_eq!(groups[0].entries[0].display_name(), "alice");
-        assert_eq!(groups[0].entries[0].status(), PresenceStatus::DoNotDisturb);
-    }
-
-    #[test]
-    fn emoji_picker_items_include_available_custom_emojis_for_selected_message_guild() {
-        let state = state_with_custom_emojis();
-
-        let items = state.emoji_reaction_items();
-
-        assert_eq!(items.len(), 9);
-        assert_eq!(items[0].emoji, ReactionEmoji::Unicode("👍".to_owned()));
-        assert_eq!(items[8].label, "Party Time");
-        assert_eq!(
-            items[8].emoji,
-            ReactionEmoji::Custom {
-                id: Id::new(50),
-                name: Some("party_time".to_owned()),
-                animated: true,
-            }
-        );
-    }
-
-    #[test]
-    fn custom_emoji_reaction_items_expose_cdn_image_url() {
-        let state = state_with_custom_emojis();
-
-        let items = state.emoji_reaction_items();
-
-        assert_eq!(
-            items[8].custom_image_url().as_deref(),
-            Some("https://cdn.discordapp.com/emojis/50.gif")
-        );
-        assert_eq!(items[0].custom_image_url(), None);
-    }
-
-    #[test]
-    fn emoji_picker_items_include_custom_emojis_from_update_event() {
-        let guild_id = Id::new(1);
-        let mut state = state_with_messages(1);
-
-        state.push_event(AppEvent::GuildEmojisUpdate {
-            guild_id,
-            emojis: vec![CustomEmojiInfo {
-                id: Id::new(60),
-                name: "wave".to_owned(),
-                animated: false,
-                available: true,
-            }],
-        });
-
-        let items = state.emoji_reaction_items();
-
-        assert_eq!(items.len(), 9);
-        assert_eq!(items[8].label, "Wave");
-        assert_eq!(
-            items[8].emoji,
-            ReactionEmoji::Custom {
-                id: Id::new(60),
-                name: Some("wave".to_owned()),
-                animated: false,
-            }
-        );
-    }
-
-    #[test]
-    fn emoji_picker_uses_channel_guild_when_selected_message_lacks_guild_id() {
-        let mut state = state_with_custom_emojis();
-
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: None,
-            channel_id: Id::new(2),
-            message_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("history message without guild".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-
-        let items = state.emoji_reaction_items();
-
-        assert_eq!(items.len(), 9);
-        assert_eq!(items[8].label, "Party Time");
-    }
-
-    #[test]
-    fn emoji_picker_items_stay_unicode_only_for_direct_messages() {
-        let mut state = DashboardState::new();
-        let channel_id = Id::new(20);
-        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-            guild_id: None,
-            channel_id,
-            parent_id: None,
-            position: None,
-            last_message_id: None,
-            name: "neo".to_owned(),
-            kind: "dm".to_owned(),
-            message_count: None,
-            total_message_sent: None,
-            thread_archived: None,
-            thread_locked: None,
-            recipients: None,
-            permission_overwrites: Vec::new(),
-        }));
-        state.confirm_selected_guild();
-        state.confirm_selected_channel();
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: None,
-            channel_id,
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("hello".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-
-        assert_eq!(state.emoji_reaction_items().len(), 8);
-    }
-
-    #[test]
-    fn message_creation_keeps_viewport_on_latest() {
-        let guild_id = Id::new(1);
-        let channel_id: Id<ChannelMarker> = Id::new(2);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id,
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: Vec::new(),
-            }],
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-        state.confirm_selected_channel();
-        for id in 1..=3u64 {
-            state.push_event(AppEvent::MessageCreate {
-                guild_id: Some(guild_id),
-                channel_id,
-                message_id: Id::new(id),
-                author_id: Id::new(99),
-                author: "neo".to_owned(),
-                author_avatar_url: None,
-                message_kind: crate::discord::MessageKind::regular(),
-                reference: None,
-                reply: None,
-                poll: None,
-                content: Some(format!("msg {id}")),
-                mentions: Vec::new(),
-                attachments: Vec::new(),
-                embeds: Vec::new(),
-                forwarded_snapshots: Vec::new(),
-            });
-        }
-
-        assert_eq!(state.selected_message(), 2);
-    }
-
-    #[test]
-    fn message_scroll_preserves_position_when_not_following() {
-        let mut state = state_with_messages(5);
-        focus_messages(&mut state);
-        state.set_message_view_height(6);
-
-        assert_eq!(state.selected_message(), 4);
-        assert!(state.message_auto_follow());
-
-        state.move_up();
-        assert_eq!(state.selected_message(), 3);
-        assert!(!state.message_auto_follow());
-
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(6),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("msg 6".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-
-        assert_eq!(state.selected_message(), 3);
-        assert_eq!(state.messages()[state.selected_message()].id, Id::new(4));
-        assert!(!state.message_auto_follow());
-    }
-
-    #[test]
-    fn message_auto_follow_can_jump_back_to_latest() {
-        let mut state = state_with_messages(5);
-        focus_messages(&mut state);
-        state.set_message_view_height(6);
-
-        state.move_up();
-        assert!(!state.message_auto_follow());
-
-        state.toggle_message_auto_follow();
-
-        assert!(state.message_auto_follow());
-        assert_eq!(state.selected_message(), 4);
-    }
-
-    #[test]
-    fn image_preview_rows_keep_latest_message_visible_when_auto_following() {
-        let mut state = state_with_image_messages(6, &[1]);
-        focus_messages(&mut state);
-        state.set_message_view_height(6);
-
-        assert_eq!(state.message_scroll(), 0);
-
-        state.clamp_message_viewport_for_image_previews(200, 16, 3);
-
-        assert!(state.message_scroll() > 0 || state.message_line_scroll() > 0);
-        let selected_bottom = state
-            .selected_message_rendered_row(200, 16, 3)
-            .saturating_add(
-                state
-                    .selected_message_rendered_height(200, 16, 3)
-                    .saturating_sub(1),
-            );
-        assert!(selected_bottom < state.message_view_height());
-    }
-
-    #[test]
-    fn image_preview_scrolloff_keeps_selected_message_visible() {
-        let mut state = state_with_image_messages(8, &[5, 6, 7]);
-        focus_messages(&mut state);
-        state.set_message_view_height(14);
-
-        while state.selected_message() > 3 {
-            state.move_up();
-        }
-        state.clamp_message_viewport_for_image_previews(200, 16, 3);
-
-        assert_eq!(state.following_message_rendered_rows(200, 16, 3, 3), 21);
-        let selected_bottom = state
-            .selected_message_rendered_row(200, 16, 3)
-            .saturating_add(
-                state
-                    .selected_message_rendered_height(200, 16, 3)
-                    .saturating_sub(1),
-            );
-        assert!(selected_bottom < state.message_view_height());
-    }
-
-    #[test]
-    fn video_attachment_does_not_reserve_image_preview_rows() {
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some("clip".to_owned()),
-            mentions: Vec::new(),
-            attachments: vec![video_attachment(1)],
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        };
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
-    }
-
-    #[test]
-    fn explicit_newlines_increase_message_rendered_height() {
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some("hello\nworld".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        };
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
-    }
-
-    #[test]
-    fn wrapped_content_increases_message_rendered_height() {
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some("abcdefghijkl".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        };
-
-        assert_eq!(message_rendered_height(&message, 5, 16, 3), 5);
-    }
-
-    #[test]
-    fn rendered_mentions_affect_message_height() {
-        let mut state = state_with_single_message_content("<@10><@10>");
-        state.push_event(AppEvent::GuildMemberUpsert {
-            guild_id: Id::new(1),
-            member: MemberInfo {
-                user_id: Id::new(10),
-                display_name: "a".to_owned(),
-                is_bot: false,
-                avatar_url: None,
-                role_ids: Vec::new(),
-            },
-        });
-        let message = state.messages()[0];
-
-        assert_eq!(message_rendered_height(message, 5, 16, 3), 4);
-        assert_eq!(state.message_base_line_count_for_width(message, 5), 2);
-    }
-
-    #[test]
-    fn forwarded_mentions_affect_height_from_source_channel_guild() {
-        let mut state = DashboardState::new();
-        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-            guild_id: Some(Id::new(2)),
-            channel_id: Id::new(9),
-            parent_id: None,
-            position: None,
-            last_message_id: None,
-            name: "source".to_owned(),
-            kind: "GuildText".to_owned(),
-            message_count: None,
-            total_message_sent: None,
-            thread_archived: None,
-            thread_locked: None,
-            recipients: None,
-            permission_overwrites: Vec::new(),
-        }));
-        state.push_event(AppEvent::GuildMemberUpsert {
-            guild_id: Id::new(2),
-            member: MemberInfo {
-                user_id: Id::new(10),
-                display_name: "a".to_owned(),
-                is_bot: false,
-                avatar_url: None,
-                role_ids: Vec::new(),
-            },
-        });
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: vec![MessageSnapshotInfo {
-                content: Some("<@10><@10>".to_owned()),
-                mentions: Vec::new(),
-                attachments: Vec::new(),
-                embeds: Vec::new(),
-                source_channel_id: Some(Id::new(9)),
-                timestamp: None,
-            }],
-        };
-
-        assert_eq!(state.message_base_line_count_for_width(&message, 7), 4);
-    }
-
-    #[test]
-    fn wide_content_increases_message_rendered_height_by_terminal_width() {
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some("漢字仮名交じ".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        };
-
-        assert_eq!(message_rendered_height(&message, 10, 16, 3), 4);
-    }
-
-    #[test]
-    fn discord_embed_rows_increase_message_rendered_height() {
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: vec![youtube_embed()],
-            forwarded_snapshots: Vec::new(),
-        };
-
-        assert_eq!(message_rendered_height(&message, 80, 16, 3), 8);
-    }
-
-    #[test]
-    fn image_attachment_summary_reserves_text_row_before_preview() {
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some("look".to_owned()),
-            mentions: Vec::new(),
-            attachments: vec![image_attachment(1)],
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        };
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
-    }
-
-    #[test]
-    fn forwarded_image_attachment_reserves_preview_rows() {
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: vec![forwarded_snapshot(1)],
-        };
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
-    }
-
-    #[test]
-    fn forwarded_snapshot_wrapped_content_increases_rendered_height() {
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: vec![MessageSnapshotInfo {
-                content: Some("abcdefghijkl".to_owned()),
-                mentions: Vec::new(),
-                attachments: vec![image_attachment(1)],
-                embeds: Vec::new(),
-                source_channel_id: None,
-                timestamp: None,
-            }],
-        };
-
-        assert_eq!(message_rendered_height(&message, 7, 16, 3), 10);
-    }
-
-    #[test]
-    fn forwarded_snapshot_wide_content_uses_terminal_width() {
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: vec![MessageSnapshotInfo {
-                content: Some("漢字仮名交じ".to_owned()),
-                mentions: Vec::new(),
-                attachments: vec![image_attachment(1)],
-                embeds: Vec::new(),
-                source_channel_id: None,
-                timestamp: None,
-            }],
-        };
-
-        assert_eq!(message_rendered_height(&message, 12, 16, 3), 9);
-    }
-
-    #[test]
-    fn forwarded_metadata_reserves_card_row() {
-        let mut snapshot = forwarded_snapshot(1);
-        snapshot.source_channel_id = Some(Id::new(2));
-        snapshot.timestamp = Some("2026-04-30T12:34:56.000000+00:00".to_owned());
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: vec![snapshot],
-        };
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
-    }
-
-    #[test]
-    fn forwarded_snapshot_embed_rows_increase_rendered_height() {
-        let mut snapshot = forwarded_snapshot(1);
-        snapshot.attachments.clear();
-        snapshot.embeds = vec![youtube_embed()];
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: vec![snapshot],
-        };
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 10);
-    }
-
-    #[test]
-    fn non_default_message_kind_reserves_label_row() {
-        let mut message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some("reply body".to_owned()),
-            mentions: Vec::new(),
-            attachments: vec![image_attachment(1)],
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        };
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
-
-        message.message_kind = MessageKind::new(19);
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
-    }
-
-    #[test]
-    fn reply_preview_reserves_connector_row_without_extra_type_label() {
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::new(19),
-            reference: None,
-            reply: Some(ReplyInfo {
-                author: "casey".to_owned(),
-                content: Some("looks good".to_owned()),
-                mentions: Vec::new(),
-            }),
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some("asdf".to_owned()),
-            mentions: Vec::new(),
-            attachments: vec![image_attachment(1)],
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        };
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
-    }
-
-    #[test]
-    fn poll_message_reserves_question_and_answer_rows() {
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: Some(poll_info(false)),
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        };
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
-    }
-
-    #[test]
-    fn poll_message_body_counts_inside_card_height() {
-        let mut message = height_test_message("Please vote");
-        message.poll = Some(poll_info(false));
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 10);
-    }
-
-    #[test]
-    fn wrapped_poll_message_body_counts_inside_card_height() {
-        let mut message = height_test_message("abcdefghijkl");
-        message.poll = Some(poll_info(false));
-
-        assert_eq!(message_rendered_height(&message, 10, 16, 3), 11);
-    }
-
-    #[test]
-    fn thread_created_message_reserves_system_card_rows() {
-        let mut message = height_test_message("release notes");
-        message.message_kind = MessageKind::new(18);
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
-    }
-
-    #[test]
-    fn poll_result_message_reserves_result_card_rows() {
-        let mut message = height_test_message("");
-        message.message_kind = MessageKind::new(46);
-        message.poll = Some(poll_info(false));
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
-    }
-
-    #[test]
-    fn thread_starter_message_reserves_system_card_rows() {
-        let mut message = height_test_message("");
-        message.message_kind = MessageKind::new(21);
-        message.reply = Some(ReplyInfo {
-            author: "alice".to_owned(),
-            content: Some("original topic".to_owned()),
-            mentions: Vec::new(),
-        });
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
-    }
-
-    #[test]
-    fn multiselect_poll_message_uses_same_card_height() {
-        let message = MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: Some(poll_info(true)),
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        };
-
-        assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
-    }
-
-    #[test]
-    fn message_action_items_reflect_selected_message_capabilities() {
-        let mut state = state_with_image_messages(1, &[1]);
-        focus_messages(&mut state);
-
-        let actions = state.selected_message_action_items();
-
-        assert!(
-            actions.iter().any(|action| {
-                action.kind == MessageActionKind::DownloadImage && action.enabled
-            })
-        );
-        assert!(!actions.iter().any(|action| action.label.contains("poll")));
-    }
-
-    #[test]
-    fn embed_thumbnail_download_action_returns_command() {
-        let mut state = state_with_messages(1);
-        state.push_event(AppEvent::MessageHistoryLoaded {
-            channel_id: Id::new(2),
-            before: None,
-            messages: vec![MessageInfo {
-                content: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
-                embeds: vec![youtube_embed()],
-                ..message_info(Id::new(2), 1)
-            }],
-        });
-        focus_messages(&mut state);
-        state.open_selected_message_actions();
-        state.move_message_action_down();
-
-        let command = state.activate_selected_message_action();
-
-        assert_eq!(
-            command,
-            Some(AppCommand::DownloadAttachment {
-                url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".to_owned(),
-                filename: "embed-thumbnail".to_owned(),
-            })
-        );
-        assert!(!state.is_message_action_menu_open());
-    }
-
-    #[test]
-    fn normal_message_actions_do_not_include_poll_or_image_actions() {
-        let mut state = state_with_messages(1);
-        focus_messages(&mut state);
-
-        let actions = state.selected_message_action_items();
-
-        assert_eq!(
-            actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
-            vec![
-                MessageActionKind::Reply,
-                MessageActionKind::AddReaction,
-                MessageActionKind::ShowProfile,
-                MessageActionKind::LoadPinnedMessages,
-                MessageActionKind::SetPinned(true),
-            ]
-        );
-    }
-
-    #[test]
-    fn reaction_message_actions_use_single_reacted_users_item() {
-        let mut state = state_with_reaction_message();
-        focus_messages(&mut state);
-
-        let actions = state.selected_message_action_items();
-
-        assert_eq!(
-            actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
-            vec![
-                MessageActionKind::Reply,
-                MessageActionKind::AddReaction,
-                MessageActionKind::ShowProfile,
-                MessageActionKind::LoadPinnedMessages,
-                MessageActionKind::SetPinned(true),
-                MessageActionKind::ShowReactionUsers,
-                MessageActionKind::RemoveReaction(0),
-            ]
-        );
-        assert_eq!(
-            actions
-                .iter()
-                .filter(|action| action.label == "Show reacted users")
-                .count(),
-            1
-        );
-        assert!(!actions.iter().any(|action| action.label == "Show 👍 users"));
-    }
-
-    #[test]
-    fn show_reacted_users_action_loads_all_reaction_emojis() {
-        let mut state = state_with_reaction_message();
-        focus_messages(&mut state);
-        state.open_selected_message_actions();
-        for _ in 0..5 {
-            state.move_message_action_down();
-        }
-
-        let command = state.activate_selected_message_action();
-
-        assert_eq!(
-            command,
-            Some(AppCommand::LoadReactionUsers {
-                channel_id: Id::new(2),
-                message_id: Id::new(1),
-                reactions: vec![
-                    ReactionEmoji::Unicode("👍".to_owned()),
-                    ReactionEmoji::Custom {
-                        id: Id::new(50),
-                        name: Some("party".to_owned()),
-                        animated: false,
-                    },
-                ],
-            })
-        );
-        assert!(!state.is_message_action_menu_open());
-    }
-
-    #[test]
-    fn reaction_users_loaded_opens_popup_state() {
-        let mut state = state_with_messages(1);
-
-        state.push_event(AppEvent::ReactionUsersLoaded {
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            reactions: vec![ReactionUsersInfo {
-                emoji: ReactionEmoji::Unicode("👍".to_owned()),
-                users: vec![ReactionUserInfo {
-                    user_id: Id::new(10),
-                    display_name: "neo".to_owned(),
-                }],
-            }],
-        });
-
-        assert!(state.is_reaction_users_popup_open());
-        assert_eq!(state.last_status(), Some("loaded reacted users"));
-        assert_eq!(
-            state
-                .reaction_users_popup()
-                .map(|popup| popup.reactions()[0].users[0].display_name.as_str()),
-            Some("neo")
-        );
-    }
-
-    #[test]
-    fn reaction_users_popup_scroll_down_clamps_at_bottom() {
-        let mut state = state_with_messages(1);
-        state.push_event(AppEvent::ReactionUsersLoaded {
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            reactions: vec![ReactionUsersInfo {
-                emoji: ReactionEmoji::Unicode("👍".to_owned()),
-                users: (1..=6)
-                    .map(|id| ReactionUserInfo {
-                        user_id: Id::new(id),
-                        display_name: format!("user-{id}"),
-                    })
-                    .collect(),
-            }],
-        });
-        // 1 header + 6 users = 7 data lines. With a 3-line viewport the
-        // furthest the user can scroll is 4.
-        state.set_reaction_users_popup_view_height(3);
-
-        for _ in 0..50 {
-            state.scroll_reaction_users_popup_down();
-        }
-        assert_eq!(
-            state.reaction_users_popup().map(|popup| popup.scroll()),
-            Some(4)
-        );
-
-        // A single 'k' press should now move the scroll back, not be eaten by
-        // the inflated counter.
-        state.scroll_reaction_users_popup_up();
-        assert_eq!(
-            state.reaction_users_popup().map(|popup| popup.scroll()),
-            Some(3)
-        );
-    }
-
-    #[test]
-    fn thread_created_message_action_opens_cached_thread() {
-        let mut state = state_with_thread_created_message();
-        focus_messages(&mut state);
-
-        let actions = state.selected_message_action_items();
-        assert_eq!(
-            actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
-            vec![
-                MessageActionKind::Reply,
-                MessageActionKind::OpenThread,
-                MessageActionKind::AddReaction,
-                MessageActionKind::ShowProfile,
-                MessageActionKind::LoadPinnedMessages,
-                MessageActionKind::SetPinned(true),
-            ]
-        );
-
-        state.open_selected_message_actions();
-        state.move_message_action_down();
-        let command = state.activate_selected_message_action();
-
-        assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
-        assert_eq!(command, None);
-    }
-
-    #[test]
-    fn history_loaded_thread_created_message_opens_reference_thread_after_rename() {
-        let mut state = state_with_thread_created_message();
-        state.push_event(AppEvent::MessageHistoryLoaded {
-            channel_id: Id::new(2),
-            before: None,
-            messages: vec![MessageInfo {
-                message_kind: MessageKind::new(18),
-                reference: Some(MessageReferenceInfo {
-                    guild_id: Some(Id::new(1)),
-                    channel_id: Some(Id::new(10)),
-                    message_id: None,
-                }),
-                pinned: false,
-                reactions: Vec::new(),
-                content: Some("old thread name".to_owned()),
-                ..message_info(Id::new(2), 2)
-            }],
-        });
-        focus_messages(&mut state);
-        state.jump_bottom();
-
-        let actions = state.selected_message_action_items();
-        assert!(
-            actions
-                .iter()
-                .any(|action| action.kind == MessageActionKind::OpenThread)
-        );
-
-        state.open_selected_message_actions();
-        state.move_message_action_down();
-        state.activate_selected_message_action();
-
-        assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
-    }
-
-    #[test]
-    fn start_composer_refused_in_read_only_channel() {
-        let mut state = state_with_read_only_channel();
-        state.start_composer();
-        assert!(
-            !state.is_composing(),
-            "composer must not open when SEND_MESSAGES is denied"
-        );
-    }
-
-    #[test]
-    fn submit_composer_drops_message_when_send_revoked_after_open() {
-        // Open the composer with SEND_MESSAGES granted, type something, then
-        // simulate a permission overwrite arriving that revokes SEND. Submit
-        // must refuse rather than silently fire a request that would 403.
-        let mut state = state_with_writable_channel();
-        state.start_composer();
-        state.push_composer_char('h');
-        state.push_composer_char('i');
-        assert!(state.is_composing());
-
-        // Apply a CHANNEL_UPDATE that strips SEND_MESSAGES via a channel
-        // overwrite on @everyone (role id == guild id == 1).
-        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            parent_id: None,
-            position: Some(0),
-            last_message_id: None,
-            name: "general".to_owned(),
-            kind: "GuildText".to_owned(),
-            message_count: None,
-            total_message_sent: None,
-            thread_archived: None,
-            thread_locked: None,
-            recipients: None,
-            permission_overwrites: vec![PermissionOverwriteInfo {
-                id: 1,
-                kind: PermissionOverwriteKind::Role,
-                allow: 0,
-                deny: 0x800,
-            }],
-        }));
-        assert_eq!(state.submit_composer(), None);
-        assert!(!state.is_composing());
-    }
-
-    #[test]
-    fn active_channel_is_cleared_when_view_permission_is_revoked() {
-        let mut state = state_with_writable_channel();
-        state.start_composer();
-        assert_eq!(state.selected_channel_id(), Some(Id::new(2)));
-        assert!(state.is_composing());
-
-        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            parent_id: None,
-            position: Some(0),
-            last_message_id: None,
-            name: "general".to_owned(),
-            kind: "GuildText".to_owned(),
-            message_count: None,
-            total_message_sent: None,
-            thread_archived: None,
-            thread_locked: None,
-            recipients: None,
-            permission_overwrites: vec![PermissionOverwriteInfo {
-                id: 1,
-                kind: PermissionOverwriteKind::Role,
-                allow: 0,
-                deny: 0x400,
-            }],
-        }));
-
-        assert_eq!(state.selected_channel_id(), None);
-        assert!(!state.is_composing());
-        assert!(state.channel_pane_entries().is_empty());
-    }
-
-    #[test]
-    fn debug_channel_visibility_reports_active_guild_counts() {
-        // The fixture's channel denies VIEW_CHANNEL on @everyone, so it
-        // shows up in the hidden bucket.
-        let state = state_with_view_denied_channel();
-        let stats = state.debug_channel_visibility();
-        assert_eq!(
-            stats,
-            ChannelVisibilityStats {
-                visible: 0,
-                hidden: 1,
-            }
-        );
-    }
-
-    /// Build a guild with a single channel where @everyone keeps
-    /// VIEW_CHANNEL but loses SEND_MESSAGES — i.e. an announcement-style
-    /// "read-only" channel that the user can read but not post in.
-    fn state_with_read_only_channel() -> DashboardState {
-        guild_state_with_overwrites(vec![PermissionOverwriteInfo {
-            id: 1,
-            kind: PermissionOverwriteKind::Role,
-            allow: 0,
-            deny: 0x800,
-        }])
-    }
-
-    /// Build a guild with a single channel that is fully hidden — used to
-    /// verify the visibility stats accounting.
-    fn state_with_view_denied_channel() -> DashboardState {
-        guild_state_with_overwrites(vec![PermissionOverwriteInfo {
-            id: 1,
-            kind: PermissionOverwriteKind::Role,
-            allow: 0,
-            deny: 0x400,
-        }])
-    }
-
-    /// Build a guild with a single channel where @everyone has VIEW + SEND
-    /// (no overwrites), so the composer should open and submit normally.
-    fn state_with_writable_channel() -> DashboardState {
-        guild_state_with_overwrites(Vec::new())
-    }
-
-    fn state_with_hidden_and_visible_channels() -> DashboardState {
-        let me: Id<UserMarker> = Id::new(10);
-        let owner: Id<UserMarker> = Id::new(11);
-        let guild: Id<GuildMarker> = Id::new(1);
-        let hidden: Id<ChannelMarker> = Id::new(2);
-        let visible: Id<ChannelMarker> = Id::new(3);
-        let voice: Id<ChannelMarker> = Id::new(4);
-        let mut state = DashboardState::new();
-        state.push_event(AppEvent::Ready {
-            user: "me".to_owned(),
-            user_id: Some(me),
-        });
-        state.push_event(AppEvent::GuildCreate {
-            guild_id: guild,
-            name: "guild".to_owned(),
-            member_count: Some(1),
-            owner_id: Some(owner),
-            channels: vec![
-                ChannelInfo {
-                    guild_id: Some(guild),
-                    channel_id: hidden,
-                    parent_id: None,
-                    position: Some(0),
-                    last_message_id: None,
-                    name: "secret".to_owned(),
-                    kind: "GuildText".to_owned(),
-                    message_count: None,
-                    total_message_sent: None,
-                    thread_archived: None,
-                    thread_locked: None,
-                    recipients: None,
-                    permission_overwrites: vec![PermissionOverwriteInfo {
-                        id: guild.get(),
-                        kind: PermissionOverwriteKind::Role,
-                        allow: 0,
-                        deny: 0x400,
-                    }],
-                },
-                ChannelInfo {
-                    guild_id: Some(guild),
-                    channel_id: visible,
-                    parent_id: None,
-                    position: Some(1),
-                    last_message_id: None,
-                    name: "general".to_owned(),
-                    kind: "GuildText".to_owned(),
-                    message_count: None,
-                    total_message_sent: None,
-                    thread_archived: None,
-                    thread_locked: None,
-                    recipients: None,
-                    permission_overwrites: Vec::new(),
-                },
-                ChannelInfo {
-                    guild_id: Some(guild),
-                    channel_id: voice,
-                    parent_id: None,
-                    position: Some(2),
-                    last_message_id: None,
-                    name: "voice".to_owned(),
-                    kind: "GuildVoice".to_owned(),
-                    message_count: None,
-                    total_message_sent: None,
-                    thread_archived: None,
-                    thread_locked: None,
-                    recipients: None,
-                    permission_overwrites: Vec::new(),
-                },
-            ],
-            members: vec![MemberInfo {
-                user_id: me,
-                display_name: "me".to_owned(),
-                is_bot: false,
-                avatar_url: None,
-                role_ids: Vec::new(),
-            }],
-            presences: Vec::new(),
-            roles: vec![RoleInfo {
-                id: Id::new(guild.get()),
-                name: "@everyone".to_owned(),
-                color: None,
-                position: 0,
-                hoist: false,
-                permissions: 0x400,
-            }],
-            emojis: Vec::new(),
-        });
-        state.activate_guild(ActiveGuildScope::Guild(guild));
-        state
-    }
-
-    fn guild_state_with_overwrites(overwrites: Vec<PermissionOverwriteInfo>) -> DashboardState {
-        let me: Id<UserMarker> = Id::new(10);
-        let owner: Id<UserMarker> = Id::new(11);
-        let guild: Id<GuildMarker> = Id::new(1);
-        let channel: Id<ChannelMarker> = Id::new(2);
-        let mut state = DashboardState::new();
-        state.push_event(AppEvent::Ready {
-            user: "me".to_owned(),
-            user_id: Some(me),
-        });
-        state.push_event(AppEvent::GuildCreate {
-            guild_id: guild,
-            name: "guild".to_owned(),
-            member_count: Some(1),
-            owner_id: Some(owner),
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild),
-                channel_id: channel,
-                parent_id: None,
-                position: Some(0),
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: overwrites,
-            }],
-            members: vec![MemberInfo {
-                user_id: me,
-                display_name: "me".to_owned(),
-                is_bot: false,
-                avatar_url: None,
-                role_ids: Vec::new(),
-            }],
-            presences: Vec::new(),
-            roles: vec![RoleInfo {
-                id: Id::new(guild.get()),
-                name: "@everyone".to_owned(),
-                color: None,
-                position: 0,
-                hoist: false,
-                permissions: 0x400 | 0x800, // VIEW + SEND
-            }],
-            emojis: Vec::new(),
-        });
-        state.activate_guild(ActiveGuildScope::Guild(guild));
-        state.activate_channel(channel);
-        state
-    }
-
-    #[test]
-    fn composer_sends_to_opened_thread_channel() {
-        let mut state = state_with_thread_created_message();
-        focus_messages(&mut state);
-        state.open_selected_message_actions();
-        state.move_message_action_down();
-        state.activate_selected_message_action();
-
-        state.start_composer();
-        state.push_composer_char('h');
-        state.push_composer_char('i');
-
-        assert_eq!(
-            state.submit_composer(),
-            Some(AppCommand::SendMessage {
-                channel_id: Id::new(10),
-                content: "hi".to_owned(),
-                reply_to: None,
-            })
-        );
-    }
-
-    #[test]
-    fn member_subscription_ranges_grow_with_viewport() {
-        let mut state = state_with_thread_created_message();
-        state.set_member_view_height(20);
-        // Default scroll 0, viewport ends at 20 → bucket 0.
-        assert_eq!(state.member_subscription_ranges(), vec![(0, 99)]);
-
-        state.member_scroll = 100;
-        state.member_view_height = 20;
-        // Viewport ends at 120 → bucket 1, contiguous coverage.
-        assert_eq!(
-            state.member_subscription_ranges(),
-            vec![(0, 99), (100, 199)]
-        );
-
-        state.member_scroll = 480;
-        state.member_view_height = 30;
-        // Viewport ends at 510 → bucket 5, anchor [0,99] plus the two buckets
-        // around the visible end so we never exceed the four-range cap.
-        assert_eq!(
-            state.member_subscription_ranges(),
-            vec![(0, 99), (400, 499), (500, 599)]
-        );
-    }
-
-    #[test]
-    fn member_list_subscription_target_uses_active_channel_or_fallback() {
-        let mut state = state_with_thread_created_message();
-        // The fixture activates `general` (id=2) on guild=1.
-        assert_eq!(
-            state.member_list_subscription_target(),
-            Some((Id::new(1), Id::new(2)))
-        );
-
-        // Switching the active channel to a thread must fall back to the
-        // parent text channel — Discord rejects op-37 ranges against threads.
-        state.activate_channel(Id::new(10));
-        assert_eq!(
-            state.member_list_subscription_target(),
-            Some((Id::new(1), Id::new(2)))
-        );
-    }
-
-    #[test]
-    fn guild_member_list_channel_skips_threads_and_categories() {
-        let state = state_with_thread_created_message();
-        // The fixture's guild has channel id=2 (`general`) plus thread id=10
-        // (`release notes`). The subscription anchor must be the parent text
-        // channel, not the thread.
-        assert_eq!(
-            state.guild_member_list_channel(Id::new(1)),
-            Some(Id::new(2))
-        );
-    }
-
-    #[test]
-    fn member_list_subscription_fallback_skips_hidden_channels() {
-        let state = state_with_hidden_and_visible_channels();
-
-        assert_eq!(
-            state.guild_member_list_channel(Id::new(1)),
-            Some(Id::new(3))
-        );
-        assert_eq!(
-            state.member_list_subscription_target(),
-            Some((Id::new(1), Id::new(3)))
-        );
-    }
-
-    #[test]
-    fn member_list_subscription_target_skips_active_voice_channel() {
-        let mut state = state_with_hidden_and_visible_channels();
-        state.activate_channel(Id::new(4));
-
-        assert_eq!(
-            state.member_list_subscription_target(),
-            Some((Id::new(1), Id::new(3)))
-        );
-    }
-
-    #[test]
-    fn channel_pane_excludes_threads() {
-        let state = state_with_thread_created_message();
-        let entries = state.channel_pane_entries();
-        let channel_ids: Vec<Id<ChannelMarker>> = entries
-            .iter()
-            .filter_map(|entry| match entry {
-                ChannelPaneEntry::Channel { state, .. } => Some(state.id),
-                ChannelPaneEntry::CategoryHeader { .. } => None,
-            })
-            .collect();
-        assert!(channel_ids.contains(&Id::new(2)));
-        assert!(!channel_ids.contains(&Id::new(10)));
-    }
-
-    #[test]
-    fn channel_action_menu_lists_threads_for_selected_channel() {
-        let mut state = state_with_thread_created_message();
-        focus_channels(&mut state);
-        state.open_selected_channel_actions();
-
-        assert!(state.is_channel_action_menu_open());
-        let actions = state.selected_channel_action_items();
-        assert_eq!(actions.len(), 1);
-        assert_eq!(actions[0].kind, ChannelActionKind::ShowThreads);
-        assert!(actions[0].enabled);
-
-        let command = state.activate_selected_channel_action();
-        assert_eq!(command, None);
-        assert!(state.is_channel_action_threads_phase());
-
-        let threads = state.channel_action_thread_items();
-        assert_eq!(threads.len(), 1);
-        assert_eq!(threads[0].channel_id, Id::new(10));
-        assert_eq!(threads[0].label, "release notes");
-    }
-
-    #[test]
-    fn channel_action_menu_open_thread_activates_and_subscribes() {
-        let mut state = state_with_thread_created_message();
-        focus_channels(&mut state);
-        state.open_selected_channel_actions();
-        state.activate_selected_channel_action();
-        let command = state.activate_selected_channel_action();
-
-        assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
-        assert!(!state.is_channel_action_menu_open());
-        assert_eq!(
-            command,
-            Some(AppCommand::SubscribeGuildChannel {
-                guild_id: Id::new(1),
-                channel_id: Id::new(10),
-            })
-        );
-    }
-
-    #[test]
-    fn channel_action_menu_back_returns_to_actions_phase() {
-        let mut state = state_with_thread_created_message();
-        focus_channels(&mut state);
-        state.open_selected_channel_actions();
-        state.activate_selected_channel_action();
-        assert!(state.is_channel_action_threads_phase());
-
-        state.back_channel_action_menu();
-        assert!(state.is_channel_action_menu_open());
-        assert!(!state.is_channel_action_threads_phase());
-
-        state.back_channel_action_menu();
-        assert!(!state.is_channel_action_menu_open());
-    }
-
-    #[test]
-    fn poll_vote_actions_are_available_by_default() {
-        let mut state = state_with_messages(1);
-        focus_messages(&mut state);
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: Some(poll_info(false)),
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-
-        let actions = state.selected_message_action_items();
-
-        assert_eq!(
-            actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
-            vec![
-                MessageActionKind::Reply,
-                MessageActionKind::AddReaction,
-                MessageActionKind::ShowProfile,
-                MessageActionKind::LoadPinnedMessages,
-                MessageActionKind::SetPinned(true),
-                MessageActionKind::VotePollAnswer(1),
-                MessageActionKind::VotePollAnswer(2),
-            ]
-        );
-        assert_eq!(actions[5].label, "Remove poll vote: Soup");
-        assert_eq!(actions[6].label, "Vote poll: Noodles");
-    }
-
-    #[test]
-    fn message_action_items_keep_image_action_for_poll_messages() {
-        let mut state = state_with_image_messages(1, &[1]);
-        focus_messages(&mut state);
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: Some(poll_info(false)),
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: vec![image_attachment(1)],
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-
-        let actions = state.selected_message_action_items();
-
-        assert_eq!(
-            actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
-            vec![
-                MessageActionKind::Reply,
-                MessageActionKind::DownloadImage,
-                MessageActionKind::AddReaction,
-                MessageActionKind::ShowProfile,
-                MessageActionKind::LoadPinnedMessages,
-                MessageActionKind::SetPinned(true),
-                MessageActionKind::VotePollAnswer(1),
-                MessageActionKind::VotePollAnswer(2),
-            ]
-        );
-    }
-
-    #[test]
-    fn poll_vote_action_can_remove_existing_vote() {
-        let mut state = state_with_messages(1);
-        focus_messages(&mut state);
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: Some(poll_info(false)),
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        state.open_selected_message_actions();
-        for _ in 0..5 {
-            state.move_message_action_down();
-        }
-
-        let command = state.activate_selected_message_action();
-
-        assert_eq!(
-            command,
-            Some(AppCommand::VotePoll {
-                channel_id: Id::new(2),
-                message_id: Id::new(1),
-                answer_ids: Vec::new(),
-            })
-        );
-    }
-
-    #[test]
-    fn multi_select_poll_action_opens_picker_and_submits_selected_answers() {
-        let mut state = state_with_messages(1);
-        focus_messages(&mut state);
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: Some(poll_info(true)),
-            content: Some(String::new()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-
-        let actions = state.selected_message_action_items();
-        assert_eq!(actions[5].kind, MessageActionKind::OpenPollVotePicker);
-        assert_eq!(actions[5].label, "Choose poll votes");
-
-        state.open_selected_message_actions();
-        for _ in 0..5 {
-            state.move_message_action_down();
-        }
-        assert_eq!(state.activate_selected_message_action(), None);
-        assert!(state.is_poll_vote_picker_open());
-        assert_eq!(
-            state.poll_vote_picker_items().map(|items| {
-                items
-                    .iter()
-                    .map(|item| (item.answer_id, item.selected))
-                    .collect::<Vec<_>>()
-            }),
-            Some(vec![(1, true), (2, false)])
-        );
-
-        state.move_poll_vote_picker_down();
-        state.toggle_selected_poll_vote_answer();
-        let command = state.activate_poll_vote_picker();
-
-        assert_eq!(
-            command,
-            Some(AppCommand::VotePoll {
-                channel_id: Id::new(2),
-                message_id: Id::new(1),
-                answer_ids: vec![1, 2],
-            })
-        );
-    }
-
-    #[test]
-    fn message_scroll_uses_scrolloff() {
-        let mut state = state_with_messages(12);
-        focus_messages(&mut state);
-        state.set_message_view_height(7);
-
-        assert_eq!(state.message_scroll(), 5);
-
-        state.move_up();
-        state.move_up();
-        assert_eq!(state.selected_message(), 9);
-        assert_eq!(state.message_scroll(), 5);
-
-        state.move_up();
-        assert_eq!(state.selected_message(), 8);
-        assert_eq!(state.message_scroll(), 5);
-    }
-
-    #[test]
-    fn message_auto_follow_keeps_latest_message_at_bottom_after_rendered_clamp() {
-        let mut state = state_with_messages(12);
-        focus_messages(&mut state);
-        state.set_message_view_height(7);
-
-        state.clamp_message_viewport_for_image_previews(200, 16, 3);
-
-        assert!(state.message_auto_follow());
-        assert_eq!(state.selected_message(), 11);
-        assert_eq!(state.message_scroll(), 9);
-        assert_eq!(state.message_line_scroll(), 2);
-        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 4);
-    }
-
-    #[test]
-    fn message_selection_centers_selected_message_when_possible() {
-        let mut state = state_with_messages(12);
-        focus_messages(&mut state);
-        state.set_message_view_height(7);
-        state.clamp_message_viewport_for_image_previews(200, 16, 3);
-
-        for _ in 0..4 {
-            state.move_up();
-            state.clamp_message_viewport_for_image_previews(200, 16, 3);
-        }
-
-        assert_eq!(state.selected_message(), 7);
-        assert_eq!(state.message_scroll(), 6);
-        assert_eq!(state.message_line_scroll(), 1);
-        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 2);
-    }
-
-    #[test]
-    fn message_selection_centers_with_line_offset_inside_previous_message() {
-        let mut state = state_with_single_message_content("abcdefghijkl");
-        for id in 2..=5 {
-            push_text_message(&mut state, id, &format!("msg {id}"));
-        }
-        focus_messages(&mut state);
-        state.set_message_view_height(5);
-        state.jump_top();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-        state.move_down();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-        assert_eq!(state.selected_message(), 1);
-        assert_eq!(state.message_scroll(), 0);
-        assert_eq!(state.message_line_scroll(), 4);
-        assert_eq!(state.selected_message_rendered_row(5, 16, 3), 1);
-    }
-
-    #[test]
-    fn message_selection_centers_with_image_preview_height() {
-        let mut state = state_with_image_messages(8, &[4]);
-        focus_messages(&mut state);
-        state.set_message_view_height(9);
-        state.jump_top();
-        state.clamp_message_viewport_for_image_previews(200, 16, 3);
-
-        for _ in 0..3 {
-            state.move_down();
-            state.clamp_message_viewport_for_image_previews(200, 16, 3);
-        }
-
-        assert_eq!(state.messages()[state.selected_message()].id, Id::new(4));
-        assert_eq!(state.selected_message_rendered_height(200, 16, 3), 7);
-        assert_eq!(state.message_scroll(), 2);
-        assert_eq!(state.message_line_scroll(), 2);
-        assert_eq!(state.selected_message_rendered_row(200, 16, 3), 1);
-    }
-
-    #[test]
-    fn message_viewport_scrolls_by_rendered_line() {
-        let mut state = state_with_single_message_content("abcdefghijkl");
-        focus_messages(&mut state);
-        state.set_message_view_height(3);
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-        state.scroll_message_viewport_down();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-        assert_eq!(state.message_scroll(), 0);
-        assert_eq!(state.message_line_scroll(), 3);
-        assert_eq!(state.selected_message(), 0);
-
-        state.scroll_message_viewport_down();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-        assert_eq!(state.message_scroll(), 0);
-        assert_eq!(state.message_line_scroll(), 4);
-    }
-
-    #[test]
-    fn viewport_scroll_moves_to_next_message_after_current_message() {
-        let mut state = state_with_single_message_content("abcdefghijkl");
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("next".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        focus_messages(&mut state);
-        state.set_message_view_height(3);
-        state.jump_top();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-        state.scroll_message_viewport_down();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-        state.scroll_message_viewport_down();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-        state.scroll_message_viewport_down();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-        state.scroll_message_viewport_down();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-        state.scroll_message_viewport_down();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-        assert_eq!(state.message_scroll(), 1);
-        assert_eq!(state.message_line_scroll(), 0);
-        assert_eq!(state.selected_message(), 0);
-    }
-
-    #[test]
-    fn focused_message_selection_returns_none_when_viewport_scrolled_past_selection() {
-        let mut state = state_with_single_message_content("abcdefghijkl");
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("next".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        focus_messages(&mut state);
-        state.set_message_view_height(3);
-        state.jump_top();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-        for _ in 0..5 {
-            state.scroll_message_viewport_down();
-            state.clamp_message_viewport_for_image_previews(5, 16, 3);
-        }
-
-        assert_eq!(state.message_scroll(), 1);
-        assert_eq!(state.selected_message(), 0);
-        assert_eq!(state.focused_message_selection(), None);
-    }
-
-    #[test]
-    fn viewport_scrolls_by_rendered_line_when_selected_message_is_below_top() {
-        let mut state = state_with_single_message_content("abcdefghijkl");
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("next".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        focus_messages(&mut state);
-        state.set_message_view_height(3);
-        state.jump_top();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-        state.scroll_message_viewport_down();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-        state.scroll_message_viewport_down();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-        assert_eq!(state.message_scroll(), 0);
-        assert_eq!(state.message_line_scroll(), 2);
-        assert_eq!(state.selected_message(), 0);
-
-        state.move_down();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-        assert_eq!(state.selected_message(), 1);
-        let selected_bottom = state
-            .selected_message_rendered_row(5, 16, 3)
-            .saturating_add(
-                state
-                    .selected_message_rendered_height(5, 16, 3)
-                    .saturating_sub(1),
-            );
-        assert!(selected_bottom < state.message_view_height());
-    }
-
-    #[test]
-    fn tall_message_clamp_keeps_next_selected_message_visible() {
-        let mut state = state_with_single_message_content(
-            "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
-        );
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("next".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        focus_messages(&mut state);
-        state.set_message_view_height(3);
-        state.jump_top();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-        state.move_down();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-        let selected_bottom = state
-            .selected_message_rendered_row(5, 16, 3)
-            .saturating_add(
-                state
-                    .selected_message_rendered_height(5, 16, 3)
-                    .saturating_sub(1),
-            );
-        assert!(selected_bottom < state.message_view_height());
-    }
-
-    #[test]
-    fn viewport_scroll_up_enters_previous_long_message_at_last_line() {
-        let mut state = state_with_single_message_content("abcdefghijkl");
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("next".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        focus_messages(&mut state);
-        state.set_message_view_height(3);
-        state.jump_top();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-        for _ in 0..3 {
-            state.scroll_message_viewport_down();
-            state.clamp_message_viewport_for_image_previews(5, 16, 3);
-        }
-
-        state.scroll_message_viewport_up();
-
-        assert_eq!(state.message_scroll(), 0);
-        assert_eq!(state.message_line_scroll(), 2);
-        assert_eq!(state.selected_message(), 0);
-    }
-
-    #[test]
-    fn shared_scroll_helper_keeps_three_rows_below_cursor_when_scrolling_starts() {
-        let height = 10;
-        let scroll = super::clamp_list_scroll(7, 0, height, 20);
-
-        assert_eq!(scroll, 1);
-        assert_eq!(height - 1 - (7 - scroll), 3);
-    }
-
-    #[test]
-    fn shared_scroll_helper_moves_one_row_near_bottom() {
-        let mut scroll = 0usize;
-
-        for cursor in 0..20 {
-            let next_scroll = super::clamp_list_scroll(cursor, scroll, 7, 20);
-            assert!(
-                next_scroll <= scroll.saturating_add(1),
-                "cursor {cursor} moved scroll from {scroll} to {next_scroll}",
-            );
-            scroll = next_scroll;
-        }
-    }
-
-    #[test]
-    fn guild_scroll_uses_scrolloff() {
-        let mut state = state_with_many_guilds(8);
-        focus_guilds(&mut state);
-        state.set_guild_view_height(7);
-
-        state.jump_bottom();
-        assert_eq!(state.selected_guild(), 8);
-        assert_eq!(state.guild_scroll(), 2);
-
-        state.move_up();
-        state.move_up();
-        assert_eq!(state.selected_guild(), 6);
-        assert_eq!(state.guild_scroll(), 2);
-
-        state.move_up();
-        assert_eq!(state.selected_guild(), 5);
-        assert_eq!(state.guild_scroll(), 2);
-    }
-
-    #[test]
-    fn channel_scroll_uses_scrolloff() {
-        let mut state = state_with_many_channels(8);
-        focus_channels(&mut state);
-        state.set_channel_view_height(7);
-
-        state.jump_bottom();
-        assert_eq!(state.selected_channel(), 7);
-        assert_eq!(state.channel_scroll(), 1);
-
-        state.move_up();
-        state.move_up();
-        assert_eq!(state.selected_channel(), 5);
-        assert_eq!(state.channel_scroll(), 1);
-
-        state.move_up();
-        assert_eq!(state.selected_channel(), 4);
-        assert_eq!(state.channel_scroll(), 1);
-    }
-
-    #[test]
-    fn member_scroll_uses_scrolloff() {
-        let mut state = state_with_members(8);
-        focus_members(&mut state);
-        state.set_member_view_height(7);
-
-        state.jump_bottom();
-        assert_eq!(state.selected_member(), 7);
-        assert_eq!(state.member_scroll(), 2);
-
-        state.move_up();
-        state.move_up();
-        assert_eq!(state.selected_member(), 5);
-        assert_eq!(state.member_scroll(), 2);
-
-        state.move_up();
-        assert_eq!(state.selected_member(), 4);
-        assert_eq!(state.member_scroll(), 2);
-    }
-
-    #[test]
-    fn member_half_page_scrolls_by_rendered_lines() {
-        let mut state = state_with_grouped_members();
-        focus_members(&mut state);
-        state.set_member_view_height(9);
-
-        assert_eq!(state.selected_member(), 0);
-        assert_eq!(state.selected_member_line_for_test(), 1);
-
-        state.half_page_down();
-        assert_eq!(state.selected_member(), 2);
-        assert_eq!(state.selected_member_line_for_test(), 5);
-
-        state.half_page_up();
-        assert_eq!(state.selected_member(), 0);
-        assert_eq!(state.selected_member_line_for_test(), 1);
-    }
-
-    #[test]
-    fn half_page_scrolls_all_list_panes() {
-        let mut guild_state = state_with_many_guilds(8);
-        focus_guilds(&mut guild_state);
-        guild_state.set_guild_view_height(9);
-        guild_state.half_page_down();
-        assert_eq!(guild_state.selected_guild(), 5);
-
-        let mut channel_state = state_with_many_channels(8);
-        focus_channels(&mut channel_state);
-        channel_state.set_channel_view_height(9);
-        channel_state.half_page_down();
-        assert_eq!(channel_state.selected_channel(), 4);
-
-        let mut member_state = state_with_members(8);
-        focus_members(&mut member_state);
-        member_state.set_member_view_height(9);
-        member_state.half_page_down();
-        assert_eq!(member_state.selected_member(), 4);
-    }
-
-    #[test]
-    fn message_half_page_up_disables_follow() {
-        let mut state = state_with_messages(10);
-        focus_messages(&mut state);
-        state.set_message_view_height(9);
-
-        state.half_page_up();
-
-        assert_eq!(state.selected_message(), 5);
-        assert!(!state.message_auto_follow());
-    }
-
-    #[test]
-    fn message_jump_bottom_does_not_enable_auto_follow() {
-        let mut state = state_with_messages(10);
-        focus_messages(&mut state);
-        state.set_message_view_height(9);
-
-        state.move_up();
-        assert!(!state.message_auto_follow());
-
-        state.jump_bottom();
-
-        assert_eq!(state.selected_message(), 9);
-        assert!(!state.message_auto_follow());
-    }
-
-    #[test]
-    fn message_half_page_down_keeps_follow_state() {
-        let mut state = state_with_messages(10);
-        focus_messages(&mut state);
-        state.set_message_view_height(9);
-
-        state.half_page_down();
-        assert!(state.message_auto_follow());
-
-        state.move_up();
-        assert!(!state.message_auto_follow());
-
-        state.half_page_down();
-        assert!(!state.message_auto_follow());
-    }
-
-    #[test]
-    fn history_load_preserves_manual_scroll_position_by_message_id() {
-        let channel_id: Id<ChannelMarker> = Id::new(2);
-        let mut state = state_with_message_ids([10, 11, 12, 13, 14]);
-        focus_messages(&mut state);
-        state.set_message_view_height(3);
-        state.move_up();
-        state.move_up();
-
-        let selected_id = state.messages()[state.selected_message()].id;
-        let scroll_id = state.messages()[state.message_scroll()].id;
-
-        state.push_event(AppEvent::MessageHistoryLoaded {
-            channel_id,
-            before: None,
-            messages: vec![message_info(channel_id, 5)],
-        });
-
-        assert_eq!(state.messages()[state.selected_message()].id, selected_id);
-        assert_eq!(state.messages()[state.message_scroll()].id, scroll_id);
-        assert!(!state.message_auto_follow());
-    }
-
-    #[test]
-    fn older_history_request_waits_for_loaded_page() {
-        let channel_id: Id<ChannelMarker> = Id::new(2);
-        let mut state = state_with_message_ids([10, 11, 12]);
-        focus_messages(&mut state);
-        state.jump_top();
-
-        assert_eq!(
-            state.next_older_history_command(),
-            Some(AppCommand::LoadMessageHistory {
-                channel_id,
-                before: Some(Id::new(10)),
-            })
-        );
-        assert_eq!(state.next_older_history_command(), None);
-
-        state.push_event(AppEvent::MessageHistoryLoaded {
-            channel_id,
-            before: Some(Id::new(10)),
-            messages: vec![message_info(channel_id, 5)],
-        });
-
-        state.move_up();
-        assert_eq!(
-            state.next_older_history_command(),
-            Some(AppCommand::LoadMessageHistory {
-                channel_id,
-                before: Some(Id::new(5)),
-            })
-        );
-    }
-
-    #[test]
-    fn older_history_request_advances_after_cache_limit_retention() {
-        let channel_id: Id<ChannelMarker> = Id::new(2);
-        let mut state = state_with_message_ids(10..=209);
-        focus_messages(&mut state);
-        state.jump_top();
-
-        assert_eq!(
-            state.next_older_history_command(),
-            Some(AppCommand::LoadMessageHistory {
-                channel_id,
-                before: Some(Id::new(10)),
-            })
-        );
-        state.push_event(AppEvent::MessageHistoryLoaded {
-            channel_id,
-            before: Some(Id::new(10)),
-            messages: vec![message_info(channel_id, 5)],
-        });
-
-        assert_eq!(
-            state.messages().last().map(|message| message.id),
-            Some(Id::new(209))
-        );
-
-        state.move_up();
-
-        assert_eq!(
-            state.next_older_history_command(),
-            Some(AppCommand::LoadMessageHistory {
-                channel_id,
-                before: Some(Id::new(5)),
-            })
-        );
-    }
-
-    #[test]
-    fn empty_older_history_page_marks_cursor_exhausted() {
-        let channel_id: Id<ChannelMarker> = Id::new(2);
-        let mut state = state_with_message_ids([10, 11, 12]);
-        focus_messages(&mut state);
-        state.jump_top();
-
-        assert_eq!(
-            state.next_older_history_command(),
-            Some(AppCommand::LoadMessageHistory {
-                channel_id,
-                before: Some(Id::new(10)),
-            })
-        );
-
-        state.push_event(AppEvent::MessageHistoryLoaded {
-            channel_id,
-            before: Some(Id::new(10)),
-            messages: Vec::new(),
-        });
-
-        assert_eq!(state.next_older_history_command(), None);
-    }
-
-    #[test]
-    fn direct_messages_are_sorted_by_latest_message_id() {
-        let mut state = state_with_direct_messages();
-        state.confirm_selected_guild();
-
-        assert_eq!(channel_entry_names(&state), vec!["new", "old", "empty"]);
-    }
-
-    #[test]
-    fn direct_message_selection_waits_for_channel_confirmation() {
-        let mut state = state_with_direct_messages();
-
-        state.confirm_selected_guild();
-        assert_eq!(state.selected_channel_id(), None);
-
-        state.confirm_selected_channel();
-        assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
-    }
-
-    #[test]
-    fn direct_message_sorting_uses_channel_id_fallback() {
-        let mut state = DashboardState::new();
-        for (channel_id, name) in [(Id::new(10), "older-id"), (Id::new(30), "newer-id")] {
-            state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-                guild_id: None,
-                channel_id,
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: name.to_owned(),
-                kind: "dm".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: Vec::new(),
-            }));
-        }
-        state.confirm_selected_guild();
-
-        assert_eq!(channel_entry_names(&state), vec!["newer-id", "older-id"]);
-    }
-
-    #[test]
-    fn direct_message_cursor_stays_on_same_channel_after_recency_sort() {
-        let mut state = state_with_direct_messages();
-        state.confirm_selected_guild();
-        focus_channels(&mut state);
-        state.move_down();
-
-        assert_eq!(state.selected_channel(), 1);
-        assert_eq!(channel_entry_names(&state), vec!["new", "old", "empty"]);
-
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: None,
-            channel_id: Id::new(30),
-            message_id: Id::new(300),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("new empty dm".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-
-        assert_eq!(channel_entry_names(&state), vec!["empty", "new", "old"]);
-        assert_eq!(state.selected_channel(), 2);
-    }
-
-    #[test]
-    fn channel_tree_groups_category_children() {
-        let state = state_with_channel_tree();
-        let entries = state.channel_pane_entries();
-
-        assert!(matches!(
-            entries[0],
-            ChannelPaneEntry::CategoryHeader {
-                collapsed: false,
-                ..
-            }
-        ));
-        assert!(matches!(
-            entries[1],
-            ChannelPaneEntry::Channel {
-                branch: ChannelBranch::Middle,
-                ..
-            }
-        ));
-        assert!(matches!(
-            entries[2],
-            ChannelPaneEntry::Channel {
-                branch: ChannelBranch::Last,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn selected_channel_category_can_be_closed_and_opened() {
-        let mut state = state_with_channel_tree();
-
-        assert_eq!(state.channel_pane_entries().len(), 3);
-        assert_eq!(state.selected_channel_id(), None);
-
-        state.close_selected_channel_category();
-        let closed_entries = state.channel_pane_entries();
-        assert_eq!(closed_entries.len(), 1);
-        assert!(matches!(
-            closed_entries[0],
-            ChannelPaneEntry::CategoryHeader {
-                collapsed: true,
-                ..
-            }
-        ));
-
-        state.open_selected_channel_category();
-        assert_eq!(state.channel_pane_entries().len(), 3);
-    }
-
-    #[test]
-    fn selected_channel_child_can_close_parent_category() {
-        let mut state = state_with_channel_tree();
-        state.selected_channel = 1;
-
-        state.toggle_selected_channel_category();
-        let entries = state.channel_pane_entries();
-        assert_eq!(entries.len(), 1);
-        assert!(matches!(
-            entries[0],
-            ChannelPaneEntry::CategoryHeader {
-                collapsed: true,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn moving_guild_cursor_does_not_activate_guild() {
-        let mut state = state_with_two_guilds();
-        focus_guilds(&mut state);
-
-        state.confirm_selected_guild();
-        let active_guild = state.selected_guild_id();
-        assert!(active_guild.is_some());
-
-        state.move_down();
-        assert_eq!(state.selected_guild, 2);
-        assert_eq!(state.selected_guild_id(), active_guild);
-
-        state.confirm_selected_guild();
-        assert_ne!(state.selected_guild_id(), active_guild);
-    }
-
-    #[test]
-    fn active_guild_entry_tracks_confirmed_guild() {
-        let mut state = state_with_two_guilds();
-        focus_guilds(&mut state);
-
-        {
-            let entries = state.guild_pane_entries();
-            assert!(!state.is_active_guild_entry(&entries[0]));
-            assert!(!state.is_active_guild_entry(&entries[1]));
-            assert!(!state.is_active_guild_entry(&entries[2]));
-        }
-
-        state.confirm_selected_guild();
-        {
-            let entries = state.guild_pane_entries();
-            assert!(!state.is_active_guild_entry(&entries[0]));
-            assert!(state.is_active_guild_entry(&entries[1]));
-            assert!(!state.is_active_guild_entry(&entries[2]));
-        }
-
-        state.move_down();
-        {
-            let entries = state.guild_pane_entries();
-            assert!(state.is_active_guild_entry(&entries[1]));
-            assert!(!state.is_active_guild_entry(&entries[2]));
-        }
-
-        state.confirm_selected_guild();
-        let entries = state.guild_pane_entries();
-        assert!(!state.is_active_guild_entry(&entries[1]));
-        assert!(state.is_active_guild_entry(&entries[2]));
-    }
-
-    #[test]
-    fn moving_channel_cursor_does_not_activate_channel() {
-        let mut state = state_with_channel_tree();
-        let random_id = Id::new(12);
-        focus_channels(&mut state);
-
-        assert_eq!(state.selected_channel_id(), None);
-
-        state.move_down();
-        state.move_down();
-        assert_eq!(state.selected_channel, 2);
-        assert_eq!(state.selected_channel_id(), None);
-
-        state.confirm_selected_channel();
-        assert_eq!(state.selected_channel_id(), Some(random_id));
-    }
-
-    #[test]
-    fn active_channel_entry_tracks_confirmed_channel() {
-        let mut state = state_with_channel_tree();
-        focus_channels(&mut state);
-
-        {
-            let entries = state.channel_pane_entries();
-            assert!(!state.is_active_channel_entry(&entries[0]));
-            assert!(!state.is_active_channel_entry(&entries[1]));
-            assert!(!state.is_active_channel_entry(&entries[2]));
-        }
-
-        state.move_down();
-        state.confirm_selected_channel();
-        {
-            let entries = state.channel_pane_entries();
-            assert!(!state.is_active_channel_entry(&entries[0]));
-            assert!(state.is_active_channel_entry(&entries[1]));
-            assert!(!state.is_active_channel_entry(&entries[2]));
-        }
-
-        state.move_down();
-        {
-            let entries = state.channel_pane_entries();
-            assert!(state.is_active_channel_entry(&entries[1]));
-            assert!(!state.is_active_channel_entry(&entries[2]));
-        }
-
-        state.confirm_selected_channel();
-        let entries = state.channel_pane_entries();
-        assert!(!state.is_active_channel_entry(&entries[1]));
-        assert!(state.is_active_channel_entry(&entries[2]));
-    }
-
-    #[test]
-    fn selected_folder_can_be_closed_and_opened() {
-        let mut state = state_with_folder(Some(42));
-
-        assert_eq!(state.guild_pane_entries().len(), 4);
-        state.close_selected_folder();
-        let closed_entries = state.guild_pane_entries();
-        assert_eq!(closed_entries.len(), 2);
-        assert!(matches!(
-            closed_entries[1],
-            GuildPaneEntry::FolderHeader {
-                collapsed: true,
-                ..
-            }
-        ));
-
-        state.open_selected_folder();
-        let open_entries = state.guild_pane_entries();
-        assert_eq!(open_entries.len(), 4);
-        assert!(matches!(
-            open_entries[1],
-            GuildPaneEntry::FolderHeader {
-                collapsed: false,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn folder_children_use_middle_and_last_branches() {
-        let state = state_with_folder(Some(42));
-
-        let entries = state.guild_pane_entries();
-        assert!(matches!(
-            entries[2],
-            GuildPaneEntry::Guild {
-                branch: GuildBranch::Middle,
-                ..
-            }
-        ));
-        assert!(matches!(
-            entries[3],
-            GuildPaneEntry::Guild {
-                branch: GuildBranch::Last,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn folder_without_id_can_be_closed() {
-        let mut state = state_with_folder(None);
-
-        state.close_selected_folder();
-        let entries = state.guild_pane_entries();
-        assert_eq!(entries.len(), 2);
-        assert!(matches!(
-            entries[1],
-            GuildPaneEntry::FolderHeader {
-                collapsed: true,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn selected_folder_child_can_close_parent() {
-        let mut state = state_with_folder(Some(42));
-        state.selected_guild = 2;
-
-        state.toggle_selected_folder();
-        let entries = state.guild_pane_entries();
-        assert_eq!(entries.len(), 2);
-        assert!(matches!(
-            entries[1],
-            GuildPaneEntry::FolderHeader {
-                collapsed: true,
-                ..
-            }
-        ));
-    }
-
-    fn state_with_folder(folder_id: Option<u64>) -> DashboardState {
-        let first_guild = Id::new(1);
-        let second_guild = Id::new(2);
-        let mut state = DashboardState::new();
-
-        for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
-            state.push_event(AppEvent::GuildCreate {
-                guild_id,
-                name: name.to_owned(),
-                member_count: None,
-                channels: Vec::new(),
-                members: Vec::new(),
-                presences: Vec::new(),
-                roles: Vec::new(),
-                emojis: Vec::new(),
-                owner_id: None,
-            });
-        }
-        state.push_event(AppEvent::GuildFoldersUpdate {
-            folders: vec![GuildFolder {
-                id: folder_id,
-                name: Some("folder".to_owned()),
-                color: None,
-                guild_ids: vec![first_guild, second_guild],
-            }],
-        });
-        state
-    }
-
-    fn state_with_many_guilds(count: u64) -> DashboardState {
-        let mut state = DashboardState::new();
-        for id in 1..=count {
-            state.push_event(AppEvent::GuildCreate {
-                guild_id: Id::new(id),
-                name: format!("guild {id}"),
-                member_count: None,
-                channels: Vec::new(),
-                members: Vec::new(),
-                presences: Vec::new(),
-                roles: Vec::new(),
-                emojis: Vec::new(),
-                owner_id: None,
-            });
-        }
-        state
-    }
-
-    fn state_with_many_channels(count: u64) -> DashboardState {
-        let guild_id = Id::new(1);
-        let mut state = DashboardState::new();
-        let channels = (1..=count)
-            .map(|id| ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id: Id::new(id),
-                parent_id: None,
-                position: Some(id as i32),
-                last_message_id: None,
-                name: format!("channel {id}"),
-                kind: "text".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: Vec::new(),
-            })
-            .collect();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels,
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-        state
-    }
-
-    fn state_with_members(count: u64) -> DashboardState {
-        let guild_id = Id::new(1);
-        let channel_id: Id<ChannelMarker> = Id::new(2);
-        let mut state = DashboardState::new();
-        let members = (1..=count)
-            .map(|id| MemberInfo {
-                user_id: Id::new(id),
-                display_name: format!("member {id}"),
-                is_bot: false,
-                avatar_url: None,
-                role_ids: Vec::new(),
-            })
-            .collect();
-        let presences = (1..=count)
-            .map(|id| (Id::new(id), PresenceStatus::Online))
-            .collect();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id,
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: Vec::new(),
-            }],
-            members,
-            presences,
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-        state
-    }
-
-    fn state_with_grouped_members() -> DashboardState {
-        let guild_id = Id::new(1);
-        let channel_id: Id<ChannelMarker> = Id::new(2);
-        let role_id = Id::new(100);
-        let mut state = DashboardState::new();
-        let members = (1..=4)
-            .map(|id| MemberInfo {
-                user_id: Id::new(id),
-                display_name: format!("member {id}"),
-                is_bot: false,
-                avatar_url: None,
-                role_ids: (id <= 2).then_some(role_id).into_iter().collect(),
-            })
-            .collect();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id,
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: Vec::new(),
-            }],
-            members,
-            presences: vec![
-                (Id::new(1), PresenceStatus::Online),
-                (Id::new(2), PresenceStatus::Online),
-                (Id::new(3), PresenceStatus::Offline),
-                (Id::new(4), PresenceStatus::Offline),
-            ],
-            roles: vec![RoleInfo {
-                id: role_id,
-                name: "Role".to_owned(),
-                color: None,
-                position: 1,
-                hoist: true,
-                permissions: 0,
-            }],
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-        state
-    }
-
-    fn state_with_channel_tree() -> DashboardState {
-        let guild_id = Id::new(1);
-        let category_id = Id::new(10);
-        let general_id = Id::new(11);
-        let random_id = Id::new(12);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: vec![
-                ChannelInfo {
-                    guild_id: Some(guild_id),
-                    channel_id: category_id,
-                    parent_id: None,
-                    position: Some(0),
-                    last_message_id: None,
-                    name: "Text Channels".to_owned(),
-                    kind: "category".to_owned(),
-                    message_count: None,
-                    total_message_sent: None,
-                    thread_archived: None,
-                    thread_locked: None,
-                    recipients: None,
-                    permission_overwrites: Vec::new(),
-                },
-                ChannelInfo {
-                    guild_id: Some(guild_id),
-                    channel_id: general_id,
-                    parent_id: Some(category_id),
-                    position: Some(0),
-                    last_message_id: None,
-                    name: "general".to_owned(),
-                    kind: "text".to_owned(),
-                    message_count: None,
-                    total_message_sent: None,
-                    thread_archived: None,
-                    thread_locked: None,
-                    recipients: None,
-                    permission_overwrites: Vec::new(),
-                },
-                ChannelInfo {
-                    guild_id: Some(guild_id),
-                    channel_id: random_id,
-                    parent_id: Some(category_id),
-                    position: Some(1),
-                    last_message_id: None,
-                    name: "random".to_owned(),
-                    kind: "text".to_owned(),
-                    message_count: None,
-                    total_message_sent: None,
-                    thread_archived: None,
-                    thread_locked: None,
-                    recipients: None,
-                    permission_overwrites: Vec::new(),
-                },
-            ],
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-        state
-    }
-
-    fn state_with_direct_messages() -> DashboardState {
-        let mut state = DashboardState::new();
-        for (channel_id, name, last_message_id) in [
-            (Id::new(10), "old", Some(Id::new(100))),
-            (Id::new(20), "new", Some(Id::new(200))),
-            (Id::new(30), "empty", None),
-        ] {
-            state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-                guild_id: None,
-                channel_id,
-                parent_id: None,
-                position: None,
-                last_message_id,
-                name: name.to_owned(),
-                kind: "dm".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: Vec::new(),
-            }));
-        }
-        state
-    }
-
-    fn state_with_messages(count: u64) -> DashboardState {
-        state_with_message_ids(1..=count)
-    }
-
-    fn state_with_reaction_message() -> DashboardState {
-        let mut state = state_with_messages(1);
-        state.push_event(AppEvent::MessageHistoryLoaded {
-            channel_id: Id::new(2),
-            before: None,
-            messages: vec![MessageInfo {
-                reactions: vec![
-                    ReactionInfo {
-                        emoji: ReactionEmoji::Unicode("👍".to_owned()),
-                        count: 2,
-                        me: true,
-                    },
-                    ReactionInfo {
-                        emoji: ReactionEmoji::Custom {
-                            id: Id::new(50),
-                            name: Some("party".to_owned()),
-                            animated: false,
-                        },
-                        count: 1,
-                        me: false,
-                    },
-                ],
-                ..message_info(Id::new(2), 1)
-            }],
-        });
-        state
-    }
-
-    fn state_with_custom_emojis() -> DashboardState {
-        let guild_id = Id::new(1);
-        let channel_id: Id<ChannelMarker> = Id::new(2);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id,
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: Vec::new(),
-            }],
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: vec![
-                CustomEmojiInfo {
-                    id: Id::new(50),
-                    name: "party_time".to_owned(),
-                    animated: true,
-                    available: true,
-                },
-                CustomEmojiInfo {
-                    id: Id::new(51),
-                    name: "gone".to_owned(),
-                    animated: false,
-                    available: false,
-                },
-            ],
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-        state.confirm_selected_channel();
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(guild_id),
-            channel_id,
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("hello".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        state
-    }
-
-    fn state_with_single_message_content(content: &str) -> DashboardState {
-        let guild_id = Id::new(1);
-        let channel_id: Id<ChannelMarker> = Id::new(2);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id,
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: Vec::new(),
-            }],
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-        state.confirm_selected_channel();
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(guild_id),
-            channel_id,
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some(content.to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        state
-    }
-
-    fn state_with_thread_created_message() -> DashboardState {
-        let guild_id = Id::new(1);
-        let parent_id: Id<ChannelMarker> = Id::new(2);
-        let thread_id: Id<ChannelMarker> = Id::new(10);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: vec![
-                ChannelInfo {
-                    guild_id: Some(guild_id),
-                    channel_id: parent_id,
-                    parent_id: None,
-                    position: None,
-                    last_message_id: None,
-                    name: "general".to_owned(),
-                    kind: "GuildText".to_owned(),
-                    message_count: None,
-                    total_message_sent: None,
-                    thread_archived: None,
-                    thread_locked: None,
-                    recipients: None,
-                    permission_overwrites: Vec::new(),
-                },
-                ChannelInfo {
-                    guild_id: Some(guild_id),
-                    channel_id: thread_id,
-                    parent_id: Some(parent_id),
-                    position: None,
-                    last_message_id: None,
-                    name: "release notes".to_owned(),
-                    kind: "thread".to_owned(),
-                    message_count: Some(12),
-                    total_message_sent: Some(14),
-                    thread_archived: Some(false),
-                    thread_locked: Some(false),
-                    recipients: None,
-                    permission_overwrites: Vec::new(),
-                },
-            ],
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-        state.confirm_selected_channel();
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(guild_id),
-            channel_id: parent_id,
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::new(18),
-            reference: Some(MessageReferenceInfo {
-                guild_id: Some(guild_id),
-                channel_id: Some(thread_id),
-                message_id: None,
-            }),
-            reply: None,
-            poll: None,
-            content: Some("release notes".to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        state
-    }
-
-    fn height_test_message(content: &str) -> MessageState {
-        MessageState {
-            id: Id::new(1),
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some(content.to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        }
-    }
-
-    fn state_with_image_messages(count: u64, image_message_ids: &[u64]) -> DashboardState {
-        state_with_messages_matching(1..=count, |id| image_message_ids.contains(&id))
-    }
-
-    fn state_with_message_ids(message_ids: impl IntoIterator<Item = u64>) -> DashboardState {
-        state_with_messages_matching(message_ids, |_| false)
-    }
-
-    fn state_with_messages_matching(
-        message_ids: impl IntoIterator<Item = u64>,
-        has_image: impl Fn(u64) -> bool,
-    ) -> DashboardState {
-        let guild_id = Id::new(1);
-        let channel_id: Id<ChannelMarker> = Id::new(2);
-        let mut state = DashboardState::new();
-
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            channels: vec![ChannelInfo {
-                guild_id: Some(guild_id),
-                channel_id,
-                parent_id: None,
-                position: None,
-                last_message_id: None,
-                name: "general".to_owned(),
-                kind: "GuildText".to_owned(),
-                message_count: None,
-                total_message_sent: None,
-                thread_archived: None,
-                thread_locked: None,
-                recipients: None,
-                permission_overwrites: Vec::new(),
-            }],
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
-        state.confirm_selected_guild();
-        state.confirm_selected_channel();
-        for id in message_ids {
-            state.push_event(AppEvent::MessageCreate {
-                guild_id: Some(guild_id),
-                channel_id,
-                message_id: Id::new(id),
-                author_id: Id::new(99),
-                author: "neo".to_owned(),
-                author_avatar_url: None,
-                message_kind: crate::discord::MessageKind::regular(),
-                reference: None,
-                reply: None,
-                poll: None,
-                content: Some(format!("msg {id}")),
-                mentions: Vec::new(),
-                attachments: has_image(id)
-                    .then(|| image_attachment(id))
-                    .into_iter()
-                    .collect(),
-                embeds: Vec::new(),
-                forwarded_snapshots: Vec::new(),
-            });
-        }
-        state
-    }
-
-    fn push_text_message(state: &mut DashboardState, message_id: u64, content: &str) {
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(message_id),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some(content.to_owned()),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-    }
-
-    fn image_attachment(id: u64) -> AttachmentInfo {
-        AttachmentInfo {
-            id: Id::new(id),
-            filename: format!("image-{id}.png"),
-            url: format!("https://cdn.discordapp.com/image-{id}.png"),
-            proxy_url: format!("https://media.discordapp.net/image-{id}.png"),
-            content_type: Some("image/png".to_owned()),
-            size: 2048,
-            width: Some(640),
-            height: Some(480),
-            description: None,
-        }
-    }
-
-    fn video_attachment(id: u64) -> AttachmentInfo {
-        AttachmentInfo {
-            id: Id::new(id),
-            filename: format!("clip-{id}.mp4"),
-            url: format!("https://cdn.discordapp.com/clip-{id}.mp4"),
-            proxy_url: format!("https://media.discordapp.net/clip-{id}.mp4"),
-            content_type: Some("video/mp4".to_owned()),
-            size: 78_364_758,
-            width: Some(1920),
-            height: Some(1080),
-            description: None,
-        }
-    }
-
-    fn youtube_embed() -> EmbedInfo {
-        EmbedInfo {
-            color: Some(0xff0000),
-            provider_name: Some("YouTube".to_owned()),
-            author_name: None,
-            title: Some("Example Video".to_owned()),
-            description: Some("A video description".to_owned()),
-            fields: Vec::new(),
-            footer_text: None,
-            url: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
-            thumbnail_url: Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".to_owned()),
-            thumbnail_width: Some(480),
-            thumbnail_height: Some(360),
-            image_url: None,
-            image_width: None,
-            image_height: None,
-            video_url: None,
-        }
-    }
-
-    fn forwarded_snapshot(id: u64) -> MessageSnapshotInfo {
-        MessageSnapshotInfo {
-            content: Some(format!("forwarded {id}")),
-            mentions: Vec::new(),
-            attachments: vec![image_attachment(id)],
-            embeds: Vec::new(),
-            source_channel_id: None,
-            timestamp: None,
-        }
-    }
-
-    fn message_info(channel_id: Id<ChannelMarker>, message_id: u64) -> MessageInfo {
-        MessageInfo {
-            guild_id: Some(Id::new(1)),
-            channel_id,
-            message_id: Id::new(message_id),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            pinned: false,
-            reactions: Vec::new(),
-            content: Some(format!("msg {message_id}")),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        }
-    }
-
-    fn channel_entry_names(state: &DashboardState) -> Vec<&str> {
-        state
-            .channel_pane_entries()
-            .into_iter()
-            .filter_map(|entry| match entry {
-                ChannelPaneEntry::Channel { state, .. } => Some(state.name.as_str()),
-                ChannelPaneEntry::CategoryHeader { .. } => None,
-            })
-            .collect()
-    }
-
-    fn poll_info(allow_multiselect: bool) -> PollInfo {
-        PollInfo {
-            question: "What should we eat?".to_owned(),
-            answers: vec![
-                PollAnswerInfo {
-                    answer_id: 1,
-                    text: "Soup".to_owned(),
-                    vote_count: Some(2),
-                    me_voted: true,
-                },
-                PollAnswerInfo {
-                    answer_id: 2,
-                    text: "Noodles".to_owned(),
-                    vote_count: Some(1),
-                    me_voted: false,
-                },
-            ],
-            allow_multiselect,
-            results_finalized: Some(false),
-            total_votes: Some(3),
-        }
-    }
-
-    fn state_with_two_guilds() -> DashboardState {
-        let mut state = DashboardState::new();
-        let first_guild = Id::new(1);
-        let second_guild = Id::new(2);
-        for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
-            state.push_event(AppEvent::GuildCreate {
-                guild_id,
-                name: name.to_owned(),
-                member_count: None,
-                channels: Vec::new(),
-                members: Vec::new(),
-                presences: Vec::new(),
-                roles: Vec::new(),
-                emojis: Vec::new(),
-                owner_id: None,
-            });
-        }
-        state.push_event(AppEvent::GuildFoldersUpdate {
-            folders: vec![
-                GuildFolder {
-                    id: None,
-                    name: None,
-                    color: None,
-                    guild_ids: vec![first_guild],
-                },
-                GuildFolder {
-                    id: None,
-                    name: None,
-                    color: None,
-                    guild_ids: vec![second_guild],
-                },
-            ],
-        });
-        state
-    }
-
-    fn focus_guilds(state: &mut DashboardState) {
-        while state.focus() != FocusPane::Guilds {
-            state.cycle_focus();
-        }
-    }
-
-    fn focus_channels(state: &mut DashboardState) {
-        while state.focus() != FocusPane::Channels {
-            state.cycle_focus();
-        }
-    }
-
-    fn focus_members(state: &mut DashboardState) {
-        while state.focus() != FocusPane::Members {
-            state.cycle_focus();
-        }
-    }
-
-    fn focus_messages(state: &mut DashboardState) {
-        while state.focus() != FocusPane::Messages {
-            state.cycle_focus();
-        }
-    }
-}
+mod tests;

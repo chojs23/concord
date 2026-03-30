@@ -8,6 +8,10 @@ use std::{
 
 use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
+use twilight_model::id::{
+    Id,
+    marker::{ChannelMarker, MessageMarker},
+};
 
 use crate::{
     DiscordClient, Result,
@@ -64,6 +68,8 @@ fn start_command_loop(
             match command {
                 AppCommand::LoadMessageHistory { channel_id, before } => {
                     let started = Instant::now();
+                    let endpoint =
+                        format_message_history_endpoint(channel_id, before, MESSAGE_HISTORY_LIMIT);
                     match client
                         .load_message_history(channel_id, before, MESSAGE_HISTORY_LIMIT)
                         .await
@@ -72,9 +78,10 @@ fn start_command_loop(
                             logging::timing(
                                 "history",
                                 format!(
-                                    "channel={} before={} messages={}",
+                                    "op=load_message_history channel_id={} before={} limit={} messages={}",
                                     channel_id.get(),
                                     before.map(|id| id.get()).unwrap_or_default(),
+                                    MESSAGE_HISTORY_LIMIT,
                                     messages.len()
                                 ),
                                 started.elapsed(),
@@ -94,18 +101,20 @@ fn start_command_loop(
                             logging::timing(
                                 "history",
                                 format!(
-                                    "channel={} before={} messages=0",
+                                    "op=load_message_history channel_id={} before={} limit={} messages=0",
                                     channel_id.get(),
-                                    before.map(|id| id.get()).unwrap_or_default()
+                                    before.map(|id| id.get()).unwrap_or_default(),
+                                    MESSAGE_HISTORY_LIMIT,
                                 ),
                                 started.elapsed(),
                             );
                             logging::error(
                                 "history",
                                 format!(
-                                    "channel={} before={} {message}; detail={detail}",
+                                    "op=load_message_history channel_id={} before={} limit={} endpoint=\"{endpoint}\" {message}; detail={detail}",
                                     channel_id.get(),
-                                    before.map(|id| id.get()).unwrap_or_default()
+                                    before.map(|id| id.get()).unwrap_or_default(),
+                                    MESSAGE_HISTORY_LIMIT,
                                 ),
                             );
                             client.publish_event(AppEvent::MessageHistoryLoadFailed {
@@ -383,6 +392,24 @@ fn log_app_error(context: &str, error: &AppError) {
     );
 }
 
+/// Builds the Discord REST endpoint string for a message-history request so
+/// debug logs name exactly what was attempted, e.g.
+/// `GET /channels/123/messages?limit=50&before=789`.
+fn format_message_history_endpoint(
+    channel_id: Id<ChannelMarker>,
+    before: Option<Id<MessageMarker>>,
+    limit: u16,
+) -> String {
+    match before {
+        Some(message_id) => format!(
+            "GET /channels/{}/messages?limit={limit}&before={}",
+            channel_id.get(),
+            message_id.get(),
+        ),
+        None => format!("GET /channels/{}/messages?limit={limit}", channel_id.get(),),
+    }
+}
+
 fn format_pinned_messages(messages: &[MessageInfo]) -> String {
     if messages.is_empty() {
         return "no pinned messages".to_owned();
@@ -418,65 +445,65 @@ fn truncate_status(value: &str, max_chars: usize) -> String {
 }
 
 async fn fetch_attachment_preview(url: &str) -> std::result::Result<Vec<u8>, String> {
-    let response = reqwest::get(url)
-        .await
-        .map_err(|error| format!("download image preview failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("download image preview failed: {error}"))?;
-
-    if let Some(length) = response.content_length()
-        && length > MAX_ATTACHMENT_PREVIEW_BYTES as u64
-    {
-        return Err(format!(
-            "image preview is too large: {length} bytes (max {MAX_ATTACHMENT_PREVIEW_BYTES})"
-        ));
-    }
-
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| format!("read image preview failed: {error}"))?;
-
-    if bytes.len() > MAX_ATTACHMENT_PREVIEW_BYTES {
-        return Err(format!(
-            "image preview is too large: {} bytes (max {MAX_ATTACHMENT_PREVIEW_BYTES})",
-            bytes.len()
-        ));
-    }
-
-    Ok(bytes.to_vec())
+    fetch_limited_bytes(
+        url,
+        MAX_ATTACHMENT_PREVIEW_BYTES,
+        "image preview",
+        "download image preview failed",
+        "read image preview failed",
+    )
+    .await
 }
 
 async fn download_attachment(url: &str, filename: &str) -> std::result::Result<PathBuf, String> {
-    let response = reqwest::get(url)
-        .await
-        .map_err(|error| format!("download attachment failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("download attachment failed: {error}"))?;
-
-    if let Some(length) = response.content_length()
-        && length > MAX_ATTACHMENT_DOWNLOAD_BYTES as u64
-    {
-        return Err(format!(
-            "attachment is too large: {length} bytes (max {MAX_ATTACHMENT_DOWNLOAD_BYTES})"
-        ));
-    }
-
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| format!("read attachment failed: {error}"))?;
-    if bytes.len() > MAX_ATTACHMENT_DOWNLOAD_BYTES {
-        return Err(format!(
-            "attachment is too large: {} bytes (max {MAX_ATTACHMENT_DOWNLOAD_BYTES})",
-            bytes.len()
-        ));
-    }
+    let bytes = fetch_limited_bytes(
+        url,
+        MAX_ATTACHMENT_DOWNLOAD_BYTES,
+        "attachment",
+        "download attachment failed",
+        "read attachment failed",
+    )
+    .await?;
 
     let directory = downloads_directory()?;
     fs::create_dir_all(&directory)
         .map_err(|error| format!("create download directory failed: {error}"))?;
     write_unique_download_file(&directory, &sanitize_filename(filename), &bytes)
+}
+
+async fn fetch_limited_bytes(
+    url: &str,
+    max_bytes: usize,
+    size_label: &str,
+    download_error: &str,
+    read_error: &str,
+) -> std::result::Result<Vec<u8>, String> {
+    let response = reqwest::get(url)
+        .await
+        .map_err(|error| format!("{download_error}: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("{download_error}: {error}"))?;
+
+    if let Some(length) = response.content_length()
+        && length > max_bytes as u64
+    {
+        return Err(format!(
+            "{size_label} is too large: {length} bytes (max {max_bytes})"
+        ));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| format!("{read_error}: {error}"))?;
+    if bytes.len() > max_bytes {
+        return Err(format!(
+            "{size_label} is too large: {} bytes (max {max_bytes})",
+            bytes.len()
+        ));
+    }
+
+    Ok(bytes.to_vec())
 }
 
 fn downloads_directory() -> std::result::Result<PathBuf, String> {
@@ -623,7 +650,9 @@ async fn shutdown_gateway(gateway_task: tokio::task::JoinHandle<()>) {
 mod tests {
     use std::{fs, process};
 
-    use super::{sanitize_filename, write_unique_download_file};
+    use twilight_model::id::Id;
+
+    use super::{format_message_history_endpoint, sanitize_filename, write_unique_download_file};
 
     fn unix_timestamp_nanos() -> u128 {
         std::time::SystemTime::now()
@@ -662,5 +691,21 @@ mod tests {
     #[test]
     fn sanitize_filename_replaces_path_separators() {
         assert_eq!(sanitize_filename("../cat\\dog.png"), "_cat_dog.png");
+    }
+
+    #[test]
+    fn message_history_endpoint_omits_before_when_unset() {
+        assert_eq!(
+            format_message_history_endpoint(Id::new(123), None, 50),
+            "GET /channels/123/messages?limit=50"
+        );
+    }
+
+    #[test]
+    fn message_history_endpoint_includes_before_for_pagination() {
+        assert_eq!(
+            format_message_history_endpoint(Id::new(123), Some(Id::new(789)), 50),
+            "GET /channels/123/messages?limit=50&before=789"
+        );
     }
 }

@@ -1,19 +1,8 @@
-use twilight_gateway::Event;
 use twilight_model::{
     channel::{
-        Attachment, Channel, Message,
+        Attachment, Message,
         message::{Embed, EmojiReactionType, Mention, MessageSnapshot, Reaction},
-        permission_overwrite::{PermissionOverwrite, PermissionOverwriteType},
     },
-    gateway::{
-        payload::incoming::{
-            GuildCreate as GuildCreatePayload, GuildEmojisUpdate as GuildEmojisUpdatePayload,
-            MemberAdd, MemberChunk as TwilightMemberChunk, MemberUpdate,
-            PresenceUpdate as PresenceUpdatePayload,
-        },
-        presence::{Status as TwilightStatus, UserOrId},
-    },
-    guild::{Emoji as TwilightEmoji, Member as TwilightMember, Role as TwilightRole},
     id::{
         Id,
         marker::{
@@ -91,6 +80,10 @@ pub struct PermissionOverwriteInfo {
 pub struct ChannelRecipientInfo {
     pub user_id: Id<UserMarker>,
     pub display_name: String,
+    /// Discord login handle (`User.name`). Kept alongside `display_name` so
+    /// the @-mention picker can fuzzy-match on both the alias and the raw
+    /// username. `None` when the source payload didn't carry a username.
+    pub username: Option<String>,
     pub is_bot: bool,
     pub avatar_url: Option<String>,
     pub status: Option<PresenceStatus>,
@@ -100,6 +93,9 @@ pub struct ChannelRecipientInfo {
 pub struct MemberInfo {
     pub user_id: Id<UserMarker>,
     pub display_name: String,
+    /// Discord login handle (`User.name`). Same role as in
+    /// [`ChannelRecipientInfo::username`].
+    pub username: Option<String>,
     pub is_bot: bool,
     pub avatar_url: Option<String>,
     pub role_ids: Vec<Id<RoleMarker>>,
@@ -121,6 +117,11 @@ pub struct RoleInfo {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MentionInfo {
     pub user_id: Id<UserMarker>,
+    /// Per-server nickname carried by this message's mention payload. Kept
+    /// separate from `display_name` so rendering can prefer a proven guild
+    /// alias while still using cached member names when the payload only has a
+    /// global display name or username.
+    pub guild_nick: Option<String>,
     pub display_name: String,
 }
 
@@ -456,6 +457,13 @@ pub enum AppEvent {
     UserPresenceUpdate {
         user_id: Id<UserMarker>,
         status: PresenceStatus,
+    },
+    /// Discord's TYPING_START dispatch: emitted ~10s before the typing
+    /// indicator should expire. The dashboard tracks the latest timestamp
+    /// per (channel, user) and shows "X is typing…" while it's fresh.
+    TypingStart {
+        channel_id: Id<ChannelMarker>,
+        user_id: Id<UserMarker>,
     },
     CurrentUserReactionAdd {
         channel_id: Id<ChannelMarker>,
@@ -888,113 +896,6 @@ impl MessageInfo {
     }
 }
 
-pub fn map_event(event: Event) -> Vec<AppEvent> {
-    match event {
-        Event::Ready(ready) => vec![AppEvent::Ready {
-            user: ready.user.name,
-            user_id: Some(ready.user.id),
-        }],
-        Event::GuildCreate(guild) => map_guild_create(*guild).into_iter().collect(),
-        Event::GuildDelete(guild) => vec![AppEvent::GuildDelete { guild_id: guild.id }],
-        Event::GuildUpdate(guild) => vec![AppEvent::GuildUpdate {
-            guild_id: guild.id,
-            name: guild.name.clone(),
-            owner_id: Some(guild.owner_id),
-            roles: Some(guild.roles.iter().map(role_info).collect()),
-            emojis: Some(guild.emojis.iter().map(custom_emoji_info).collect()),
-        }],
-        Event::GuildEmojisUpdate(update) => vec![guild_emojis_update(&update)],
-        Event::ChannelCreate(channel) => vec![AppEvent::ChannelUpsert(channel_info(&channel.0))],
-        Event::ChannelUpdate(channel) => vec![AppEvent::ChannelUpsert(channel_info(&channel.0))],
-        Event::ChannelDelete(channel) => vec![AppEvent::ChannelDelete {
-            guild_id: channel.guild_id,
-            channel_id: channel.id,
-        }],
-        Event::ThreadCreate(thread) => vec![AppEvent::ChannelUpsert(channel_info(&thread.0))],
-        Event::ThreadUpdate(thread) => vec![AppEvent::ChannelUpsert(channel_info(&thread.0))],
-        Event::ThreadDelete(thread) => vec![AppEvent::ChannelDelete {
-            guild_id: Some(thread.guild_id),
-            channel_id: thread.id,
-        }],
-        Event::ThreadListSync(sync) => sync
-            .threads
-            .iter()
-            .map(|thread| AppEvent::ChannelUpsert(channel_info(thread)))
-            .collect(),
-        Event::MessageCreate(message) => {
-            let reference = message_reference_info(&message.reference);
-            let source_channel_id = reference
-                .as_ref()
-                .and_then(|reference| reference.channel_id);
-            let reply = message
-                .referenced_message
-                .as_deref()
-                .and_then(ReplyInfo::from_message);
-            let poll = message
-                .poll
-                .as_ref()
-                .map(PollInfo::from_poll)
-                .or_else(|| poll_result_info(&message.embeds));
-
-            vec![AppEvent::MessageCreate {
-                guild_id: message.guild_id,
-                channel_id: message.channel_id,
-                message_id: message.id,
-                author_id: message.author.id,
-                author: message_display_name(&message),
-                author_avatar_url: Some(user_avatar_url(&message.author)),
-                message_kind: MessageKind::new(message.kind.into()),
-                reference,
-                reply,
-                poll,
-                content: Some(message.content.clone()),
-                mentions: mention_infos(&message.mentions),
-                attachments: message
-                    .attachments
-                    .clone()
-                    .into_iter()
-                    .map(AttachmentInfo::from_attachment)
-                    .collect(),
-                embeds: embed_infos(&message.embeds),
-                forwarded_snapshots: message
-                    .message_snapshots
-                    .clone()
-                    .into_iter()
-                    .map(|snapshot| MessageSnapshotInfo::from_snapshot(snapshot, source_channel_id))
-                    .collect(),
-            }]
-        }
-        Event::MessageUpdate(message) => vec![AppEvent::MessageUpdate {
-            guild_id: message.guild_id,
-            channel_id: message.channel_id,
-            message_id: message.id,
-            poll: message
-                .poll
-                .as_ref()
-                .map(PollInfo::from_poll)
-                .or_else(|| poll_result_info(&message.embeds)),
-            content: Some(message.content.clone()),
-            mentions: Some(mention_infos(&message.mentions)),
-            attachments: map_attachment_update(message.attachments.clone()),
-            embeds: Some(embed_infos(&message.embeds)),
-        }],
-        Event::MessageDelete(message) => vec![AppEvent::MessageDelete {
-            guild_id: message.guild_id,
-            channel_id: message.channel_id,
-            message_id: message.id,
-        }],
-        Event::MemberChunk(chunk) => member_chunk_events(&chunk),
-        Event::MemberAdd(member_add) => vec![member_add_from_add(&member_add)],
-        Event::MemberUpdate(update) => vec![member_upsert_from_update(&update)],
-        Event::MemberRemove(remove) => vec![AppEvent::GuildMemberRemove {
-            guild_id: remove.guild_id,
-            user_id: remove.user.id,
-        }],
-        Event::PresenceUpdate(presence) => vec![presence_update(&presence)],
-        _ => Vec::new(),
-    }
-}
-
 fn message_reference_info(
     reference: &Option<twilight_model::channel::message::MessageReference>,
 ) -> Option<MessageReferenceInfo> {
@@ -1003,154 +904,6 @@ fn message_reference_info(
         channel_id: reference.channel_id,
         message_id: reference.message_id,
     })
-}
-
-fn map_attachment_update(attachments: Vec<Attachment>) -> AttachmentUpdate {
-    AttachmentUpdate::Replace(
-        attachments
-            .into_iter()
-            .map(AttachmentInfo::from_attachment)
-            .collect(),
-    )
-}
-
-fn map_guild_create(guild: GuildCreatePayload) -> Option<AppEvent> {
-    let guild = match guild {
-        GuildCreatePayload::Available(guild) => guild,
-        GuildCreatePayload::Unavailable(_) => return None,
-    };
-
-    let channels = guild
-        .channels
-        .iter()
-        .chain(guild.threads.iter())
-        .map(channel_info)
-        .collect();
-    let members = guild.members.iter().map(member_info).collect();
-    let presences = guild
-        .presences
-        .iter()
-        .map(|presence| (presence.user.id(), map_status(presence.status)))
-        .collect();
-    let roles = guild.roles.iter().map(role_info).collect();
-    let emojis = guild.emojis.iter().map(custom_emoji_info).collect();
-
-    Some(AppEvent::GuildCreate {
-        guild_id: guild.id,
-        name: guild.name,
-        member_count: guild.member_count,
-        owner_id: Some(guild.owner_id),
-        channels,
-        members,
-        presences,
-        roles,
-        emojis,
-    })
-}
-
-fn role_info(role: &TwilightRole) -> RoleInfo {
-    let color = role_color(role.colors.primary_color).or_else(|| {
-        #[allow(deprecated)]
-        {
-            role_color(role.color)
-        }
-    });
-
-    RoleInfo {
-        id: role.id,
-        name: role.name.clone(),
-        color,
-        position: role.position,
-        hoist: role.hoist,
-        permissions: role.permissions.bits(),
-    }
-}
-
-fn permission_overwrite_info(overwrite: &PermissionOverwrite) -> Option<PermissionOverwriteInfo> {
-    let kind = match overwrite.kind {
-        PermissionOverwriteType::Member => PermissionOverwriteKind::Member,
-        PermissionOverwriteType::Role => PermissionOverwriteKind::Role,
-        // Discord occasionally adds new overwrite kinds (synced threads, etc.).
-        // We have no way to interpret an unknown discriminant, so the safer
-        // option is to drop the entry; treating it as Role/Member could either
-        // grant or deny access incorrectly.
-        _ => return None,
-    };
-    Some(PermissionOverwriteInfo {
-        id: overwrite.id.get(),
-        kind,
-        allow: overwrite.allow.bits(),
-        deny: overwrite.deny.bits(),
-    })
-}
-
-fn role_color(color: u32) -> Option<u32> {
-    (color != 0).then_some(color)
-}
-
-fn custom_emoji_info(emoji: &TwilightEmoji) -> CustomEmojiInfo {
-    CustomEmojiInfo {
-        id: emoji.id,
-        name: emoji.name.clone(),
-        animated: emoji.animated,
-        available: emoji.available,
-    }
-}
-
-fn guild_emojis_update(payload: &GuildEmojisUpdatePayload) -> AppEvent {
-    AppEvent::GuildEmojisUpdate {
-        guild_id: payload.guild_id,
-        emojis: payload.emojis.iter().map(custom_emoji_info).collect(),
-    }
-}
-
-fn channel_info(channel: &Channel) -> ChannelInfo {
-    ChannelInfo {
-        guild_id: channel.guild_id,
-        channel_id: channel.id,
-        parent_id: channel.parent_id,
-        position: channel.position,
-        last_message_id: channel.last_message_id.map(|id| Id::new(id.get())),
-        name: channel
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("channel-{}", channel.id.get())),
-        kind: format!("{:?}", channel.kind),
-        message_count: channel.message_count.map(u64::from),
-        total_message_sent: None,
-        thread_archived: channel
-            .thread_metadata
-            .as_ref()
-            .map(|metadata| metadata.archived),
-        thread_locked: channel
-            .thread_metadata
-            .as_ref()
-            .map(|metadata| metadata.locked),
-        recipients: channel
-            .recipients
-            .as_ref()
-            .map(|recipients| recipients.iter().map(channel_recipient_info).collect()),
-        permission_overwrites: channel
-            .permission_overwrites
-            .as_ref()
-            .map(|overwrites| {
-                overwrites
-                    .iter()
-                    .filter_map(permission_overwrite_info)
-                    .collect()
-            })
-            .unwrap_or_default(),
-    }
-}
-
-fn channel_recipient_info(user: &TwilightUser) -> ChannelRecipientInfo {
-    ChannelRecipientInfo {
-        user_id: user.id,
-        display_name: display_name(None, user),
-        is_bot: user.bot,
-        avatar_url: Some(user_avatar_url(user)),
-        status: None,
-    }
 }
 
 fn poll_result_info(embeds: &[Embed]) -> Option<PollInfo> {
@@ -1203,94 +956,31 @@ fn poll_result_info_from_fields<'a>(
     })
 }
 
-fn member_info(member: &TwilightMember) -> MemberInfo {
-    MemberInfo {
-        user_id: member.user.id,
-        display_name: display_name(member.nick.as_deref(), &member.user),
-        is_bot: member.user.bot,
-        avatar_url: Some(user_avatar_url(&member.user)),
-        role_ids: member.roles.clone(),
-    }
-}
-
-fn member_add_from_add(payload: &MemberAdd) -> AppEvent {
-    AppEvent::GuildMemberAdd {
-        guild_id: payload.guild_id,
-        member: member_info(&payload.member),
-    }
-}
-
-fn member_upsert_from_update(update: &MemberUpdate) -> AppEvent {
-    AppEvent::GuildMemberUpsert {
-        guild_id: update.guild_id,
-        member: MemberInfo {
-            user_id: update.user.id,
-            display_name: display_name(update.nick.as_deref(), &update.user),
-            is_bot: update.user.bot,
-            avatar_url: Some(user_avatar_url(&update.user)),
-            role_ids: update.roles.clone(),
-        },
-    }
-}
-
-fn member_chunk_events(chunk: &TwilightMemberChunk) -> Vec<AppEvent> {
-    let mut events: Vec<AppEvent> = chunk
-        .members
-        .iter()
-        .map(|member| AppEvent::GuildMemberUpsert {
-            guild_id: chunk.guild_id,
-            member: member_info(member),
-        })
-        .collect();
-
-    events.extend(
-        chunk
-            .presences
-            .iter()
-            .map(|presence| AppEvent::PresenceUpdate {
-                guild_id: chunk.guild_id,
-                user_id: presence.user.id(),
-                status: map_status(presence.status),
-            }),
-    );
-
-    events
-}
-
-fn presence_update(payload: &PresenceUpdatePayload) -> AppEvent {
-    AppEvent::PresenceUpdate {
-        guild_id: payload.0.guild_id,
-        user_id: match &payload.0.user {
-            UserOrId::User(user) => user.id,
-            UserOrId::UserId { id } => *id,
-        },
-        status: map_status(payload.0.status),
-    }
-}
-
-fn map_status(status: TwilightStatus) -> PresenceStatus {
-    match status {
-        TwilightStatus::Online => PresenceStatus::Online,
-        TwilightStatus::Idle => PresenceStatus::Idle,
-        TwilightStatus::DoNotDisturb => PresenceStatus::DoNotDisturb,
-        TwilightStatus::Offline | TwilightStatus::Invisible => PresenceStatus::Offline,
-    }
-}
-
 fn mention_infos(mentions: &[Mention]) -> Vec<MentionInfo> {
     mentions.iter().map(mention_info).collect()
 }
 
 fn mention_info(mention: &Mention) -> MentionInfo {
-    let display_name = mention
+    // Prefer per-server nickname, then the user's global display name (when
+    // Discord embeds the user payload in `member.user`), and only fall back to
+    // the raw username last. This makes the rendered `@name` line up with
+    // what the user actually sees as a friendly alias in DMs and in guilds
+    // where the member cache hasn't loaded yet.
+    let nick = mention
         .member
         .as_ref()
         .and_then(|member| member.nick.as_deref())
-        .filter(|value| !value.is_empty())
-        .unwrap_or(&mention.name)
-        .to_owned();
+        .filter(|value| !value.is_empty());
+    let global_name = mention
+        .member
+        .as_ref()
+        .and_then(|member| member.user.as_ref())
+        .and_then(|user| user.global_name.as_deref())
+        .filter(|value| !value.is_empty());
+    let display_name = nick.or(global_name).unwrap_or(&mention.name).to_owned();
     MentionInfo {
         user_id: mention.id,
+        guild_nick: nick.map(str::to_owned),
         display_name,
     }
 }
@@ -1345,16 +1035,6 @@ fn message_display_name(message: &Message) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-    use twilight_model::{
-        gateway::payload::incoming::{
-            GuildEmojisUpdate as TwilightGuildEmojisUpdate, GuildUpdate as TwilightGuildUpdate,
-        },
-        guild::{
-            AfkTimeout, DefaultMessageNotificationLevel, ExplicitContentFilter, MfaLevel,
-            NSFWLevel, PartialGuild, PremiumTier, SystemChannelFlags, VerificationLevel,
-        },
-    };
 
     #[test]
     fn video_attachment_with_dimensions_is_not_an_image_preview() {
@@ -1396,122 +1076,8 @@ mod tests {
     }
 
     #[test]
-    fn typed_group_channel_maps_recipients() {
-        let channel: Channel = serde_json::from_value(json!({
-            "id": "10",
-            "type": 3,
-            "name": "project chat",
-            "recipients": [
-                {
-                    "id": "20",
-                    "username": "alice",
-                    "global_name": "Alice",
-                    "discriminator": "0",
-                    "avatar": null,
-                    "bot": false
-                },
-                {
-                    "id": "30",
-                    "username": "helper-bot",
-                    "discriminator": "0",
-                    "avatar": null,
-                    "bot": true
-                }
-            ]
-        }))
-        .expect("group channel should deserialize");
-
-        let info = channel_info(&channel);
-        let recipients = info
-            .recipients
-            .expect("typed group channel should carry recipients");
-
-        assert_eq!(info.kind, "Group");
-        assert_eq!(recipients.len(), 2);
-        assert_eq!(recipients[0].user_id, Id::new(20));
-        assert_eq!(recipients[0].display_name, "Alice");
-        assert!(!recipients[0].is_bot);
-        assert_eq!(recipients[0].status, None);
-        assert_eq!(recipients[1].display_name, "helper-bot");
-        assert!(recipients[1].is_bot);
-        assert_eq!(recipients[1].status, None);
-    }
-
-    #[test]
     fn message_update_empty_mentions_can_clear_cached_mentions() {
         assert_eq!(mention_infos(&[]), Vec::<MentionInfo>::new());
-    }
-
-    #[test]
-    fn message_update_empty_attachments_can_clear_cached_attachments() {
-        assert!(matches!(
-            map_attachment_update(Vec::new()),
-            AttachmentUpdate::Replace(attachments) if attachments.is_empty()
-        ));
-    }
-
-    #[test]
-    fn twilight_custom_emoji_maps_to_app_emoji_info() {
-        let emoji = twilight_emoji(50, "party", true, true);
-
-        let info = custom_emoji_info(&emoji);
-
-        assert_eq!(info.id, Id::new(50));
-        assert_eq!(info.name, "party");
-        assert!(info.animated);
-        assert!(info.available);
-    }
-
-    #[test]
-    fn typed_guild_emojis_update_maps_custom_emojis() {
-        let event = Event::GuildEmojisUpdate(TwilightGuildEmojisUpdate {
-            guild_id: Id::new(10),
-            emojis: vec![twilight_emoji(50, "party", true, true)],
-        });
-
-        let app_event = map_event(event);
-
-        assert!(matches!(
-            app_event.as_slice(),
-            [AppEvent::GuildEmojisUpdate { guild_id, emojis }]
-                if *guild_id == Id::new(10)
-                    && *emojis == vec![CustomEmojiInfo {
-                        id: Id::new(50),
-                        name: "party".to_owned(),
-                        animated: true,
-                        available: true,
-                    }]
-        ));
-    }
-
-    #[test]
-    fn typed_guild_update_maps_custom_emojis() {
-        let event = Event::GuildUpdate(Box::new(TwilightGuildUpdate(partial_guild(
-            10,
-            "Renamed Guild",
-            vec![twilight_emoji(51, "wave", false, false)],
-        ))));
-
-        let app_event = map_event(event);
-
-        assert!(matches!(
-            app_event.as_slice(),
-            [AppEvent::GuildUpdate {
-                guild_id,
-                name,
-                roles: Some(roles),
-                emojis: Some(emojis),
-                ..
-            }] if *guild_id == Id::new(10)
-                && name == "Renamed Guild"
-                && roles.is_empty()
-                && *emojis == vec![CustomEmojiInfo {
-                    id: Id::new(51),
-                    name: "wave".to_owned(),
-                    animated: false,
-                    available: false,
-                }]
-        ));
     }
 
     #[test]
@@ -1547,59 +1113,6 @@ mod tests {
         assert_eq!(mapped.guild_id, Some(Id::new(1)));
         assert_eq!(mapped.channel_id, Some(Id::new(10)));
         assert_eq!(mapped.message_id, Some(Id::new(20)));
-    }
-
-    fn twilight_emoji(id: u64, name: &str, animated: bool, available: bool) -> TwilightEmoji {
-        TwilightEmoji {
-            animated,
-            available,
-            id: Id::new(id),
-            managed: false,
-            name: name.to_owned(),
-            require_colons: true,
-            roles: Vec::new(),
-            user: None,
-        }
-    }
-
-    fn partial_guild(id: u64, name: &str, emojis: Vec<TwilightEmoji>) -> PartialGuild {
-        PartialGuild {
-            afk_channel_id: None,
-            afk_timeout: AfkTimeout::FIFTEEN_MINUTES,
-            application_id: None,
-            banner: None,
-            default_message_notifications: DefaultMessageNotificationLevel::Mentions,
-            description: None,
-            discovery_splash: None,
-            emojis,
-            explicit_content_filter: ExplicitContentFilter::MembersWithoutRole,
-            features: Vec::new(),
-            icon: None,
-            id: Id::new(id),
-            max_members: None,
-            max_presences: None,
-            member_count: None,
-            mfa_level: MfaLevel::Elevated,
-            name: name.to_owned(),
-            nsfw_level: NSFWLevel::Default,
-            owner_id: Id::new(5),
-            owner: None,
-            permissions: None,
-            preferred_locale: "en-us".to_owned(),
-            premium_progress_bar_enabled: false,
-            premium_subscription_count: None,
-            premium_tier: PremiumTier::Tier1,
-            public_updates_channel_id: None,
-            roles: Vec::new(),
-            rules_channel_id: None,
-            splash: None,
-            system_channel_flags: SystemChannelFlags::empty(),
-            system_channel_id: None,
-            verification_level: VerificationLevel::Medium,
-            vanity_url_code: None,
-            widget_channel_id: None,
-            widget_enabled: None,
-        }
     }
 
     fn user(name: &str, global_name: Option<&str>) -> TwilightUser {
