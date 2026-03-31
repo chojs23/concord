@@ -1038,20 +1038,21 @@ mod tests {
 
     use super::*;
 
+    fn layout(list_height: usize) -> ImagePreviewLayout {
+        ImagePreviewLayout {
+            list_height,
+            content_width: 200,
+            preview_width: 16,
+            max_preview_height: 3,
+        }
+    }
+
     #[test]
     fn image_preview_targets_stop_at_rendered_row_budget() {
         let mut state = state_with_image_messages(6, &[1, 3, 6]);
         state.set_message_view_height(6);
 
-        let targets = visible_image_preview_targets(
-            &state,
-            ImagePreviewLayout {
-                list_height: 6,
-                content_width: 200,
-                preview_width: 16,
-                max_preview_height: 3,
-            },
-        );
+        let targets = visible_image_preview_targets(&state, layout(6));
 
         assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
     }
@@ -1061,15 +1062,7 @@ mod tests {
         let mut state = state_with_image_messages(2, &[1, 2]);
         state.set_message_view_height(6);
 
-        let targets = visible_image_preview_targets(
-            &state,
-            ImagePreviewLayout {
-                list_height: 6,
-                content_width: 200,
-                preview_width: 16,
-                max_preview_height: 3,
-            },
-        );
+        let targets = visible_image_preview_targets(&state, layout(6));
 
         assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
     }
@@ -1084,15 +1077,7 @@ mod tests {
         state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
-        let targets = visible_image_preview_targets(
-            &state,
-            ImagePreviewLayout {
-                list_height: 2,
-                content_width: 200,
-                preview_width: 16,
-                max_preview_height: 3,
-            },
-        );
+        let targets = visible_image_preview_targets(&state, layout(2));
 
         assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
     }
@@ -1101,15 +1086,7 @@ mod tests {
     fn avatar_targets_include_visible_author_avatar() {
         let state = state_with_avatar_messages(1);
 
-        let targets = visible_avatar_targets(
-            &state,
-            ImagePreviewLayout {
-                list_height: 2,
-                content_width: 200,
-                preview_width: 16,
-                max_preview_height: 3,
-            },
-        );
+        let targets = visible_avatar_targets(&state, layout(2));
 
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].row, 0);
@@ -1126,15 +1103,7 @@ mod tests {
         state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
-        let targets = visible_avatar_targets(
-            &state,
-            ImagePreviewLayout {
-                list_height: 1,
-                content_width: 200,
-                preview_width: 16,
-                max_preview_height: 3,
-            },
-        );
+        let targets = visible_avatar_targets(&state, layout(1));
 
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].row, 0);
@@ -1152,15 +1121,7 @@ mod tests {
             state.clamp_message_viewport_for_image_previews(200, 16, 3);
         }
 
-        let targets = visible_image_preview_targets(
-            &state,
-            ImagePreviewLayout {
-                list_height: 2,
-                content_width: 200,
-                preview_width: 16,
-                max_preview_height: 3,
-            },
-        );
+        let targets = visible_image_preview_targets(&state, layout(2));
 
         assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
         assert_eq!(targets[0].visible_preview_height, 2);
@@ -1172,15 +1133,7 @@ mod tests {
         let mut state = state_with_image_messages(2, &[1, 2]);
         state.set_message_view_height(5);
 
-        let targets = visible_image_preview_targets(
-            &state,
-            ImagePreviewLayout {
-                list_height: 5,
-                content_width: 200,
-                preview_width: 16,
-                max_preview_height: 3,
-            },
-        );
+        let targets = visible_image_preview_targets(&state, layout(5));
 
         assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
     }
@@ -1195,15 +1148,7 @@ mod tests {
         };
         let mut state = state_with_image_messages(2, &[1, 2]);
         state.set_message_view_height(6);
-        let targets = visible_image_preview_targets(
-            &state,
-            ImagePreviewLayout {
-                list_height: 6,
-                content_width: 200,
-                preview_width: 16,
-                max_preview_height: 3,
-            },
-        );
+        let targets = visible_image_preview_targets(&state, layout(6));
 
         let requests = cache.next_requests(&targets);
 
@@ -1235,15 +1180,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         });
 
-        let targets = visible_image_preview_targets(
-            &state,
-            ImagePreviewLayout {
-                list_height: 6,
-                content_width: 200,
-                preview_width: 16,
-                max_preview_height: 3,
-            },
-        );
+        let targets = visible_image_preview_targets(&state, layout(6));
 
         assert!(targets.is_empty());
     }
@@ -1269,15 +1206,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         });
 
-        let targets = visible_image_preview_targets(
-            &state,
-            ImagePreviewLayout {
-                list_height: 8,
-                content_width: 200,
-                preview_width: 16,
-                max_preview_height: 3,
-            },
-        );
+        let targets = visible_image_preview_targets(&state, layout(8));
 
         assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
         assert_eq!(
@@ -1308,15 +1237,7 @@ mod tests {
             forwarded_snapshots: vec![forwarded_snapshot(2)],
         });
 
-        let targets = visible_image_preview_targets(
-            &state,
-            ImagePreviewLayout {
-                list_height: 6,
-                content_width: 200,
-                preview_width: 16,
-                max_preview_height: 3,
-            },
-        );
+        let targets = visible_image_preview_targets(&state, layout(6));
 
         assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
         assert_eq!(targets[0].url, "https://cdn.discordapp.com/image-2.png");
@@ -1327,15 +1248,7 @@ mod tests {
         let mut state = state_with_image_messages(8, &[1, 6]);
         state.set_message_view_height(6);
 
-        let targets = visible_image_preview_targets(
-            &state,
-            ImagePreviewLayout {
-                list_height: 7,
-                content_width: 200,
-                preview_width: 16,
-                max_preview_height: 3,
-            },
-        );
+        let targets = visible_image_preview_targets(&state, layout(7));
 
         assert!(target_message_ids(&targets).is_empty());
     }
@@ -1350,15 +1263,7 @@ mod tests {
         }
         state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
-        let targets = visible_image_preview_targets(
-            &state,
-            ImagePreviewLayout {
-                list_height: 14,
-                content_width: 200,
-                preview_width: 16,
-                max_preview_height: 3,
-            },
-        );
+        let targets = visible_image_preview_targets(&state, layout(14));
 
         assert_eq!(target_message_ids(&targets), vec![Id::new(5)]);
     }

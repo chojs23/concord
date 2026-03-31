@@ -338,21 +338,31 @@ mod tests {
         },
     };
 
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn char_key(value: char) -> KeyEvent {
+        key(KeyCode::Char(value))
+    }
+
+    fn ctrl_key(value: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(value), KeyModifiers::CONTROL)
+    }
+
+    fn shift_enter() -> KeyEvent {
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)
+    }
+
     #[test]
     fn enter_and_space_toggle_selected_folder() {
         let mut state = state_with_folder();
         state.focus_pane(FocusPane::Guilds);
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Enter));
         assert_selected_folder_collapsed(&state, true);
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key(' '));
         assert_selected_folder_collapsed(&state, false);
     }
 
@@ -361,16 +371,10 @@ mod tests {
         let mut state = state_with_channel_tree();
         state.focus_pane(FocusPane::Channels);
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Enter));
         assert_selected_channel_category_collapsed(&state, true);
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key(' '));
         assert_selected_channel_category_collapsed(&state, false);
     }
 
@@ -381,13 +385,10 @@ mod tests {
 
         assert_eq!(state.selected_channel_id(), None);
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(&mut state, key(KeyCode::Down));
         assert_eq!(state.selected_channel_id(), None);
 
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        let command = handle_key(&mut state, key(KeyCode::Enter));
         assert_eq!(
             command,
             Some(AppCommand::SubscribeGuildChannel {
@@ -397,11 +398,8 @@ mod tests {
         );
         assert_eq!(state.selected_channel_id(), Some(Id::new(11)));
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Down));
+        let command = handle_key(&mut state, key(KeyCode::Enter));
         assert_eq!(
             command,
             Some(AppCommand::SubscribeGuildChannel {
@@ -417,10 +415,7 @@ mod tests {
         let mut state = state_with_direct_message("dm");
         state.focus_pane(FocusPane::Channels);
 
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        let command = handle_key(&mut state, key(KeyCode::Enter));
 
         assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
         assert_eq!(
@@ -436,10 +431,7 @@ mod tests {
         let mut state = state_with_direct_message("group-dm");
         state.focus_pane(FocusPane::Channels);
 
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        let command = handle_key(&mut state, key(KeyCode::Enter));
 
         assert_eq!(
             command,
@@ -455,31 +447,19 @@ mod tests {
         state.focus_pane(FocusPane::Messages);
         state.set_message_view_height(9);
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
-        );
+        handle_key(&mut state, ctrl_key('u'));
         assert_eq!(state.selected_message(), 5);
         assert!(!state.message_auto_follow());
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('F'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('F'));
         assert_eq!(state.selected_message(), 9);
         assert!(state.message_auto_follow());
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::PageUp));
         assert_eq!(state.selected_message(), 5);
         assert!(!state.message_auto_follow());
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
-        );
+        handle_key(&mut state, ctrl_key('d'));
         assert_eq!(state.selected_message(), 9);
         assert!(!state.message_auto_follow());
     }
@@ -489,11 +469,8 @@ mod tests {
         let mut state = state_with_messages(3);
         state.focus_pane(FocusPane::Messages);
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE),
-        );
-        let command = handle_key(&mut state, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        handle_key(&mut state, char_key('g'));
+        let command = handle_key(&mut state, key(KeyCode::Up));
 
         assert_eq!(
             command,
@@ -503,7 +480,7 @@ mod tests {
             })
         );
 
-        let duplicate = handle_key(&mut state, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        let duplicate = handle_key(&mut state, key(KeyCode::Up));
 
         assert_eq!(duplicate, None);
     }
@@ -515,16 +492,10 @@ mod tests {
         state.clamp_message_viewport_for_image_previews(2, 16, 3);
         let selected = state.selected_message();
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('J'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('J'));
         state.clamp_message_viewport_for_image_previews(2, 16, 3);
 
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('K'), KeyModifiers::NONE),
-        );
+        let command = handle_key(&mut state, char_key('K'));
 
         assert_eq!(command, None);
         assert_eq!(state.selected_message(), selected);
@@ -539,11 +510,11 @@ mod tests {
         state.clamp_message_viewport_for_image_previews(200, 16, 3);
         let selected = state.selected_message();
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+        handle_key(&mut state, key(KeyCode::Home));
         assert_eq!(state.selected_message(), selected);
         assert_eq!(state.message_scroll(), 0);
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+        handle_key(&mut state, key(KeyCode::End));
         assert_eq!(state.selected_message(), selected);
         assert!(state.message_scroll() > 0);
     }
@@ -554,16 +525,10 @@ mod tests {
         state.focus_pane(FocusPane::Channels);
         state.set_channel_view_height(9);
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::PageDown));
         assert_eq!(state.selected_channel(), 2);
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::PageUp));
         assert_eq!(state.selected_channel(), 0);
     }
 
@@ -571,24 +536,15 @@ mod tests {
     fn composer_requires_selected_channel() {
         let mut state = DashboardState::new();
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('i'));
         assert!(!state.is_composing());
 
         let mut state = state_with_channel_tree();
         state.focus_pane(FocusPane::Channels);
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('i'));
         assert!(state.is_composing());
         assert_eq!(state.focus(), FocusPane::Messages);
     }
@@ -597,28 +553,16 @@ mod tests {
     fn number_keys_focus_top_level_panes() {
         let mut state = DashboardState::new();
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('2'));
         assert_eq!(state.focus(), FocusPane::Channels);
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('3'));
         assert_eq!(state.focus(), FocusPane::Messages);
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('4'));
         assert_eq!(state.focus(), FocusPane::Members);
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('1'));
         assert_eq!(state.focus(), FocusPane::Guilds);
     }
 
@@ -626,20 +570,11 @@ mod tests {
     fn number_keys_type_digits_while_composing() {
         let mut state = state_with_channel_tree();
         state.focus_pane(FocusPane::Channels);
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, char_key('i'));
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('4'));
 
         assert_eq!(state.focus(), FocusPane::Messages);
         assert_eq!(state.composer_input(), "4");
@@ -649,16 +584,10 @@ mod tests {
     fn backtick_toggles_debug_log_popup() {
         let mut state = DashboardState::new();
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('`'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('`'));
         assert!(state.is_debug_log_popup_open());
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('`'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('`'));
         assert!(!state.is_debug_log_popup_open());
     }
 
@@ -668,7 +597,7 @@ mod tests {
         state.focus_pane(FocusPane::Messages);
         state.toggle_debug_log_popup();
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        handle_key(&mut state, key(KeyCode::Esc));
 
         assert!(!state.is_debug_log_popup_open());
         assert_eq!(state.focus(), FocusPane::Messages);
@@ -678,20 +607,11 @@ mod tests {
     fn backtick_types_while_composing() {
         let mut state = state_with_channel_tree();
         state.focus_pane(FocusPane::Channels);
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, char_key('i'));
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('`'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('`'));
 
         assert!(state.is_composing());
         assert!(!state.is_debug_log_popup_open());
@@ -702,27 +622,12 @@ mod tests {
     fn shift_enter_inserts_newline_while_composing() {
         let mut state = state_with_channel_tree();
         state.focus_pane(FocusPane::Channels);
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
-        );
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, char_key('i'));
+        handle_key(&mut state, char_key('h'));
+        handle_key(&mut state, shift_enter());
+        handle_key(&mut state, char_key('i'));
 
         assert!(state.is_composing());
         assert_eq!(state.composer_input(), "h\ni");
@@ -732,32 +637,14 @@ mod tests {
     fn enter_submits_multiline_composer() {
         let mut state = state_with_channel_tree();
         state.focus_pane(FocusPane::Channels);
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
-        );
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, char_key('i'));
+        handle_key(&mut state, char_key('h'));
+        handle_key(&mut state, shift_enter());
+        handle_key(&mut state, char_key('i'));
 
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        let command = handle_key(&mut state, key(KeyCode::Enter));
 
         assert!(!state.is_composing());
         assert_eq!(state.composer_input(), "");
@@ -776,10 +663,7 @@ mod tests {
         let mut state = state_with_messages(1);
         state.focus_pane(FocusPane::Messages);
 
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
-        );
+        let command = handle_key(&mut state, char_key('o'));
 
         assert_eq!(command, None);
     }
@@ -789,18 +673,12 @@ mod tests {
         let mut state = state_with_messages(1);
         state.focus_pane(FocusPane::Messages);
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Enter));
 
         assert!(state.is_message_action_menu_open());
         state.close_message_action_menu();
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key(' '));
 
         assert!(state.is_message_action_menu_open());
     }
@@ -809,12 +687,9 @@ mod tests {
     fn message_action_menu_navigation_is_modal() {
         let mut state = state_with_messages(2);
         state.focus_pane(FocusPane::Messages);
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Enter));
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(&mut state, key(KeyCode::Down));
 
         assert_eq!(state.selected_message(), 1);
         assert_eq!(
@@ -822,7 +697,7 @@ mod tests {
             Some(MessageActionKind::AddReaction)
         );
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        handle_key(&mut state, key(KeyCode::Esc));
 
         assert!(!state.is_message_action_menu_open());
     }
@@ -831,33 +706,18 @@ mod tests {
     fn message_action_menu_reply_opens_composer() {
         let mut state = state_with_messages(1);
         state.focus_pane(FocusPane::Messages);
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Enter));
 
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        let command = handle_key(&mut state, key(KeyCode::Enter));
 
         assert_eq!(command, None);
         assert!(!state.is_message_action_menu_open());
         assert!(state.is_composing());
         assert_eq!(state.composer_input(), "");
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
-        );
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('h'));
+        handle_key(&mut state, char_key('i'));
+        let command = handle_key(&mut state, key(KeyCode::Enter));
 
         assert_eq!(
             command,
@@ -873,28 +733,13 @@ mod tests {
     fn canceling_reply_composer_clears_reply_target() {
         let mut state = state_with_messages(1);
         state.focus_pane(FocusPane::Messages);
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, key(KeyCode::Esc));
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
-        );
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('i'));
+        handle_key(&mut state, char_key('n'));
+        let command = handle_key(&mut state, key(KeyCode::Enter));
 
         assert_eq!(
             command,
@@ -910,16 +755,10 @@ mod tests {
     fn message_action_menu_download_image_returns_command() {
         let mut state = state_with_image_message();
         state.focus_pane(FocusPane::Messages);
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, key(KeyCode::Down));
 
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        let command = handle_key(&mut state, key(KeyCode::Enter));
 
         assert_eq!(
             command,
@@ -935,16 +774,10 @@ mod tests {
     fn message_action_menu_add_reaction_opens_emoji_picker() {
         let mut state = state_with_messages(1);
         state.focus_pane(FocusPane::Messages);
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, key(KeyCode::Down));
 
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        let command = handle_key(&mut state, key(KeyCode::Enter));
 
         assert_eq!(command, None);
         assert!(!state.is_message_action_menu_open());
@@ -961,13 +794,10 @@ mod tests {
         state.focus_pane(FocusPane::Messages);
         open_emoji_picker(&mut state);
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Down));
+        let command = handle_key(&mut state, key(KeyCode::Enter));
 
         assert_eq!(
             command,
@@ -986,11 +816,8 @@ mod tests {
         state.focus_pane(FocusPane::Messages);
         open_emoji_picker(&mut state);
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Down));
+        let command = handle_key(&mut state, char_key(' '));
 
         assert_eq!(
             command,
@@ -1010,12 +837,9 @@ mod tests {
         open_emoji_picker(&mut state);
 
         for _ in 0..8 {
-            handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+            handle_key(&mut state, key(KeyCode::Down));
         }
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        let command = handle_key(&mut state, key(KeyCode::Enter));
 
         assert_eq!(
             command,
@@ -1037,34 +861,25 @@ mod tests {
         state.focus_pane(FocusPane::Messages);
         open_emoji_picker(&mut state);
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('j'));
         assert_eq!(
             state.selected_emoji_reaction().map(|item| item.emoji),
             Some(ReactionEmoji::Unicode("❤️".to_owned()))
         );
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('j'));
         assert_eq!(
             state.selected_emoji_reaction().map(|item| item.emoji),
             Some(ReactionEmoji::Unicode("😂".to_owned()))
         );
 
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
-        );
+        handle_key(&mut state, char_key('k'));
         assert_eq!(
             state.selected_emoji_reaction().map(|item| item.emoji),
             Some(ReactionEmoji::Unicode("❤️".to_owned()))
         );
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        handle_key(&mut state, key(KeyCode::Up));
         assert_eq!(
             state.selected_emoji_reaction().map(|item| item.emoji),
             Some(ReactionEmoji::Unicode("👍".to_owned()))
@@ -1077,8 +892,8 @@ mod tests {
         state.focus_pane(FocusPane::Messages);
         open_emoji_picker(&mut state);
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        let command = handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        handle_key(&mut state, key(KeyCode::Down));
+        let command = handle_key(&mut state, key(KeyCode::Esc));
 
         assert_eq!(command, None);
         assert!(!state.is_emoji_reaction_picker_open());
@@ -1101,7 +916,7 @@ mod tests {
             }],
         });
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key(&mut state, key(KeyCode::Down));
 
         assert_eq!(state.selected_message(), 1);
         assert!(state.is_reaction_users_popup_open());
@@ -1110,7 +925,7 @@ mod tests {
             Some(1)
         );
 
-        let command = handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let command = handle_key(&mut state, key(KeyCode::Esc));
 
         assert_eq!(command, None);
         assert!(!state.is_reaction_users_popup_open());
@@ -1120,30 +935,18 @@ mod tests {
     fn multiselect_poll_picker_toggles_and_submits_selected_answers() {
         let mut state = state_with_multiselect_poll();
         state.focus_pane(FocusPane::Messages);
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Enter));
         for _ in 0..5 {
-            handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+            handle_key(&mut state, key(KeyCode::Down));
         }
 
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        let command = handle_key(&mut state, key(KeyCode::Enter));
         assert_eq!(command, None);
         assert!(state.is_poll_vote_picker_open());
 
-        handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        );
-        let command = handle_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, char_key(' '));
+        let command = handle_key(&mut state, key(KeyCode::Enter));
 
         assert_eq!(
             command,
@@ -1512,9 +1315,9 @@ mod tests {
         state
     }
     fn open_emoji_picker(state: &mut DashboardState) {
-        handle_key(state, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        handle_key(state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        handle_key(state, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        handle_key(state, key(KeyCode::Enter));
+        handle_key(state, key(KeyCode::Down));
+        handle_key(state, key(KeyCode::Enter));
         assert!(state.is_emoji_reaction_picker_open());
     }
 }

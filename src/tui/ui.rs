@@ -3230,6 +3230,8 @@ fn composer_prompt_line_count(input: &str, width: u16) -> u16 {
 #[cfg(test)]
 mod tests {
     use ratatui::{
+        Terminal,
+        backend::TestBackend,
         layout::Rect,
         style::{Color, Modifier, Style},
     };
@@ -4439,8 +4441,6 @@ mod tests {
 
     #[test]
     fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
-        use ratatui::{Terminal, backend::TestBackend};
-
         let mut state = DashboardState::new();
         state.push_event(AppEvent::ReactionUsersLoaded {
             channel_id: Id::new(2),
@@ -4538,8 +4538,6 @@ mod tests {
 
     #[test]
     fn reaction_users_popup_buffer_stays_clean_in_narrow_terminal() {
-        use ratatui::{Terminal, backend::TestBackend};
-
         let mut state = DashboardState::new();
         state.push_event(AppEvent::ReactionUsersLoaded {
             channel_id: Id::new(2),
@@ -4562,23 +4560,7 @@ mod tests {
         // Narrow terminal that would force the popup down to a width where
         // the long name no longer fits without wrapping. Pre-truncation must
         // turn the long name into an ellipsis, never split it across rows.
-        let backend = TestBackend::new(40, 25);
-        let mut terminal = Terminal::new(backend).expect("test terminal should build");
-        terminal
-            .draw(|frame| {
-                sync_view_heights(frame.area(), &mut state);
-                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new(), None);
-            })
-            .expect("draw");
-
-        let buffer = terminal.backend().buffer();
-        let dump = (0..buffer.area.height)
-            .map(|row| {
-                (0..buffer.area.width)
-                    .map(|col| buffer[(col, row)].symbol().to_owned())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>();
+        let dump = render_dashboard_dump(40, 25, &mut state);
 
         let trailing_matches = dump.iter().filter(|line| line.contains("? )")).count();
         assert!(
@@ -5262,6 +5244,26 @@ mod tests {
         let area = Rect::new(10, 5, 80, 6);
 
         assert_eq!(inline_image_preview_area(area, -5, 4, None), None);
+    }
+
+    fn render_dashboard_dump(width: u16, height: u16, state: &mut DashboardState) -> Vec<String> {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+        terminal
+            .draw(|frame| {
+                sync_view_heights(frame.area(), state);
+                super::render(frame, state, Vec::new(), Vec::new(), Vec::new(), None);
+            })
+            .expect("draw");
+
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|row| {
+                (0..buffer.area.width)
+                    .map(|col| buffer[(col, row)].symbol().to_owned())
+                    .collect::<String>()
+            })
+            .collect()
     }
 
     fn message_with_attachment(
