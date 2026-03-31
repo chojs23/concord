@@ -2458,26 +2458,11 @@ impl DashboardState {
         }
         self.message_auto_follow = false;
         self.message_keep_selection_visible = false;
-        let height = self.message_content_height();
-        let mut remaining = height;
-        for index in (0..self.messages().len()).rev() {
-            let message_height = self
-                .message_rendered_height_at(
-                    index,
-                    self.message_content_width,
-                    self.message_preview_width,
-                    self.message_max_preview_height,
-                )
-                .max(1);
-            if message_height >= remaining {
-                self.message_scroll = index;
-                self.message_line_scroll = message_height.saturating_sub(remaining);
-                return;
-            }
-            remaining = remaining.saturating_sub(message_height);
-        }
-        self.message_scroll = 0;
-        self.message_line_scroll = 0;
+        self.align_message_viewport_to_bottom(
+            self.message_content_width,
+            self.message_preview_width,
+            self.message_max_preview_height,
+        );
     }
 
     pub fn cycle_focus(&mut self) {
