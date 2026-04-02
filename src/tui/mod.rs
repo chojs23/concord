@@ -2,6 +2,7 @@ mod format;
 mod input;
 mod login;
 mod media;
+mod message_format;
 mod requests;
 mod selection;
 mod state;

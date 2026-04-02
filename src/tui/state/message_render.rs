@@ -1,7 +1,7 @@
 use crate::discord::{AttachmentInfo, MessageSnapshotInfo, MessageState, PollInfo, ReactionInfo};
 
 use super::super::format::{RenderedText, TextHighlight, TextHighlightKind};
-use super::super::{media, ui};
+use super::super::{media, message_format, ui};
 
 pub(super) fn message_rendered_height_with_mentions<F, G>(
     message: &MessageState,
@@ -82,8 +82,11 @@ where
         0
     };
     let reaction_lines = reaction_line_count(&message.reactions, content_width);
-    let embed_lines =
-        ui::embed_line_count(&message.embeds, message.content.as_deref(), content_width);
+    let embed_lines = message_format::embed_line_count(
+        &message.embeds,
+        message.content.as_deref(),
+        content_width,
+    );
 
     if let Some(snapshot) = message.forwarded_snapshots.first() {
         let metadata_line =
@@ -104,7 +107,9 @@ where
 }
 
 fn reaction_line_count(reactions: &[ReactionInfo], width: usize) -> usize {
-    ui::lay_out_reaction_chips(reactions, width).lines.len()
+    message_format::lay_out_reaction_chips(reactions, width)
+        .lines
+        .len()
 }
 
 fn poll_card_line_count(
@@ -113,10 +118,10 @@ fn poll_card_line_count(
     content_width: usize,
     render_text: &dyn Fn(&str) -> String,
 ) -> usize {
-    let inner_width = ui::poll_card_inner_width(content_width);
+    let inner_width = message_format::poll_card_inner_width(content_width);
     let content_lines = content
         .filter(|value| !value.is_empty())
-        .map(|value| ui::wrapped_text_line_count(&render_text(value), inner_width))
+        .map(|value| message_format::wrapped_text_line_count(&render_text(value), inner_width))
         .unwrap_or(0);
 
     2 + content_lines + 3 + poll.answers.len()
@@ -144,7 +149,7 @@ fn message_primary_line_count(
 ) -> usize {
     content
         .filter(|value| !value.is_empty())
-        .map(|value| ui::wrapped_text_line_count(&render_text(value), content_width))
+        .map(|value| message_format::wrapped_text_line_count(&render_text(value), content_width))
         .unwrap_or(0)
         + usize::from(!attachments.is_empty())
 }
@@ -160,11 +165,14 @@ fn forwarded_snapshot_line_count(
         .as_deref()
         .filter(|value| !value.is_empty())
         .map(|value| {
-            ui::wrapped_text_line_count(&render_text(snapshot, value), forwarded_content_width)
+            message_format::wrapped_text_line_count(
+                &render_text(snapshot, value),
+                forwarded_content_width,
+            )
         })
         .unwrap_or(0);
     let attachment_line = usize::from(!snapshot.attachments.is_empty());
-    let embed_lines = ui::embed_line_count(
+    let embed_lines = message_format::embed_line_count(
         &snapshot.embeds,
         snapshot.content.as_deref(),
         forwarded_content_width,
