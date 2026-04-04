@@ -39,8 +39,9 @@ use popups::{ChannelActionMenuState, MemberActionMenuState, UserProfilePopupStat
 use presentation::{is_direct_message_channel, sort_channels, sort_direct_message_channels};
 use scroll::{
     SCROLL_OFF, clamp_list_scroll, clamp_selected_index, close_collapsed_key, last_index,
-    move_index_down, move_index_down_by, move_index_up, move_index_up_by, open_collapsed_key,
-    pane_content_height, toggle_collapsed_key,
+    move_index_down, move_index_down_by, move_index_up, move_index_up_by,
+    normalize_message_line_scroll, open_collapsed_key, pane_content_height,
+    scroll_message_row_down, scroll_message_row_up, toggle_collapsed_key,
 };
 
 pub use composer::{MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry};
@@ -3010,24 +3011,20 @@ impl DashboardState {
         max_preview_height: u16,
     ) {
         let messages_len = self.messages().len();
-        if self.messages().get(self.message_scroll).is_none() {
-            self.message_line_scroll = 0;
-            return;
-        }
-        let height = self
-            .message_rendered_height_at(
+        let current_message_height = self.messages().get(self.message_scroll).map(|_| {
+            self.message_rendered_height_at(
                 self.message_scroll,
                 content_width,
                 preview_width,
                 max_preview_height,
             )
-            .max(1);
-        if self.message_line_scroll.saturating_add(1) < height {
-            self.message_line_scroll = self.message_line_scroll.saturating_add(1);
-        } else if self.message_scroll < messages_len.saturating_sub(1) {
-            self.message_scroll = self.message_scroll.saturating_add(1);
-            self.message_line_scroll = 0;
-        }
+        });
+        scroll_message_row_down(
+            &mut self.message_scroll,
+            &mut self.message_line_scroll,
+            messages_len,
+            current_message_height,
+        );
     }
 
     fn scroll_message_viewport_up_one_row(
@@ -3037,21 +3034,22 @@ impl DashboardState {
         max_preview_height: u16,
     ) {
         if self.message_line_scroll > 0 {
-            self.message_line_scroll = self.message_line_scroll.saturating_sub(1);
+            scroll_message_row_up(
+                &mut self.message_scroll,
+                &mut self.message_line_scroll,
+                None,
+            );
             return;
         }
-        if self.message_scroll == 0 {
-            return;
-        }
-        self.message_scroll = self.message_scroll.saturating_sub(1);
-        self.message_line_scroll = self
-            .message_rendered_height_at(
-                self.message_scroll,
-                content_width,
-                preview_width,
-                max_preview_height,
-            )
-            .saturating_sub(1);
+        let previous_message_index = self.message_scroll.checked_sub(1);
+        let previous_message_height = previous_message_index.map(|index| {
+            self.message_rendered_height_at(index, content_width, preview_width, max_preview_height)
+        });
+        scroll_message_row_up(
+            &mut self.message_scroll,
+            &mut self.message_line_scroll,
+            previous_message_height,
+        );
     }
 
     fn normalize_message_line_scroll(
@@ -3060,19 +3058,15 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) {
-        if self.messages().get(self.message_scroll).is_none() {
-            self.message_line_scroll = 0;
-            return;
-        }
-        let height = self
-            .message_rendered_height_at(
+        let current_message_height = self.messages().get(self.message_scroll).map(|_| {
+            self.message_rendered_height_at(
                 self.message_scroll,
                 content_width,
                 preview_width,
                 max_preview_height,
             )
-            .max(1);
-        self.message_line_scroll = self.message_line_scroll.min(height.saturating_sub(1));
+        });
+        normalize_message_line_scroll(&mut self.message_line_scroll, current_message_height);
     }
 
     fn message_content_height(&self) -> usize {

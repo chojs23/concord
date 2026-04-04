@@ -90,3 +90,54 @@ pub(super) fn clamp_list_scroll(
 
     scroll.min(max_scroll)
 }
+
+pub(super) fn scroll_message_row_down(
+    message_scroll: &mut usize,
+    message_line_scroll: &mut usize,
+    messages_len: usize,
+    current_message_height: Option<usize>,
+) {
+    let Some(height) = current_message_height.map(|height| height.max(1)) else {
+        *message_line_scroll = 0;
+        return;
+    };
+
+    if (*message_line_scroll).saturating_add(1) < height {
+        *message_line_scroll = (*message_line_scroll).saturating_add(1);
+    } else if *message_scroll < messages_len.saturating_sub(1) {
+        *message_scroll = (*message_scroll).saturating_add(1);
+        *message_line_scroll = 0;
+    }
+}
+
+pub(super) fn scroll_message_row_up(
+    message_scroll: &mut usize,
+    message_line_scroll: &mut usize,
+    previous_message_height: Option<usize>,
+) {
+    if *message_line_scroll > 0 {
+        *message_line_scroll = (*message_line_scroll).saturating_sub(1);
+        return;
+    }
+    if *message_scroll == 0 {
+        return;
+    }
+
+    *message_scroll = (*message_scroll).saturating_sub(1);
+    *message_line_scroll = previous_message_height
+        .map(|height| height.max(1))
+        .unwrap_or(1)
+        .saturating_sub(1);
+}
+
+pub(super) fn normalize_message_line_scroll(
+    message_line_scroll: &mut usize,
+    current_message_height: Option<usize>,
+) {
+    let Some(height) = current_message_height.map(|height| height.max(1)) else {
+        *message_line_scroll = 0;
+        return;
+    };
+
+    *message_line_scroll = (*message_line_scroll).min(height.saturating_sub(1));
+}
