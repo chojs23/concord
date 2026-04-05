@@ -133,12 +133,22 @@ fn system_message_line_count(message: &MessageState) -> Option<usize> {
         18 => Some(3),
         21 => Some(2),
         46 => Some(match message.poll.as_ref() {
-            Some(poll) if poll.total_votes.is_some() => 4,
+            Some(poll) if poll_result_has_total_votes(poll) => 4,
             Some(_) => 3,
             None => 2,
         }),
         _ => None,
     }
+}
+
+fn poll_result_has_total_votes(poll: &PollInfo) -> bool {
+    poll.total_votes.is_some()
+        || poll
+            .answers
+            .iter()
+            .filter_map(|answer| answer.vote_count)
+            .sum::<u64>()
+            > 0
 }
 
 fn message_primary_line_count(

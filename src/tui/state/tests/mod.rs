@@ -1536,6 +1536,19 @@ fn poll_result_message_reserves_result_card_rows() {
 }
 
 #[test]
+fn poll_result_message_counts_summed_answer_votes() {
+    let mut message = height_test_message("");
+    message.message_kind = MessageKind::new(46);
+    let mut poll = poll_info(false);
+    poll.total_votes = None;
+    poll.answers[0].vote_count = Some(2);
+    poll.answers[1].vote_count = Some(1);
+    message.poll = Some(poll);
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
+}
+
+#[test]
 fn thread_starter_message_reserves_system_card_rows() {
     let mut message = height_test_message("");
     message.message_kind = MessageKind::new(21);
