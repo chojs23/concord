@@ -221,14 +221,6 @@ pub(super) fn format_message_content_lines(
     lines
 }
 
-pub(crate) fn embed_line_count(
-    embeds: &[EmbedInfo],
-    message_content: Option<&str>,
-    width: usize,
-) -> usize {
-    format_embed_lines(embeds, message_content, width).len()
-}
-
 fn format_embed_lines(
     embeds: &[EmbedInfo],
     message_content: Option<&str>,
@@ -466,10 +458,6 @@ pub(crate) fn lay_out_reaction_chips(reactions: &[ReactionInfo], width: usize) -
     }
 
     ReactionLayout { lines, slots }
-}
-
-pub(crate) fn wrapped_text_line_count(value: &str, width: usize) -> usize {
-    wrap_text_lines(value, width).len()
 }
 
 fn wrap_rendered_text_lines(

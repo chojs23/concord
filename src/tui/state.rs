@@ -15,6 +15,7 @@ use crate::logging;
 use super::format::{
     RenderedText, TextHighlightKind, render_user_mentions, render_user_mentions_with_highlights,
 };
+use super::{media, message_format, ui};
 
 mod composer;
 mod emoji;
@@ -31,10 +32,7 @@ use composer::{
 };
 use emoji::{custom_emoji_reaction_item, unicode_emoji_reaction_items};
 use member_grouping::{channel_recipient_group, flatten_member_groups, guild_member_groups};
-use message_render::{
-    add_literal_mention_highlights, message_base_line_count_for_width_with_mentions,
-    message_rendered_height_with_mentions, normalize_text_highlights,
-};
+use message_render::{add_literal_mention_highlights, normalize_text_highlights};
 use popups::{ChannelActionMenuState, MemberActionMenuState, UserProfilePopupState};
 use presentation::{is_direct_message_channel, sort_channels, sort_direct_message_channels};
 use scroll::{
@@ -3138,18 +3136,7 @@ impl DashboardState {
         message: &MessageState,
         content_width: usize,
     ) -> usize {
-        message_base_line_count_for_width_with_mentions(
-            message,
-            content_width,
-            |value| self.render_user_mentions(message.guild_id, &message.mentions, value),
-            |snapshot, value| {
-                self.render_user_mentions(
-                    self.forwarded_snapshot_mention_guild_id(snapshot),
-                    &snapshot.mentions,
-                    value,
-                )
-            },
-        )
+        1 + message_format::format_message_content_lines(message, self, content_width).len()
     }
 
     fn message_rendered_height(
@@ -3159,20 +3146,20 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) -> usize {
-        message_rendered_height_with_mentions(
-            message,
-            content_width,
-            preview_width,
-            max_preview_height,
-            |value| self.render_user_mentions(message.guild_id, &message.mentions, value),
-            |snapshot, value| {
-                self.render_user_mentions(
-                    self.forwarded_snapshot_mention_guild_id(snapshot),
-                    &snapshot.mentions,
-                    value,
+        let preview_height = message
+            .first_inline_preview()
+            .map(|preview| {
+                media::image_preview_height_for_dimensions(
+                    preview_width,
+                    max_preview_height,
+                    preview.width,
+                    preview.height,
                 )
-            },
-        )
+            })
+            .unwrap_or(0);
+        self.message_base_line_count_for_width(message, content_width)
+            + usize::from(preview_height)
+            + ui::MESSAGE_ROW_GAP
     }
 
     /// Same as `message_rendered_height` but also accounts for an optional
@@ -3202,13 +3189,11 @@ fn message_rendered_height(
     preview_width: u16,
     max_preview_height: u16,
 ) -> usize {
-    message_rendered_height_with_mentions(
+    DashboardState::new().message_rendered_height(
         message,
         content_width,
         preview_width,
         max_preview_height,
-        str::to_owned,
-        |_, value| value.to_owned(),
     )
 }
 
