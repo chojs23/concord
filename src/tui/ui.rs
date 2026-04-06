@@ -2555,9 +2555,7 @@ mod tests {
 
     #[test]
     fn message_content_preserves_explicit_newlines() {
-        let mut message =
-            message_with_attachment(Some("hello\nworld".to_owned()), image_attachment());
-        message.attachments.clear();
+        let message = message_with_content(Some("hello\nworld".to_owned()));
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
@@ -2566,9 +2564,7 @@ mod tests {
 
     #[test]
     fn message_content_wraps_long_lines_to_content_width() {
-        let mut message =
-            message_with_attachment(Some("abcdefghijkl".to_owned()), image_attachment());
-        message.attachments.clear();
+        let message = message_with_content(Some("abcdefghijkl".to_owned()));
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 5);
 
@@ -2577,9 +2573,7 @@ mod tests {
 
     #[test]
     fn message_content_wraps_wide_characters_by_terminal_width() {
-        let mut message =
-            message_with_attachment(Some("漢字仮名交じ".to_owned()), image_attachment());
-        message.attachments.clear();
+        let message = message_with_content(Some("漢字仮名交じ".to_owned()));
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 10);
 
@@ -2588,9 +2582,7 @@ mod tests {
 
     #[test]
     fn message_content_renders_known_user_mentions() {
-        let mut message =
-            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
-        message.attachments.clear();
+        let message = message_with_content(Some("hello <@10>".to_owned()));
         let state = state_with_member(10, "alice");
 
         let lines = format_message_content_lines(&message, &state, 200);
@@ -2600,9 +2592,7 @@ mod tests {
 
     #[test]
     fn message_content_keeps_unknown_user_mentions_raw() {
-        let mut message =
-            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
-        message.attachments.clear();
+        let message = message_with_content(Some("hello <@10>".to_owned()));
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
@@ -2611,9 +2601,7 @@ mod tests {
 
     #[test]
     fn message_content_renders_mentions_from_message_metadata() {
-        let mut message =
-            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some("hello <@10>".to_owned()));
         message.mentions = vec![mention_info(10, "alice")];
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
@@ -2623,9 +2611,7 @@ mod tests {
 
     #[test]
     fn message_content_highlights_current_user_mentions() {
-        let mut message =
-            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some("hello <@10>".to_owned()));
         message.mentions = vec![mention_info(10, "username")];
         let mut state = state_with_member(10, "server alias");
         state.push_event(AppEvent::Ready {
@@ -2659,9 +2645,7 @@ mod tests {
         // Discord still paints non-self mentions, just with a calmer tint than
         // the gold "you" highlight, so the user can tell whether they were the
         // one being pinged at a glance.
-        let mut message =
-            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some("hello <@10>".to_owned()));
         message.mentions = vec![mention_info(10, "alice")];
         let mut state = DashboardState::new();
         state.push_event(AppEvent::Ready {
@@ -2697,9 +2681,7 @@ mod tests {
 
     #[test]
     fn message_content_highlights_everyone_mentions_for_current_user() {
-        let mut message =
-            message_with_attachment(Some("ping @everyone".to_owned()), image_attachment());
-        message.attachments.clear();
+        let message = message_with_content(Some("ping @everyone".to_owned()));
         let mut state = DashboardState::new();
         state.push_event(AppEvent::Ready {
             user: "neo".to_owned(),
@@ -2729,9 +2711,7 @@ mod tests {
 
     #[test]
     fn message_content_highlights_mixed_everyone_and_direct_mentions_in_order() {
-        let mut message =
-            message_with_attachment(Some("@everyone hello <@10>".to_owned()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some("@everyone hello <@10>".to_owned()));
         message.mentions = vec![mention_info(10, "neo")];
         let mut state = DashboardState::new();
         state.push_event(AppEvent::Ready {
@@ -2767,9 +2747,7 @@ mod tests {
 
     #[test]
     fn message_content_highlights_here_mentions_for_current_user() {
-        let mut message =
-            message_with_attachment(Some("ping @here".to_owned()), image_attachment());
-        message.attachments.clear();
+        let message = message_with_content(Some("ping @here".to_owned()));
         let mut state = DashboardState::new();
         state.push_event(AppEvent::Ready {
             user: "neo".to_owned(),
@@ -2799,9 +2777,7 @@ mod tests {
 
     #[test]
     fn mention_like_display_name_does_not_duplicate_highlight_spans() {
-        let mut message =
-            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some("hello <@10>".to_owned()));
         message.mentions = vec![mention_info(10, "everyone")];
         let mut state = DashboardState::new();
         state.push_event(AppEvent::Ready {
@@ -2833,9 +2809,7 @@ mod tests {
 
     #[test]
     fn message_content_prefers_cached_member_alias_over_mention_metadata() {
-        let mut message =
-            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some("hello <@10>".to_owned()));
         message.mentions = vec![mention_info(10, "username")];
         let state = state_with_member(10, "server alias");
 
@@ -2846,9 +2820,7 @@ mod tests {
 
     #[test]
     fn message_content_prefers_message_mention_nick_over_cached_member_name() {
-        let mut message =
-            message_with_attachment(Some("hello <@10>".to_owned()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some("hello <@10>".to_owned()));
         message.mentions = vec![mention_info_with_nick(10, "server alias")];
         let state = state_with_member(10, "username");
 
@@ -2866,9 +2838,7 @@ mod tests {
 
     #[test]
     fn message_content_preserves_blank_lines() {
-        let mut message =
-            message_with_attachment(Some("one\n\nthree".to_owned()), image_attachment());
-        message.attachments.clear();
+        let message = message_with_content(Some("one\n\nthree".to_owned()));
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
@@ -2902,8 +2872,7 @@ mod tests {
 
     #[test]
     fn user_join_message_type_uses_join_label() {
-        let mut message = message_with_attachment(Some(String::new()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some(String::new()));
         message.message_kind = MessageKind::new(7);
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
@@ -2920,8 +2889,7 @@ mod tests {
             (10, "neo boosted the server to Level 2"),
             (11, "neo boosted the server to Level 3"),
         ] {
-            let mut message = message_with_attachment(Some(String::new()), image_attachment());
-            message.attachments.clear();
+            let mut message = message_with_content(Some(String::new()));
             message.message_kind = MessageKind::new(kind);
 
             let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
@@ -2933,9 +2901,7 @@ mod tests {
 
     #[test]
     fn thread_created_message_uses_cached_thread_details() {
-        let mut message =
-            message_with_attachment(Some("release notes".to_owned()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some("release notes".to_owned()));
         message.message_kind = MessageKind::new(18);
         let mut state = DashboardState::new();
         state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
@@ -2968,8 +2934,7 @@ mod tests {
 
     #[test]
     fn thread_starter_message_uses_referenced_message_card() {
-        let mut message = message_with_attachment(Some(String::new()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some(String::new()));
         message.message_kind = MessageKind::new(21);
         message.reply = Some(ReplyInfo {
             author: "alice".to_owned(),
@@ -2987,8 +2952,7 @@ mod tests {
 
     #[test]
     fn poll_result_message_uses_result_card() {
-        let mut message = message_with_attachment(Some(String::new()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some(String::new()));
         message.message_kind = MessageKind::new(46);
         message.poll = Some(PollInfo {
             question: "What should we eat?".to_owned(),
@@ -3042,14 +3006,13 @@ mod tests {
 
     #[test]
     fn reply_preview_renders_known_user_mentions() {
-        let mut message = message_with_attachment(Some("asdf".to_owned()), image_attachment());
+        let mut message = message_with_content(Some("asdf".to_owned()));
         message.message_kind = MessageKind::new(19);
         message.reply = Some(ReplyInfo {
             author: "neo".to_owned(),
             content: Some("hello <@10>".to_owned()),
             mentions: Vec::new(),
         });
-        message.attachments.clear();
         let state = state_with_member(10, "alice");
 
         let lines = format_message_content_lines(&message, &state, 200);
@@ -3059,14 +3022,13 @@ mod tests {
 
     #[test]
     fn reply_preview_renders_mentions_from_reply_metadata() {
-        let mut message = message_with_attachment(Some("asdf".to_owned()), image_attachment());
+        let mut message = message_with_content(Some("asdf".to_owned()));
         message.message_kind = MessageKind::new(19);
         message.reply = Some(ReplyInfo {
             author: "neo".to_owned(),
             content: Some("hello <@10>".to_owned()),
             mentions: vec![mention_info(10, "alice")],
         });
-        message.attachments.clear();
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
@@ -3085,8 +3047,7 @@ mod tests {
 
     #[test]
     fn poll_message_replaces_empty_message_placeholder() {
-        let mut message = message_with_attachment(Some(String::new()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some(String::new()));
         message.poll = Some(poll_info(false));
 
         let width = 40;
@@ -3110,8 +3071,7 @@ mod tests {
 
     #[test]
     fn poll_message_notes_multiselect() {
-        let mut message = message_with_attachment(Some(String::new()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some(String::new()));
         message.poll = Some(poll_info(true));
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
@@ -3122,9 +3082,7 @@ mod tests {
 
     #[test]
     fn poll_message_places_body_inside_box() {
-        let mut message =
-            message_with_attachment(Some("Please vote <@10>".to_owned()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some("Please vote <@10>".to_owned()));
         message.poll = Some(poll_info(false));
         let state = state_with_member(10, "alice");
 
@@ -3137,9 +3095,7 @@ mod tests {
 
     #[test]
     fn poll_message_body_highlights_mentions_inside_box() {
-        let mut message =
-            message_with_attachment(Some("<@10> please vote".to_owned()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some("<@10> please vote".to_owned()));
         message.mentions = vec![mention_info(10, "server alias")];
         message.poll = Some(poll_info(false));
         let mut state = state_with_member(10, "server alias");
@@ -3161,8 +3117,7 @@ mod tests {
 
     #[test]
     fn message_content_renders_reaction_chips_below_message() {
-        let mut message = message_with_attachment(Some("hello".to_owned()), image_attachment());
-        message.attachments.clear();
+        let mut message = message_with_content(Some("hello".to_owned()));
         message.reactions = vec![ReactionInfo {
             emoji: ReactionEmoji::Unicode("👍".to_owned()),
             count: 3,
@@ -4108,9 +4063,7 @@ mod tests {
 
     #[test]
     fn selected_message_highlight_skips_avatar_column() {
-        let mut message =
-            message_with_attachment(Some("abcdefghijkl".to_owned()), image_attachment());
-        message.attachments.clear();
+        let message = message_with_content(Some("abcdefghijkl".to_owned()));
         let messages = [&message];
 
         let lines = message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, 80, &[]);
