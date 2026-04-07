@@ -74,64 +74,74 @@ impl MessageContentLine {
     }
 
     pub(super) fn spans(&self) -> Vec<Span<'static>> {
-        if self.mention_highlights.is_empty() {
-            return self.spans_without_mentions();
+        let mut boundaries = vec![0, self.text.len()];
+        for highlight in &self.mention_highlights {
+            push_range_boundaries(
+                &mut boundaries,
+                highlight.start,
+                highlight.end,
+                self.text.len(),
+            );
+        }
+        for prefix in &self.styled_prefixes {
+            push_range_boundaries(
+                &mut boundaries,
+                prefix.start,
+                prefix.start.saturating_add(prefix.len),
+                self.text.len(),
+            );
         }
 
-        let mut spans = Vec::new();
-        let mut cursor = 0usize;
-        for highlight in &self.mention_highlights {
-            if highlight.end <= cursor {
-                continue;
-            }
-            if highlight.start > cursor {
-                spans.push(Span::styled(
-                    self.text[cursor..highlight.start].to_owned(),
-                    self.style,
-                ));
-            }
-            let start = highlight.start.max(cursor);
-            spans.push(Span::styled(
-                self.text[start..highlight.end].to_owned(),
-                self.style.patch(mention_highlight_style(highlight.kind)),
-            ));
-            cursor = highlight.end;
-        }
-        if cursor < self.text.len() {
-            spans.push(Span::styled(self.text[cursor..].to_owned(), self.style));
-        }
-        spans
+        boundaries.sort_unstable();
+        boundaries.dedup();
+
+        boundaries
+            .windows(2)
+            .filter_map(|window| {
+                let start = window[0];
+                let end = window[1];
+                (start < end).then(|| {
+                    Span::styled(
+                        self.text[start..end].to_owned(),
+                        self.style_for_range(start, end),
+                    )
+                })
+            })
+            .collect()
     }
 
-    fn spans_without_mentions(&self) -> Vec<Span<'static>> {
-        let mut spans = Vec::new();
-        let mut cursor = 0usize;
-        let mut prefixes = self.styled_prefixes.clone();
-        prefixes.sort_by_key(|prefix| prefix.start);
+    fn style_for_range(&self, start: usize, end: usize) -> Style {
+        let mut style = self
+            .styled_prefixes
+            .iter()
+            .find(|prefix| prefix.contains(start, end))
+            .map(|prefix| prefix.style)
+            .unwrap_or(self.style);
 
-        for prefix in prefixes {
-            let prefix_start = prefix.start.min(self.text.len());
-            let prefix_end = prefix_start.saturating_add(prefix.len).min(self.text.len());
-            if prefix_end <= cursor {
-                continue;
-            }
-            if prefix_start > cursor {
-                spans.push(Span::styled(
-                    self.text[cursor..prefix_start].to_owned(),
-                    self.style,
-                ));
-            }
-            spans.push(Span::styled(
-                self.text[prefix_start.max(cursor)..prefix_end].to_owned(),
-                prefix.style,
-            ));
-            cursor = prefix_end;
+        if let Some(highlight) = self
+            .mention_highlights
+            .iter()
+            .find(|highlight| highlight.start <= start && end <= highlight.end)
+        {
+            style = style.patch(mention_highlight_style(highlight.kind));
         }
 
-        if cursor < self.text.len() {
-            spans.push(Span::styled(self.text[cursor..].to_owned(), self.style));
-        }
-        spans
+        style
+    }
+}
+
+impl StyledPrefix {
+    fn contains(&self, start: usize, end: usize) -> bool {
+        self.start <= start && end <= self.start.saturating_add(self.len)
+    }
+}
+
+fn push_range_boundaries(boundaries: &mut Vec<usize>, start: usize, end: usize, text_len: usize) {
+    let start = start.min(text_len);
+    let end = end.min(text_len);
+    if start < end {
+        boundaries.push(start);
+        boundaries.push(end);
     }
 }
 
@@ -1027,5 +1037,43 @@ pub(super) fn mention_highlight_style(kind: TextHighlightKind) -> Style {
         TextHighlightKind::OtherMention => Style::default()
             .bg(Color::Rgb(40, 50, 92))
             .fg(Color::Rgb(193, 206, 247)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_content_line_spans_combine_prefix_and_mention_styles() {
+        let mention_start = ">> hello ".len();
+        let line = MessageContentLine {
+            text: ">> hello @alice".to_owned(),
+            style: Style::default().add_modifier(Modifier::UNDERLINED),
+            mention_highlights: vec![TextHighlight {
+                start: mention_start,
+                end: mention_start + "@alice".len(),
+                kind: TextHighlightKind::SelfMention,
+            }],
+            styled_prefixes: vec![StyledPrefix {
+                start: 0,
+                len: ">> ".len(),
+                style: Style::default().fg(Color::Red),
+            }],
+        };
+
+        let spans = line.spans();
+
+        assert_eq!(spans[0].content.as_ref(), ">> ");
+        assert_eq!(spans[0].style.fg, Some(Color::Red));
+        assert!(!spans[0].style.add_modifier.contains(Modifier::UNDERLINED));
+        assert_eq!(spans[1].content.as_ref(), "hello ");
+        assert!(spans[1].style.add_modifier.contains(Modifier::UNDERLINED));
+        assert_eq!(spans[2].content.as_ref(), "@alice");
+        assert!(spans[2].style.add_modifier.contains(Modifier::UNDERLINED));
+        assert_eq!(
+            spans[2].style.bg,
+            mention_highlight_style(TextHighlightKind::SelfMention).bg
+        );
     }
 }
