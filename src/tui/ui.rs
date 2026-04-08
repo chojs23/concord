@@ -39,7 +39,6 @@ pub(crate) const MESSAGE_ROW_GAP: usize = 1;
 const EMBED_PREVIEW_GUTTER_PREFIX: &str = "  ▎ ";
 const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
 const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
-const MAX_EMOJI_REACTION_VISIBLE_ITEMS: usize = 10;
 const MAX_REACTION_USERS_VISIBLE_LINES: usize = 14;
 
 pub struct ImagePreview<'a> {
@@ -1199,7 +1198,9 @@ fn render_emoji_reaction_picker(
     }
 
     let selected = state.selected_emoji_reaction_index().unwrap_or(0);
-    let visible_items = reactions.len().clamp(1, MAX_EMOJI_REACTION_VISIBLE_ITEMS);
+    let visible_items = reactions
+        .len()
+        .clamp(1, super::selection::MAX_EMOJI_REACTION_VISIBLE_ITEMS);
     let popup = centered_rect(area, 42, (visible_items as u16).saturating_add(4));
     let ready_urls = emoji_images
         .iter()

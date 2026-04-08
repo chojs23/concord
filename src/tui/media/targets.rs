@@ -11,8 +11,6 @@ use super::AVATAR_PREVIEW_HEIGHT;
 
 const IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
 
-const MAX_EMOJI_REACTION_VISIBLE_ITEMS: usize = 10;
-
 pub(in crate::tui) struct ImagePreviewTarget {
     pub(super) message_index: usize,
     pub(super) preview_width: u16,
@@ -165,7 +163,9 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
                 .selected_emoji_reaction_index()
                 .unwrap_or(0)
                 .min(reactions.len().saturating_sub(1));
-            let visible_items = reactions.len().clamp(1, MAX_EMOJI_REACTION_VISIBLE_ITEMS);
+            let visible_items = reactions
+                .len()
+                .clamp(1, selection::MAX_EMOJI_REACTION_VISIBLE_ITEMS);
             let visible_range =
                 selection::visible_item_range(reactions.len(), selected, visible_items);
             for reaction in &reactions[visible_range] {

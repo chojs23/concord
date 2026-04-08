@@ -1,3 +1,5 @@
+pub(super) const MAX_EMOJI_REACTION_VISIBLE_ITEMS: usize = 10;
+
 pub(super) fn visible_item_range(
     items_len: usize,
     selected: usize,
