@@ -49,11 +49,14 @@ pub(in crate::tui) fn visible_image_preview_targets(
         }
 
         let line_offset = usize::from(message_index == 0) * state.message_line_scroll();
+        let global_index = state.message_scroll().saturating_add(message_index);
+        let separator_lines = state.message_extra_top_lines(global_index);
         let base_rows = state.message_base_line_count_for_width(message, layout.content_width);
+        let block_rows = base_rows.saturating_add(separator_lines);
 
         let Some(preview) = message.first_inline_preview() else {
             rendered_rows = rendered_rows.saturating_add(
-                base_rows
+                block_rows
                     .saturating_add(ui::MESSAGE_ROW_GAP)
                     .saturating_sub(line_offset),
             );
@@ -66,7 +69,7 @@ pub(in crate::tui) fn visible_image_preview_targets(
             preview.width,
             preview.height,
         );
-        let preview_top = rendered_rows as isize + base_rows as isize - line_offset as isize;
+        let preview_top = rendered_rows as isize + block_rows as isize - line_offset as isize;
         let preview_bottom = preview_top.saturating_add(preview_height as isize);
         let visible_top = preview_top.max(0);
         let visible_bottom = preview_bottom.min(layout.list_height as isize);
@@ -86,7 +89,7 @@ pub(in crate::tui) fn visible_image_preview_targets(
         }
 
         rendered_rows = rendered_rows.saturating_add(
-            base_rows
+            block_rows
                 .saturating_add(preview_height as usize)
                 .saturating_add(ui::MESSAGE_ROW_GAP)
                 .saturating_sub(line_offset),

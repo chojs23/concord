@@ -466,6 +466,16 @@ mod tests {
     }
 
     #[test]
+    fn image_preview_targets_account_for_date_separator_rows() {
+        let mut state = state_with_cross_day_image_message();
+        state.set_message_view_height(4);
+
+        let targets = visible_image_preview_targets(&state, layout(4));
+
+        assert!(targets.is_empty());
+    }
+
+    #[test]
     fn image_preview_request_is_created_for_clipped_draw_target() {
         let mut cache = ImagePreviewCache {
             picker: None,
@@ -1160,6 +1170,66 @@ mod tests {
         state
     }
 
+    fn state_with_cross_day_image_message() -> DashboardState {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+
+        let day_one = snowflake_for_unix_ms(1_743_465_600_000);
+        let day_two = snowflake_for_unix_ms(1_743_465_600_000 + 24 * 60 * 60 * 1000);
+        for (message_id, attachments) in
+            [(day_one, Vec::new()), (day_two, vec![image_attachment(2)])]
+        {
+            state.push_event(AppEvent::MessageCreate {
+                guild_id: Some(guild_id),
+                channel_id,
+                message_id,
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                author_avatar_url: None,
+                message_kind: crate::discord::MessageKind::regular(),
+                reference: None,
+                reply: None,
+                poll: None,
+                content: Some("msg".to_owned()),
+                mentions: Vec::new(),
+                attachments,
+                embeds: Vec::new(),
+                forwarded_snapshots: Vec::new(),
+            });
+        }
+
+        state
+    }
+
     fn target_message_ids(targets: &[ImagePreviewTarget]) -> Vec<Id<MessageMarker>> {
         targets.iter().map(|target| target.message_id).collect()
     }
@@ -1176,6 +1246,13 @@ mod tests {
             url: format!("https://cdn.discordapp.com/image-{id}.png"),
             filename: format!("image-{id}.png"),
         }
+    }
+
+    fn snowflake_for_unix_ms(unix_ms: u64) -> Id<MessageMarker> {
+        const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
+        const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
+        let raw = (unix_ms - DISCORD_EPOCH_MILLIS) << SNOWFLAKE_TIMESTAMP_SHIFT;
+        Id::new(raw.max(1))
     }
 
     fn image_attachment(id: u64) -> AttachmentInfo {
