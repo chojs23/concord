@@ -1352,7 +1352,6 @@ impl DashboardState {
         clamp_selected_index(self.selected_guild, self.guild_pane_entries().len())
     }
 
-    #[cfg(test)]
     pub fn guild_scroll(&self) -> usize {
         self.guild_scroll
     }
@@ -1644,7 +1643,6 @@ impl DashboardState {
         }
     }
 
-    #[cfg(test)]
     pub fn channel_scroll(&self) -> usize {
         self.channel_scroll
     }
@@ -2018,6 +2016,43 @@ impl DashboardState {
         self.message_scroll
     }
 
+    pub(crate) fn message_scroll_row_position(
+        &self,
+        content_width: usize,
+        preview_width: u16,
+        max_preview_height: u16,
+    ) -> usize {
+        (0..self.message_scroll)
+            .map(|index| {
+                self.message_rendered_height_at(
+                    index,
+                    content_width,
+                    preview_width,
+                    max_preview_height,
+                )
+            })
+            .sum::<usize>()
+            .saturating_add(self.message_line_scroll)
+    }
+
+    pub(crate) fn message_total_rendered_rows(
+        &self,
+        content_width: usize,
+        preview_width: u16,
+        max_preview_height: u16,
+    ) -> usize {
+        (0..self.messages().len())
+            .map(|index| {
+                self.message_rendered_height_at(
+                    index,
+                    content_width,
+                    preview_width,
+                    max_preview_height,
+                )
+            })
+            .sum()
+    }
+
     /// Returns true when the message at `index` (within `self.messages()`)
     /// should be preceded by a date separator because its local date differs
     /// from the previous message's. The first message in the loaded history
@@ -2241,6 +2276,10 @@ impl DashboardState {
 
     pub fn member_content_height(&self) -> usize {
         pane_content_height(self.member_view_height)
+    }
+
+    pub fn member_line_count(&self) -> usize {
+        self.count_member_lines()
     }
 
     pub fn set_member_view_height(&mut self, height: usize) {
@@ -2782,7 +2821,7 @@ impl DashboardState {
             self.selected_member_line(),
             self.member_scroll,
             pane_content_height(self.member_view_height),
-            self.member_line_count(),
+            self.count_member_lines(),
         );
     }
 
@@ -2839,7 +2878,7 @@ impl DashboardState {
         indices
     }
 
-    fn member_line_count(&self) -> usize {
+    fn count_member_lines(&self) -> usize {
         let mut lines = 0usize;
         for group in self.members_grouped() {
             if lines > 0 {

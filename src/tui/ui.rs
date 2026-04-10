@@ -1,10 +1,13 @@
 use chrono::{DateTime, Local, NaiveDate};
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Margin, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, Wrap,
+    },
 };
 use ratatui_image::{Image as RatatuiImage, Resize, StatefulImage, protocol::StatefulProtocol};
 use twilight_model::id::{Id, marker::MessageMarker};
@@ -236,6 +239,13 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
         .highlight_style(highlight_style());
 
     frame.render_widget(list, area);
+    render_vertical_scrollbar(
+        frame,
+        panel_scrollbar_area(area),
+        state.guild_scroll(),
+        panel_content_height(area, "Servers"),
+        state.guild_pane_entries().len(),
+    );
 }
 
 fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
@@ -292,6 +302,13 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
         .highlight_style(highlight_style());
 
     frame.render_widget(list, area);
+    render_vertical_scrollbar(
+        frame,
+        panel_scrollbar_area(area),
+        state.channel_scroll(),
+        panel_content_height(area, "Channels"),
+        state.channel_pane_entries().len(),
+    );
 }
 
 fn render_messages(
@@ -367,6 +384,15 @@ fn render_messages(
         previous_preview_rows =
             previous_preview_rows.saturating_add(image_preview.preview_height as usize);
     }
+    let preview_width = inline_image_preview_width(message_areas.list);
+    let max_preview_height = inline_image_preview_height(message_areas.list, true);
+    render_vertical_scrollbar(
+        frame,
+        message_areas.list,
+        state.message_scroll_row_position(content_width, preview_width, max_preview_height),
+        message_areas.list.height as usize,
+        state.message_total_rendered_rows(content_width, preview_width, max_preview_height),
+    );
     render_typing_footer(frame, message_areas.typing, state);
     render_composer(frame, message_areas.composer, state);
     render_composer_mention_picker(frame, message_areas, state);
@@ -1000,6 +1026,13 @@ fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
             .wrap(Wrap { trim: false }),
         area,
     );
+    render_vertical_scrollbar(
+        frame,
+        panel_scrollbar_area(area),
+        state.member_scroll(),
+        state.member_content_height(),
+        state.member_line_count(),
+    );
 }
 
 fn member_group_header(group: &MemberGroup<'_>) -> Line<'static> {
@@ -1198,16 +1231,19 @@ fn render_emoji_reaction_picker(
     }
 
     let selected = state.selected_emoji_reaction_index().unwrap_or(0);
-    let visible_items = reactions
+    let desired_visible_items = reactions
         .len()
         .clamp(1, super::selection::MAX_EMOJI_REACTION_VISIBLE_ITEMS);
-    let popup = centered_rect(area, 42, (visible_items as u16).saturating_add(4));
+    let popup = centered_rect(area, 42, (desired_visible_items as u16).saturating_add(4));
     let ready_urls = emoji_images
         .iter()
         .map(|image| image.url.clone())
         .collect::<Vec<_>>();
     let block = panel_block("Choose reaction", true);
     let content = block.inner(popup);
+    let visible_items = usize::from(content.height.saturating_sub(1)).min(desired_visible_items);
+    let visible_range =
+        super::selection::visible_item_range(reactions.len(), selected, visible_items);
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(emoji_reaction_picker_lines(
@@ -1227,6 +1263,16 @@ fn render_emoji_reaction_picker(
         selected,
         visible_items,
         emoji_images,
+    );
+    render_vertical_scrollbar(
+        frame,
+        Rect {
+            height: visible_items as u16,
+            ..content
+        },
+        visible_range.start,
+        visible_items,
+        reactions.len(),
     );
 }
 
@@ -1369,12 +1415,23 @@ fn render_user_profile_popup(
             selected_line: None,
         }
     };
+    let total_lines = popup_text.lines.len();
+    let selected_line = popup_text.selected_line;
+    let scroll_position =
+        user_profile_popup_scroll_position(total_lines, selected_line, text_area.height as usize);
     let lines = user_profile_popup_visible_lines(
         popup_text.lines,
-        popup_text.selected_line,
+        selected_line,
         text_area.height as usize,
     );
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), text_area);
+    render_vertical_scrollbar(
+        frame,
+        text_area,
+        scroll_position,
+        text_area.height as usize,
+        total_lines,
+    );
 
     if let Some(avatar) = avatar.filter(|_| has_avatar) {
         let avatar_area = Rect {
@@ -1523,17 +1580,25 @@ fn user_profile_popup_visible_lines(
         return Vec::new();
     }
 
-    let max_scroll = lines.len().saturating_sub(visible_height);
-    let scroll = selected_line
-        .map(|line| line.saturating_add(1).saturating_sub(visible_height))
-        .unwrap_or(0)
-        .min(max_scroll);
+    let scroll = user_profile_popup_scroll_position(lines.len(), selected_line, visible_height);
 
     lines
         .into_iter()
         .skip(scroll)
         .take(visible_height)
         .collect()
+}
+
+fn user_profile_popup_scroll_position(
+    total_lines: usize,
+    selected_line: Option<usize>,
+    visible_height: usize,
+) -> usize {
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    selected_line
+        .map(|line| line.saturating_add(1).saturating_sub(visible_height))
+        .unwrap_or(0)
+        .min(max_scroll)
 }
 
 fn user_profile_display_name_style(status: PresenceStatus) -> Style {
@@ -1602,6 +1667,16 @@ fn render_reaction_users_popup(frame: &mut Frame, area: Rect, state: &DashboardS
         Paragraph::new(lines).block(panel_block("Reacted users", true)),
         popup,
     );
+    render_vertical_scrollbar(
+        frame,
+        Rect {
+            height: max_visible_lines as u16,
+            ..panel_scrollbar_area(popup)
+        },
+        popup_state.scroll(),
+        max_visible_lines,
+        popup_state.data_line_count(),
+    );
 }
 
 fn render_debug_log_popup(frame: &mut Frame, area: Rect, state: &DashboardState) {
@@ -1641,6 +1716,39 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
         width,
         height,
     }
+}
+
+fn panel_scrollbar_area(area: Rect) -> Rect {
+    area.inner(Margin {
+        vertical: 1,
+        horizontal: 0,
+    })
+}
+
+fn render_vertical_scrollbar(
+    frame: &mut Frame,
+    area: Rect,
+    position: usize,
+    viewport_len: usize,
+    content_len: usize,
+) {
+    if area.height == 0 || viewport_len == 0 || content_len <= viewport_len {
+        return;
+    }
+
+    let max_position = content_len.saturating_sub(viewport_len);
+    let position = position.min(max_position);
+    let scrollbar_content_len = max_position.saturating_add(1);
+    let mut state = ScrollbarState::new(scrollbar_content_len)
+        .position(position)
+        .viewport_content_length(viewport_len);
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None)
+        .thumb_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
+        .track_style(Style::default().fg(DIM));
+
+    frame.render_stateful_widget(scrollbar, area, &mut state);
 }
 
 fn reaction_users_visible_line_count(area: Rect) -> usize {
