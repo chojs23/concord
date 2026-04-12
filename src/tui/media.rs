@@ -349,8 +349,8 @@ fn fit_image_to_canvas(image: &DynamicImage, width: u32, height: u32) -> Dynamic
 mod tests {
     use std::collections::HashMap;
 
+    use crate::discord::ids::{Id, marker::MessageMarker};
     use image::{DynamicImage, ImageBuffer, Rgba};
-    use twilight_model::id::{Id, marker::MessageMarker};
 
     use crate::{
         discord::{

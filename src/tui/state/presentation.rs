@@ -1,5 +1,5 @@
+use crate::discord::ids::{Id, marker::RoleMarker};
 use ratatui::style::Color;
-use twilight_model::id::{Id, marker::RoleMarker};
 
 use crate::discord::{
     ChannelRecipientState, ChannelState, GuildMemberState, PresenceStatus, RoleState,
@@ -9,6 +9,10 @@ use crate::discord::{
 /// Falls back to a neutral cyan when the color is missing or zero so
 /// uncolored folders still read as folder headers.
 pub fn folder_color(color: Option<u32>) -> Color {
+    discord_color(color, Color::Cyan)
+}
+
+pub fn discord_color(color: Option<u32>, fallback: Color) -> Color {
     match color {
         Some(value) if value != 0 => {
             let r = ((value >> 16) & 0xFF) as u8;
@@ -16,7 +20,7 @@ pub fn folder_color(color: Option<u32>) -> Color {
             let b = (value & 0xFF) as u8;
             Color::Rgb(r, g, b)
         }
-        _ => Color::Cyan,
+        _ => fallback,
     }
 }
 
@@ -106,11 +110,8 @@ fn member_status_rank(status: PresenceStatus) -> u8 {
 
 pub fn presence_marker(status: PresenceStatus) -> char {
     match status {
-        PresenceStatus::Online => '●',
-        PresenceStatus::Idle => '◐',
-        PresenceStatus::DoNotDisturb => '⊘',
-        PresenceStatus::Offline => '○',
-        PresenceStatus::Unknown => ' ',
+        PresenceStatus::Online | PresenceStatus::Idle | PresenceStatus::DoNotDisturb => '●',
+        PresenceStatus::Offline | PresenceStatus::Unknown => ' ',
     }
 }
 

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use twilight_model::id::{
+use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker},
 };
@@ -88,7 +88,7 @@ enum HistoryRequestState {
 
 #[cfg(test)]
 mod tests {
-    use twilight_model::id::Id;
+    use crate::discord::ids::Id;
 
     use crate::discord::AppEvent;
 

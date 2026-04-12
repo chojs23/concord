@@ -10,6 +10,10 @@ mod ui;
 
 use std::io::stdout;
 
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, GuildMarker},
+};
 use crossterm::{
     event::{
         Event as TerminalEvent, EventStream, KeyEventKind, KeyboardEnhancementFlags,
@@ -19,10 +23,6 @@ use crossterm::{
 };
 use futures::StreamExt;
 use tokio::sync::{broadcast, mpsc};
-use twilight_model::id::{
-    Id,
-    marker::{ChannelMarker, GuildMarker},
-};
 
 use crate::{
     Result,

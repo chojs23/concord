@@ -1,3 +1,4 @@
+use crate::discord::ids::{Id, marker::MessageMarker};
 use chrono::{DateTime, Local, NaiveDate};
 use ratatui::{
     Frame,
@@ -10,7 +11,6 @@ use ratatui::{
     },
 };
 use ratatui_image::{Image as RatatuiImage, Resize, StatefulImage, protocol::StatefulProtocol};
-use twilight_model::id::{Id, marker::MessageMarker};
 use unicode_width::UnicodeWidthStr;
 
 use super::{
@@ -22,8 +22,8 @@ use super::{
     state::{
         ChannelActionItem, ChannelPaneEntry, ChannelThreadItem, DashboardState, EmojiReactionItem,
         FocusPane, GuildPaneEntry, MAX_MENTION_PICKER_VISIBLE, MemberActionItem, MemberEntry,
-        MemberGroup, MentionPickerEntry, MessageActionItem, PollVotePickerItem, folder_color,
-        presence_color, presence_marker,
+        MemberGroup, MentionPickerEntry, MessageActionItem, PollVotePickerItem, discord_color,
+        folder_color, presence_color, presence_marker,
     },
 };
 use crate::discord::{
@@ -551,6 +551,7 @@ fn message_viewport_lines(
     let mut lines = Vec::new();
     for (index, message) in messages.iter().enumerate() {
         let author = message.author.clone();
+        let author_style = message_author_style(state.message_author_role_color(message));
         let content = format_message_content_lines(message, state, content_width.max(8));
         let preview = preview_for_message(image_previews, index);
         let preview_height = preview.map(|preview| preview.preview_height).unwrap_or(0);
@@ -569,6 +570,7 @@ fn message_viewport_lines(
 
         let item_lines = message_item_lines(
             author,
+            author_style,
             format_message_sent_time(message.id),
             content,
             content_width,
@@ -587,6 +589,7 @@ fn message_viewport_lines(
 
 fn message_item_lines(
     author: String,
+    author_style: Style,
     sent_time: String,
     content: Vec<MessageContentLine>,
     content_width: usize,
@@ -602,7 +605,7 @@ fn message_item_lines(
     let author = truncate_display_width(&author, author_width);
     let mut lines = vec![Line::from(vec![
         message_avatar_span(),
-        Span::styled(author, message_author_style()),
+        Span::styled(author, author_style),
         Span::raw(" "),
         Span::styled(sent_time, Style::default().fg(DIM)),
     ])];
@@ -619,8 +622,10 @@ fn message_item_lines(
     lines.into_iter().skip(line_offset).collect()
 }
 
-fn message_author_style() -> Style {
-    Style::default().fg(Color::White).bold()
+fn message_author_style(role_color: Option<u32>) -> Style {
+    Style::default()
+        .fg(discord_color(role_color, Color::White))
+        .bold()
 }
 
 fn message_content_width(list: Rect) -> usize {
@@ -992,15 +997,8 @@ fn render_members(frame: &mut Frame, area: Rect, state: &DashboardState) {
             let member = *member;
             let is_selected = focused && selected_line == Some(line_index);
             let marker_style = Style::default().fg(presence_color(member.status()));
-            let mut name_style = Style::default().fg(presence_color(member.status()));
-            if member.is_bot() {
-                name_style = name_style.add_modifier(Modifier::ITALIC);
-            }
-            if is_selected {
-                name_style = name_style
-                    .bg(Color::Rgb(24, 54, 65))
-                    .add_modifier(Modifier::BOLD);
-            }
+            let name_style =
+                member_name_style(member, state.member_role_color(member), is_selected);
 
             let display = member_display_label(member, max_name_width);
             lines.push(Line::from(vec![
@@ -1040,7 +1038,7 @@ fn member_group_header(group: &MemberGroup<'_>) -> Line<'static> {
         Span::styled(
             group.label.clone(),
             Style::default()
-                .fg(discord_role_color(group.color))
+                .fg(discord_color(group.color, DIM))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -1048,6 +1046,25 @@ fn member_group_header(group: &MemberGroup<'_>) -> Line<'static> {
             Style::default().fg(DIM),
         ),
     ])
+}
+
+fn member_name_style(member: MemberEntry<'_>, role_color: Option<u32>, is_selected: bool) -> Style {
+    let mut style = Style::default().fg(discord_color(role_color, Color::White));
+    if matches!(
+        member.status(),
+        PresenceStatus::Offline | PresenceStatus::Unknown
+    ) {
+        style = style.add_modifier(Modifier::DIM);
+    }
+    if member.is_bot() {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    if is_selected {
+        style = style
+            .bg(Color::Rgb(24, 54, 65))
+            .add_modifier(Modifier::BOLD);
+    }
+    style
 }
 
 fn member_display_label(member: MemberEntry<'_>, max_width: usize) -> String {
@@ -1067,18 +1084,6 @@ fn member_display_label(member: MemberEntry<'_>, max_width: usize) -> String {
         truncate_display_width(&display_name, max_width.saturating_sub(suffix_width)),
         BOT_SUFFIX
     )
-}
-
-fn discord_role_color(color: Option<u32>) -> Color {
-    match color {
-        Some(value) if value != 0 => {
-            let r = ((value >> 16) & 0xFF) as u8;
-            let g = ((value >> 8) & 0xFF) as u8;
-            let b = (value & 0xFF) as u8;
-            Color::Rgb(r, g, b)
-        }
-        _ => DIM,
-    }
 }
 
 fn panel_content_height(area: Rect, title: &'static str) -> usize {
@@ -2313,13 +2318,13 @@ fn composer_prompt_line_count(input: &str, width: u16) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use crate::discord::ids::{Id, marker::MessageMarker};
     use ratatui::{
         Terminal,
         backend::TestBackend,
         layout::Rect,
         style::{Color, Modifier, Style},
     };
-    use twilight_model::id::{Id, marker::MessageMarker};
     use unicode_width::UnicodeWidthStr;
 
     use super::{
@@ -2328,19 +2333,20 @@ mod tests {
         composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
         emoji_reaction_picker_lines, footer_hint, format_message_sent_time,
         format_unix_millis_with_offset, highlight_style, inline_image_preview_area,
-        inline_image_preview_row, member_display_label, message_action_menu_lines,
-        message_author_style, message_item_lines, message_starts_new_day, message_viewport_lines,
-        poll_vote_picker_lines, reaction_users_popup_lines, reaction_users_visible_line_count,
-        sync_view_heights, user_profile_display_name_style, user_profile_popup_lines,
-        user_profile_popup_text, user_profile_popup_visible_lines,
+        inline_image_preview_row, member_display_label, member_name_style,
+        message_action_menu_lines, message_author_style, message_item_lines,
+        message_starts_new_day, message_viewport_lines, poll_vote_picker_lines,
+        reaction_users_popup_lines, reaction_users_visible_line_count, sync_view_heights,
+        user_profile_display_name_style, user_profile_popup_lines, user_profile_popup_text,
+        user_profile_popup_visible_lines,
     };
     use crate::{
         discord::{
             AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientState, ChannelState,
             ChannelVisibilityStats, EmbedInfo, FriendStatus, GuildMemberState, MemberInfo,
-            MentionInfo, MessageKind, MessageSnapshotInfo, MessageState, MutualGuildInfo,
-            PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
-            ReactionUserInfo, ReactionUsersInfo, ReplyInfo, UserProfileInfo,
+            MentionInfo, MessageInfo, MessageKind, MessageSnapshotInfo, MessageState,
+            MutualGuildInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
+            ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo, UserProfileInfo,
         },
         tui::{
             format::{TextHighlightKind, truncate_display_width},
@@ -2443,10 +2449,176 @@ mod tests {
 
     #[test]
     fn message_author_style_is_bold_white() {
-        let style = message_author_style();
+        let style = message_author_style(None);
 
         assert_eq!(style.fg, Some(Color::White));
         assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn message_author_style_uses_role_color_when_available() {
+        let style = message_author_style(Some(0x3366CC));
+
+        assert_eq!(style.fg, Some(Color::Rgb(0x33, 0x66, 0xCC)));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn message_viewport_author_uses_resolved_role_color() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let author_id = Id::new(99);
+        let role_id = Id::new(100);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            }],
+            members: vec![MemberInfo {
+                user_id: author_id,
+                display_name: "neo".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: vec![role_id],
+            }],
+            presences: vec![(author_id, PresenceStatus::Online)],
+            roles: vec![RoleInfo {
+                id: role_id,
+                name: "Blue".to_owned(),
+                color: Some(0x3366CC),
+                position: 10,
+                hoist: false,
+                permissions: 0,
+            }],
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(1),
+            author_id,
+            author: "fallback".to_owned(),
+            author_avatar_url: None,
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let messages = state.messages();
+        let lines = message_viewport_lines(&messages, None, &state, 40, 80, &[]);
+
+        assert_eq!(
+            lines[0].spans[1].style.fg,
+            Some(Color::Rgb(0x33, 0x66, 0xCC))
+        );
+    }
+
+    #[test]
+    fn history_message_author_uses_channel_guild_for_role_color() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let author_id = Id::new(99);
+        let role_id = Id::new(100);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            }],
+            members: vec![MemberInfo {
+                user_id: author_id,
+                display_name: "neo".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: vec![role_id],
+            }],
+            presences: vec![(author_id, PresenceStatus::Online)],
+            roles: vec![RoleInfo {
+                id: role_id,
+                name: "Blue".to_owned(),
+                color: Some(0x3366CC),
+                position: 10,
+                hoist: false,
+                permissions: 0,
+            }],
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.push_event(AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![MessageInfo {
+                guild_id: None,
+                channel_id,
+                message_id: Id::new(1),
+                author_id,
+                author: "fallback".to_owned(),
+                author_avatar_url: None,
+                message_kind: crate::discord::MessageKind::regular(),
+                reference: None,
+                reply: None,
+                poll: None,
+                pinned: false,
+                reactions: Vec::new(),
+                content: Some("hello".to_owned()),
+                mentions: Vec::new(),
+                attachments: Vec::new(),
+                embeds: Vec::new(),
+                forwarded_snapshots: Vec::new(),
+            }],
+        });
+
+        let messages = state.messages();
+        let lines = message_viewport_lines(&messages, None, &state, 40, 80, &[]);
+
+        assert_eq!(
+            lines[0].spans[1].style.fg,
+            Some(Color::Rgb(0x33, 0x66, 0xCC))
+        );
     }
 
     #[test]
@@ -2730,6 +2902,7 @@ mod tests {
 
         let lines = message_item_lines(
             message.author.clone(),
+            message_author_style(None),
             "00:00".to_owned(),
             format_message_content_lines(&message, &state, 200),
             40,
@@ -2764,6 +2937,7 @@ mod tests {
 
         let lines = message_item_lines(
             message.author.clone(),
+            message_author_style(None),
             "00:00".to_owned(),
             format_message_content_lines(&message, &state, 200),
             40,
@@ -2799,6 +2973,7 @@ mod tests {
 
         let lines = message_item_lines(
             message.author.clone(),
+            message_author_style(None),
             "00:00".to_owned(),
             format_message_content_lines(&message, &state, 200),
             40,
@@ -2830,6 +3005,7 @@ mod tests {
 
         let lines = message_item_lines(
             message.author.clone(),
+            message_author_style(None),
             "00:00".to_owned(),
             format_message_content_lines(&message, &state, 200),
             40,
@@ -2865,6 +3041,7 @@ mod tests {
 
         let lines = message_item_lines(
             message.author.clone(),
+            message_author_style(None),
             "00:00".to_owned(),
             format_message_content_lines(&message, &state, 200),
             40,
@@ -2896,6 +3073,7 @@ mod tests {
 
         let lines = message_item_lines(
             message.author.clone(),
+            message_author_style(None),
             "00:00".to_owned(),
             format_message_content_lines(&message, &state, 200),
             40,
@@ -3979,6 +4157,7 @@ mod tests {
     fn image_preview_rows_are_part_of_the_message_item() {
         let lines = message_item_lines(
             "neo".to_owned(),
+            message_author_style(None),
             "00:00".to_owned(),
             vec![MessageContentLine::plain("look".to_owned())],
             14,
@@ -3994,6 +4173,7 @@ mod tests {
     fn embed_image_preview_rows_continue_embed_gutter() {
         let lines = message_item_lines(
             "neo".to_owned(),
+            message_author_style(None),
             "00:00".to_owned(),
             vec![MessageContentLine::plain("look".to_owned())],
             14,
@@ -4010,6 +4190,7 @@ mod tests {
     fn text_only_message_item_has_header_and_content_rows() {
         let lines = message_item_lines(
             "neo".to_owned(),
+            message_author_style(None),
             "00:00".to_owned(),
             vec![MessageContentLine::plain("look".to_owned())],
             14,
@@ -4028,6 +4209,7 @@ mod tests {
     fn message_item_lines_can_start_after_line_offset() {
         let lines = message_item_lines(
             "neo".to_owned(),
+            message_author_style(None),
             "00:00".to_owned(),
             vec![
                 MessageContentLine::plain("first".to_owned()),
@@ -4050,6 +4232,7 @@ mod tests {
     fn message_item_header_uses_display_width_for_wide_author() {
         let ascii = message_item_lines(
             "bruised8".to_owned(),
+            message_author_style(None),
             "00:00".to_owned(),
             vec![MessageContentLine::plain("plain text".to_owned())],
             14,
@@ -4059,6 +4242,7 @@ mod tests {
         );
         let wide = message_item_lines(
             "漢字名".to_owned(),
+            message_author_style(None),
             "00:00".to_owned(),
             vec![MessageContentLine::plain("plain text".to_owned())],
             14,
@@ -4095,6 +4279,86 @@ mod tests {
 
         assert_eq!(label, "漢字仮名...");
         assert!(label.width() <= 12);
+    }
+
+    #[test]
+    fn offline_member_name_keeps_role_color_and_dims() {
+        let member = GuildMemberState {
+            user_id: Id::new(10),
+            display_name: "neo".to_owned(),
+            username: None,
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+            status: PresenceStatus::Offline,
+        };
+
+        let style = member_name_style(MemberEntry::Guild(&member), Some(0x3366CC), false);
+
+        assert_eq!(style.fg, Some(Color::Rgb(0x33, 0x66, 0xCC)));
+        assert!(style.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn no_role_member_name_stays_white_for_online_like_statuses() {
+        for status in [
+            PresenceStatus::Online,
+            PresenceStatus::Idle,
+            PresenceStatus::DoNotDisturb,
+        ] {
+            let member = GuildMemberState {
+                user_id: Id::new(10),
+                display_name: "neo".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+                status,
+            };
+
+            let style = member_name_style(MemberEntry::Guild(&member), None, false);
+
+            assert_eq!(style.fg, Some(Color::White));
+            assert!(!style.add_modifier.contains(Modifier::DIM));
+        }
+    }
+
+    #[test]
+    fn no_role_offline_member_name_is_white_and_dimmed() {
+        let member = GuildMemberState {
+            user_id: Id::new(10),
+            display_name: "neo".to_owned(),
+            username: None,
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+            status: PresenceStatus::Offline,
+        };
+
+        let style = member_name_style(MemberEntry::Guild(&member), None, false);
+
+        assert_eq!(style.fg, Some(Color::White));
+        assert!(style.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn selected_bot_member_name_preserves_role_color_and_selection_style() {
+        let member = GuildMemberState {
+            user_id: Id::new(10),
+            display_name: "bot".to_owned(),
+            username: None,
+            is_bot: true,
+            avatar_url: None,
+            role_ids: Vec::new(),
+            status: PresenceStatus::Online,
+        };
+
+        let style = member_name_style(MemberEntry::Guild(&member), Some(0x3366CC), true);
+
+        assert_eq!(style.fg, Some(Color::Rgb(0x33, 0x66, 0xCC)));
+        assert_eq!(style.bg, Some(Color::Rgb(24, 54, 65)));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+        assert!(style.add_modifier.contains(Modifier::ITALIC));
     }
 
     #[test]

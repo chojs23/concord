@@ -3,10 +3,10 @@ use std::{
     sync::Arc,
 };
 
+use crate::discord::ids::{Id, marker::MessageMarker};
 use image::{DynamicImage, imageops::FilterType};
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
 use tokio::{sync::mpsc, task};
-use twilight_model::id::{Id, marker::MessageMarker};
 
 use crate::{
     discord::{AppCommand, AppEvent},

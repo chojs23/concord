@@ -3,6 +3,7 @@ mod client;
 mod commands;
 mod events;
 mod gateway;
+pub mod ids;
 pub mod password_auth;
 pub mod qr_auth;
 mod rest;
@@ -19,6 +20,7 @@ pub use events::{
     PresenceStatus, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo,
     UserProfileInfo,
 };
+pub use ids::{Id, marker};
 pub use state::{
     ChannelRecipientState, ChannelState, ChannelVisibilityStats, DiscordState, GuildMemberState,
     GuildState, MessageCapabilities, MessageState, RoleState,

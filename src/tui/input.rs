@@ -323,8 +323,8 @@ fn handle_mention_picker_key(
 
 #[cfg(test)]
 mod tests {
+    use crate::discord::ids::Id;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use twilight_model::id::Id;
 
     use super::handle_key;
     use crate::{

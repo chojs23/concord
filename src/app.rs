@@ -6,12 +6,12 @@ use std::{
     time::Instant,
 };
 
-use tokio::sync::mpsc;
-use tokio::time::{Duration, timeout};
-use twilight_model::id::{
+use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, MessageMarker},
 };
+use tokio::sync::mpsc;
+use tokio::time::{Duration, timeout};
 
 use crate::{
     DiscordClient, Result,
@@ -89,10 +89,7 @@ fn start_command_loop(
                             client.publish_event(AppEvent::MessageHistoryLoaded {
                                 channel_id,
                                 before,
-                                messages: messages
-                                    .into_iter()
-                                    .map(MessageInfo::from_message)
-                                    .collect(),
+                                messages,
                             });
                         }
                         Err(error) => {
@@ -186,7 +183,7 @@ fn start_command_loop(
                     content,
                     reply_to,
                 } => match client.send_message(channel_id, &content, reply_to).await {
-                    Ok(message) => client.publish_event(AppEvent::from_message(message)),
+                    Ok(message) => client.publish_event(message_create_event(message)),
                     Err(error) => {
                         log_app_error("send message failed", &error);
                         client.publish_event(AppEvent::GatewayError {
@@ -434,6 +431,26 @@ fn format_pinned_messages(messages: &[MessageInfo]) -> String {
     }
 }
 
+fn message_create_event(message: MessageInfo) -> AppEvent {
+    AppEvent::MessageCreate {
+        guild_id: message.guild_id,
+        channel_id: message.channel_id,
+        message_id: message.message_id,
+        author_id: message.author_id,
+        author: message.author,
+        author_avatar_url: message.author_avatar_url,
+        message_kind: message.message_kind,
+        reference: message.reference,
+        reply: message.reply,
+        poll: message.poll,
+        content: message.content,
+        mentions: message.mentions,
+        attachments: message.attachments,
+        embeds: message.embeds,
+        forwarded_snapshots: message.forwarded_snapshots,
+    }
+}
+
 fn truncate_status(value: &str, max_chars: usize) -> String {
     let mut chars = value.chars();
     let truncated = chars.by_ref().take(max_chars).collect::<String>();
@@ -650,7 +667,7 @@ async fn shutdown_gateway(gateway_task: tokio::task::JoinHandle<()>) {
 mod tests {
     use std::{fs, process};
 
-    use twilight_model::id::Id;
+    use crate::discord::ids::Id;
 
     use super::{format_message_history_endpoint, sanitize_filename, write_unique_download_file};
 

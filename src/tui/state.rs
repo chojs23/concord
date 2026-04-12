@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use twilight_model::id::{
+use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
@@ -52,7 +52,7 @@ pub use model::{
 pub use popups::{
     EmojiReactionPickerState, MessageActionMenuState, PollVotePickerState, ReactionUsersPopupState,
 };
-pub use presentation::{folder_color, presence_color, presence_marker};
+pub use presentation::{discord_color, folder_color, presence_color, presence_marker};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OlderHistoryRequestState {
@@ -2226,6 +2226,21 @@ impl DashboardState {
         let members = self.discord.members_for_guild(guild_id);
         let roles = self.discord.roles_for_guild(guild_id);
         guild_member_groups(members, roles)
+    }
+
+    pub fn message_author_role_color(&self, message: &MessageState) -> Option<u32> {
+        let guild_id = message.guild_id.or_else(|| {
+            self.discord
+                .channel(message.channel_id)
+                .and_then(|channel| channel.guild_id)
+        });
+        let guild_id = guild_id?;
+        self.discord.member_role_color(guild_id, message.author_id)
+    }
+
+    pub fn member_role_color(&self, member: MemberEntry<'_>) -> Option<u32> {
+        let guild_id = self.selected_guild_id()?;
+        self.discord.member_role_color(guild_id, member.user_id())
     }
 
     pub fn member_panel_title(&self) -> String {

@@ -1,23 +1,15 @@
-use std::sync::Arc;
-
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+};
 use reqwest::header::AUTHORIZATION;
 use serde_json::{Value, json};
-use twilight_http::Client as HttpClient;
-use twilight_http::request::channel::reaction::RequestReactionType;
-use twilight_model::{
-    channel::Message,
-    channel::message::ReactionType,
-    id::{
-        Id,
-        marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
-    },
-};
 
 use crate::{
     AppError, Result,
     discord::{
-        FriendStatus, MutualGuildInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
-        events::reaction_user_info,
+        FriendStatus, MessageInfo, MutualGuildInfo, ReactionEmoji, ReactionUserInfo,
+        UserProfileInfo, gateway::parse_message_info,
     },
 };
 
@@ -25,15 +17,13 @@ const REACTION_USERS_PAGE_LIMIT: u16 = 100;
 
 #[derive(Clone, Debug)]
 pub struct DiscordRest {
-    http: Arc<HttpClient>,
     raw_http: reqwest::Client,
     token: String,
 }
 
 impl DiscordRest {
-    pub fn new(http: Arc<HttpClient>, token: String) -> Self {
+    pub fn new(token: String) -> Self {
         Self {
-            http,
             raw_http: reqwest::Client::new(),
             token,
         }
@@ -44,17 +34,36 @@ impl DiscordRest {
         channel_id: Id<ChannelMarker>,
         content: &str,
         reply_to: Option<Id<MessageMarker>>,
-    ) -> Result<Message> {
+    ) -> Result<MessageInfo> {
         validate_message_content(content)?;
-
-        let mut request = self.http.create_message(channel_id).content(content);
+        let mut body = json!({ "content": content });
         if let Some(message_id) = reply_to {
-            request = request.reply(message_id);
+            body["message_reference"] = json!({ "message_id": message_id.to_string() });
         }
 
-        let response = request.await?;
-
-        response.model().await.map_err(Into::into)
+        let raw = self
+            .raw_http
+            .post(format!(
+                "https://discord.com/api/v9/channels/{}/messages",
+                channel_id.get()
+            ))
+            .header(AUTHORIZATION, &self.token)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("send message request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| AppError::DiscordRequest(format!("send message failed: {error}")))?
+            .json::<Value>()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("send message decode failed: {error}"))
+            })?;
+        parse_message_info(&raw).ok_or_else(|| {
+            AppError::DiscordRequest("send message response was missing required fields".to_owned())
+        })
     }
 
     pub async fn load_message_history(
@@ -62,14 +71,42 @@ impl DiscordRest {
         channel_id: Id<ChannelMarker>,
         before: Option<Id<MessageMarker>>,
         limit: u16,
-    ) -> Result<Vec<Message>> {
-        let request = self.http.channel_messages(channel_id);
-        let response = match before {
-            Some(message_id) => request.before(message_id).limit(limit).await?,
-            None => request.limit(limit).await?,
-        };
+    ) -> Result<Vec<MessageInfo>> {
+        let mut request = self
+            .raw_http
+            .get(format!(
+                "https://discord.com/api/v9/channels/{}/messages",
+                channel_id.get()
+            ))
+            .header(AUTHORIZATION, &self.token)
+            .query(&[("limit", limit.to_string())]);
+        if let Some(message_id) = before {
+            request = request.query(&[("before", message_id.to_string())]);
+        }
+        let raw_messages: Vec<Value> = request
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("message history request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| AppError::DiscordRequest(format!("message history failed: {error}")))?
+            .json()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("message history decode failed: {error}"))
+            })?;
 
-        response.models().await.map_err(Into::into)
+        raw_messages
+            .iter()
+            .map(|raw| {
+                parse_message_info(raw).ok_or_else(|| {
+                    AppError::DiscordRequest(
+                        "history message response was missing required fields".to_owned(),
+                    )
+                })
+            })
+            .collect()
     }
 
     pub async fn add_reaction(
@@ -78,10 +115,21 @@ impl DiscordRest {
         message_id: Id<MessageMarker>,
         emoji: &ReactionEmoji,
     ) -> Result<()> {
-        let reaction = request_reaction_type(emoji);
-        self.http
-            .create_reaction(channel_id, message_id, &reaction)
-            .await?;
+        self.raw_http
+            .put(format!(
+                "https://discord.com/api/v9/channels/{}/messages/{}/reactions/{}/@me",
+                channel_id.get(),
+                message_id.get(),
+                reaction_route_component(emoji)
+            ))
+            .header(AUTHORIZATION, &self.token)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("add reaction request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| AppError::DiscordRequest(format!("add reaction failed: {error}")))?;
         Ok(())
     }
 
@@ -91,10 +139,23 @@ impl DiscordRest {
         message_id: Id<MessageMarker>,
         emoji: &ReactionEmoji,
     ) -> Result<()> {
-        let reaction = request_reaction_type(emoji);
-        self.http
-            .delete_current_user_reaction(channel_id, message_id, &reaction)
-            .await?;
+        self.raw_http
+            .delete(format!(
+                "https://discord.com/api/v9/channels/{}/messages/{}/reactions/{}/@me",
+                channel_id.get(),
+                message_id.get(),
+                reaction_route_component(emoji)
+            ))
+            .header(AUTHORIZATION, &self.token)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("remove reaction request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("remove reaction failed: {error}"))
+            })?;
         Ok(())
     }
 
@@ -104,23 +165,51 @@ impl DiscordRest {
         message_id: Id<MessageMarker>,
         emoji: &ReactionEmoji,
     ) -> Result<Vec<ReactionUserInfo>> {
-        let reaction = request_reaction_type(emoji);
         let mut users = Vec::new();
-        let mut after = None;
+        let mut after: Option<Id<UserMarker>> = None;
 
         loop {
             let mut request = self
-                .http
-                .reactions(channel_id, message_id, &reaction)
-                .kind(ReactionType::Normal)
-                .limit(REACTION_USERS_PAGE_LIMIT);
+                .raw_http
+                .get(format!(
+                    "https://discord.com/api/v9/channels/{}/messages/{}/reactions/{}",
+                    channel_id.get(),
+                    message_id.get(),
+                    reaction_route_component(emoji)
+                ))
+                .header(AUTHORIZATION, &self.token)
+                .query(&[
+                    ("limit", REACTION_USERS_PAGE_LIMIT.to_string()),
+                    ("type", "0".to_owned()),
+                ]);
             if let Some(user_id) = after {
-                request = request.after(user_id);
+                request = request.query(&[("after", user_id.to_string())]);
             }
 
-            let page = request.await?.models().await?;
-            let next_after = next_reaction_users_after(page.len(), page.last().map(|user| user.id));
-            users.extend(page.into_iter().map(|user| reaction_user_info(&user)));
+            let page: Vec<Value> = request
+                .send()
+                .await
+                .map_err(|error| {
+                    AppError::DiscordRequest(format!("reaction users request failed: {error}"))
+                })?
+                .error_for_status()
+                .map_err(|error| {
+                    AppError::DiscordRequest(format!("reaction users failed: {error}"))
+                })?
+                .json()
+                .await
+                .map_err(|error| {
+                    AppError::DiscordRequest(format!("reaction users decode failed: {error}"))
+                })?;
+            let parsed_page: Vec<ReactionUserInfo> = page
+                .iter()
+                .filter_map(reaction_user_info_from_raw)
+                .collect();
+            let next_after = next_reaction_users_after(
+                parsed_page.len(),
+                parsed_page.last().map(|user| user.user_id),
+            );
+            users.extend(parsed_page);
 
             let Some(user_id) = next_after else {
                 break;
@@ -134,18 +223,45 @@ impl DiscordRest {
     pub async fn load_pinned_messages(
         &self,
         channel_id: Id<ChannelMarker>,
-    ) -> Result<Vec<Message>> {
-        Ok(self
-            .http
-            .pins(channel_id)
-            .limit(50)
-            .await?
-            .model()
-            .await?
-            .items
+    ) -> Result<Vec<MessageInfo>> {
+        let raw: Value = self
+            .raw_http
+            .get(format!(
+                "https://discord.com/api/v9/channels/{}/messages/pins",
+                channel_id.get()
+            ))
+            .header(AUTHORIZATION, &self.token)
+            .query(&[("limit", "50")])
+            .send()
+            .await
+            .map_err(|error| AppError::DiscordRequest(format!("pins request failed: {error}")))?
+            .error_for_status()
+            .map_err(|error| AppError::DiscordRequest(format!("pins failed: {error}")))?
+            .json()
+            .await
+            .map_err(|error| AppError::DiscordRequest(format!("pins decode failed: {error}")))?;
+        let messages: Vec<&Value> = match &raw {
+            Value::Array(items) => items.iter().collect(),
+            Value::Object(object) => object
+                .get("items")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.get("message"))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        messages
             .into_iter()
-            .map(|pin| pin.message)
-            .collect())
+            .map(|raw| {
+                parse_message_info(raw).ok_or_else(|| {
+                    AppError::DiscordRequest("pin message was missing required fields".to_owned())
+                })
+            })
+            .collect()
     }
 
     pub async fn set_message_pinned(
@@ -154,11 +270,26 @@ impl DiscordRest {
         message_id: Id<MessageMarker>,
         pinned: bool,
     ) -> Result<()> {
-        if pinned {
-            self.http.create_pin(channel_id, message_id).await?;
+        let request = if pinned {
+            self.raw_http.put(format!(
+                "https://discord.com/api/v9/channels/{}/pins/{}",
+                channel_id.get(),
+                message_id.get()
+            ))
         } else {
-            self.http.delete_pin(channel_id, message_id).await?;
-        }
+            self.raw_http.delete(format!(
+                "https://discord.com/api/v9/channels/{}/pins/{}",
+                channel_id.get(),
+                message_id.get()
+            ))
+        };
+        request
+            .header(AUTHORIZATION, &self.token)
+            .send()
+            .await
+            .map_err(|error| AppError::DiscordRequest(format!("pin request failed: {error}")))?
+            .error_for_status()
+            .map_err(|error| AppError::DiscordRequest(format!("pin update failed: {error}")))?;
         Ok(())
     }
 
@@ -256,6 +387,25 @@ fn poll_vote_request_body(answer_ids: &[u8]) -> Value {
     json!({ "answer_ids": answer_ids })
 }
 
+fn reaction_user_info_from_raw(value: &Value) -> Option<ReactionUserInfo> {
+    let user_id = value
+        .get("id")
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .and_then(Id::<UserMarker>::new_checked)?;
+    let display_name = value
+        .get("global_name")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .or_else(|| value.get("username").and_then(Value::as_str))?
+        .to_owned();
+
+    Some(ReactionUserInfo {
+        user_id,
+        display_name,
+    })
+}
+
 /// Builds the dashboard's `UserProfileInfo` from Discord's
 /// `/users/{id}/profile` JSON. Friend status is left as `None` here — the
 /// caller fills it in from cached relationship data.
@@ -351,14 +501,26 @@ fn profile_avatar_url(user: &Value) -> Option<String> {
     ))
 }
 
-pub fn request_reaction_type(emoji: &ReactionEmoji) -> RequestReactionType<'_> {
+fn reaction_route_component(emoji: &ReactionEmoji) -> String {
     match emoji {
-        ReactionEmoji::Unicode(name) => RequestReactionType::Unicode { name },
-        ReactionEmoji::Custom { id, name, .. } => RequestReactionType::Custom {
-            id: *id,
-            name: name.as_deref(),
-        },
+        ReactionEmoji::Unicode(name) => percent_encode_path_segment(name),
+        ReactionEmoji::Custom { id, name, .. } => {
+            percent_encode_path_segment(&format!("{}:{id}", name.as_deref().unwrap_or_default()))
+        }
     }
+}
+
+fn percent_encode_path_segment(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(char::from(byte));
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 fn next_reaction_users_after(
@@ -385,15 +547,14 @@ pub fn validate_message_content(content: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use twilight_http::request::channel::reaction::RequestReactionType;
-    use twilight_model::id::Id;
+    use crate::discord::ids::{Id, marker::EmojiMarker};
 
     use crate::{
         AppError,
         discord::{
             ReactionEmoji,
             rest::{
-                next_reaction_users_after, poll_vote_request_body, request_reaction_type,
+                next_reaction_users_after, poll_vote_request_body, reaction_route_component,
                 validate_message_content,
             },
         },
@@ -413,30 +574,21 @@ mod tests {
     }
 
     #[test]
-    fn unicode_reaction_uses_twilight_unicode_request_type() {
+    fn unicode_reaction_route_component_is_percent_encoded() {
         let reaction = ReactionEmoji::Unicode("🎉".to_owned());
 
-        assert_eq!(
-            request_reaction_type(&reaction),
-            RequestReactionType::Unicode { name: "🎉" }
-        );
+        assert_eq!(reaction_route_component(&reaction), "%F0%9F%8E%89");
     }
 
     #[test]
-    fn custom_reaction_uses_twilight_custom_request_type_without_animated() {
+    fn custom_reaction_route_component_uses_name_and_id() {
         let reaction = ReactionEmoji::Custom {
-            id: Id::new(42),
+            id: Id::<EmojiMarker>::new(42),
             name: Some("party".to_owned()),
             animated: true,
         };
 
-        assert_eq!(
-            request_reaction_type(&reaction),
-            RequestReactionType::Custom {
-                id: Id::new(42),
-                name: Some("party"),
-            }
-        );
+        assert_eq!(reaction_route_component(&reaction), "party%3A42");
     }
 
     #[test]

@@ -4,6 +4,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::discord::ids::{
+    Id,
+    marker::{
+        AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, RoleMarker,
+        UserMarker,
+    },
+};
 use futures::{SinkExt, StreamExt};
 use rand::Rng;
 use serde_json::{Value, json};
@@ -13,18 +20,13 @@ use tokio_tungstenite::{
     connect_async,
     tungstenite::{Message as WsMessage, protocol::CloseFrame},
 };
-use twilight_model::id::{
-    Id,
-    marker::{
-        AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, RoleMarker,
-        UserMarker,
-    },
-};
 
 use super::{
     AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, EmbedFieldInfo, EmbedInfo,
-    FriendStatus, GuildFolder, MemberInfo, MentionInfo, MessageKind, MessageReferenceInfo,
-    MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo, RoleInfo,
+    FriendStatus, GuildFolder, MemberInfo, MentionInfo, MessageInfo, MessageKind,
+    MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus,
+    ReactionInfo, ReplyInfo, RoleInfo,
+    commands::ReactionEmoji,
     events::default_avatar_url,
     events::{AppEvent, AttachmentUpdate, PermissionOverwriteInfo, PermissionOverwriteKind},
 };
@@ -1190,6 +1192,27 @@ fn channel_array_len(value: &Value, field: &str) -> usize {
 }
 
 fn parse_message_create(data: &Value) -> Option<AppEvent> {
+    let message = parse_message_info(data)?;
+    Some(AppEvent::MessageCreate {
+        guild_id: message.guild_id,
+        channel_id: message.channel_id,
+        message_id: message.message_id,
+        author_id: message.author_id,
+        author: message.author,
+        author_avatar_url: message.author_avatar_url,
+        message_kind: message.message_kind,
+        reference: message.reference,
+        reply: message.reply,
+        poll: message.poll,
+        content: message.content,
+        mentions: message.mentions,
+        attachments: message.attachments,
+        embeds: message.embeds,
+        forwarded_snapshots: message.forwarded_snapshots,
+    })
+}
+
+pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
     let channel_id = parse_id::<ChannelMarker>(data.get("channel_id")?)?;
     let message_id = parse_id::<MessageMarker>(data.get("id")?)?;
     let author = data.get("author")?;
@@ -1223,7 +1246,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         .and_then(|reference| reference.channel_id);
     let forwarded_snapshots =
         parse_message_snapshots(data.get("message_snapshots"), source_channel_id);
-    Some(AppEvent::MessageCreate {
+    Some(MessageInfo {
         guild_id,
         channel_id,
         message_id,
@@ -1234,6 +1257,8 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         reference,
         reply,
         poll,
+        pinned: data.get("pinned").and_then(Value::as_bool).unwrap_or(false),
+        reactions: parse_reactions(data.get("reactions")),
         content,
         mentions,
         attachments,
@@ -1554,8 +1579,42 @@ fn parse_mentions(value: Option<&Value>) -> Vec<MentionInfo> {
         .unwrap_or_default()
 }
 
+fn parse_reactions(value: Option<&Value>) -> Vec<ReactionInfo> {
+    value
+        .and_then(Value::as_array)
+        .map(|reactions| reactions.iter().filter_map(parse_reaction_info).collect())
+        .unwrap_or_default()
+}
+
+fn parse_reaction_info(value: &Value) -> Option<ReactionInfo> {
+    Some(ReactionInfo {
+        emoji: parse_reaction_emoji(value.get("emoji")?)?,
+        count: value.get("count").and_then(Value::as_u64).unwrap_or(0),
+        me: value.get("me").and_then(Value::as_bool).unwrap_or(false),
+    })
+}
+
+fn parse_reaction_emoji(value: &Value) -> Option<ReactionEmoji> {
+    if let Some(id) = value.get("id").and_then(parse_id::<EmojiMarker>) {
+        return Some(ReactionEmoji::Custom {
+            id,
+            name: value.get("name").and_then(Value::as_str).map(str::to_owned),
+            animated: value
+                .get("animated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        });
+    }
+    value
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .map(|name| ReactionEmoji::Unicode(name.to_owned()))
+}
+
 fn parse_mention_info(value: &Value) -> Option<MentionInfo> {
     let user_id = parse_id::<UserMarker>(value.get("id")?)?;
+    let member = value.get("member");
     let nick = value
         .get("member")
         .and_then(|member| member.get("nick"))
@@ -1569,11 +1628,40 @@ fn parse_mention_info(value: &Value) -> Option<MentionInfo> {
         .get("username")
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty());
+    let display_name = nick.or(global_name).or(username)?;
+    log_mention_raw_fields(user_id, member, nick, global_name, username, display_name);
+
     Some(MentionInfo {
         user_id,
         guild_nick: nick.map(str::to_owned),
-        display_name: nick.or(global_name).or(username)?.to_owned(),
+        display_name: display_name.to_owned(),
     })
+}
+
+fn log_mention_raw_fields(
+    user_id: Id<UserMarker>,
+    member: Option<&Value>,
+    nick: Option<&str>,
+    global_name: Option<&str>,
+    username: Option<&str>,
+    display_name: &str,
+) {
+    logging::debug(
+        "gateway",
+        format!(
+            "mention raw fields user_id={} has_member={} nick={} global_name={} username={} display_name={}",
+            user_id.get(),
+            member.is_some(),
+            log_optional_name(nick),
+            log_optional_name(global_name),
+            log_optional_name(username),
+            display_name,
+        ),
+    );
+}
+
+fn log_optional_name(value: Option<&str>) -> &str {
+    value.unwrap_or("<missing>")
 }
 
 fn message_author_display_name(message: &Value, author: &Value) -> String {
@@ -2157,8 +2245,11 @@ fn parse_id<M>(value: &Value) -> Option<Id<M>> {
 
 #[cfg(test)]
 mod tests {
+    use crate::discord::ids::{
+        Id,
+        marker::{ChannelMarker, GuildMarker},
+    };
     use serde_json::json;
-    use twilight_model::id::Id;
 
     use super::{
         SessionState, USER_ACCOUNT_CAPABILITIES, build_identify_payload, build_resume_payload,
@@ -2209,11 +2300,10 @@ mod tests {
 
     #[test]
     fn direct_message_subscribe_payload_matches_expected_shape() {
-        let payload: serde_json::Value =
-            serde_json::from_str(&direct_message_subscribe_payload(Id::<
-                twilight_model::id::marker::ChannelMarker,
-            >::new(20)))
-            .expect("payload should be valid json");
+        let payload: serde_json::Value = serde_json::from_str(&direct_message_subscribe_payload(
+            Id::<ChannelMarker>::new(20),
+        ))
+        .expect("payload should be valid json");
 
         assert_eq!(
             payload,
@@ -2229,8 +2319,8 @@ mod tests {
     #[test]
     fn guild_channel_subscribe_payload_matches_expected_shape() {
         let payload: serde_json::Value = serde_json::from_str(&guild_channel_subscribe_payload(
-            Id::<twilight_model::id::marker::GuildMarker>::new(10),
-            Id::<twilight_model::id::marker::ChannelMarker>::new(20),
+            Id::<GuildMarker>::new(10),
+            Id::<ChannelMarker>::new(20),
             &[(0, 99)],
         ))
         .expect("payload should be valid json");
@@ -2258,8 +2348,8 @@ mod tests {
     #[test]
     fn guild_channel_subscribe_payload_emits_extended_member_ranges() {
         let payload: serde_json::Value = serde_json::from_str(&guild_channel_subscribe_payload(
-            Id::<twilight_model::id::marker::GuildMarker>::new(10),
-            Id::<twilight_model::id::marker::ChannelMarker>::new(20),
+            Id::<GuildMarker>::new(10),
+            Id::<ChannelMarker>::new(20),
             &[(0, 99), (100, 199), (200, 299)],
         ))
         .expect("payload should be valid json");

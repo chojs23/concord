@@ -2,7 +2,7 @@ mod fixtures;
 
 use fixtures::*;
 
-use twilight_model::id::{
+use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
@@ -411,6 +411,115 @@ fn member_groups_use_roles_and_status_sorted_entries() {
 }
 
 #[test]
+fn member_role_color_uses_highest_nonzero_role_color() {
+    let guild_id = Id::new(1);
+    let user_id = Id::new(10);
+    let low_role = Id::new(100);
+    let zero_role = Id::new(101);
+    let high_role = Id::new(102);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: Vec::new(),
+        members: vec![MemberInfo {
+            user_id,
+            display_name: "alice".to_owned(),
+            username: None,
+            is_bot: false,
+            avatar_url: None,
+            role_ids: vec![low_role, zero_role, high_role],
+        }],
+        presences: vec![(user_id, PresenceStatus::Online)],
+        roles: vec![
+            RoleInfo {
+                id: low_role,
+                name: "Low".to_owned(),
+                color: Some(0x112233),
+                position: 1,
+                hoist: false,
+                permissions: 0,
+            },
+            RoleInfo {
+                id: zero_role,
+                name: "Zero".to_owned(),
+                color: Some(0),
+                position: 99,
+                hoist: false,
+                permissions: 0,
+            },
+            RoleInfo {
+                id: high_role,
+                name: "High".to_owned(),
+                color: Some(0x445566),
+                position: 10,
+                hoist: false,
+                permissions: 0,
+            },
+        ],
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+
+    let member = state.flattened_members()[0];
+
+    assert_eq!(state.member_role_color(member), Some(0x445566));
+}
+
+#[test]
+fn member_role_color_breaks_equal_position_ties_by_role_id() {
+    let guild_id = Id::new(1);
+    let user_id = Id::new(10);
+    let older_role = Id::new(100);
+    let newer_role = Id::new(200);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: Vec::new(),
+        members: vec![MemberInfo {
+            user_id,
+            display_name: "alice".to_owned(),
+            username: None,
+            is_bot: false,
+            avatar_url: None,
+            role_ids: vec![newer_role, older_role],
+        }],
+        presences: vec![(user_id, PresenceStatus::Online)],
+        roles: vec![
+            RoleInfo {
+                id: newer_role,
+                name: "Newer".to_owned(),
+                color: Some(0x112233),
+                position: 10,
+                hoist: false,
+                permissions: 0,
+            },
+            RoleInfo {
+                id: older_role,
+                name: "Older".to_owned(),
+                color: Some(0x445566),
+                position: 10,
+                hoist: false,
+                permissions: 0,
+            },
+        ],
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+
+    let member = state.flattened_members()[0];
+
+    assert_eq!(state.member_role_color(member), Some(0x445566));
+}
+
+#[test]
 fn member_groups_show_selected_group_dm_recipients() {
     let mut state = DashboardState::new();
     let channel_id = Id::new(20);
@@ -532,7 +641,11 @@ fn member_panel_title_stays_plain_without_guild_total_or_in_direct_messages() {
 }
 
 #[test]
-fn unknown_presence_uses_neutral_member_marker() {
+fn presence_marker_uses_dot_only_for_online_like_statuses() {
+    assert_eq!(presence_marker(PresenceStatus::Online), '●');
+    assert_eq!(presence_marker(PresenceStatus::Idle), '●');
+    assert_eq!(presence_marker(PresenceStatus::DoNotDisturb), '●');
+    assert_eq!(presence_marker(PresenceStatus::Offline), ' ');
     assert_eq!(presence_marker(PresenceStatus::Unknown), ' ');
 }
 

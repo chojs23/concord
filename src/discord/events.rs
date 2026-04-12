@@ -1,17 +1,9 @@
-use twilight_model::{
-    channel::{
-        Attachment, Message,
-        message::{Embed, EmojiReactionType, Mention, MessageSnapshot, Reaction},
+use crate::discord::ids::{
+    Id,
+    marker::{
+        AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, RoleMarker,
+        UserMarker,
     },
-    id::{
-        Id,
-        marker::{
-            AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, RoleMarker,
-            UserMarker,
-        },
-    },
-    poll::Poll,
-    user::User as TwilightUser,
 };
 
 use super::commands::ReactionEmoji;
@@ -568,29 +560,6 @@ impl UserProfileInfo {
     }
 }
 
-impl AppEvent {
-    pub fn from_message(message: Message) -> Self {
-        let message = MessageInfo::from_message(message);
-        Self::MessageCreate {
-            guild_id: message.guild_id,
-            channel_id: message.channel_id,
-            message_id: message.message_id,
-            author_id: message.author_id,
-            author: message.author,
-            author_avatar_url: message.author_avatar_url,
-            message_kind: message.message_kind,
-            reference: message.reference,
-            reply: message.reply,
-            poll: message.poll,
-            content: message.content,
-            mentions: message.mentions,
-            attachments: message.attachments,
-            embeds: message.embeds,
-            forwarded_snapshots: message.forwarded_snapshots,
-        }
-    }
-}
-
 impl AttachmentInfo {
     pub fn preferred_url(&self) -> Option<&str> {
         if self.url.is_empty() {
@@ -632,81 +601,9 @@ impl AttachmentInfo {
             accent_color: None,
         })
     }
-
-    pub fn from_attachment(attachment: Attachment) -> Self {
-        Self {
-            id: attachment.id,
-            filename: attachment.filename,
-            url: attachment.url,
-            proxy_url: attachment.proxy_url,
-            content_type: attachment.content_type,
-            size: attachment.size,
-            width: attachment.width,
-            height: attachment.height,
-            description: attachment.description,
-        }
-    }
 }
 
 impl EmbedInfo {
-    fn from_embed(embed: &Embed) -> Option<Self> {
-        if embed.kind == "poll_result" {
-            return None;
-        }
-
-        let info = Self {
-            color: embed.color,
-            provider_name: embed
-                .provider
-                .as_ref()
-                .and_then(|provider| provider.name.clone()),
-            author_name: embed.author.as_ref().map(|author| author.name.clone()),
-            title: embed.title.clone(),
-            description: embed.description.clone(),
-            fields: embed
-                .fields
-                .iter()
-                .map(|field| EmbedFieldInfo {
-                    name: field.name.clone(),
-                    value: field.value.clone(),
-                })
-                .collect(),
-            footer_text: embed.footer.as_ref().map(|footer| footer.text.clone()),
-            url: embed.url.clone(),
-            thumbnail_url: embed
-                .thumbnail
-                .as_ref()
-                .map(|thumbnail| thumbnail.url.clone()),
-            thumbnail_width: embed
-                .thumbnail
-                .as_ref()
-                .and_then(|thumbnail| thumbnail.width),
-            thumbnail_height: embed
-                .thumbnail
-                .as_ref()
-                .and_then(|thumbnail| thumbnail.height),
-            image_url: embed.image.as_ref().map(|image| image.url.clone()),
-            image_width: embed.image.as_ref().and_then(|image| image.width),
-            image_height: embed.image.as_ref().and_then(|image| image.height),
-            video_url: embed.video.as_ref().and_then(|video| video.url.clone()),
-        };
-
-        info.has_renderable_content().then_some(info)
-    }
-
-    fn has_renderable_content(&self) -> bool {
-        self.provider_name.is_some()
-            || self.author_name.is_some()
-            || self.title.is_some()
-            || self.description.is_some()
-            || !self.fields.is_empty()
-            || self.footer_text.is_some()
-            || self.url.is_some()
-            || self.thumbnail_url.is_some()
-            || self.image_url.is_some()
-            || self.video_url.is_some()
-    }
-
     pub fn inline_preview_info(&self) -> Option<InlinePreviewInfo<'_>> {
         if let Some(url) = self.thumbnail_url.as_deref() {
             return Some(InlinePreviewInfo {
@@ -728,120 +625,6 @@ impl EmbedInfo {
     }
 }
 
-fn embed_infos(embeds: &[Embed]) -> Vec<EmbedInfo> {
-    embeds.iter().filter_map(EmbedInfo::from_embed).collect()
-}
-
-impl MessageSnapshotInfo {
-    pub fn from_snapshot(
-        snapshot: MessageSnapshot,
-        source_channel_id: Option<Id<ChannelMarker>>,
-    ) -> Self {
-        let message = snapshot.message;
-        let mentions = mention_infos(&message.mentions);
-        Self {
-            content: Some(message.content),
-            mentions,
-            attachments: message
-                .attachments
-                .into_iter()
-                .map(AttachmentInfo::from_attachment)
-                .collect(),
-            embeds: embed_infos(&message.embeds),
-            source_channel_id,
-            timestamp: Some(message.timestamp.iso_8601().to_string()),
-        }
-    }
-}
-
-impl ReplyInfo {
-    fn from_message(message: &Message) -> Option<Self> {
-        let content = if message.content.is_empty() {
-            None
-        } else {
-            Some(message.content.clone())
-        };
-        Some(Self {
-            author: message_display_name(message),
-            content,
-            mentions: mention_infos(&message.mentions),
-        })
-    }
-}
-
-impl PollInfo {
-    fn from_poll(poll: &Poll) -> Self {
-        Self {
-            question: poll
-                .question
-                .text
-                .clone()
-                .unwrap_or_else(|| "<no question text>".to_owned()),
-            answers: poll
-                .answers
-                .iter()
-                .map(|answer| {
-                    let result = poll.results.as_ref().and_then(|results| {
-                        results
-                            .answer_counts
-                            .iter()
-                            .find(|count| count.id == answer.answer_id)
-                    });
-                    PollAnswerInfo {
-                        answer_id: answer.answer_id,
-                        text: answer
-                            .poll_media
-                            .text
-                            .clone()
-                            .unwrap_or_else(|| "<no answer text>".to_owned()),
-                        vote_count: result.map(|count| count.count),
-                        me_voted: result.is_some_and(|count| count.me_voted),
-                    }
-                })
-                .collect(),
-            allow_multiselect: poll.allow_multiselect,
-            results_finalized: poll.results.as_ref().map(|results| results.is_finalized),
-            total_votes: poll
-                .results
-                .as_ref()
-                .map(|results| results.answer_counts.iter().map(|count| count.count).sum()),
-        }
-    }
-}
-
-impl ReactionInfo {
-    fn from_reaction(reaction: &Reaction) -> Self {
-        Self {
-            emoji: reaction_emoji(&reaction.emoji),
-            count: reaction.count,
-            me: reaction.me,
-        }
-    }
-}
-
-fn reaction_emoji(emoji: &EmojiReactionType) -> ReactionEmoji {
-    match emoji {
-        EmojiReactionType::Unicode { name } => ReactionEmoji::Unicode(name.clone()),
-        EmojiReactionType::Custom { id, name, animated } => ReactionEmoji::Custom {
-            id: *id,
-            name: name.clone(),
-            animated: *animated,
-        },
-    }
-}
-
-pub fn reaction_user_info(user: &TwilightUser) -> ReactionUserInfo {
-    ReactionUserInfo {
-        user_id: user.id,
-        display_name: user
-            .global_name
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .unwrap_or(&user.name)
-            .to_owned(),
-    }
-}
-
 fn filename_has_extension(filename: &str, extensions: &[&str]) -> bool {
     filename.rsplit_once('.').is_some_and(|(_, extension)| {
         extensions
@@ -850,72 +633,7 @@ fn filename_has_extension(filename: &str, extensions: &[&str]) -> bool {
     })
 }
 
-impl MessageInfo {
-    pub fn from_message(message: Message) -> Self {
-        let reference = message_reference_info(&message.reference);
-        let source_channel_id = reference
-            .as_ref()
-            .and_then(|reference| reference.channel_id);
-        let reply = message
-            .referenced_message
-            .as_deref()
-            .and_then(ReplyInfo::from_message);
-        let poll = message.poll.as_ref().map(PollInfo::from_poll);
-        let mentions = mention_infos(&message.mentions);
-        Self {
-            guild_id: message.guild_id,
-            channel_id: message.channel_id,
-            message_id: message.id,
-            author_id: message.author.id,
-            author: message_display_name(&message),
-            author_avatar_url: Some(user_avatar_url(&message.author)),
-            message_kind: MessageKind::new(message.kind.into()),
-            reference,
-            reply,
-            poll: poll.or_else(|| poll_result_info(&message.embeds)),
-            pinned: message.pinned,
-            reactions: message
-                .reactions
-                .iter()
-                .map(ReactionInfo::from_reaction)
-                .collect(),
-            content: Some(message.content),
-            mentions,
-            attachments: message
-                .attachments
-                .into_iter()
-                .map(AttachmentInfo::from_attachment)
-                .collect(),
-            embeds: embed_infos(&message.embeds),
-            forwarded_snapshots: message
-                .message_snapshots
-                .into_iter()
-                .map(|snapshot| MessageSnapshotInfo::from_snapshot(snapshot, source_channel_id))
-                .collect(),
-        }
-    }
-}
-
-fn message_reference_info(
-    reference: &Option<twilight_model::channel::message::MessageReference>,
-) -> Option<MessageReferenceInfo> {
-    reference.as_ref().map(|reference| MessageReferenceInfo {
-        guild_id: reference.guild_id,
-        channel_id: reference.channel_id,
-        message_id: reference.message_id,
-    })
-}
-
-fn poll_result_info(embeds: &[Embed]) -> Option<PollInfo> {
-    let embed = embeds.iter().find(|embed| embed.kind == "poll_result")?;
-    poll_result_info_from_fields(
-        embed
-            .fields
-            .iter()
-            .map(|field| (field.name.as_str(), field.value.as_str())),
-    )
-}
-
+#[cfg(test)]
 fn poll_result_info_from_fields<'a>(
     fields: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> Option<PollInfo> {
@@ -956,62 +674,6 @@ fn poll_result_info_from_fields<'a>(
     })
 }
 
-fn mention_infos(mentions: &[Mention]) -> Vec<MentionInfo> {
-    mentions.iter().map(mention_info).collect()
-}
-
-fn mention_info(mention: &Mention) -> MentionInfo {
-    // Prefer per-server nickname, then the user's global display name (when
-    // Discord embeds the user payload in `member.user`), and only fall back to
-    // the raw username last. This makes the rendered `@name` line up with
-    // what the user actually sees as a friendly alias in DMs and in guilds
-    // where the member cache hasn't loaded yet.
-    let nick = mention
-        .member
-        .as_ref()
-        .and_then(|member| member.nick.as_deref())
-        .filter(|value| !value.is_empty());
-    let global_name = mention
-        .member
-        .as_ref()
-        .and_then(|member| member.user.as_ref())
-        .and_then(|user| user.global_name.as_deref())
-        .filter(|value| !value.is_empty());
-    let display_name = nick.or(global_name).unwrap_or(&mention.name).to_owned();
-    MentionInfo {
-        user_id: mention.id,
-        guild_nick: nick.map(str::to_owned),
-        display_name,
-    }
-}
-
-fn display_name(nick: Option<&str>, user: &TwilightUser) -> String {
-    if let Some(nick) = nick.filter(|value| !value.is_empty()) {
-        return nick.to_owned();
-    }
-    if let Some(global) = user
-        .global_name
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
-        return global.to_owned();
-    }
-    user.name.clone()
-}
-
-fn user_avatar_url(user: &TwilightUser) -> String {
-    match user.avatar.as_ref() {
-        Some(hash) => {
-            let extension = if hash.is_animated() { "gif" } else { "png" };
-            format!(
-                "https://cdn.discordapp.com/avatars/{}/{}.{}",
-                user.id, hash, extension
-            )
-        }
-        None => default_avatar_url(user.id, user.discriminator),
-    }
-}
-
 pub(crate) fn default_avatar_url(user_id: Id<UserMarker>, discriminator: u16) -> String {
     let index = if discriminator == 0 {
         (user_id.get() >> 22) % 6
@@ -1020,16 +682,6 @@ pub(crate) fn default_avatar_url(user_id: Id<UserMarker>, discriminator: u16) ->
     };
 
     format!("https://cdn.discordapp.com/embed/avatars/{index}.png")
-}
-
-fn message_display_name(message: &Message) -> String {
-    display_name(
-        message
-            .member
-            .as_ref()
-            .and_then(|member| member.nick.as_deref()),
-        &message.author,
-    )
 }
 
 #[cfg(test)]
@@ -1064,23 +716,6 @@ mod tests {
     }
 
     #[test]
-    fn display_name_prefers_nick_then_global_name_then_username() {
-        let user_with_global = user("neo", Some("global alias"));
-
-        assert_eq!(
-            display_name(Some("server alias"), &user_with_global),
-            "server alias"
-        );
-        assert_eq!(display_name(None, &user_with_global), "global alias");
-        assert_eq!(display_name(None, &user("neo", None)), "neo");
-    }
-
-    #[test]
-    fn message_update_empty_mentions_can_clear_cached_mentions() {
-        assert_eq!(mention_infos(&[]), Vec::<MentionInfo>::new());
-    }
-
-    #[test]
     fn poll_result_embed_fields_map_to_poll_summary() {
         let poll = poll_result_info_from_fields([
             ("poll_question_text", "오늘 뭐 먹지?"),
@@ -1096,47 +731,6 @@ mod tests {
         assert_eq!(poll.results_finalized, Some(true));
         assert_eq!(poll.answers[0].text, "김치찌개");
         assert_eq!(poll.answers[0].vote_count, Some(5));
-    }
-
-    #[test]
-    fn message_reference_maps_thread_ids() {
-        let reference = Some(twilight_model::channel::message::MessageReference {
-            channel_id: Some(Id::new(10)),
-            guild_id: Some(Id::new(1)),
-            kind: twilight_model::channel::message::MessageReferenceType::Default,
-            message_id: Some(Id::new(20)),
-            fail_if_not_exists: None,
-        });
-
-        let mapped = message_reference_info(&reference).expect("reference should map");
-
-        assert_eq!(mapped.guild_id, Some(Id::new(1)));
-        assert_eq!(mapped.channel_id, Some(Id::new(10)));
-        assert_eq!(mapped.message_id, Some(Id::new(20)));
-    }
-
-    fn user(name: &str, global_name: Option<&str>) -> TwilightUser {
-        TwilightUser {
-            accent_color: None,
-            avatar: None,
-            avatar_decoration: None,
-            avatar_decoration_data: None,
-            banner: None,
-            bot: false,
-            discriminator: 0,
-            email: None,
-            flags: None,
-            global_name: global_name.map(str::to_owned),
-            id: Id::new(1),
-            locale: None,
-            mfa_enabled: None,
-            name: name.to_owned(),
-            premium_type: None,
-            primary_guild: None,
-            public_flags: None,
-            system: None,
-            verified: None,
-        }
     }
 
     fn attachment_info(filename: &str, content_type: Option<&str>) -> AttachmentInfo {

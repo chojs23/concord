@@ -1,8 +1,8 @@
+use crate::discord::ids::{Id, marker::GuildMarker};
 use ratatui::{
     style::{Color, Modifier, Style, Stylize},
     text::Span,
 };
-use twilight_model::id::{Id, marker::GuildMarker};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 

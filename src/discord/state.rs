@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 /// label tracks what other clients show.
 const TYPING_INDICATOR_TTL: Duration = Duration::from_secs(10);
 
-use twilight_model::id::{
+use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
@@ -20,7 +20,7 @@ use super::{
 };
 
 /// Discord permission bits we currently care about. Mirrors a subset of
-/// `twilight_model::guild::Permissions` but kept inline so the state crate
+/// Discord's permission bits, kept inline so the state crate
 /// does not need to depend on twilight's bitflags.
 const PERMISSION_VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
 const PERMISSION_SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
@@ -396,29 +396,32 @@ impl DiscordState {
                 embeds,
                 forwarded_snapshots,
                 ..
-            } => self.upsert_message(MessageState {
-                id: *message_id,
-                guild_id: *guild_id,
-                channel_id: *channel_id,
-                author_id: *author_id,
-                author: self.message_author_display_name(*guild_id, *author_id, author),
-                author_avatar_url: self.message_author_avatar_url(
-                    *guild_id,
-                    *author_id,
-                    author_avatar_url,
-                ),
-                message_kind: *message_kind,
-                reference: reference.clone(),
-                reply: reply.clone(),
-                poll: poll.clone(),
-                pinned: false,
-                reactions: Vec::new(),
-                content: content.clone(),
-                mentions: mentions.clone(),
-                attachments: attachments.clone(),
-                embeds: embeds.clone(),
-                forwarded_snapshots: forwarded_snapshots.clone(),
-            }),
+            } => {
+                let guild_id = guild_id.or_else(|| self.channel_guild_id(*channel_id));
+                self.upsert_message(MessageState {
+                    id: *message_id,
+                    guild_id,
+                    channel_id: *channel_id,
+                    author_id: *author_id,
+                    author: self.message_author_display_name(guild_id, *author_id, author),
+                    author_avatar_url: self.message_author_avatar_url(
+                        guild_id,
+                        *author_id,
+                        author_avatar_url,
+                    ),
+                    message_kind: *message_kind,
+                    reference: reference.clone(),
+                    reply: reply.clone(),
+                    poll: poll.clone(),
+                    pinned: false,
+                    reactions: Vec::new(),
+                    content: content.clone(),
+                    mentions: mentions.clone(),
+                    attachments: attachments.clone(),
+                    embeds: embeds.clone(),
+                    forwarded_snapshots: forwarded_snapshots.clone(),
+                });
+            }
             AppEvent::MessageHistoryLoaded {
                 channel_id,
                 before,
@@ -891,6 +894,22 @@ impl DiscordState {
             .unwrap_or_default()
     }
 
+    pub fn member_role_color(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> Option<u32> {
+        let member = self.members.get(&guild_id)?.get(&user_id)?;
+        let roles = self.roles.get(&guild_id)?;
+        member
+            .role_ids
+            .iter()
+            .filter_map(|role_id| roles.get(role_id))
+            .filter(|role| role.color.is_some_and(|color| color != 0))
+            .min_by(|left, right| role_display_order(left, right))
+            .and_then(|role| role.color)
+    }
+
     pub fn custom_emojis_for_guild(&self, guild_id: Id<GuildMarker>) -> &[CustomEmojiInfo] {
         self.custom_emojis
             .get(&guild_id)
@@ -911,6 +930,12 @@ impl DiscordState {
 
     pub fn channel(&self, channel_id: Id<ChannelMarker>) -> Option<&ChannelState> {
         self.channels.get(&channel_id)
+    }
+
+    fn channel_guild_id(&self, channel_id: Id<ChannelMarker>) -> Option<Id<GuildMarker>> {
+        self.channels
+            .get(&channel_id)
+            .and_then(|channel| channel.guild_id)
     }
 
     fn message_author_display_name(
@@ -1048,12 +1073,15 @@ impl DiscordState {
         }
     }
 
-    fn upsert_message(&mut self, message: MessageState) {
+    fn upsert_message(&mut self, mut message: MessageState) {
         let channel_id = message.channel_id;
         let message_id = message.id;
+        message.guild_id = message
+            .guild_id
+            .or_else(|| self.channel_guild_id(channel_id));
         let messages = self.messages.entry(message.channel_id).or_default();
         if let Some(existing) = messages.iter_mut().find(|item| item.id == message.id) {
-            existing.guild_id = message.guild_id;
+            existing.guild_id = message.guild_id.or(existing.guild_id);
             existing.channel_id = message.channel_id;
             existing.author_id = message.author_id;
             existing.author = message.author;
@@ -1076,7 +1104,7 @@ impl DiscordState {
                 existing.content = message.content;
             }
             if !message.mentions.is_empty() || existing.mentions.is_empty() {
-                existing.mentions = message.mentions;
+                existing.mentions = merge_message_mentions(&existing.mentions, &message.mentions);
             }
             if !message.attachments.is_empty() || existing.attachments.is_empty() {
                 existing.attachments = message.attachments;
@@ -1196,35 +1224,39 @@ impl DiscordState {
         before: Option<Id<MessageMarker>>,
         history: &[MessageInfo],
     ) {
+        let channel_guild_id = self.channel_guild_id(channel_id);
         let incoming_messages = history
             .iter()
             .filter(|message| message.channel_id == channel_id)
-            .map(|message| MessageState {
-                id: message.message_id,
-                guild_id: message.guild_id,
-                channel_id: message.channel_id,
-                author_id: message.author_id,
-                author: self.message_author_display_name(
-                    message.guild_id,
-                    message.author_id,
-                    &message.author,
-                ),
-                author_avatar_url: self.message_author_avatar_url(
-                    message.guild_id,
-                    message.author_id,
-                    &message.author_avatar_url,
-                ),
-                message_kind: message.message_kind,
-                reference: message.reference.clone(),
-                reply: message.reply.clone(),
-                poll: message.poll.clone(),
-                pinned: message.pinned,
-                reactions: message.reactions.clone(),
-                content: message.content.clone(),
-                mentions: message.mentions.clone(),
-                attachments: message.attachments.clone(),
-                embeds: message.embeds.clone(),
-                forwarded_snapshots: message.forwarded_snapshots.clone(),
+            .map(|message| {
+                let guild_id = message.guild_id.or(channel_guild_id);
+                MessageState {
+                    id: message.message_id,
+                    guild_id,
+                    channel_id: message.channel_id,
+                    author_id: message.author_id,
+                    author: self.message_author_display_name(
+                        guild_id,
+                        message.author_id,
+                        &message.author,
+                    ),
+                    author_avatar_url: self.message_author_avatar_url(
+                        guild_id,
+                        message.author_id,
+                        &message.author_avatar_url,
+                    ),
+                    message_kind: message.message_kind,
+                    reference: message.reference.clone(),
+                    reply: message.reply.clone(),
+                    poll: message.poll.clone(),
+                    pinned: message.pinned,
+                    reactions: message.reactions.clone(),
+                    content: message.content.clone(),
+                    mentions: message.mentions.clone(),
+                    attachments: message.attachments.clone(),
+                    embeds: message.embeds.clone(),
+                    forwarded_snapshots: message.forwarded_snapshots.clone(),
+                }
             })
             .collect::<Vec<_>>();
         let messages = self.messages.entry(channel_id).or_default();
@@ -1302,7 +1334,7 @@ impl DiscordState {
 }
 
 fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
-    existing.guild_id = incoming.guild_id;
+    existing.guild_id = incoming.guild_id.or(existing.guild_id);
     existing.channel_id = incoming.channel_id;
     existing.author_id = incoming.author_id;
     existing.author = incoming.author.clone();
@@ -1329,7 +1361,7 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
             existing.content = Some(content.clone());
         }
     }
-    existing.mentions = incoming.mentions.clone();
+    existing.mentions = merge_message_mentions(&existing.mentions, &incoming.mentions);
     if !incoming.attachments.is_empty() || existing.attachments.is_empty() {
         existing.attachments = incoming.attachments.clone();
     }
@@ -1339,6 +1371,27 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
     if !incoming.forwarded_snapshots.is_empty() || existing.forwarded_snapshots.is_empty() {
         existing.forwarded_snapshots = incoming.forwarded_snapshots.clone();
     }
+}
+
+fn merge_message_mentions(existing: &[MentionInfo], incoming: &[MentionInfo]) -> Vec<MentionInfo> {
+    if incoming.is_empty() {
+        return Vec::new();
+    }
+
+    incoming
+        .iter()
+        .map(|mention| {
+            if mention.guild_nick.is_some() {
+                mention.clone()
+            } else {
+                existing
+                    .iter()
+                    .find(|existing| existing.user_id == mention.user_id)
+                    .cloned()
+                    .unwrap_or_else(|| mention.clone())
+            }
+        })
+        .collect()
 }
 
 fn upsert_member(
@@ -1380,6 +1433,13 @@ fn role_map(roles: &[RoleInfo]) -> BTreeMap<Id<RoleMarker>, RoleState> {
         .collect()
 }
 
+fn role_display_order(left: &RoleState, right: &RoleState) -> std::cmp::Ordering {
+    right
+        .position
+        .cmp(&left.position)
+        .then(left.id.get().cmp(&right.id.get()))
+}
+
 /// Whether a Discord channel kind string represents a thread. Mirrors
 /// `ChannelState::is_thread` so that bare `ChannelInfo` inputs can be
 /// classified before they become a `ChannelState`.
@@ -1411,7 +1471,7 @@ pub struct ChannelVisibilityStats {
 
 #[cfg(test)]
 mod tests {
-    use twilight_model::id::{
+    use crate::discord::ids::{
         Id,
         marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker},
     };
@@ -2717,6 +2777,41 @@ mod tests {
 
         let messages = state.messages_for_channel(channel_id);
         assert!(messages[0].mentions.is_empty());
+    }
+
+    #[test]
+    fn history_merge_preserves_richer_gateway_mention_display_name() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(20),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("hello <@10>".to_owned()),
+            mentions: vec![mention_info(10, "global alias")],
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![MessageInfo {
+                mentions: vec![mention_info(10, "username")],
+                ..message_info(channel_id, 20, "hello <@10>")
+            }],
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages[0].mentions, vec![mention_info(10, "global alias")]);
     }
 
     #[test]
