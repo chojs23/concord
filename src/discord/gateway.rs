@@ -703,6 +703,7 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
             }
         }
     }
+    events.extend(parse_merged_member_events(data));
     stats.guilds_duration = guilds_started.elapsed();
 
     let mut merged_presences = parse_merged_presences(data);
@@ -786,9 +787,95 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
 }
 
 fn parse_ready_supplemental(data: &Value) -> Vec<AppEvent> {
-    parse_merged_presences(data)
-        .into_iter()
-        .map(|(user_id, status)| AppEvent::UserPresenceUpdate { user_id, status })
+    let mut events = parse_supplemental_guild_events(data);
+    events.extend(parse_merged_member_events(data));
+    events.extend(
+        parse_merged_presences(data)
+            .into_iter()
+            .map(|(user_id, status)| AppEvent::UserPresenceUpdate { user_id, status }),
+    );
+    events
+}
+
+fn parse_merged_member_events(data: &Value) -> Vec<AppEvent> {
+    let Some(guilds) = data.get("guilds").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let Some(merged_members) = data.get("merged_members").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    guilds
+        .iter()
+        .zip(merged_members)
+        .flat_map(|(guild, members)| {
+            let Some(guild_id) = guild.get("id").and_then(parse_id::<GuildMarker>) else {
+                return Vec::new();
+            };
+            members
+                .as_array()
+                .map(|members| guild_member_upsert_events(guild_id, members))
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+fn parse_supplemental_guild_events(data: &Value) -> Vec<AppEvent> {
+    let Some(guilds) = data.get("guilds").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    let mut events = Vec::new();
+    for guild in guilds {
+        let Some(guild_id) = guild.get("id").and_then(parse_id::<GuildMarker>) else {
+            continue;
+        };
+        if let Some(roles) = guild.get("roles").and_then(Value::as_array) {
+            let roles: Vec<RoleInfo> = roles.iter().filter_map(parse_role_info).collect();
+            if !roles.is_empty() {
+                events.push(AppEvent::GuildRolesUpdate { guild_id, roles });
+            }
+        }
+        if let Some(channels) = guild.get("channels").and_then(Value::as_array) {
+            events.extend(
+                channels
+                    .iter()
+                    .filter_map(|channel| parse_channel_info(channel, Some(guild_id)))
+                    .map(AppEvent::ChannelUpsert),
+            );
+        }
+        if let Some(threads) = guild.get("threads").and_then(Value::as_array) {
+            events.extend(
+                threads
+                    .iter()
+                    .filter_map(|channel| parse_channel_info(channel, Some(guild_id)))
+                    .map(AppEvent::ChannelUpsert),
+            );
+        }
+        if let Some(members) = guild.get("members").and_then(Value::as_array) {
+            events.extend(guild_member_upsert_events(guild_id, members));
+        }
+        if let Some(member) = guild.get("member").and_then(parse_member_info) {
+            events.push(AppEvent::GuildMemberUpsert { guild_id, member });
+        }
+        if let Some(presences) = guild.get("presences").and_then(Value::as_array) {
+            events.extend(presences.iter().filter_map(parse_presence_entry).map(
+                |(user_id, status)| AppEvent::PresenceUpdate {
+                    guild_id,
+                    user_id,
+                    status,
+                },
+            ));
+        }
+    }
+    events
+}
+
+fn guild_member_upsert_events(guild_id: Id<GuildMarker>, members: &[Value]) -> Vec<AppEvent> {
+    members
+        .iter()
+        .filter_map(parse_member_info)
+        .map(|member| AppEvent::GuildMemberUpsert { guild_id, member })
         .collect()
 }
 
@@ -2117,29 +2204,38 @@ fn parse_channel_recipient_info(value: &Value) -> Option<ChannelRecipientInfo> {
 }
 
 fn parse_member_info(value: &Value) -> Option<MemberInfo> {
-    let user = value.get("user")?;
-    let user_id = parse_id::<UserMarker>(user.get("id")?)?;
+    let user = value.get("user");
+    let user_id = user
+        .and_then(|user| user.get("id"))
+        .or_else(|| value.get("user_id"))
+        .or_else(|| value.get("id"))
+        .and_then(parse_id::<UserMarker>)?;
     let nick = value
         .get("nick")
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty());
     let global_name = user
-        .get("global_name")
+        .and_then(|user| user.get("global_name"))
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty());
-    let username = user.get("username").and_then(Value::as_str);
+    let username = user
+        .and_then(|user| user.get("username"))
+        .and_then(Value::as_str);
     let display_name = nick
         .or(global_name)
         .or(username)
         .unwrap_or("unknown")
         .to_owned();
-    let is_bot = user.get("bot").and_then(Value::as_bool).unwrap_or(false);
+    let is_bot = user
+        .and_then(|user| user.get("bot"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     Some(MemberInfo {
         user_id,
         display_name,
         username: username.map(str::to_owned),
         is_bot,
-        avatar_url: raw_user_avatar_url(user_id, user),
+        avatar_url: user.and_then(|user| raw_user_avatar_url(user_id, user)),
         role_ids: value
             .get("roles")
             .and_then(Value::as_array)
@@ -2240,7 +2336,11 @@ fn parse_status(value: &str) -> PresenceStatus {
 }
 
 fn parse_id<M>(value: &Value) -> Option<Id<M>> {
-    value.as_str()?.parse::<u64>().ok().map(Id::new)
+    value
+        .as_str()
+        .and_then(|value| value.parse::<u64>().ok())
+        .or_else(|| value.as_u64())
+        .map(Id::new)
 }
 
 #[cfg(test)]
@@ -2258,8 +2358,8 @@ mod tests {
         parse_message_update, parse_user_account_event,
     };
     use crate::discord::{
-        AppEvent, AttachmentUpdate, FriendStatus, MentionInfo, MessageKind, PollAnswerInfo,
-        PollInfo, PresenceStatus, ReplyInfo,
+        AppEvent, AttachmentUpdate, ChannelVisibilityStats, DiscordState, FriendStatus,
+        MentionInfo, MessageKind, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
     };
 
     #[test]
@@ -2760,6 +2860,145 @@ mod tests {
     }
 
     #[test]
+    fn raw_ready_supplemental_updates_merged_member_roles() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY_SUPPLEMENTAL",
+                "d": {
+                    "guilds": [{ "id": "1" }],
+                    "merged_members": [[{
+                        "user_id": "10",
+                        "roles": ["20"]
+                    }]]
+                }
+            })
+            .to_string(),
+        );
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::GuildMemberUpsert { guild_id, member }
+                if *guild_id == Id::new(1)
+                    && member.user_id == Id::new(10)
+                    && member.role_ids == vec![Id::new(20)]
+        )));
+    }
+
+    #[test]
+    fn raw_ready_supplemental_aligns_merged_members_by_guild_index() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY_SUPPLEMENTAL",
+                "d": {
+                    "guilds": [{ "id": "1" }, { "id": "2" }],
+                    "merged_members": [[{
+                        "user_id": "10",
+                        "roles": ["20"]
+                    }], [{
+                        "user_id": "10",
+                        "roles": ["30"]
+                    }]]
+                }
+            })
+            .to_string(),
+        );
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::GuildMemberUpsert { guild_id, member }
+                if *guild_id == Id::new(1)
+                    && member.user_id == Id::new(10)
+                    && member.role_ids == vec![Id::new(20)]
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::GuildMemberUpsert { guild_id, member }
+                if *guild_id == Id::new(2)
+                    && member.user_id == Id::new(10)
+                    && member.role_ids == vec![Id::new(30)]
+        )));
+    }
+
+    #[test]
+    fn raw_ready_supplemental_member_roles_hide_role_denied_channel() {
+        let ready_events = parse_user_account_event(
+            &json!({
+                "t": "READY",
+                "d": {
+                    "user": { "id": "10", "username": "me" },
+                    "guilds": [{
+                        "id": "1",
+                        "name": "guild",
+                        "owner_id": "11",
+                        "channels": [{
+                            "id": "2",
+                            "type": 0,
+                            "name": "staff-hidden",
+                            "permission_overwrites": [{
+                                "id": "20",
+                                "type": 0,
+                                "allow": "0",
+                                "deny": "1024"
+                            }]
+                        }],
+                        "members": [],
+                        "presences": [],
+                        "roles": [],
+                        "emojis": []
+                    }],
+                    "private_channels": []
+                }
+            })
+            .to_string(),
+        );
+        let supplemental_events = parse_user_account_event(
+            &json!({
+                "t": "READY_SUPPLEMENTAL",
+                "d": {
+                    "guilds": [{
+                        "id": "1",
+                        "roles": [{
+                            "id": "1",
+                            "name": "@everyone",
+                            "permissions": "1024",
+                            "position": 0,
+                            "hoist": false
+                        }, {
+                            "id": "20",
+                            "name": "Staff",
+                            "permissions": "0",
+                            "position": 1,
+                            "hoist": false
+                        }]
+                    }],
+                    "merged_members": [[{
+                        "user_id": "10",
+                        "roles": ["20"]
+                    }]]
+                }
+            })
+            .to_string(),
+        );
+        let mut state = DiscordState::default();
+        for event in ready_events.iter().chain(supplemental_events.iter()) {
+            state.apply_event(event);
+        }
+
+        assert_eq!(
+            state.channel_visibility_stats(Some(Id::new(1))),
+            ChannelVisibilityStats {
+                visible: 0,
+                hidden: 1,
+            }
+        );
+        assert!(
+            state
+                .viewable_channels_for_guild(Some(Id::new(1)))
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn raw_ready_supplemental_accepts_bare_id_presence_entries() {
         let events = parse_user_account_event(
             &json!({
@@ -3063,6 +3302,170 @@ mod tests {
         assert_eq!(roles[0].color, Some(16755200));
         assert_eq!(roles[0].position, 10);
         assert!(roles[0].hoist);
+    }
+
+    #[test]
+    fn guild_create_parser_keeps_string_permission_bitfields() {
+        let event = parse_guild_create(&json!({
+            "id": "1",
+            "name": "guild",
+            "channels": [],
+            "members": [],
+            "presences": [],
+            "roles": [{
+                "id": "1",
+                "name": "@everyone",
+                "permissions": "1024",
+                "position": 0,
+                "hoist": false
+            }],
+            "emojis": []
+        }))
+        .expect("guild create should parse");
+
+        let AppEvent::GuildCreate { roles, .. } = event else {
+            panic!("expected guild create event");
+        };
+
+        assert_eq!(roles[0].permissions, 0x400);
+    }
+
+    #[test]
+    fn guild_create_parser_accepts_member_user_id_without_nested_user() {
+        let event = parse_guild_create(&json!({
+            "id": "1",
+            "name": "guild",
+            "channels": [],
+            "members": [{
+                "user_id": "10",
+                "roles": [20]
+            }],
+            "presences": [],
+            "roles": [],
+            "emojis": []
+        }))
+        .expect("guild create should parse");
+
+        let AppEvent::GuildCreate { members, .. } = event else {
+            panic!("expected guild create event");
+        };
+
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].user_id, Id::new(10));
+        assert_eq!(members[0].role_ids, vec![Id::new(20)]);
+    }
+
+    #[test]
+    fn raw_guild_create_with_thin_current_member_hides_denied_channel() {
+        let event = parse_guild_create(&json!({
+            "id": "1",
+            "name": "guild",
+            "owner_id": "11",
+            "channels": [{
+                "id": "2",
+                "type": 0,
+                "name": "secret",
+                "permission_overwrites": [{
+                    "id": "1",
+                    "type": 0,
+                    "allow": "0",
+                    "deny": "1024"
+                }]
+            }],
+            "members": [{
+                "user_id": "10",
+                "roles": []
+            }],
+            "presences": [],
+            "roles": [{
+                "id": "1",
+                "name": "@everyone",
+                "permissions": "1024",
+                "position": 0,
+                "hoist": false
+            }],
+            "emojis": []
+        }))
+        .expect("guild create should parse");
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(Id::new(10)),
+        });
+        state.apply_event(&event);
+
+        assert_eq!(
+            state.channel_visibility_stats(Some(Id::new(1))),
+            ChannelVisibilityStats {
+                visible: 0,
+                hidden: 1,
+            }
+        );
+        assert!(
+            state
+                .viewable_channels_for_guild(Some(Id::new(1)))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn raw_guild_create_with_thin_current_member_keeps_role_based_access() {
+        let event = parse_guild_create(&json!({
+            "id": "1",
+            "name": "guild",
+            "owner_id": "11",
+            "channels": [{
+                "id": "2",
+                "type": 0,
+                "name": "staff",
+                "permission_overwrites": [{
+                    "id": "1",
+                    "type": 0,
+                    "allow": "0",
+                    "deny": "1024"
+                }, {
+                    "id": "20",
+                    "type": 0,
+                    "allow": "1024",
+                    "deny": "0"
+                }]
+            }],
+            "members": [{
+                "user_id": "10",
+                "roles": [20]
+            }],
+            "presences": [],
+            "roles": [{
+                "id": "1",
+                "name": "@everyone",
+                "permissions": "1024",
+                "position": 0,
+                "hoist": false
+            }, {
+                "id": "20",
+                "name": "Staff",
+                "permissions": "0",
+                "position": 1,
+                "hoist": false
+            }],
+            "emojis": []
+        }))
+        .expect("guild create should parse");
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(Id::new(10)),
+        });
+        state.apply_event(&event);
+
+        assert_eq!(
+            state.channel_visibility_stats(Some(Id::new(1))),
+            ChannelVisibilityStats {
+                visible: 1,
+                hidden: 0,
+            }
+        );
+        assert_eq!(state.viewable_channels_for_guild(Some(Id::new(1))).len(), 1);
     }
 
     #[test]

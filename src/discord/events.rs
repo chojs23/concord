@@ -376,6 +376,10 @@ pub enum AppEvent {
         roles: Option<Vec<RoleInfo>>,
         emojis: Option<Vec<CustomEmojiInfo>>,
     },
+    GuildRolesUpdate {
+        guild_id: Id<GuildMarker>,
+        roles: Vec<RoleInfo>,
+    },
     GuildEmojisUpdate {
         guild_id: Id<GuildMarker>,
         emojis: Vec<CustomEmojiInfo>,

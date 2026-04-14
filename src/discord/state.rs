@@ -361,6 +361,9 @@ impl DiscordState {
                     self.custom_emojis.insert(*guild_id, emojis.clone());
                 }
             }
+            AppEvent::GuildRolesUpdate { guild_id, roles } => {
+                self.roles.insert(*guild_id, role_map(roles));
+            }
             AppEvent::GuildEmojisUpdate { guild_id, emojis } => {
                 self.custom_emojis.insert(*guild_id, emojis.clone());
             }
