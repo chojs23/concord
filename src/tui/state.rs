@@ -2229,13 +2229,44 @@ impl DashboardState {
     }
 
     pub fn message_author_role_color(&self, message: &MessageState) -> Option<u32> {
-        let guild_id = message.guild_id.or_else(|| {
-            self.discord
-                .channel(message.channel_id)
-                .and_then(|channel| channel.guild_id)
-        });
+        let channel = self.discord.channel(message.channel_id);
+        let guild_id = message
+            .guild_id
+            .or_else(|| channel.and_then(|channel| channel.guild_id));
         let guild_id = guild_id?;
-        self.discord.member_role_color(guild_id, message.author_id)
+        self.discord.message_author_role_color(
+            guild_id,
+            message.channel_id,
+            message.id,
+            message.author_id,
+        )
+    }
+
+    pub fn missing_message_author_profile_requests(
+        &self,
+    ) -> Vec<(Id<UserMarker>, Id<GuildMarker>)> {
+        self.visible_messages()
+            .into_iter()
+            .filter_map(|message| {
+                let guild_id = message.guild_id.or_else(|| {
+                    self.discord
+                        .channel(message.channel_id)
+                        .and_then(|channel| channel.guild_id)
+                })?;
+                if self
+                    .discord
+                    .member_display_name(guild_id, message.author_id)
+                    .is_some()
+                    || self
+                        .discord
+                        .user_profile(message.author_id, Some(guild_id))
+                        .is_some()
+                {
+                    return None;
+                }
+                Some((message.author_id, guild_id))
+            })
+            .collect()
     }
 
     pub fn member_role_color(&self, member: MemberEntry<'_>) -> Option<u32> {

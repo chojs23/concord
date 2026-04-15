@@ -8,11 +8,11 @@ mod selection;
 mod state;
 mod ui;
 
-use std::io::stdout;
+use std::{collections::HashSet, io::stdout};
 
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, GuildMarker},
+    marker::{ChannelMarker, GuildMarker, UserMarker},
 };
 use crossterm::{
     event::{
@@ -96,6 +96,7 @@ async fn run_dashboard(
     let mut history_requests = HistoryRequests::default();
     let mut member_requests = MemberRequests::default();
     let mut last_member_subscription: Option<(Id<GuildMarker>, Id<ChannelMarker>, u32)> = None;
+    let mut requested_author_profiles: HashSet<(Id<UserMarker>, Id<GuildMarker>)> = HashSet::new();
     let mut image_targets = Vec::new();
     let mut avatar_targets = Vec::new();
     let mut emoji_targets = Vec::new();
@@ -277,6 +278,26 @@ async fn run_dashboard(
                     })
                     .await
                     .is_err()
+            {
+                logging::error("tui", "command channel closed");
+                state.push_event(AppEvent::GatewayError {
+                    message: "command channel closed".to_owned(),
+                });
+                dirty = true;
+            }
+        }
+
+        for (user_id, guild_id) in state.missing_message_author_profile_requests() {
+            if !requested_author_profiles.insert((user_id, guild_id)) {
+                continue;
+            }
+            if commands
+                .send(AppCommand::LoadUserProfile {
+                    user_id,
+                    guild_id: Some(guild_id),
+                })
+                .await
+                .is_err()
             {
                 logging::error("tui", "command channel closed");
                 state.push_event(AppEvent::GatewayError {

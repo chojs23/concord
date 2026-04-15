@@ -1,6 +1,6 @@
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+    marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
 use reqwest::header::AUTHORIZATION;
 use serde_json::{Value, json};
@@ -470,12 +470,19 @@ fn parse_user_profile_response(
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
+    let role_ids = body
+        .get("guild_member")
+        .and_then(|member| member.get("roles"))
+        .and_then(Value::as_array)
+        .map(|roles| roles.iter().filter_map(parse_profile_role_id).collect())
+        .unwrap_or_default();
 
     UserProfileInfo {
         user_id,
         username,
         global_name,
         guild_nick,
+        role_ids,
         avatar_url,
         bio,
         pronouns,
@@ -484,6 +491,14 @@ fn parse_user_profile_response(
         friend_status: FriendStatus::None,
         note,
     }
+}
+
+fn parse_profile_role_id(value: &Value) -> Option<Id<RoleMarker>> {
+    value
+        .as_str()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .or_else(|| value.as_u64())
+        .and_then(Id::new_checked)
 }
 
 fn profile_avatar_url(user: &Value) -> Option<String> {
@@ -554,8 +569,8 @@ mod tests {
         discord::{
             ReactionEmoji,
             rest::{
-                next_reaction_users_after, poll_vote_request_body, reaction_route_component,
-                validate_message_content,
+                next_reaction_users_after, parse_user_profile_response, poll_vote_request_body,
+                reaction_route_component, validate_message_content,
             },
         },
     };
@@ -613,5 +628,19 @@ mod tests {
             poll_vote_request_body(&[]),
             serde_json::json!({ "answer_ids": [] })
         );
+    }
+
+    #[test]
+    fn user_profile_parser_keeps_guild_member_roles() {
+        let profile = parse_user_profile_response(
+            Id::new(10),
+            &serde_json::json!({
+                "user": { "id": "10", "username": "test-user" },
+                "guild_member": { "roles": ["90", "91"] }
+            }),
+            None,
+        );
+
+        assert_eq!(profile.role_ids, vec![Id::new(90), Id::new(91)]);
     }
 }

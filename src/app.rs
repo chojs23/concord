@@ -439,6 +439,7 @@ fn message_create_event(message: MessageInfo) -> AppEvent {
         author_id: message.author_id,
         author: message.author,
         author_avatar_url: message.author_avatar_url,
+        author_role_ids: message.author_role_ids,
         message_kind: message.message_kind,
         reference: message.reference,
         reply: message.reply,

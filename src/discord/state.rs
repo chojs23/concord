@@ -244,8 +244,10 @@ pub struct DiscordState {
     guilds: BTreeMap<Id<GuildMarker>, GuildState>,
     channels: BTreeMap<Id<ChannelMarker>, ChannelState>,
     messages: BTreeMap<Id<ChannelMarker>, VecDeque<MessageState>>,
+    message_author_role_ids: BTreeMap<(Id<ChannelMarker>, Id<MessageMarker>), Vec<Id<RoleMarker>>>,
     members: BTreeMap<Id<GuildMarker>, BTreeMap<Id<UserMarker>, GuildMemberState>>,
     roles: BTreeMap<Id<GuildMarker>, BTreeMap<Id<RoleMarker>, RoleState>>,
+    profile_role_ids: BTreeMap<(Id<GuildMarker>, Id<UserMarker>), Vec<Id<RoleMarker>>>,
     custom_emojis: BTreeMap<Id<GuildMarker>, Vec<CustomEmojiInfo>>,
     /// User's `guild_folders` setting in display order. Empty until READY
     /// delivers it; the dashboard falls back to a flat guild list.
@@ -290,8 +292,10 @@ impl DiscordState {
             guilds: BTreeMap::new(),
             channels: BTreeMap::new(),
             messages: BTreeMap::new(),
+            message_author_role_ids: BTreeMap::new(),
             members: BTreeMap::new(),
             roles: BTreeMap::new(),
+            profile_role_ids: BTreeMap::new(),
             custom_emojis: BTreeMap::new(),
             guild_folders: Vec::new(),
             user_profiles: BTreeMap::new(),
@@ -373,14 +377,20 @@ impl DiscordState {
                     .retain(|_, channel| channel.guild_id != Some(*guild_id));
                 self.messages
                     .retain(|channel_id, _| self.channels.contains_key(channel_id));
+                self.message_author_role_ids
+                    .retain(|(channel_id, _), _| self.channels.contains_key(channel_id));
                 self.members.remove(guild_id);
                 self.roles.remove(guild_id);
+                self.profile_role_ids
+                    .retain(|(profile_guild_id, _), _| profile_guild_id != guild_id);
                 self.custom_emojis.remove(guild_id);
             }
             AppEvent::ChannelUpsert(channel) => self.upsert_channel(channel),
             AppEvent::ChannelDelete { channel_id, .. } => {
                 self.channels.remove(channel_id);
                 self.messages.remove(channel_id);
+                self.message_author_role_ids
+                    .retain(|(message_channel_id, _), _| message_channel_id != channel_id);
             }
             AppEvent::MessageCreate {
                 guild_id,
@@ -389,6 +399,7 @@ impl DiscordState {
                 author_id,
                 author,
                 author_avatar_url,
+                author_role_ids,
                 message_kind,
                 reference,
                 reply,
@@ -401,6 +412,7 @@ impl DiscordState {
                 ..
             } => {
                 let guild_id = guild_id.or_else(|| self.channel_guild_id(*channel_id));
+                self.record_author_role_ids(*channel_id, *message_id, author_role_ids);
                 self.upsert_message(MessageState {
                     id: *message_id,
                     guild_id,
@@ -559,6 +571,10 @@ impl DiscordState {
             }
             AppEvent::UserProfileLoaded { guild_id, profile } => {
                 let mut profile = profile.clone();
+                if let Some(guild_id) = guild_id {
+                    self.profile_role_ids
+                        .insert((*guild_id, profile.user_id), profile.role_ids.clone());
+                }
                 profile.friend_status = self
                     .relationships
                     .get(&profile.user_id)
@@ -904,13 +920,33 @@ impl DiscordState {
     ) -> Option<u32> {
         let member = self.members.get(&guild_id)?.get(&user_id)?;
         let roles = self.roles.get(&guild_id)?;
-        member
-            .role_ids
-            .iter()
-            .filter_map(|role_id| roles.get(role_id))
-            .filter(|role| role.color.is_some_and(|color| color != 0))
-            .min_by(|left, right| role_display_order(left, right))
-            .and_then(|role| role.color)
+        selected_member_role_color(member, roles)
+    }
+
+    pub fn message_author_role_color(
+        &self,
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        user_id: Id<UserMarker>,
+    ) -> Option<u32> {
+        let roles = self.roles.get(&guild_id)?;
+        if let Some(member) = self
+            .members
+            .get(&guild_id)
+            .and_then(|members| members.get(&user_id))
+        {
+            return selected_member_role_color(member, roles);
+        }
+
+        if let Some(role_ids) = self.profile_role_ids.get(&(guild_id, user_id)) {
+            return selected_role_ids_color(role_ids, roles);
+        }
+
+        let role_ids = self
+            .message_author_role_ids
+            .get(&(channel_id, message_id))?;
+        selected_role_ids_color(role_ids, roles)
     }
 
     pub fn custom_emojis_for_guild(&self, guild_id: Id<GuildMarker>) -> &[CustomEmojiInfo] {
@@ -1262,6 +1298,12 @@ impl DiscordState {
                 }
             })
             .collect::<Vec<_>>();
+        for message in history
+            .iter()
+            .filter(|message| message.channel_id == channel_id)
+        {
+            self.record_message_author_role_ids(message);
+        }
         let messages = self.messages.entry(channel_id).or_default();
         let mut by_id: BTreeMap<Id<MessageMarker>, MessageState> = messages
             .drain(..)
@@ -1333,6 +1375,32 @@ impl DiscordState {
         if let Some(messages) = self.messages.get_mut(&channel_id) {
             messages.retain(|message| message.id != message_id);
         }
+        self.message_author_role_ids
+            .remove(&(channel_id, message_id));
+    }
+
+    fn record_message_author_role_ids(&mut self, message: &MessageInfo) {
+        self.record_author_role_ids(
+            message.channel_id,
+            message.message_id,
+            &message.author_role_ids,
+        );
+    }
+
+    fn record_author_role_ids(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        author_role_ids: &[Id<RoleMarker>],
+    ) {
+        let key = (channel_id, message_id);
+        if author_role_ids.is_empty() {
+            self.message_author_role_ids.remove(&key);
+            return;
+        }
+
+        self.message_author_role_ids
+            .insert(key, author_role_ids.to_vec());
     }
 }
 
@@ -1436,6 +1504,25 @@ fn role_map(roles: &[RoleInfo]) -> BTreeMap<Id<RoleMarker>, RoleState> {
         .collect()
 }
 
+fn selected_member_role_color(
+    member: &GuildMemberState,
+    roles: &BTreeMap<Id<RoleMarker>, RoleState>,
+) -> Option<u32> {
+    selected_role_ids_color(&member.role_ids, roles)
+}
+
+fn selected_role_ids_color(
+    role_ids: &[Id<RoleMarker>],
+    roles: &BTreeMap<Id<RoleMarker>, RoleState>,
+) -> Option<u32> {
+    role_ids
+        .iter()
+        .filter_map(|role_id| roles.get(role_id))
+        .filter(|role| role.color.is_some_and(|color| color != 0))
+        .min_by(|left, right| role_display_order(left, right))
+        .and_then(|role| role.color)
+}
+
 fn role_display_order(left: &RoleState, right: &RoleState) -> std::cmp::Ordering {
     right
         .position
@@ -1493,6 +1580,7 @@ mod tests {
             username: format!("user-{user_id}"),
             global_name: None,
             guild_nick: guild_nick.map(str::to_owned),
+            role_ids: Vec::new(),
             avatar_url: None,
             bio: None,
             pronouns: None,
@@ -1543,6 +1631,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -1636,6 +1725,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -1665,6 +1755,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -1952,6 +2043,7 @@ mod tests {
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
                 author_avatar_url: None,
+                author_role_ids: Vec::new(),
                 message_kind: crate::discord::MessageKind::regular(),
                 reference: None,
                 reply: None,
@@ -1981,6 +2073,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::new(19),
             reference: None,
             reply: None,
@@ -2010,6 +2103,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2027,6 +2121,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::new(19),
             reference: None,
             reply: None,
@@ -2058,6 +2153,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2075,6 +2171,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2103,6 +2200,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::new(19),
             reference: None,
             reply: Some(ReplyInfo {
@@ -2149,6 +2247,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::new(19),
             reference: None,
             reply: Some(ReplyInfo {
@@ -2170,6 +2269,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::new(19),
             reference: None,
             reply: None,
@@ -2204,6 +2304,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2236,6 +2337,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2253,6 +2355,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2286,6 +2389,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2332,6 +2436,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2390,6 +2495,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2432,6 +2538,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2471,6 +2578,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2510,6 +2618,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2593,6 +2702,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2610,6 +2720,7 @@ mod tests {
             author_id,
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2648,6 +2759,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2712,6 +2824,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2750,6 +2863,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2794,6 +2908,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2864,6 +2979,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2904,6 +3020,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2936,6 +3053,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -2971,6 +3089,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -3009,6 +3128,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -3115,6 +3235,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -3163,6 +3284,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -3180,6 +3302,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: crate::discord::MessageKind::regular(),
             reference: None,
             reply: None,
@@ -3520,6 +3643,199 @@ mod tests {
     }
 
     #[test]
+    fn message_author_role_color_uses_history_author_roles_when_member_is_missing() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let message_id = Id::new(3);
+        let role_id = Id::new(90);
+        let user_id = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: Vec::new(),
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: vec![RoleInfo {
+                id: role_id,
+                name: "Red".to_owned(),
+                color: Some(0xCC0000),
+                position: 10,
+                hoist: true,
+                permissions: 0,
+            }],
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        let mut message = message_info(channel_id, message_id.get(), "hello");
+        message.guild_id = Some(guild_id);
+        message.author_id = user_id;
+        message.author_role_ids = vec![role_id];
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![message],
+        });
+
+        assert_eq!(
+            state.message_author_role_color(guild_id, channel_id, message_id, user_id),
+            Some(0xCC0000)
+        );
+    }
+
+    #[test]
+    fn message_author_role_color_uses_live_author_roles_when_member_is_missing() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let message_id = Id::new(3);
+        let role_id = Id::new(90);
+        let user_id = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: Vec::new(),
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: vec![RoleInfo {
+                id: role_id,
+                name: "Red".to_owned(),
+                color: Some(0xCC0000),
+                position: 10,
+                hoist: true,
+                permissions: 0,
+            }],
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: Some(guild_id),
+            channel_id,
+            message_id,
+            author_id: user_id,
+            author: "test-user".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: vec![role_id],
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        assert_eq!(
+            state.message_author_role_color(guild_id, channel_id, message_id, user_id),
+            Some(0xCC0000)
+        );
+    }
+
+    #[test]
+    fn message_author_role_color_uses_profile_roles_when_message_roles_are_missing() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let message_id = Id::new(3);
+        let role_id = Id::new(90);
+        let user_id = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: Vec::new(),
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: vec![RoleInfo {
+                id: role_id,
+                name: "Red".to_owned(),
+                color: Some(0xCC0000),
+                position: 10,
+                hoist: true,
+                permissions: 0,
+            }],
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        let mut message = message_info(channel_id, message_id.get(), "hello");
+        message.guild_id = Some(guild_id);
+        message.author_id = user_id;
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![message],
+        });
+        let mut profile = profile_info(user_id.get(), Some("test-user"));
+        profile.role_ids = vec![role_id];
+        state.apply_event(&AppEvent::UserProfileLoaded {
+            guild_id: Some(guild_id),
+            profile,
+        });
+
+        assert_eq!(
+            state.message_author_role_color(guild_id, channel_id, message_id, user_id),
+            Some(0xCC0000)
+        );
+    }
+
+    #[test]
+    fn message_author_role_color_does_not_use_message_roles_when_member_is_cached() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let message_id = Id::new(3);
+        let stale_role_id = Id::new(90);
+        let user_id = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: Vec::new(),
+            members: vec![MemberInfo {
+                user_id,
+                display_name: "test-user".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            }],
+            presences: Vec::new(),
+            roles: vec![RoleInfo {
+                id: stale_role_id,
+                name: "Old Red".to_owned(),
+                color: Some(0xCC0000),
+                position: 10,
+                hoist: true,
+                permissions: 0,
+            }],
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        let mut message = message_info(channel_id, message_id.get(), "hello");
+        message.guild_id = Some(guild_id);
+        message.author_id = user_id;
+        message.author_role_ids = vec![stale_role_id];
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![message],
+        });
+
+        assert_eq!(
+            state.message_author_role_color(guild_id, channel_id, message_id, user_id),
+            None
+        );
+    }
+
+    #[test]
     fn chunk_style_member_upserts_populate_member_list() {
         let guild_id = Id::new(1);
         let alice = Id::new(10);
@@ -3760,6 +4076,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,
@@ -4154,6 +4471,7 @@ mod tests {
             author_id: owner,
             author: "owner".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::default(),
             reference: None,
             reply: None,
@@ -4537,6 +4855,7 @@ mod tests {
             author_id: Id::new(99),
             author: "neo".to_owned(),
             author_avatar_url: None,
+            author_role_ids: Vec::new(),
             message_kind: MessageKind::regular(),
             reference: None,
             reply: None,

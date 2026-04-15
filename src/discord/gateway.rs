@@ -1287,6 +1287,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         author_id: message.author_id,
         author: message.author,
         author_avatar_url: message.author_avatar_url,
+        author_role_ids: message.author_role_ids,
         message_kind: message.message_kind,
         reference: message.reference,
         reply: message.reply,
@@ -1306,6 +1307,7 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
     let author_id = parse_id::<UserMarker>(author.get("id")?)?;
     let author_name = message_author_display_name(data, author);
     let author_avatar_url = raw_user_avatar_url(author_id, author);
+    let author_role_ids = parse_message_author_role_ids(data);
     let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
     let message_kind = data
         .get("type")
@@ -1340,6 +1342,7 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         author_id,
         author: author_name,
         author_avatar_url,
+        author_role_ids,
         message_kind,
         reference,
         reply,
@@ -1352,6 +1355,14 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         embeds,
         forwarded_snapshots,
     })
+}
+
+fn parse_message_author_role_ids(data: &Value) -> Vec<Id<RoleMarker>> {
+    data.get("member")
+        .and_then(|member| member.get("roles"))
+        .and_then(Value::as_array)
+        .map(|roles| roles.iter().filter_map(parse_id::<RoleMarker>).collect())
+        .unwrap_or_default()
 }
 
 fn parse_message_reference_info(value: &Value) -> MessageReferenceInfo {
@@ -2355,7 +2366,7 @@ mod tests {
         SessionState, USER_ACCOUNT_CAPABILITIES, build_identify_payload, build_resume_payload,
         direct_message_subscribe_payload, guild_channel_subscribe_payload, parse_channel_info,
         parse_guild_create, parse_guild_emojis_update, parse_guild_update, parse_message_create,
-        parse_message_update, parse_user_account_event,
+        parse_message_info, parse_message_update, parse_user_account_event,
     };
     use crate::discord::{
         AppEvent, AttachmentUpdate, ChannelVisibilityStats, DiscordState, FriendStatus,
@@ -3872,6 +3883,22 @@ mod tests {
             panic!("expected message create event");
         };
         assert_eq!(author, "server alias");
+    }
+
+    #[test]
+    fn message_info_parser_keeps_author_role_ids_from_member_payload() {
+        let message = parse_message_info(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "guild_id": "1",
+            "author": { "id": "30", "username": "neo" },
+            "member": { "roles": ["90", "91"] },
+            "content": "hello",
+            "attachments": []
+        }))
+        .expect("message should parse");
+
+        assert_eq!(message.author_role_ids, vec![Id::new(90), Id::new(91)]);
     }
 
     #[test]
