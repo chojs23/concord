@@ -175,12 +175,17 @@ impl DashboardState {
             return status;
         }
 
-        self.discord
+        let recipient_status = self
+            .discord
             .channels_for_guild(None)
             .into_iter()
             .flat_map(|channel| channel.recipients.iter())
             .find(|recipient| recipient.user_id == popup.user_id)
-            .map(|recipient| recipient.status)
+            .map(|recipient| recipient.status);
+
+        recipient_status
+            .filter(|status| *status != PresenceStatus::Unknown)
+            .or_else(|| self.discord.user_presence(popup.user_id))
             .unwrap_or(PresenceStatus::Unknown)
     }
 

@@ -218,6 +218,56 @@ fn user_profile_popup_status_uses_dm_recipient_status_without_guild() {
 }
 
 #[test]
+fn user_profile_popup_status_uses_cached_presence_without_guild() {
+    let user_id: Id<UserMarker> = Id::new(10);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::UserPresenceUpdate {
+        user_id,
+        status: PresenceStatus::Idle,
+    });
+    state.open_user_profile_popup(user_id, None);
+
+    assert_eq!(state.user_profile_popup_status(), PresenceStatus::Idle);
+}
+
+#[test]
+fn user_profile_popup_status_prefers_cached_presence_over_unknown_recipient() {
+    let user_id: Id<UserMarker> = Id::new(10);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::UserPresenceUpdate {
+        user_id,
+        status: PresenceStatus::Idle,
+    });
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: None,
+        channel_id: Id::new(20),
+        parent_id: None,
+        position: None,
+        last_message_id: None,
+        name: "test-user".to_owned(),
+        kind: "dm".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        recipients: Some(vec![ChannelRecipientInfo {
+            user_id,
+            display_name: "test-user".to_owned(),
+            username: None,
+            is_bot: false,
+            avatar_url: None,
+            status: Some(PresenceStatus::Unknown),
+        }]),
+        permission_overwrites: Vec::new(),
+    }));
+    state.open_user_profile_popup(user_id, None);
+
+    assert_eq!(state.user_profile_popup_status(), PresenceStatus::Idle);
+}
+
+#[test]
 fn cycle_focus_uses_four_top_level_panes() {
     let mut state = DashboardState::new();
 

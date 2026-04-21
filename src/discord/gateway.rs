@@ -663,6 +663,8 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
     let mut events = Vec::new();
     let mut stats = ReadyTimingStats::default();
     let mut current_user = None;
+    let mut current_user_id = None;
+    let mut current_user_status = None;
 
     let user_started = Instant::now();
     if let Some(user) = data.get("user") {
@@ -678,7 +680,12 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
             user: name,
             user_id,
         });
+        current_user_id = user_id;
         current_user = parse_channel_recipient_info(user);
+        current_user_status = parse_current_user_session_status(data);
+        if let (Some(user), Some(status)) = (current_user.as_mut(), current_user_status) {
+            user.status = Some(status);
+        }
     }
     stats.user = user_started.elapsed();
 
@@ -746,6 +753,10 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
         }
     }
     stats.private_channels_duration = private_channels_started.elapsed();
+
+    if let (Some(user_id), Some(status)) = (current_user_id, current_user_status) {
+        events.push(AppEvent::UserPresenceUpdate { user_id, status });
+    }
 
     // User-account READY ships the friend list as `relationships`. Capture
     // it as a single event so the profile popup can show friend / pending /
@@ -951,6 +962,20 @@ fn parse_merged_presences(data: &Value) -> BTreeMap<Id<UserMarker>, PresenceStat
         collect_presence_entries(merged, &mut presences);
     }
     presences
+}
+
+fn parse_current_user_session_status(data: &Value) -> Option<PresenceStatus> {
+    data.get("sessions")
+        .and_then(Value::as_array)
+        .and_then(|sessions| {
+            sessions.iter().find_map(|session| {
+                let status = session
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(parse_status)?;
+                (status != PresenceStatus::Unknown).then_some(status)
+            })
+        })
 }
 
 fn collect_presence_entries(
@@ -2691,6 +2716,7 @@ mod tests {
                         "id": "99",
                         "username": "neo"
                     },
+                    "sessions": [{ "status": "idle" }],
                     "guilds": [],
                     "merged_presences": {
                         "friends": [
@@ -2744,7 +2770,12 @@ mod tests {
         assert_eq!(recipients[1].status, Some(PresenceStatus::Idle));
         assert_eq!(recipients[2].user_id, Id::new(99));
         assert_eq!(recipients[2].display_name, "neo");
-        assert_eq!(recipients[2].status, None);
+        assert_eq!(recipients[2].status, Some(PresenceStatus::Idle));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::UserPresenceUpdate { user_id, status }
+                if *user_id == Id::new(99) && *status == PresenceStatus::Idle
+        )));
     }
 
     #[test]

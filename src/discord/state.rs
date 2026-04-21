@@ -100,6 +100,7 @@ impl ChannelRecipientState {
     fn from_info(
         recipient: &ChannelRecipientInfo,
         previous_status: Option<PresenceStatus>,
+        known_status: Option<PresenceStatus>,
     ) -> Self {
         Self {
             user_id: recipient.user_id,
@@ -110,6 +111,7 @@ impl ChannelRecipientState {
             status: recipient
                 .status
                 .or(previous_status)
+                .or(known_status)
                 .unwrap_or(PresenceStatus::Unknown),
         }
     }
@@ -259,6 +261,9 @@ pub struct DiscordState {
     /// `relationships` array. Used to colour the profile popup's friend
     /// indicator and to enrich `UserProfileInfo` on insert.
     relationships: BTreeMap<Id<UserMarker>, FriendStatus>,
+    /// Last known presence by user id. This gives DM/profile views a fallback
+    /// when the private-channel recipient payload omitted status.
+    user_presences: BTreeMap<Id<UserMarker>, PresenceStatus>,
     /// Snowflake of the authenticated user. Captured from the READY payload
     /// and consulted by `can_view_channel` to look up our own roles and
     /// match member-level permission overwrites.
@@ -300,6 +305,7 @@ impl DiscordState {
             guild_folders: Vec::new(),
             user_profiles: BTreeMap::new(),
             relationships: BTreeMap::new(),
+            user_presences: BTreeMap::new(),
             current_user_id: None,
             typing: BTreeMap::new(),
             max_messages_per_channel,
@@ -338,6 +344,7 @@ impl DiscordState {
                     upsert_member(entry, member, None);
                 }
                 for (user_id, status) in presences {
+                    self.user_presences.insert(*user_id, *status);
                     if let Some(member) = entry.get_mut(user_id) {
                         member.status = *status;
                     }
@@ -529,6 +536,7 @@ impl DiscordState {
                 user_id,
                 status,
             } => {
+                self.user_presences.insert(*user_id, *status);
                 let entry = self.members.entry(*guild_id).or_default();
                 if let Some(member) = entry.get_mut(user_id) {
                     member.status = *status;
@@ -549,6 +557,7 @@ impl DiscordState {
                 self.update_channel_recipient_presence(*user_id, *status);
             }
             AppEvent::UserPresenceUpdate { user_id, status } => {
+                self.user_presences.insert(*user_id, *status);
                 self.update_channel_recipient_presence(*user_id, *status);
             }
             AppEvent::TypingStart {
@@ -703,6 +712,10 @@ impl DiscordState {
     /// missing case as "can't compute, fall back to permissive".
     pub fn current_user_id(&self) -> Option<Id<UserMarker>> {
         self.current_user_id
+    }
+
+    pub fn user_presence(&self, user_id: Id<UserMarker>) -> Option<PresenceStatus> {
+        self.user_presences.get(&user_id).copied()
     }
 
     /// Whether the authenticated user has `VIEW_CHANNEL` for `channel`.
@@ -1040,7 +1053,8 @@ impl DiscordState {
                                     .find(|existing| existing.user_id == recipient.user_id)
                             })
                             .map(|recipient| recipient.status);
-                        ChannelRecipientState::from_info(recipient, previous_status)
+                        let known_status = self.user_presences.get(&recipient.user_id).copied();
+                        ChannelRecipientState::from_info(recipient, previous_status, known_status)
                     })
                     .collect()
             })
@@ -1953,6 +1967,44 @@ mod tests {
 
         let channel = state.channel(channel_id).expect("channel should be stored");
         assert_eq!(channel.recipients[0].status, PresenceStatus::Unknown);
+    }
+
+    #[test]
+    fn channel_upsert_uses_cached_user_presence_when_status_is_omitted() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let user_id: Id<UserMarker> = Id::new(20);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::UserPresenceUpdate {
+            user_id,
+            status: PresenceStatus::Idle,
+        });
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "test-user".to_owned(),
+            kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            recipients: Some(vec![ChannelRecipientInfo {
+                user_id,
+                display_name: "test-user".to_owned(),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                status: None,
+            }]),
+            permission_overwrites: Vec::new(),
+        }));
+
+        let channel = state.channel(channel_id).expect("channel should be stored");
+        assert_eq!(channel.recipients[0].status, PresenceStatus::Idle);
+        assert_eq!(state.user_presence(user_id), Some(PresenceStatus::Idle));
     }
 
     #[test]
