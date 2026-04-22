@@ -33,6 +33,7 @@ use crate::discord::{
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
+const SCROLLBAR_THUMB: Color = Color::Rgb(170, 170, 170);
 const MIN_MESSAGE_INPUT_HEIGHT: u16 = 3;
 const IMAGE_PREVIEW_HEIGHT: u16 = 10;
 const IMAGE_PREVIEW_WIDTH: u16 = 72;
@@ -187,7 +188,7 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
                     GuildPaneEntry::DirectMessages => ListItem::new(Line::from(vec![
                         selection_marker(is_selected),
                         Span::styled(
-                            truncate_text(entry.label(), max_width),
+                            truncate_display_width(entry.label(), max_width),
                             active_text_style(
                                 is_active,
                                 Style::default()
@@ -206,24 +207,24 @@ fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
                         } else {
                             format!("{icon} {label}")
                         };
-                        let label_width = max_width.saturating_sub(arrow.chars().count());
+                        let label_width = max_width.saturating_sub(arrow.width());
                         ListItem::new(Line::from(vec![
                             selection_marker(is_selected),
                             Span::styled(arrow, Style::default().fg(color)),
                             Span::styled(
-                                truncate_text(&title, label_width),
+                                truncate_display_width(&title, label_width),
                                 Style::default().fg(color).add_modifier(Modifier::BOLD),
                             ),
                         ]))
                     }
                     GuildPaneEntry::Guild { state, branch } => {
                         let prefix = branch.prefix();
-                        let label_width = max_width.saturating_sub(prefix.chars().count());
+                        let label_width = max_width.saturating_sub(prefix.width());
                         ListItem::new(Line::from(vec![
                             selection_marker(is_selected),
                             Span::styled(prefix, Style::default().fg(DIM)),
                             Span::styled(
-                                truncate_text(state.name.as_str(), label_width),
+                                truncate_display_width(state.name.as_str(), label_width),
                                 active_text_style(is_active, Style::default()),
                             ),
                         ]))
@@ -262,12 +263,12 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
                 match entry {
                     ChannelPaneEntry::CategoryHeader { state, collapsed } => {
                         let arrow = if *collapsed { "▶ " } else { "▼ " };
-                        let label_width = max_width.saturating_sub(arrow.chars().count());
+                        let label_width = max_width.saturating_sub(arrow.width());
                         ListItem::new(Line::from(vec![
                             selection_marker(is_selected),
                             Span::styled(arrow, Style::default().fg(ACCENT)),
                             Span::styled(
-                                truncate_text(&state.name, label_width),
+                                truncate_display_width(&state.name, label_width),
                                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
                             ),
                         ]))
@@ -276,14 +277,14 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
                         let branch_prefix = branch.prefix();
                         let channel_prefix = channel_prefix(&state.kind);
                         let label_width = max_width
-                            .saturating_sub(branch_prefix.chars().count())
-                            .saturating_sub(channel_prefix.chars().count());
+                            .saturating_sub(branch_prefix.width())
+                            .saturating_sub(channel_prefix.width());
                         ListItem::new(Line::from(vec![
                             selection_marker(is_selected),
                             Span::styled(branch_prefix, Style::default().fg(DIM)),
                             Span::styled(channel_prefix, Style::default().fg(DIM)),
                             Span::styled(
-                                truncate_text(&state.name, label_width),
+                                truncate_display_width(&state.name, label_width),
                                 channel_name_style(state, is_active),
                             ),
                         ]))
@@ -1726,7 +1727,7 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
 fn panel_scrollbar_area(area: Rect) -> Rect {
     area.inner(Margin {
         vertical: 1,
-        horizontal: 0,
+        horizontal: 1,
     })
 }
 
@@ -1750,7 +1751,9 @@ fn render_vertical_scrollbar(
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(None)
         .end_symbol(None)
-        .thumb_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
+        .track_symbol(Some("│"))
+        .thumb_symbol("┃")
+        .thumb_style(Style::default().fg(SCROLLBAR_THUMB))
         .track_style(Style::default().fg(DIM));
 
     frame.render_stateful_widget(scrollbar, area, &mut state);
@@ -4281,6 +4284,28 @@ mod tests {
 
         assert_eq!(label, "漢字仮名...");
         assert!(label.width() <= 12);
+    }
+
+    #[test]
+    fn server_label_truncates_by_display_width() {
+        let label = truncate_display_width("漢字仮名交じりサーバー", 12);
+
+        assert_eq!(label, "漢字仮名...");
+        assert!(label.width() <= 12);
+    }
+
+    #[test]
+    fn channel_label_truncates_by_display_width_after_prefixes() {
+        let branch_prefix = "├ ";
+        let channel_prefix = "# ";
+        let max_width = 14usize;
+        let label_width = max_width
+            .saturating_sub(branch_prefix.width())
+            .saturating_sub(channel_prefix.width());
+        let label = truncate_display_width("漢字仮名交じり", label_width);
+
+        assert_eq!(label, "漢字仮...");
+        assert!(branch_prefix.width() + channel_prefix.width() + label.width() <= max_width);
     }
 
     #[test]
