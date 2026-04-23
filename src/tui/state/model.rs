@@ -1,4 +1,7 @@
-use crate::discord::ids::{Id, marker::ChannelMarker};
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, MessageMarker},
+};
 
 use crate::discord::{ChannelState, GuildFolder, GuildState, ReactionEmoji};
 
@@ -91,6 +94,14 @@ pub struct ThreadSummary {
     pub total_message_sent: Option<u64>,
     pub archived: Option<bool>,
     pub locked: Option<bool>,
+    pub latest_message_id: Option<Id<MessageMarker>>,
+    pub latest_message_preview: Option<ThreadMessagePreview>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThreadMessagePreview {
+    pub author: String,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Copy)]

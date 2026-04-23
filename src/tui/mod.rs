@@ -34,7 +34,7 @@ use media::{
     AvatarImageCache, EmojiImageCache, ImagePreviewCache, spawn_image_preview_decode,
     visible_avatar_targets, visible_emoji_image_targets, visible_image_preview_targets,
 };
-use requests::{HistoryRequests, MemberRequests};
+use requests::{HistoryRequests, MemberRequests, ThreadPreviewRequests};
 use state::DashboardState;
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
@@ -95,6 +95,7 @@ async fn run_dashboard(
     let (preview_decode_tx, mut preview_decode_rx) = mpsc::unbounded_channel();
     let mut history_requests = HistoryRequests::default();
     let mut member_requests = MemberRequests::default();
+    let mut thread_preview_requests = ThreadPreviewRequests::default();
     let mut last_member_subscription: Option<(Id<GuildMarker>, Id<ChannelMarker>, u32)> = None;
     let mut requested_author_profiles: HashSet<(Id<UserMarker>, Id<GuildMarker>)> = HashSet::new();
     let mut image_targets = Vec::new();
@@ -218,6 +219,7 @@ async fn run_dashboard(
                         avatar_images.record_event(&event);
                         emoji_images.record_event(&event);
                         history_requests.record_event(&event);
+                        thread_preview_requests.record_event(&event);
                         state.push_event(event);
                         dirty = true;
                     }
@@ -299,6 +301,26 @@ async fn run_dashboard(
                 .await
                 .is_err()
             {
+                logging::error("tui", "command channel closed");
+                state.push_event(AppEvent::GatewayError {
+                    message: "command channel closed".to_owned(),
+                });
+                dirty = true;
+            }
+        }
+
+        for (channel_id, latest_message_id) in
+            thread_preview_requests.next(state.missing_thread_preview_load_requests())
+        {
+            if commands
+                .send(AppCommand::LoadThreadPreview {
+                    channel_id,
+                    message_id: latest_message_id,
+                })
+                .await
+                .is_err()
+            {
+                thread_preview_requests.remove((channel_id, latest_message_id));
                 logging::error("tui", "command channel closed");
                 state.push_event(AppEvent::GatewayError {
                     message: "command channel closed".to_owned(),

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, GuildMarker},
+    marker::{ChannelMarker, GuildMarker, MessageMarker},
 };
 
 use crate::discord::AppEvent;
@@ -68,6 +68,12 @@ pub(super) struct MemberRequests {
     requests: HashSet<Id<GuildMarker>>,
 }
 
+#[derive(Default)]
+pub(super) struct ThreadPreviewRequests {
+    requested: HashSet<(Id<ChannelMarker>, Id<MessageMarker>)>,
+    failed: HashSet<(Id<ChannelMarker>, Id<MessageMarker>)>,
+}
+
 impl MemberRequests {
     pub(super) fn next(&mut self, guild_id: Option<Id<GuildMarker>>) -> Option<Id<GuildMarker>> {
         let guild_id = guild_id?;
@@ -76,6 +82,47 @@ impl MemberRequests {
 
     pub(super) fn remove(&mut self, guild_id: Id<GuildMarker>) {
         self.requests.remove(&guild_id);
+    }
+}
+
+impl ThreadPreviewRequests {
+    pub(super) fn record_event(&mut self, event: &AppEvent) {
+        match event {
+            AppEvent::ThreadPreviewLoaded {
+                channel_id,
+                message,
+            } => {
+                let key = (*channel_id, message.message_id);
+                self.requested.remove(&key);
+            }
+            AppEvent::ThreadPreviewLoadFailed {
+                channel_id,
+                message_id,
+            } => {
+                let key = (*channel_id, *message_id);
+                self.requested.remove(&key);
+                self.failed.insert(key);
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn next(
+        &mut self,
+        missing: Vec<(Id<ChannelMarker>, Id<MessageMarker>)>,
+    ) -> Vec<(Id<ChannelMarker>, Id<MessageMarker>)> {
+        let visible = missing.iter().copied().collect::<HashSet<_>>();
+        self.failed.retain(|key| visible.contains(key));
+
+        missing
+            .into_iter()
+            .filter(|key| !self.failed.contains(key))
+            .filter(|key| self.requested.insert(*key))
+            .collect()
+    }
+
+    pub(super) fn remove(&mut self, key: (Id<ChannelMarker>, Id<MessageMarker>)) {
+        self.requested.remove(&key);
     }
 }
 
@@ -92,7 +139,7 @@ mod tests {
 
     use crate::discord::AppEvent;
 
-    use super::{HistoryRequests, MemberRequests};
+    use super::{HistoryRequests, MemberRequests, ThreadPreviewRequests};
 
     #[test]
     fn history_request_is_sent_once_per_channel() {
@@ -144,5 +191,21 @@ mod tests {
         requests.remove(guild_id);
 
         assert_eq!(requests.next(Some(guild_id)), Some(guild_id));
+    }
+
+    #[test]
+    fn thread_preview_request_retries_after_failed_card_is_revisited() {
+        let mut requests = ThreadPreviewRequests::default();
+        let key = (Id::new(10), Id::new(30));
+
+        assert_eq!(requests.next(vec![key]), vec![key]);
+        requests.record_event(&AppEvent::ThreadPreviewLoadFailed {
+            channel_id: key.0,
+            message_id: key.1,
+        });
+
+        assert_eq!(requests.next(vec![key]), Vec::new());
+        assert_eq!(requests.next(Vec::new()), Vec::new());
+        assert_eq!(requests.next(vec![key]), vec![key]);
     }
 }

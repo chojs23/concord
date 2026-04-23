@@ -1,4 +1,9 @@
-use crate::discord::ids::{Id, marker::GuildMarker};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::discord::ids::{
+    Id,
+    marker::{GuildMarker, MessageMarker},
+};
 use ratatui::{
     style::{Color, Modifier, Style, Stylize},
     text::Span,
@@ -10,7 +15,7 @@ use super::{
     format::{
         RenderedText, TextHighlight, TextHighlightKind, truncate_display_width, truncate_text,
     },
-    state::{DashboardState, ThreadSummary},
+    state::{DashboardState, ThreadSummary, discord_color},
 };
 use crate::discord::{
     AttachmentInfo, EmbedInfo, MessageKind, MessageSnapshotInfo, MessageState, PollInfo,
@@ -19,6 +24,9 @@ use crate::discord::{
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
+const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
+const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
+const THREAD_CARD_INDENT: &str = "  ";
 pub(super) const EMOJI_REACTION_IMAGE_WIDTH: u16 = 2;
 
 #[derive(Clone)]
@@ -70,6 +78,17 @@ impl MessageContentLine {
             style: Style::default().fg(ACCENT),
             mention_highlights: Vec::new(),
             styled_prefixes: Vec::new(),
+        }
+    }
+
+    fn styled_range(&mut self, start: usize, len: usize, style: Style) {
+        let end = start.saturating_add(len).min(self.text.len());
+        if start < end {
+            self.styled_prefixes.push(StyledPrefix {
+                start,
+                len: end.saturating_sub(start),
+                style,
+            });
         }
     }
 
@@ -880,38 +899,238 @@ fn format_thread_created_lines(
         .map(|summary| summary.name.as_str())
         .or_else(|| message.content.as_deref().filter(|value| !value.is_empty()))
         .unwrap_or("thread");
-    let mut lines = vec![
-        MessageContentLine::accent(truncate_text(
-            &format!("{} started a thread", message.author),
-            width,
-        )),
-        MessageContentLine::plain(truncate_text(&format!("# {thread_name}"), width)),
-    ];
-    if let Some(summary) = summary {
-        lines.push(format_thread_summary_line(&summary, width));
-    } else {
-        lines.push(MessageContentLine::dim(truncate_text(
-            "Thread details unavailable",
-            width,
-        )));
-    }
+    let mut lines = vec![format_thread_created_starter_line(
+        message,
+        state,
+        thread_name,
+        width,
+    )];
+    lines.extend(format_thread_card_lines(
+        thread_name,
+        summary.as_ref(),
+        message.id,
+        width,
+    ));
     lines
 }
 
-fn format_thread_summary_line(summary: &ThreadSummary, width: usize) -> MessageContentLine {
-    let mut parts = Vec::new();
-    if let Some(count) = summary.message_count.or(summary.total_message_sent) {
-        let label = if count == 1 { "message" } else { "messages" };
-        parts.push(format!("{count} {label}"));
+fn format_thread_created_starter_line(
+    message: &MessageState,
+    state: &DashboardState,
+    thread_name: &str,
+    width: usize,
+) -> MessageContentLine {
+    let author_style = Style::default()
+        .fg(discord_color(
+            state.message_author_role_color(message),
+            Color::White,
+        ))
+        .bold();
+    let thread_style = Style::default().fg(ACCENT).bold();
+    let base_style = Style::default().fg(Color::White);
+
+    let author = message.author.as_str();
+    let (starter, thread_start) = if thread_name == "thread" {
+        (format!("{author} started a thread."), None)
+    } else {
+        let before_thread = format!("{author} started ");
+        let thread_start = before_thread.len();
+        (
+            format!("{before_thread}{thread_name} thread."),
+            Some(thread_start),
+        )
+    };
+    let mut line = MessageContentLine::plain(truncate_display_width(&starter, width));
+    line.style = base_style;
+    line.styled_range(0, author.len(), author_style);
+    if let Some(thread_start) = thread_start {
+        line.styled_range(thread_start, thread_name.len(), thread_style);
     }
-    if summary.archived == Some(true) {
-        parts.push("archived".to_owned());
+    line
+}
+
+fn format_thread_card_lines(
+    thread_name: &str,
+    summary: Option<&ThreadSummary>,
+    message_id: Id<MessageMarker>,
+    width: usize,
+) -> Vec<MessageContentLine> {
+    let card_width = thread_card_width(width);
+    let inner_width = thread_card_inner_width(width);
+    vec![
+        MessageContentLine::accent(thread_card_border('╭', '╮', width)),
+        thread_card_line(
+            format_thread_card_title_line(thread_name, summary, inner_width),
+            inner_width,
+        ),
+        thread_card_line(
+            format_thread_latest_line(summary, message_id, inner_width),
+            inner_width,
+        ),
+        MessageContentLine::accent(format!(
+            "{THREAD_CARD_INDENT}╰{}╯",
+            "─".repeat(card_width.saturating_sub(2))
+        )),
+    ]
+}
+
+fn format_thread_card_title_line(
+    thread_name: &str,
+    summary: Option<&ThreadSummary>,
+    width: usize,
+) -> MessageContentLine {
+    let Some(count_label) = summary.and_then(thread_message_count_label) else {
+        return MessageContentLine::accent(truncate_display_width(thread_name, width));
+    };
+
+    let count_width = count_label.width();
+    if count_width.saturating_add(2) >= width {
+        return MessageContentLine::accent(truncate_display_width(thread_name, width));
     }
-    if summary.locked == Some(true) {
-        parts.push("locked".to_owned());
+
+    let name_width = width.saturating_sub(count_width).saturating_sub(2);
+    let name = truncate_display_width(thread_name, name_width);
+    let padding = width
+        .saturating_sub(name.width())
+        .saturating_sub(count_width);
+    MessageContentLine::accent(format!("{name}{}{count_label}", " ".repeat(padding)))
+}
+
+fn thread_message_count_label(summary: &ThreadSummary) -> Option<String> {
+    summary
+        .message_count
+        .or(summary.total_message_sent)
+        .map(|count| {
+            let label = if count == 1 { "message" } else { "messages" };
+            format!("{count} {label}")
+        })
+}
+
+fn thread_card_width(width: usize) -> usize {
+    width
+        .saturating_sub(THREAD_CARD_INDENT.width())
+        .clamp(4, 72)
+}
+
+fn thread_card_inner_width(width: usize) -> usize {
+    thread_card_width(width).saturating_sub(4).max(1)
+}
+
+fn thread_card_border(left: char, right: char, width: usize) -> String {
+    let card_width = thread_card_width(width);
+    format!(
+        "{THREAD_CARD_INDENT}{left}{}{right}",
+        "─".repeat(card_width.saturating_sub(2))
+    )
+}
+
+fn thread_card_line(mut line: MessageContentLine, inner_width: usize) -> MessageContentLine {
+    let prefix = format!("{THREAD_CARD_INDENT}│ ");
+    let suffix = " │";
+    let padding = inner_width.saturating_sub(line.text.width());
+    line.text = format!("{prefix}{}{}{suffix}", line.text, " ".repeat(padding));
+    line
+}
+
+fn format_thread_latest_line(
+    summary: Option<&ThreadSummary>,
+    message_id: Id<MessageMarker>,
+    width: usize,
+) -> MessageContentLine {
+    let mut metadata = Vec::new();
+    if let Some(summary) = summary {
+        let mut statuses = Vec::new();
+        let latest_message_id = summary.latest_message_id.unwrap_or(message_id);
+        let age = format_message_relative_age(latest_message_id);
+        if summary.archived == Some(true) {
+            statuses.push("archived".to_owned());
+        }
+        if summary.locked == Some(true) {
+            statuses.push("locked".to_owned());
+        }
+        let suffix = if statuses.is_empty() {
+            age
+        } else {
+            format!("{age} · {}", statuses.join(" · "))
+        };
+        if let Some(preview) = summary.latest_message_preview.as_ref() {
+            return MessageContentLine::dim(format_latest_message_preview(
+                &preview.author,
+                &preview.content,
+                &suffix,
+                width,
+            ));
+        }
+        metadata.push(suffix);
+    } else {
+        metadata.push(format_message_relative_age(message_id));
+        metadata.push("Thread details unavailable".to_owned());
     }
-    parts.push("Open thread to view messages".to_owned());
-    MessageContentLine::dim(truncate_text(&parts.join(" · "), width))
+
+    MessageContentLine::dim(truncate_display_width(&metadata.join(" · "), width))
+}
+
+fn format_latest_message_preview(
+    author: &str,
+    content: &str,
+    suffix: &str,
+    width: usize,
+) -> String {
+    let prefix = format!("{author} ");
+    let suffix = format!(" {suffix}");
+    if prefix.width().saturating_add(suffix.width()) >= width {
+        return truncate_display_width(&format!("{author} {content}{suffix}"), width);
+    }
+
+    let content_width = width
+        .saturating_sub(prefix.width())
+        .saturating_sub(suffix.width());
+    let content = truncate_display_width(content, content_width.max(1));
+    format!("{prefix}{content}{suffix}")
+}
+
+fn format_message_relative_age(message_id: Id<MessageMarker>) -> String {
+    let created = (message_id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+        .unwrap_or(created);
+    let seconds = now.saturating_sub(created) / 1000;
+    format_relative_seconds(seconds)
+}
+
+fn format_relative_seconds(seconds: u64) -> String {
+    if seconds < 60 {
+        return "just now".to_owned();
+    }
+
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return format_relative_unit(minutes, "minute");
+    }
+
+    let hours = minutes / 60;
+    if hours < 24 {
+        return format_relative_unit(hours, "hour");
+    }
+
+    let days = hours / 24;
+    if days < 30 {
+        return format_relative_unit(days, "day");
+    }
+
+    let months = days / 30;
+    if months < 12 {
+        return format_relative_unit(months, "month");
+    }
+
+    format_relative_unit((days / 365).max(1), "year")
+}
+
+fn format_relative_unit(value: u64, unit: &str) -> String {
+    let suffix = if value == 1 { "" } else { "s" };
+    format!("{value} {unit}{suffix} ago")
 }
 
 fn format_thread_starter_lines(
@@ -1075,5 +1294,18 @@ mod tests {
             spans[2].style.bg,
             mention_highlight_style(TextHighlightKind::SelfMention).bg
         );
+    }
+
+    #[test]
+    fn relative_age_labels_use_expected_boundaries() {
+        assert_eq!(format_relative_seconds(0), "just now");
+        assert_eq!(format_relative_seconds(59), "just now");
+        assert_eq!(format_relative_seconds(60), "1 minute ago");
+        assert_eq!(format_relative_seconds(2 * 60), "2 minutes ago");
+        assert_eq!(format_relative_seconds(59 * 60), "59 minutes ago");
+        assert_eq!(format_relative_seconds(60 * 60), "1 hour ago");
+        assert_eq!(format_relative_seconds(24 * 60 * 60), "1 day ago");
+        assert_eq!(format_relative_seconds(30 * 24 * 60 * 60), "1 month ago");
+        assert_eq!(format_relative_seconds(365 * 24 * 60 * 60), "1 year ago");
     }
 }

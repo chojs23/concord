@@ -449,6 +449,10 @@ impl DiscordState {
                 before,
                 messages,
             } => self.merge_message_history(*channel_id, *before, messages),
+            AppEvent::ThreadPreviewLoaded {
+                channel_id,
+                message,
+            } => self.merge_message_history(*channel_id, None, std::slice::from_ref(message)),
             AppEvent::MessageHistoryLoadFailed { .. } => {}
             AppEvent::MessageUpdate {
                 channel_id,
@@ -637,6 +641,7 @@ impl DiscordState {
             | AppEvent::ReactionUsersLoaded { .. }
             | AppEvent::AttachmentPreviewLoaded { .. }
             | AppEvent::AttachmentPreviewLoadFailed { .. }
+            | AppEvent::ThreadPreviewLoadFailed { .. }
             | AppEvent::UserProfileLoadFailed { .. }
             | AppEvent::GatewayClosed => {}
         }
@@ -1133,7 +1138,9 @@ impl DiscordState {
             .guild_id
             .or_else(|| self.channel_guild_id(channel_id));
         let messages = self.messages.entry(message.channel_id).or_default();
-        if let Some(existing) = messages.iter_mut().find(|item| item.id == message.id) {
+        let inserted = if let Some(existing) =
+            messages.iter_mut().find(|item| item.id == message.id)
+        {
             existing.guild_id = message.guild_id.or(existing.guild_id);
             existing.channel_id = message.channel_id;
             existing.author_id = message.author_id;
@@ -1165,14 +1172,36 @@ impl DiscordState {
             if !message.forwarded_snapshots.is_empty() || existing.forwarded_snapshots.is_empty() {
                 existing.forwarded_snapshots = message.forwarded_snapshots;
             }
+            false
         } else {
             messages.push_back(message);
-        }
+            true
+        };
 
         while messages.len() > self.max_messages_per_channel {
             messages.pop_front();
         }
         self.record_channel_message_id(channel_id, message_id);
+        if inserted {
+            self.increment_thread_message_counts(channel_id);
+        }
+    }
+
+    fn increment_thread_message_counts(&mut self, channel_id: Id<ChannelMarker>) {
+        let Some(channel) = self
+            .channels
+            .get_mut(&channel_id)
+            .filter(|channel| channel.is_thread())
+        else {
+            return;
+        };
+
+        if let Some(count) = channel.message_count.as_mut() {
+            *count = count.saturating_add(1);
+        }
+        if let Some(count) = channel.total_message_sent.as_mut() {
+            *count = count.saturating_add(1);
+        }
     }
 
     fn add_reaction(
@@ -3372,6 +3401,59 @@ mod tests {
                 .and_then(|channel| channel.last_message_id),
             Some(Id::new(30))
         );
+    }
+
+    #[test]
+    fn live_thread_messages_increment_cached_counts_once() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id,
+            parent_id: Some(Id::new(2)),
+            position: None,
+            last_message_id: None,
+            name: "release notes".to_owned(),
+            kind: "thread".to_owned(),
+            message_count: Some(12),
+            total_message_sent: Some(14),
+            thread_archived: Some(false),
+            thread_locked: Some(false),
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }));
+        for _ in 0..2 {
+            state.apply_event(&AppEvent::MessageCreate {
+                guild_id: Some(Id::new(1)),
+                channel_id,
+                message_id: Id::new(30),
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                author_avatar_url: None,
+                author_role_ids: Vec::new(),
+                message_kind: MessageKind::regular(),
+                reference: None,
+                reply: None,
+                poll: None,
+                content: Some("new".to_owned()),
+                mentions: Vec::new(),
+                attachments: Vec::new(),
+                embeds: Vec::new(),
+                forwarded_snapshots: Vec::new(),
+            });
+        }
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: Some(Id::new(30)),
+            messages: vec![message_info(channel_id, 20, "old")],
+        });
+
+        let channel = state
+            .channel(channel_id)
+            .expect("thread should stay cached");
+        assert_eq!(channel.message_count, Some(13));
+        assert_eq!(channel.total_message_sent, Some(15));
     }
 
     #[test]

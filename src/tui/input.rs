@@ -52,6 +52,9 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
 
     let focus = state.focus();
     match key.code {
+        KeyCode::Esc => {
+            state.return_from_opened_thread();
+        }
         KeyCode::Char('q') => state.quit(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
         KeyCode::Char('a') if focus == FocusPane::Channels => {
@@ -330,8 +333,8 @@ mod tests {
     use crate::{
         discord::{
             AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, GuildFolder,
-            PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionUserInfo,
-            ReactionUsersInfo,
+            MessageReferenceInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji,
+            ReactionUserInfo, ReactionUsersInfo,
         },
         tui::state::{
             ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind,
@@ -700,6 +703,40 @@ mod tests {
         handle_key(&mut state, key(KeyCode::Esc));
 
         assert!(!state.is_message_action_menu_open());
+    }
+
+    #[test]
+    fn esc_returns_from_message_opened_thread() {
+        let mut state = state_with_thread_created_message();
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
+
+        handle_key(&mut state, key(KeyCode::Esc));
+
+        assert_eq!(state.selected_channel_id(), Some(Id::new(2)));
+        assert_eq!(state.focus(), FocusPane::Messages);
+    }
+
+    #[test]
+    fn esc_closes_modal_before_returning_from_opened_thread() {
+        let mut state = state_with_thread_created_message();
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
+
+        handle_key(&mut state, char_key('`'));
+        handle_key(&mut state, key(KeyCode::Esc));
+
+        assert!(!state.is_debug_log_popup_open());
+        assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
+
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert_eq!(state.selected_channel_id(), Some(Id::new(2)));
     }
 
     #[test]
@@ -1153,6 +1190,81 @@ mod tests {
                 forwarded_snapshots: Vec::new(),
             });
         }
+        state
+    }
+
+    fn state_with_thread_created_message() -> DashboardState {
+        let guild_id = Id::new(1);
+        let parent_id = Id::new(2);
+        let thread_id = Id::new(10);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: vec![
+                ChannelInfo {
+                    guild_id: Some(guild_id),
+                    channel_id: parent_id,
+                    parent_id: None,
+                    position: None,
+                    last_message_id: None,
+                    name: "general".to_owned(),
+                    kind: "GuildText".to_owned(),
+                    message_count: None,
+                    total_message_sent: None,
+                    thread_archived: None,
+                    thread_locked: None,
+                    recipients: None,
+                    permission_overwrites: Vec::new(),
+                },
+                ChannelInfo {
+                    guild_id: Some(guild_id),
+                    channel_id: thread_id,
+                    parent_id: Some(parent_id),
+                    position: None,
+                    last_message_id: None,
+                    name: "release notes".to_owned(),
+                    kind: "thread".to_owned(),
+                    message_count: Some(12),
+                    total_message_sent: Some(14),
+                    thread_archived: Some(false),
+                    thread_locked: Some(false),
+                    recipients: None,
+                    permission_overwrites: Vec::new(),
+                },
+            ],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(guild_id),
+            channel_id: parent_id,
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::new(18),
+            reference: Some(MessageReferenceInfo {
+                guild_id: Some(guild_id),
+                channel_id: Some(thread_id),
+                message_id: None,
+            }),
+            reply: None,
+            poll: None,
+            content: Some("release notes".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
         state
     }
 

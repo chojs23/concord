@@ -416,6 +416,14 @@ pub enum AppEvent {
         before: Option<Id<MessageMarker>>,
         messages: Vec<MessageInfo>,
     },
+    ThreadPreviewLoaded {
+        channel_id: Id<ChannelMarker>,
+        message: MessageInfo,
+    },
+    ThreadPreviewLoadFailed {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    },
     MessageHistoryLoadFailed {
         channel_id: Id<ChannelMarker>,
         message: String,

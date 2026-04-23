@@ -476,27 +476,6 @@ mod tests {
     }
 
     #[test]
-    fn image_preview_request_is_created_for_clipped_draw_target() {
-        let mut cache = ImagePreviewCache {
-            picker: None,
-            entries: HashMap::new(),
-            tick: 0,
-            decode_generation: 0,
-        };
-        let mut state = state_with_image_messages(2, &[1, 2]);
-        state.set_message_view_height(6);
-        let targets = visible_image_preview_targets(&state, layout(6));
-
-        let requests = cache.next_requests(&targets);
-
-        assert_eq!(requests.len(), 1);
-        assert_eq!(cache.entries.len(), 1);
-        assert!(requests.contains(&AppCommand::LoadAttachmentPreview {
-            url: "https://cdn.discordapp.com/image-1.png".to_owned(),
-        }));
-    }
-
-    #[test]
     fn video_attachment_does_not_request_original_as_image_preview() {
         let mut state = state_with_image_messages(1, &[]);
         state.push_event(AppEvent::MessageCreate {

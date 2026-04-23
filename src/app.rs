@@ -21,6 +21,7 @@ use crate::{
 };
 
 const MESSAGE_HISTORY_LIMIT: u16 = 50;
+const THREAD_PREVIEW_LIMIT: u16 = 1;
 const MAX_ATTACHMENT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ATTACHMENT_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
 const ATTACHMENT_PREVIEW_TIMEOUT: Duration = Duration::from_secs(30);
@@ -117,6 +118,63 @@ fn start_command_loop(
                             client.publish_event(AppEvent::MessageHistoryLoadFailed {
                                 channel_id,
                                 message,
+                            });
+                        }
+                    }
+                }
+                AppCommand::LoadThreadPreview {
+                    channel_id,
+                    message_id,
+                } => {
+                    let started = Instant::now();
+                    match client
+                        .load_message_history(channel_id, None, THREAD_PREVIEW_LIMIT)
+                        .await
+                    {
+                        Ok(messages) => {
+                            logging::timing(
+                                "history",
+                                format!(
+                                    "op=load_thread_preview channel_id={} message_id={} limit={} messages={}",
+                                    channel_id.get(),
+                                    message_id.get(),
+                                    THREAD_PREVIEW_LIMIT,
+                                    messages.len(),
+                                ),
+                                started.elapsed(),
+                            );
+                            if let Some(message) = messages
+                                .into_iter()
+                                .next()
+                                .filter(|message| message.message_id == message_id)
+                            {
+                                client.publish_event(AppEvent::ThreadPreviewLoaded {
+                                    channel_id,
+                                    message,
+                                });
+                            } else {
+                                client.publish_event(AppEvent::ThreadPreviewLoadFailed {
+                                    channel_id,
+                                    message_id,
+                                });
+                            }
+                        }
+                        Err(error) => {
+                            let message = format!("load thread preview failed: {error}");
+                            let detail = error.log_detail();
+                            logging::timing(
+                                "history",
+                                format!(
+                                    "op=load_thread_preview channel_id={} message_id={} messages=0 {message}; detail={detail}",
+                                    channel_id.get(),
+                                    message_id.get(),
+                                ),
+                                started.elapsed(),
+                            );
+                            logging::error("history", &message);
+                            client.publish_event(AppEvent::ThreadPreviewLoadFailed {
+                                channel_id,
+                                message_id,
                             });
                         }
                     }

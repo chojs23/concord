@@ -43,6 +43,10 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         before: Option<Id<MessageMarker>>,
     },
+    LoadThreadPreview {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    },
     LoadGuildMembers {
         guild_id: Id<GuildMarker>,
     },

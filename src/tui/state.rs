@@ -46,7 +46,7 @@ pub use member_grouping::{MemberEntry, MemberGroup};
 pub use model::{
     ChannelActionItem, ChannelPaneEntry, ChannelThreadItem, EmojiReactionItem, FocusPane,
     GuildPaneEntry, MemberActionItem, MessageActionItem, MessageActionKind, PollVotePickerItem,
-    ThreadSummary,
+    ThreadMessagePreview, ThreadSummary,
 };
 #[allow(unused_imports)]
 pub use model::{ChannelActionKind, ChannelBranch, GuildBranch};
@@ -66,6 +66,17 @@ enum ActiveGuildScope {
     Unset,
     DirectMessages,
     Guild(Id<GuildMarker>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ThreadReturnTarget {
+    thread_channel_id: Id<ChannelMarker>,
+    channel_id: Id<ChannelMarker>,
+    selected_message: usize,
+    message_scroll: usize,
+    message_line_scroll: usize,
+    message_keep_selection_visible: bool,
+    message_auto_follow: bool,
 }
 
 #[derive(Debug)]
@@ -89,6 +100,7 @@ pub struct DashboardState {
     message_content_width: usize,
     message_preview_width: u16,
     message_max_preview_height: u16,
+    thread_return_target: Option<ThreadReturnTarget>,
     selected_member: usize,
     member_scroll: usize,
     member_view_height: usize,
@@ -157,6 +169,7 @@ impl DashboardState {
             message_content_width: usize::MAX,
             message_preview_width: 0,
             message_max_preview_height: 0,
+            thread_return_target: None,
             selected_member: 0,
             member_scroll: 0,
             member_view_height: 1,
@@ -326,14 +339,56 @@ impl DashboardState {
                         && channel.name == thread_name
                 })
         });
-        thread.map(|channel| ThreadSummary {
-            channel_id: channel.id,
-            name: channel.name.clone(),
-            message_count: channel.message_count,
-            total_message_sent: channel.total_message_sent,
-            archived: channel.thread_archived,
-            locked: channel.thread_locked,
+        thread.map(|channel| {
+            let latest_cached_message = self
+                .discord
+                .messages_for_channel(channel.id)
+                .into_iter()
+                .max_by_key(|message| message.id);
+            let latest_message_id = channel
+                .last_message_id
+                .or_else(|| latest_cached_message.map(|message| message.id));
+            let latest_message_preview = latest_cached_message
+                .filter(|message| Some(message.id) == latest_message_id)
+                .map(|message| ThreadMessagePreview {
+                    author: message.author.clone(),
+                    content: self.thread_message_preview_text(message),
+                });
+            ThreadSummary {
+                channel_id: channel.id,
+                name: channel.name.clone(),
+                message_count: channel.message_count,
+                total_message_sent: channel.total_message_sent,
+                archived: channel.thread_archived,
+                locked: channel.thread_locked,
+                latest_message_id,
+                latest_message_preview,
+            }
         })
+    }
+
+    fn thread_message_preview_text(&self, message: &MessageState) -> String {
+        if let Some(content) = message
+            .content
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            return self
+                .render_user_mentions(message.guild_id, &message.mentions, content)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
+
+        if !message.attachments.is_empty() {
+            return "[attachment]".to_owned();
+        }
+
+        if message.content.is_some() {
+            "<empty message>".to_owned()
+        } else {
+            "<message content unavailable>".to_owned()
+        }
     }
 
     pub(crate) fn render_user_mentions(
@@ -563,6 +618,22 @@ impl DashboardState {
             .into_iter()
             .skip(self.message_scroll)
             .take(self.message_content_height())
+            .collect()
+    }
+
+    pub fn missing_thread_preview_load_requests(
+        &self,
+    ) -> Vec<(Id<ChannelMarker>, Id<MessageMarker>)> {
+        self.visible_messages()
+            .into_iter()
+            .filter_map(|message| {
+                let summary = self.thread_summary_for_message(message)?;
+                let latest_message_id = summary.latest_message_id?;
+                summary
+                    .latest_message_preview
+                    .is_none()
+                    .then_some((summary.channel_id, latest_message_id))
+            })
             .collect()
     }
 
@@ -1004,6 +1075,7 @@ impl DashboardState {
         self.close_emoji_reaction_picker();
         self.close_poll_vote_picker();
         self.close_reaction_users_popup();
+        self.thread_return_target = None;
     }
 
     fn clamp_list_viewports(&mut self) {

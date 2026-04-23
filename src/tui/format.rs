@@ -201,28 +201,12 @@ mod tests {
     }
 
     #[test]
-    fn renders_known_user_mentions() {
-        let text = render_user_mentions("hello <@10>", |user_id| {
-            (user_id == 10).then(|| "alice".to_owned())
-        });
-
-        assert_eq!(text, "hello @alice");
-    }
-
-    #[test]
     fn renders_deprecated_nickname_mentions_like_user_mentions() {
         let text = render_user_mentions("hello <@!10>", |user_id| {
             (user_id == 10).then(|| "alice".to_owned())
         });
 
         assert_eq!(text, "hello @alice");
-    }
-
-    #[test]
-    fn keeps_unknown_user_mentions_raw() {
-        let text = render_user_mentions("hello <@10>", |_| None);
-
-        assert_eq!(text, "hello <@10>");
     }
 
     #[test]

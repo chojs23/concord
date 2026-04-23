@@ -152,6 +152,7 @@ impl DashboardState {
                     .selected_message_state()
                     .and_then(|message| self.thread_summary_for_message(message))?
                     .channel_id;
+                self.record_thread_return_target(channel_id);
                 self.activate_channel(channel_id);
                 self.close_message_action_menu();
                 None

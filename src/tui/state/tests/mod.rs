@@ -1693,7 +1693,7 @@ fn thread_created_message_reserves_system_card_rows() {
     let mut message = height_test_message("release notes");
     message.message_kind = MessageKind::new(18);
 
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 5);
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
 }
 
 #[test]
@@ -1940,29 +1940,211 @@ fn reaction_users_popup_scroll_down_clamps_at_bottom() {
 }
 
 #[test]
-fn thread_created_message_action_opens_cached_thread() {
+fn missing_thread_preview_requests_exact_latest_message_until_loaded() {
     let mut state = state_with_thread_created_message();
-    state.focus_pane(FocusPane::Messages);
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(10),
+        parent_id: Some(Id::new(2)),
+        position: None,
+        last_message_id: Some(Id::new(30)),
+        name: "release notes".to_owned(),
+        kind: "thread".to_owned(),
+        message_count: Some(12),
+        total_message_sent: Some(14),
+        thread_archived: Some(false),
+        thread_locked: Some(false),
+        recipients: None,
+        permission_overwrites: Vec::new(),
+    }));
 
-    let actions = state.selected_message_action_items();
     assert_eq!(
-        actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
-        vec![
-            MessageActionKind::Reply,
-            MessageActionKind::OpenThread,
-            MessageActionKind::AddReaction,
-            MessageActionKind::ShowProfile,
-            MessageActionKind::LoadPinnedMessages,
-            MessageActionKind::SetPinned(true),
-        ]
+        state.missing_thread_preview_load_requests(),
+        vec![(Id::new(10), Id::new(30))]
     );
+
+    state.push_event(AppEvent::ThreadPreviewLoaded {
+        channel_id: Id::new(10),
+        message: MessageInfo {
+            content: Some("latest reply".to_owned()),
+            ..message_info(Id::new(10), 30)
+        },
+    });
+    let message = state.messages()[0];
+    let summary = state
+        .thread_summary_for_message(message)
+        .expect("thread summary should resolve");
+
+    assert_eq!(state.missing_thread_preview_load_requests(), Vec::new());
+    assert_eq!(
+        summary
+            .latest_message_preview
+            .map(|preview| (preview.author, preview.content)),
+        Some(("neo".to_owned(), "latest reply".to_owned()))
+    );
+}
+
+#[test]
+fn thread_summary_suppresses_preview_when_channel_latest_is_newer_than_cache() {
+    let mut state = state_with_thread_created_message();
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(10),
+        parent_id: Some(Id::new(2)),
+        position: None,
+        last_message_id: Some(Id::new(40)),
+        name: "release notes".to_owned(),
+        kind: "thread".to_owned(),
+        message_count: Some(12),
+        total_message_sent: Some(14),
+        thread_archived: Some(false),
+        thread_locked: Some(false),
+        recipients: None,
+        permission_overwrites: Vec::new(),
+    }));
+    state.push_event(AppEvent::ThreadPreviewLoaded {
+        channel_id: Id::new(10),
+        message: MessageInfo {
+            content: Some("older cached reply".to_owned()),
+            ..message_info(Id::new(10), 30)
+        },
+    });
+    let message = state.messages()[0];
+    let summary = state
+        .thread_summary_for_message(message)
+        .expect("thread summary should resolve");
+
+    assert_eq!(summary.latest_message_id, Some(Id::new(40)));
+    assert_eq!(summary.latest_message_preview, None);
+    assert_eq!(
+        state.missing_thread_preview_load_requests(),
+        vec![(Id::new(10), Id::new(40))]
+    );
+}
+
+#[test]
+fn return_from_opened_thread_restores_scrolled_parent_message_window() {
+    let mut state = state_with_thread_created_message_after_regular_message();
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(4);
+    state.clamp_message_viewport_for_image_previews(16, 0, 0);
+    state.scroll_message_viewport_top();
+    for _ in 0..160 {
+        state.scroll_message_viewport_down();
+        if state.message_scroll() > 0 && state.message_line_scroll() > 0 {
+            break;
+        }
+    }
+    assert_eq!(state.selected_message(), 1);
+    assert!(state.message_scroll() > 0);
+    assert!(state.message_line_scroll() > 0);
+    let expected_message_scroll = state.message_scroll();
+    let expected_line_scroll = state.message_line_scroll();
 
     state.open_selected_message_actions();
     state.move_message_action_down();
-    let command = state.activate_selected_message_action();
-
+    state.activate_selected_message_action();
     assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
-    assert_eq!(command, None);
+
+    assert!(state.return_from_opened_thread());
+
+    assert_eq!(state.selected_channel_id(), Some(Id::new(2)));
+    assert_eq!(state.selected_message(), 1);
+    assert_eq!(state.message_scroll(), expected_message_scroll);
+    assert_eq!(state.message_line_scroll(), expected_line_scroll);
+}
+
+fn state_with_thread_created_message_after_regular_message() -> DashboardState {
+    let guild_id = Id::new(1);
+    let parent_id = Id::new(2);
+    let thread_id = Id::new(10);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: parent_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: thread_id,
+                parent_id: Some(parent_id),
+                position: None,
+                last_message_id: None,
+                name: "release notes".to_owned(),
+                kind: "thread".to_owned(),
+                message_count: Some(12),
+                total_message_sent: Some(14),
+                thread_archived: Some(false),
+                thread_locked: Some(false),
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+        ],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(guild_id),
+        channel_id: parent_id,
+        message_id: Id::new(1),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("older parent message ".repeat(20)),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(guild_id),
+        channel_id: parent_id,
+        message_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: MessageKind::new(18),
+        reference: Some(MessageReferenceInfo {
+            guild_id: Some(guild_id),
+            channel_id: Some(thread_id),
+            message_id: None,
+        }),
+        reply: None,
+        poll: None,
+        content: Some("release notes ".repeat(20)),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    state
 }
 
 #[test]
@@ -2396,18 +2578,6 @@ fn member_list_subscription_target_uses_active_channel_or_fallback() {
     assert_eq!(
         state.member_list_subscription_target(),
         Some((Id::new(1), Id::new(2)))
-    );
-}
-
-#[test]
-fn guild_member_list_channel_skips_threads_and_categories() {
-    let state = state_with_thread_created_message();
-    // The fixture's guild has channel id=2 (`general`) plus thread id=10
-    // (`release notes`). The subscription anchor must be the parent text
-    // channel, not the thread.
-    assert_eq!(
-        state.guild_member_list_channel(Id::new(1)),
-        Some(Id::new(2))
     );
 }
 

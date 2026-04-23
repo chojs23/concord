@@ -2321,6 +2321,8 @@ fn composer_prompt_line_count(input: &str, width: u16) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use crate::discord::ids::{Id, marker::MessageMarker};
     use ratatui::{
         Terminal,
@@ -3195,6 +3197,93 @@ mod tests {
     fn thread_created_message_uses_cached_thread_details() {
         let mut message = message_with_content(Some("release notes".to_owned()));
         message.message_kind = MessageKind::new(18);
+        message.id = snowflake_for_unix_ms(current_unix_millis().saturating_sub(10 * 60 * 1000));
+        let latest_thread_message_id =
+            snowflake_for_unix_ms(current_unix_millis().saturating_sub(2 * 60 * 1000));
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(10),
+            parent_id: Some(message.channel_id),
+            position: None,
+            last_message_id: Some(latest_thread_message_id),
+            name: "release notes".to_owned(),
+            kind: "thread".to_owned(),
+            message_count: Some(12),
+            total_message_sent: Some(14),
+            thread_archived: Some(false),
+            thread_locked: Some(false),
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }));
+
+        let lines = format_message_content_lines(&message, &state, 200);
+        let texts = line_texts(&lines);
+
+        assert_eq!(texts[0], "neo started release notes thread.");
+        assert!(texts[1].starts_with("  ╭"));
+        assert!(texts[2].starts_with("  │ release notes"));
+        assert!(texts[2].contains("12 messages"));
+        assert!(texts[3].contains("2 minutes ago"));
+        assert!(texts[4].starts_with("  ╰"));
+        assert_eq!(lines[0].style, Style::default().fg(Color::White));
+        assert_eq!(lines[3].style, Style::default().fg(DIM));
+    }
+
+    #[test]
+    fn thread_created_message_uses_cached_thread_message_when_last_id_missing() {
+        let now = current_unix_millis();
+        let mut message = message_with_content(Some("release notes".to_owned()));
+        message.message_kind = MessageKind::new(18);
+        message.id = snowflake_for_unix_ms(now.saturating_sub(10 * 60 * 1000));
+        let latest_thread_message_id = snowflake_for_unix_ms(now.saturating_sub(2 * 60 * 1000));
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(10),
+            parent_id: Some(message.channel_id),
+            position: None,
+            last_message_id: None,
+            name: "release notes".to_owned(),
+            kind: "thread".to_owned(),
+            message_count: Some(12),
+            total_message_sent: Some(14),
+            thread_archived: Some(false),
+            thread_locked: Some(false),
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }));
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(10),
+            message_id: latest_thread_message_id,
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("latest reply".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let lines = format_message_content_lines(&message, &state, 200);
+        let texts = line_texts(&lines);
+
+        assert!(texts[2].contains("13 messages"));
+        assert!(texts[3].contains("neo latest reply 2 minutes ago"));
+    }
+
+    #[test]
+    fn thread_created_message_falls_back_to_system_message_time() {
+        let mut message = message_with_content(Some("release notes".to_owned()));
+        message.message_kind = MessageKind::new(18);
+        message.id = snowflake_for_unix_ms(current_unix_millis().saturating_sub(2 * 60 * 1000));
         let mut state = DashboardState::new();
         state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
             guild_id: Some(Id::new(1)),
@@ -3213,15 +3302,37 @@ mod tests {
         }));
 
         let lines = format_message_content_lines(&message, &state, 200);
+        let texts = line_texts(&lines);
 
-        assert_eq!(
-            line_texts(&lines),
-            vec![
-                "neo started a thread",
-                "# release notes",
-                "12 messages · Open thread to view messages"
-            ]
-        );
+        assert!(texts[2].contains("12 messages"));
+        assert!(texts[3].contains("2 minutes ago"));
+    }
+
+    #[test]
+    fn thread_created_message_keeps_archived_and_locked_metadata() {
+        let mut message = message_with_content(Some("release notes".to_owned()));
+        message.message_kind = MessageKind::new(18);
+        message.id = snowflake_for_unix_ms(current_unix_millis().saturating_sub(2 * 60 * 1000));
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(10),
+            parent_id: Some(message.channel_id),
+            position: None,
+            last_message_id: None,
+            name: "release notes".to_owned(),
+            kind: "thread".to_owned(),
+            message_count: Some(12),
+            total_message_sent: Some(14),
+            thread_archived: Some(true),
+            thread_locked: Some(true),
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }));
+
+        let lines = format_message_content_lines(&message, &state, 200);
+
+        assert!(line_texts(&lines)[3].contains("archived · locked"));
     }
 
     #[test]
@@ -4401,6 +4512,15 @@ mod tests {
     fn snowflake_for_unix_ms(unix_ms: u64) -> Id<MessageMarker> {
         let raw = (unix_ms - DISCORD_EPOCH_MILLIS) << SNOWFLAKE_TIMESTAMP_SHIFT;
         Id::new(raw.max(1))
+    }
+
+    fn current_unix_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_millis()
+            .try_into()
+            .expect("current unix millis should fit in u64")
     }
 
     #[test]

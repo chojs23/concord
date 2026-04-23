@@ -6,7 +6,7 @@ use crate::discord::ids::{
 };
 use crate::discord::{AppCommand, ChannelState};
 
-use super::{ActiveGuildScope, DashboardState};
+use super::{ActiveGuildScope, DashboardState, ThreadReturnTarget};
 use super::{
     model::{
         ChannelActionItem, ChannelActionKind, ChannelBranch, ChannelPaneEntry, ChannelThreadItem,
@@ -460,7 +460,62 @@ impl DashboardState {
         }
     }
 
+    pub(super) fn record_thread_return_target(&mut self, thread_channel_id: Id<ChannelMarker>) {
+        let Some(channel_id) = self.active_channel_id else {
+            return;
+        };
+        if channel_id == thread_channel_id {
+            return;
+        }
+        self.thread_return_target = Some(ThreadReturnTarget {
+            thread_channel_id,
+            channel_id,
+            selected_message: self.selected_message,
+            message_scroll: self.message_scroll,
+            message_line_scroll: self.message_line_scroll,
+            message_keep_selection_visible: self.message_keep_selection_visible,
+            message_auto_follow: self.message_auto_follow,
+        });
+    }
+
+    pub fn return_from_opened_thread(&mut self) -> bool {
+        let Some(target) = self.thread_return_target else {
+            return false;
+        };
+        if self.active_channel_id != Some(target.thread_channel_id) {
+            return false;
+        }
+        if !self
+            .selected_channel_state()
+            .is_some_and(|channel| channel.is_thread())
+        {
+            self.thread_return_target = None;
+            return false;
+        }
+        if self.discord.channel(target.channel_id).is_none() {
+            self.thread_return_target = None;
+            return false;
+        }
+
+        self.activate_channel(target.channel_id);
+        self.selected_message = target.selected_message;
+        self.message_scroll = target.message_scroll;
+        self.message_line_scroll = target.message_line_scroll;
+        self.message_keep_selection_visible = target.message_keep_selection_visible;
+        self.message_auto_follow = target.message_auto_follow;
+        self.thread_return_target = None;
+        self.clamp_message_viewport();
+        true
+    }
+
     pub(super) fn activate_channel(&mut self, channel_id: Id<ChannelMarker>) {
+        let preserves_thread_return = self.thread_return_target.is_some_and(|target| {
+            self.active_channel_id == Some(target.channel_id)
+                && channel_id == target.thread_channel_id
+        });
+        if !preserves_thread_return {
+            self.thread_return_target = None;
+        }
         self.active_channel_id = Some(channel_id);
         self.message_auto_follow = true;
         self.message_line_scroll = 0;
