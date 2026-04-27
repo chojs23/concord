@@ -94,21 +94,184 @@ impl DashboardState {
             Some(ChannelActionMenuState::Threads { channel_id, .. }) => *channel_id,
             _ => return Vec::new(),
         };
+        self.child_thread_items(channel_id)
+    }
+
+    pub fn selected_forum_post_items(&self) -> Vec<ChannelThreadItem> {
+        let Some(channel) = self
+            .selected_channel_state()
+            .filter(|channel| channel.is_forum())
+        else {
+            return Vec::new();
+        };
+        let Some(list) = self.forum_post_lists.get(&channel.id) else {
+            return Vec::new();
+        };
+        // Two corrections versus the order Discord's `/threads/search` returns:
+        //
+        //  1. Pinned posts come back interleaved with everything else by
+        //     activity time, but the official client lifts them to the top.
+        //  2. The server-side `sort_by=last_message_time` index can be stale —
+        //     posts with newer messages sometimes sit below older ones. The
+        //     `last_message_id` snowflake encodes the actual message
+        //     timestamp, and we keep it fresh via gateway updates, so a local
+        //     resort by that field tracks Discord's UI more closely.
+        let (mut pinned, mut rest): (Vec<_>, Vec<_>) = list
+            .post_ids
+            .iter()
+            .filter_map(|post_id| self.discord.channel(*post_id))
+            .filter(|post| post.is_thread() && post.parent_id == Some(channel.id))
+            .partition(|post| post.thread_pinned.unwrap_or(false));
+        let by_last_message = |post: &&ChannelState| {
+            std::cmp::Reverse(post.last_message_id.map(|id| id.get()).unwrap_or(0))
+        };
+        pinned.sort_by_key(by_last_message);
+        rest.sort_by_key(by_last_message);
+        pinned
+            .into_iter()
+            .chain(rest)
+            .map(|post| self.forum_thread_item(post))
+            .collect()
+    }
+
+    pub fn selected_forum_posts_loading(&self) -> bool {
+        let Some(channel) = self
+            .selected_channel_state()
+            .filter(|channel| channel.is_forum())
+        else {
+            return false;
+        };
+        !self.forum_post_lists.contains_key(&channel.id)
+    }
+
+    pub fn visible_forum_post_items(&self) -> Vec<ChannelThreadItem> {
+        self.selected_forum_post_items()
+            .into_iter()
+            .skip(self.message_scroll)
+            .take(self.forum_post_visible_count())
+            .collect()
+    }
+
+    pub fn selected_forum_post(&self) -> usize {
+        clamp_selected_index(
+            self.selected_message,
+            self.selected_forum_post_items().len(),
+        )
+    }
+
+    pub fn focused_forum_post_selection(&self) -> Option<usize> {
+        if self.focus != FocusPane::Messages || !self.selected_channel_is_forum() {
+            return None;
+        }
+        let selected = self.selected_forum_post();
+        let visible_count = self.visible_forum_post_items().len();
+        if visible_count > 0
+            && selected >= self.message_scroll
+            && selected < self.message_scroll + visible_count
+        {
+            Some(selected - self.message_scroll)
+        } else {
+            None
+        }
+    }
+
+    pub fn selected_channel_is_forum(&self) -> bool {
+        self.selected_channel_state()
+            .is_some_and(|channel| channel.is_forum())
+    }
+
+    pub fn selected_message_history_channel_id(&self) -> Option<Id<ChannelMarker>> {
+        (!self.selected_channel_is_forum()).then_some(self.selected_channel_id()?)
+    }
+
+    pub fn selected_forum_channel(&self) -> Option<(Id<GuildMarker>, Id<ChannelMarker>)> {
+        let channel = self
+            .selected_channel_state()
+            .filter(|channel| channel.is_forum())?;
+        Some((channel.guild_id?, channel.id))
+    }
+
+    pub fn selected_forum_channel_with_load_more(
+        &self,
+    ) -> Option<(Id<GuildMarker>, Id<ChannelMarker>, bool)> {
+        let (guild_id, channel_id) = self.selected_forum_channel()?;
+        Some((
+            guild_id,
+            channel_id,
+            self.should_load_more_forum_posts(channel_id),
+        ))
+    }
+
+    pub fn activate_selected_forum_post(&mut self) -> Option<AppCommand> {
+        let item = self
+            .selected_forum_post_items()
+            .get(self.selected_forum_post())?
+            .clone();
+        let guild_id = self
+            .discord
+            .channel(item.channel_id)
+            .and_then(|channel| channel.guild_id)?;
+        self.record_thread_return_target(item.channel_id);
+        self.activate_channel(item.channel_id);
+        Some(AppCommand::SubscribeGuildChannel {
+            guild_id,
+            channel_id: item.channel_id,
+        })
+    }
+
+    fn child_thread_items(&self, channel_id: Id<ChannelMarker>) -> Vec<ChannelThreadItem> {
         let mut threads: Vec<&ChannelState> = self
             .channels()
             .into_iter()
             .filter(|c| c.is_thread() && c.parent_id == Some(channel_id))
             .collect();
-        sort_channels(&mut threads);
+        sort_thread_channels(&mut threads);
         threads
             .into_iter()
-            .map(|c| ChannelThreadItem {
-                channel_id: c.id,
-                label: c.name.clone(),
-                archived: c.thread_archived.unwrap_or(false),
-                locked: c.thread_locked.unwrap_or(false),
-            })
+            .map(|thread| self.forum_thread_item(thread))
             .collect()
+    }
+
+    fn forum_thread_item(&self, channel: &ChannelState) -> ChannelThreadItem {
+        let preview = self
+            .discord
+            .messages_for_channel(channel.id)
+            .into_iter()
+            .next();
+        ChannelThreadItem {
+            channel_id: channel.id,
+            label: channel.name.clone(),
+            archived: channel.thread_archived.unwrap_or(false),
+            locked: channel.thread_locked.unwrap_or(false),
+            pinned: channel.thread_pinned.unwrap_or(false),
+            preview_author_id: preview.map(|message| message.author_id),
+            preview_author: preview.map(|message| message.author.clone()),
+            preview_author_color: preview
+                .and_then(|message| self.message_author_role_color(message)),
+            preview_content: preview.map(|message| self.thread_message_preview_text(message)),
+            preview_reactions: preview
+                .map(|message| message.reactions.clone())
+                .unwrap_or_default(),
+            comment_count: channel.message_count.or(channel.total_message_sent),
+            last_activity_message_id: channel
+                .last_message_id
+                .or_else(|| preview.map(|message| message.id)),
+        }
+    }
+
+    fn should_load_more_forum_posts(&self, channel_id: Id<ChannelMarker>) -> bool {
+        let Some(list) = self.forum_post_lists.get(&channel_id) else {
+            return false;
+        };
+        if !list.has_more || list.post_ids.is_empty() {
+            return false;
+        }
+        let visible_bottom = self
+            .message_scroll
+            .saturating_add(self.forum_post_visible_count())
+            .saturating_add(5);
+        let selected_bottom = self.selected_forum_post().saturating_add(5);
+        visible_bottom >= list.post_ids.len() || selected_bottom >= list.post_ids.len()
     }
 
     pub fn selected_channel_action_index(&self) -> Option<usize> {
@@ -509,6 +672,10 @@ impl DashboardState {
     }
 
     pub(super) fn activate_channel(&mut self, channel_id: Id<ChannelMarker>) {
+        let is_forum = self
+            .discord
+            .channel(channel_id)
+            .is_some_and(|channel| channel.is_forum());
         let preserves_thread_return = self.thread_return_target.is_some_and(|target| {
             self.active_channel_id == Some(target.channel_id)
                 && channel_id == target.thread_channel_id
@@ -517,10 +684,15 @@ impl DashboardState {
             self.thread_return_target = None;
         }
         self.active_channel_id = Some(channel_id);
-        self.message_auto_follow = true;
+        self.message_auto_follow = !is_forum;
         self.message_line_scroll = 0;
         self.message_keep_selection_visible = true;
-        self.selected_message = self.messages().len().saturating_sub(1);
+        self.selected_message = if is_forum {
+            0
+        } else {
+            self.messages().len().saturating_sub(1)
+        };
+        self.message_scroll = 0;
         self.clamp_message_viewport();
     }
 
@@ -540,4 +712,8 @@ impl DashboardState {
             _ => None,
         }
     }
+}
+
+fn sort_thread_channels(channels: &mut [&ChannelState]) {
+    channels.sort_by(|left, right| right.id.cmp(&left.id));
 }

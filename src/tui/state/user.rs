@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::discord::ids::{
     Id,
     marker::{GuildMarker, UserMarker},
@@ -286,28 +288,61 @@ impl DashboardState {
     pub fn missing_message_author_profile_requests(
         &self,
     ) -> Vec<(Id<UserMarker>, Id<GuildMarker>)> {
-        self.visible_messages()
-            .into_iter()
-            .filter_map(|message| {
-                let guild_id = message.guild_id.or_else(|| {
-                    self.discord
-                        .channel(message.channel_id)
-                        .and_then(|channel| channel.guild_id)
-                })?;
-                if self
-                    .discord
-                    .member_display_name(guild_id, message.author_id)
-                    .is_some()
-                    || self
-                        .discord
-                        .user_profile(message.author_id, Some(guild_id))
-                        .is_some()
-                {
-                    return None;
-                }
-                Some((message.author_id, guild_id))
-            })
-            .collect()
+        let mut seen = HashSet::new();
+        let mut requests = Vec::new();
+
+        for message in self.visible_messages() {
+            let guild_id = message.guild_id.or_else(|| {
+                self.discord
+                    .channel(message.channel_id)
+                    .and_then(|channel| channel.guild_id)
+            });
+            self.push_missing_author_profile_request(
+                &mut requests,
+                &mut seen,
+                message.author_id,
+                guild_id,
+            );
+        }
+
+        for post in self.visible_forum_post_items() {
+            let guild_id = self
+                .discord
+                .channel(post.channel_id)
+                .and_then(|channel| channel.guild_id);
+            if let Some(author_id) = post.preview_author_id {
+                self.push_missing_author_profile_request(
+                    &mut requests,
+                    &mut seen,
+                    author_id,
+                    guild_id,
+                );
+            }
+        }
+
+        requests
+    }
+
+    fn push_missing_author_profile_request(
+        &self,
+        requests: &mut Vec<(Id<UserMarker>, Id<GuildMarker>)>,
+        seen: &mut HashSet<(Id<UserMarker>, Id<GuildMarker>)>,
+        user_id: Id<UserMarker>,
+        guild_id: Option<Id<GuildMarker>>,
+    ) {
+        let Some(guild_id) = guild_id else {
+            return;
+        };
+        if self
+            .discord
+            .member_display_name(guild_id, user_id)
+            .is_some()
+            || self.discord.user_profile(user_id, Some(guild_id)).is_some()
+            || !seen.insert((user_id, guild_id))
+        {
+            return;
+        }
+        requests.push((user_id, guild_id));
     }
 
     pub fn member_role_color(&self, member: MemberEntry<'_>) -> Option<u32> {

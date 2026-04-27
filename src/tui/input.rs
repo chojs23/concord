@@ -119,7 +119,7 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
             return state.show_selected_member_profile();
         }
         KeyCode::Enter | KeyCode::Char(' ') if focus == FocusPane::Messages => {
-            state.open_selected_message_actions()
+            return state.activate_selected_message_pane_item();
         }
         KeyCode::Right if focus == FocusPane::Guilds => state.open_selected_folder(),
         KeyCode::Left if focus == FocusPane::Guilds => state.close_selected_folder(),
@@ -687,6 +687,42 @@ mod tests {
     }
 
     #[test]
+    fn enter_opens_selected_forum_post_from_message_pane() {
+        let mut state = state_with_forum_channel_posts();
+        state.focus_pane(FocusPane::Messages);
+        state.move_down();
+
+        let command = handle_key(&mut state, key(KeyCode::Enter));
+
+        assert_eq!(state.selected_channel_id(), Some(Id::new(30)));
+        assert_eq!(
+            command,
+            Some(AppCommand::SubscribeGuildChannel {
+                guild_id: Id::new(1),
+                channel_id: Id::new(30),
+            })
+        );
+    }
+
+    #[test]
+    fn space_opens_selected_forum_post_from_message_pane() {
+        let mut state = state_with_forum_channel_posts();
+        state.focus_pane(FocusPane::Messages);
+        state.move_down();
+
+        let command = handle_key(&mut state, char_key(' '));
+
+        assert_eq!(state.selected_channel_id(), Some(Id::new(30)));
+        assert_eq!(
+            command,
+            Some(AppCommand::SubscribeGuildChannel {
+                guild_id: Id::new(1),
+                channel_id: Id::new(30),
+            })
+        );
+    }
+
+    #[test]
     fn message_action_menu_navigation_is_modal() {
         let mut state = state_with_messages(2);
         state.focus_pane(FocusPane::Messages);
@@ -1064,6 +1100,7 @@ mod tests {
                     total_message_sent: None,
                     thread_archived: None,
                     thread_locked: None,
+                    thread_pinned: None,
                     recipients: None,
                     permission_overwrites: Vec::new(),
                 },
@@ -1079,6 +1116,7 @@ mod tests {
                     total_message_sent: None,
                     thread_archived: None,
                     thread_locked: None,
+                    thread_pinned: None,
                     recipients: None,
                     permission_overwrites: Vec::new(),
                 },
@@ -1094,6 +1132,7 @@ mod tests {
                     total_message_sent: None,
                     thread_archived: None,
                     thread_locked: None,
+                    thread_pinned: None,
                     recipients: None,
                     permission_overwrites: Vec::new(),
                 },
@@ -1124,6 +1163,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(30),
                 display_name: "alice".to_owned(),
@@ -1159,6 +1199,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: Vec::new(),
             }],
@@ -1216,6 +1257,7 @@ mod tests {
                     total_message_sent: None,
                     thread_archived: None,
                     thread_locked: None,
+                    thread_pinned: None,
                     recipients: None,
                     permission_overwrites: Vec::new(),
                 },
@@ -1231,6 +1273,7 @@ mod tests {
                     total_message_sent: Some(14),
                     thread_archived: Some(false),
                     thread_locked: Some(false),
+                    thread_pinned: None,
                     recipients: None,
                     permission_overwrites: Vec::new(),
                 },
@@ -1331,6 +1374,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: Vec::new(),
             }],
@@ -1368,6 +1412,85 @@ mod tests {
         state
     }
 
+    fn state_with_forum_channel_posts() -> DashboardState {
+        let guild_id = Id::new(1);
+        let forum_id = Id::new(20);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: forum_id,
+                parent_id: None,
+                position: Some(0),
+                last_message_id: None,
+                name: "announcements".to_owned(),
+                kind: "forum".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+
+        // Discord's `/threads/search` returns posts newest-first; emit them in
+        // descending channel-id order so the test sees the same layout.
+        state.push_event(AppEvent::ForumPostsLoaded {
+            channel_id: forum_id,
+            offset: 0,
+            posts: vec![
+                ChannelInfo {
+                    guild_id: Some(guild_id),
+                    channel_id: Id::new(31),
+                    parent_id: Some(forum_id),
+                    position: Some(1),
+                    last_message_id: None,
+                    name: "release notes".to_owned(),
+                    kind: "GuildPublicThread".to_owned(),
+                    message_count: Some(2),
+                    total_message_sent: Some(2),
+                    thread_archived: Some(false),
+                    thread_locked: Some(false),
+                    thread_pinned: None,
+                    recipients: None,
+                    permission_overwrites: Vec::new(),
+                },
+                ChannelInfo {
+                    guild_id: Some(guild_id),
+                    channel_id: Id::new(30),
+                    parent_id: Some(forum_id),
+                    position: Some(0),
+                    last_message_id: None,
+                    name: "welcome".to_owned(),
+                    kind: "GuildPublicThread".to_owned(),
+                    message_count: Some(1),
+                    total_message_sent: Some(1),
+                    thread_archived: Some(false),
+                    thread_locked: Some(false),
+                    thread_pinned: None,
+                    recipients: None,
+                    permission_overwrites: Vec::new(),
+                },
+            ],
+            preview_messages: Vec::new(),
+            has_more: false,
+        });
+        state
+    }
+
     fn state_with_image_message() -> DashboardState {
         let guild_id = Id::new(1);
         let channel_id = Id::new(2);
@@ -1389,6 +1512,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: Vec::new(),
             }],

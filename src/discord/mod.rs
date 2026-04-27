@@ -21,6 +21,7 @@ pub use events::{
     UserProfileInfo,
 };
 pub use ids::{Id, marker};
+pub use rest::ForumPostPage;
 pub use state::{
     ChannelRecipientState, ChannelState, ChannelVisibilityStats, DiscordState, GuildMemberState,
     GuildState, MessageCapabilities, MessageState, RoleState,

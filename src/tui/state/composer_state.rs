@@ -35,6 +35,7 @@ impl DashboardState {
     /// special-case the empty state.
     pub fn can_send_in_selected_channel(&self) -> bool {
         match self.selected_channel_state() {
+            Some(channel) if channel.is_forum() => false,
             Some(channel) => self.discord.can_send_in_channel(channel),
             None => true,
         }
@@ -45,6 +46,7 @@ impl DashboardState {
     /// composer doesn't expose attachment input today.
     pub fn can_attach_in_selected_channel(&self) -> bool {
         match self.selected_channel_state() {
+            Some(channel) if channel.is_forum() => false,
             Some(channel) => self.discord.can_attach_in_channel(channel),
             None => true,
         }

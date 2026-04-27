@@ -355,7 +355,7 @@ mod tests {
     use crate::{
         discord::{
             AppCommand, AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, EmbedInfo,
-            MessageSnapshotInfo,
+            MessageInfo, MessageSnapshotInfo, ReactionEmoji, ReactionInfo,
         },
         tui::{
             state::{DashboardState, FocusPane},
@@ -936,6 +936,101 @@ mod tests {
     }
 
     #[test]
+    fn emoji_image_targets_include_visible_forum_preview_custom_reactions() {
+        let guild_id = Id::new(1);
+        let forum_id = Id::new(20);
+        let thread_id = Id::new(30);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: forum_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "forum".to_owned(),
+                kind: "GuildForum".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.push_event(AppEvent::ForumPostsLoaded {
+            channel_id: forum_id,
+            offset: 0,
+            posts: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: thread_id,
+                parent_id: Some(forum_id),
+                position: None,
+                last_message_id: Some(Id::new(300)),
+                name: "welcome".to_owned(),
+                kind: "GuildPublicThread".to_owned(),
+                message_count: Some(1),
+                total_message_sent: Some(1),
+                thread_archived: Some(false),
+                thread_locked: Some(false),
+                thread_pinned: Some(false),
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            }],
+            preview_messages: vec![MessageInfo {
+                guild_id: Some(guild_id),
+                channel_id: thread_id,
+                message_id: Id::new(300),
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                author_avatar_url: None,
+                author_role_ids: Vec::new(),
+                message_kind: crate::discord::MessageKind::regular(),
+                reference: None,
+                reply: None,
+                poll: None,
+                pinned: false,
+                reactions: vec![ReactionInfo {
+                    emoji: ReactionEmoji::Custom {
+                        id: Id::new(50),
+                        name: Some("party".to_owned()),
+                        animated: false,
+                    },
+                    count: 1,
+                    me: false,
+                }],
+                content: Some("first post".to_owned()),
+                mentions: Vec::new(),
+                attachments: Vec::new(),
+                embeds: Vec::new(),
+                forwarded_snapshots: Vec::new(),
+            }],
+            has_more: false,
+        });
+
+        let targets = visible_emoji_image_targets(&state);
+
+        assert_eq!(
+            targets,
+            vec![EmojiImageTarget {
+                url: "https://cdn.discordapp.com/emojis/50.png".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
     fn emoji_image_request_is_created_for_visible_target() {
         let mut cache = EmojiImageCache::new();
         let target = EmojiImageTarget {
@@ -1057,6 +1152,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: Vec::new(),
             }],
@@ -1118,6 +1214,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: Vec::new(),
             }],
@@ -1175,6 +1272,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: Vec::new(),
             }],

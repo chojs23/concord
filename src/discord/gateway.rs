@@ -2061,7 +2061,7 @@ fn parse_typing_start(data: &Value) -> Option<AppEvent> {
     })
 }
 
-fn parse_channel_info(
+pub(crate) fn parse_channel_info(
     value: &Value,
     default_guild: Option<Id<GuildMarker>>,
 ) -> Option<ChannelInfo> {
@@ -2153,6 +2153,13 @@ fn parse_channel_info(
             .get("thread_metadata")
             .and_then(|metadata| metadata.get("locked"))
             .and_then(Value::as_bool),
+        // Discord's `flags` bitfield includes PINNED (1 << 1) for forum/media
+        // threads. Surface it as `Some(true)` only when the bit is set, leaving
+        // non-thread channels and unpinned threads as `None`/`Some(false)`.
+        thread_pinned: value
+            .get("flags")
+            .and_then(Value::as_u64)
+            .map(|flags| flags & (1 << 1) != 0),
         recipients,
         permission_overwrites,
     })

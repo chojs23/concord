@@ -47,6 +47,11 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
     },
+    LoadForumPosts {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        offset: usize,
+    },
     LoadGuildMembers {
         guild_id: Id<GuildMarker>,
     },

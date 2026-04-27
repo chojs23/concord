@@ -44,9 +44,9 @@ use scroll::{
 pub use composer::{MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry};
 pub use member_grouping::{MemberEntry, MemberGroup};
 pub use model::{
-    ChannelActionItem, ChannelPaneEntry, ChannelThreadItem, EmojiReactionItem, FocusPane,
-    GuildPaneEntry, MemberActionItem, MessageActionItem, MessageActionKind, PollVotePickerItem,
-    ThreadMessagePreview, ThreadSummary,
+    ChannelActionItem, ChannelPaneEntry, ChannelThreadItem, EmojiReactionItem,
+    FORUM_POST_CARD_HEIGHT, FocusPane, GuildPaneEntry, MemberActionItem, MessageActionItem,
+    MessageActionKind, PollVotePickerItem, ThreadMessagePreview, ThreadSummary,
 };
 #[allow(unused_imports)]
 pub use model::{ChannelActionKind, ChannelBranch, GuildBranch};
@@ -78,6 +78,14 @@ struct ThreadReturnTarget {
     message_keep_selection_visible: bool,
     message_auto_follow: bool,
 }
+
+#[derive(Debug, Default)]
+struct ForumPostListState {
+    post_ids: Vec<Id<ChannelMarker>>,
+    has_more: bool,
+}
+
+const MAX_PINNED_MESSAGES_VISIBLE: usize = 3;
 
 #[derive(Debug)]
 pub struct DashboardState {
@@ -131,6 +139,7 @@ pub struct DashboardState {
     skipped_events: u64,
     should_quit: bool,
     older_history_requests: HashMap<Id<ChannelMarker>, OlderHistoryRequestState>,
+    forum_post_lists: HashMap<Id<ChannelMarker>, ForumPostListState>,
     /// Folder IDs the user has collapsed in the guild pane. Single-guild
     /// "folders" (id = None) are never collapsible since they have no header.
     collapsed_folders: HashSet<FolderKey>,
@@ -194,6 +203,7 @@ impl DashboardState {
             skipped_events: 0,
             should_quit: false,
             older_history_requests: HashMap::new(),
+            forum_post_lists: HashMap::new(),
             collapsed_folders: HashSet::new(),
             collapsed_channel_categories: HashSet::new(),
         }
@@ -250,6 +260,26 @@ impl DashboardState {
                 self.last_error = Some(message.clone());
                 self.older_history_requests.remove(channel_id);
             }
+            AppEvent::ForumPostsLoaded {
+                channel_id,
+                offset,
+                posts,
+                has_more,
+                ..
+            } => {
+                self.record_forum_posts_loaded(*channel_id, *offset, posts, *has_more);
+                self.last_error = None;
+            }
+            AppEvent::ForumPostsLoadFailed { message, .. } => {
+                self.last_error = Some(message.clone());
+            }
+            AppEvent::PinnedMessagesLoaded { messages, .. } => {
+                self.last_status = Some(format!("loaded {} pinned messages", messages.len()));
+                self.last_error = None;
+            }
+            AppEvent::PinnedMessagesLoadFailed { message, .. } => {
+                self.last_error = Some(message.clone());
+            }
             AppEvent::MessageHistoryLoaded {
                 channel_id,
                 before,
@@ -276,7 +306,7 @@ impl DashboardState {
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);
         self.clamp_selection_indices();
-        if self.message_auto_follow {
+        if self.message_auto_follow && !self.selected_channel_is_forum() {
             self.follow_latest_message();
         } else {
             self.restore_message_position(selected_message_id, scroll_message_id);
@@ -482,22 +512,71 @@ impl DashboardState {
         }
     }
 
+    fn record_forum_posts_loaded(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        offset: usize,
+        posts: &[crate::discord::ChannelInfo],
+        has_more: bool,
+    ) {
+        let list = self.forum_post_lists.entry(channel_id).or_default();
+        if offset == 0 {
+            list.post_ids.clear();
+            if self.active_channel_id == Some(channel_id) {
+                self.selected_message = 0;
+                self.message_scroll = 0;
+                self.message_line_scroll = 0;
+                self.message_auto_follow = false;
+            }
+        }
+        for post in posts {
+            if !list.post_ids.contains(&post.channel_id) {
+                list.post_ids.push(post.channel_id);
+            }
+        }
+        list.has_more = has_more;
+    }
+
     pub fn messages(&self) -> Vec<&MessageState> {
+        if self.selected_channel_is_forum() {
+            return Vec::new();
+        }
         self.selected_channel_id()
             .map(|channel_id| self.discord.messages_for_channel(channel_id))
             .unwrap_or_default()
     }
 
+    pub fn pinned_messages(&self) -> Vec<&MessageState> {
+        if self.selected_channel_is_forum() {
+            return Vec::new();
+        }
+        self.selected_channel_id()
+            .map(|channel_id| {
+                self.discord
+                    .messages_for_channel(channel_id)
+                    .into_iter()
+                    .rev()
+                    .filter(|message| message.pinned)
+                    .take(MAX_PINNED_MESSAGES_VISIBLE)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn pinned_message_section_height(&self) -> usize {
+        let count = self.pinned_messages().len();
+        if count == 0 { 0 } else { count + 1 }
+    }
+
     pub fn selected_message(&self) -> usize {
-        clamp_selected_index(self.selected_message, self.messages().len())
+        clamp_selected_index(self.selected_message, self.message_pane_item_count())
     }
 
     pub fn selected_message_state(&self) -> Option<&MessageState> {
-        let channel_id = self.selected_channel_id()?;
-        self.discord
-            .messages_for_channel(channel_id)
-            .get(self.selected_message())
-            .copied()
+        if self.selected_channel_is_forum() {
+            return None;
+        }
+        self.messages().get(self.selected_message()).copied()
     }
 
     pub(crate) fn reply_target_message_state(&self) -> Option<&MessageState> {
@@ -549,6 +628,9 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) -> usize {
+        if self.selected_channel_is_forum() {
+            return self.message_scroll;
+        }
         (0..self.message_scroll)
             .map(|index| {
                 self.message_rendered_height_at(
@@ -568,6 +650,9 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) -> usize {
+        if self.selected_channel_is_forum() {
+            return self.selected_forum_post_items().len();
+        }
         (0..self.messages().len())
             .map(|index| {
                 self.message_rendered_height_at(
@@ -673,12 +758,37 @@ impl DashboardState {
         if self.messages().is_empty() || !self.message_keep_selection_visible {
             return;
         }
+        if self.selected_message() == 0 {
+            self.message_scroll = 0;
+            self.message_line_scroll = 0;
+            return;
+        }
+
+        let height = self.message_content_height();
+        if self.selected_message() == 1 && self.message_scroll == 0 && self.message_line_scroll == 0
+        {
+            let selected_row = self.selected_message_rendered_row(
+                content_width,
+                preview_width,
+                max_preview_height,
+            );
+            let selected_bottom = selected_row.saturating_add(
+                self.selected_message_rendered_height(
+                    content_width,
+                    preview_width,
+                    max_preview_height,
+                )
+                .saturating_sub(1),
+            );
+            if selected_bottom < height {
+                return;
+            }
+        }
 
         if self.center_selected_message(content_width, preview_width, max_preview_height) {
             return;
         }
 
-        let height = self.message_content_height();
         let upper_scrolloff = SCROLL_OFF.min(height.saturating_sub(1) / 2);
         let max_iterations = self
             .messages()
@@ -749,6 +859,9 @@ impl DashboardState {
     }
 
     pub fn focused_message_selection(&self) -> Option<usize> {
+        if self.selected_channel_is_forum() {
+            return self.focused_forum_post_selection();
+        }
         if self.focus == FocusPane::Messages && !self.messages().is_empty() {
             let selected = self.selected_message();
             let visible_count = self.visible_messages().len();
@@ -807,7 +920,7 @@ impl DashboardState {
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
-                let len = self.messages().len();
+                let len = self.message_pane_item_count();
                 move_index_down(&mut self.selected_message, len);
                 self.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
@@ -877,7 +990,7 @@ impl DashboardState {
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
-                self.selected_message = last_index(self.messages().len());
+                self.selected_message = last_index(self.message_pane_item_count());
                 self.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
             }
@@ -904,7 +1017,7 @@ impl DashboardState {
             }
             FocusPane::Messages => {
                 let distance = self.message_content_height() / 2;
-                let len = self.messages().len();
+                let len = self.message_pane_item_count();
                 move_index_down_by(&mut self.selected_message, len, distance.max(1));
                 self.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
@@ -965,6 +1078,13 @@ impl DashboardState {
         if self.focus != FocusPane::Messages || self.message_content_width == usize::MAX {
             return;
         }
+        if self.selected_channel_is_forum() {
+            let len = self.selected_forum_post_items().len();
+            move_index_down(&mut self.message_scroll, len);
+            self.message_auto_follow = false;
+            self.message_keep_selection_visible = false;
+            return;
+        }
         self.message_auto_follow = false;
         self.message_keep_selection_visible = false;
         self.scroll_message_viewport_down_one_row(
@@ -976,6 +1096,12 @@ impl DashboardState {
 
     pub fn scroll_message_viewport_up(&mut self) {
         if self.focus != FocusPane::Messages || self.message_content_width == usize::MAX {
+            return;
+        }
+        if self.selected_channel_is_forum() {
+            move_index_up(&mut self.message_scroll);
+            self.message_auto_follow = false;
+            self.message_keep_selection_visible = false;
             return;
         }
         self.message_auto_follow = false;
@@ -1188,7 +1314,7 @@ impl DashboardState {
     }
 
     fn follow_latest_message(&mut self) {
-        self.selected_message = self.messages().len().saturating_sub(1);
+        self.selected_message = self.message_pane_item_count().saturating_sub(1);
         self.message_scroll = self.selected_message;
         self.message_line_scroll = 0;
         self.message_keep_selection_visible = true;
@@ -1200,6 +1326,16 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) {
+        if self.selected_channel_is_forum() {
+            self.message_scroll = clamp_list_scroll(
+                self.selected_message,
+                self.message_scroll,
+                self.forum_post_visible_count(),
+                self.selected_forum_post_items().len(),
+            );
+            self.message_line_scroll = 0;
+            return;
+        }
         let height = self.message_content_height();
         let mut remaining = height;
         for index in (0..self.messages().len()).rev() {
@@ -1240,22 +1376,32 @@ impl DashboardState {
     }
 
     fn clamp_message_viewport(&mut self) {
-        let messages_len = self.messages().len();
-        if messages_len == 0 {
+        let item_count = self.message_pane_item_count();
+        if item_count == 0 {
             self.selected_message = 0;
             self.message_scroll = 0;
             self.message_line_scroll = 0;
             return;
         }
 
-        self.selected_message = self.selected_message.min(messages_len - 1);
-        self.message_scroll = self.message_scroll.min(messages_len - 1);
+        self.selected_message = self.selected_message.min(item_count - 1);
+        self.message_scroll = self.message_scroll.min(item_count - 1);
+        if self.selected_channel_is_forum() {
+            self.message_scroll = clamp_list_scroll(
+                self.selected_message,
+                self.message_scroll,
+                self.forum_post_visible_count(),
+                item_count,
+            );
+            self.message_line_scroll = 0;
+            return;
+        }
         if self.message_content_width == usize::MAX {
             self.message_scroll = clamp_list_scroll(
                 self.selected_message,
                 self.message_scroll,
                 self.message_content_height(),
-                messages_len,
+                item_count,
             );
             if self.message_scroll != self.selected_message {
                 self.message_line_scroll = 0;
@@ -1405,7 +1551,24 @@ impl DashboardState {
     }
 
     fn message_content_height(&self) -> usize {
-        pane_content_height(self.message_view_height)
+        let height = pane_content_height(self.message_view_height);
+        if self.selected_channel_is_forum() {
+            height
+        } else {
+            height.saturating_sub(self.pinned_message_section_height())
+        }
+    }
+
+    fn forum_post_visible_count(&self) -> usize {
+        (self.message_content_height() / FORUM_POST_CARD_HEIGHT).max(1)
+    }
+
+    fn message_pane_item_count(&self) -> usize {
+        if self.selected_channel_is_forum() {
+            self.selected_forum_post_items().len()
+        } else {
+            self.messages().len()
+        }
     }
 
     fn selected_message_rendered_row(

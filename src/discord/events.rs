@@ -42,6 +42,10 @@ pub struct ChannelInfo {
     pub total_message_sent: Option<u64>,
     pub thread_archived: Option<bool>,
     pub thread_locked: Option<bool>,
+    /// Whether this thread is pinned in its parent forum/media channel.
+    /// Discord encodes the bit in `flags` (`PINNED = 1 << 1`); only set on
+    /// threads inside forum-style parents.
+    pub thread_pinned: Option<bool>,
     pub recipients: Option<Vec<ChannelRecipientInfo>>,
     /// Channel-level permission overrides. The empty default means a
     /// gateway/REST payload that omitted the field is treated as "no
@@ -424,6 +428,18 @@ pub enum AppEvent {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
     },
+    ForumPostsLoaded {
+        channel_id: Id<ChannelMarker>,
+        offset: usize,
+        posts: Vec<ChannelInfo>,
+        preview_messages: Vec<MessageInfo>,
+        has_more: bool,
+    },
+    ForumPostsLoadFailed {
+        channel_id: Id<ChannelMarker>,
+        offset: usize,
+        message: String,
+    },
     MessageHistoryLoadFailed {
         channel_id: Id<ChannelMarker>,
         message: String,
@@ -485,6 +501,14 @@ pub enum AppEvent {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
         pinned: bool,
+    },
+    PinnedMessagesLoaded {
+        channel_id: Id<ChannelMarker>,
+        messages: Vec<MessageInfo>,
+    },
+    PinnedMessagesLoadFailed {
+        channel_id: Id<ChannelMarker>,
+        message: String,
     },
     CurrentUserPollVoteUpdate {
         channel_id: Id<ChannelMarker>,

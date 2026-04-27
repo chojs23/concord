@@ -34,7 +34,10 @@ use media::{
     AvatarImageCache, EmojiImageCache, ImagePreviewCache, spawn_image_preview_decode,
     visible_avatar_targets, visible_emoji_image_targets, visible_image_preview_targets,
 };
-use requests::{HistoryRequests, MemberRequests, ThreadPreviewRequests};
+use requests::{
+    ForumPostRequestTarget, ForumPostRequests, HistoryRequests, MemberRequests,
+    PinnedMessageRequests, ThreadPreviewRequests,
+};
 use state::DashboardState;
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
@@ -94,6 +97,8 @@ async fn run_dashboard(
     let mut terminal_events = EventStream::new();
     let (preview_decode_tx, mut preview_decode_rx) = mpsc::unbounded_channel();
     let mut history_requests = HistoryRequests::default();
+    let mut forum_post_requests = ForumPostRequests::default();
+    let mut pinned_message_requests = PinnedMessageRequests::default();
     let mut member_requests = MemberRequests::default();
     let mut thread_preview_requests = ThreadPreviewRequests::default();
     let mut last_member_subscription: Option<(Id<GuildMarker>, Id<ChannelMarker>, u32)> = None;
@@ -219,6 +224,8 @@ async fn run_dashboard(
                         avatar_images.record_event(&event);
                         emoji_images.record_event(&event);
                         history_requests.record_event(&event);
+                        forum_post_requests.record_event(&event);
+                        pinned_message_requests.record_event(&event);
                         thread_preview_requests.record_event(&event);
                         state.push_event(event);
                         dirty = true;
@@ -236,7 +243,7 @@ async fn run_dashboard(
             }
         }
 
-        if let Some(channel_id) = history_requests.next(state.selected_channel_id())
+        if let Some(channel_id) = history_requests.next(state.selected_message_history_channel_id())
             && commands
                 .send(AppCommand::LoadMessageHistory {
                     channel_id,
@@ -246,6 +253,46 @@ async fn run_dashboard(
                 .is_err()
         {
             history_requests.mark_failed(channel_id);
+            logging::error("tui", "command channel closed");
+            state.push_event(AppEvent::GatewayError {
+                message: "command channel closed".to_owned(),
+            });
+            dirty = true;
+        }
+
+        if let Some(channel_id) =
+            pinned_message_requests.next(state.selected_message_history_channel_id())
+            && commands
+                .send(AppCommand::LoadPinnedMessages { channel_id })
+                .await
+                .is_err()
+        {
+            pinned_message_requests.mark_failed(channel_id);
+            logging::error("tui", "command channel closed");
+            state.push_event(AppEvent::GatewayError {
+                message: "command channel closed".to_owned(),
+            });
+            dirty = true;
+        }
+
+        let forum_post_target = state.selected_forum_channel_with_load_more().map(
+            |(guild_id, channel_id, should_load_more)| ForumPostRequestTarget {
+                guild_id,
+                channel_id,
+                should_load_more,
+            },
+        );
+        if let Some((guild_id, channel_id, offset)) = forum_post_requests.next(forum_post_target)
+            && commands
+                .send(AppCommand::LoadForumPosts {
+                    guild_id,
+                    channel_id,
+                    offset,
+                })
+                .await
+                .is_err()
+        {
+            forum_post_requests.mark_failed(channel_id, offset);
             logging::error("tui", "command channel closed");
             state.push_event(AppEvent::GatewayError {
                 message: "command channel closed".to_owned(),

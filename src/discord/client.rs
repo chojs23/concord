@@ -16,7 +16,7 @@ use super::{
     MessageInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
     events::AppEvent,
     gateway::{GatewayCommand, run_gateway},
-    rest::DiscordRest,
+    rest::{DiscordRest, ForumPostPage},
 };
 
 #[derive(Clone, Debug)]
@@ -113,6 +113,10 @@ impl DiscordClient {
             .map_err(|_| "gateway command channel closed".to_owned())
     }
 
+    pub async fn prime_rest_pool(&self) -> Result<()> {
+        self.rest.prime_connection_pool().await
+    }
+
     pub async fn send_message(
         &self,
         channel_id: Id<ChannelMarker>,
@@ -130,6 +134,17 @@ impl DiscordClient {
     ) -> Result<Vec<MessageInfo>> {
         self.rest
             .load_message_history(channel_id, before, limit)
+            .await
+    }
+
+    pub async fn load_forum_posts(
+        &self,
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        offset: usize,
+    ) -> Result<ForumPostPage> {
+        self.rest
+            .load_forum_posts(guild_id, channel_id, offset)
             .await
     }
 

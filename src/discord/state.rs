@@ -60,6 +60,7 @@ pub struct ChannelState {
     pub total_message_sent: Option<u64>,
     pub thread_archived: Option<bool>,
     pub thread_locked: Option<bool>,
+    pub thread_pinned: Option<bool>,
     pub recipients: Vec<ChannelRecipientState>,
     /// Channel-level permission overrides used by `can_view_channel`. Threads
     /// inherit from their parent channel, so this stays empty for threads
@@ -77,6 +78,10 @@ impl ChannelState {
             self.kind.as_str(),
             "thread" | "GuildPublicThread" | "GuildPrivateThread" | "GuildNewsThread"
         )
+    }
+
+    pub fn is_forum(&self) -> bool {
+        matches!(self.kind.as_str(), "forum" | "GuildForum")
     }
 
     pub fn is_private_thread(&self) -> bool {
@@ -393,6 +398,22 @@ impl DiscordState {
                 self.custom_emojis.remove(guild_id);
             }
             AppEvent::ChannelUpsert(channel) => self.upsert_channel(channel),
+            AppEvent::ForumPostsLoaded {
+                posts,
+                preview_messages,
+                ..
+            } => {
+                for post in posts {
+                    self.upsert_channel(post);
+                }
+                for message in preview_messages {
+                    self.merge_message_history(
+                        message.channel_id,
+                        None,
+                        std::slice::from_ref(message),
+                    );
+                }
+            }
             AppEvent::ChannelDelete { channel_id, .. } => {
                 self.channels.remove(channel_id);
                 self.messages.remove(channel_id);
@@ -503,6 +524,17 @@ impl DiscordState {
                     reactions: None,
                 },
             ),
+            AppEvent::PinnedMessagesLoaded {
+                channel_id,
+                messages,
+            } => {
+                let mut messages = messages.clone();
+                for message in &mut messages {
+                    message.pinned = true;
+                }
+                self.merge_message_history(*channel_id, None, &messages);
+            }
+            AppEvent::PinnedMessagesLoadFailed { .. } => {}
             AppEvent::CurrentUserPollVoteUpdate {
                 channel_id,
                 message_id,
@@ -642,6 +674,7 @@ impl DiscordState {
             | AppEvent::AttachmentPreviewLoaded { .. }
             | AppEvent::AttachmentPreviewLoadFailed { .. }
             | AppEvent::ThreadPreviewLoadFailed { .. }
+            | AppEvent::ForumPostsLoadFailed { .. }
             | AppEvent::UserProfileLoadFailed { .. }
             | AppEvent::GatewayClosed => {}
         }
@@ -1091,6 +1124,7 @@ impl DiscordState {
                 total_message_sent: channel.total_message_sent,
                 thread_archived: channel.thread_archived,
                 thread_locked: channel.thread_locked,
+                thread_pinned: channel.thread_pinned,
                 recipients,
                 permission_overwrites,
             },
@@ -1158,7 +1192,7 @@ impl DiscordState {
             if message.poll.is_some() || existing.poll.is_none() {
                 existing.poll = message.poll;
             }
-            existing.pinned = message.pinned;
+            existing.pinned = existing.pinned || message.pinned;
             existing.reactions = message.reactions;
             if message.content.is_some() {
                 existing.content = message.content;
@@ -1462,7 +1496,7 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
     if incoming.poll.is_some() || existing.poll.is_none() {
         existing.poll = incoming.poll.clone();
     }
-    existing.pinned = incoming.pinned;
+    existing.pinned = existing.pinned || incoming.pinned;
     existing.reactions = incoming.reactions.clone();
 
     if let Some(content) = &incoming.content {
@@ -1658,6 +1692,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: Vec::new(),
             }],
@@ -1745,6 +1780,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: Vec::new(),
             }],
@@ -1844,6 +1880,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -1871,6 +1908,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(20),
                 display_name: "alice".to_owned(),
@@ -1894,6 +1932,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -1927,6 +1966,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(20),
                 display_name: "alice".to_owned(),
@@ -1950,6 +1990,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(20),
                 display_name: "alice renamed".to_owned(),
@@ -1983,6 +2024,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(20),
                 display_name: "alice".to_owned(),
@@ -2020,6 +2062,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id,
                 display_name: "test-user".to_owned(),
@@ -2053,6 +2096,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(20),
                 display_name: "alice".to_owned(),
@@ -2090,6 +2134,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: Some(vec![ChannelRecipientInfo {
                 user_id: Id::new(20),
                 display_name: "alice".to_owned(),
@@ -3355,6 +3400,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -3420,6 +3466,7 @@ mod tests {
             total_message_sent: Some(14),
             thread_archived: Some(false),
             thread_locked: Some(false),
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -3473,6 +3520,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -3510,6 +3558,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -3525,6 +3574,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -3540,6 +3590,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -3567,6 +3618,7 @@ mod tests {
             total_message_sent: Some(14),
             thread_archived: Some(false),
             thread_locked: Some(false),
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -4301,6 +4353,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: overwrites,
             }],
@@ -4334,6 +4387,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -4550,6 +4604,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: Some(false),
             thread_locked: Some(false),
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -4808,6 +4863,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: Some(false),
             thread_locked: Some(false),
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -4833,6 +4889,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: Some(false),
             thread_locked: Some(false),
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -4875,6 +4932,7 @@ mod tests {
                     total_message_sent: None,
                     thread_archived: None,
                     thread_locked: None,
+                    thread_pinned: None,
                     recipients: None,
                     permission_overwrites: Vec::new(),
                 },
@@ -4890,6 +4948,7 @@ mod tests {
                     total_message_sent: None,
                     thread_archived: None,
                     thread_locked: None,
+                    thread_pinned: None,
                     recipients: None,
                     permission_overwrites: vec![perm_role(guild.get(), 0, VIEW_CHANNEL)],
                 },
@@ -4905,6 +4964,7 @@ mod tests {
                     total_message_sent: None,
                     thread_archived: Some(false),
                     thread_locked: Some(false),
+                    thread_pinned: None,
                     recipients: None,
                     permission_overwrites: Vec::new(),
                 },
@@ -4962,6 +5022,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: vec![perm_role(1, 0, VIEW_CHANNEL)],
             }],

@@ -1,9 +1,9 @@
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, MessageMarker},
+    marker::{ChannelMarker, MessageMarker, UserMarker},
 };
 
-use crate::discord::{ChannelState, GuildFolder, GuildState, ReactionEmoji};
+use crate::discord::{ChannelState, GuildFolder, GuildState, ReactionEmoji, ReactionInfo};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FocusPane {
@@ -59,12 +59,22 @@ pub struct MemberActionItem {
     pub enabled: bool,
 }
 
+pub const FORUM_POST_CARD_HEIGHT: usize = 5;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelThreadItem {
     pub channel_id: Id<ChannelMarker>,
     pub label: String,
     pub archived: bool,
     pub locked: bool,
+    pub pinned: bool,
+    pub preview_author_id: Option<Id<UserMarker>>,
+    pub preview_author: Option<String>,
+    pub preview_author_color: Option<u32>,
+    pub preview_content: Option<String>,
+    pub preview_reactions: Vec<ReactionInfo>,
+    pub comment_count: Option<u64>,
+    pub last_activity_message_id: Option<Id<MessageMarker>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -16,18 +16,19 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     format::{truncate_display_width, truncate_text},
     message_format::{
-        EMOJI_REACTION_IMAGE_WIDTH, MessageContentLine, embed_color, format_attachment_summary,
-        format_message_content_lines, lay_out_reaction_chips, wrap_text_lines,
+        EMOJI_REACTION_IMAGE_WIDTH, MessageContentLine, ReactionLayout, embed_color,
+        format_attachment_summary, format_message_content_lines, format_message_relative_age,
+        lay_out_reaction_chips, wrap_text_lines,
     },
     state::{
         ChannelActionItem, ChannelPaneEntry, ChannelThreadItem, DashboardState, EmojiReactionItem,
-        FocusPane, GuildPaneEntry, MAX_MENTION_PICKER_VISIBLE, MemberActionItem, MemberEntry,
-        MemberGroup, MentionPickerEntry, MessageActionItem, PollVotePickerItem, discord_color,
-        folder_color, presence_color, presence_marker,
+        FORUM_POST_CARD_HEIGHT, FocusPane, GuildPaneEntry, MAX_MENTION_PICKER_VISIBLE,
+        MemberActionItem, MemberEntry, MemberGroup, MentionPickerEntry, MessageActionItem,
+        PollVotePickerItem, discord_color, folder_color, presence_color, presence_marker,
     },
 };
 use crate::discord::{
-    ChannelState, ChannelVisibilityStats, FriendStatus, MessageState, PresenceStatus,
+    ChannelState, ChannelVisibilityStats, FriendStatus, MessageState, PresenceStatus, ReactionInfo,
     ReactionUsersInfo, UserProfileInfo,
 };
 
@@ -334,9 +335,66 @@ fn render_messages(
     frame.render_widget(block, area);
 
     let message_areas = message_areas(inner, state);
+    let content_width = message_content_width(message_areas.list);
+
+    if state.selected_channel_is_forum() {
+        let posts = state.visible_forum_post_items();
+        let selected = state.focused_forum_post_selection();
+        let is_loading = state.selected_forum_posts_loading();
+        frame.render_widget(
+            Paragraph::new(forum_post_viewport_lines(
+                &posts,
+                selected,
+                message_areas.list.width as usize,
+                is_loading,
+            )),
+            message_areas.list,
+        );
+        render_forum_post_reaction_emojis(
+            frame,
+            message_areas.list,
+            &posts,
+            message_areas.list.width as usize,
+            emoji_images,
+        );
+        render_vertical_scrollbar(
+            frame,
+            message_areas.list,
+            state.message_scroll(),
+            forum_post_scrollbar_visible_count(message_areas.list.height),
+            state.selected_forum_post_items().len(),
+        );
+        render_typing_footer(frame, message_areas.typing, state);
+        render_composer(frame, message_areas.composer, state);
+        render_composer_mention_picker(frame, message_areas, state);
+        return;
+    }
+
+    let pinned_messages = state.pinned_messages();
+    let pinned_lines = pinned_message_section_lines(
+        &pinned_messages,
+        state,
+        content_width,
+        message_areas.list.width as usize,
+    );
+    let pinned_height = u16::try_from(pinned_lines.len())
+        .unwrap_or(u16::MAX)
+        .min(message_areas.list.height);
+    if pinned_height > 0 {
+        let pinned_area = Rect {
+            height: pinned_height,
+            ..message_areas.list
+        };
+        frame.render_widget(Paragraph::new(pinned_lines), pinned_area);
+    }
+    let message_list = Rect {
+        y: message_areas.list.y.saturating_add(pinned_height),
+        height: message_areas.list.height.saturating_sub(pinned_height),
+        ..message_areas.list
+    };
+
     let messages = state.visible_messages();
     let selected = state.focused_message_selection();
-    let content_width = message_content_width(message_areas.list);
 
     let lines = message_viewport_lines(
         &messages,
@@ -347,17 +405,15 @@ fn render_messages(
         &image_previews,
     );
 
-    frame.render_widget(Paragraph::new(lines), message_areas.list);
+    frame.render_widget(Paragraph::new(lines), message_list);
     for avatar in avatar_images {
-        if let Some(area) =
-            message_avatar_area(message_areas.list, avatar.row, avatar.visible_height)
-        {
+        if let Some(area) = message_avatar_area(message_list, avatar.row, avatar.visible_height) {
             frame.render_widget(RatatuiImage::new(&avatar.protocol), area);
         }
     }
     render_inline_reaction_emojis(
         frame,
-        message_areas.list,
+        message_list,
         &messages,
         state,
         content_width,
@@ -375,7 +431,7 @@ fn render_messages(
             previous_preview_rows,
         );
         if let Some(preview_area) = inline_image_preview_area(
-            message_areas.list,
+            message_list,
             row,
             image_preview.preview_height,
             image_preview.accent_color,
@@ -389,9 +445,9 @@ fn render_messages(
     let max_preview_height = inline_image_preview_height(message_areas.list, true);
     render_vertical_scrollbar(
         frame,
-        message_areas.list,
+        message_list,
         state.message_scroll_row_position(content_width, preview_width, max_preview_height),
-        message_areas.list.height as usize,
+        message_list.height as usize,
         state.message_total_rendered_rows(content_width, preview_width, max_preview_height),
     );
     render_typing_footer(frame, message_areas.typing, state);
@@ -586,6 +642,425 @@ fn message_viewport_lines(
         }
     }
     lines
+}
+
+fn forum_post_viewport_lines(
+    posts: &[ChannelThreadItem],
+    selected: Option<usize>,
+    width: usize,
+    is_loading: bool,
+) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    if posts.is_empty() {
+        let message = if is_loading {
+            "Loading posts…"
+        } else {
+            "No forum posts."
+        };
+        return vec![Line::from(Span::styled(message, Style::default().fg(DIM)))];
+    }
+
+    posts
+        .iter()
+        .enumerate()
+        .flat_map(|(index, post)| forum_post_card_lines(post, selected == Some(index), width))
+        .collect()
+}
+
+fn forum_post_scrollbar_visible_count(list_height: u16) -> usize {
+    (usize::from(list_height) / FORUM_POST_CARD_HEIGHT).max(1)
+}
+
+fn forum_post_card_lines(
+    post: &ChannelThreadItem,
+    selected: bool,
+    width: usize,
+) -> [Line<'static>; FORUM_POST_CARD_HEIGHT] {
+    let marker = if selected { "› " } else { "  " };
+    let card_width = width.saturating_sub(marker.width()).max(4);
+    let inner_width = card_width.saturating_sub(4).max(1);
+    let border_style = forum_post_card_style(Style::default().fg(ACCENT), selected);
+
+    [
+        Line::from(vec![
+            Span::styled(marker, Style::default().fg(ACCENT)),
+            Span::styled(
+                format!("╭{}╮", "─".repeat(card_width.saturating_sub(2))),
+                border_style,
+            ),
+        ]),
+        forum_post_inner_line(
+            "  ",
+            forum_post_title_spans(post, inner_width, selected),
+            inner_width,
+            selected,
+        ),
+        forum_post_inner_line(
+            "  ",
+            forum_post_preview_spans(post, inner_width, selected),
+            inner_width,
+            selected,
+        ),
+        forum_post_inner_line(
+            "  ",
+            forum_post_metadata_spans(post, inner_width, selected),
+            inner_width,
+            selected,
+        ),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                format!("╰{}╯", "─".repeat(card_width.saturating_sub(2))),
+                border_style,
+            ),
+        ]),
+    ]
+}
+
+fn forum_post_title_spans(
+    post: &ChannelThreadItem,
+    inner_width: usize,
+    selected: bool,
+) -> Vec<Span<'static>> {
+    let title_style = forum_post_card_style(Style::default().fg(Color::White).bold(), selected);
+    if !post.pinned {
+        return vec![Span::styled(
+            truncate_display_width(&post.label, inner_width),
+            title_style,
+        )];
+    }
+
+    let badge = " PINNED";
+    let badge_width = badge.width();
+    let title_width = inner_width.saturating_sub(badge_width).max(1);
+    vec![
+        Span::styled(
+            truncate_display_width(&post.label, title_width),
+            title_style,
+        ),
+        Span::styled(
+            badge,
+            forum_post_card_style(Style::default().fg(Color::Yellow).bold(), selected),
+        ),
+    ]
+}
+
+fn forum_post_preview_spans(
+    post: &ChannelThreadItem,
+    inner_width: usize,
+    selected: bool,
+) -> Vec<Span<'static>> {
+    let preview_style = forum_post_card_style(Style::default().fg(Color::White), selected);
+    let Some(author) = post.preview_author.as_deref() else {
+        return vec![Span::styled(
+            "Preview unavailable",
+            forum_post_card_style(Style::default().fg(DIM), selected),
+        )];
+    };
+    let Some(content) = post.preview_content.as_deref() else {
+        return vec![Span::styled(
+            "Preview unavailable",
+            forum_post_card_style(Style::default().fg(DIM), selected),
+        )];
+    };
+
+    let author_width = (inner_width / 3).max(1);
+    let author = truncate_display_width(author, author_width);
+    let content_width = inner_width
+        .saturating_sub(author.width())
+        .saturating_sub(2)
+        .max(1);
+    vec![
+        Span::styled(
+            author,
+            forum_post_card_style(message_author_style(post.preview_author_color), selected),
+        ),
+        Span::styled(": ", preview_style),
+        Span::styled(
+            truncate_display_width(content, content_width),
+            preview_style,
+        ),
+    ]
+}
+
+fn forum_post_metadata_spans(
+    post: &ChannelThreadItem,
+    width: usize,
+    selected: bool,
+) -> Vec<Span<'static>> {
+    let primary_style = forum_post_card_style(Style::default().fg(Color::White), selected);
+    let reaction_style = forum_post_card_style(Style::default().fg(ACCENT), selected);
+    let muted_style = forum_post_card_style(Style::default().fg(DIM), selected);
+    let mut spans = Vec::new();
+    let mut used_width = 0usize;
+
+    if let Some(count) = post.comment_count {
+        let label = if count == 1 { "comment" } else { "comments" };
+        push_forum_metadata_part(
+            &mut spans,
+            &mut used_width,
+            width,
+            format!("{count} {label}"),
+            primary_style,
+        );
+    }
+    if let Some(reactions) = forum_post_reaction_summary(&post.preview_reactions, width) {
+        push_forum_metadata_part(
+            &mut spans,
+            &mut used_width,
+            width,
+            reactions,
+            reaction_style,
+        );
+    }
+    if let Some(message_id) = post.last_activity_message_id {
+        push_forum_metadata_part(
+            &mut spans,
+            &mut used_width,
+            width,
+            format_message_relative_age(message_id),
+            primary_style,
+        );
+    }
+    if post.archived {
+        push_forum_metadata_part(
+            &mut spans,
+            &mut used_width,
+            width,
+            "archived".to_owned(),
+            muted_style,
+        );
+    }
+    if post.locked {
+        push_forum_metadata_part(
+            &mut spans,
+            &mut used_width,
+            width,
+            "locked".to_owned(),
+            muted_style,
+        );
+    }
+
+    if spans.is_empty() {
+        vec![Span::styled("No activity yet", muted_style)]
+    } else {
+        spans
+    }
+}
+
+fn push_forum_metadata_part(
+    spans: &mut Vec<Span<'static>>,
+    used_width: &mut usize,
+    max_width: usize,
+    text: String,
+    style: Style,
+) {
+    if *used_width >= max_width {
+        return;
+    }
+    if !spans.is_empty() {
+        let separator = " · ";
+        let remaining = max_width.saturating_sub(*used_width);
+        if remaining == 0 {
+            return;
+        }
+        let separator = truncate_display_width(separator, remaining);
+        *used_width = used_width.saturating_add(separator.width());
+        spans.push(Span::styled(separator, Style::default().fg(DIM)));
+    }
+
+    let remaining = max_width.saturating_sub(*used_width);
+    if remaining == 0 {
+        return;
+    }
+    let text = truncate_display_width(&text, remaining);
+    *used_width = used_width.saturating_add(text.width());
+    spans.push(Span::styled(text, style));
+}
+
+fn forum_post_reaction_start_col(post: &ChannelThreadItem) -> usize {
+    if let Some(count) = post.comment_count {
+        let label = if count == 1 { "comment" } else { "comments" };
+        format!("{count} {label} · ").width()
+    } else {
+        0
+    }
+}
+
+fn forum_post_reaction_summary(reactions: &[ReactionInfo], width: usize) -> Option<String> {
+    lay_out_reaction_chips(reactions, width)
+        .lines
+        .into_iter()
+        .next()
+        .filter(|line| !line.is_empty())
+}
+
+fn forum_post_reaction_layout(
+    post: &ChannelThreadItem,
+    width: usize,
+) -> Option<(usize, ReactionLayout)> {
+    let start_col = forum_post_reaction_start_col(post);
+    let available_width = width.saturating_sub(start_col).max(1);
+    let layout = lay_out_reaction_chips(&post.preview_reactions, available_width);
+    if layout.lines.first().is_some_and(|line| !line.is_empty()) {
+        Some((start_col, layout))
+    } else {
+        None
+    }
+}
+
+fn render_forum_post_reaction_emojis(
+    frame: &mut Frame,
+    list: Rect,
+    posts: &[ChannelThreadItem],
+    width: usize,
+    emoji_images: &[EmojiReactionImage<'_>],
+) {
+    if emoji_images.is_empty() || list.height == 0 || list.width == 0 {
+        return;
+    }
+
+    let list_left = list.x as isize;
+    let list_right = list_left + list.width as isize;
+    let content_start = 4isize;
+    let card_width = width.saturating_sub(2).max(4);
+    let inner_width = card_width.saturating_sub(4).max(1);
+
+    for (index, post) in posts.iter().enumerate() {
+        let row = index
+            .saturating_mul(FORUM_POST_CARD_HEIGHT)
+            .saturating_add(3);
+        if row >= list.height as usize {
+            break;
+        }
+        let Some((reaction_start_col, layout)) = forum_post_reaction_layout(post, inner_width)
+        else {
+            continue;
+        };
+        for slot in layout.slots.into_iter().filter(|slot| slot.line == 0) {
+            let slot_col = reaction_start_col.saturating_add(slot.col as usize);
+            if slot_col >= inner_width {
+                continue;
+            }
+            let Some(image) = emoji_images.iter().find(|img| img.url == slot.url) else {
+                continue;
+            };
+            let absolute_col = list_left + content_start + slot_col as isize;
+            if absolute_col >= list_right {
+                continue;
+            }
+            let remaining_content_width = inner_width.saturating_sub(slot_col) as u16;
+            let remaining_list_width = (list_right - absolute_col).max(0) as u16;
+            let image_width = EMOJI_REACTION_IMAGE_WIDTH
+                .min(remaining_content_width)
+                .min(remaining_list_width);
+            if image_width == 0 {
+                continue;
+            }
+            frame.render_widget(
+                RatatuiImage::new(image.protocol),
+                Rect {
+                    x: absolute_col as u16,
+                    y: list.y.saturating_add(row as u16),
+                    width: image_width,
+                    height: 1,
+                },
+            );
+        }
+    }
+}
+
+fn forum_post_inner_line(
+    marker: &str,
+    mut content: Vec<Span<'static>>,
+    inner_width: usize,
+    selected: bool,
+) -> Line<'static> {
+    let content_width = content
+        .iter()
+        .map(|span| span.content.width())
+        .sum::<usize>();
+    let padding = inner_width.saturating_sub(content_width);
+    let border_style = forum_post_card_style(Style::default().fg(ACCENT), selected);
+    let fill_style = forum_post_card_style(Style::default(), selected);
+    let mut spans = vec![
+        Span::raw(marker.to_owned()),
+        Span::styled("│ ", border_style),
+    ];
+    spans.append(&mut content);
+    spans.push(Span::styled(" ".repeat(padding), fill_style));
+    spans.push(Span::styled(" │", border_style));
+    Line::from(spans)
+}
+
+fn forum_post_card_style(style: Style, selected: bool) -> Style {
+    if selected {
+        style.bg(Color::Rgb(40, 45, 90))
+    } else {
+        style
+    }
+}
+
+fn pinned_message_section_lines(
+    messages: &[&MessageState],
+    state: &DashboardState,
+    content_width: usize,
+    list_width: usize,
+) -> Vec<Line<'static>> {
+    if messages.is_empty() {
+        return Vec::new();
+    }
+
+    let mut lines = Vec::new();
+    for message in messages {
+        let author = truncate_display_width(&message.author, content_width / 3);
+        let preview = message
+            .content
+            .as_deref()
+            .filter(|content| !content.trim().is_empty())
+            .map(|content| content.split_whitespace().collect::<Vec<_>>().join(" "))
+            .unwrap_or_else(|| {
+                if !message.attachments.is_empty() {
+                    "[attachment]".to_owned()
+                } else {
+                    "<message content unavailable>".to_owned()
+                }
+            });
+        let preview_width = list_width
+            .saturating_sub("PIN ".width())
+            .saturating_sub(author.width())
+            .saturating_sub(2)
+            .max(1);
+        lines.push(Line::from(vec![
+            Span::styled(
+                "PIN ",
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                author,
+                message_author_style(state.message_author_role_color(message)),
+            ),
+            Span::styled(": ", Style::default().fg(DIM)),
+            Span::styled(
+                truncate_display_width(&preview, preview_width),
+                Style::default().fg(DIM),
+            ),
+        ]));
+    }
+    lines.push(pinned_separator_line(list_width));
+    lines
+}
+
+fn pinned_separator_line(width: usize) -> Line<'static> {
+    let label = " pinned messages ";
+    let remaining = width.saturating_sub(label.width());
+    let left = remaining / 2;
+    let right = remaining.saturating_sub(left);
+    Line::from(vec![
+        Span::styled("─".repeat(left), Style::default().fg(DIM)),
+        Span::styled(label, Style::default().fg(DIM).add_modifier(Modifier::BOLD)),
+        Span::styled("─".repeat(right), Style::default().fg(DIM)),
+    ])
 }
 
 fn message_item_lines(
@@ -2142,6 +2617,7 @@ fn channel_prefix(kind: &str) -> &'static str {
         "group-dm" | "Group" => "● ",
         "voice" | "GuildVoice" => "🔊 ",
         "category" | "GuildCategory" => "▾ ",
+        "forum" | "GuildForum" => "▣ ",
         "thread" | "GuildPublicThread" | "GuildPrivateThread" | "GuildNewsThread" => "» ",
         _ => "# ",
     }
@@ -2337,13 +2813,14 @@ mod tests {
         channel_name_style, composer_content_line_count, composer_lines,
         composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
         emoji_reaction_picker_lines, footer_hint, format_message_sent_time,
-        format_unix_millis_with_offset, highlight_style, inline_image_preview_area,
-        inline_image_preview_row, member_display_label, member_name_style,
-        message_action_menu_lines, message_author_style, message_item_lines,
-        message_starts_new_day, message_viewport_lines, poll_vote_picker_lines,
-        reaction_users_popup_lines, reaction_users_visible_line_count, sync_view_heights,
-        user_profile_display_name_style, user_profile_popup_lines, user_profile_popup_text,
-        user_profile_popup_visible_lines,
+        format_unix_millis_with_offset, forum_post_reaction_summary,
+        forum_post_scrollbar_visible_count, forum_post_viewport_lines, highlight_style,
+        inline_image_preview_area, inline_image_preview_row, member_display_label,
+        member_name_style, message_action_menu_lines, message_author_style, message_item_lines,
+        message_starts_new_day, message_viewport_lines, pinned_message_section_lines,
+        poll_vote_picker_lines, reaction_users_popup_lines, reaction_users_visible_line_count,
+        sync_view_heights, user_profile_display_name_style, user_profile_popup_lines,
+        user_profile_popup_text, user_profile_popup_visible_lines,
     };
     use crate::{
         discord::{
@@ -2361,8 +2838,8 @@ mod tests {
                 poll_card_inner_width, wrap_text_lines,
             },
             state::{
-                DashboardState, EmojiReactionItem, FocusPane, MessageActionItem, MessageActionKind,
-                PollVotePickerItem,
+                ChannelThreadItem, DashboardState, EmojiReactionItem, FocusPane, MessageActionItem,
+                MessageActionKind, PollVotePickerItem,
             },
         },
     };
@@ -2492,6 +2969,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: Vec::new(),
             }],
@@ -2546,6 +3024,148 @@ mod tests {
     }
 
     #[test]
+    fn pinned_message_section_renders_pins_and_separator() {
+        let mut state = state_with_message();
+        state.push_event(AppEvent::PinnedMessagesLoaded {
+            channel_id: Id::new(2),
+            messages: vec![message_info(10, "mod", "important announcement", true)],
+        });
+
+        assert_eq!(state.pinned_messages().len(), 1);
+        assert_eq!(state.messages().len(), 2);
+
+        let pinned = state.pinned_messages();
+        let lines = pinned_message_section_lines(&pinned, &state, 40, 60);
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines)[0],
+            "PIN mod: important announcement"
+        );
+        assert!(line_texts_from_ratatui(&lines)[1].contains("pinned messages"));
+    }
+
+    #[test]
+    fn pinned_message_remains_selectable_for_unpin_action() {
+        let mut state = state_with_message();
+        state.push_event(AppEvent::PinnedMessagesLoaded {
+            channel_id: Id::new(2),
+            messages: vec![message_info(10, "mod", "important announcement", true)],
+        });
+        state.jump_bottom();
+
+        assert_eq!(
+            state.selected_message_state().map(|message| message.pinned),
+            Some(true)
+        );
+        state.open_selected_message_actions();
+
+        assert!(state.selected_message_action_items().iter().any(|action| {
+            action.kind == MessageActionKind::SetPinned(false) && action.label == "Unpin message"
+        }));
+    }
+
+    #[test]
+    fn later_history_does_not_clear_loaded_pin_state() {
+        let mut state = state_with_message();
+        state.push_event(AppEvent::PinnedMessagesLoaded {
+            channel_id: Id::new(2),
+            messages: vec![message_info(10, "mod", "important announcement", true)],
+        });
+        state.push_event(AppEvent::MessageHistoryLoaded {
+            channel_id: Id::new(2),
+            before: None,
+            messages: vec![message_info(10, "mod", "important announcement", false)],
+        });
+
+        assert_eq!(state.pinned_messages().len(), 1);
+        assert!(
+            state
+                .messages()
+                .into_iter()
+                .any(|message| message.id == Id::new(10) && message.pinned)
+        );
+    }
+
+    #[test]
+    fn forum_post_lines_render_title_author_and_preview() {
+        let post = ChannelThreadItem {
+            channel_id: Id::new(30),
+            label: "A useful Rust crate".to_owned(),
+            archived: false,
+            locked: true,
+            pinned: true,
+            preview_author_id: Some(Id::new(99)),
+            preview_author: Some("neo".to_owned()),
+            preview_author_color: Some(0x3366CC),
+            preview_content: Some("This crate solves a small but annoying problem".to_owned()),
+            preview_reactions: vec![ReactionInfo {
+                emoji: ReactionEmoji::Unicode("👍".to_owned()),
+                count: 2,
+                me: false,
+            }],
+            comment_count: Some(4),
+            last_activity_message_id: Some(Id::new(30)),
+        };
+
+        let lines = forum_post_viewport_lines(&[post], Some(0), 80, false);
+        let texts = line_texts_from_ratatui(&lines);
+
+        assert_eq!(texts.len(), 5);
+        assert!(texts[0].starts_with("› ╭"));
+        assert!(texts[1].contains("A useful Rust crate"));
+        assert!(texts[1].contains("PINNED"));
+        assert!(texts[2].contains("neo: This crate solves"));
+        assert!(texts[3].contains("4 comments"));
+        assert!(texts[3].contains("[👍 2]"));
+        assert!(!texts[3].contains("pinned"));
+        assert!(texts[3].contains("locked"));
+        assert!(texts[4].starts_with("  ╰"));
+        assert_eq!(lines[1].spans[2].style.fg, Some(Color::White));
+        assert_eq!(lines[1].spans[3].style.fg, Some(Color::Yellow));
+        assert_eq!(
+            lines[2].spans[2].style.fg,
+            Some(Color::Rgb(0x33, 0x66, 0xCC))
+        );
+        assert_eq!(lines[2].spans[4].style.fg, Some(Color::White));
+        assert_eq!(lines[3].spans[2].style.fg, Some(Color::White));
+        assert_eq!(lines[3].spans[4].style.fg, Some(ACCENT));
+        assert_eq!(lines[3].spans[6].style.fg, Some(Color::White));
+    }
+
+    #[test]
+    fn forum_post_reaction_summary_reserves_custom_emoji_image_slot() {
+        let reactions = vec![ReactionInfo {
+            emoji: ReactionEmoji::Custom {
+                id: Id::new(42),
+                name: Some("party".to_owned()),
+                animated: false,
+            },
+            count: 1,
+            me: true,
+        }];
+
+        assert_eq!(
+            forum_post_reaction_summary(&reactions, 80).as_deref(),
+            Some("[●    1]")
+        );
+    }
+
+    #[test]
+    fn forum_post_scrollbar_visible_count_uses_card_count() {
+        assert_eq!(forum_post_scrollbar_visible_count(10), 2);
+        assert_eq!(forum_post_scrollbar_visible_count(9), 1);
+    }
+
+    #[test]
+    fn forum_post_render_shows_scrollbar_when_posts_exceed_visible_cards() {
+        let mut state = state_with_forum_posts(10);
+
+        let dump = render_dashboard_dump(100, 20, &mut state);
+
+        assert!(dump.iter().any(|line| line.contains('┃')));
+    }
+
+    #[test]
     fn history_message_author_uses_channel_guild_for_role_color() {
         let guild_id = Id::new(1);
         let channel_id = Id::new(2);
@@ -2569,6 +3189,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: Vec::new(),
             }],
@@ -3213,6 +3834,7 @@ mod tests {
             total_message_sent: Some(14),
             thread_archived: Some(false),
             thread_locked: Some(false),
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -3250,6 +3872,7 @@ mod tests {
             total_message_sent: Some(14),
             thread_archived: Some(false),
             thread_locked: Some(false),
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -3297,6 +3920,7 @@ mod tests {
             total_message_sent: Some(14),
             thread_archived: Some(false),
             thread_locked: Some(false),
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -3326,6 +3950,7 @@ mod tests {
             total_message_sent: Some(14),
             thread_archived: Some(true),
             thread_locked: Some(true),
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -4157,6 +4782,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: None,
             permission_overwrites: Vec::new(),
         }));
@@ -4213,6 +4839,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: Vec::new(),
             },
@@ -4789,6 +5416,7 @@ mod tests {
                 total_message_sent: None,
                 thread_archived: None,
                 thread_locked: None,
+                thread_pinned: None,
                 recipients: None,
                 permission_overwrites: Vec::new(),
             }],
@@ -4822,6 +5450,72 @@ mod tests {
         state
     }
 
+    fn state_with_forum_posts(post_count: usize) -> DashboardState {
+        let guild_id = Id::new(1);
+        let forum_id = Id::new(20);
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: forum_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "forum".to_owned(),
+                kind: "GuildForum".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.focus_pane(FocusPane::Messages);
+
+        let posts = (0..post_count)
+            .map(|index| {
+                let id = 100 + u64::try_from(index).expect("post index should fit u64");
+                ChannelInfo {
+                    guild_id: Some(guild_id),
+                    channel_id: Id::new(id),
+                    parent_id: Some(forum_id),
+                    position: None,
+                    last_message_id: Some(Id::new(10_000 + id)),
+                    name: format!("post {index}"),
+                    kind: "GuildPublicThread".to_owned(),
+                    message_count: Some(0),
+                    total_message_sent: Some(1),
+                    thread_archived: Some(false),
+                    thread_locked: Some(false),
+                    thread_pinned: Some(false),
+                    recipients: None,
+                    permission_overwrites: Vec::new(),
+                }
+            })
+            .collect();
+        state.push_event(AppEvent::ForumPostsLoaded {
+            channel_id: forum_id,
+            offset: 0,
+            posts,
+            preview_messages: Vec::new(),
+            has_more: false,
+        });
+        state
+    }
+
     fn push_message(state: &mut DashboardState, message_id: u64, content: &str) {
         state.push_event(AppEvent::MessageCreate {
             guild_id: Some(Id::new(1)),
@@ -4841,6 +5535,29 @@ mod tests {
             embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
+    }
+
+    fn message_info(message_id: u64, author: &str, content: &str, pinned: bool) -> MessageInfo {
+        MessageInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(message_id),
+            author_id: Id::new(99),
+            author: author.to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            pinned,
+            reactions: Vec::new(),
+            content: Some(content.to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        }
     }
 
     fn message_with_forwarded_snapshot(snapshot: MessageSnapshotInfo) -> MessageState {
@@ -4975,6 +5692,7 @@ mod tests {
             total_message_sent: None,
             thread_archived: None,
             thread_locked: None,
+            thread_pinned: None,
             recipients: statuses
                 .iter()
                 .enumerate()

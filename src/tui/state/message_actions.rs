@@ -6,6 +6,14 @@ use super::{
 };
 
 impl DashboardState {
+    pub fn activate_selected_message_pane_item(&mut self) -> Option<AppCommand> {
+        if self.selected_channel_is_forum() {
+            return self.activate_selected_forum_post();
+        }
+        self.open_selected_message_actions();
+        None
+    }
+
     pub fn is_message_action_menu_open(&self) -> bool {
         self.message_action_menu.is_some()
     }

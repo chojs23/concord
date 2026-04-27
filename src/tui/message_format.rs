@@ -1089,7 +1089,7 @@ fn format_latest_message_preview(
     format!("{prefix}{content}{suffix}")
 }
 
-fn format_message_relative_age(message_id: Id<MessageMarker>) -> String {
+pub(super) fn format_message_relative_age(message_id: Id<MessageMarker>) -> String {
     let created = (message_id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
