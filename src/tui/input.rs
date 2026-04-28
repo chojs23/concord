@@ -38,6 +38,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_message_action_menu_key(state, key);
     }
 
+    if state.is_guild_action_menu_open() {
+        return handle_guild_action_menu_key(state, key);
+    }
+
     if state.is_channel_action_menu_open() {
         return handle_channel_action_menu_key(state, key);
     }
@@ -59,12 +63,7 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         }
         KeyCode::Char('q') => state.quit(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
-        KeyCode::Char('a') if focus == FocusPane::Channels => {
-            state.open_selected_channel_actions();
-        }
-        KeyCode::Char('a') if focus == FocusPane::Members => {
-            state.open_selected_member_actions();
-        }
+        KeyCode::Char('a') => state.open_actions_for_focused_target(),
         KeyCode::Char('i') => state.start_composer(),
         KeyCode::Char('1') => state.focus_pane(FocusPane::Guilds),
         KeyCode::Char('2') => state.focus_pane(FocusPane::Channels),
@@ -164,6 +163,17 @@ fn handle_member_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> O
         code if is_down_key(code) => state.move_member_action_down(),
         code if is_up_key(code) => state.move_member_action_up(),
         code if is_confirm_key(code) => return state.activate_selected_member_action(),
+        _ => {}
+    }
+    None
+}
+
+fn handle_guild_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc => state.close_guild_action_menu(),
+        code if is_down_key(code) => state.move_guild_action_down(),
+        code if is_up_key(code) => state.move_guild_action_up(),
+        code if is_confirm_key(code) => return state.activate_selected_guild_action(),
         _ => {}
     }
     None
@@ -335,8 +345,8 @@ mod tests {
     use crate::{
         discord::{
             AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, GuildFolder,
-            MessageReferenceInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji,
-            ReactionUserInfo, ReactionUsersInfo,
+            MemberInfo, MessageReferenceInfo, PollAnswerInfo, PollInfo, PresenceStatus,
+            ReactionEmoji, ReactionUserInfo, ReactionUsersInfo,
         },
         tui::state::{
             ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind,
@@ -686,6 +696,61 @@ mod tests {
         handle_key(&mut state, char_key(' '));
 
         assert!(state.is_message_action_menu_open());
+    }
+
+    #[test]
+    fn a_key_opens_current_channel_actions_from_message_pane() {
+        let mut state = state_with_messages(1);
+        state.focus_pane(FocusPane::Messages);
+
+        handle_key(&mut state, char_key('a'));
+
+        assert!(state.is_channel_action_menu_open());
+        assert!(!state.is_message_action_menu_open());
+        let command = handle_key(&mut state, key(KeyCode::Enter));
+        assert_eq!(
+            command,
+            Some(AppCommand::LoadPinnedMessages {
+                channel_id: Id::new(2),
+            })
+        );
+        assert!(state.is_pinned_message_view());
+    }
+
+    #[test]
+    fn a_key_opens_selected_channel_actions_from_channel_pane() {
+        let mut state = state_with_messages(1);
+        state.focus_pane(FocusPane::Channels);
+
+        handle_key(&mut state, char_key('a'));
+
+        assert!(state.is_channel_action_menu_open());
+    }
+
+    #[test]
+    fn a_key_opens_server_actions_from_guild_pane() {
+        let mut state = state_with_messages(1);
+        state.focus_pane(FocusPane::Guilds);
+
+        handle_key(&mut state, char_key('a'));
+
+        assert!(state.is_guild_action_menu_open());
+        assert_eq!(handle_key(&mut state, key(KeyCode::Enter)), None);
+        assert!(state.is_guild_action_menu_open());
+    }
+
+    #[test]
+    fn a_key_opens_member_actions_from_member_pane() {
+        let mut state = state_with_members(1);
+        state.focus_pane(FocusPane::Members);
+
+        handle_key(&mut state, char_key('a'));
+
+        assert!(state.is_member_action_menu_open());
+        let actions = state.selected_member_action_items();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].label, "Show profile");
+        assert!(actions[0].enabled);
     }
 
     #[test]
@@ -1256,6 +1321,54 @@ mod tests {
                 forwarded_snapshots: Vec::new(),
             });
         }
+        state
+    }
+
+    fn state_with_members(count: u64) -> DashboardState {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let mut state = DashboardState::new();
+        let members = (1..=count)
+            .map(|id| MemberInfo {
+                user_id: Id::new(id),
+                display_name: format!("member {id}"),
+                username: None,
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            })
+            .collect();
+        let presences = (1..=count)
+            .map(|id| (Id::new(id), PresenceStatus::Online))
+            .collect();
+
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            }],
+            members,
+            presences,
+            roles: Vec::new(),
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.confirm_selected_guild();
         state
     }
 

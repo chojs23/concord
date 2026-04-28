@@ -5,10 +5,11 @@ use crate::discord::{GuildFolder, GuildState};
 
 use super::{ActiveGuildScope, DashboardState, FolderKey};
 use super::{
-    model::{FocusPane, GuildBranch, GuildPaneEntry},
+    model::{FocusPane, GuildActionItem, GuildActionKind, GuildBranch, GuildPaneEntry},
+    popups::GuildActionMenuState,
     scroll::{
-        clamp_selected_index, close_collapsed_key, open_collapsed_key, pane_content_height,
-        toggle_collapsed_key,
+        clamp_selected_index, close_collapsed_key, move_index_down, move_index_up,
+        open_collapsed_key, pane_content_height, toggle_collapsed_key,
     },
 };
 
@@ -157,6 +158,74 @@ impl DashboardState {
             (ActiveGuildScope::Unset, _)
             | (ActiveGuildScope::DirectMessages, _)
             | (ActiveGuildScope::Guild(_), _) => false,
+        }
+    }
+
+    pub fn open_selected_guild_actions(&mut self) {
+        if self.focus != FocusPane::Guilds {
+            return;
+        }
+        match self.guild_pane_entries().get(self.selected_guild()) {
+            Some(GuildPaneEntry::DirectMessages | GuildPaneEntry::Guild { .. }) => {
+                self.guild_action_menu = Some(GuildActionMenuState { selected: 0 });
+            }
+            Some(GuildPaneEntry::FolderHeader { .. }) | None => {}
+        }
+    }
+
+    pub fn close_guild_action_menu(&mut self) {
+        self.guild_action_menu = None;
+    }
+
+    pub fn guild_action_menu_title(&self) -> Option<String> {
+        match self.guild_pane_entries().get(self.selected_guild())? {
+            GuildPaneEntry::DirectMessages => Some("Direct Messages".to_owned()),
+            GuildPaneEntry::Guild { state, .. } => Some(state.name.clone()),
+            GuildPaneEntry::FolderHeader { .. } => None,
+        }
+    }
+
+    pub fn selected_guild_action_items(&self) -> Vec<GuildActionItem> {
+        if self.guild_action_menu.is_none() {
+            return Vec::new();
+        }
+        vec![GuildActionItem {
+            kind: GuildActionKind::NoActionsYet,
+            label: "No server actions yet".to_owned(),
+            enabled: false,
+        }]
+    }
+
+    pub fn selected_guild_action_index(&self) -> Option<usize> {
+        let menu = self.guild_action_menu.as_ref()?;
+        Some(clamp_selected_index(
+            menu.selected,
+            self.selected_guild_action_items().len(),
+        ))
+    }
+
+    pub fn move_guild_action_down(&mut self) {
+        let len = self.selected_guild_action_items().len();
+        if let Some(menu) = self.guild_action_menu.as_mut() {
+            move_index_down(&mut menu.selected, len);
+        }
+    }
+
+    pub fn move_guild_action_up(&mut self) {
+        if let Some(menu) = self.guild_action_menu.as_mut() {
+            move_index_up(&mut menu.selected);
+        }
+    }
+
+    pub fn activate_selected_guild_action(&mut self) -> Option<crate::discord::AppCommand> {
+        let menu = self.guild_action_menu.clone()?;
+        let items = self.selected_guild_action_items();
+        let item = items.get(clamp_selected_index(menu.selected, items.len()))?;
+        if !item.enabled {
+            return None;
+        }
+        match item.kind {
+            GuildActionKind::NoActionsYet => None,
         }
     }
 

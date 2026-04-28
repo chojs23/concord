@@ -22,9 +22,10 @@ use super::{
     },
     state::{
         ChannelActionItem, ChannelPaneEntry, ChannelThreadItem, DashboardState, EmojiReactionItem,
-        FORUM_POST_CARD_HEIGHT, FocusPane, GuildPaneEntry, MAX_MENTION_PICKER_VISIBLE,
-        MemberActionItem, MemberEntry, MemberGroup, MentionPickerEntry, MessageActionItem,
-        PollVotePickerItem, discord_color, folder_color, presence_color, presence_marker,
+        FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry,
+        MAX_MENTION_PICKER_VISIBLE, MemberActionItem, MemberEntry, MemberGroup, MentionPickerEntry,
+        MessageActionItem, PollVotePickerItem, discord_color, folder_color, presence_color,
+        presence_marker,
     },
 };
 use crate::discord::{
@@ -145,6 +146,7 @@ pub fn render(
     render_members(frame, areas.members, state);
     render_footer(frame, areas.footer, state);
     render_message_action_menu(frame, areas.messages, state);
+    render_guild_action_menu(frame, areas.messages, state);
     render_channel_action_menu(frame, areas.messages, state);
     render_member_action_menu(frame, areas.messages, state);
     render_poll_vote_picker(frame, areas.messages, state);
@@ -1524,7 +1526,10 @@ fn footer_hint(state: &DashboardState) -> &'static str {
         "j/k choose emoji | enter/space react | esc close"
     } else if state.is_user_profile_popup_open() {
         "j/k pick mutual server | enter open server | esc close"
-    } else if state.is_message_action_menu_open() {
+    } else if state.is_message_action_menu_open()
+        || state.is_guild_action_menu_open()
+        || state.is_member_action_menu_open()
+    {
         "j/k choose action | enter select | esc close | q quit"
     } else if state.is_channel_action_menu_open() {
         if state.is_channel_action_threads_phase() {
@@ -1532,8 +1537,6 @@ fn footer_hint(state: &DashboardState) -> &'static str {
         } else {
             "j/k choose action | enter select | esc close | q quit"
         }
-    } else if state.is_member_action_menu_open() {
-        "j/k choose action | enter select | esc close | q quit"
     } else if state.focus() == FocusPane::Members {
         "tab/1-4 focus | j/k move | enter/space profile | a actions | i write | q quit"
     } else if state.focus() == FocusPane::Channels {
@@ -1559,6 +1562,29 @@ fn render_message_action_menu(frame: &mut Frame, area: Rect, state: &DashboardSt
     frame.render_widget(
         Paragraph::new(message_action_menu_lines(&actions, selected))
             .block(panel_block("Message actions", true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+fn render_guild_action_menu(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    if !state.is_guild_action_menu_open() {
+        return;
+    }
+    let actions = state.selected_guild_action_items();
+    if actions.is_empty() {
+        return;
+    }
+    let selected = state.selected_guild_action_index().unwrap_or(0);
+    let title = state
+        .guild_action_menu_title()
+        .map(|name| format!("Server actions — {name}"))
+        .unwrap_or_else(|| "Server actions".to_owned());
+    let popup = centered_rect(area, 48, (actions.len() as u16).saturating_add(4));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(guild_action_menu_lines(&actions, selected))
+            .block(panel_block_owned(title, true))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -1708,6 +1734,35 @@ fn render_member_action_menu(frame: &mut Frame, area: Rect, state: &DashboardSta
             .wrap(Wrap { trim: false }),
         popup,
     );
+}
+
+fn guild_action_menu_lines(actions: &[GuildActionItem], selected: usize) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| {
+            let marker = if index == selected { "› " } else { "  " };
+            let mut style = if action.enabled {
+                Style::default()
+            } else {
+                Style::default().fg(DIM)
+            };
+            if index == selected {
+                style = style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            Line::from(vec![
+                Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(action.label.clone(), style),
+            ])
+        })
+        .collect();
+    lines.push(Line::from(Span::styled(
+        "Enter select · Esc close",
+        Style::default().fg(DIM),
+    )));
+    lines
 }
 
 fn member_action_menu_lines(actions: &[MemberActionItem], selected: usize) -> Vec<Line<'static>> {
@@ -2721,12 +2776,12 @@ mod tests {
 
     use super::{
         ACCENT, DIM, DISCORD_EPOCH_MILLIS, MemberEntry, SNOWFLAKE_TIMESTAMP_SHIFT,
-        channel_name_style, composer_content_line_count, composer_lines,
+        channel_action_menu_lines, channel_name_style, composer_content_line_count, composer_lines,
         composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
         emoji_reaction_picker_lines, footer_hint, format_message_sent_time,
         format_unix_millis_with_offset, forum_post_reaction_summary,
-        forum_post_scrollbar_visible_count, forum_post_viewport_lines, highlight_style,
-        inline_image_preview_area, inline_image_preview_row, member_display_label,
+        forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
+        highlight_style, inline_image_preview_area, inline_image_preview_row, member_display_label,
         member_name_style, message_action_menu_lines, message_author_style, message_item_lines,
         message_starts_new_day, message_viewport_lines, poll_vote_picker_lines,
         reaction_users_popup_lines, reaction_users_visible_line_count, sync_view_heights,
@@ -2749,7 +2804,8 @@ mod tests {
                 poll_card_inner_width, wrap_text_lines,
             },
             state::{
-                ChannelThreadItem, DashboardState, EmojiReactionItem, FocusPane, MessageActionItem,
+                ChannelActionItem, ChannelActionKind, ChannelThreadItem, DashboardState,
+                EmojiReactionItem, FocusPane, GuildActionItem, GuildActionKind, MessageActionItem,
                 MessageActionKind, PollVotePickerItem,
             },
         },
@@ -4154,6 +4210,49 @@ mod tests {
                 "› Download image (unavailable)",
                 "Enter select · Esc close"
             ]
+        );
+    }
+
+    #[test]
+    fn channel_action_menu_renders_pinned_and_thread_actions() {
+        let actions = vec![
+            ChannelActionItem {
+                kind: ChannelActionKind::LoadPinnedMessages,
+                label: "Show pinned messages".to_owned(),
+                enabled: true,
+            },
+            ChannelActionItem {
+                kind: ChannelActionKind::ShowThreads,
+                label: "Show threads (none)".to_owned(),
+                enabled: false,
+            },
+        ];
+
+        let lines = channel_action_menu_lines(&actions, 0);
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec![
+                "› Show pinned messages",
+                "  Show threads (none)",
+                "Enter select · Esc close",
+            ]
+        );
+    }
+
+    #[test]
+    fn guild_action_menu_renders_placeholder_action() {
+        let actions = vec![GuildActionItem {
+            kind: GuildActionKind::NoActionsYet,
+            label: "No server actions yet".to_owned(),
+            enabled: false,
+        }];
+
+        let lines = guild_action_menu_lines(&actions, 0);
+
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec!["› No server actions yet", "Enter select · Esc close"]
         );
     }
 

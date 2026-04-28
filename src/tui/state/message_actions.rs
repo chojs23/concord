@@ -77,11 +77,6 @@ impl DashboardState {
             enabled: true,
         });
         actions.push(MessageActionItem {
-            kind: MessageActionKind::LoadPinnedMessages,
-            label: "Show pinned messages".to_owned(),
-            enabled: true,
-        });
-        actions.push(MessageActionItem {
             kind: MessageActionKind::SetPinned(!message.pinned),
             label: if message.pinned {
                 "Unpin message".to_owned()
@@ -215,12 +210,6 @@ impl DashboardState {
                     message_id,
                     reactions,
                 })
-            }
-            MessageActionKind::LoadPinnedMessages => {
-                let channel_id = self.selected_message_state()?.channel_id;
-                self.enter_pinned_message_view(channel_id);
-                self.close_message_action_menu();
-                Some(AppCommand::LoadPinnedMessages { channel_id })
             }
             MessageActionKind::SetPinned(pinned) => {
                 let message = self.selected_message_state()?;

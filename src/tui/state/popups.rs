@@ -13,6 +13,11 @@ pub struct MessageActionMenuState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct GuildActionMenuState {
+    pub(super) selected: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct UserProfilePopupState {
     pub(super) user_id: Id<UserMarker>,
     pub(super) guild_id: Option<Id<GuildMarker>>,

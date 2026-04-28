@@ -22,7 +22,6 @@ pub enum MessageActionKind {
     RemoveReaction(usize),
     ShowReactionUsers,
     ShowProfile,
-    LoadPinnedMessages,
     SetPinned(bool),
     VotePollAnswer(u8),
     OpenPollVotePicker,
@@ -37,12 +36,25 @@ pub struct MessageActionItem {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChannelActionKind {
+    LoadPinnedMessages,
     ShowThreads,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelActionItem {
     pub kind: ChannelActionKind,
+    pub label: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuildActionKind {
+    NoActionsYet,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuildActionItem {
+    pub kind: GuildActionKind,
     pub label: String,
     pub enabled: bool,
 }

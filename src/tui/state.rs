@@ -34,7 +34,9 @@ mod user;
 
 use composer::MentionCompletion;
 use message_render::{add_literal_mention_highlights, normalize_text_highlights};
-use popups::{ChannelActionMenuState, MemberActionMenuState, UserProfilePopupState};
+use popups::{
+    ChannelActionMenuState, GuildActionMenuState, MemberActionMenuState, UserProfilePopupState,
+};
 use scroll::{
     SCROLL_OFF, clamp_list_scroll, clamp_selected_index, last_index, move_index_down,
     move_index_down_by, move_index_up, move_index_up_by, normalize_message_line_scroll,
@@ -45,11 +47,11 @@ pub use composer::{MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry};
 pub use member_grouping::{MemberEntry, MemberGroup};
 pub use model::{
     ChannelActionItem, ChannelPaneEntry, ChannelThreadItem, EmojiReactionItem,
-    FORUM_POST_CARD_HEIGHT, FocusPane, GuildPaneEntry, MemberActionItem, MessageActionItem,
-    MessageActionKind, PollVotePickerItem, ThreadMessagePreview, ThreadSummary,
+    FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, MemberActionItem,
+    MessageActionItem, MessageActionKind, PollVotePickerItem, ThreadMessagePreview, ThreadSummary,
 };
 #[allow(unused_imports)]
-pub use model::{ChannelActionKind, ChannelBranch, GuildBranch};
+pub use model::{ChannelActionKind, ChannelBranch, GuildActionKind, GuildBranch};
 pub use popups::{
     EmojiReactionPickerState, MessageActionMenuState, PollVotePickerState, ReactionUsersPopupState,
 };
@@ -135,6 +137,7 @@ pub struct DashboardState {
     /// submit even though the visible text is still the friendly form.
     composer_mention_completions: Vec<MentionCompletion>,
     message_action_menu: Option<MessageActionMenuState>,
+    guild_action_menu: Option<GuildActionMenuState>,
     channel_action_menu: Option<ChannelActionMenuState>,
     member_action_menu: Option<MemberActionMenuState>,
     user_profile_popup: Option<UserProfilePopupState>,
@@ -201,6 +204,7 @@ impl DashboardState {
             composer_mention_selected: 0,
             composer_mention_completions: Vec::new(),
             message_action_menu: None,
+            guild_action_menu: None,
             channel_action_menu: None,
             member_action_menu: None,
             user_profile_popup: None,
@@ -343,6 +347,19 @@ impl DashboardState {
 
     pub fn is_channel_action_menu_open(&self) -> bool {
         self.channel_action_menu.is_some()
+    }
+
+    pub fn is_guild_action_menu_open(&self) -> bool {
+        self.guild_action_menu.is_some()
+    }
+
+    pub fn open_actions_for_focused_target(&mut self) {
+        match self.focus {
+            FocusPane::Guilds => self.open_selected_guild_actions(),
+            FocusPane::Channels => self.open_selected_channel_actions(),
+            FocusPane::Messages => self.open_active_channel_actions(),
+            FocusPane::Members => self.open_selected_member_actions(),
+        }
     }
 
     pub fn is_channel_action_threads_phase(&self) -> bool {

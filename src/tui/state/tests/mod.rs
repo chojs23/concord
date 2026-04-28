@@ -8,8 +8,9 @@ use crate::discord::ids::{
 };
 
 use super::{
-    ChannelActionKind, ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildBranch,
-    GuildPaneEntry, MessageActionKind, MessageState, message_rendered_height, presence_marker,
+    ChannelActionKind, ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildActionKind,
+    GuildBranch, GuildPaneEntry, MessageActionKind, MessageState, message_rendered_height,
+    presence_marker,
 };
 use crate::discord::{
     AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, ChannelVisibilityStats,
@@ -1825,22 +1826,18 @@ fn normal_message_actions_do_not_include_poll_or_image_actions() {
             MessageActionKind::Reply,
             MessageActionKind::AddReaction,
             MessageActionKind::ShowProfile,
-            MessageActionKind::LoadPinnedMessages,
             MessageActionKind::SetPinned(true),
         ]
     );
 }
 
 #[test]
-fn show_pinned_messages_action_enters_pinned_message_view() {
+fn channel_show_pinned_messages_action_enters_pinned_message_view() {
     let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Messages);
-    state.open_selected_message_actions();
-    state.move_message_action_down();
-    state.move_message_action_down();
-    state.move_message_action_down();
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
 
-    let command = state.activate_selected_message_action();
+    let command = state.activate_selected_channel_action();
 
     assert!(matches!(
         command,
@@ -1963,7 +1960,6 @@ fn reaction_message_actions_use_single_reacted_users_item() {
             MessageActionKind::Reply,
             MessageActionKind::AddReaction,
             MessageActionKind::ShowProfile,
-            MessageActionKind::LoadPinnedMessages,
             MessageActionKind::SetPinned(true),
             MessageActionKind::ShowReactionUsers,
             MessageActionKind::RemoveReaction(0),
@@ -1984,7 +1980,7 @@ fn show_reacted_users_action_loads_all_reaction_emojis() {
     let mut state = state_with_reaction_message();
     state.focus_pane(FocusPane::Messages);
     state.open_selected_message_actions();
-    for _ in 0..5 {
+    for _ in 0..4 {
         state.move_message_action_down();
     }
 
@@ -2789,10 +2785,14 @@ fn channel_action_menu_lists_threads_for_selected_channel() {
 
     assert!(state.is_channel_action_menu_open());
     let actions = state.selected_channel_action_items();
-    assert_eq!(actions.len(), 1);
-    assert_eq!(actions[0].kind, ChannelActionKind::ShowThreads);
+    assert_eq!(actions.len(), 2);
+    assert_eq!(actions[0].kind, ChannelActionKind::LoadPinnedMessages);
+    assert_eq!(actions[0].label, "Show pinned messages");
     assert!(actions[0].enabled);
+    assert_eq!(actions[1].kind, ChannelActionKind::ShowThreads);
+    assert!(actions[1].enabled);
 
+    state.move_channel_action_down();
     let command = state.activate_selected_channel_action();
     assert_eq!(command, None);
     assert!(state.is_channel_action_threads_phase());
@@ -2808,6 +2808,7 @@ fn channel_action_menu_open_thread_activates_and_subscribes() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Channels);
     state.open_selected_channel_actions();
+    state.move_channel_action_down();
     state.activate_selected_channel_action();
     let command = state.activate_selected_channel_action();
 
@@ -2820,6 +2821,40 @@ fn channel_action_menu_open_thread_activates_and_subscribes() {
             channel_id: Id::new(10),
         })
     );
+}
+
+#[test]
+fn channel_action_menu_loads_pinned_messages_for_selected_channel() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+
+    let command = state.activate_selected_channel_action();
+
+    assert_eq!(
+        command,
+        Some(AppCommand::LoadPinnedMessages {
+            channel_id: Id::new(2),
+        })
+    );
+    assert!(state.is_pinned_message_view());
+    assert!(!state.is_channel_action_menu_open());
+}
+
+#[test]
+fn guild_action_menu_opens_without_concrete_actions_yet() {
+    let mut state = state_with_many_guilds(1);
+    state.focus_pane(FocusPane::Guilds);
+    state.open_selected_guild_actions();
+
+    assert!(state.is_guild_action_menu_open());
+    assert_eq!(state.guild_action_menu_title(), Some("guild 1".to_owned()));
+    let actions = state.selected_guild_action_items();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].kind, GuildActionKind::NoActionsYet);
+    assert_eq!(actions[0].label, "No server actions yet");
+    assert!(!actions[0].enabled);
+    assert_eq!(state.activate_selected_guild_action(), None);
 }
 
 #[test]
@@ -3235,6 +3270,7 @@ fn channel_action_menu_back_returns_to_actions_phase() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Channels);
     state.open_selected_channel_actions();
+    state.move_channel_action_down();
     state.activate_selected_channel_action();
     assert!(state.is_channel_action_threads_phase());
 
@@ -3277,14 +3313,13 @@ fn poll_vote_actions_are_available_by_default() {
             MessageActionKind::Reply,
             MessageActionKind::AddReaction,
             MessageActionKind::ShowProfile,
-            MessageActionKind::LoadPinnedMessages,
             MessageActionKind::SetPinned(true),
             MessageActionKind::VotePollAnswer(1),
             MessageActionKind::VotePollAnswer(2),
         ]
     );
-    assert_eq!(actions[5].label, "Remove poll vote: Soup");
-    assert_eq!(actions[6].label, "Vote poll: Noodles");
+    assert_eq!(actions[4].label, "Remove poll vote: Soup");
+    assert_eq!(actions[5].label, "Vote poll: Noodles");
 }
 
 fn state_with_forum_channel_posts() -> DashboardState {
@@ -3468,7 +3503,6 @@ fn message_action_items_keep_image_action_for_poll_messages() {
             MessageActionKind::DownloadImage,
             MessageActionKind::AddReaction,
             MessageActionKind::ShowProfile,
-            MessageActionKind::LoadPinnedMessages,
             MessageActionKind::SetPinned(true),
             MessageActionKind::VotePollAnswer(1),
             MessageActionKind::VotePollAnswer(2),
@@ -3499,7 +3533,7 @@ fn poll_vote_action_can_remove_existing_vote() {
         forwarded_snapshots: Vec::new(),
     });
     state.open_selected_message_actions();
-    for _ in 0..5 {
+    for _ in 0..4 {
         state.move_message_action_down();
     }
 
@@ -3539,11 +3573,11 @@ fn multi_select_poll_action_opens_picker_and_submits_selected_answers() {
     });
 
     let actions = state.selected_message_action_items();
-    assert_eq!(actions[5].kind, MessageActionKind::OpenPollVotePicker);
-    assert_eq!(actions[5].label, "Choose poll votes");
+    assert_eq!(actions[4].kind, MessageActionKind::OpenPollVotePicker);
+    assert_eq!(actions[4].label, "Choose poll votes");
 
     state.open_selected_message_actions();
-    for _ in 0..5 {
+    for _ in 0..4 {
         state.move_message_action_down();
     }
     assert_eq!(state.activate_selected_message_action(), None);

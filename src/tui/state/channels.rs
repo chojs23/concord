@@ -37,6 +37,17 @@ impl DashboardState {
         let Some(channel_id) = self.selected_channel_cursor_id() else {
             return;
         };
+        self.open_channel_actions(channel_id);
+    }
+
+    pub fn open_active_channel_actions(&mut self) {
+        let Some(channel_id) = self.selected_channel_id() else {
+            return;
+        };
+        self.open_channel_actions(channel_id);
+    }
+
+    fn open_channel_actions(&mut self, channel_id: Id<ChannelMarker>) {
         let Some(channel) = self.discord.channel(channel_id) else {
             return;
         };
@@ -82,11 +93,18 @@ impl DashboardState {
         } else {
             format!("Show threads ({thread_count})")
         };
-        vec![ChannelActionItem {
-            kind: ChannelActionKind::ShowThreads,
-            label,
-            enabled: thread_count > 0,
-        }]
+        vec![
+            ChannelActionItem {
+                kind: ChannelActionKind::LoadPinnedMessages,
+                label: "Show pinned messages".to_owned(),
+                enabled: true,
+            },
+            ChannelActionItem {
+                kind: ChannelActionKind::ShowThreads,
+                label,
+                enabled: thread_count > 0,
+            },
+        ]
     }
 
     pub fn channel_action_thread_items(&self) -> Vec<ChannelThreadItem> {
@@ -331,6 +349,11 @@ impl DashboardState {
                     return None;
                 }
                 match item.kind {
+                    ChannelActionKind::LoadPinnedMessages => {
+                        self.enter_pinned_message_view(channel_id);
+                        self.close_channel_action_menu();
+                        Some(AppCommand::LoadPinnedMessages { channel_id })
+                    }
                     ChannelActionKind::ShowThreads => {
                         self.channel_action_menu = Some(ChannelActionMenuState::Threads {
                             channel_id,
