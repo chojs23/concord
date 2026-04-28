@@ -199,6 +199,8 @@ impl DashboardState {
         self.selected_channel = 0;
         self.channel_scroll = 0;
         self.active_channel_id = None;
+        self.pinned_message_view_channel_id = None;
+        self.pinned_message_view_return_target = None;
         self.selected_message = 0;
         self.message_scroll = 0;
         self.message_line_scroll = 0;

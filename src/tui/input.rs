@@ -53,7 +53,9 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     let focus = state.focus();
     match key.code {
         KeyCode::Esc => {
-            state.return_from_opened_thread();
+            if !state.return_from_pinned_message_view() {
+                state.return_from_opened_thread();
+            }
         }
         KeyCode::Char('q') => state.quit(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
@@ -753,6 +755,29 @@ mod tests {
         handle_key(&mut state, key(KeyCode::Esc));
 
         assert_eq!(state.selected_channel_id(), Some(Id::new(2)));
+        assert_eq!(state.focus(), FocusPane::Messages);
+    }
+
+    #[test]
+    fn esc_returns_from_pinned_message_view() {
+        let mut state = state_with_messages(3);
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Up));
+        let expected_selected = state.selected_message();
+
+        state.push_event(AppEvent::MessagePinnedUpdate {
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            pinned: true,
+        });
+        state.enter_pinned_message_view(Id::new(2));
+        assert!(state.is_pinned_message_view());
+
+        handle_key(&mut state, key(KeyCode::Esc));
+
+        assert!(!state.is_pinned_message_view());
+        assert_eq!(state.selected_channel_id(), Some(Id::new(2)));
+        assert_eq!(state.selected_message(), expected_selected);
         assert_eq!(state.focus(), FocusPane::Messages);
     }
 

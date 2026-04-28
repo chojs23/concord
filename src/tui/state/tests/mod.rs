@@ -1832,6 +1832,125 @@ fn normal_message_actions_do_not_include_poll_or_image_actions() {
 }
 
 #[test]
+fn show_pinned_messages_action_enters_pinned_message_view() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+    state.move_message_action_down();
+    state.move_message_action_down();
+    state.move_message_action_down();
+
+    let command = state.activate_selected_message_action();
+
+    assert!(matches!(
+        command,
+        Some(AppCommand::LoadPinnedMessages { channel_id }) if channel_id == Id::new(2)
+    ));
+    assert!(state.is_pinned_message_view());
+    assert_eq!(state.selected_message(), 0);
+    assert_eq!(state.message_scroll(), 0);
+    assert_eq!(state.message_line_scroll(), 0);
+    assert!(!state.message_auto_follow());
+}
+
+#[test]
+fn pinned_message_view_title_mentions_channel_and_pins() {
+    let mut state = state_with_messages(1);
+
+    assert_eq!(state.message_pane_title(), "#general");
+
+    state.enter_pinned_message_view(Id::new(2));
+
+    assert_eq!(state.message_pane_title(), "#general pinned messages");
+}
+
+#[test]
+fn returning_from_pinned_message_view_restores_parent_message_window() {
+    let mut state = state_with_message_ids([10, 11, 12, 13, 14]);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.move_up();
+    state.move_up();
+    let expected_selected = state.selected_message();
+    let expected_scroll = state.message_scroll();
+    let expected_line_scroll = state.message_line_scroll();
+
+    state.push_event(AppEvent::PinnedMessagesLoaded {
+        channel_id: Id::new(2),
+        messages: vec![message_info(Id::new(2), 11)],
+    });
+    state.enter_pinned_message_view(Id::new(2));
+    assert!(state.is_pinned_message_view());
+
+    assert!(state.return_from_pinned_message_view());
+
+    assert!(!state.is_pinned_message_view());
+    assert_eq!(state.selected_message(), expected_selected);
+    assert_eq!(state.message_scroll(), expected_scroll);
+    assert_eq!(state.message_line_scroll(), expected_line_scroll);
+}
+
+#[test]
+fn pinned_message_view_does_not_request_older_history() {
+    let channel_id: Id<ChannelMarker> = Id::new(2);
+    let mut state = state_with_message_ids([10, 11, 12]);
+    state.push_event(AppEvent::PinnedMessagesLoaded {
+        channel_id,
+        messages: vec![message_info(channel_id, 11)],
+    });
+    state.enter_pinned_message_view(channel_id);
+    state.focus_pane(FocusPane::Messages);
+    state.jump_top();
+
+    assert_eq!(
+        state.messages().first().map(|message| message.id),
+        Some(Id::new(11))
+    );
+    assert_eq!(state.next_older_history_command(), None);
+}
+
+#[test]
+fn channel_change_exits_pinned_message_view() {
+    let mut state = state_with_many_channels(2);
+    state.confirm_selected_channel();
+    state.enter_pinned_message_view(Id::new(1));
+    assert!(state.is_pinned_message_view());
+
+    state.focus_pane(FocusPane::Channels);
+    state.move_down();
+    state.confirm_selected_channel();
+
+    assert_eq!(state.selected_channel_id(), Some(Id::new(2)));
+    assert!(!state.is_pinned_message_view());
+}
+
+#[test]
+fn guild_change_exits_pinned_message_view() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(2),
+        name: "other guild".to_owned(),
+        member_count: None,
+        channels: Vec::new(),
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.enter_pinned_message_view(Id::new(2));
+    assert!(state.is_pinned_message_view());
+
+    state.focus_pane(FocusPane::Guilds);
+    state.move_down();
+    state.confirm_selected_guild();
+
+    assert_eq!(state.selected_guild_id(), Some(Id::new(2)));
+    assert_eq!(state.selected_channel_id(), None);
+    assert!(!state.is_pinned_message_view());
+}
+
+#[test]
 fn reaction_message_actions_use_single_reacted_users_item() {
     let mut state = state_with_reaction_message();
     state.focus_pane(FocusPane::Messages);
@@ -1890,6 +2009,14 @@ fn show_reacted_users_action_loads_all_reaction_emojis() {
 }
 
 #[test]
+fn first_loaded_message_has_date_separator() {
+    let state = state_with_message_ids([10, 11]);
+
+    assert!(state.message_starts_new_day_at(0));
+    assert_eq!(state.message_extra_top_lines(0), 1);
+}
+
+#[test]
 fn reaction_users_loaded_opens_popup_state() {
     let mut state = state_with_messages(1);
 
@@ -1906,13 +2033,27 @@ fn reaction_users_loaded_opens_popup_state() {
     });
 
     assert!(state.is_reaction_users_popup_open());
-    assert_eq!(state.last_status(), Some("loaded reacted users"));
+    assert_eq!(state.last_status(), None);
     assert_eq!(
         state
             .reaction_users_popup()
             .map(|popup| popup.reactions()[0].users[0].display_name.as_str()),
         Some("neo")
     );
+}
+
+#[test]
+fn pinned_messages_loaded_does_not_update_status() {
+    let channel_id: Id<ChannelMarker> = Id::new(2);
+    let mut state = state_with_messages(1);
+
+    state.push_event(AppEvent::PinnedMessagesLoaded {
+        channel_id,
+        messages: vec![message_info(channel_id, 1)],
+    });
+
+    assert_eq!(state.last_status(), None);
+    assert_eq!(state.pinned_messages().len(), 1);
 }
 
 #[test]
@@ -3498,7 +3639,7 @@ fn message_selection_centers_with_line_offset_inside_previous_message() {
 
     assert_eq!(state.selected_message(), 1);
     assert_eq!(state.message_scroll(), 0);
-    assert_eq!(state.message_line_scroll(), 4);
+    assert_eq!(state.message_line_scroll(), 5);
     assert_eq!(state.selected_message_rendered_row(5, 16, 3), 1);
 }
 
@@ -3519,7 +3660,7 @@ fn message_selection_keeps_top_when_next_message_is_already_visible() {
     assert_eq!(state.selected_message(), 1);
     assert_eq!(state.message_scroll(), 0);
     assert_eq!(state.message_line_scroll(), 0);
-    assert_eq!(state.selected_message_rendered_row(5, 16, 3), 5);
+    assert_eq!(state.selected_message_rendered_row(5, 16, 3), 6);
 }
 
 #[test]
@@ -3553,14 +3694,14 @@ fn message_viewport_scrolls_by_rendered_line() {
     state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
     assert_eq!(state.message_scroll(), 0);
-    assert_eq!(state.message_line_scroll(), 3);
+    assert_eq!(state.message_line_scroll(), 4);
     assert_eq!(state.selected_message(), 0);
 
     state.scroll_message_viewport_down();
     state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
     assert_eq!(state.message_scroll(), 0);
-    assert_eq!(state.message_line_scroll(), 4);
+    assert_eq!(state.message_line_scroll(), 5);
 }
 
 #[test]
@@ -3589,6 +3730,8 @@ fn viewport_scroll_moves_to_next_message_after_current_message() {
     state.jump_top();
     state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
+    state.scroll_message_viewport_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
     state.scroll_message_viewport_down();
     state.clamp_message_viewport_for_image_previews(5, 16, 3);
     state.scroll_message_viewport_down();
@@ -3631,7 +3774,7 @@ fn focused_message_selection_returns_none_when_viewport_scrolled_past_selection(
     state.jump_top();
     state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
-    for _ in 0..5 {
+    for _ in 0..6 {
         state.scroll_message_viewport_down();
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
     }

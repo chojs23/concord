@@ -218,6 +218,7 @@ impl DashboardState {
             }
             MessageActionKind::LoadPinnedMessages => {
                 let channel_id = self.selected_message_state()?.channel_id;
+                self.enter_pinned_message_view(channel_id);
                 self.close_message_action_menu();
                 Some(AppCommand::LoadPinnedMessages { channel_id })
             }

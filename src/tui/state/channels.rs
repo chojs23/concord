@@ -567,6 +567,18 @@ impl DashboardState {
             .unwrap_or_else(|| format!("#channel-{}", channel_id.get()))
     }
 
+    pub fn message_pane_title(&self) -> String {
+        let Some(channel_id) = self.selected_channel_id() else {
+            return "no channel".to_owned();
+        };
+        let label = self.channel_label(channel_id);
+        if self.pinned_message_view_channel_id == Some(channel_id) {
+            format!("{label} pinned messages")
+        } else {
+            label
+        }
+    }
+
     pub fn is_active_channel_entry(&self, entry: &ChannelPaneEntry<'_>) -> bool {
         matches!(
             entry,
@@ -684,6 +696,8 @@ impl DashboardState {
             self.thread_return_target = None;
         }
         self.active_channel_id = Some(channel_id);
+        self.pinned_message_view_channel_id = None;
+        self.pinned_message_view_return_target = None;
         self.message_auto_follow = !is_forum;
         self.message_line_scroll = 0;
         self.message_keep_selection_visible = true;

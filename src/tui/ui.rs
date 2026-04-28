@@ -321,16 +321,10 @@ fn render_messages(
     avatar_images: Vec<AvatarImage>,
     emoji_images: &[EmojiReactionImage<'_>],
 ) {
-    let title_text = state
-        .selected_channel_state()
-        .map(|channel| match channel.kind.as_str() {
-            "dm" | "Private" => format!("@{}", channel.name),
-            "group-dm" | "Group" => channel.name.clone(),
-            _ => format!("#{}", channel.name),
-        })
-        .unwrap_or_else(|| "no channel".to_owned());
-
-    let block = panel_block_owned(title_text, state.focus() == FocusPane::Messages);
+    let block = panel_block_owned(
+        state.message_pane_title(),
+        state.focus() == FocusPane::Messages,
+    );
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -370,29 +364,6 @@ fn render_messages(
         return;
     }
 
-    let pinned_messages = state.pinned_messages();
-    let pinned_lines = pinned_message_section_lines(
-        &pinned_messages,
-        state,
-        content_width,
-        message_areas.list.width as usize,
-    );
-    let pinned_height = u16::try_from(pinned_lines.len())
-        .unwrap_or(u16::MAX)
-        .min(message_areas.list.height);
-    if pinned_height > 0 {
-        let pinned_area = Rect {
-            height: pinned_height,
-            ..message_areas.list
-        };
-        frame.render_widget(Paragraph::new(pinned_lines), pinned_area);
-    }
-    let message_list = Rect {
-        y: message_areas.list.y.saturating_add(pinned_height),
-        height: message_areas.list.height.saturating_sub(pinned_height),
-        ..message_areas.list
-    };
-
     let messages = state.visible_messages();
     let selected = state.focused_message_selection();
 
@@ -405,15 +376,17 @@ fn render_messages(
         &image_previews,
     );
 
-    frame.render_widget(Paragraph::new(lines), message_list);
+    frame.render_widget(Paragraph::new(lines), message_areas.list);
     for avatar in avatar_images {
-        if let Some(area) = message_avatar_area(message_list, avatar.row, avatar.visible_height) {
+        if let Some(area) =
+            message_avatar_area(message_areas.list, avatar.row, avatar.visible_height)
+        {
             frame.render_widget(RatatuiImage::new(&avatar.protocol), area);
         }
     }
     render_inline_reaction_emojis(
         frame,
-        message_list,
+        message_areas.list,
         &messages,
         state,
         content_width,
@@ -431,7 +404,7 @@ fn render_messages(
             previous_preview_rows,
         );
         if let Some(preview_area) = inline_image_preview_area(
-            message_list,
+            message_areas.list,
             row,
             image_preview.preview_height,
             image_preview.accent_color,
@@ -445,9 +418,9 @@ fn render_messages(
     let max_preview_height = inline_image_preview_height(message_areas.list, true);
     render_vertical_scrollbar(
         frame,
-        message_list,
+        message_areas.list,
         state.message_scroll_row_position(content_width, preview_width, max_preview_height),
-        message_list.height as usize,
+        message_areas.list.height as usize,
         state.message_total_rendered_rows(content_width, preview_width, max_preview_height),
     );
     render_typing_footer(frame, message_areas.typing, state);
@@ -1001,68 +974,6 @@ fn forum_post_card_style(style: Style, selected: bool) -> Style {
     }
 }
 
-fn pinned_message_section_lines(
-    messages: &[&MessageState],
-    state: &DashboardState,
-    content_width: usize,
-    list_width: usize,
-) -> Vec<Line<'static>> {
-    if messages.is_empty() {
-        return Vec::new();
-    }
-
-    let mut lines = Vec::new();
-    for message in messages {
-        let author = truncate_display_width(&message.author, content_width / 3);
-        let preview = message
-            .content
-            .as_deref()
-            .filter(|content| !content.trim().is_empty())
-            .map(|content| content.split_whitespace().collect::<Vec<_>>().join(" "))
-            .unwrap_or_else(|| {
-                if !message.attachments.is_empty() {
-                    "[attachment]".to_owned()
-                } else {
-                    "<message content unavailable>".to_owned()
-                }
-            });
-        let preview_width = list_width
-            .saturating_sub("PIN ".width())
-            .saturating_sub(author.width())
-            .saturating_sub(2)
-            .max(1);
-        lines.push(Line::from(vec![
-            Span::styled(
-                "PIN ",
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                author,
-                message_author_style(state.message_author_role_color(message)),
-            ),
-            Span::styled(": ", Style::default().fg(DIM)),
-            Span::styled(
-                truncate_display_width(&preview, preview_width),
-                Style::default().fg(DIM),
-            ),
-        ]));
-    }
-    lines.push(pinned_separator_line(list_width));
-    lines
-}
-
-fn pinned_separator_line(width: usize) -> Line<'static> {
-    let label = " pinned messages ";
-    let remaining = width.saturating_sub(label.width());
-    let left = remaining / 2;
-    let right = remaining.saturating_sub(left);
-    Line::from(vec![
-        Span::styled("─".repeat(left), Style::default().fg(DIM)),
-        Span::styled(label, Style::default().fg(DIM).add_modifier(Modifier::BOLD)),
-        Span::styled("─".repeat(right), Style::default().fg(DIM)),
-    ])
-}
-
 fn message_item_lines(
     author: String,
     author_style: Style,
@@ -1172,14 +1083,14 @@ fn message_local_date(message_id: Id<MessageMarker>) -> NaiveDate {
 
 /// Returns true when a message at `current` should be preceded by a date
 /// separator because its local-date differs from the previous visible message.
-/// Returns false when there is no previous message so the channel's earliest
-/// visible message does not gain a separator on its own.
+/// Returns true when there is no previous message so the channel's earliest
+/// visible message still shows its date at the top of the pane.
 pub(crate) fn message_starts_new_day(
     current: Id<MessageMarker>,
     previous: Option<Id<MessageMarker>>,
 ) -> bool {
     match previous {
-        None => false,
+        None => true,
         Some(prev) => message_local_date(current) != message_local_date(prev),
     }
 }
@@ -2817,10 +2728,10 @@ mod tests {
         forum_post_scrollbar_visible_count, forum_post_viewport_lines, highlight_style,
         inline_image_preview_area, inline_image_preview_row, member_display_label,
         member_name_style, message_action_menu_lines, message_author_style, message_item_lines,
-        message_starts_new_day, message_viewport_lines, pinned_message_section_lines,
-        poll_vote_picker_lines, reaction_users_popup_lines, reaction_users_visible_line_count,
-        sync_view_heights, user_profile_display_name_style, user_profile_popup_lines,
-        user_profile_popup_text, user_profile_popup_visible_lines,
+        message_starts_new_day, message_viewport_lines, poll_vote_picker_lines,
+        reaction_users_popup_lines, reaction_users_visible_line_count, sync_view_heights,
+        user_profile_display_name_style, user_profile_popup_lines, user_profile_popup_text,
+        user_profile_popup_visible_lines,
     };
     use crate::{
         discord::{
@@ -3018,30 +2929,9 @@ mod tests {
         let lines = message_viewport_lines(&messages, None, &state, 40, 80, &[]);
 
         assert_eq!(
-            lines[0].spans[1].style.fg,
+            lines[1].spans[1].style.fg,
             Some(Color::Rgb(0x33, 0x66, 0xCC))
         );
-    }
-
-    #[test]
-    fn pinned_message_section_renders_pins_and_separator() {
-        let mut state = state_with_message();
-        state.push_event(AppEvent::PinnedMessagesLoaded {
-            channel_id: Id::new(2),
-            messages: vec![message_info(10, "mod", "important announcement", true)],
-        });
-
-        assert_eq!(state.pinned_messages().len(), 1);
-        assert_eq!(state.messages().len(), 2);
-
-        let pinned = state.pinned_messages();
-        let lines = pinned_message_section_lines(&pinned, &state, 40, 60);
-
-        assert_eq!(
-            line_texts_from_ratatui(&lines)[0],
-            "PIN mod: important announcement"
-        );
-        assert!(line_texts_from_ratatui(&lines)[1].contains("pinned messages"));
     }
 
     #[test]
@@ -3244,7 +3134,7 @@ mod tests {
         let lines = message_viewport_lines(&messages, None, &state, 40, 80, &[]);
 
         assert_eq!(
-            lines[0].spans[1].style.fg,
+            lines[1].spans[1].style.fg,
             Some(Color::Rgb(0x33, 0x66, 0xCC))
         );
     }
@@ -5157,7 +5047,7 @@ mod tests {
         let day_one = snowflake_for_unix_ms(1_743_465_600_000); // 2026-04-01 00:00:00 UTC + 12h ≈ noon
         let day_two = snowflake_for_unix_ms(1_743_465_600_000 + 24 * 60 * 60 * 1000);
 
-        assert!(!message_starts_new_day(day_one, None));
+        assert!(message_starts_new_day(day_one, None));
         assert!(!message_starts_new_day(day_one, Some(day_one)));
         assert!(message_starts_new_day(day_two, Some(day_one)));
     }

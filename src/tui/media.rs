@@ -406,7 +406,10 @@ mod tests {
 
         let targets = visible_image_preview_targets(&state, layout(2));
 
-        assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
+        assert_eq!(
+            target_message_ids(&targets),
+            Vec::<Id<MessageMarker>>::new()
+        );
     }
 
     #[test]
@@ -416,8 +419,8 @@ mod tests {
         let targets = visible_avatar_targets(&state, layout(2));
 
         assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].row, 0);
-        assert_eq!(targets[0].visible_height, 2);
+        assert_eq!(targets[0].row, 1);
+        assert_eq!(targets[0].visible_height, 1);
         assert_eq!(targets[0].top_clip_rows, 0);
         assert_eq!(targets[0].url, "https://cdn.discordapp.com/avatar-1.png");
     }
@@ -435,7 +438,7 @@ mod tests {
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].row, 0);
         assert_eq!(targets[0].visible_height, 1);
-        assert_eq!(targets[0].top_clip_rows, 1);
+        assert_eq!(targets[0].top_clip_rows, 0);
     }
 
     #[test]
@@ -452,7 +455,7 @@ mod tests {
 
         assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
         assert_eq!(targets[0].visible_preview_height, 2);
-        assert_eq!(targets[0].top_clip_rows, 1);
+        assert_eq!(targets[0].top_clip_rows, 0);
     }
 
     #[test]

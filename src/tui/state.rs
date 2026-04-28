@@ -79,13 +79,21 @@ struct ThreadReturnTarget {
     message_auto_follow: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PinnedMessageViewReturnTarget {
+    channel_id: Id<ChannelMarker>,
+    selected_message: usize,
+    message_scroll: usize,
+    message_line_scroll: usize,
+    message_keep_selection_visible: bool,
+    message_auto_follow: bool,
+}
+
 #[derive(Debug, Default)]
 struct ForumPostListState {
     post_ids: Vec<Id<ChannelMarker>>,
     has_more: bool,
 }
-
-const MAX_PINNED_MESSAGES_VISIBLE: usize = 3;
 
 #[derive(Debug)]
 pub struct DashboardState {
@@ -108,6 +116,8 @@ pub struct DashboardState {
     message_content_width: usize,
     message_preview_width: u16,
     message_max_preview_height: u16,
+    pinned_message_view_channel_id: Option<Id<ChannelMarker>>,
+    pinned_message_view_return_target: Option<PinnedMessageViewReturnTarget>,
     thread_return_target: Option<ThreadReturnTarget>,
     selected_member: usize,
     member_scroll: usize,
@@ -178,6 +188,8 @@ impl DashboardState {
             message_content_width: usize::MAX,
             message_preview_width: 0,
             message_max_preview_height: 0,
+            pinned_message_view_channel_id: None,
+            pinned_message_view_return_target: None,
             thread_return_target: None,
             selected_member: 0,
             member_scroll: 0,
@@ -250,7 +262,6 @@ impl DashboardState {
                     scroll: 0,
                     view_height: 0,
                 });
-                self.last_status = Some("loaded reacted users".to_owned());
                 self.last_error = None;
             }
             AppEvent::MessageHistoryLoadFailed {
@@ -273,8 +284,7 @@ impl DashboardState {
             AppEvent::ForumPostsLoadFailed { message, .. } => {
                 self.last_error = Some(message.clone());
             }
-            AppEvent::PinnedMessagesLoaded { messages, .. } => {
-                self.last_status = Some(format!("loaded {} pinned messages", messages.len()));
+            AppEvent::PinnedMessagesLoaded { .. } => {
                 self.last_error = None;
             }
             AppEvent::PinnedMessagesLoadFailed { message, .. } => {
@@ -541,31 +551,87 @@ impl DashboardState {
         if self.selected_channel_is_forum() {
             return Vec::new();
         }
-        self.selected_channel_id()
-            .map(|channel_id| self.discord.messages_for_channel(channel_id))
-            .unwrap_or_default()
+        if self.pinned_message_view_channel_id == self.selected_channel_id() {
+            return self.pinned_messages();
+        }
+        self.channel_messages()
     }
 
     pub fn pinned_messages(&self) -> Vec<&MessageState> {
         if self.selected_channel_is_forum() {
             return Vec::new();
         }
+        self.channel_messages()
+            .into_iter()
+            .rev()
+            .filter(|message| message.pinned)
+            .collect()
+    }
+
+    fn channel_messages(&self) -> Vec<&MessageState> {
         self.selected_channel_id()
-            .map(|channel_id| {
-                self.discord
-                    .messages_for_channel(channel_id)
-                    .into_iter()
-                    .rev()
-                    .filter(|message| message.pinned)
-                    .take(MAX_PINNED_MESSAGES_VISIBLE)
-                    .collect()
-            })
+            .map(|channel_id| self.discord.messages_for_channel(channel_id))
             .unwrap_or_default()
     }
 
-    pub(crate) fn pinned_message_section_height(&self) -> usize {
-        let count = self.pinned_messages().len();
-        if count == 0 { 0 } else { count + 1 }
+    pub fn enter_pinned_message_view(&mut self, channel_id: Id<ChannelMarker>) {
+        if !self.is_pinned_message_view_active() {
+            self.record_pinned_message_view_return_target(channel_id);
+        }
+        self.pinned_message_view_channel_id = Some(channel_id);
+        self.selected_message = 0;
+        self.message_scroll = 0;
+        self.message_line_scroll = 0;
+        self.message_auto_follow = false;
+        self.message_keep_selection_visible = true;
+        self.clamp_message_viewport();
+    }
+
+    fn record_pinned_message_view_return_target(&mut self, channel_id: Id<ChannelMarker>) {
+        if self.selected_channel_id() != Some(channel_id) {
+            return;
+        }
+        self.pinned_message_view_return_target = Some(PinnedMessageViewReturnTarget {
+            channel_id,
+            selected_message: self.selected_message,
+            message_scroll: self.message_scroll,
+            message_line_scroll: self.message_line_scroll,
+            message_keep_selection_visible: self.message_keep_selection_visible,
+            message_auto_follow: self.message_auto_follow,
+        });
+    }
+
+    pub fn return_from_pinned_message_view(&mut self) -> bool {
+        if !self.is_pinned_message_view_active() {
+            return false;
+        }
+        let Some(target) = self.pinned_message_view_return_target else {
+            return false;
+        };
+        if self.selected_channel_id() != Some(target.channel_id) {
+            self.pinned_message_view_return_target = None;
+            return false;
+        }
+
+        self.pinned_message_view_channel_id = None;
+        self.pinned_message_view_return_target = None;
+        self.selected_message = target.selected_message;
+        self.message_scroll = target.message_scroll;
+        self.message_line_scroll = target.message_line_scroll;
+        self.message_keep_selection_visible = target.message_keep_selection_visible;
+        self.message_auto_follow = target.message_auto_follow;
+        self.clamp_message_viewport();
+        true
+    }
+
+    fn is_pinned_message_view_active(&self) -> bool {
+        self.pinned_message_view_channel_id
+            .is_some_and(|channel_id| Some(channel_id) == self.selected_channel_id())
+    }
+
+    #[cfg(test)]
+    pub fn is_pinned_message_view(&self) -> bool {
+        self.is_pinned_message_view_active()
     }
 
     pub fn selected_message(&self) -> usize {
@@ -587,6 +653,9 @@ impl DashboardState {
     }
 
     pub fn next_older_history_command(&mut self) -> Option<AppCommand> {
+        if self.is_pinned_message_view_active() {
+            return None;
+        }
         let channel_id = self.selected_channel_id()?;
         let before = self.older_history_cursor()?;
         match self.older_history_requests.get(&channel_id) {
@@ -667,9 +736,8 @@ impl DashboardState {
 
     /// Returns true when the message at `index` (within `self.messages()`)
     /// should be preceded by a date separator because its local date differs
-    /// from the previous message's. The first message in the loaded history
-    /// receives no separator on its own — the renderer waits for an actual
-    /// day boundary between two visible messages.
+    /// from the previous message's, or because it is the first loaded message
+    /// and needs day context at the top of the pane.
     pub(crate) fn message_starts_new_day_at(&self, index: usize) -> bool {
         let messages = self.messages();
         let Some(current) = messages.get(index) else {
@@ -1551,12 +1619,7 @@ impl DashboardState {
     }
 
     fn message_content_height(&self) -> usize {
-        let height = pane_content_height(self.message_view_height);
-        if self.selected_channel_is_forum() {
-            height
-        } else {
-            height.saturating_sub(self.pinned_message_section_height())
-        }
+        pane_content_height(self.message_view_height)
     }
 
     fn forum_post_visible_count(&self) -> usize {
