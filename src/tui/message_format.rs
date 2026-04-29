@@ -5,7 +5,7 @@ use crate::discord::ids::{
     marker::{GuildMarker, MessageMarker},
 };
 use ratatui::{
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Modifier, Style},
     text::Span,
 };
 use unicode_segmentation::UnicodeSegmentation;
