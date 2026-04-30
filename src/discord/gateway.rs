@@ -641,6 +641,14 @@ fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         "MESSAGE_CREATE" => parse_message_create(data).into_iter().collect(),
         "MESSAGE_UPDATE" => parse_message_update(data).into_iter().collect(),
         "MESSAGE_DELETE" => parse_message_delete(data).into_iter().collect(),
+        "MESSAGE_REACTION_ADD" => parse_message_reaction_add(data).into_iter().collect(),
+        "MESSAGE_REACTION_REMOVE" => parse_message_reaction_remove(data).into_iter().collect(),
+        "MESSAGE_REACTION_REMOVE_ALL" => parse_message_reaction_remove_all(data)
+            .into_iter()
+            .collect(),
+        "MESSAGE_REACTION_REMOVE_EMOJI" => parse_message_reaction_remove_emoji(data)
+            .into_iter()
+            .collect(),
         "GUILD_MEMBER_ADD" => parse_member_add(data).into_iter().collect(),
         "GUILD_MEMBER_UPDATE" => parse_member_upsert(data).into_iter().collect(),
         "GUILD_MEMBER_LIST_UPDATE" => parse_member_list_update(data),
@@ -1439,6 +1447,43 @@ fn parse_message_delete(data: &Value) -> Option<AppEvent> {
         guild_id,
         channel_id,
         message_id,
+    })
+}
+
+fn parse_message_reaction_add(data: &Value) -> Option<AppEvent> {
+    Some(AppEvent::MessageReactionAdd {
+        guild_id: data.get("guild_id").and_then(parse_id::<GuildMarker>),
+        channel_id: parse_id::<ChannelMarker>(data.get("channel_id")?)?,
+        message_id: parse_id::<MessageMarker>(data.get("message_id")?)?,
+        user_id: parse_id::<UserMarker>(data.get("user_id")?)?,
+        emoji: parse_reaction_emoji(data.get("emoji")?)?,
+    })
+}
+
+fn parse_message_reaction_remove(data: &Value) -> Option<AppEvent> {
+    Some(AppEvent::MessageReactionRemove {
+        guild_id: data.get("guild_id").and_then(parse_id::<GuildMarker>),
+        channel_id: parse_id::<ChannelMarker>(data.get("channel_id")?)?,
+        message_id: parse_id::<MessageMarker>(data.get("message_id")?)?,
+        user_id: parse_id::<UserMarker>(data.get("user_id")?)?,
+        emoji: parse_reaction_emoji(data.get("emoji")?)?,
+    })
+}
+
+fn parse_message_reaction_remove_all(data: &Value) -> Option<AppEvent> {
+    Some(AppEvent::MessageReactionRemoveAll {
+        guild_id: data.get("guild_id").and_then(parse_id::<GuildMarker>),
+        channel_id: parse_id::<ChannelMarker>(data.get("channel_id")?)?,
+        message_id: parse_id::<MessageMarker>(data.get("message_id")?)?,
+    })
+}
+
+fn parse_message_reaction_remove_emoji(data: &Value) -> Option<AppEvent> {
+    Some(AppEvent::MessageReactionRemoveEmoji {
+        guild_id: data.get("guild_id").and_then(parse_id::<GuildMarker>),
+        channel_id: parse_id::<ChannelMarker>(data.get("channel_id")?)?,
+        message_id: parse_id::<MessageMarker>(data.get("message_id")?)?,
+        emoji: parse_reaction_emoji(data.get("emoji")?)?,
     })
 }
 
@@ -2402,7 +2447,8 @@ mod tests {
     };
     use crate::discord::{
         AppEvent, AttachmentUpdate, ChannelVisibilityStats, DiscordState, FriendStatus,
-        MentionInfo, MessageKind, PollAnswerInfo, PollInfo, PresenceStatus, ReplyInfo,
+        MentionInfo, MessageKind, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji,
+        ReplyInfo,
     };
 
     #[test]
@@ -3799,6 +3845,142 @@ mod tests {
         assert_eq!(poll.results_finalized, Some(true));
         assert_eq!(poll.answers[0].vote_count, Some(5));
         assert!(poll.answers[0].me_voted);
+    }
+
+    #[test]
+    fn message_reaction_add_dispatch_parses_reaction_event() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "MESSAGE_REACTION_ADD",
+                "d": {
+                    "guild_id": "1",
+                    "channel_id": "10",
+                    "message_id": "20",
+                    "user_id": "30",
+                    "emoji": { "name": "👍" }
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(events.len(), 1);
+        let AppEvent::MessageReactionAdd {
+            guild_id,
+            channel_id,
+            message_id,
+            user_id,
+            emoji,
+        } = &events[0]
+        else {
+            panic!("expected message reaction add event");
+        };
+        assert_eq!(*guild_id, Some(Id::new(1)));
+        assert_eq!(*channel_id, Id::new(10));
+        assert_eq!(*message_id, Id::new(20));
+        assert_eq!(*user_id, Id::new(30));
+        assert_eq!(emoji, &ReactionEmoji::Unicode("👍".to_owned()));
+    }
+
+    #[test]
+    fn message_reaction_remove_dispatch_parses_custom_reaction_event() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "MESSAGE_REACTION_REMOVE",
+                "d": {
+                    "channel_id": "10",
+                    "message_id": "20",
+                    "user_id": "30",
+                    "emoji": {
+                        "id": "40",
+                        "name": "party",
+                        "animated": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(events.len(), 1);
+        let AppEvent::MessageReactionRemove {
+            guild_id,
+            channel_id,
+            message_id,
+            user_id,
+            emoji,
+        } = &events[0]
+        else {
+            panic!("expected message reaction remove event");
+        };
+        assert_eq!(*guild_id, None);
+        assert_eq!(*channel_id, Id::new(10));
+        assert_eq!(*message_id, Id::new(20));
+        assert_eq!(*user_id, Id::new(30));
+        assert_eq!(
+            emoji,
+            &ReactionEmoji::Custom {
+                id: Id::new(40),
+                name: Some("party".to_owned()),
+                animated: true,
+            }
+        );
+    }
+
+    #[test]
+    fn message_reaction_remove_all_dispatch_parses_clear_event() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "MESSAGE_REACTION_REMOVE_ALL",
+                "d": {
+                    "guild_id": "1",
+                    "channel_id": "10",
+                    "message_id": "20"
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(events.len(), 1);
+        let AppEvent::MessageReactionRemoveAll {
+            guild_id,
+            channel_id,
+            message_id,
+        } = &events[0]
+        else {
+            panic!("expected message reaction remove all event");
+        };
+        assert_eq!(*guild_id, Some(Id::new(1)));
+        assert_eq!(*channel_id, Id::new(10));
+        assert_eq!(*message_id, Id::new(20));
+    }
+
+    #[test]
+    fn message_reaction_remove_emoji_dispatch_parses_clear_emoji_event() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "MESSAGE_REACTION_REMOVE_EMOJI",
+                "d": {
+                    "channel_id": "10",
+                    "message_id": "20",
+                    "emoji": { "name": "👍" }
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(events.len(), 1);
+        let AppEvent::MessageReactionRemoveEmoji {
+            guild_id,
+            channel_id,
+            message_id,
+            emoji,
+        } = &events[0]
+        else {
+            panic!("expected message reaction remove emoji event");
+        };
+        assert_eq!(*guild_id, None);
+        assert_eq!(*channel_id, Id::new(10));
+        assert_eq!(*message_id, Id::new(20));
+        assert_eq!(emoji, &ReactionEmoji::Unicode("👍".to_owned()));
     }
 
     #[test]

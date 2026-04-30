@@ -507,6 +507,31 @@ impl DiscordState {
                 message_id,
                 emoji,
             } => self.remove_reaction(*channel_id, *message_id, emoji),
+            AppEvent::MessageReactionAdd {
+                channel_id,
+                message_id,
+                user_id,
+                emoji,
+                ..
+            } => self.add_gateway_reaction(*channel_id, *message_id, *user_id, emoji.clone()),
+            AppEvent::MessageReactionRemove {
+                channel_id,
+                message_id,
+                user_id,
+                emoji,
+                ..
+            } => self.remove_gateway_reaction(*channel_id, *message_id, *user_id, emoji),
+            AppEvent::MessageReactionRemoveAll {
+                channel_id,
+                message_id,
+                ..
+            } => self.clear_gateway_reactions(*channel_id, *message_id),
+            AppEvent::MessageReactionRemoveEmoji {
+                channel_id,
+                message_id,
+                emoji,
+                ..
+            } => self.clear_gateway_reaction_emoji(*channel_id, *message_id, emoji),
             AppEvent::MessagePinnedUpdate {
                 channel_id,
                 message_id,
@@ -1293,6 +1318,106 @@ impl DiscordState {
             reaction.me = false;
         }
         message.reactions.retain(|reaction| reaction.count > 0);
+    }
+
+    fn add_gateway_reaction(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        user_id: Id<UserMarker>,
+        emoji: super::ReactionEmoji,
+    ) {
+        let is_current_user = self.current_user_id == Some(user_id);
+        let Some(message) = self
+            .messages
+            .get_mut(&channel_id)
+            .and_then(|messages| messages.iter_mut().find(|message| message.id == message_id))
+        else {
+            return;
+        };
+
+        if let Some(reaction) = message
+            .reactions
+            .iter_mut()
+            .find(|reaction| reaction.emoji == emoji)
+        {
+            if !(is_current_user && reaction.me) {
+                reaction.count = reaction.count.saturating_add(1);
+            }
+            if is_current_user {
+                reaction.me = true;
+            }
+        } else {
+            message.reactions.push(ReactionInfo {
+                emoji,
+                count: 1,
+                me: is_current_user,
+            });
+        }
+    }
+
+    fn remove_gateway_reaction(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        user_id: Id<UserMarker>,
+        emoji: &super::ReactionEmoji,
+    ) {
+        let is_current_user = self.current_user_id == Some(user_id);
+        let Some(message) = self
+            .messages
+            .get_mut(&channel_id)
+            .and_then(|messages| messages.iter_mut().find(|message| message.id == message_id))
+        else {
+            return;
+        };
+
+        if let Some(reaction) = message
+            .reactions
+            .iter_mut()
+            .find(|reaction| &reaction.emoji == emoji)
+        {
+            if !(is_current_user && !reaction.me) {
+                reaction.count = reaction.count.saturating_sub(1);
+            }
+            if is_current_user {
+                reaction.me = false;
+            }
+        }
+        message.reactions.retain(|reaction| reaction.count > 0);
+    }
+
+    fn clear_gateway_reactions(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    ) {
+        let Some(message) = self
+            .messages
+            .get_mut(&channel_id)
+            .and_then(|messages| messages.iter_mut().find(|message| message.id == message_id))
+        else {
+            return;
+        };
+        message.reactions.clear();
+    }
+
+    fn clear_gateway_reaction_emoji(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: &super::ReactionEmoji,
+    ) {
+        let Some(message) = self
+            .messages
+            .get_mut(&channel_id)
+            .and_then(|messages| messages.iter_mut().find(|message| message.id == message_id))
+        else {
+            return;
+        };
+        message
+            .reactions
+            .retain(|reaction| &reaction.emoji != emoji);
     }
 
     fn update_current_user_poll_vote(
@@ -4289,6 +4414,191 @@ mod tests {
             message_id,
             emoji: ReactionEmoji::Unicode("👍".to_owned()),
         });
+        assert!(
+            state.messages_for_channel(channel_id)[0]
+                .reactions
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn gateway_reaction_events_update_cached_reaction_summary() {
+        let mut state = DiscordState::default();
+        let channel_id = Id::new(2);
+        let message_id = Id::new(1);
+        let emoji = ReactionEmoji::Unicode("👍".to_owned());
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        state.apply_event(&AppEvent::MessageReactionAdd {
+            guild_id: None,
+            channel_id,
+            message_id,
+            user_id: Id::new(50),
+            emoji: emoji.clone(),
+        });
+        state.apply_event(&AppEvent::MessageReactionAdd {
+            guild_id: None,
+            channel_id,
+            message_id,
+            user_id: Id::new(51),
+            emoji: emoji.clone(),
+        });
+
+        let message = state.messages_for_channel(channel_id)[0];
+        assert_eq!(message.reactions.len(), 1);
+        assert_eq!(message.reactions[0].count, 2);
+        assert!(!message.reactions[0].me);
+
+        state.apply_event(&AppEvent::MessageReactionRemove {
+            guild_id: None,
+            channel_id,
+            message_id,
+            user_id: Id::new(50),
+            emoji,
+        });
+
+        let message = state.messages_for_channel(channel_id)[0];
+        assert_eq!(message.reactions.len(), 1);
+        assert_eq!(message.reactions[0].count, 1);
+        assert!(!message.reactions[0].me);
+    }
+
+    #[test]
+    fn current_user_gateway_reaction_events_reconcile_optimistic_updates() {
+        let mut state = DiscordState::default();
+        let channel_id = Id::new(2);
+        let message_id = Id::new(1);
+        let current_user_id = Id::new(7);
+        let emoji = ReactionEmoji::Unicode("👍".to_owned());
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(current_user_id),
+        });
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id,
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        state.apply_event(&AppEvent::CurrentUserReactionAdd {
+            channel_id,
+            message_id,
+            emoji: emoji.clone(),
+        });
+        state.apply_event(&AppEvent::MessageReactionAdd {
+            guild_id: None,
+            channel_id,
+            message_id,
+            user_id: current_user_id,
+            emoji: emoji.clone(),
+        });
+        let message = state.messages_for_channel(channel_id)[0];
+        assert_eq!(message.reactions[0].count, 1);
+        assert!(message.reactions[0].me);
+
+        state.apply_event(&AppEvent::MessageReactionAdd {
+            guild_id: None,
+            channel_id,
+            message_id,
+            user_id: Id::new(50),
+            emoji: emoji.clone(),
+        });
+        state.apply_event(&AppEvent::CurrentUserReactionRemove {
+            channel_id,
+            message_id,
+            emoji: emoji.clone(),
+        });
+        state.apply_event(&AppEvent::MessageReactionRemove {
+            guild_id: None,
+            channel_id,
+            message_id,
+            user_id: current_user_id,
+            emoji,
+        });
+
+        let message = state.messages_for_channel(channel_id)[0];
+        assert_eq!(message.reactions.len(), 1);
+        assert_eq!(message.reactions[0].count, 1);
+        assert!(!message.reactions[0].me);
+    }
+
+    #[test]
+    fn gateway_reaction_clear_events_update_cached_reaction_summary() {
+        let mut state = DiscordState::default();
+        let channel_id = Id::new(2);
+        let message_id = Id::new(1);
+        let thumbs_up = ReactionEmoji::Unicode("👍".to_owned());
+        let party = ReactionEmoji::Unicode("🎉".to_owned());
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![MessageInfo {
+                reactions: vec![
+                    ReactionInfo {
+                        emoji: thumbs_up.clone(),
+                        count: 2,
+                        me: true,
+                    },
+                    ReactionInfo {
+                        emoji: party,
+                        count: 1,
+                        me: false,
+                    },
+                ],
+                ..message_info(channel_id, message_id.get(), "hello")
+            }],
+        });
+
+        state.apply_event(&AppEvent::MessageReactionRemoveEmoji {
+            guild_id: None,
+            channel_id,
+            message_id,
+            emoji: thumbs_up,
+        });
+
+        let message = state.messages_for_channel(channel_id)[0];
+        assert_eq!(message.reactions.len(), 1);
+        assert_eq!(
+            message.reactions[0].emoji,
+            ReactionEmoji::Unicode("🎉".to_owned())
+        );
+
+        state.apply_event(&AppEvent::MessageReactionRemoveAll {
+            guild_id: None,
+            channel_id,
+            message_id,
+        });
+
         assert!(
             state.messages_for_channel(channel_id)[0]
                 .reactions

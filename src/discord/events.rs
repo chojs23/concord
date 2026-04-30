@@ -497,6 +497,31 @@ pub enum AppEvent {
         message_id: Id<MessageMarker>,
         emoji: ReactionEmoji,
     },
+    MessageReactionAdd {
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        user_id: Id<UserMarker>,
+        emoji: ReactionEmoji,
+    },
+    MessageReactionRemove {
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        user_id: Id<UserMarker>,
+        emoji: ReactionEmoji,
+    },
+    MessageReactionRemoveAll {
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    },
+    MessageReactionRemoveEmoji {
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: ReactionEmoji,
+    },
     MessagePinnedUpdate {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
