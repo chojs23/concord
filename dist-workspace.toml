@@ -1,0 +1,22 @@
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.31.0"
+ci = "github"
+installers = ["shell", "powershell", "homebrew"]
+targets = [
+  "aarch64-apple-darwin",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "x86_64-unknown-linux-gnu",
+  "x86_64-pc-windows-msvc",
+]
+install-path = "CARGO_HOME"
+hosting = "github"
+install-updater = false
+tap = "chojs23/homebrew-tap"
+publish-jobs = ["homebrew"]
+# Skip the "CI file is up-to-date" check (local toml/yaml formatter
+# rewrites quote styles in release.yml, which cargo-dist would otherwise reject).
+allow-dirty = ["ci"]
