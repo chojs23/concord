@@ -246,15 +246,18 @@ pub struct RoleState {
     pub permissions: u64,
 }
 
+type MessageAuthorRoleIds = BTreeMap<(Id<ChannelMarker>, Id<MessageMarker>), Vec<Id<RoleMarker>>>;
+type ProfileRoleIds = BTreeMap<(Id<GuildMarker>, Id<UserMarker>), Vec<Id<RoleMarker>>>;
+
 #[derive(Clone, Debug)]
 pub struct DiscordState {
     guilds: BTreeMap<Id<GuildMarker>, GuildState>,
     channels: BTreeMap<Id<ChannelMarker>, ChannelState>,
     messages: BTreeMap<Id<ChannelMarker>, VecDeque<MessageState>>,
-    message_author_role_ids: BTreeMap<(Id<ChannelMarker>, Id<MessageMarker>), Vec<Id<RoleMarker>>>,
+    message_author_role_ids: MessageAuthorRoleIds,
     members: BTreeMap<Id<GuildMarker>, BTreeMap<Id<UserMarker>, GuildMemberState>>,
     roles: BTreeMap<Id<GuildMarker>, BTreeMap<Id<RoleMarker>, RoleState>>,
-    profile_role_ids: BTreeMap<(Id<GuildMarker>, Id<UserMarker>), Vec<Id<RoleMarker>>>,
+    profile_role_ids: ProfileRoleIds,
     custom_emojis: BTreeMap<Id<GuildMarker>, Vec<CustomEmojiInfo>>,
     /// User's `guild_folders` setting in display order. Empty until READY
     /// delivers it; the dashboard falls back to a flat guild list.
@@ -726,7 +729,7 @@ impl DiscordState {
             .collect();
         // Newest typer first so the "X is typing…" label tends to surface the
         // person who just hit a key.
-        fresh.sort_by(|a, b| b.1.cmp(&a.1));
+        fresh.sort_by_key(|(_, started)| std::cmp::Reverse(*started));
         fresh.into_iter().map(|(user_id, _)| user_id).collect()
     }
 
@@ -1377,7 +1380,7 @@ impl DiscordState {
             .iter_mut()
             .find(|reaction| &reaction.emoji == emoji)
         {
-            if !(is_current_user && !reaction.me) {
+            if !is_current_user || reaction.me {
                 reaction.count = reaction.count.saturating_sub(1);
             }
             if is_current_user {

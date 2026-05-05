@@ -752,5 +752,5 @@ impl DashboardState {
 }
 
 fn sort_thread_channels(channels: &mut [&ChannelState]) {
-    channels.sort_by(|left, right| right.id.cmp(&left.id));
+    channels.sort_by_key(|channel| std::cmp::Reverse(channel.id));
 }

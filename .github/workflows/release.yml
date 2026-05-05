@@ -39,14 +39,29 @@ permissions:
 # If there's a prerelease-style suffix to the version, then the release(s)
 # will be marked as a prerelease.
 on:
-  pull_request:
   push:
     tags:
       - "**[0-9]+.[0-9]+.[0-9]+*"
 
 jobs:
+  pre-release-check:
+    runs-on: "ubuntu-22.04"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: test
+        run: cargo test --all-features
+
   # Run 'dist plan' (or host) to determine what tasks we need to do
   plan:
+    needs: [pre-release-check]
     runs-on: "ubuntu-22.04"
     outputs:
       val: ${{ steps.plan.outputs.manifest }}
@@ -139,6 +154,10 @@ jobs:
       - name: Install dependencies
         run: |
           ${{ matrix.packages_install }}
+      - name: Cache cargo deps
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ join(matrix.targets, '-') || 'global' }}
       - name: Build artifacts
         run: |
           # Actually do builds and make zips and whatnot

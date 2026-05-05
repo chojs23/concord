@@ -56,10 +56,8 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
 
     let focus = state.focus();
     match key.code {
-        KeyCode::Esc => {
-            if !state.return_from_pinned_message_view() {
-                state.return_from_opened_thread();
-            }
+        KeyCode::Esc if !state.return_from_pinned_message_view() => {
+            state.return_from_opened_thread();
         }
         KeyCode::Char('q') => state.quit(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),

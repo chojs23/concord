@@ -976,6 +976,7 @@ fn forum_post_card_style(style: Style, selected: bool) -> Style {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn message_item_lines(
     author: String,
     author_style: Style,

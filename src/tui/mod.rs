@@ -66,12 +66,16 @@ pub(super) struct TerminalRestoreGuard {
 
 impl TerminalRestoreGuard {
     pub(super) fn new() -> Result<Self> {
-        execute!(
+        // Kitty progressive enhancement isn't supported on every terminal
+        // (e.g. legacy Windows console). Fall back silently when unavailable
+        // so the app still runs with basic key handling.
+        let keyboard_enhancement_enabled = execute!(
             stdout(),
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        )?;
+        )
+        .is_ok();
         Ok(Self {
-            keyboard_enhancement_enabled: true,
+            keyboard_enhancement_enabled,
         })
     }
 }
