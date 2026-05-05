@@ -176,6 +176,25 @@ fn dashboard_areas(area: Rect) -> DashboardAreas {
     }
 }
 
+pub(crate) fn focus_pane_at(area: Rect, column: u16, row: u16) -> Option<FocusPane> {
+    let areas = dashboard_areas(area);
+    [
+        (areas.guilds, FocusPane::Guilds),
+        (areas.channels, FocusPane::Channels),
+        (areas.messages, FocusPane::Messages),
+        (areas.members, FocusPane::Members),
+    ]
+    .into_iter()
+    .find_map(|(area, pane)| rect_contains(area, column, row).then_some(pane))
+}
+
+fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
+    column >= area.x
+        && column < area.x.saturating_add(area.width)
+        && row >= area.y
+        && row < area.y.saturating_add(area.height)
+}
+
 fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let entries = state.visible_guild_pane_entries();
     let max_width = area.width.saturating_sub(6) as usize;
@@ -2779,7 +2798,7 @@ mod tests {
         ACCENT, DIM, DISCORD_EPOCH_MILLIS, MemberEntry, SNOWFLAKE_TIMESTAMP_SHIFT,
         channel_action_menu_lines, channel_name_style, composer_content_line_count, composer_lines,
         composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
-        emoji_reaction_picker_lines, footer_hint, format_message_sent_time,
+        emoji_reaction_picker_lines, focus_pane_at, footer_hint, format_message_sent_time,
         format_unix_millis_with_offset, forum_post_reaction_summary,
         forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
         highlight_style, inline_image_preview_area, inline_image_preview_row, member_display_label,
@@ -2811,6 +2830,25 @@ mod tests {
             },
         },
     };
+
+    #[test]
+    fn focus_pane_at_maps_dashboard_regions() {
+        let area = Rect::new(0, 0, 120, 20);
+
+        assert_eq!(focus_pane_at(area, 1, 1), Some(FocusPane::Guilds));
+        assert_eq!(focus_pane_at(area, 21, 1), Some(FocusPane::Channels));
+        assert_eq!(focus_pane_at(area, 50, 1), Some(FocusPane::Messages));
+        assert_eq!(focus_pane_at(area, 100, 1), Some(FocusPane::Members));
+    }
+
+    #[test]
+    fn focus_pane_at_ignores_footer_and_outside_area() {
+        let area = Rect::new(0, 0, 120, 20);
+
+        assert_eq!(focus_pane_at(area, 1, 19), None);
+        assert_eq!(focus_pane_at(area, 120, 1), None);
+        assert_eq!(focus_pane_at(area, 1, 20), None);
+    }
 
     #[test]
     fn sync_view_heights_reserves_message_input_inside_messages_pane() {

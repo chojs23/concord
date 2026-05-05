@@ -16,17 +16,18 @@ use crate::discord::ids::{
 };
 use crossterm::{
     event::{
-        Event as TerminalEvent, EventStream, KeyEventKind, KeyboardEnhancementFlags,
-        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        DisableMouseCapture, EnableMouseCapture, Event as TerminalEvent, EventStream, KeyEventKind,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
 };
 use futures::StreamExt;
+use ratatui::layout::Rect;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::{
     Result,
-    discord::{AppCommand, AppEvent},
+    discord::{AppCommand, AppEvent, DiscordClient},
     logging,
 };
 
@@ -47,6 +48,7 @@ pub async fn prompt_login(notice: Option<String>) -> Result<String> {
 pub async fn run(
     mut events: broadcast::Receiver<AppEvent>,
     commands: mpsc::Sender<AppCommand>,
+    client: DiscordClient,
 ) -> Result<()> {
     let mut terminal = ratatui::init();
     let _restore_guard = match TerminalRestoreGuard::new() {
@@ -57,11 +59,12 @@ pub async fn run(
         }
     };
 
-    run_dashboard(&mut terminal, &mut events, commands).await
+    run_dashboard(&mut terminal, &mut events, commands, client).await
 }
 
 pub(super) struct TerminalRestoreGuard {
     keyboard_enhancement_enabled: bool,
+    mouse_capture_enabled: bool,
 }
 
 impl TerminalRestoreGuard {
@@ -74,8 +77,10 @@ impl TerminalRestoreGuard {
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         )
         .is_ok();
+        let mouse_capture_enabled = execute!(stdout(), EnableMouseCapture).is_ok();
         Ok(Self {
             keyboard_enhancement_enabled,
+            mouse_capture_enabled,
         })
     }
 }
@@ -85,6 +90,9 @@ impl Drop for TerminalRestoreGuard {
         if self.keyboard_enhancement_enabled {
             let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
         }
+        if self.mouse_capture_enabled {
+            let _ = execute!(stdout(), DisableMouseCapture);
+        }
         ratatui::restore();
     }
 }
@@ -93,6 +101,7 @@ async fn run_dashboard(
     terminal: &mut ratatui::DefaultTerminal,
     events: &mut broadcast::Receiver<AppEvent>,
     commands: mpsc::Sender<AppCommand>,
+    client: DiscordClient,
 ) -> Result<()> {
     let mut state = DashboardState::new();
     let mut image_previews = ImagePreviewCache::new();
@@ -110,11 +119,13 @@ async fn run_dashboard(
     let mut image_targets = Vec::new();
     let mut avatar_targets = Vec::new();
     let mut emoji_targets = Vec::new();
+    let mut last_frame_area = Rect::default();
     let mut dirty = true;
 
     while !state.should_quit() {
         if dirty {
             terminal.draw(|frame| {
+                last_frame_area = frame.area();
                 ui::sync_view_heights(frame.area(), &mut state);
                 let preview_layout = ui::image_preview_layout(frame.area(), &state);
                 state.clamp_message_viewport_for_image_previews(
@@ -206,7 +217,15 @@ async fn run_dashboard(
                             dirty = true;
                         }
                     }
-                    Some(Ok(TerminalEvent::Resize(_, _))) => dirty = true,
+                    Some(Ok(TerminalEvent::Mouse(mouse))) => {
+                        if input::handle_mouse(&mut state, mouse, last_frame_area) {
+                            dirty = true;
+                        }
+                    }
+                    Some(Ok(TerminalEvent::Resize(width, height))) => {
+                        last_frame_area = Rect::new(0, 0, width, height);
+                        dirty = true;
+                    }
                     Some(Ok(_)) => {}
                     Some(Err(error)) => return Err(error.into()),
                     None => {
@@ -236,6 +255,16 @@ async fn run_dashboard(
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         state.record_lag(skipped);
+                        let (snapshot, next_events) = client.navigation_snapshot_and_subscribe();
+                        state.restore_discord_snapshot(snapshot);
+                        *events = next_events;
+                        history_requests.reset_after_lag();
+                        forum_post_requests.reset_after_lag();
+                        pinned_message_requests.reset_after_lag();
+                        member_requests.reset_after_lag();
+                        thread_preview_requests.reset_after_lag();
+                        last_member_subscription = None;
+                        requested_author_profiles.clear();
                         dirty = true;
                     }
                     Err(broadcast::error::RecvError::Closed) => {

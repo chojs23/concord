@@ -1,8 +1,14 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::Rect;
 
 use crate::discord::AppCommand;
 
-use super::state::{DashboardState, FocusPane};
+use super::{
+    state::{DashboardState, FocusPane},
+    ui,
+};
 
 pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     if key.kind != KeyEventKind::Press {
@@ -128,6 +134,67 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     }
 
     None
+}
+
+pub fn handle_mouse(state: &mut DashboardState, mouse: MouseEvent, area: Rect) -> bool {
+    if ignores_dashboard_mouse(state) {
+        return false;
+    }
+
+    let pane = ui::focus_pane_at(area, mouse.column, mouse.row);
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            let Some(pane) = pane else {
+                return false;
+            };
+            state.focus_pane(pane);
+            true
+        }
+        MouseEventKind::ScrollDown => {
+            if let Some(pane) = pane {
+                state.focus_pane(pane);
+            }
+            scroll_focused_pane_down(state);
+            true
+        }
+        MouseEventKind::ScrollUp => {
+            if let Some(pane) = pane {
+                state.focus_pane(pane);
+            }
+            scroll_focused_pane_up(state);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn ignores_dashboard_mouse(state: &DashboardState) -> bool {
+    state.is_debug_log_popup_open()
+        || state.is_reaction_users_popup_open()
+        || state.is_composing()
+        || state.is_poll_vote_picker_open()
+        || state.is_emoji_reaction_picker_open()
+        || state.is_message_action_menu_open()
+        || state.is_guild_action_menu_open()
+        || state.is_channel_action_menu_open()
+        || state.is_member_action_menu_open()
+        || state.is_user_profile_popup_open()
+}
+
+fn scroll_focused_pane_down(state: &mut DashboardState) {
+    if state.focus() == FocusPane::Messages {
+        state.scroll_message_viewport_down();
+    } else {
+        state.move_down();
+    }
+}
+
+fn scroll_focused_pane_up(state: &mut DashboardState) {
+    if state.focus() == FocusPane::Messages {
+        state.scroll_message_viewport_up();
+    } else {
+        state.move_up();
+    }
 }
 
 fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
@@ -337,9 +404,12 @@ fn handle_mention_picker_key(
 #[cfg(test)]
 mod tests {
     use crate::discord::ids::Id;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+    use ratatui::layout::Rect;
 
-    use super::handle_key;
+    use super::{handle_key, handle_mouse};
     use crate::{
         discord::{
             AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, GuildFolder,
@@ -365,6 +435,19 @@ mod tests {
 
     fn shift_enter() -> KeyEvent {
         KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)
+    }
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn dashboard_area() -> Rect {
+        Rect::new(0, 0, 120, 20)
     }
 
     #[test]
@@ -577,6 +660,111 @@ mod tests {
 
         handle_key(&mut state, char_key('1'));
         assert_eq!(state.focus(), FocusPane::Guilds);
+    }
+
+    #[test]
+    fn left_click_focuses_top_level_pane() {
+        let mut state = DashboardState::new();
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), 50, 1),
+            dashboard_area(),
+        ));
+        assert_eq!(state.focus(), FocusPane::Messages);
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), 100, 1),
+            dashboard_area(),
+        ));
+        assert_eq!(state.focus(), FocusPane::Members);
+    }
+
+    #[test]
+    fn mouse_click_outside_dashboard_panes_does_not_change_focus() {
+        let mut state = DashboardState::new();
+        state.focus_pane(FocusPane::Messages);
+
+        assert!(!handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), 10, 19),
+            dashboard_area(),
+        ));
+        assert_eq!(state.focus(), FocusPane::Messages);
+
+        assert!(!handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Right), 1, 1),
+            dashboard_area(),
+        ));
+        assert_eq!(state.focus(), FocusPane::Messages);
+    }
+
+    #[test]
+    fn mouse_click_is_ignored_while_composing() {
+        let mut state = state_with_channel_tree();
+        state.focus_pane(FocusPane::Channels);
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, char_key('i'));
+
+        assert!(!handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), 100, 1),
+            dashboard_area(),
+        ));
+        assert_eq!(state.focus(), FocusPane::Messages);
+        assert!(state.is_composing());
+    }
+
+    #[test]
+    fn mouse_wheel_focuses_hovered_non_message_pane_and_moves_selection() {
+        let mut state = state_with_channel_tree();
+        state.focus_pane(FocusPane::Messages);
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::ScrollDown, 21, 1),
+            dashboard_area(),
+        ));
+
+        assert_eq!(state.focus(), FocusPane::Channels);
+        assert_eq!(state.selected_channel(), 1);
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::ScrollUp, 21, 1),
+            dashboard_area(),
+        ));
+        assert_eq!(state.selected_channel(), 0);
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_message_viewport_without_changing_selection() {
+        let mut state = state_with_messages(1);
+        state.focus_pane(FocusPane::Messages);
+        state.clamp_message_viewport_for_image_previews(2, 16, 3);
+        let selected = state.selected_message();
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::ScrollDown, 50, 1),
+            dashboard_area(),
+        ));
+        state.clamp_message_viewport_for_image_previews(2, 16, 3);
+
+        assert_eq!(state.focus(), FocusPane::Messages);
+        assert_eq!(state.selected_message(), selected);
+        assert!(state.message_line_scroll() > 0);
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::ScrollUp, 50, 1),
+            dashboard_area(),
+        ));
+        assert_eq!(state.selected_message(), selected);
+        assert_eq!(state.message_line_scroll(), 0);
     }
 
     #[test]
