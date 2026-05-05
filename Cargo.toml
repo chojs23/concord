@@ -5,7 +5,7 @@ edition = "2024"
 description = "A terminal user interface client for Discord"
 homepage = "https://github.com/chojs23/concord"
 repository = "https://github.com/chojs23/concord"
-license = "MIT"
+license = "GPL-3.0-only"
 
 [dependencies]
 base64 = "0.22"
