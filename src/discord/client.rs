@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::discord::ids::{
     Id,
@@ -17,6 +17,7 @@ use super::{
     events::AppEvent,
     gateway::{GatewayCommand, run_gateway},
     rest::{DiscordRest, ForumPostPage},
+    state::DiscordState,
 };
 
 #[derive(Clone, Debug)]
@@ -24,6 +25,7 @@ pub struct DiscordClient {
     token: String,
     rest: DiscordRest,
     events_tx: broadcast::Sender<AppEvent>,
+    state: Arc<RwLock<DiscordState>>,
     gateway_commands_tx: mpsc::UnboundedSender<GatewayCommand>,
     gateway_commands_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<GatewayCommand>>>>,
 }
@@ -32,13 +34,14 @@ impl DiscordClient {
     pub fn new(token: String) -> Result<Self> {
         validate_token_header(&token)?;
         let rest = DiscordRest::new(token.clone());
-        let (events_tx, _) = broadcast::channel(512);
+        let (events_tx, _) = broadcast::channel(4096);
         let (gateway_commands_tx, gateway_commands_rx) = mpsc::unbounded_channel();
 
         Ok(Self {
             token,
             rest,
             events_tx,
+            state: Arc::new(RwLock::new(DiscordState::default())),
             gateway_commands_tx,
             gateway_commands_rx: Arc::new(Mutex::new(Some(gateway_commands_rx))),
         })
@@ -49,12 +52,30 @@ impl DiscordClient {
     }
 
     pub fn publish_event(&self, event: AppEvent) {
+        let mut state = self
+            .state
+            .write()
+            .expect("discord state lock is not poisoned");
+        state.apply_event(&event);
         let _ = self.events_tx.send(event);
+    }
+
+    pub fn navigation_snapshot_and_subscribe(
+        &self,
+    ) -> (DiscordState, broadcast::Receiver<AppEvent>) {
+        let state = self
+            .state
+            .read()
+            .expect("discord state lock is not poisoned");
+        let snapshot = state.navigation_snapshot();
+        let events = self.events_tx.subscribe();
+        (snapshot, events)
     }
 
     pub fn start_gateway(&self) -> JoinHandle<()> {
         let token = self.token.clone();
         let events_tx = self.events_tx.clone();
+        let state = Arc::clone(&self.state);
         let gateway_commands = self
             .gateway_commands_rx
             .lock()
@@ -63,7 +84,7 @@ impl DiscordClient {
             .expect("gateway can only be started once");
 
         tokio::spawn(async move {
-            run_gateway(token, events_tx, gateway_commands).await;
+            run_gateway(token, events_tx, gateway_commands, state).await;
         })
     }
 

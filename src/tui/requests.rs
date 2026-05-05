@@ -79,6 +79,11 @@ impl HistoryRequests {
         self.requests
             .insert(channel_id, HistoryRequestState::Failed);
     }
+
+    pub(super) fn reset_after_lag(&mut self) {
+        self.requests.clear();
+        self.last_channel = None;
+    }
 }
 
 impl ForumPostRequests {
@@ -157,6 +162,11 @@ impl ForumPostRequests {
         self.requests
             .insert(channel_id, ForumPostRequestState::Failed { offset });
     }
+
+    pub(super) fn reset_after_lag(&mut self) {
+        self.requests.clear();
+        self.last_channel = None;
+    }
 }
 
 impl PinnedMessageRequests {
@@ -207,6 +217,11 @@ impl PinnedMessageRequests {
         self.requests
             .insert(channel_id, PinnedMessageRequestState::Failed);
     }
+
+    pub(super) fn reset_after_lag(&mut self) {
+        self.requests.clear();
+        self.last_channel = None;
+    }
 }
 
 #[derive(Default)]
@@ -228,6 +243,10 @@ impl MemberRequests {
 
     pub(super) fn remove(&mut self, guild_id: Id<GuildMarker>) {
         self.requests.remove(&guild_id);
+    }
+
+    pub(super) fn reset_after_lag(&mut self) {
+        self.requests.clear();
     }
 }
 
@@ -269,6 +288,10 @@ impl ThreadPreviewRequests {
 
     pub(super) fn remove(&mut self, key: (Id<ChannelMarker>, Id<MessageMarker>)) {
         self.requested.remove(&key);
+    }
+
+    pub(super) fn reset_after_lag(&mut self) {
+        self.requested.clear();
     }
 }
 
@@ -330,6 +353,19 @@ mod tests {
         assert_eq!(requests.next(Some(first)), None);
         assert_eq!(requests.next(Some(second)), Some(second));
         assert_eq!(requests.next(Some(first)), Some(first));
+    }
+
+    #[test]
+    fn history_request_retries_requested_channel_after_lag_reset() {
+        let mut requests = HistoryRequests::default();
+        let channel = Id::new(1);
+
+        assert_eq!(requests.next(Some(channel)), Some(channel));
+        assert_eq!(requests.next(Some(channel)), None);
+
+        requests.reset_after_lag();
+
+        assert_eq!(requests.next(Some(channel)), Some(channel));
     }
 
     #[test]
@@ -412,6 +448,39 @@ mod tests {
         assert_eq!(requests.next(Some(target(guild, channel, true))), None);
     }
 
+    #[test]
+    fn forum_post_request_retries_requested_channel_after_lag_reset() {
+        let mut requests = ForumPostRequests::default();
+        let guild = Id::new(100);
+        let channel = Id::new(1);
+
+        assert_eq!(
+            requests.next(Some(target(guild, channel, false))),
+            Some((guild, channel, 0))
+        );
+        assert_eq!(requests.next(Some(target(guild, channel, false))), None);
+
+        requests.reset_after_lag();
+
+        assert_eq!(
+            requests.next(Some(target(guild, channel, false))),
+            Some((guild, channel, 0))
+        );
+    }
+
+    #[test]
+    fn pinned_message_request_retries_requested_channel_after_lag_reset() {
+        let mut requests = super::PinnedMessageRequests::default();
+        let channel = Id::new(1);
+
+        assert_eq!(requests.next(Some(channel)), Some(channel));
+        assert_eq!(requests.next(Some(channel)), None);
+
+        requests.reset_after_lag();
+
+        assert_eq!(requests.next(Some(channel)), Some(channel));
+    }
+
     fn target(
         guild_id: Id<crate::discord::ids::marker::GuildMarker>,
         channel_id: Id<crate::discord::ids::marker::ChannelMarker>,
@@ -471,6 +540,19 @@ mod tests {
     }
 
     #[test]
+    fn member_request_retries_after_lag_reset() {
+        let mut requests = MemberRequests::default();
+        let guild_id = Id::new(1);
+
+        assert_eq!(requests.next(Some(guild_id)), Some(guild_id));
+        assert_eq!(requests.next(Some(guild_id)), None);
+
+        requests.reset_after_lag();
+
+        assert_eq!(requests.next(Some(guild_id)), Some(guild_id));
+    }
+
+    #[test]
     fn thread_preview_request_retries_after_failed_card_is_revisited() {
         let mut requests = ThreadPreviewRequests::default();
         let key = (Id::new(10), Id::new(30));
@@ -483,6 +565,19 @@ mod tests {
 
         assert_eq!(requests.next(vec![key]), Vec::new());
         assert_eq!(requests.next(Vec::new()), Vec::new());
+        assert_eq!(requests.next(vec![key]), vec![key]);
+    }
+
+    #[test]
+    fn thread_preview_request_retries_requested_card_after_lag_reset() {
+        let mut requests = ThreadPreviewRequests::default();
+        let key = (Id::new(10), Id::new(30));
+
+        assert_eq!(requests.next(vec![key]), vec![key]);
+        assert_eq!(requests.next(vec![key]), Vec::new());
+
+        requests.reset_after_lag();
+
         assert_eq!(requests.next(vec![key]), vec![key]);
     }
 }

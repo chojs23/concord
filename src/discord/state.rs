@@ -276,6 +276,7 @@ pub struct DiscordState {
     /// and consulted by `can_view_channel` to look up our own roles and
     /// match member-level permission overwrites.
     current_user_id: Option<Id<UserMarker>>,
+    current_user: Option<String>,
     /// Most recent TYPING_START arrival per (channel, user). Discord renews
     /// the indicator every ~10 seconds; readers prune stale entries via
     /// `typing_users` so the map stays small.
@@ -315,6 +316,7 @@ impl DiscordState {
             relationships: BTreeMap::new(),
             user_presences: BTreeMap::new(),
             current_user_id: None,
+            current_user: None,
             typing: BTreeMap::new(),
             max_messages_per_channel,
         }
@@ -691,7 +693,8 @@ impl DiscordState {
                     profile.friend_status = FriendStatus::None;
                 }
             }
-            AppEvent::Ready { user_id, .. } => {
+            AppEvent::Ready { user, user_id } => {
+                self.current_user = Some(user.clone());
                 if let Some(user_id) = user_id {
                     self.current_user_id = Some(*user_id);
                 }
@@ -778,6 +781,32 @@ impl DiscordState {
     /// missing case as "can't compute, fall back to permissive".
     pub fn current_user_id(&self) -> Option<Id<UserMarker>> {
         self.current_user_id
+    }
+
+    pub fn current_user(&self) -> Option<&str> {
+        self.current_user.as_deref()
+    }
+
+    pub fn navigation_snapshot(&self) -> Self {
+        let mut snapshot = Self::new(self.max_messages_per_channel);
+        snapshot.restore_navigation_snapshot(self);
+        snapshot
+    }
+
+    pub fn restore_navigation_snapshot(&mut self, snapshot: &Self) {
+        self.guilds = snapshot.guilds.clone();
+        self.channels = snapshot.channels.clone();
+        self.members = snapshot.members.clone();
+        self.roles = snapshot.roles.clone();
+        self.profile_role_ids = snapshot.profile_role_ids.clone();
+        self.custom_emojis = snapshot.custom_emojis.clone();
+        self.guild_folders = snapshot.guild_folders.clone();
+        self.user_profiles = snapshot.user_profiles.clone();
+        self.relationships = snapshot.relationships.clone();
+        self.user_presences = snapshot.user_presences.clone();
+        self.current_user_id = snapshot.current_user_id;
+        self.current_user = snapshot.current_user.clone();
+        self.typing = snapshot.typing.clone();
     }
 
     pub fn user_presence(&self, user_id: Id<UserMarker>) -> Option<PresenceStatus> {
@@ -1852,6 +1881,72 @@ mod tests {
         assert_eq!(state.guilds().len(), 1);
         assert_eq!(state.channels_for_guild(Some(guild_id)).len(), 1);
         assert_eq!(state.messages_for_channel(channel_id).len(), 1);
+    }
+
+    #[test]
+    fn navigation_snapshot_keeps_sidebar_data_without_message_cache() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let message_id = Id::new(3);
+        let author_id = Id::new(4);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(author_id),
+        });
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: Some(guild_id),
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let snapshot = state.navigation_snapshot();
+
+        assert_eq!(snapshot.current_user(), Some("neo"));
+        assert_eq!(snapshot.current_user_id(), Some(author_id));
+        assert_eq!(snapshot.guilds().len(), 1);
+        assert_eq!(snapshot.channels_for_guild(Some(guild_id)).len(), 1);
+        assert_eq!(snapshot.messages_for_channel(channel_id).len(), 0);
     }
 
     #[test]

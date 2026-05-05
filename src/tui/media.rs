@@ -7,7 +7,7 @@ use ratatui_image::{Resize, picker::Picker};
 mod preview;
 mod targets;
 
-pub(super) use preview::{ImagePreviewCache, spawn_image_preview_decode};
+pub(super) use preview::{ImagePreviewCache, ImagePreviewDecodeResult, spawn_image_preview_decode};
 pub(super) use targets::{
     AvatarTarget, EmojiImageTarget, ImagePreviewTarget, image_preview_height_for_dimensions,
     visible_avatar_targets, visible_emoji_image_targets, visible_image_preview_targets,
@@ -15,8 +15,8 @@ pub(super) use targets::{
 
 #[cfg(test)]
 use preview::{
-    ImagePreviewDecodeResult, ImagePreviewEntry, MAX_IMAGE_PREVIEW_CACHE_ENTRIES,
-    decode_preview_sized_image, preview_sized_image,
+    ImagePreviewEntry, MAX_IMAGE_PREVIEW_CACHE_ENTRIES, decode_preview_sized_image,
+    preview_sized_image,
 };
 
 use crate::{

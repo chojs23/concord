@@ -32,14 +32,17 @@ use crate::{
 };
 
 use media::{
-    AvatarImageCache, EmojiImageCache, ImagePreviewCache, spawn_image_preview_decode,
-    visible_avatar_targets, visible_emoji_image_targets, visible_image_preview_targets,
+    AvatarImageCache, EmojiImageCache, ImagePreviewCache, ImagePreviewDecodeResult,
+    spawn_image_preview_decode, visible_avatar_targets, visible_emoji_image_targets,
+    visible_image_preview_targets,
 };
 use requests::{
     ForumPostRequestTarget, ForumPostRequests, HistoryRequests, MemberRequests,
     PinnedMessageRequests, ThreadPreviewRequests,
 };
 use state::DashboardState;
+
+const MAX_DRAINED_APP_EVENTS: usize = 1024;
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
@@ -95,6 +98,63 @@ impl Drop for TerminalRestoreGuard {
         }
         ratatui::restore();
     }
+}
+
+fn process_app_event(
+    event: AppEvent,
+    state: &mut DashboardState,
+    image_previews: &mut ImagePreviewCache,
+    avatar_images: &mut AvatarImageCache,
+    emoji_images: &mut EmojiImageCache,
+    history_requests: &mut HistoryRequests,
+    forum_post_requests: &mut ForumPostRequests,
+    pinned_message_requests: &mut PinnedMessageRequests,
+    thread_preview_requests: &mut ThreadPreviewRequests,
+    preview_decode_tx: &mpsc::UnboundedSender<ImagePreviewDecodeResult>,
+) {
+    for job in image_previews.record_event(&event) {
+        spawn_image_preview_decode(job, preview_decode_tx.clone());
+    }
+    avatar_images.record_event(&event);
+    emoji_images.record_event(&event);
+    history_requests.record_event(&event);
+    forum_post_requests.record_event(&event);
+    pinned_message_requests.record_event(&event);
+    thread_preview_requests.record_event(&event);
+    state.push_event(event);
+}
+
+fn recover_after_lag(
+    skipped: u64,
+    events: &mut broadcast::Receiver<AppEvent>,
+    client: &DiscordClient,
+    state: &mut DashboardState,
+    history_requests: &mut HistoryRequests,
+    forum_post_requests: &mut ForumPostRequests,
+    pinned_message_requests: &mut PinnedMessageRequests,
+    member_requests: &mut MemberRequests,
+    thread_preview_requests: &mut ThreadPreviewRequests,
+    last_member_subscription: &mut Option<(Id<GuildMarker>, Id<ChannelMarker>, u32)>,
+    requested_author_profiles: &mut HashSet<(Id<UserMarker>, Id<GuildMarker>)>,
+) {
+    logging::error("tui", format!("resynced after {skipped} missed updates"));
+    state.record_recovered_lag(skipped);
+    let (snapshot, next_events) = client.navigation_snapshot_and_subscribe();
+    state.restore_discord_snapshot(snapshot);
+    *events = next_events;
+    history_requests.reset_after_lag();
+    forum_post_requests.reset_after_lag();
+    pinned_message_requests.reset_after_lag();
+    member_requests.reset_after_lag();
+    thread_preview_requests.reset_after_lag();
+    *last_member_subscription = None;
+    requested_author_profiles.clear();
+}
+
+fn handle_gateway_closed(state: &mut DashboardState) {
+    logging::error("tui", "gateway closed");
+    state.push_event(AppEvent::GatewayClosed);
+    state.quit();
 }
 
 async fn run_dashboard(
@@ -241,35 +301,75 @@ async fn run_dashboard(
             event = events.recv() => {
                 match event {
                     Ok(event) => {
-                        for job in image_previews.record_event(&event) {
-                            spawn_image_preview_decode(job, preview_decode_tx.clone());
+                        process_app_event(
+                            event,
+                            &mut state,
+                            &mut image_previews,
+                            &mut avatar_images,
+                            &mut emoji_images,
+                            &mut history_requests,
+                            &mut forum_post_requests,
+                            &mut pinned_message_requests,
+                            &mut thread_preview_requests,
+                            &preview_decode_tx,
+                        );
+                        for _ in 0..MAX_DRAINED_APP_EVENTS {
+                            match events.try_recv() {
+                                Ok(event) => process_app_event(
+                                    event,
+                                    &mut state,
+                                    &mut image_previews,
+                                    &mut avatar_images,
+                                    &mut emoji_images,
+                                    &mut history_requests,
+                                    &mut forum_post_requests,
+                                    &mut pinned_message_requests,
+                                    &mut thread_preview_requests,
+                                    &preview_decode_tx,
+                                ),
+                                Err(broadcast::error::TryRecvError::Empty) => break,
+                                Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
+                                    recover_after_lag(
+                                        skipped,
+                                        events,
+                                        &client,
+                                        &mut state,
+                                        &mut history_requests,
+                                        &mut forum_post_requests,
+                                        &mut pinned_message_requests,
+                                        &mut member_requests,
+                                        &mut thread_preview_requests,
+                                        &mut last_member_subscription,
+                                        &mut requested_author_profiles,
+                                    );
+                                    break;
+                                }
+                                Err(broadcast::error::TryRecvError::Closed) => {
+                                    handle_gateway_closed(&mut state);
+                                    break;
+                                }
+                            }
                         }
-                        avatar_images.record_event(&event);
-                        emoji_images.record_event(&event);
-                        history_requests.record_event(&event);
-                        forum_post_requests.record_event(&event);
-                        pinned_message_requests.record_event(&event);
-                        thread_preview_requests.record_event(&event);
-                        state.push_event(event);
                         dirty = true;
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        state.record_lag(skipped);
-                        let (snapshot, next_events) = client.navigation_snapshot_and_subscribe();
-                        state.restore_discord_snapshot(snapshot);
-                        *events = next_events;
-                        history_requests.reset_after_lag();
-                        forum_post_requests.reset_after_lag();
-                        pinned_message_requests.reset_after_lag();
-                        member_requests.reset_after_lag();
-                        thread_preview_requests.reset_after_lag();
-                        last_member_subscription = None;
-                        requested_author_profiles.clear();
+                        recover_after_lag(
+                            skipped,
+                            events,
+                            &client,
+                            &mut state,
+                            &mut history_requests,
+                            &mut forum_post_requests,
+                            &mut pinned_message_requests,
+                            &mut member_requests,
+                            &mut thread_preview_requests,
+                            &mut last_member_subscription,
+                            &mut requested_author_profiles,
+                        );
                         dirty = true;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
-                        state.push_event(AppEvent::GatewayClosed);
-                        state.quit();
+                        handle_gateway_closed(&mut state);
                         dirty = true;
                     }
                 }

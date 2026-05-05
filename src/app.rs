@@ -71,7 +71,7 @@ impl App {
                 client.publish_event(AppEvent::GatewayError { message: warning });
             }
 
-            tui::run(events, commands_tx).await
+            tui::run(events, commands_tx, client.clone()).await
         }
         .await;
 
@@ -184,6 +184,14 @@ fn start_command_loop(
                                         message,
                                     });
                                 } else {
+                                    logging::error(
+                                        "history",
+                                        format!(
+                                            "load thread preview missing requested message: channel_id={} message_id={}",
+                                            channel_id.get(),
+                                            message_id.get(),
+                                        ),
+                                    );
                                     client.publish_event(AppEvent::ThreadPreviewLoadFailed {
                                         channel_id,
                                         message_id,

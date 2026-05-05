@@ -147,7 +147,6 @@ pub struct DashboardState {
     debug_log_popup_open: bool,
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
-    last_error: Option<String>,
     last_status: Option<String>,
     skipped_events: u64,
     should_quit: bool,
@@ -214,7 +213,6 @@ impl DashboardState {
             debug_log_popup_open: false,
             current_user: None,
             current_user_id: None,
-            last_error: None,
             last_status: None,
             skipped_events: 0,
             should_quit: false,
@@ -247,12 +245,8 @@ impl DashboardState {
                 self.current_user = Some(user.clone());
                 self.current_user_id = *user_id;
             }
-            AppEvent::GatewayError { message } => {
-                self.last_error = Some(message.clone());
-            }
             AppEvent::StatusMessage { message } => {
                 self.last_status = Some(message.clone());
-                self.last_error = None;
             }
             AppEvent::ReactionUsersLoaded {
                 channel_id,
@@ -266,13 +260,8 @@ impl DashboardState {
                     scroll: 0,
                     view_height: 0,
                 });
-                self.last_error = None;
             }
-            AppEvent::MessageHistoryLoadFailed {
-                channel_id,
-                message,
-            } => {
-                self.last_error = Some(message.clone());
+            AppEvent::MessageHistoryLoadFailed { channel_id, .. } => {
                 self.older_history_requests.remove(channel_id);
             }
             AppEvent::ForumPostsLoaded {
@@ -283,16 +272,6 @@ impl DashboardState {
                 ..
             } => {
                 self.record_forum_posts_loaded(*channel_id, *offset, posts, *has_more);
-                self.last_error = None;
-            }
-            AppEvent::ForumPostsLoadFailed { message, .. } => {
-                self.last_error = Some(message.clone());
-            }
-            AppEvent::PinnedMessagesLoaded { .. } => {
-                self.last_error = None;
-            }
-            AppEvent::PinnedMessagesLoadFailed { message, .. } => {
-                self.last_error = Some(message.clone());
             }
             AppEvent::MessageHistoryLoaded {
                 channel_id,
@@ -311,12 +290,45 @@ impl DashboardState {
                     popup.load_error = Some(message.clone());
                 }
             }
-            AppEvent::GatewayClosed => {
-                self.last_error = Some("gateway closed".to_owned());
-            }
             _ => {}
         }
         self.discord.apply_event(&event);
+        self.clamp_active_selection();
+        self.restore_channel_cursor(channel_cursor_id);
+        self.clamp_selection_indices();
+        if self.message_auto_follow && !self.selected_channel_is_forum() {
+            self.follow_latest_message();
+        } else {
+            self.restore_message_position(selected_message_id, scroll_message_id);
+        }
+        self.clamp_list_viewports();
+        self.clamp_message_viewport();
+    }
+
+    pub fn restore_discord_snapshot(&mut self, discord: DiscordState) {
+        let selected_message_id = (!self.message_auto_follow)
+            .then(|| {
+                self.messages()
+                    .get(self.selected_message())
+                    .map(|message| message.id)
+            })
+            .flatten();
+        let scroll_message_id = (!self.message_auto_follow)
+            .then(|| {
+                self.messages()
+                    .get(self.message_scroll)
+                    .map(|message| message.id)
+            })
+            .flatten();
+        let channel_cursor_id = self.selected_channel_cursor_id();
+
+        self.discord.restore_navigation_snapshot(&discord);
+        if let Some(user) = self.discord.current_user() {
+            self.current_user = Some(user.to_owned());
+        }
+        if let Some(user_id) = self.discord.current_user_id() {
+            self.current_user_id = Some(user_id);
+        }
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);
         self.clamp_selection_indices();

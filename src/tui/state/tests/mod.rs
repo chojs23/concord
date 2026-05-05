@@ -14,10 +14,10 @@ use super::{
 };
 use crate::discord::{
     AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, ChannelVisibilityStats,
-    CustomEmojiInfo, FriendStatus, MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo,
-    MessageSnapshotInfo, MutualGuildInfo, PermissionOverwriteInfo, PermissionOverwriteKind,
-    PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo,
-    RoleInfo, UserProfileInfo,
+    CustomEmojiInfo, DiscordState, FriendStatus, MemberInfo, MessageInfo, MessageKind,
+    MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo, PermissionOverwriteInfo,
+    PermissionOverwriteKind, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo,
+    ReactionUsersInfo, ReplyInfo, RoleInfo, UserProfileInfo,
 };
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -49,12 +49,24 @@ fn tracks_current_user_from_ready() {
 }
 
 #[test]
-fn captures_last_gateway_error() {
+fn gateway_error_stays_out_of_footer_state() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GatewayError {
         message: "boom".to_owned(),
     });
-    assert_eq!(state.last_error(), Some("boom"));
+
+    assert_eq!(state.last_status(), None);
+}
+
+#[test]
+fn recovered_lag_keeps_count_for_debug_without_footer_status() {
+    let mut state = DashboardState::new();
+
+    state.record_recovered_lag(2);
+    state.record_recovered_lag(3);
+
+    assert_eq!(state.skipped_events(), 5);
+    assert_eq!(state.last_status(), None);
 }
 
 #[test]
@@ -4327,6 +4339,78 @@ fn direct_message_sorting_uses_channel_id_fallback() {
     state.confirm_selected_guild();
 
     assert_eq!(channel_entry_names(&state), vec!["newer-id", "older-id"]);
+}
+
+#[test]
+fn restoring_discord_snapshot_recovers_missed_guilds_and_direct_messages() {
+    let guild_id: Id<GuildMarker> = Id::new(1);
+    let guild_channel_id: Id<ChannelMarker> = Id::new(2);
+    let dm_channel_id: Id<ChannelMarker> = Id::new(20);
+    let mut snapshot = DiscordState::default();
+    snapshot.apply_event(&AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    snapshot.apply_event(&AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        owner_id: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id: guild_channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+    });
+    snapshot.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: None,
+        channel_id: dm_channel_id,
+        parent_id: None,
+        position: None,
+        last_message_id: Some(Id::new(200)),
+        name: "alice".to_owned(),
+        kind: "dm".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        thread_pinned: None,
+        recipients: None,
+        permission_overwrites: Vec::new(),
+    }));
+
+    let mut state = DashboardState::new();
+    state.record_recovered_lag(3);
+    state.restore_discord_snapshot(snapshot);
+
+    assert_eq!(state.skipped_events(), 3);
+    assert_eq!(state.last_status(), None);
+    assert_eq!(state.current_user(), Some("neo"));
+    assert_eq!(state.current_user_id, Some(Id::new(10)));
+    assert_eq!(state.guild_pane_entries().len(), 2);
+
+    state.confirm_selected_guild();
+    assert_eq!(state.selected_guild_id(), Some(guild_id));
+    assert_eq!(channel_entry_names(&state), vec!["general"]);
+
+    state.selected_guild = 0;
+    state.confirm_selected_guild();
+    assert_eq!(channel_entry_names(&state), vec!["alice"]);
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
@@ -29,6 +29,7 @@ use super::{
     commands::ReactionEmoji,
     events::default_avatar_url,
     events::{AppEvent, AttachmentUpdate, PermissionOverwriteInfo, PermissionOverwriteKind},
+    state::DiscordState,
 };
 use crate::logging;
 
@@ -142,18 +143,24 @@ pub async fn run_gateway(
     token: String,
     tx: broadcast::Sender<AppEvent>,
     mut commands: mpsc::UnboundedReceiver<GatewayCommand>,
+    state: Arc<RwLock<DiscordState>>,
 ) {
     let mut session = SessionState::default();
     let mut backoff = RECONNECT_BASE_DELAY;
 
     loop {
-        let outcome = match connect_and_run(&token, &tx, &mut commands, &mut session).await {
+        let outcome = match connect_and_run(&token, &tx, &mut commands, &mut session, &state).await
+        {
             Ok(outcome) => outcome,
             Err(error) => {
                 logging::error("gateway", format!("connection error: {error}"));
-                let _ = tx.send(AppEvent::GatewayError {
-                    message: format!("connection error: {error}"),
-                });
+                publish_gateway_event(
+                    &tx,
+                    &state,
+                    AppEvent::GatewayError {
+                        message: format!("connection error: {error}"),
+                    },
+                );
                 ConnectionOutcome::Resume
             }
         };
@@ -180,7 +187,7 @@ pub async fn run_gateway(
         backoff = (backoff * 2).min(RECONNECT_MAX_DELAY);
     }
 
-    let _ = tx.send(AppEvent::GatewayClosed);
+    publish_gateway_event(&tx, &state, AppEvent::GatewayClosed);
 }
 
 async fn connect_and_run(
@@ -188,6 +195,7 @@ async fn connect_and_run(
     tx: &broadcast::Sender<AppEvent>,
     commands: &mut mpsc::UnboundedReceiver<GatewayCommand>,
     session: &mut SessionState,
+    state: &Arc<RwLock<DiscordState>>,
 ) -> Result<ConnectionOutcome, String> {
     let url = session.next_url();
     logging::debug("gateway", format!("connecting to {url}"));
@@ -301,7 +309,7 @@ async fn connect_and_run(
                                 continue;
                             }
                         };
-                        match handle_frame(value, &text, session, &sequence_cell, tx, &writer).await {
+                        match handle_frame(value, &text, session, &sequence_cell, tx, &writer, state).await {
                             FrameOutcome::Continue => {}
                             FrameOutcome::Resume => break ConnectionOutcome::Resume,
                             FrameOutcome::Reidentify => break ConnectionOutcome::Reidentify,
@@ -355,6 +363,7 @@ async fn handle_frame(
     sequence_cell: &Arc<Mutex<Option<u64>>>,
     tx: &broadcast::Sender<AppEvent>,
     writer: &WriterHandle,
+    state: &Arc<RwLock<DiscordState>>,
 ) -> FrameOutcome {
     let op = value.get("op").and_then(Value::as_u64).unwrap_or_default();
     match op {
@@ -383,7 +392,7 @@ async fn handle_frame(
             let events = parse_user_account_event(raw);
             logging::timing("gateway", "dispatch parse", started.elapsed());
             for app_event in events {
-                let _ = tx.send(app_event);
+                publish_gateway_event(tx, state, app_event);
             }
             FrameOutcome::Continue
         }
@@ -419,6 +428,16 @@ async fn handle_frame(
             FrameOutcome::Continue
         }
     }
+}
+
+fn publish_gateway_event(
+    tx: &broadcast::Sender<AppEvent>,
+    state: &Arc<RwLock<DiscordState>>,
+    event: AppEvent,
+) {
+    let mut state = state.write().expect("discord state lock is not poisoned");
+    state.apply_event(&event);
+    let _ = tx.send(event);
 }
 
 fn close_outcome(frame: Option<&CloseFrame>) -> ConnectionOutcome {

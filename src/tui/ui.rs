@@ -1508,24 +1508,11 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
         ),
         Span::styled(footer_hint(state), Style::default().fg(DIM)),
     ];
-    if let Some(error) = state.last_error() {
-        spans.push(Span::raw(" | "));
-        spans.push(Span::styled(
-            format!("err: {}", truncate_text(error, 60)),
-            Style::default().fg(Color::Red),
-        ));
-    } else if let Some(status) = state.last_status() {
+    if let Some(status) = state.last_status() {
         spans.push(Span::raw(" | "));
         spans.push(Span::styled(
             truncate_text(status, 72),
             Style::default().fg(Color::Green),
-        ));
-    }
-    if state.skipped_events() > 0 {
-        spans.push(Span::raw(" | "));
-        spans.push(Span::styled(
-            format!("lagged {}", state.skipped_events()),
-            Style::default().fg(Color::Yellow),
         ));
     }
 
