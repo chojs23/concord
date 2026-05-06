@@ -63,6 +63,22 @@ impl DashboardState {
         }];
 
         let capabilities = message.capabilities();
+        let is_own_regular_message =
+            Some(message.author_id) == self.current_user_id && message.message_kind.is_regular();
+        if is_own_regular_message {
+            if message.content.is_some() {
+                actions.push(MessageActionItem {
+                    kind: MessageActionKind::Edit,
+                    label: "Edit message".to_owned(),
+                    enabled: true,
+                });
+            }
+            actions.push(MessageActionItem {
+                kind: MessageActionKind::Delete,
+                label: "Delete message".to_owned(),
+                enabled: true,
+            });
+        }
         if self.thread_summary_for_message(message).is_some() {
             actions.push(MessageActionItem {
                 kind: MessageActionKind::OpenThread,
@@ -160,6 +176,25 @@ impl DashboardState {
                 self.start_reply_composer();
                 self.close_message_action_menu();
                 None
+            }
+            MessageActionKind::Edit => {
+                self.start_edit_composer();
+                self.close_message_action_menu();
+                None
+            }
+            MessageActionKind::Delete => {
+                let message = self.selected_message_state()?;
+                if Some(message.author_id) != self.current_user_id {
+                    self.close_message_action_menu();
+                    return None;
+                }
+                let channel_id = message.channel_id;
+                let message_id = message.id;
+                self.close_message_action_menu();
+                Some(AppCommand::DeleteMessage {
+                    channel_id,
+                    message_id,
+                })
             }
             MessageActionKind::OpenThread => {
                 let channel_id = self

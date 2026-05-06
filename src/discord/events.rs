@@ -347,6 +347,33 @@ pub struct MessageInfo {
     pub attachments: Vec<AttachmentInfo>,
     pub embeds: Vec<EmbedInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
+    pub edited_timestamp: Option<String>,
+}
+
+impl Default for MessageInfo {
+    fn default() -> Self {
+        Self {
+            guild_id: None,
+            channel_id: Id::new(1),
+            message_id: Id::new(1),
+            author_id: Id::new(1),
+            author: String::new(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: MessageKind::default(),
+            reference: None,
+            reply: None,
+            poll: None,
+            pinned: false,
+            reactions: Vec::new(),
+            content: None,
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+            edited_timestamp: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -456,6 +483,7 @@ pub enum AppEvent {
         mentions: Option<Vec<MentionInfo>>,
         attachments: AttachmentUpdate,
         embeds: Option<Vec<EmbedInfo>>,
+        edited_timestamp: Option<String>,
     },
     MessageDelete {
         guild_id: Option<Id<GuildMarker>>,

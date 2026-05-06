@@ -824,6 +824,7 @@ pub(super) fn height_test_message(content: &str) -> MessageState {
         attachments: Vec::new(),
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
+        ..MessageState::default()
     }
 }
 
@@ -997,6 +998,7 @@ pub(super) fn message_info(channel_id: Id<ChannelMarker>, message_id: u64) -> Me
         attachments: Vec::new(),
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
+        ..MessageInfo::default()
     }
 }
 

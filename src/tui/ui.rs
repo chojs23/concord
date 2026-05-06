@@ -10,7 +10,7 @@ use ratatui::{
         ScrollbarOrientation, ScrollbarState, Wrap,
     },
 };
-use ratatui_image::{Image as RatatuiImage, Resize, StatefulImage, protocol::StatefulProtocol};
+use ratatui_image::{Image as RatatuiImage, Resize, StatefulImage};
 use unicode_width::UnicodeWidthStr;
 
 use super::{
@@ -33,103 +33,20 @@ use crate::discord::{
     ReactionUsersInfo, UserProfileInfo,
 };
 
-const ACCENT: Color = Color::Cyan;
-const DIM: Color = Color::DarkGray;
-const SCROLLBAR_THUMB: Color = Color::Rgb(170, 170, 170);
-const MIN_MESSAGE_INPUT_HEIGHT: u16 = 3;
-const IMAGE_PREVIEW_HEIGHT: u16 = 10;
-const IMAGE_PREVIEW_WIDTH: u16 = 72;
-const MESSAGE_AVATAR_PLACEHOLDER: &str = "oo";
-const MESSAGE_AVATAR_OFFSET: u16 = 3;
-pub(crate) const MESSAGE_ROW_GAP: usize = 1;
-const EMBED_PREVIEW_GUTTER_PREFIX: &str = "  ▎ ";
-const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
-const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
-const MAX_REACTION_USERS_VISIBLE_LINES: usize = 14;
-const IMAGE_VIEWER_POPUP_WIDTH: u16 = 78;
-const IMAGE_VIEWER_POPUP_HEIGHT: u16 = 16;
-const SELECTED_FORUM_POST_BORDER: Color = Color::Green;
-const SELECTED_MESSAGE_BORDER: Color = Color::Green;
-const SELECTED_MESSAGE_CONTENT_OFFSET: u16 = 2;
+mod types;
 
-pub struct ImagePreview<'a> {
-    pub viewer: bool,
-    pub message_index: usize,
-    pub preview_x_offset_columns: u16,
-    pub preview_y_offset_rows: usize,
-    pub preview_width: u16,
-    pub preview_height: u16,
-    pub preview_overflow_count: usize,
-    pub accent_color: Option<u32>,
-    pub state: ImagePreviewState<'a>,
-}
-
-pub struct AvatarImage {
-    pub row: isize,
-    pub visible_height: u16,
-    pub protocol: ratatui_image::protocol::Protocol,
-}
-
-pub struct EmojiReactionImage<'a> {
-    pub url: String,
-    pub protocol: &'a ratatui_image::protocol::Protocol,
-}
-
-#[derive(Clone, Copy)]
-pub struct ImagePreviewLayout {
-    pub list_height: usize,
-    pub content_width: usize,
-    pub preview_width: u16,
-    pub max_preview_height: u16,
-    pub viewer_preview_width: u16,
-    pub viewer_max_preview_height: u16,
-}
-
-pub enum ImagePreviewState<'a> {
-    Loading { filename: String },
-    Failed { filename: String, message: String },
-    Ready { protocol: &'a mut StatefulProtocol },
-}
-
-#[derive(Clone, Copy)]
-struct DashboardAreas {
-    guilds: Rect,
-    channels: Rect,
-    messages: Rect,
-    members: Rect,
-    footer: Rect,
-}
-
-struct MessageAreas {
-    list: Rect,
-    /// One-row strip rendered between the message list and the composer when
-    /// somebody else is typing in the selected channel. Width is zero when
-    /// nobody is typing so the message list reclaims the row.
-    typing: Rect,
-    composer: Rect,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MouseTarget {
-    Pane(FocusPane),
-    PaneRow { pane: FocusPane, row: usize },
-    Composer,
-    ActionRow { menu: ActionMenuTarget, row: usize },
-    ModalBackdrop,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ActionMenuTarget {
-    Message,
-    Guild,
-    Channel,
-    Member,
-}
-
-struct UserProfilePopupText {
-    lines: Vec<Line<'static>>,
-    selected_line: Option<usize>,
-}
+use self::types::{
+    ACCENT, DIM, DISCORD_EPOCH_MILLIS, DashboardAreas, EMBED_PREVIEW_GUTTER_PREFIX,
+    IMAGE_PREVIEW_HEIGHT, IMAGE_PREVIEW_WIDTH, IMAGE_VIEWER_POPUP_HEIGHT, IMAGE_VIEWER_POPUP_WIDTH,
+    MAX_REACTION_USERS_VISIBLE_LINES, MESSAGE_AVATAR_OFFSET, MESSAGE_AVATAR_PLACEHOLDER,
+    MIN_MESSAGE_INPUT_HEIGHT, MessageAreas, MessageViewportLayout, SCROLLBAR_THUMB,
+    SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, SELECTED_MESSAGE_CONTENT_OFFSET,
+    SNOWFLAKE_TIMESTAMP_SHIFT, UserProfilePopupText,
+};
+pub(crate) use self::types::{ActionMenuTarget, MESSAGE_ROW_GAP, MouseTarget};
+pub use self::types::{
+    AvatarImage, EmojiReactionImage, ImagePreview, ImagePreviewLayout, ImagePreviewState,
+};
 
 pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
     let areas = dashboard_areas(area);
@@ -617,11 +534,13 @@ fn render_messages(
         &messages,
         selected,
         state,
-        content_width,
-        message_areas.list.width as usize,
-        selected_card_width,
-        preview_width,
-        max_preview_height,
+        MessageViewportLayout {
+            content_width,
+            list_width: message_areas.list.width as usize,
+            selected_card_width,
+            preview_width,
+            max_preview_height,
+        },
         emoji_images,
     );
 
@@ -1043,31 +962,30 @@ fn message_viewport_lines(
     messages: &[&MessageState],
     selected: Option<usize>,
     state: &DashboardState,
-    content_width: usize,
-    list_width: usize,
-    selected_card_width: usize,
-    preview_width: u16,
-    max_preview_height: u16,
+    layout: MessageViewportLayout,
     emoji_images: &[EmojiReactionImage<'_>],
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for (index, message) in messages.iter().enumerate() {
         let author = message.author.clone();
         let author_style = message_author_style(state.message_author_role_color(message));
-        let preview_spacers =
-            inline_preview_spacers_for_message(message, preview_width, max_preview_height);
+        let preview_spacers = inline_preview_spacers_for_message(
+            message,
+            layout.preview_width,
+            layout.max_preview_height,
+        );
 
         let global_index = state.message_scroll().saturating_add(index);
         let separator_line = state
             .message_starts_new_day_at(global_index)
-            .then(|| date_separator_line(message.id, list_width));
+            .then(|| date_separator_line(message.id, layout.list_width));
         let separator_lines = usize::from(separator_line.is_some());
         let line_offset = usize::from(index == 0) * state.message_line_scroll();
         let body_skip = line_offset.saturating_sub(separator_lines);
         let item_content_width = if selected == Some(index) {
-            selected_message_content_width(selected_card_width)
+            selected_message_content_width(layout.selected_card_width)
         } else {
-            content_width
+            layout.content_width
         };
 
         if let Some(line) = separator_line.filter(|_| line_offset == 0) {
@@ -1093,7 +1011,7 @@ fn message_viewport_lines(
         if selected == Some(index) {
             lines.extend(selected_message_lines(
                 item_lines,
-                selected_message_card_inner_width(selected_card_width),
+                selected_message_card_inner_width(layout.selected_card_width),
                 body_skip == 0,
             ));
         } else {
@@ -1101,6 +1019,23 @@ fn message_viewport_lines(
         }
     }
     lines
+}
+
+#[cfg(test)]
+fn message_viewport_layout(
+    content_width: usize,
+    list_width: usize,
+    selected_card_width: usize,
+    preview_width: u16,
+    max_preview_height: u16,
+) -> MessageViewportLayout {
+    MessageViewportLayout {
+        content_width,
+        list_width,
+        selected_card_width,
+        preview_width,
+        max_preview_height,
+    }
 }
 
 fn forum_post_viewport_lines(
@@ -3757,7 +3692,13 @@ mod tests {
         });
 
         let messages = state.messages();
-        let lines = message_viewport_lines(&messages, None, &state, 40, 80, 80, 16, 3, &[]);
+        let lines = message_viewport_lines(
+            &messages,
+            None,
+            &state,
+            super::message_viewport_layout(40, 80, 80, 16, 3),
+            &[],
+        );
 
         assert_eq!(
             lines[1].spans[1].style.fg,
@@ -4012,11 +3953,18 @@ mod tests {
                 attachments: Vec::new(),
                 embeds: Vec::new(),
                 forwarded_snapshots: Vec::new(),
+                ..MessageInfo::default()
             }],
         });
 
         let messages = state.messages();
-        let lines = message_viewport_lines(&messages, None, &state, 40, 80, 80, 16, 3, &[]);
+        let lines = message_viewport_lines(
+            &messages,
+            None,
+            &state,
+            super::message_viewport_layout(40, 80, 80, 16, 3),
+            &[],
+        );
 
         assert_eq!(
             lines[1].spans[1].style.fg,
@@ -4125,6 +4073,40 @@ mod tests {
 
         assert_eq!(line_texts(&lines), vec!["look", "[image: cat.png] 640x480"]);
         assert_eq!(lines[1].style, Style::default().fg(ACCENT));
+    }
+
+    #[test]
+    fn edited_message_appends_dim_italic_marker_to_content() {
+        let mut message = message_with_content(Some("hello".to_owned()));
+        message.edited_timestamp = Some("2026-05-07T12:34:56.000000+00:00".to_owned());
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(line_texts(&lines), vec!["hello (edited)"]);
+        let marker = lines[0]
+            .spans()
+            .into_iter()
+            .find(|span| span.content == " (edited)")
+            .expect("edited marker span should be present");
+        assert_eq!(marker.style.fg, Some(DIM));
+        assert!(marker.style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn wrapped_edited_marker_keeps_dim_italic_style() {
+        let mut message = message_with_content(Some("hello".to_owned()));
+        message.edited_timestamp = Some("2026-05-07T12:34:56.000000+00:00".to_owned());
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 5);
+
+        assert_eq!(line_texts(&lines), vec!["hello", "(edited)"]);
+        let marker = lines[1]
+            .spans()
+            .into_iter()
+            .next()
+            .expect("wrapped edited marker span should be present");
+        assert_eq!(marker.style.fg, Some(DIM));
+        assert!(marker.style.add_modifier.contains(Modifier::ITALIC));
     }
 
     #[test]
@@ -5789,11 +5771,7 @@ mod tests {
             &messages,
             None,
             &DashboardState::new(),
-            200,
-            80,
-            80,
-            16,
-            3,
+            super::message_viewport_layout(200, 80, 80, 16, 3),
             &[],
         );
 
@@ -5810,11 +5788,7 @@ mod tests {
             &messages,
             None,
             &DashboardState::new(),
-            200,
-            80,
-            80,
-            16,
-            3,
+            super::message_viewport_layout(200, 80, 80, 16, 3),
             &[],
         );
 
@@ -5831,11 +5805,7 @@ mod tests {
             &messages,
             None,
             &DashboardState::new(),
-            200,
-            80,
-            80,
-            16,
-            3,
+            super::message_viewport_layout(200, 80, 80, 16, 3),
             &[],
         );
 
@@ -5852,11 +5822,7 @@ mod tests {
             &messages,
             None,
             &DashboardState::new(),
-            200,
-            80,
-            80,
-            16,
-            3,
+            super::message_viewport_layout(200, 80, 80, 16, 3),
             &[],
         );
 
@@ -6147,11 +6113,7 @@ mod tests {
             &messages,
             Some(0),
             &DashboardState::new(),
-            5,
-            80,
-            80,
-            16,
-            3,
+            super::message_viewport_layout(5, 80, 80, 16, 3),
             &[],
         )
         .into_iter()
@@ -6178,11 +6140,7 @@ mod tests {
             &messages,
             Some(0),
             &DashboardState::new(),
-            5,
-            80,
-            80,
-            16,
-            3,
+            super::message_viewport_layout(5, 80, 80, 16, 3),
             &[],
         );
         let sent_time = format_message_sent_time(Id::new(1));
@@ -6223,11 +6181,7 @@ mod tests {
             &messages,
             Some(0),
             &DashboardState::new(),
-            40,
-            80,
-            selected_message_card_width(80, true),
-            16,
-            3,
+            super::message_viewport_layout(40, 80, selected_message_card_width(80, true), 16, 3),
             &[],
         ));
 
@@ -6410,11 +6364,7 @@ mod tests {
             &messages,
             None,
             &DashboardState::new(),
-            200,
-            80,
-            80,
-            16,
-            3,
+            super::message_viewport_layout(200, 80, 80, 16, 3),
             &[],
         );
 
@@ -6472,6 +6422,7 @@ mod tests {
             attachments: vec![attachment],
             embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
+            ..MessageState::default()
         }
     }
 
@@ -6689,6 +6640,7 @@ mod tests {
             attachments: Vec::new(),
             embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
+            ..MessageInfo::default()
         }
     }
 
@@ -6711,6 +6663,7 @@ mod tests {
             attachments: Vec::new(),
             embeds: Vec::new(),
             forwarded_snapshots: vec![snapshot],
+            ..MessageState::default()
         }
     }
 

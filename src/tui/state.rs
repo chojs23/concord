@@ -137,6 +137,7 @@ pub struct DashboardState {
     composer_input: String,
     composer_active: bool,
     reply_target_message_id: Option<Id<MessageMarker>>,
+    edit_target_message: Option<(Id<ChannelMarker>, Id<MessageMarker>)>,
     /// Set when the user is in the middle of an `@mention` autocomplete. The
     /// stored string is the characters typed *after* the `@` and is used to
     /// filter the candidate list. `None` means the picker is closed.
@@ -212,6 +213,7 @@ impl DashboardState {
             composer_input: String::new(),
             composer_active: false,
             reply_target_message_id: None,
+            edit_target_message: None,
             composer_mention_query: None,
             composer_mention_selected: 0,
             composer_mention_completions: Vec::new(),
@@ -349,8 +351,8 @@ impl DashboardState {
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);
         self.clamp_selection_indices();
-        let in_message_view = !self.selected_channel_is_forum()
-            && !self.is_pinned_message_view_active();
+        let in_message_view =
+            !self.selected_channel_is_forum() && !self.is_pinned_message_view_active();
         let should_follow = (was_cursor_on_last || user_just_sent) && in_message_view;
         let should_scroll = should_follow || (was_at_latest && in_message_view);
         if should_follow {
@@ -439,8 +441,8 @@ impl DashboardState {
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);
         self.clamp_selection_indices();
-        let in_message_view = !self.selected_channel_is_forum()
-            && !self.is_pinned_message_view_active();
+        let in_message_view =
+            !self.selected_channel_is_forum() && !self.is_pinned_message_view_active();
         let should_follow = was_cursor_on_last && in_message_view;
         let should_scroll = should_follow || (was_at_latest && in_message_view);
         if should_follow {

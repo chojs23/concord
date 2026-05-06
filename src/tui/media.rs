@@ -1438,6 +1438,7 @@ mod tests {
                 attachments: Vec::new(),
                 embeds: Vec::new(),
                 forwarded_snapshots: Vec::new(),
+                ..MessageInfo::default()
             }],
             has_more: false,
         });

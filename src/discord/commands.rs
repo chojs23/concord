@@ -101,6 +101,15 @@ pub enum AppCommand {
         content: String,
         reply_to: Option<Id<MessageMarker>>,
     },
+    EditMessage {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        content: String,
+    },
+    DeleteMessage {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    },
     OpenUrl {
         url: String,
     },

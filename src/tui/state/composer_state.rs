@@ -22,6 +22,26 @@ impl DashboardState {
         }
         self.composer_input.clear();
         self.reply_target_message_id = Some(message_id);
+        self.edit_target_message = None;
+        self.composer_active = true;
+        self.focus = FocusPane::Messages;
+    }
+
+    pub(super) fn start_edit_composer(&mut self) {
+        let Some(message) = self.selected_message_state() else {
+            return;
+        };
+        if Some(message.author_id) != self.current_user_id || !message.message_kind.is_regular() {
+            return;
+        }
+        let Some(content) = message.content.clone() else {
+            return;
+        };
+        let channel_id = message.channel_id;
+        let message_id = message.id;
+        self.composer_input = content;
+        self.reply_target_message_id = None;
+        self.edit_target_message = Some((channel_id, message_id));
         self.composer_active = true;
         self.focus = FocusPane::Messages;
     }
@@ -64,6 +84,7 @@ impl DashboardState {
             return;
         }
         self.reply_target_message_id = None;
+        self.edit_target_message = None;
         self.composer_active = true;
         self.focus = FocusPane::Messages;
     }
@@ -72,6 +93,7 @@ impl DashboardState {
         self.composer_active = false;
         self.composer_input.clear();
         self.reply_target_message_id = None;
+        self.edit_target_message = None;
         self.reset_mention_picker_state();
     }
 
@@ -127,13 +149,24 @@ impl DashboardState {
     }
 
     pub fn submit_composer(&mut self) -> Option<AppCommand> {
-        let channel_id = self.selected_channel_id()?;
         let expanded =
             expand_mention_completions(&self.composer_input, &self.composer_mention_completions);
         let content = expanded.trim().to_owned();
         if content.is_empty() {
             return None;
         }
+        if let Some((channel_id, message_id)) = self.edit_target_message.take() {
+            self.composer_input.clear();
+            self.composer_active = false;
+            self.reply_target_message_id = None;
+            self.reset_mention_picker_state();
+            return Some(AppCommand::EditMessage {
+                channel_id,
+                message_id,
+                content,
+            });
+        }
+        let channel_id = self.selected_channel_id()?;
         // Defense in depth: the channel could have lost SEND_MESSAGES while
         // the composer was open (role change, channel overwrite update). Drop
         // the message rather than fire a request that would 403.
@@ -141,6 +174,7 @@ impl DashboardState {
             self.composer_input.clear();
             self.composer_active = false;
             self.reply_target_message_id = None;
+            self.edit_target_message = None;
             self.reset_mention_picker_state();
             return None;
         }

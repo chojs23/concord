@@ -1283,6 +1283,7 @@ fn video_attachment_does_not_reserve_image_preview_rows() {
         attachments: vec![video_attachment(1)],
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
@@ -1308,6 +1309,7 @@ fn explicit_newlines_increase_message_rendered_height() {
         attachments: Vec::new(),
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
@@ -1333,6 +1335,7 @@ fn wrapped_content_increases_message_rendered_height() {
         attachments: Vec::new(),
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 5, 16, 3), 5);
@@ -1413,6 +1416,7 @@ fn forwarded_mentions_affect_height_from_source_channel_guild() {
             source_channel_id: Some(Id::new(9)),
             timestamp: None,
         }],
+        ..MessageState::default()
     };
 
     assert_eq!(state.message_base_line_count_for_width(&message, 7), 4);
@@ -1438,6 +1442,7 @@ fn wide_content_increases_message_rendered_height_by_terminal_width() {
         attachments: Vec::new(),
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 10, 16, 3), 4);
@@ -1463,6 +1468,7 @@ fn discord_embed_rows_increase_message_rendered_height() {
         attachments: Vec::new(),
         embeds: vec![youtube_embed()],
         forwarded_snapshots: Vec::new(),
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 80, 16, 3), 8);
@@ -1488,6 +1494,7 @@ fn image_attachment_summary_reserves_text_row_before_preview() {
         attachments: vec![image_attachment(1)],
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
@@ -1513,6 +1520,7 @@ fn five_image_album_rendered_height_lists_each_attachment_but_keeps_album_bounde
         attachments: (1..=5).map(image_attachment).collect(),
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 200, 16, 3), 12);
@@ -1538,6 +1546,7 @@ fn forwarded_image_attachment_reserves_preview_rows() {
         attachments: Vec::new(),
         embeds: Vec::new(),
         forwarded_snapshots: vec![forwarded_snapshot(1)],
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
@@ -1570,6 +1579,7 @@ fn forwarded_snapshot_wrapped_content_increases_rendered_height() {
             source_channel_id: None,
             timestamp: None,
         }],
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 7, 16, 3), 10);
@@ -1602,6 +1612,7 @@ fn forwarded_snapshot_wide_content_uses_terminal_width() {
             source_channel_id: None,
             timestamp: None,
         }],
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 12, 16, 3), 9);
@@ -1630,6 +1641,7 @@ fn forwarded_metadata_reserves_card_row() {
         attachments: Vec::new(),
         embeds: Vec::new(),
         forwarded_snapshots: vec![snapshot],
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
@@ -1658,6 +1670,7 @@ fn forwarded_snapshot_embed_rows_increase_rendered_height() {
         attachments: Vec::new(),
         embeds: Vec::new(),
         forwarded_snapshots: vec![snapshot],
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 200, 16, 3), 10);
@@ -1683,6 +1696,7 @@ fn non_default_message_kind_reserves_label_row() {
         attachments: vec![image_attachment(1)],
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
@@ -1716,6 +1730,7 @@ fn reply_preview_reserves_connector_row_without_extra_type_label() {
         attachments: vec![image_attachment(1)],
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
@@ -1741,6 +1756,7 @@ fn poll_message_reserves_question_and_answer_rows() {
         attachments: Vec::new(),
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
@@ -1825,6 +1841,7 @@ fn multiselect_poll_message_uses_same_card_height() {
         attachments: Vec::new(),
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
+        ..MessageState::default()
     };
 
     assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
@@ -1936,6 +1953,142 @@ fn normal_message_actions_do_not_include_poll_or_image_actions() {
             MessageActionKind::ShowProfile,
             MessageActionKind::SetPinned(true),
         ]
+    );
+}
+
+#[test]
+fn own_regular_message_actions_include_edit_and_delete() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(99)),
+    });
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+
+    assert_eq!(
+        actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
+        vec![
+            MessageActionKind::Reply,
+            MessageActionKind::Edit,
+            MessageActionKind::Delete,
+            MessageActionKind::AddReaction,
+            MessageActionKind::ShowProfile,
+            MessageActionKind::SetPinned(true),
+        ]
+    );
+}
+
+#[test]
+fn other_user_message_actions_do_not_include_edit_or_delete() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+
+    assert!(!actions.iter().any(|action| matches!(
+        action.kind,
+        MessageActionKind::Edit | MessageActionKind::Delete
+    )));
+}
+
+#[test]
+fn edit_message_action_prefills_composer_and_submits_edit_command() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(99)),
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+    assert!(state.select_message_action_row(1));
+
+    assert_eq!(state.activate_selected_message_action(), None);
+    assert_eq!(state.composer_input(), "msg 1");
+    state.push_composer_char('!');
+
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::EditMessage {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            content: "msg 1!".to_owned(),
+        })
+    );
+    assert!(!state.is_composing());
+}
+
+#[test]
+fn delete_message_action_submits_delete_command_for_own_message() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(99)),
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+    assert!(state.select_message_action_row(2));
+
+    assert_eq!(
+        state.activate_selected_message_action(),
+        Some(AppCommand::DeleteMessage {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+        })
+    );
+}
+
+#[test]
+fn own_attachment_only_message_can_be_deleted_but_not_edited() {
+    let mut state = state_with_message_ids([]);
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(99)),
+    });
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: None,
+        mentions: Vec::new(),
+        attachments: vec![image_attachment(1)],
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+
+    let actions = state.selected_message_action_items();
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.kind == MessageActionKind::Delete)
+    );
+    assert!(
+        !actions
+            .iter()
+            .any(|action| action.kind == MessageActionKind::Edit)
+    );
+    assert!(state.select_message_action_row(1));
+    assert_eq!(
+        state.activate_selected_message_action(),
+        Some(AppCommand::DeleteMessage {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+        })
     );
 }
 
@@ -3632,6 +3785,7 @@ fn forum_preview_message(
         attachments: Vec::new(),
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
+        ..MessageInfo::default()
     }
 }
 

@@ -141,6 +141,32 @@ pub struct MessageState {
     pub attachments: Vec<AttachmentInfo>,
     pub embeds: Vec<EmbedInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
+    pub edited_timestamp: Option<String>,
+}
+
+impl Default for MessageState {
+    fn default() -> Self {
+        Self {
+            id: Id::new(1),
+            guild_id: None,
+            channel_id: Id::new(1),
+            author_id: Id::new(1),
+            author: String::new(),
+            author_avatar_url: None,
+            message_kind: MessageKind::default(),
+            reference: None,
+            reply: None,
+            poll: None,
+            pinned: false,
+            reactions: Vec::new(),
+            content: None,
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+            edited_timestamp: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -318,6 +344,7 @@ struct MessageUpdateFields {
     mentions: Option<Vec<MentionInfo>>,
     attachments: AttachmentUpdate,
     embeds: Option<Vec<EmbedInfo>>,
+    edited_timestamp: Option<String>,
     pinned: Option<bool>,
     reactions: Option<Vec<ReactionInfo>>,
 }
@@ -500,6 +527,7 @@ impl DiscordState {
                     attachments: attachments.clone(),
                     embeds: embeds.clone(),
                     forwarded_snapshots: forwarded_snapshots.clone(),
+                    edited_timestamp: None,
                 });
             }
             AppEvent::MessageHistoryLoaded {
@@ -520,6 +548,7 @@ impl DiscordState {
                 mentions,
                 attachments,
                 embeds,
+                edited_timestamp,
                 ..
             } => self.update_message(
                 *channel_id,
@@ -530,6 +559,7 @@ impl DiscordState {
                     mentions: mentions.clone(),
                     attachments: attachments.clone(),
                     embeds: embeds.clone(),
+                    edited_timestamp: edited_timestamp.clone(),
                     pinned: None,
                     reactions: None,
                 },
@@ -1527,6 +1557,7 @@ impl DiscordState {
             attachments: message.attachments.clone(),
             embeds: message.embeds.clone(),
             forwarded_snapshots: message.forwarded_snapshots.clone(),
+            edited_timestamp: message.edited_timestamp.clone(),
         }
     }
 
@@ -1664,6 +1695,9 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
     if !incoming.forwarded_snapshots.is_empty() || existing.forwarded_snapshots.is_empty() {
         existing.forwarded_snapshots = incoming.forwarded_snapshots.clone();
     }
+    if incoming.edited_timestamp.is_some() || existing.edited_timestamp.is_none() {
+        existing.edited_timestamp = incoming.edited_timestamp.clone();
+    }
 }
 
 fn update_message_in(
@@ -1691,6 +1725,9 @@ fn update_message_in(
     }
     if let Some(embeds) = &update.embeds {
         existing.embeds = embeds.clone();
+    }
+    if let Some(edited_timestamp) = &update.edited_timestamp {
+        existing.edited_timestamp = Some(edited_timestamp.clone());
     }
     match &update.attachments {
         AttachmentUpdate::Replace(attachments) => existing.attachments = attachments.clone(),
@@ -2954,6 +2991,7 @@ mod tests {
             mentions: None,
             attachments: AttachmentUpdate::Unchanged,
             embeds: None,
+            edited_timestamp: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -3099,6 +3137,7 @@ mod tests {
             mentions: Some(vec![mention_info(10, "alice")]),
             attachments: AttachmentUpdate::Unchanged,
             embeds: None,
+            edited_timestamp: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -3139,6 +3178,7 @@ mod tests {
             mentions: None,
             attachments: AttachmentUpdate::Unchanged,
             embeds: None,
+            edited_timestamp: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -3179,6 +3219,7 @@ mod tests {
             mentions: Some(Vec::new()),
             attachments: AttachmentUpdate::Unchanged,
             embeds: None,
+            edited_timestamp: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -3281,6 +3322,7 @@ mod tests {
             mentions: None,
             attachments: AttachmentUpdate::Unchanged,
             embeds: None,
+            edited_timestamp: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -3810,6 +3852,7 @@ mod tests {
             mentions: None,
             attachments: AttachmentUpdate::Unchanged,
             embeds: None,
+            edited_timestamp: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -3849,6 +3892,7 @@ mod tests {
             mentions: None,
             attachments: AttachmentUpdate::Replace(Vec::new()),
             embeds: None,
+            edited_timestamp: None,
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -5822,6 +5866,7 @@ mod tests {
             attachments: Vec::new(),
             embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
+            ..MessageInfo::default()
         }
     }
 
@@ -5844,6 +5889,7 @@ mod tests {
             attachments: Vec::new(),
             embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
+            ..MessageState::default()
         }
     }
 

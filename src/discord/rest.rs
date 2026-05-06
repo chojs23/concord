@@ -106,6 +106,61 @@ impl DiscordRest {
         })
     }
 
+    pub async fn edit_message(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        content: &str,
+    ) -> Result<MessageInfo> {
+        validate_message_content(content)?;
+        let raw = self
+            .raw_http
+            .patch(format!(
+                "https://discord.com/api/v9/channels/{}/messages/{}",
+                channel_id.get(),
+                message_id.get()
+            ))
+            .header(AUTHORIZATION, &self.token)
+            .json(&json!({ "content": content }))
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("edit message request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| AppError::DiscordRequest(format!("edit message failed: {error}")))?
+            .json::<Value>()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("edit message decode failed: {error}"))
+            })?;
+        parse_message_info(&raw).ok_or_else(|| {
+            AppError::DiscordRequest("edit message response was missing required fields".to_owned())
+        })
+    }
+
+    pub async fn delete_message(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    ) -> Result<()> {
+        self.raw_http
+            .delete(format!(
+                "https://discord.com/api/v9/channels/{}/messages/{}",
+                channel_id.get(),
+                message_id.get()
+            ))
+            .header(AUTHORIZATION, &self.token)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("delete message request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| AppError::DiscordRequest(format!("delete message failed: {error}")))?;
+        Ok(())
+    }
+
     pub async fn load_message_history(
         &self,
         channel_id: Id<ChannelMarker>,

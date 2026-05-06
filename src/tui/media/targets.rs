@@ -121,9 +121,11 @@ pub(in crate::tui) fn visible_image_preview_targets(
             .flatten();
         for cell in &album.cells {
             let preview = previews[cell.preview_index];
-            let preview_overflow_count = (cell.preview_index + 1 == MAX_ALBUM_PREVIEW_TILES)
-                .then(|| previews.len().saturating_sub(MAX_ALBUM_PREVIEW_TILES))
-                .unwrap_or(0);
+            let preview_overflow_count = if cell.preview_index + 1 == MAX_ALBUM_PREVIEW_TILES {
+                previews.len().saturating_sub(MAX_ALBUM_PREVIEW_TILES)
+            } else {
+                0
+            };
             let preview_top =
                 rendered_rows as isize + block_rows as isize + cell.y_offset_rows as isize
                     - line_offset as isize;

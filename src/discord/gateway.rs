@@ -1431,6 +1431,10 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         .and_then(|reference| reference.channel_id);
     let forwarded_snapshots =
         parse_message_snapshots(data.get("message_snapshots"), source_channel_id);
+    let edited_timestamp = data
+        .get("edited_timestamp")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     Some(MessageInfo {
         guild_id,
         channel_id,
@@ -1450,6 +1454,7 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         attachments,
         embeds,
         forwarded_snapshots,
+        edited_timestamp,
     })
 }
 
@@ -1490,6 +1495,10 @@ fn parse_message_update(data: &Value) -> Option<AppEvent> {
     let mentions = data
         .get("mentions")
         .map(|value| parse_mentions(Some(value)));
+    let edited_timestamp = data
+        .get("edited_timestamp")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     Some(AppEvent::MessageUpdate {
         guild_id,
         channel_id,
@@ -1499,6 +1508,7 @@ fn parse_message_update(data: &Value) -> Option<AppEvent> {
         mentions,
         attachments,
         embeds,
+        edited_timestamp,
     })
 }
 

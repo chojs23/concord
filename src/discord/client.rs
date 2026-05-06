@@ -184,6 +184,25 @@ impl DiscordClient {
         self.rest.send_message(channel_id, content, reply_to).await
     }
 
+    pub async fn edit_message(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        content: &str,
+    ) -> Result<MessageInfo> {
+        self.rest
+            .edit_message(channel_id, message_id, content)
+            .await
+    }
+
+    pub async fn delete_message(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    ) -> Result<()> {
+        self.rest.delete_message(channel_id, message_id).await
+    }
+
     pub async fn load_message_history(
         &self,
         channel_id: Id<ChannelMarker>,

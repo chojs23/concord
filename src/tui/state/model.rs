@@ -16,6 +16,8 @@ pub enum FocusPane {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MessageActionKind {
     Reply,
+    Edit,
+    Delete,
     OpenThread,
     ViewImage,
     DownloadImage,

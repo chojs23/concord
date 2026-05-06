@@ -15,7 +15,7 @@ use tokio::time::{Duration, timeout};
 
 use crate::{
     DiscordClient, Result,
-    discord::{AppCommand, AppEvent, MessageInfo, ReactionUsersInfo},
+    discord::{AppCommand, AppEvent, AttachmentUpdate, MessageInfo, ReactionUsersInfo},
     error::AppError,
     logging, token_store, tui,
 };
@@ -392,6 +392,55 @@ fn start_command_loop(
                                 .await;
                         }
                     },
+                    AppCommand::EditMessage {
+                        channel_id,
+                        message_id,
+                        content,
+                    } => match client.edit_message(channel_id, message_id, &content).await {
+                        Ok(message) => {
+                            client.publish_event(message_update_event(message)).await;
+                            client
+                                .publish_event(AppEvent::StatusMessage {
+                                    message: "edited message".to_owned(),
+                                })
+                                .await;
+                        }
+                        Err(error) => {
+                            log_app_error("edit message failed", &error);
+                            client
+                                .publish_event(AppEvent::GatewayError {
+                                    message: format!("edit message failed: {error}"),
+                                })
+                                .await;
+                        }
+                    },
+                    AppCommand::DeleteMessage {
+                        channel_id,
+                        message_id,
+                    } => match client.delete_message(channel_id, message_id).await {
+                        Ok(()) => {
+                            client
+                                .publish_event(AppEvent::MessageDelete {
+                                    guild_id: None,
+                                    channel_id,
+                                    message_id,
+                                })
+                                .await;
+                            client
+                                .publish_event(AppEvent::StatusMessage {
+                                    message: "deleted message".to_owned(),
+                                })
+                                .await;
+                        }
+                        Err(error) => {
+                            log_app_error("delete message failed", &error);
+                            client
+                                .publish_event(AppEvent::GatewayError {
+                                    message: format!("delete message failed: {error}"),
+                                })
+                                .await;
+                        }
+                    },
                     AppCommand::OpenUrl { url } => {
                         if let Err(error) = open_url(&url) {
                             logging::error("app", format!("open attachment failed: {error}"));
@@ -685,6 +734,20 @@ fn message_create_event(message: MessageInfo) -> AppEvent {
         attachments: message.attachments,
         embeds: message.embeds,
         forwarded_snapshots: message.forwarded_snapshots,
+    }
+}
+
+fn message_update_event(message: MessageInfo) -> AppEvent {
+    AppEvent::MessageUpdate {
+        guild_id: message.guild_id,
+        channel_id: message.channel_id,
+        message_id: message.message_id,
+        poll: message.poll,
+        content: message.content,
+        mentions: Some(message.mentions),
+        attachments: AttachmentUpdate::Replace(message.attachments),
+        embeds: Some(message.embeds),
+        edited_timestamp: message.edited_timestamp,
     }
 }
 

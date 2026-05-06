@@ -28,6 +28,7 @@ const DIM: Color = Color::DarkGray;
 const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
 const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
 const THREAD_CARD_INDENT: &str = "  ";
+const EDITED_MARKER: &str = " (edited)";
 pub(super) const EMOJI_REACTION_IMAGE_WIDTH: u16 = 2;
 
 #[derive(Clone)]
@@ -144,6 +145,12 @@ impl MessageContentLine {
                 style,
             });
         }
+    }
+
+    fn append_styled_suffix(&mut self, suffix: &str, style: Style) {
+        let start = self.text.len();
+        self.text.push_str(suffix);
+        self.styled_range(start, suffix.len(), style);
     }
 
     pub(super) fn spans(&self) -> Vec<Span<'static>> {
@@ -292,10 +299,6 @@ pub(super) fn format_message_content_lines(
     if let Some(snapshot) = message.forwarded_snapshots.first() {
         lines.extend(format_forwarded_snapshot(snapshot, state, width));
     }
-    if !message.reactions.is_empty() {
-        lines.extend(format_reaction_lines(&message.reactions, width));
-    }
-
     if lines.is_empty() {
         lines.push(MessageContentLine::plain(if message.content.is_some() {
             "<empty message>".to_owned()
@@ -304,7 +307,31 @@ pub(super) fn format_message_content_lines(
         }));
     }
 
+    if message.edited_timestamp.is_some() {
+        append_edited_marker(&mut lines, width);
+    }
+
+    if !message.reactions.is_empty() {
+        lines.extend(format_reaction_lines(&message.reactions, width));
+    }
+
     lines
+}
+
+fn append_edited_marker(lines: &mut Vec<MessageContentLine>, width: usize) {
+    let marker_style = Style::default().fg(DIM).add_modifier(Modifier::ITALIC);
+    let marker_width = EDITED_MARKER.width();
+    if let Some(line) = lines.last_mut()
+        && line.text.width().saturating_add(marker_width) <= width
+    {
+        line.append_styled_suffix(EDITED_MARKER, marker_style);
+        return;
+    }
+    lines.push(MessageContentLine::styled_text(
+        EDITED_MARKER.trim().to_owned(),
+        marker_style,
+        Vec::new(),
+    ));
 }
 
 fn format_embed_lines(
