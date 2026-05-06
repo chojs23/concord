@@ -1460,6 +1460,31 @@ fn image_attachment_summary_reserves_text_row_before_preview() {
 }
 
 #[test]
+fn five_image_album_rendered_height_lists_each_attachment_but_keeps_album_bounded() {
+    let message = MessageState {
+        id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        pinned: false,
+        reactions: Vec::new(),
+        content: Some("look".to_owned()),
+        mentions: Vec::new(),
+        attachments: (1..=5).map(image_attachment).collect(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    };
+
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 12);
+}
+
+#[test]
 fn forwarded_image_attachment_reserves_preview_rows() {
     let message = MessageState {
         id: Id::new(1),
@@ -1778,16 +1803,16 @@ fn message_action_items_reflect_selected_message_capabilities() {
 
     let actions = state.selected_message_action_items();
 
-    assert!(
-        actions
-            .iter()
-            .any(|action| { action.kind == MessageActionKind::DownloadImage && action.enabled })
-    );
+    assert!(actions.iter().any(|action| {
+        action.kind == MessageActionKind::ViewImage
+            && action.label == "View image"
+            && action.enabled
+    }));
     assert!(!actions.iter().any(|action| action.label.contains("poll")));
 }
 
 #[test]
-fn embed_thumbnail_download_action_returns_command() {
+fn image_message_action_opens_image_viewer() {
     let mut state = state_with_messages(1);
     state.push_event(AppEvent::MessageHistoryLoaded {
         channel_id: Id::new(2),
@@ -1804,14 +1829,62 @@ fn embed_thumbnail_download_action_returns_command() {
 
     let command = state.activate_selected_message_action();
 
+    assert_eq!(command, None,);
+    assert!(!state.is_message_action_menu_open());
+    assert!(state.is_image_viewer_open());
+    assert_eq!(
+        state.selected_image_viewer_item(),
+        Some(super::ImageViewerItem {
+            index: 1,
+            total: 1,
+            filename: "embed-thumbnail".to_owned(),
+            url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn image_viewer_navigation_clamps_and_downloads_current_image() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            content: Some(String::new()),
+            attachments: vec![image_attachment(10), image_attachment(11)],
+            ..message_info(Id::new(2), 1)
+        }],
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+    state.move_message_action_down();
+    state.activate_selected_message_action();
+
+    state.move_image_viewer_previous();
+    assert_eq!(
+        state.selected_image_viewer_item().map(|item| item.index),
+        Some(1)
+    );
+
+    state.move_image_viewer_next();
+    state.move_image_viewer_next();
+    assert_eq!(
+        state.selected_image_viewer_item().map(|item| item.index),
+        Some(2)
+    );
+
+    state.open_image_viewer_action_menu();
+    let command = state.activate_selected_image_viewer_action();
+
     assert_eq!(
         command,
         Some(AppCommand::DownloadAttachment {
-            url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".to_owned(),
-            filename: "embed-thumbnail".to_owned(),
+            url: "https://cdn.discordapp.com/image-11.png".to_owned(),
+            filename: "image-11.png".to_owned(),
         })
     );
-    assert!(!state.is_message_action_menu_open());
+    assert!(state.is_image_viewer_open());
+    assert!(!state.is_image_viewer_action_menu_open());
 }
 
 #[test]
@@ -3501,7 +3574,7 @@ fn message_action_items_keep_image_action_for_poll_messages() {
         actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
         vec![
             MessageActionKind::Reply,
-            MessageActionKind::DownloadImage,
+            MessageActionKind::ViewImage,
             MessageActionKind::AddReaction,
             MessageActionKind::ShowProfile,
             MessageActionKind::SetPinned(true),

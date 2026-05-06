@@ -21,6 +21,7 @@ mod composer_state;
 mod diagnostics;
 mod emoji;
 mod guilds;
+mod image_viewer;
 mod member_grouping;
 mod message_actions;
 mod message_render;
@@ -36,7 +37,8 @@ mod user;
 use composer::MentionCompletion;
 use message_render::{add_literal_mention_highlights, normalize_text_highlights};
 use popups::{
-    ChannelActionMenuState, GuildActionMenuState, MemberActionMenuState, UserProfilePopupState,
+    ChannelActionMenuState, GuildActionMenuState, ImageViewerState, MemberActionMenuState,
+    UserProfilePopupState,
 };
 use scroll::{
     SCROLL_OFF, clamp_list_scroll, clamp_list_viewport, clamp_selected_index, last_index,
@@ -49,8 +51,9 @@ pub use composer::{MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry};
 pub use member_grouping::{MemberEntry, MemberGroup};
 pub use model::{
     ChannelActionItem, ChannelPaneEntry, ChannelThreadItem, EmojiReactionItem,
-    FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, MemberActionItem,
-    MessageActionItem, MessageActionKind, PollVotePickerItem, ThreadMessagePreview, ThreadSummary,
+    FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, ImageViewerItem,
+    MemberActionItem, MessageActionItem, MessageActionKind, PollVotePickerItem,
+    ThreadMessagePreview, ThreadSummary,
 };
 #[allow(unused_imports)]
 pub use model::{ChannelActionKind, ChannelBranch, GuildActionKind, GuildBranch};
@@ -142,6 +145,7 @@ pub struct DashboardState {
     /// submit even though the visible text is still the friendly form.
     composer_mention_completions: Vec<MentionCompletion>,
     message_action_menu: Option<MessageActionMenuState>,
+    image_viewer: Option<ImageViewerState>,
     guild_action_menu: Option<GuildActionMenuState>,
     channel_action_menu: Option<ChannelActionMenuState>,
     member_action_menu: Option<MemberActionMenuState>,
@@ -210,6 +214,7 @@ impl DashboardState {
             composer_mention_selected: 0,
             composer_mention_completions: Vec::new(),
             message_action_menu: None,
+            image_viewer: None,
             guild_action_menu: None,
             channel_action_menu: None,
             member_action_menu: None,
@@ -1928,19 +1933,13 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) -> usize {
-        let preview_height = message
-            .first_inline_preview()
-            .map(|preview| {
-                media::image_preview_height_for_dimensions(
-                    preview_width,
-                    max_preview_height,
-                    preview.width,
-                    preview.height,
-                )
-            })
-            .unwrap_or(0);
+        let previews = message.inline_previews();
+        let album = media::image_preview_album_layout(&previews, preview_width, max_preview_height);
+        let preview_height = album
+            .height
+            .saturating_add(usize::from(album.overflow_count > 0));
         self.message_base_line_count_for_width(message, content_width)
-            + usize::from(preview_height)
+            + preview_height
             + ui::MESSAGE_ROW_GAP
     }
 

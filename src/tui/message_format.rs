@@ -232,8 +232,11 @@ pub(super) fn format_message_content_lines(
     state: &DashboardState,
     width: usize,
 ) -> Vec<MessageContentLine> {
-    let attachment_summary =
-        (!message.attachments.is_empty()).then(|| format_attachment_summary(&message.attachments));
+    let attachment_summary_lines = if message.attachments.is_empty() {
+        Vec::new()
+    } else {
+        format_attachment_summary_lines(&message.attachments)
+    };
     let mut lines = Vec::new();
 
     if let Some(system_lines) = format_system_message_lines(message, state, width) {
@@ -280,9 +283,9 @@ pub(super) fn format_message_content_lines(
         message.content.as_deref(),
         width,
     ));
-    if let Some(attachments) = attachment_summary {
+    for attachment in attachment_summary_lines {
         lines.push(MessageContentLine::accent(truncate_text(
-            &attachments,
+            &attachment,
             width,
         )));
     }
@@ -1290,8 +1293,11 @@ fn format_forwarded_snapshot(
     state: &DashboardState,
     width: usize,
 ) -> Vec<MessageContentLine> {
-    let attachment_summary = (!snapshot.attachments.is_empty())
-        .then(|| format_attachment_summary(&snapshot.attachments));
+    let attachment_summary_lines = if snapshot.attachments.is_empty() {
+        Vec::new()
+    } else {
+        format_attachment_summary_lines(&snapshot.attachments)
+    };
     let mut lines = vec![MessageContentLine::plain("↱ Forwarded".to_owned())];
     if let Some(content) = snapshot
         .content
@@ -1310,9 +1316,9 @@ fn format_forwarded_snapshot(
                 .map(|line| prefix_message_content_line_without_underline("│ ", line)),
         );
     }
-    if let Some(attachments) = attachment_summary {
+    for attachment in attachment_summary_lines {
         lines.push(MessageContentLine::accent(truncate_text(
-            &format!("│ {attachments}"),
+            &format!("│ {attachment}"),
             width,
         )));
     }
@@ -1354,11 +1360,11 @@ fn format_forwarded_time(timestamp: &str) -> String {
 }
 
 pub(super) fn format_attachment_summary(attachments: &[AttachmentInfo]) -> String {
-    attachments
-        .iter()
-        .map(format_attachment)
-        .collect::<Vec<_>>()
-        .join(" | ")
+    format_attachment_summary_lines(attachments).join(" | ")
+}
+
+fn format_attachment_summary_lines(attachments: &[AttachmentInfo]) -> Vec<String> {
+    attachments.iter().map(format_attachment).collect()
 }
 
 fn format_attachment(attachment: &AttachmentInfo) -> String {

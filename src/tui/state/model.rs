@@ -17,6 +17,7 @@ pub enum FocusPane {
 pub enum MessageActionKind {
     Reply,
     OpenThread,
+    ViewImage,
     DownloadImage,
     AddReaction,
     RemoveReaction(usize),
@@ -32,6 +33,14 @@ pub struct MessageActionItem {
     pub kind: MessageActionKind,
     pub label: String,
     pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImageViewerItem {
+    pub index: usize,
+    pub total: usize,
+    pub filename: String,
+    pub url: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

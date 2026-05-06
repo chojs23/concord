@@ -22,7 +22,7 @@ use super::{
     },
     state::{
         ChannelActionItem, ChannelPaneEntry, ChannelThreadItem, DashboardState, EmojiReactionItem,
-        FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry,
+        FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, ImageViewerItem,
         MAX_MENTION_PICKER_VISIBLE, MemberActionItem, MemberEntry, MemberGroup, MentionPickerEntry,
         MessageActionItem, PollVotePickerItem, discord_color, folder_color, presence_color,
         presence_marker,
@@ -46,10 +46,17 @@ const EMBED_PREVIEW_GUTTER_PREFIX: &str = "  ▎ ";
 const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
 const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
 const MAX_REACTION_USERS_VISIBLE_LINES: usize = 14;
+const IMAGE_VIEWER_POPUP_WIDTH: u16 = 78;
+const IMAGE_VIEWER_POPUP_HEIGHT: u16 = 16;
 
 pub struct ImagePreview<'a> {
+    pub viewer: bool,
     pub message_index: usize,
+    pub preview_x_offset_columns: u16,
+    pub preview_y_offset_rows: usize,
+    pub preview_width: u16,
     pub preview_height: u16,
+    pub preview_overflow_count: usize,
     pub accent_color: Option<u32>,
     pub state: ImagePreviewState<'a>,
 }
@@ -71,6 +78,8 @@ pub struct ImagePreviewLayout {
     pub content_width: usize,
     pub preview_width: u16,
     pub max_preview_height: u16,
+    pub viewer_preview_width: u16,
+    pub viewer_max_preview_height: u16,
 }
 
 pub enum ImagePreviewState<'a> {
@@ -131,11 +140,14 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
 pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewLayout {
     let areas = dashboard_areas(area);
     let list = message_list_area(areas.messages, state);
+    let viewer_image_area = image_viewer_image_area(areas.messages);
     ImagePreviewLayout {
         list_height: list.height as usize,
         content_width: message_content_width(list),
         preview_width: inline_image_preview_width(list),
         max_preview_height: inline_image_preview_height(list, true),
+        viewer_preview_width: viewer_image_area.width,
+        viewer_max_preview_height: viewer_image_area.height,
     }
 }
 
@@ -148,6 +160,15 @@ pub fn render(
     profile_avatar: Option<AvatarImage>,
 ) {
     let areas = dashboard_areas(frame.area());
+    let mut inline_image_previews = Vec::new();
+    let mut viewer_image_preview = None;
+    for image_preview in image_previews {
+        if image_preview.viewer {
+            viewer_image_preview = Some(image_preview);
+        } else {
+            inline_image_previews.push(image_preview);
+        }
+    }
 
     render_guilds(frame, areas.guilds, state);
     render_channels(frame, areas.channels, state);
@@ -155,7 +176,7 @@ pub fn render(
         frame,
         areas.messages,
         state,
-        image_previews,
+        inline_image_previews,
         avatar_images,
         &emoji_images,
     );
@@ -169,6 +190,8 @@ pub fn render(
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
     render_reaction_users_popup(frame, areas.messages, state);
     render_user_profile_popup(frame, areas.messages, state, profile_avatar);
+    render_image_viewer(frame, areas.messages, state, viewer_image_preview);
+    render_image_viewer_action_menu(frame, areas.messages, state);
     render_debug_log_popup(frame, areas.messages, state);
 }
 
@@ -576,7 +599,8 @@ fn render_messages(
         state,
         content_width,
         message_areas.list.width as usize,
-        &image_previews,
+        inline_image_preview_width(message_areas.list),
+        inline_image_preview_height(message_areas.list, true),
         emoji_images,
     );
 
@@ -594,7 +618,6 @@ fn render_messages(
         &messages,
         state,
         content_width,
-        &image_previews,
         emoji_images,
     );
     render_inline_message_body_emojis(
@@ -605,29 +628,40 @@ fn render_messages(
         content_width,
         emoji_images,
     );
-    let mut previous_preview_rows = 0usize;
+    let preview_width = inline_image_preview_width(message_areas.list);
+    let max_preview_height = inline_image_preview_height(message_areas.list, true);
     for image_preview in image_previews.into_iter() {
+        let preview_rows_before_cell = inline_preview_rows_before_message(
+            &messages,
+            image_preview.message_index,
+            preview_width,
+            max_preview_height,
+        )
+        .saturating_add(image_preview.preview_y_offset_rows);
         let row = inline_image_preview_row(
             &messages,
             state,
             image_preview.message_index,
             content_width,
             state.message_line_scroll(),
-            previous_preview_rows,
+            preview_rows_before_cell,
         );
         if let Some(preview_area) = inline_image_preview_area(
             message_areas.list,
             row,
+            image_preview.preview_x_offset_columns,
+            image_preview.preview_width,
             image_preview.preview_height,
             image_preview.accent_color,
         ) {
             render_image_preview(frame, preview_area, image_preview.state);
+            render_image_preview_overflow_marker(
+                frame,
+                preview_area,
+                image_preview.preview_overflow_count,
+            );
         }
-        previous_preview_rows =
-            previous_preview_rows.saturating_add(image_preview.preview_height as usize);
     }
-    let preview_width = inline_image_preview_width(message_areas.list);
-    let max_preview_height = inline_image_preview_height(message_areas.list, true);
     render_vertical_scrollbar(
         frame,
         message_areas.list,
@@ -660,7 +694,7 @@ fn render_typing_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
 /// each custom-emoji reaction image overlay, and paints it on top of the
 /// already-rendered message text. Mirrors `visible_avatar_targets`'s row
 /// accounting in `mod.rs`: each message contributes
-/// `base_lines + preview_height` rendered rows, with the first message
+/// `base_lines + total_preview_height` rendered rows, with the first message
 /// optionally clipped at the top by `state.message_line_scroll()`.
 fn render_inline_reaction_emojis(
     frame: &mut Frame,
@@ -668,7 +702,6 @@ fn render_inline_reaction_emojis(
     messages: &[&MessageState],
     state: &DashboardState,
     content_width: usize,
-    image_previews: &[ImagePreview<'_>],
     emoji_images: &[EmojiReactionImage<'_>],
 ) {
     if emoji_images.is_empty() || list.height == 0 || list.width <= MESSAGE_AVATAR_OFFSET {
@@ -697,9 +730,11 @@ fn render_inline_reaction_emojis(
         let body_base_rows =
             state.message_base_line_count_for_width(message, content_width) as isize;
         let block_rows = body_base_rows + separator_lines;
-        let preview_height = preview_for_message(image_previews, index)
-            .map(|preview| preview.preview_height)
-            .unwrap_or(0) as isize;
+        let preview_height = total_inline_preview_height_for_message(
+            message,
+            inline_image_preview_width(list),
+            inline_image_preview_height(list, true),
+        ) as isize;
 
         let layout = lay_out_reaction_chips(&message.reactions, content_width);
         if !layout.slots.is_empty() {
@@ -825,19 +860,11 @@ fn render_inline_message_body_emojis(
             }
         }
 
-        let preview_height = message
-            .first_inline_preview()
-            .map(|preview| {
-                let preview_width = inline_image_preview_width(list);
-                let max_preview_height = inline_image_preview_height(list, true);
-                super::media::image_preview_height_for_dimensions(
-                    preview_width,
-                    max_preview_height,
-                    preview.width,
-                    preview.height,
-                )
-            })
-            .unwrap_or(0) as isize;
+        let preview_height = total_inline_preview_height_for_message(
+            message,
+            inline_image_preview_width(list),
+            inline_image_preview_height(list, true),
+        ) as isize;
         let block_rows = body_base_rows + separator_lines;
         rendered_rows = rendered_rows
             .saturating_add((block_rows + preview_height + MESSAGE_ROW_GAP as isize) - line_offset);
@@ -865,13 +892,107 @@ fn render_image_preview(frame: &mut Frame, area: Rect, image_preview: ImagePrevi
     }
 }
 
-fn preview_for_message<'a>(
-    image_previews: &'a [ImagePreview<'a>],
-    message_index: usize,
-) -> Option<&'a ImagePreview<'a>> {
-    image_previews
-        .iter()
-        .find(|preview| preview.message_index == message_index)
+fn render_image_preview_overflow_marker(frame: &mut Frame, area: Rect, overflow_count: usize) {
+    if overflow_count == 0 || area.width < 3 || area.height == 0 {
+        return;
+    }
+
+    let marker = format!("+{overflow_count}");
+    let width = u16::try_from(marker.width())
+        .unwrap_or(u16::MAX)
+        .min(area.width);
+    let marker_area = Rect {
+        x: area.x.saturating_add(area.width.saturating_sub(width)),
+        y: area.y.saturating_add(area.height.saturating_sub(1)),
+        width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(marker)
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::White).bg(Color::Black).bold()),
+        marker_area,
+    );
+}
+
+fn render_image_viewer(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+    image_preview: Option<ImagePreview<'_>>,
+) {
+    let Some(item) = state.selected_image_viewer_item() else {
+        return;
+    };
+
+    let popup = image_viewer_popup(area);
+    let title_width = usize::from(popup.width.saturating_sub(4)).max(1);
+    let title = truncate_display_width(&image_viewer_title(&item), title_width);
+    frame.render_widget(Clear, popup);
+    let block = panel_block_owned(title, true);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let [image_area, hint_area] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    if let Some(image_preview) = image_preview {
+        render_image_preview(frame, image_area, image_preview.state);
+    } else {
+        frame.render_widget(
+            Paragraph::new(format!("loading {}...", item.filename))
+                .style(Style::default().fg(DIM))
+                .wrap(Wrap { trim: false }),
+            image_area,
+        );
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "h/← previous · l/→ next · Enter/Space actions · Esc close",
+            Style::default().fg(DIM),
+        )))
+        .alignment(Alignment::Center),
+        hint_area,
+    );
+}
+
+fn image_viewer_title(item: &ImageViewerItem) -> String {
+    format!("Image {}/{} — {}", item.index, item.total, item.filename)
+}
+
+fn image_viewer_popup(area: Rect) -> Rect {
+    centered_rect(area, IMAGE_VIEWER_POPUP_WIDTH, IMAGE_VIEWER_POPUP_HEIGHT)
+}
+
+fn image_viewer_image_area(area: Rect) -> Rect {
+    let inner = image_viewer_popup(area).inner(Margin {
+        vertical: 1,
+        horizontal: 1,
+    });
+    let [image_area, _] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    image_area
+}
+
+fn render_image_viewer_action_menu(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    if !state.is_image_viewer_action_menu_open() {
+        return;
+    }
+
+    let actions = state.selected_image_viewer_action_items();
+    if actions.is_empty() {
+        return;
+    }
+    let Some(selected) = state.selected_image_viewer_action_index() else {
+        return;
+    };
+    let popup = centered_rect(area, 42, (actions.len() as u16).saturating_add(4));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(message_action_menu_lines(&actions, selected))
+            .block(panel_block("Image actions", true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
 }
 
 fn message_viewport_lines(
@@ -880,7 +1001,8 @@ fn message_viewport_lines(
     state: &DashboardState,
     content_width: usize,
     list_width: usize,
-    image_previews: &[ImagePreview<'_>],
+    preview_width: u16,
+    max_preview_height: u16,
     emoji_images: &[EmojiReactionImage<'_>],
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
@@ -893,8 +1015,8 @@ fn message_viewport_lines(
                 emoji_images.iter().any(|image| image.url == url)
             });
         }
-        let preview = preview_for_message(image_previews, index);
-        let preview_height = preview.map(|preview| preview.preview_height).unwrap_or(0);
+        let preview_spacers =
+            inline_preview_spacers_for_message(message, preview_width, max_preview_height);
 
         let global_index = state.message_scroll().saturating_add(index);
         let separator_line = state
@@ -908,14 +1030,13 @@ fn message_viewport_lines(
             lines.push(line);
         }
 
-        let item_lines = message_item_lines(
+        let item_lines = message_item_lines_with_previews(
             author,
             author_style,
             format_message_sent_time(message.id),
             content,
             content_width,
-            preview_height,
-            preview.and_then(|preview| preview.accent_color),
+            &preview_spacers,
             body_skip,
         );
         if selected == Some(index) {
@@ -1285,6 +1406,7 @@ fn forum_post_card_style(style: Style, selected: bool) -> Style {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn message_item_lines(
     author: String,
     author_style: Style,
@@ -1293,6 +1415,34 @@ fn message_item_lines(
     content_width: usize,
     preview_height: u16,
     preview_accent_color: Option<u32>,
+    line_offset: usize,
+) -> Vec<Line<'static>> {
+    let preview_spacers = (preview_height > 0)
+        .then_some(InlinePreviewSpacer {
+            height: preview_height,
+            accent_color: preview_accent_color,
+            overflow_count: 0,
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
+    message_item_lines_with_previews(
+        author,
+        author_style,
+        sent_time,
+        content,
+        content_width,
+        &preview_spacers,
+        line_offset,
+    )
+}
+
+fn message_item_lines_with_previews(
+    author: String,
+    author_style: Style,
+    sent_time: String,
+    content: Vec<MessageContentLine>,
+    content_width: usize,
+    preview_spacers: &[InlinePreviewSpacer],
     line_offset: usize,
 ) -> Vec<Line<'static>> {
     let sent_time_width = sent_time.as_str().width();
@@ -1312,10 +1462,9 @@ fn message_item_lines(
         spans.extend(line.spans());
         Line::from(spans)
     }));
-    lines.extend(image_preview_spacer_lines(
-        preview_height,
-        preview_accent_color,
-    ));
+    for spacer in preview_spacers {
+        lines.extend(image_preview_spacer_lines(spacer));
+    }
     lines.push(Line::from(""));
     lines.into_iter().skip(line_offset).collect()
 }
@@ -1427,19 +1576,40 @@ fn format_unix_millis_with_offset(unix_millis: u64, offset: chrono::FixedOffset)
     Some(utc.with_timezone(&offset).format("%H:%M").to_string())
 }
 
-fn image_preview_spacer_lines(height: u16, accent_color: Option<u32>) -> Vec<Line<'static>> {
-    (0..height)
-        .map(|_| match accent_color {
-            Some(color) => Line::from(vec![
-                message_avatar_spacer_span(),
-                Span::styled(
-                    EMBED_PREVIEW_GUTTER_PREFIX,
-                    Style::default().fg(embed_color(color)),
-                ),
-            ]),
-            None => Line::from(""),
-        })
-        .collect()
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct InlinePreviewSpacer {
+    height: u16,
+    accent_color: Option<u32>,
+    overflow_count: usize,
+}
+
+fn image_preview_spacer_lines(spacer: &InlinePreviewSpacer) -> Vec<Line<'static>> {
+    let mut lines = (0..spacer.height)
+        .map(|_| preview_spacer_blank_line(spacer.accent_color))
+        .collect::<Vec<_>>();
+    if spacer.overflow_count > 0 {
+        lines.push(Line::from(vec![
+            message_avatar_spacer_span(),
+            Span::styled(
+                format!("+{} more images", spacer.overflow_count),
+                Style::default().fg(Color::White).bg(Color::Black).bold(),
+            ),
+        ]));
+    }
+    lines
+}
+
+fn preview_spacer_blank_line(accent_color: Option<u32>) -> Line<'static> {
+    match accent_color {
+        Some(color) => Line::from(vec![
+            message_avatar_spacer_span(),
+            Span::styled(
+                EMBED_PREVIEW_GUTTER_PREFIX,
+                Style::default().fg(embed_color(color)),
+            ),
+        ]),
+        None => Line::from(""),
+    }
 }
 
 fn styled_list_item<'a>(item: ListItem<'a>, selected: bool) -> ListItem<'a> {
@@ -1820,6 +1990,10 @@ fn footer_hint(state: &DashboardState) -> &'static str {
         "j/k choose answer | space toggle | enter vote | esc close"
     } else if state.is_emoji_reaction_picker_open() {
         "j/k choose emoji | enter/space react | esc close"
+    } else if state.is_image_viewer_action_menu_open() {
+        "enter/space download image | esc close menu"
+    } else if state.is_image_viewer_open() {
+        "h/← previous image | l/→ next image | enter/space actions | esc close"
     } else if state.is_user_profile_popup_open() {
         "j/k pick mutual server | enter open server | esc close"
     } else if state.is_message_action_menu_open()
@@ -1836,9 +2010,9 @@ fn footer_hint(state: &DashboardState) -> &'static str {
     } else if state.focus() == FocusPane::Members {
         "tab/1-4 focus | j/k move | enter/space profile | a actions | i write | q quit"
     } else if state.focus() == FocusPane::Channels {
-        "tab/1-4 focus | j/k move | enter/space open | ←/→ category | a actions | ` logs | i write | q quit"
+        "tab/1-4 focus | j/k move | enter/space open | h/← close | l/→ open | a actions | ` logs | i write | q quit"
     } else {
-        "tab/1-4 focus | j/k move | J/K scroll | enter/space action/tree | ←/→ close/open | ` logs | i write | esc cancel | q quit"
+        "tab/1-4 focus | j/k move | J/K scroll | enter/space action/tree | h/← close | l/→ open | ` logs | i write | esc cancel | q quit"
     }
 }
 
@@ -2966,6 +3140,57 @@ fn inline_image_content_offset(area: Rect) -> u16 {
     MESSAGE_AVATAR_OFFSET.min(area.width.saturating_sub(1))
 }
 
+fn inline_preview_spacers_for_message(
+    message: &MessageState,
+    preview_width: u16,
+    max_preview_height: u16,
+) -> Vec<InlinePreviewSpacer> {
+    let previews = message.inline_previews();
+    let album =
+        super::media::image_preview_album_layout(&previews, preview_width, max_preview_height);
+    (album.height > 0)
+        .then(|| {
+            let accent_color = (previews.len() == 1)
+                .then(|| previews[0].accent_color)
+                .flatten();
+            InlinePreviewSpacer {
+                height: u16::try_from(album.height).unwrap_or(u16::MAX),
+                accent_color,
+                overflow_count: album.overflow_count,
+            }
+        })
+        .into_iter()
+        .collect()
+}
+
+fn total_inline_preview_height_for_message(
+    message: &MessageState,
+    preview_width: u16,
+    max_preview_height: u16,
+) -> usize {
+    inline_preview_spacers_for_message(message, preview_width, max_preview_height)
+        .into_iter()
+        .map(|spacer| {
+            usize::from(spacer.height).saturating_add(usize::from(spacer.overflow_count > 0))
+        })
+        .sum()
+}
+
+fn inline_preview_rows_before_message(
+    messages: &[&MessageState],
+    message_index: usize,
+    preview_width: u16,
+    max_preview_height: u16,
+) -> usize {
+    messages
+        .iter()
+        .take(message_index)
+        .map(|message| {
+            total_inline_preview_height_for_message(message, preview_width, max_preview_height)
+        })
+        .sum()
+}
+
 fn inline_image_preview_row(
     messages: &[&MessageState],
     state: &DashboardState,
@@ -2993,10 +3218,12 @@ fn inline_image_preview_row(
 fn inline_image_preview_area(
     list: Rect,
     row: isize,
+    preview_x_offset_columns: u16,
+    preview_width: u16,
     preview_height: u16,
     accent_color: Option<u32>,
 ) -> Option<Rect> {
-    if preview_height == 0 {
+    if preview_width == 0 || preview_height == 0 {
         return None;
     }
 
@@ -3017,15 +3244,18 @@ fn inline_image_preview_area(
     let x = list
         .x
         .saturating_add(content_offset)
+        .saturating_add(preview_x_offset_columns)
         .saturating_add(gutter_width);
+    let available_width = list
+        .width
+        .saturating_sub(content_offset)
+        .saturating_sub(preview_x_offset_columns)
+        .saturating_sub(gutter_width);
 
     Some(Rect {
         x,
         y: u16::try_from(visible_top).ok()?,
-        width: list
-            .width
-            .saturating_sub(content_offset)
-            .saturating_sub(gutter_width),
+        width: preview_width.min(available_width),
         height: u16::try_from(visible_bottom - visible_top).ok()?,
     })
 }
@@ -3071,14 +3301,15 @@ mod tests {
     use unicode_width::UnicodeWidthStr;
 
     use super::{
-        ACCENT, DIM, DISCORD_EPOCH_MILLIS, MemberEntry, SNOWFLAKE_TIMESTAMP_SHIFT,
-        channel_action_menu_lines, channel_name_style, composer_content_line_count, composer_lines,
-        composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
-        emoji_reaction_picker_lines, focus_pane_at, footer_hint, format_message_sent_time,
-        format_unix_millis_with_offset, forum_post_reaction_summary,
-        forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
-        highlight_style, inline_image_preview_area, inline_image_preview_row, member_display_label,
-        member_name_style, message_action_menu_lines, message_author_style, message_item_lines,
+        ACCENT, DIM, DISCORD_EPOCH_MILLIS, ImagePreview, ImagePreviewState, MemberEntry,
+        SNOWFLAKE_TIMESTAMP_SHIFT, channel_action_menu_lines, channel_name_style,
+        composer_content_line_count, composer_lines, composer_prompt_line_count, composer_text,
+        date_separator_line, debug_log_popup_lines, emoji_reaction_picker_lines, focus_pane_at,
+        footer_hint, format_message_sent_time, format_unix_millis_with_offset,
+        forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
+        guild_action_menu_lines, highlight_style, inline_image_preview_area,
+        inline_image_preview_row, member_display_label, member_name_style,
+        message_action_menu_lines, message_author_style, message_item_lines,
         message_starts_new_day, message_viewport_lines, poll_vote_picker_lines,
         reaction_users_popup_lines, reaction_users_visible_line_count, sync_view_heights,
         user_profile_display_name_style, user_profile_popup_lines, user_profile_popup_text,
@@ -3297,7 +3528,7 @@ mod tests {
         });
 
         let messages = state.messages();
-        let lines = message_viewport_lines(&messages, None, &state, 40, 80, &[], &[]);
+        let lines = message_viewport_lines(&messages, None, &state, 40, 80, 16, 3, &[]);
 
         assert_eq!(
             lines[1].spans[1].style.fg,
@@ -3502,7 +3733,7 @@ mod tests {
         });
 
         let messages = state.messages();
-        let lines = message_viewport_lines(&messages, None, &state, 40, 80, &[], &[]);
+        let lines = message_viewport_lines(&messages, None, &state, 40, 80, 16, 3, &[]);
 
         assert_eq!(
             lines[1].spans[1].style.fg,
@@ -3614,6 +3845,21 @@ mod tests {
     }
 
     #[test]
+    fn attachment_summary_renders_multiple_attachments_one_per_line() {
+        let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
+        message.attachments.push(file_attachment());
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(
+            line_texts(&lines),
+            vec!["look", "[image: cat.png] 640x480", "[file: notes.txt]"]
+        );
+        assert_eq!(lines[1].style, Style::default().fg(ACCENT));
+        assert_eq!(lines[2].style, Style::default().fg(ACCENT));
+    }
+
+    #[test]
     fn message_content_lines_render_discord_embed_preview() {
         let mut message = message_with_content(Some(
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned(),
@@ -3712,7 +3958,10 @@ mod tests {
         message.embeds = vec![embed];
 
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
-        let slots: Vec<_> = lines.iter().flat_map(|line| line.image_slots.iter()).collect();
+        let slots: Vec<_> = lines
+            .iter()
+            .flat_map(|line| line.image_slots.iter())
+            .collect();
 
         assert!(!slots.is_empty());
         assert!(
@@ -4960,6 +5209,19 @@ mod tests {
     }
 
     #[test]
+    fn footer_hint_switches_for_image_viewer() {
+        let mut state = state_with_image_message();
+        state.open_selected_message_actions();
+        state.move_message_action_down();
+        state.activate_selected_message_action();
+
+        assert_eq!(
+            footer_hint(&state),
+            "h/← previous image | l/→ next image | enter/space actions | esc close"
+        );
+    }
+
+    #[test]
     fn footer_hint_switches_for_debug_log_popup() {
         let mut state = DashboardState::new();
         state.toggle_debug_log_popup();
@@ -5232,6 +5494,55 @@ mod tests {
         );
 
         assert_eq!(lines.len(), 6);
+    }
+
+    #[test]
+    fn message_viewport_lines_reserve_rows_for_multiple_attachment_summaries() {
+        let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
+        message.attachments = image_attachments(2);
+        let messages = [&message];
+
+        let lines =
+            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 16, 3, &[]);
+
+        assert_eq!(lines.len(), 8);
+    }
+
+    #[test]
+    fn message_viewport_lines_reserve_rows_for_three_image_album() {
+        let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
+        message.attachments = image_attachments(3);
+        let messages = [&message];
+
+        let lines =
+            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 16, 3, &[]);
+
+        assert_eq!(lines.len(), 9);
+    }
+
+    #[test]
+    fn message_viewport_lines_keep_four_image_album_bounded() {
+        let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
+        message.attachments = image_attachments(4);
+        let messages = [&message];
+
+        let lines =
+            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 16, 3, &[]);
+
+        assert_eq!(lines.len(), 10);
+    }
+
+    #[test]
+    fn message_viewport_lines_keep_five_image_album_bounded_to_four_tiles() {
+        let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
+        message.attachments = image_attachments(5);
+        let messages = [&message];
+
+        let lines =
+            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 16, 3, &[]);
+
+        assert_eq!(lines.len(), 12);
+        assert!(line_texts_from_ratatui(&lines).contains(&"   +1 more images".to_owned()));
     }
 
     #[test]
@@ -5513,11 +5824,19 @@ mod tests {
         tall_following.attachments.clear();
         let messages = [&selected, &tall_following];
 
-        let visible_rows =
-            message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, 80, &[], &[])
-                .into_iter()
-                .take(5)
-                .collect::<Vec<_>>();
+        let visible_rows = message_viewport_lines(
+            &messages,
+            Some(0),
+            &DashboardState::new(),
+            5,
+            80,
+            16,
+            3,
+            &[],
+        )
+        .into_iter()
+        .take(5)
+        .collect::<Vec<_>>();
         let visible_text = line_texts_from_ratatui(&visible_rows);
         let sent_time = format_message_sent_time(Id::new(1));
 
@@ -5535,7 +5854,16 @@ mod tests {
         let message = message_with_content(Some("abcdefghijkl".to_owned()));
         let messages = [&message];
 
-        let lines = message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, 80, &[], &[]);
+        let lines = message_viewport_lines(
+            &messages,
+            Some(0),
+            &DashboardState::new(),
+            5,
+            80,
+            16,
+            3,
+            &[],
+        );
         let sent_time = format_message_sent_time(Id::new(1));
 
         assert_eq!(
@@ -5566,7 +5894,7 @@ mod tests {
         let area = Rect::new(10, 5, 80, 12);
 
         assert_eq!(
-            inline_image_preview_area(area, 2, 4, None),
+            inline_image_preview_area(area, 2, 0, 77, 4, None),
             Some(Rect::new(13, 8, 77, 4))
         );
     }
@@ -5576,7 +5904,7 @@ mod tests {
         let area = Rect::new(10, 5, 80, 12);
 
         assert_eq!(
-            inline_image_preview_area(area, 2, 4, Some(0xff0000)),
+            inline_image_preview_area(area, 2, 0, 77, 4, Some(0xff0000)),
             Some(Rect::new(17, 8, 73, 4))
         );
     }
@@ -5595,8 +5923,29 @@ mod tests {
 
         assert_eq!(row, 14);
         assert_eq!(
-            inline_image_preview_area(area, row, 4, None),
+            inline_image_preview_area(area, row, 0, 77, 4, None),
             Some(Rect::new(13, 20, 77, 3))
+        );
+    }
+
+    #[test]
+    fn second_inline_preview_slot_uses_album_column_offset() {
+        let area = Rect::new(10, 5, 80, 18);
+        let mut message = message_with_attachment(Some("one".to_owned()), image_attachment());
+        let mut second = image_attachment();
+        second.id = Id::new(4);
+        second.filename = "dog.png".to_owned();
+        second.url = "https://cdn.discordapp.com/dog.png".to_owned();
+        second.proxy_url = "https://media.discordapp.net/dog.png".to_owned();
+        message.attachments.push(second);
+        let messages = [&message];
+        let state = DashboardState::new();
+        let row = inline_image_preview_row(&messages, &state, 0, 200, 0, 0);
+
+        assert_eq!(row, 3);
+        assert_eq!(
+            inline_image_preview_area(area, row, 8, 8, 3, None),
+            Some(Rect::new(21, 9, 8, 3))
         );
     }
 
@@ -5617,7 +5966,7 @@ mod tests {
         let area = Rect::new(10, 5, 80, 6);
 
         assert_eq!(
-            inline_image_preview_area(area, 3, 4, None),
+            inline_image_preview_area(area, 3, 0, 77, 4, None),
             Some(Rect::new(13, 9, 77, 2))
         );
     }
@@ -5627,7 +5976,7 @@ mod tests {
         let area = Rect::new(10, 5, 80, 6);
 
         assert_eq!(
-            inline_image_preview_area(area, -2, 4, None),
+            inline_image_preview_area(area, -2, 0, 77, 4, None),
             Some(Rect::new(13, 5, 77, 3))
         );
     }
@@ -5636,23 +5985,73 @@ mod tests {
     fn inline_image_preview_area_returns_none_when_preview_starts_below_list() {
         let area = Rect::new(10, 5, 80, 6);
 
-        assert_eq!(inline_image_preview_area(area, 5, 4, None), None);
+        assert_eq!(inline_image_preview_area(area, 5, 0, 77, 4, None), None);
     }
 
     #[test]
     fn inline_image_preview_area_returns_none_when_preview_ends_above_list() {
         let area = Rect::new(10, 5, 80, 6);
 
-        assert_eq!(inline_image_preview_area(area, -5, 4, None), None);
+        assert_eq!(inline_image_preview_area(area, -5, 0, 77, 4, None), None);
+    }
+
+    #[test]
+    fn inline_album_overflow_marker_is_visible() {
+        let mut state = state_with_message();
+        let dump = render_dashboard_dump_with_previews(
+            120,
+            20,
+            &mut state,
+            vec![ImagePreview {
+                viewer: false,
+                message_index: 0,
+                preview_x_offset_columns: 0,
+                preview_y_offset_rows: 0,
+                preview_width: 16,
+                preview_height: 3,
+                preview_overflow_count: 2,
+                accent_color: None,
+                state: ImagePreviewState::Loading {
+                    filename: "image-4.png".to_owned(),
+                },
+            }],
+        );
+
+        assert!(
+            dump.iter().any(|line| line.contains("+2")),
+            "dashboard dump did not contain overflow overlay marker:\n{}",
+            dump.join("\n")
+        );
+    }
+
+    #[test]
+    fn message_viewport_lines_render_overflow_marker_as_text_fallback() {
+        let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
+        message.attachments = image_attachments(6);
+        let messages = [&message];
+
+        let lines =
+            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 16, 3, &[]);
+
+        assert!(line_texts_from_ratatui(&lines).contains(&"   +2 more images".to_owned()));
     }
 
     fn render_dashboard_dump(width: u16, height: u16, state: &mut DashboardState) -> Vec<String> {
+        render_dashboard_dump_with_previews(width, height, state, Vec::new())
+    }
+
+    fn render_dashboard_dump_with_previews(
+        width: u16,
+        height: u16,
+        state: &mut DashboardState,
+        image_previews: Vec<ImagePreview<'_>>,
+    ) -> Vec<String> {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("test terminal should build");
         terminal
             .draw(|frame| {
                 sync_view_heights(frame.area(), state);
-                super::render(frame, state, Vec::new(), Vec::new(), Vec::new(), None);
+                super::render(frame, state, image_previews, Vec::new(), Vec::new(), None);
             })
             .expect("draw");
 
@@ -5769,6 +6168,30 @@ mod tests {
             embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
+        state
+    }
+
+    fn state_with_image_message() -> DashboardState {
+        let mut state = state_with_message();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some(String::new()),
+            mentions: Vec::new(),
+            attachments: vec![image_attachment()],
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state.jump_bottom();
         state
     }
 
@@ -6067,6 +6490,20 @@ mod tests {
         }
     }
 
+    fn image_attachments(count: u64) -> Vec<AttachmentInfo> {
+        (0..count)
+            .map(|index| {
+                let id = 3 + index;
+                let mut attachment = image_attachment();
+                attachment.id = Id::new(id);
+                attachment.filename = format!("image-{id}.png");
+                attachment.url = format!("https://cdn.discordapp.com/image-{id}.png");
+                attachment.proxy_url = format!("https://media.discordapp.net/image-{id}.png");
+                attachment
+            })
+            .collect()
+    }
+
     fn video_attachment() -> AttachmentInfo {
         AttachmentInfo {
             id: Id::new(4),
@@ -6077,6 +6514,20 @@ mod tests {
             size: 78_364_758,
             width: Some(1920),
             height: Some(1080),
+            description: None,
+        }
+    }
+
+    fn file_attachment() -> AttachmentInfo {
+        AttachmentInfo {
+            id: Id::new(5),
+            filename: "notes.txt".to_owned(),
+            url: "https://cdn.discordapp.com/notes.txt".to_owned(),
+            proxy_url: "https://media.discordapp.net/notes.txt".to_owned(),
+            content_type: Some("text/plain".to_owned()),
+            size: 42,
+            width: None,
+            height: None,
             description: None,
         }
     }

@@ -8,16 +8,15 @@ mod preview;
 mod targets;
 
 pub(super) use preview::{ImagePreviewCache, ImagePreviewDecodeResult, spawn_image_preview_decode};
+#[cfg(test)]
+use targets::image_preview_height_for_dimensions;
 pub(super) use targets::{
-    AvatarTarget, EmojiImageTarget, ImagePreviewTarget, image_preview_height_for_dimensions,
+    AvatarTarget, EmojiImageTarget, ImagePreviewTarget, image_preview_album_layout,
     visible_avatar_targets, visible_emoji_image_targets, visible_image_preview_targets,
 };
 
 #[cfg(test)]
-use preview::{
-    ImagePreviewEntry, MAX_IMAGE_PREVIEW_CACHE_ENTRIES, decode_preview_sized_image,
-    preview_sized_image,
-};
+use preview::{ImagePreviewEntry, MAX_IMAGE_PREVIEW_CACHE_ENTRIES, decode_original_preview_image};
 
 use crate::{
     discord::{AppCommand, AppEvent},
@@ -115,9 +114,13 @@ impl AvatarImageCache {
                     return None;
                 };
                 let render_info = ImagePreviewRenderInfo {
+                    viewer: false,
                     message_index: 0,
+                    preview_x_offset_columns: 0,
+                    preview_y_offset_rows: 0,
                     preview_width: AVATAR_PREVIEW_WIDTH,
                     preview_height: AVATAR_PREVIEW_HEIGHT,
+                    preview_overflow_count: 0,
                     visible_preview_height: target.visible_height,
                     top_clip_rows: target.top_clip_rows,
                     accent_color: None,
@@ -160,9 +163,13 @@ impl AvatarImageCache {
             return None;
         };
         let render_info = ImagePreviewRenderInfo {
+            viewer: false,
             message_index: 0,
+            preview_x_offset_columns: 0,
+            preview_y_offset_rows: 0,
             preview_width: PROFILE_POPUP_AVATAR_WIDTH,
             preview_height: PROFILE_POPUP_AVATAR_HEIGHT,
+            preview_overflow_count: 0,
             visible_preview_height: PROFILE_POPUP_AVATAR_HEIGHT,
             top_clip_rows: 0,
             accent_color: None,
@@ -327,9 +334,13 @@ impl EmojiImageCache {
         match image::load_from_memory(bytes) {
             Ok(image) => {
                 let render_info = ImagePreviewRenderInfo {
+                    viewer: false,
                     message_index: 0,
+                    preview_x_offset_columns: 0,
+                    preview_y_offset_rows: 0,
                     preview_width: EMOJI_REACTION_THUMB_WIDTH,
                     preview_height: EMOJI_REACTION_THUMB_HEIGHT,
+                    preview_overflow_count: 0,
                     visible_preview_height: EMOJI_REACTION_THUMB_HEIGHT,
                     top_clip_rows: 0,
                     accent_color: None,
@@ -365,9 +376,13 @@ impl EmojiImageCache {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ImagePreviewRenderInfo {
+    viewer: bool,
     message_index: usize,
+    preview_x_offset_columns: u16,
+    preview_y_offset_rows: usize,
     preview_width: u16,
     preview_height: u16,
+    preview_overflow_count: usize,
     visible_preview_height: u16,
     top_clip_rows: u16,
     accent_color: Option<u32>,
@@ -458,6 +473,8 @@ mod tests {
             content_width: 200,
             preview_width: 16,
             max_preview_height: 3,
+            viewer_preview_width: 76,
+            viewer_max_preview_height: 13,
         }
     }
 
@@ -479,6 +496,154 @@ mod tests {
         let targets = visible_image_preview_targets(&state, layout(6));
 
         assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
+    }
+
+    #[test]
+    fn image_preview_targets_include_multiple_attachments_from_one_message() {
+        let mut state = state_with_image_messages(0, &[]);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("album".to_owned()),
+            mentions: Vec::new(),
+            attachments: vec![image_attachment(1), image_attachment(2)],
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let targets = visible_image_preview_targets(&state, layout(12));
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(1), Id::new(1)]);
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.url.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "https://cdn.discordapp.com/image-1.png",
+                "https://cdn.discordapp.com/image-2.png",
+            ]
+        );
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| (
+                    target.preview_x_offset_columns,
+                    target.preview_y_offset_rows,
+                    target.preview_width,
+                    target.preview_height,
+                ))
+                .collect::<Vec<_>>(),
+            vec![(0, 0, 8, 3), (8, 0, 8, 3)]
+        );
+    }
+
+    #[test]
+    fn image_preview_targets_layout_three_images_as_large_left_tile() {
+        let mut state = state_with_image_messages(0, &[]);
+        push_album_message(&mut state, 1, 3);
+
+        let targets = visible_image_preview_targets(&state, layout(12));
+
+        assert_eq!(targets.len(), 3);
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| (
+                    target.preview_index,
+                    target.preview_x_offset_columns,
+                    target.preview_y_offset_rows,
+                    target.preview_width,
+                    target.preview_height,
+                ))
+                .collect::<Vec<_>>(),
+            vec![(0, 0, 0, 8, 3), (1, 8, 0, 8, 2), (2, 8, 2, 8, 1)]
+        );
+    }
+
+    #[test]
+    fn image_preview_targets_layout_four_images_as_bounded_two_by_two_grid() {
+        let mut state = state_with_image_messages(0, &[]);
+        push_album_message(&mut state, 1, 4);
+
+        let targets = visible_image_preview_targets(&state, layout(12));
+
+        assert_eq!(targets.len(), 4);
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| (
+                    target.preview_index,
+                    target.preview_x_offset_columns,
+                    target.preview_y_offset_rows,
+                    target.preview_width,
+                    target.preview_height,
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, 0, 0, 8, 2),
+                (1, 8, 0, 8, 2),
+                (2, 0, 2, 8, 1),
+                (3, 8, 2, 8, 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn image_preview_targets_layout_five_images_with_overflow_marker_on_fourth_tile() {
+        let mut state = state_with_image_messages(0, &[]);
+        push_album_message(&mut state, 1, 5);
+
+        let targets = visible_image_preview_targets(&state, layout(12));
+
+        assert_eq!(targets.len(), 4);
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.preview_index)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
+        assert!(
+            targets
+                .iter()
+                .all(|target| target.preview_y_offset_rows < 3)
+        );
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.preview_overflow_count)
+                .collect::<Vec<_>>(),
+            vec![0, 0, 0, 1]
+        );
+    }
+
+    #[test]
+    fn image_viewer_target_uses_viewer_layout_dimensions() {
+        let mut state = state_with_image_messages(1, &[1]);
+        state.focus_pane(FocusPane::Messages);
+        state.open_selected_message_actions();
+        state.move_message_action_down();
+        state.activate_selected_message_action();
+
+        let target = visible_image_preview_targets(&state, layout(12))
+            .into_iter()
+            .next()
+            .expect("viewer should create one image target");
+
+        assert!(target.viewer);
+        assert_eq!(target.preview_width, 76);
+        assert_eq!(target.preview_height, 13);
+        assert_eq!(target.visible_preview_height, 13);
     }
 
     #[test]
@@ -543,6 +708,39 @@ mod tests {
         assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
         assert_eq!(targets[0].visible_preview_height, 2);
         assert_eq!(targets[0].top_clip_rows, 0);
+    }
+
+    #[test]
+    fn image_preview_targets_clip_album_bottom_row_after_line_scroll() {
+        let mut state = state_with_image_messages(0, &[]);
+        push_album_message(&mut state, 1, 4);
+        state.focus_pane(FocusPane::Messages);
+        state.clamp_message_viewport_for_image_previews(200, 16, 3);
+        for _ in 0..16 {
+            state.scroll_message_viewport_down();
+            let targets = visible_image_preview_targets(&state, layout(2));
+            if targets
+                .first()
+                .is_some_and(|target| target.preview_index == 2)
+            {
+                break;
+            }
+        }
+
+        let targets = visible_image_preview_targets(&state, layout(2));
+
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| (
+                    target.preview_index,
+                    target.preview_y_offset_rows,
+                    target.visible_preview_height,
+                    target.top_clip_rows,
+                ))
+                .collect::<Vec<_>>(),
+            vec![(2, 2, 1, 0), (3, 2, 1, 0)]
+        );
     }
 
     #[test]
@@ -703,6 +901,134 @@ mod tests {
     }
 
     #[test]
+    fn image_preview_render_state_preserves_target_order() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+            decode_generation: 0,
+        };
+        let first = image_preview_target(1);
+        let second = ImagePreviewTarget {
+            message_id: Id::new(1),
+            preview_index: 1,
+            preview_x_offset_columns: 8,
+            ..image_preview_target(2)
+        };
+        cache.entries.insert(
+            second.key(),
+            ImagePreviewEntry::Loading {
+                filename: second.filename.clone(),
+                render_info: second.preview_render_info(),
+                last_used: 1,
+            },
+        );
+        cache.entries.insert(
+            first.key(),
+            ImagePreviewEntry::Loading {
+                filename: first.filename.clone(),
+                render_info: first.preview_render_info(),
+                last_used: 2,
+            },
+        );
+
+        let previews = cache.render_state(&[first, second]);
+
+        assert_eq!(
+            previews
+                .into_iter()
+                .map(|preview| match preview.state {
+                    super::super::ui::ImagePreviewState::Loading { filename } => filename,
+                    _ => "unexpected state".to_owned(),
+                })
+                .collect::<Vec<_>>(),
+            vec!["image-1.png", "image-2.png"]
+        );
+    }
+
+    #[test]
+    fn image_preview_cache_keeps_duplicate_urls_as_separate_preview_instances() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+            decode_generation: 0,
+        };
+        let first = image_preview_target(1);
+        let second = ImagePreviewTarget {
+            preview_index: 1,
+            preview_x_offset_columns: 8,
+            ..image_preview_target(1)
+        };
+
+        let requests = cache.next_requests(&[first, second]);
+
+        assert_eq!(requests.len(), 1);
+        assert_eq!(cache.entries.len(), 2);
+        let previews = cache.render_state(&[
+            image_preview_target(1),
+            ImagePreviewTarget {
+                preview_index: 1,
+                preview_x_offset_columns: 8,
+                ..image_preview_target(1)
+            },
+        ]);
+
+        assert_eq!(previews.len(), 2);
+        assert_eq!(previews[0].preview_x_offset_columns, 0);
+        assert_eq!(previews[1].preview_x_offset_columns, 8);
+    }
+
+    #[test]
+    fn image_preview_cache_deduplicates_url_already_loading_from_previous_frame() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+            decode_generation: 0,
+        };
+        let first = image_preview_target(1);
+        cache.next_requests(std::slice::from_ref(&first));
+        let second = ImagePreviewTarget {
+            preview_index: 1,
+            preview_x_offset_columns: 8,
+            ..image_preview_target(1)
+        };
+
+        let requests = cache.next_requests(std::slice::from_ref(&second));
+
+        assert!(requests.is_empty());
+        assert_eq!(cache.entries.len(), 2);
+    }
+
+    #[test]
+    fn image_preview_cache_keeps_viewer_and_inline_entries_separate() {
+        let mut cache = ImagePreviewCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+            decode_generation: 0,
+        };
+        let inline = image_preview_target(1);
+        let viewer = ImagePreviewTarget {
+            viewer: true,
+            preview_width: 76,
+            preview_height: 13,
+            visible_preview_height: 13,
+            ..image_preview_target(1)
+        };
+
+        let inline_requests = cache.next_requests(std::slice::from_ref(&inline));
+        let viewer_requests = cache.next_requests(std::slice::from_ref(&viewer));
+
+        assert_eq!(inline_requests.len(), 1);
+        assert!(viewer_requests.is_empty());
+        assert_eq!(cache.entries.len(), 2);
+        assert!(cache.entries.contains_key(&inline.key()));
+        assert!(cache.entries.contains_key(&viewer.key()));
+    }
+
+    #[test]
     fn image_preview_cache_evicts_least_recently_used_entries() {
         let mut cache = ImagePreviewCache {
             picker: None,
@@ -819,8 +1145,6 @@ mod tests {
         assert_eq!(jobs[0].key, key);
         assert_eq!(jobs[0].generation, 1);
         assert_eq!(jobs[0].bytes.as_ref(), b"image bytes");
-        assert_eq!(jobs[0].font_size, (10, 20));
-        assert_eq!(jobs[0].render_info, render_info);
         assert!(matches!(
             cache.entries.get(&jobs[0].key),
             Some(ImagePreviewEntry::Decoding { filename, generation, .. })
@@ -928,13 +1252,9 @@ mod tests {
     }
 
     #[test]
-    fn decode_preview_sized_image_reports_invalid_bytes() {
-        let error = decode_preview_sized_image(
-            b"not an image",
-            (10, 20),
-            image_preview_target(1).preview_render_info(),
-        )
-        .expect_err("invalid bytes should fail to decode");
+    fn decode_original_preview_image_reports_invalid_bytes() {
+        let error = decode_original_preview_image(b"not an image")
+            .expect_err("invalid bytes should fail to decode");
 
         assert!(error.starts_with("decode failed:"));
     }
@@ -983,19 +1303,23 @@ mod tests {
     }
 
     #[test]
-    fn preview_sized_image_stays_within_preview_pixel_bounds() {
+    fn clipped_preview_image_stays_within_preview_pixel_bounds() {
         let image =
             DynamicImage::ImageRgba8(ImageBuffer::from_pixel(400, 400, Rgba([0, 0, 0, 255])));
         let render_info = ImagePreviewRenderInfo {
+            viewer: false,
             message_index: 0,
+            preview_x_offset_columns: 0,
+            preview_y_offset_rows: 0,
             preview_width: 16,
             preview_height: 3,
+            preview_overflow_count: 0,
             visible_preview_height: 3,
             top_clip_rows: 0,
             accent_color: None,
         };
 
-        let resized = preview_sized_image(&image, (10, 20), render_info)
+        let resized = clipped_preview_image(&image, (10, 20), render_info)
             .expect("preview dimensions should produce resized image");
 
         assert!(resized.width() <= 160);
@@ -1445,11 +1769,37 @@ mod tests {
         targets.iter().map(|target| target.message_id).collect()
     }
 
+    fn push_album_message(state: &mut DashboardState, message_id: u64, attachment_count: u64) {
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(message_id),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("album".to_owned()),
+            mentions: Vec::new(),
+            attachments: (1..=attachment_count).map(image_attachment).collect(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+    }
+
     fn image_preview_target(id: u64) -> ImagePreviewTarget {
         ImagePreviewTarget {
+            viewer: false,
             message_index: 0,
+            preview_index: 0,
+            preview_x_offset_columns: 0,
+            preview_y_offset_rows: 0,
             preview_width: 16,
             preview_height: 3,
+            preview_overflow_count: 0,
             visible_preview_height: 3,
             top_clip_rows: 0,
             accent_color: None,

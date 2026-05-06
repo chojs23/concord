@@ -177,6 +177,22 @@ impl MessageState {
             })
     }
 
+    pub fn inline_previews(&self) -> Vec<InlinePreviewInfo<'_>> {
+        self.attachments_in_display_order()
+            .filter_map(AttachmentInfo::inline_preview_info)
+            .chain(
+                self.embeds
+                    .iter()
+                    .chain(
+                        self.forwarded_snapshots
+                            .iter()
+                            .flat_map(|snapshot| snapshot.embeds.iter()),
+                    )
+                    .filter_map(EmbedInfo::inline_preview_info),
+            )
+            .collect()
+    }
+
     pub fn capabilities(&self) -> MessageCapabilities {
         let mut capabilities = MessageCapabilities {
             is_reply: self.reply.is_some(),

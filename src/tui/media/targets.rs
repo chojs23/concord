@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use crate::discord::ids::{Id, marker::MessageMarker};
+use crate::discord::{
+    InlinePreviewInfo,
+    ids::{Id, marker::MessageMarker},
+};
 
 use super::super::{
     message_format::format_message_content_lines,
@@ -17,9 +20,14 @@ use super::AVATAR_PREVIEW_HEIGHT;
 const IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
 
 pub(in crate::tui) struct ImagePreviewTarget {
+    pub(super) viewer: bool,
     pub(super) message_index: usize,
+    pub(super) preview_index: usize,
+    pub(super) preview_x_offset_columns: u16,
+    pub(super) preview_y_offset_rows: usize,
     pub(super) preview_width: u16,
     pub(super) preview_height: u16,
+    pub(super) preview_overflow_count: usize,
     pub(super) visible_preview_height: u16,
     pub(super) top_clip_rows: u16,
     pub(super) accent_color: Option<u32>,
@@ -41,10 +49,56 @@ pub(in crate::tui) struct EmojiImageTarget {
     pub(super) url: String,
 }
 
+const MAX_ALBUM_PREVIEW_TILES: usize = 4;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) struct ImagePreviewAlbumCell {
+    pub(in crate::tui) preview_index: usize,
+    pub(in crate::tui) x_offset_columns: u16,
+    pub(in crate::tui) y_offset_rows: usize,
+    pub(in crate::tui) width: u16,
+    pub(in crate::tui) height: u16,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(in crate::tui) struct ImagePreviewAlbumLayout {
+    pub(in crate::tui) cells: Vec<ImagePreviewAlbumCell>,
+    pub(in crate::tui) height: usize,
+    pub(in crate::tui) overflow_count: usize,
+}
+
 pub(in crate::tui) fn visible_image_preview_targets(
     state: &DashboardState,
     layout: ImagePreviewLayout,
 ) -> Vec<ImagePreviewTarget> {
+    if let Some((message_id, preview_index, preview)) = state.selected_image_viewer_preview() {
+        let preview_height = image_preview_height_for_dimensions(
+            layout.viewer_preview_width,
+            layout.viewer_max_preview_height,
+            preview.width,
+            preview.height,
+        );
+        if preview_height == 0 {
+            return Vec::new();
+        }
+        return vec![ImagePreviewTarget {
+            viewer: true,
+            message_index: 0,
+            preview_index,
+            preview_x_offset_columns: 0,
+            preview_y_offset_rows: 0,
+            preview_width: layout.viewer_preview_width,
+            preview_height,
+            preview_overflow_count: 0,
+            visible_preview_height: preview_height,
+            top_clip_rows: 0,
+            accent_color: preview.accent_color,
+            message_id,
+            url: preview.url.to_owned(),
+            filename: preview.filename.to_owned(),
+        }];
+    }
+
     let mut rendered_rows = 0usize;
     let mut targets = Vec::new();
 
@@ -59,43 +113,48 @@ pub(in crate::tui) fn visible_image_preview_targets(
         let base_rows = state.message_base_line_count_for_width(message, layout.content_width);
         let block_rows = base_rows.saturating_add(separator_lines);
 
-        let Some(preview) = message.first_inline_preview() else {
-            rendered_rows = rendered_rows.saturating_add(
-                block_rows
-                    .saturating_add(ui::MESSAGE_ROW_GAP)
-                    .saturating_sub(line_offset),
-            );
-            continue;
-        };
-
-        let preview_height = image_preview_height_for_dimensions(
-            layout.preview_width,
-            layout.max_preview_height,
-            preview.width,
-            preview.height,
-        );
-        let preview_top = rendered_rows as isize + block_rows as isize - line_offset as isize;
-        let preview_bottom = preview_top.saturating_add(preview_height as isize);
-        let visible_top = preview_top.max(0);
-        let visible_bottom = preview_bottom.min(layout.list_height as isize);
-        if preview_height > 0 && visible_top < visible_bottom {
-            targets.push(ImagePreviewTarget {
-                message_index,
-                preview_width: layout.preview_width,
-                preview_height,
-                visible_preview_height: u16::try_from(visible_bottom - visible_top)
-                    .unwrap_or(u16::MAX),
-                top_clip_rows: u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX),
-                accent_color: preview.accent_color,
-                message_id: message.id,
-                url: preview.url.to_owned(),
-                filename: preview.filename.to_owned(),
-            });
+        let previews = message.inline_previews();
+        let album =
+            image_preview_album_layout(&previews, layout.preview_width, layout.max_preview_height);
+        let album_accent_color = (previews.len() == 1)
+            .then(|| previews.first().and_then(|preview| preview.accent_color))
+            .flatten();
+        for cell in &album.cells {
+            let preview = previews[cell.preview_index];
+            let preview_overflow_count = (cell.preview_index + 1 == MAX_ALBUM_PREVIEW_TILES)
+                .then(|| previews.len().saturating_sub(MAX_ALBUM_PREVIEW_TILES))
+                .unwrap_or(0);
+            let preview_top =
+                rendered_rows as isize + block_rows as isize + cell.y_offset_rows as isize
+                    - line_offset as isize;
+            let preview_bottom = preview_top.saturating_add(cell.height as isize);
+            let visible_top = preview_top.max(0);
+            let visible_bottom = preview_bottom.min(layout.list_height as isize);
+            if cell.width > 0 && cell.height > 0 && visible_top < visible_bottom {
+                targets.push(ImagePreviewTarget {
+                    viewer: false,
+                    message_index,
+                    preview_index: cell.preview_index,
+                    preview_x_offset_columns: cell.x_offset_columns,
+                    preview_y_offset_rows: cell.y_offset_rows,
+                    preview_width: cell.width,
+                    preview_height: cell.height,
+                    preview_overflow_count,
+                    visible_preview_height: u16::try_from(visible_bottom - visible_top)
+                        .unwrap_or(u16::MAX),
+                    top_clip_rows: u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX),
+                    accent_color: album_accent_color,
+                    message_id: message.id,
+                    url: preview.url.to_owned(),
+                    filename: preview.filename.to_owned(),
+                });
+            }
         }
 
         rendered_rows = rendered_rows.saturating_add(
             block_rows
-                .saturating_add(preview_height as usize)
+                .saturating_add(album.height)
+                .saturating_add(usize::from(album.overflow_count > 0))
                 .saturating_add(ui::MESSAGE_ROW_GAP)
                 .saturating_sub(line_offset),
         );
@@ -137,20 +196,15 @@ pub(in crate::tui) fn visible_avatar_targets(
             });
         }
 
-        let preview_height = message
-            .first_inline_preview()
-            .map(|preview| {
-                image_preview_height_for_dimensions(
-                    layout.preview_width,
-                    layout.max_preview_height,
-                    preview.width,
-                    preview.height,
-                )
-            })
-            .unwrap_or(0);
+        let previews = message.inline_previews();
+        let album =
+            image_preview_album_layout(&previews, layout.preview_width, layout.max_preview_height);
+        let preview_height = album
+            .height
+            .saturating_add(usize::from(album.overflow_count > 0));
         rendered_rows = rendered_rows.saturating_add(
             block_rows
-                .saturating_add(preview_height as usize)
+                .saturating_add(preview_height)
                 .saturating_add(ui::MESSAGE_ROW_GAP)
                 .saturating_sub(line_offset),
         );
@@ -228,6 +282,153 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
     }
 
     targets
+}
+
+pub(in crate::tui) fn image_preview_album_layout(
+    previews: &[InlinePreviewInfo<'_>],
+    preview_width: u16,
+    max_preview_height: u16,
+) -> ImagePreviewAlbumLayout {
+    if previews.is_empty() || preview_width == 0 || max_preview_height == 0 {
+        return ImagePreviewAlbumLayout::default();
+    }
+
+    if previews.len() == 1 {
+        let preview = previews[0];
+        let height = image_preview_height_for_dimensions(
+            preview_width,
+            max_preview_height,
+            preview.width,
+            preview.height,
+        );
+        if height == 0 {
+            return ImagePreviewAlbumLayout::default();
+        }
+        return ImagePreviewAlbumLayout {
+            cells: vec![ImagePreviewAlbumCell {
+                preview_index: 0,
+                x_offset_columns: 0,
+                y_offset_rows: 0,
+                width: preview_width,
+                height,
+            }],
+            height: height as usize,
+            overflow_count: 0,
+        };
+    }
+
+    let (left_width, right_width) = split_cells(preview_width);
+    let overflow_count = previews.len().saturating_sub(MAX_ALBUM_PREVIEW_TILES);
+    match previews.len().min(MAX_ALBUM_PREVIEW_TILES) {
+        2 => {
+            let height = previews
+                .iter()
+                .take(2)
+                .zip([left_width, right_width])
+                .map(|(preview, width)| {
+                    image_preview_height_for_dimensions(
+                        width,
+                        max_preview_height,
+                        preview.width,
+                        preview.height,
+                    )
+                })
+                .max()
+                .unwrap_or(0);
+            ImagePreviewAlbumLayout {
+                cells: vec![
+                    ImagePreviewAlbumCell {
+                        preview_index: 0,
+                        x_offset_columns: 0,
+                        y_offset_rows: 0,
+                        width: left_width,
+                        height,
+                    },
+                    ImagePreviewAlbumCell {
+                        preview_index: 1,
+                        x_offset_columns: left_width,
+                        y_offset_rows: 0,
+                        width: right_width,
+                        height,
+                    },
+                ],
+                height: height as usize,
+                overflow_count,
+            }
+        }
+        3 => {
+            let (top_height, bottom_height) = split_cells(max_preview_height);
+            ImagePreviewAlbumLayout {
+                cells: vec![
+                    ImagePreviewAlbumCell {
+                        preview_index: 0,
+                        x_offset_columns: 0,
+                        y_offset_rows: 0,
+                        width: left_width,
+                        height: max_preview_height,
+                    },
+                    ImagePreviewAlbumCell {
+                        preview_index: 1,
+                        x_offset_columns: left_width,
+                        y_offset_rows: 0,
+                        width: right_width,
+                        height: top_height,
+                    },
+                    ImagePreviewAlbumCell {
+                        preview_index: 2,
+                        x_offset_columns: left_width,
+                        y_offset_rows: top_height as usize,
+                        width: right_width,
+                        height: bottom_height,
+                    },
+                ],
+                height: max_preview_height as usize,
+                overflow_count,
+            }
+        }
+        _ => {
+            let (top_height, bottom_height) = split_cells(max_preview_height);
+            ImagePreviewAlbumLayout {
+                cells: vec![
+                    ImagePreviewAlbumCell {
+                        preview_index: 0,
+                        x_offset_columns: 0,
+                        y_offset_rows: 0,
+                        width: left_width,
+                        height: top_height,
+                    },
+                    ImagePreviewAlbumCell {
+                        preview_index: 1,
+                        x_offset_columns: left_width,
+                        y_offset_rows: 0,
+                        width: right_width,
+                        height: top_height,
+                    },
+                    ImagePreviewAlbumCell {
+                        preview_index: 2,
+                        x_offset_columns: 0,
+                        y_offset_rows: top_height as usize,
+                        width: left_width,
+                        height: bottom_height,
+                    },
+                    ImagePreviewAlbumCell {
+                        preview_index: 3,
+                        x_offset_columns: left_width,
+                        y_offset_rows: top_height as usize,
+                        width: right_width,
+                        height: bottom_height,
+                    },
+                ],
+                height: max_preview_height as usize,
+                overflow_count,
+            }
+        }
+    }
+}
+
+fn split_cells(value: u16) -> (u16, u16) {
+    let first = value.div_ceil(2);
+    (first, value.saturating_sub(first))
 }
 
 pub(in crate::tui) fn image_preview_height_for_dimensions(

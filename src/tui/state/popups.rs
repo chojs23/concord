@@ -13,6 +13,13 @@ pub struct MessageActionMenuState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ImageViewerState {
+    pub(super) message_id: Id<MessageMarker>,
+    pub(super) selected: usize,
+    pub(super) action_menu_selected: Option<usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct GuildActionMenuState {
     pub(super) selected: usize,
 }

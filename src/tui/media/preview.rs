@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::discord::ids::{Id, marker::MessageMarker};
-use image::{DynamicImage, imageops::FilterType};
+use image::DynamicImage;
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
 use tokio::{sync::mpsc, task};
 
@@ -21,7 +21,9 @@ pub(super) const MAX_IMAGE_PREVIEW_CACHE_ENTRIES: usize = 32;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) struct ImagePreviewKey {
+    viewer: bool,
     message_id: Id<MessageMarker>,
+    preview_index: usize,
     pub(super) url: String,
 }
 
@@ -36,8 +38,6 @@ pub(in crate::tui) struct ImagePreviewDecodeJob {
     pub(super) key: ImagePreviewKey,
     pub(super) generation: u64,
     pub(super) bytes: Arc<[u8]>,
-    pub(super) font_size: (u16, u16),
-    pub(super) render_info: ImagePreviewRenderInfo,
 }
 
 pub(in crate::tui) struct ImagePreviewDecodeResult {
@@ -90,13 +90,14 @@ impl ImagePreviewCache {
         let picker = self.picker.clone();
         let target_by_key = targets
             .iter()
-            .map(|target| (target.key(), target.preview_render_info()))
+            .enumerate()
+            .map(|(index, target)| (target.key(), (index, target.preview_render_info())))
             .collect::<HashMap<_, _>>();
         let mut rendered_keys = HashSet::new();
         let mut previews = Vec::new();
 
         for (key, entry) in &mut self.entries {
-            let Some(render_info) = target_by_key.get(key).copied() else {
+            let Some((order, render_info)) = target_by_key.get(key).copied() else {
                 continue;
             };
             rendered_keys.insert(key.clone());
@@ -131,29 +132,45 @@ impl ImagePreviewCache {
                     message: message.clone(),
                 },
             };
-            previews.push(ImagePreview {
-                message_index: render_info.message_index,
-                preview_height: render_info.preview_height,
-                accent_color: render_info.accent_color,
-                state,
-            });
+            previews.push((
+                order,
+                ImagePreview {
+                    viewer: render_info.viewer,
+                    message_index: render_info.message_index,
+                    preview_x_offset_columns: render_info.preview_x_offset_columns,
+                    preview_y_offset_rows: render_info.preview_y_offset_rows,
+                    preview_width: render_info.preview_width,
+                    preview_height: render_info.preview_height,
+                    preview_overflow_count: render_info.preview_overflow_count,
+                    accent_color: render_info.accent_color,
+                    state,
+                },
+            ));
         }
 
-        for target in targets.iter() {
+        for (order, target) in targets.iter().enumerate() {
             if !rendered_keys.contains(&target.key()) {
-                previews.push(ImagePreview {
-                    message_index: target.message_index,
-                    preview_height: target.preview_height,
-                    accent_color: target.accent_color,
-                    state: ImagePreviewState::Loading {
-                        filename: target.filename.clone(),
+                previews.push((
+                    order,
+                    ImagePreview {
+                        viewer: target.viewer,
+                        message_index: target.message_index,
+                        preview_x_offset_columns: target.preview_x_offset_columns,
+                        preview_y_offset_rows: target.preview_y_offset_rows,
+                        preview_width: target.preview_width,
+                        preview_height: target.preview_height,
+                        preview_overflow_count: target.preview_overflow_count,
+                        accent_color: target.accent_color,
+                        state: ImagePreviewState::Loading {
+                            filename: target.filename.clone(),
+                        },
                     },
-                });
+                ));
             }
         }
 
-        previews.sort_by_key(|preview| preview.message_index);
-        previews
+        previews.sort_by_key(|(order, _)| *order);
+        previews.into_iter().map(|(_, preview)| preview).collect()
     }
 
     pub(in crate::tui) fn next_requests(
@@ -161,7 +178,12 @@ impl ImagePreviewCache {
         targets: &[ImagePreviewTarget],
     ) -> Vec<AppCommand> {
         let mut commands = Vec::new();
-        let mut requested_urls = HashSet::new();
+        let mut requested_urls = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| matches!(entry, ImagePreviewEntry::Loading { .. }))
+            .map(|(key, _)| key.url.clone())
+            .collect::<HashSet<_>>();
         for target in targets.iter().take(MAX_IMAGE_PREVIEW_CACHE_ENTRIES) {
             let key = target.key();
             if self.entries.contains_key(&key) {
@@ -226,7 +248,7 @@ impl ImagePreviewCache {
         &mut self,
         keys: Vec<ImagePreviewKey>,
         bytes: &[u8],
-        font_size: (u16, u16),
+        _font_size: (u16, u16),
     ) -> Vec<ImagePreviewDecodeJob> {
         let bytes: Arc<[u8]> = Arc::from(bytes.to_vec());
         let mut jobs = Vec::new();
@@ -259,8 +281,6 @@ impl ImagePreviewCache {
                 key,
                 generation,
                 bytes: bytes.clone(),
-                font_size,
-                render_info,
             });
         }
         jobs
@@ -429,7 +449,9 @@ fn clipped_preview_stateful_protocol(
 impl ImagePreviewTarget {
     pub(super) fn key(&self) -> ImagePreviewKey {
         ImagePreviewKey {
+            viewer: self.viewer,
             message_id: self.message_id,
+            preview_index: self.preview_index,
             url: self.url.clone(),
         }
     }
@@ -437,11 +459,15 @@ impl ImagePreviewTarget {
     pub(super) fn preview_render_info(&self) -> ImagePreviewRenderInfo {
         ImagePreviewRenderInfo {
             message_index: self.message_index,
+            preview_x_offset_columns: self.preview_x_offset_columns,
+            preview_y_offset_rows: self.preview_y_offset_rows,
             preview_width: self.preview_width,
             preview_height: self.preview_height,
+            preview_overflow_count: self.preview_overflow_count,
             visible_preview_height: self.visible_preview_height,
             top_clip_rows: self.top_clip_rows,
             accent_color: self.accent_color,
+            viewer: self.viewer,
         }
     }
 }
@@ -496,7 +522,7 @@ pub(in crate::tui) fn spawn_image_preview_decode(
 }
 
 fn decode_image_preview(job: ImagePreviewDecodeJob) -> ImagePreviewDecodeResult {
-    let result = decode_preview_sized_image(&job.bytes, job.font_size, job.render_info);
+    let result = decode_original_preview_image(&job.bytes);
     ImagePreviewDecodeResult {
         key: job.key,
         generation: job.generation,
@@ -504,28 +530,8 @@ fn decode_image_preview(job: ImagePreviewDecodeJob) -> ImagePreviewDecodeResult 
     }
 }
 
-pub(super) fn decode_preview_sized_image(
+pub(super) fn decode_original_preview_image(
     bytes: &[u8],
-    font_size: (u16, u16),
-    render_info: ImagePreviewRenderInfo,
 ) -> std::result::Result<DynamicImage, String> {
-    let decoded =
-        image::load_from_memory(bytes).map_err(|error| format!("decode failed: {error}"))?;
-    preview_sized_image(&decoded, font_size, render_info)
-        .ok_or_else(|| "preview dimensions unavailable".to_owned())
-}
-
-pub(super) fn preview_sized_image(
-    image: &DynamicImage,
-    font_size: (u16, u16),
-    render_info: ImagePreviewRenderInfo,
-) -> Option<DynamicImage> {
-    let (font_width, font_height) = font_size;
-    let width = u32::from(render_info.preview_width).checked_mul(u32::from(font_width))?;
-    let height = u32::from(render_info.preview_height).checked_mul(u32::from(font_height))?;
-    if width == 0 || height == 0 {
-        return None;
-    }
-
-    Some(image.resize(width, height, FilterType::Triangle))
+    image::load_from_memory(bytes).map_err(|error| format!("decode failed: {error}"))
 }

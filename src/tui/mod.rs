@@ -220,6 +220,8 @@ struct VisibleDashboardSignature {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct VisiblePopupSignature {
     message_action_open: bool,
+    image_viewer_open: bool,
+    image_viewer_action_open: bool,
     guild_action_open: bool,
     channel_action_open: bool,
     member_action_open: bool,
@@ -260,6 +262,8 @@ fn visible_dashboard_signature(state: &DashboardState) -> VisibleDashboardSignat
         status_message: state.last_status().map(str::to_owned),
         popups: VisiblePopupSignature {
             message_action_open: state.is_message_action_menu_open(),
+            image_viewer_open: state.is_image_viewer_open(),
+            image_viewer_action_open: state.is_image_viewer_action_menu_open(),
             guild_action_open: state.is_guild_action_menu_open(),
             channel_action_open: state.is_channel_action_menu_open(),
             member_action_open: state.is_member_action_menu_open(),

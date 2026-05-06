@@ -79,6 +79,14 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_message_action_menu_key(state, key);
     }
 
+    if state.is_image_viewer_action_menu_open() {
+        return handle_image_viewer_action_menu_key(state, key);
+    }
+
+    if state.is_image_viewer_open() {
+        return handle_image_viewer_key(state, key);
+    }
+
     if state.is_guild_action_menu_open() {
         return handle_guild_action_menu_key(state, key);
     }
@@ -161,10 +169,14 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Enter | KeyCode::Char(' ') if focus == FocusPane::Messages => {
             return state.activate_selected_message_pane_item();
         }
-        KeyCode::Right if focus == FocusPane::Guilds => state.open_selected_folder(),
-        KeyCode::Left if focus == FocusPane::Guilds => state.close_selected_folder(),
-        KeyCode::Right if focus == FocusPane::Channels => state.open_selected_channel_category(),
-        KeyCode::Left if focus == FocusPane::Channels => state.close_selected_channel_category(),
+        code if is_right_key(code) && focus == FocusPane::Guilds => state.open_selected_folder(),
+        code if is_left_key(code) && focus == FocusPane::Guilds => state.close_selected_folder(),
+        code if is_right_key(code) && focus == FocusPane::Channels => {
+            state.open_selected_channel_category()
+        }
+        code if is_left_key(code) && focus == FocusPane::Channels => {
+            state.close_selected_channel_category()
+        }
         _ => {}
     }
 
@@ -372,6 +384,7 @@ fn ignores_dashboard_mouse(state: &DashboardState) -> bool {
         || state.is_poll_vote_picker_open()
         || state.is_emoji_reaction_picker_open()
         || state.is_message_action_menu_open()
+        || state.is_image_viewer_open()
         || state.is_guild_action_menu_open()
         || state.is_channel_action_menu_open()
         || state.is_member_action_menu_open()
@@ -392,6 +405,31 @@ fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
         code if is_down_key(code) => state.move_message_action_down(),
         code if is_up_key(code) => state.move_message_action_up(),
         code if is_confirm_key(code) => return state.activate_selected_message_action(),
+        _ => {}
+    }
+
+    None
+}
+
+fn handle_image_viewer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc => state.close_image_viewer(),
+        code if is_left_key(code) => state.move_image_viewer_previous(),
+        code if is_right_key(code) => state.move_image_viewer_next(),
+        code if is_confirm_key(code) => state.open_image_viewer_action_menu(),
+        _ => {}
+    }
+
+    None
+}
+
+fn handle_image_viewer_action_menu_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc => state.close_image_viewer_action_menu(),
+        code if is_confirm_key(code) => return state.activate_selected_image_viewer_action(),
         _ => {}
     }
 
@@ -438,7 +476,7 @@ fn handle_channel_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
         // Esc steps back to the action list when viewing threads, otherwise
         // closes the menu entirely.
         KeyCode::Esc => state.back_channel_action_menu(),
-        KeyCode::Left if state.is_channel_action_threads_phase() => {
+        code if is_left_key(code) && state.is_channel_action_threads_phase() => {
             state.back_channel_action_menu()
         }
         code if is_down_key(code) => state.move_channel_action_down(),
@@ -509,6 +547,14 @@ fn is_down_key(code: KeyCode) -> bool {
 
 fn is_up_key(code: KeyCode) -> bool {
     matches!(code, KeyCode::Char('k') | KeyCode::Up)
+}
+
+fn is_left_key(code: KeyCode) -> bool {
+    matches!(code, KeyCode::Char('h') | KeyCode::Left)
+}
+
+fn is_right_key(code: KeyCode) -> bool {
+    matches!(code, KeyCode::Char('l') | KeyCode::Right)
 }
 
 fn is_confirm_key(code: KeyCode) -> bool {
@@ -1580,7 +1626,7 @@ mod tests {
     }
 
     #[test]
-    fn message_action_menu_download_image_returns_command() {
+    fn message_action_menu_view_image_opens_viewer_and_esc_closes_nested_menu_first() {
         let mut state = state_with_image_message();
         state.focus_pane(FocusPane::Messages);
         handle_key(&mut state, key(KeyCode::Enter));
@@ -1588,14 +1634,59 @@ mod tests {
 
         let command = handle_key(&mut state, key(KeyCode::Enter));
 
-        assert_eq!(
-            command,
-            Some(AppCommand::DownloadAttachment {
-                url: "https://cdn.discordapp.com/cat.png".to_owned(),
-                filename: "cat.png".to_owned(),
-            })
-        );
+        assert_eq!(command, None);
         assert!(!state.is_message_action_menu_open());
+        assert!(state.is_image_viewer_open());
+        assert_eq!(
+            state.selected_image_viewer_item().map(|item| item.index),
+            Some(1)
+        );
+
+        handle_key(&mut state, char_key('l'));
+        assert_eq!(
+            state.selected_image_viewer_item().map(|item| item.index),
+            Some(2)
+        );
+
+        handle_key(&mut state, char_key('j'));
+        assert_eq!(
+            state.selected_image_viewer_item().map(|item| item.index),
+            Some(2)
+        );
+
+        handle_key(&mut state, char_key('k'));
+        assert_eq!(
+            state.selected_image_viewer_item().map(|item| item.index),
+            Some(2)
+        );
+
+        handle_key(&mut state, key(KeyCode::Left));
+        assert_eq!(
+            state.selected_image_viewer_item().map(|item| item.index),
+            Some(1)
+        );
+
+        handle_key(&mut state, key(KeyCode::Right));
+        assert_eq!(
+            state.selected_image_viewer_item().map(|item| item.index),
+            Some(2)
+        );
+
+        handle_key(&mut state, char_key('h'));
+        assert_eq!(
+            state.selected_image_viewer_item().map(|item| item.index),
+            Some(1)
+        );
+
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert!(state.is_image_viewer_action_menu_open());
+
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert!(!state.is_image_viewer_action_menu_open());
+        assert!(state.is_image_viewer_open());
+
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert!(!state.is_image_viewer_open());
     }
 
     #[test]
@@ -1829,6 +1920,39 @@ mod tests {
             entries[0],
             ChannelPaneEntry::CategoryHeader { collapsed, .. } if collapsed == expected
         ));
+    }
+
+    #[test]
+    fn h_l_and_left_right_open_close_tree_nodes() {
+        let mut guild_state = state_with_folder();
+        guild_state.focus_pane(FocusPane::Guilds);
+
+        handle_key(&mut guild_state, char_key('h'));
+        assert_selected_folder_collapsed(&guild_state, true);
+
+        handle_key(&mut guild_state, char_key('l'));
+        assert_selected_folder_collapsed(&guild_state, false);
+
+        handle_key(&mut guild_state, key(KeyCode::Left));
+        assert_selected_folder_collapsed(&guild_state, true);
+
+        handle_key(&mut guild_state, key(KeyCode::Right));
+        assert_selected_folder_collapsed(&guild_state, false);
+
+        let mut channel_state = state_with_channel_tree();
+        channel_state.focus_pane(FocusPane::Channels);
+
+        handle_key(&mut channel_state, char_key('h'));
+        assert_selected_channel_category_collapsed(&channel_state, true);
+
+        handle_key(&mut channel_state, char_key('l'));
+        assert_selected_channel_category_collapsed(&channel_state, false);
+
+        handle_key(&mut channel_state, key(KeyCode::Left));
+        assert_selected_channel_category_collapsed(&channel_state, true);
+
+        handle_key(&mut channel_state, key(KeyCode::Right));
+        assert_selected_channel_category_collapsed(&channel_state, false);
     }
 
     fn state_with_channel_tree() -> DashboardState {
@@ -2341,17 +2465,30 @@ mod tests {
             poll: None,
             content: Some(String::new()),
             mentions: Vec::new(),
-            attachments: vec![crate::discord::AttachmentInfo {
-                id: Id::new(3),
-                filename: "cat.png".to_owned(),
-                url: "https://cdn.discordapp.com/cat.png".to_owned(),
-                proxy_url: "https://media.discordapp.net/cat.png".to_owned(),
-                content_type: Some("image/png".to_owned()),
-                size: 2048,
-                width: Some(640),
-                height: Some(480),
-                description: None,
-            }],
+            attachments: vec![
+                crate::discord::AttachmentInfo {
+                    id: Id::new(3),
+                    filename: "cat.png".to_owned(),
+                    url: "https://cdn.discordapp.com/cat.png".to_owned(),
+                    proxy_url: "https://media.discordapp.net/cat.png".to_owned(),
+                    content_type: Some("image/png".to_owned()),
+                    size: 2048,
+                    width: Some(640),
+                    height: Some(480),
+                    description: None,
+                },
+                crate::discord::AttachmentInfo {
+                    id: Id::new(4),
+                    filename: "dog.png".to_owned(),
+                    url: "https://cdn.discordapp.com/dog.png".to_owned(),
+                    proxy_url: "https://media.discordapp.net/dog.png".to_owned(),
+                    content_type: Some("image/png".to_owned()),
+                    size: 2048,
+                    width: Some(640),
+                    height: Some(480),
+                    description: None,
+                },
+            ],
             embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });

@@ -72,8 +72,8 @@ impl DashboardState {
         }
         if capabilities.has_image {
             actions.push(MessageActionItem {
-                kind: MessageActionKind::DownloadImage,
-                label: "Download image".to_owned(),
+                kind: MessageActionKind::ViewImage,
+                label: "View image".to_owned(),
                 enabled: true,
             });
         }
@@ -171,12 +171,14 @@ impl DashboardState {
                 self.close_message_action_menu();
                 None
             }
-            MessageActionKind::DownloadImage => {
-                let preview = self.selected_message_state()?.first_inline_preview()?;
-                let url = preview.url.to_owned();
-                let filename = preview.filename.to_owned();
+            MessageActionKind::ViewImage => {
                 self.close_message_action_menu();
-                Some(AppCommand::DownloadAttachment { url, filename })
+                self.open_image_viewer_for_selected_message();
+                None
+            }
+            MessageActionKind::DownloadImage => {
+                self.close_message_action_menu();
+                None
             }
             MessageActionKind::AddReaction => {
                 self.open_emoji_reaction_picker();
