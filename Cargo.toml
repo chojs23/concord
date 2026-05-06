@@ -1,6 +1,6 @@
 [package]
 name = "concord"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 description = "A terminal user interface client for Discord"
 homepage = "https://github.com/chojs23/concord"
