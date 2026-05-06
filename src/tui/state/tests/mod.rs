@@ -1168,22 +1168,56 @@ fn message_scroll_preserves_position_when_not_following() {
 
     assert_eq!(state.selected_message(), 3);
     assert_eq!(state.messages()[state.selected_message()].id, Id::new(4));
-    assert!(!state.message_auto_follow());
+    // Cursor moved up but the viewport still showed the latest, so the new
+    // event engaged auto-scroll (without moving the cursor).
+    assert!(state.message_auto_follow());
 }
 
 #[test]
-fn message_auto_follow_can_jump_back_to_latest() {
+fn user_sent_message_triggers_auto_follow_from_history_position() {
+    let me: Id<UserMarker> = Id::new(10);
     let mut state = state_with_messages(5);
+    // Pretend the Ready event came through so the state knows who "we" are.
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(me),
+    });
     state.focus_pane(FocusPane::Messages);
-    state.set_message_view_height(6);
+    state.set_message_view_height(2);
 
+    // Scroll up far enough that the latest message is no longer visible
+    // and the cursor is parked on an older message.
     state.move_up();
+    state.move_up();
+    state.move_up();
+    assert_eq!(state.selected_message(), 1);
     assert!(!state.message_auto_follow());
 
-    state.toggle_message_auto_follow();
+    // Simulate the REST send response arriving as a self-authored
+    // MessageCreate.
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(99),
+        author_id: me,
+        author: "me".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("hello".to_owned()),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
 
+    // Auto-follow should have moved the cursor to the new latest message.
+    let messages = state.messages();
+    assert_eq!(messages[state.selected_message()].id, Id::new(99));
     assert!(state.message_auto_follow());
-    assert_eq!(state.selected_message(), 4);
 }
 
 #[test]
@@ -4477,7 +4511,7 @@ fn message_half_page_up_disables_follow() {
 }
 
 #[test]
-fn message_jump_bottom_does_not_enable_auto_follow() {
+fn message_jump_bottom_re_engages_auto_follow() {
     let mut state = state_with_messages(10);
     state.focus_pane(FocusPane::Messages);
     state.set_message_view_height(9);
@@ -4487,12 +4521,14 @@ fn message_jump_bottom_does_not_enable_auto_follow() {
 
     state.jump_bottom();
 
+    // Cursor is back on the latest message, so auto-follow turns on again
+    // (sticky-bottom rule).
     assert_eq!(state.selected_message(), 9);
-    assert!(!state.message_auto_follow());
+    assert!(state.message_auto_follow());
 }
 
 #[test]
-fn message_half_page_down_keeps_follow_state() {
+fn message_half_page_down_re_engages_auto_follow_when_landing_on_last() {
     let mut state = state_with_messages(10);
     state.focus_pane(FocusPane::Messages);
     state.set_message_view_height(9);
@@ -4504,7 +4540,8 @@ fn message_half_page_down_keeps_follow_state() {
     assert!(!state.message_auto_follow());
 
     state.half_page_down();
-    assert!(!state.message_auto_follow());
+    // Half-page-down moved the cursor back onto the latest message.
+    assert!(state.message_auto_follow());
 }
 
 #[test]

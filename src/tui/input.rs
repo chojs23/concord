@@ -135,7 +135,6 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
             state.half_page_up();
             return state.next_older_history_command();
         }
-        KeyCode::Char('F') => state.toggle_message_auto_follow(),
         KeyCode::Char('g') => {
             state.jump_top();
         }
@@ -798,17 +797,19 @@ mod tests {
         assert_eq!(state.selected_message(), 5);
         assert!(!state.message_auto_follow());
 
-        handle_key(&mut state, char_key('F'));
-        assert_eq!(state.selected_message(), 9);
-        assert!(state.message_auto_follow());
-
         handle_key(&mut state, key(KeyCode::PageUp));
+        assert_eq!(state.selected_message(), 1);
+        assert!(!state.message_auto_follow());
+
+        handle_key(&mut state, ctrl_key('d'));
         assert_eq!(state.selected_message(), 5);
         assert!(!state.message_auto_follow());
 
         handle_key(&mut state, ctrl_key('d'));
         assert_eq!(state.selected_message(), 9);
-        assert!(!state.message_auto_follow());
+        // Half-page-down landed the cursor on the latest message, so
+        // auto-follow re-engages.
+        assert!(state.message_auto_follow());
     }
 
     #[test]
