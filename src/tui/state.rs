@@ -1604,9 +1604,13 @@ impl DashboardState {
     }
 
     fn follow_latest_message(&mut self) {
+        // Only updates the selection; scroll position is left for
+        // `align_message_viewport_to_bottom` to recompute on the next render.
+        // Touching scroll/line_scroll here would briefly collapse the viewport
+        // to a single-message state, and a key press (e.g. `k`) landing in
+        // that window flips auto_follow off before alignment runs again,
+        // stranding the viewport with empty space below the last message.
         self.selected_message = self.message_pane_item_count().saturating_sub(1);
-        self.message_scroll = self.selected_message;
-        self.message_line_scroll = 0;
         self.message_keep_selection_visible = true;
     }
 
