@@ -98,6 +98,13 @@ struct MessageAreas {
     composer: Rect,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MouseTarget {
+    Pane(FocusPane),
+    PaneRow { pane: FocusPane, row: usize },
+    Composer,
+}
+
 struct UserProfilePopupText {
     lines: Vec<Line<'static>>,
     selected_line: Option<usize>,
@@ -186,6 +193,70 @@ pub(crate) fn focus_pane_at(area: Rect, column: u16, row: u16) -> Option<FocusPa
     ]
     .into_iter()
     .find_map(|(area, pane)| rect_contains(area, column, row).then_some(pane))
+}
+
+pub(crate) fn mouse_target_at(
+    area: Rect,
+    state: &DashboardState,
+    column: u16,
+    row: u16,
+) -> Option<MouseTarget> {
+    let areas = dashboard_areas(area);
+    if let Some(target) = pane_row_mouse_target(areas.guilds, FocusPane::Guilds, column, row) {
+        return Some(target);
+    }
+    if let Some(target) = pane_row_mouse_target(areas.channels, FocusPane::Channels, column, row) {
+        return Some(target);
+    }
+    if let Some(target) = message_mouse_target(areas.messages, state, column, row) {
+        return Some(target);
+    }
+    if let Some(target) = pane_row_mouse_target(areas.members, FocusPane::Members, column, row) {
+        return Some(target);
+    }
+    None
+}
+
+fn pane_row_mouse_target(
+    area: Rect,
+    pane: FocusPane,
+    column: u16,
+    row: u16,
+) -> Option<MouseTarget> {
+    if !rect_contains(area, column, row) {
+        return None;
+    }
+    let inner = panel_block("", false).inner(area);
+    if rect_contains(inner, column, row) {
+        return Some(MouseTarget::PaneRow {
+            pane,
+            row: row.saturating_sub(inner.y) as usize,
+        });
+    }
+    Some(MouseTarget::Pane(pane))
+}
+
+fn message_mouse_target(
+    area: Rect,
+    state: &DashboardState,
+    column: u16,
+    row: u16,
+) -> Option<MouseTarget> {
+    if !rect_contains(area, column, row) {
+        return None;
+    }
+    let inner = panel_block_owned(String::new(), false).inner(area);
+    let message_areas = message_areas(inner, state);
+    if rect_contains(message_areas.composer, column, row) {
+        return Some(MouseTarget::Composer);
+    }
+    if rect_contains(message_areas.list, column, row) {
+        return Some(MouseTarget::PaneRow {
+            pane: FocusPane::Messages,
+            row: row.saturating_sub(message_areas.list.y) as usize,
+        });
+    }
+    Some(MouseTarget::Pane(FocusPane::Messages))
 }
 
 fn rect_contains(area: Rect, column: u16, row: u16) -> bool {

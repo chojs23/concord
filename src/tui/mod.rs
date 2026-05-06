@@ -188,6 +188,7 @@ async fn run_dashboard(
     let mut avatar_images = AvatarImageCache::new();
     let mut emoji_images = EmojiImageCache::new();
     let mut terminal_events = EventStream::new();
+    let mut mouse_clicks = input::MouseClickTracker::default();
     let (preview_decode_tx, mut preview_decode_rx) = mpsc::unbounded_channel();
     let mut history_requests = HistoryRequests::default();
     let mut forum_post_requests = ForumPostRequests::default();
@@ -299,7 +300,21 @@ async fn run_dashboard(
                         }
                     }
                     Some(Ok(TerminalEvent::Mouse(mouse))) => {
-                        if input::handle_mouse(&mut state, mouse, last_frame_area) {
+                        let outcome = input::handle_mouse_event(
+                            &mut state,
+                            mouse,
+                            last_frame_area,
+                            &mut mouse_clicks,
+                        );
+                        if let Some(command) = outcome.command
+                            && commands.send(command).await.is_err()
+                        {
+                            logging::error("tui", "command channel closed");
+                            state.push_effect(AppEvent::GatewayError {
+                                message: "command channel closed".to_owned(),
+                            });
+                        }
+                        if outcome.handled {
                             dirty = true;
                         }
                     }

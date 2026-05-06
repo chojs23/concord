@@ -1255,6 +1255,94 @@ impl DashboardState {
         self.focus = pane;
     }
 
+    pub fn select_visible_pane_row(&mut self, pane: FocusPane, row: usize) -> bool {
+        match pane {
+            FocusPane::Guilds => self.select_visible_guild_row(row),
+            FocusPane::Channels => self.select_visible_channel_row(row),
+            FocusPane::Messages => self.select_visible_message_row(row),
+            FocusPane::Members => self.select_visible_member_line(row),
+        }
+    }
+
+    fn select_visible_guild_row(&mut self, row: usize) -> bool {
+        let index = self.guild_scroll.saturating_add(row);
+        if index >= self.guild_pane_entries().len() {
+            return false;
+        }
+        self.selected_guild = index;
+        true
+    }
+
+    fn select_visible_channel_row(&mut self, row: usize) -> bool {
+        let index = self.channel_scroll.saturating_add(row);
+        if index >= self.channel_pane_entries().len() {
+            return false;
+        }
+        self.selected_channel = index;
+        true
+    }
+
+    fn select_visible_message_row(&mut self, row: usize) -> bool {
+        if self.selected_channel_is_forum() {
+            return self.select_visible_forum_post_row(row);
+        }
+        if self.message_content_width == usize::MAX {
+            return false;
+        }
+
+        let mut rendered_row = 0usize;
+        for local_index in 0..self.visible_messages().len() {
+            let index = self.message_scroll.saturating_add(local_index);
+            let rendered_height = self
+                .message_rendered_height_at(
+                    index,
+                    self.message_content_width,
+                    self.message_preview_width,
+                    self.message_max_preview_height,
+                )
+                .max(1);
+            let visible_height = if local_index == 0 {
+                rendered_height.saturating_sub(self.message_line_scroll)
+            } else {
+                rendered_height
+            };
+            if row < rendered_row.saturating_add(visible_height) {
+                self.selected_message = index;
+                self.message_auto_follow = false;
+                self.message_keep_selection_visible = false;
+                return true;
+            }
+            rendered_row = rendered_row.saturating_add(visible_height);
+        }
+        false
+    }
+
+    fn select_visible_forum_post_row(&mut self, row: usize) -> bool {
+        let visible_index = row / FORUM_POST_CARD_HEIGHT;
+        if visible_index >= self.visible_forum_post_items().len() {
+            return false;
+        }
+        let index = self.message_scroll.saturating_add(visible_index);
+        if index >= self.selected_forum_post_items().len() {
+            return false;
+        }
+        self.selected_message = index;
+        self.message_auto_follow = false;
+        self.message_keep_selection_visible = false;
+        true
+    }
+
+    fn select_visible_member_line(&mut self, row: usize) -> bool {
+        let target_line = self.member_scroll.saturating_add(row);
+        for (member_index, line_index) in self.member_line_indices() {
+            if line_index == target_line {
+                self.selected_member = member_index;
+                return true;
+            }
+        }
+        false
+    }
+
     fn clamp_selection_indices(&mut self) {
         self.selected_guild = self.selected_guild();
         self.selected_channel = self.selected_channel();

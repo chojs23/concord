@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -9,6 +11,39 @@ use super::{
     state::{DashboardState, FocusPane},
     ui,
 };
+
+const DOUBLE_CLICK_MAX_DELAY: Duration = Duration::from_millis(500);
+
+#[derive(Default)]
+pub struct MouseClickTracker {
+    last_left_click: Option<MouseClick>,
+}
+
+struct MouseClick {
+    target: ui::MouseTarget,
+    at: Instant,
+}
+
+pub struct MouseOutcome {
+    pub handled: bool,
+    pub command: Option<AppCommand>,
+}
+
+impl MouseOutcome {
+    fn ignored() -> Self {
+        Self {
+            handled: false,
+            command: None,
+        }
+    }
+
+    fn handled(command: Option<AppCommand>) -> Self {
+        Self {
+            handled: true,
+            command,
+        }
+    }
+}
 
 pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     if key.kind != KeyEventKind::Press {
@@ -136,42 +171,125 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     None
 }
 
+#[cfg(test)]
 pub fn handle_mouse(state: &mut DashboardState, mouse: MouseEvent, area: Rect) -> bool {
-    if ignores_dashboard_mouse(state) {
-        return false;
+    let mut clicks = MouseClickTracker::default();
+    handle_mouse_event(state, mouse, area, &mut clicks).handled
+}
+
+pub fn handle_mouse_event(
+    state: &mut DashboardState,
+    mouse: MouseEvent,
+    area: Rect,
+    clicks: &mut MouseClickTracker,
+) -> MouseOutcome {
+    let target = ui::mouse_target_at(area, state, mouse.column, mouse.row);
+    if ignores_dashboard_mouse(state)
+        || state.is_composing() && target != Some(ui::MouseTarget::Composer)
+    {
+        return MouseOutcome::ignored();
     }
 
-    let pane = ui::focus_pane_at(area, mouse.column, mouse.row);
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            let Some(pane) = pane else {
-                return false;
+            let Some(target) = target else {
+                clicks.clear();
+                return MouseOutcome::ignored();
             };
-            state.focus_pane(pane);
-            true
+            handle_left_click(state, target, clicks)
         }
         MouseEventKind::ScrollDown => {
+            clicks.clear();
+            let pane = ui::focus_pane_at(area, mouse.column, mouse.row);
             if let Some(pane) = pane {
                 state.focus_pane(pane);
             }
             scroll_focused_pane_down(state);
-            true
+            MouseOutcome::handled(None)
         }
         MouseEventKind::ScrollUp => {
+            clicks.clear();
+            let pane = ui::focus_pane_at(area, mouse.column, mouse.row);
             if let Some(pane) = pane {
                 state.focus_pane(pane);
             }
             scroll_focused_pane_up(state);
-            true
+            MouseOutcome::handled(None)
         }
-        _ => false,
+        _ => {
+            clicks.clear();
+            MouseOutcome::ignored()
+        }
+    }
+}
+
+impl MouseClickTracker {
+    fn clear(&mut self) {
+        self.last_left_click = None;
+    }
+
+    fn record_left_click(&mut self, target: ui::MouseTarget) -> bool {
+        let now = Instant::now();
+        let double_click = self.last_left_click.as_ref().is_some_and(|click| {
+            click.target == target && now.duration_since(click.at) <= DOUBLE_CLICK_MAX_DELAY
+        });
+        self.last_left_click = if double_click {
+            None
+        } else {
+            Some(MouseClick { target, at: now })
+        };
+        double_click
+    }
+}
+
+fn handle_left_click(
+    state: &mut DashboardState,
+    target: ui::MouseTarget,
+    clicks: &mut MouseClickTracker,
+) -> MouseOutcome {
+    match target {
+        ui::MouseTarget::Composer => {
+            clicks.clear();
+            state.start_composer();
+            MouseOutcome::handled(None)
+        }
+        ui::MouseTarget::Pane(pane) => {
+            clicks.clear();
+            state.focus_pane(pane);
+            MouseOutcome::handled(None)
+        }
+        ui::MouseTarget::PaneRow { pane, row } => {
+            state.focus_pane(pane);
+            let selected = state.select_visible_pane_row(pane, row);
+            if !selected {
+                clicks.clear();
+                return MouseOutcome::handled(None);
+            }
+            let command = if selected && clicks.record_left_click(target) {
+                activate_focused_target(state)
+            } else {
+                None
+            };
+            MouseOutcome::handled(command)
+        }
+    }
+}
+
+fn activate_focused_target(state: &mut DashboardState) -> Option<AppCommand> {
+    match state.focus() {
+        FocusPane::Guilds => {
+            state.confirm_selected_guild();
+            None
+        }
+        FocusPane::Channels => state.confirm_selected_channel_command(),
+        FocusPane::Messages => state.activate_selected_message_pane_item(),
+        FocusPane::Members => state.show_selected_member_profile(),
     }
 }
 
 fn ignores_dashboard_mouse(state: &DashboardState) -> bool {
     state.is_debug_log_popup_open()
         || state.is_reaction_users_popup_open()
-        || state.is_composing()
         || state.is_poll_vote_picker_open()
         || state.is_emoji_reaction_picker_open()
         || state.is_message_action_menu_open()
@@ -409,7 +527,7 @@ mod tests {
     };
     use ratatui::layout::Rect;
 
-    use super::{handle_key, handle_mouse};
+    use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event};
     use crate::{
         discord::{
             AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, GuildFolder,
@@ -444,6 +562,18 @@ mod tests {
             row,
             modifiers: KeyModifiers::NONE,
         }
+    }
+
+    fn channel_row_point(row: u16) -> (u16, u16) {
+        (21, 1 + row)
+    }
+
+    fn composer_point() -> (u16, u16) {
+        (50, 16)
+    }
+
+    fn message_row_point(row: u16) -> (u16, u16) {
+        (50, 1 + row)
     }
 
     fn dashboard_area() -> Rect {
@@ -679,6 +809,143 @@ mod tests {
             dashboard_area(),
         ));
         assert_eq!(state.focus(), FocusPane::Members);
+    }
+
+    #[test]
+    fn left_click_selects_visible_channel_row() {
+        let mut state = state_with_channel_tree();
+        state.focus_pane(FocusPane::Messages);
+        let (column, row) = channel_row_point(1);
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+            dashboard_area(),
+        ));
+
+        assert_eq!(state.focus(), FocusPane::Channels);
+        assert_eq!(state.selected_channel(), 1);
+        assert_eq!(state.selected_channel_id(), None);
+    }
+
+    #[test]
+    fn double_click_activates_selected_channel_like_enter() {
+        let mut state = state_with_channel_tree();
+        let mut clicks = MouseClickTracker::default();
+        let (column, row) = channel_row_point(1);
+
+        let first = handle_mouse_event(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+            dashboard_area(),
+            &mut clicks,
+        );
+        let second = handle_mouse_event(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+            dashboard_area(),
+            &mut clicks,
+        );
+
+        assert!(first.handled);
+        assert_eq!(first.command, None);
+        assert!(second.handled);
+        assert_eq!(state.selected_channel_id(), Some(Id::new(11)));
+        assert_eq!(
+            second.command,
+            Some(AppCommand::SubscribeGuildChannel {
+                guild_id: Id::new(1),
+                channel_id: Id::new(11),
+            })
+        );
+    }
+
+    #[test]
+    fn scroll_between_clicks_prevents_stale_double_click_activation() {
+        let mut state = state_with_channel_tree();
+        let mut clicks = MouseClickTracker::default();
+        let (column, row) = channel_row_point(1);
+
+        let first = handle_mouse_event(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+            dashboard_area(),
+            &mut clicks,
+        );
+        let scroll = handle_mouse_event(
+            &mut state,
+            mouse(MouseEventKind::ScrollDown, column, row),
+            dashboard_area(),
+            &mut clicks,
+        );
+        let second = handle_mouse_event(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+            dashboard_area(),
+            &mut clicks,
+        );
+
+        assert!(first.handled);
+        assert!(scroll.handled);
+        assert!(second.handled);
+        assert_eq!(second.command, None);
+        assert_eq!(state.selected_channel_id(), None);
+    }
+
+    #[test]
+    fn forum_blank_bottom_rows_do_not_select_hidden_posts() {
+        let mut state = state_with_forum_channel_posts();
+        state.push_event(AppEvent::ForumPostsLoaded {
+            channel_id: Id::new(20),
+            offset: 2,
+            posts: vec![ChannelInfo {
+                guild_id: Some(Id::new(1)),
+                channel_id: Id::new(29),
+                parent_id: Some(Id::new(20)),
+                position: Some(2),
+                last_message_id: None,
+                name: "hidden by remainder rows".to_owned(),
+                kind: "GuildPublicThread".to_owned(),
+                message_count: Some(1),
+                total_message_sent: Some(1),
+                thread_archived: Some(false),
+                thread_locked: Some(false),
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            }],
+            preview_messages: Vec::new(),
+            has_more: false,
+        });
+        state.focus_pane(FocusPane::Messages);
+        state.set_message_view_height(14);
+        let (column, row) = message_row_point(11);
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+            dashboard_area(),
+        ));
+
+        assert_eq!(state.selected_forum_post(), 0);
+    }
+
+    #[test]
+    fn left_click_on_message_input_starts_composer() {
+        let mut state = state_with_channel_tree();
+        state.focus_pane(FocusPane::Channels);
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
+        let (column, row) = composer_point();
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+            dashboard_area(),
+        ));
+
+        assert!(state.is_composing());
+        assert_eq!(state.focus(), FocusPane::Messages);
     }
 
     #[test]
