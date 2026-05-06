@@ -148,7 +148,6 @@ pub struct DashboardState {
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
     last_status: Option<String>,
-    skipped_events: u64,
     should_quit: bool,
     older_history_requests: HashMap<Id<ChannelMarker>, OlderHistoryRequestState>,
     forum_post_lists: HashMap<Id<ChannelMarker>, ForumPostListState>,
@@ -214,7 +213,6 @@ impl DashboardState {
             current_user: None,
             current_user_id: None,
             last_status: None,
-            skipped_events: 0,
             should_quit: false,
             older_history_requests: HashMap::new(),
             forum_post_lists: HashMap::new(),
@@ -223,7 +221,16 @@ impl DashboardState {
         }
     }
 
+    #[cfg(test)]
     pub fn push_event(&mut self, event: AppEvent) {
+        self.push_event_inner(event, true);
+    }
+
+    pub fn push_effect(&mut self, event: AppEvent) {
+        self.push_event_inner(event, false);
+    }
+
+    fn push_event_inner(&mut self, event: AppEvent, apply_discord: bool) {
         let selected_message_id = (!self.message_auto_follow)
             .then(|| {
                 self.messages()
@@ -292,7 +299,9 @@ impl DashboardState {
             }
             _ => {}
         }
-        self.discord.apply_event(&event);
+        if apply_discord {
+            self.discord.apply_event(&event);
+        }
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);
         self.clamp_selection_indices();
@@ -322,7 +331,7 @@ impl DashboardState {
             .flatten();
         let channel_cursor_id = self.selected_channel_cursor_id();
 
-        self.discord.restore_navigation_snapshot(&discord);
+        self.discord = discord;
         if let Some(user) = self.discord.current_user() {
             self.current_user = Some(user.to_owned());
         }

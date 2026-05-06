@@ -39,7 +39,8 @@ impl App {
         let token = resolved_token.token;
         let token_warnings = resolved_token.warnings;
         let client = DiscordClient::new(token)?;
-        let events = client.subscribe();
+        let effects = client.take_effects();
+        let snapshots = client.subscribe_snapshots();
         let (commands_tx, commands_rx) = mpsc::channel(64);
         let gateway_task = client.start_gateway();
         let command_task = start_command_loop(client.clone(), commands_rx);
@@ -68,10 +69,12 @@ impl App {
         let result = async {
             for warning in token_warnings {
                 logging::error("app", &warning);
-                client.publish_event(AppEvent::GatewayError { message: warning });
+                client
+                    .publish_event(AppEvent::GatewayError { message: warning })
+                    .await;
             }
 
-            tui::run(events, commands_tx, client.clone()).await
+            tui::run(effects, snapshots, commands_tx, client.clone()).await
         }
         .await;
 
@@ -118,11 +121,13 @@ fn start_command_loop(
                                     ),
                                     started.elapsed(),
                                 );
-                                client.publish_event(AppEvent::MessageHistoryLoaded {
-                                    channel_id,
-                                    before,
-                                    messages,
-                                });
+                                client
+                                    .publish_event(AppEvent::MessageHistoryLoaded {
+                                        channel_id,
+                                        before,
+                                        messages,
+                                    })
+                                    .await;
                             }
                             Err(error) => {
                                 let message = format!("load message history failed: {error}");
@@ -146,10 +151,12 @@ fn start_command_loop(
                                         MESSAGE_HISTORY_LIMIT,
                                     ),
                                 );
-                                client.publish_event(AppEvent::MessageHistoryLoadFailed {
-                                    channel_id,
-                                    message,
-                                });
+                                client
+                                    .publish_event(AppEvent::MessageHistoryLoadFailed {
+                                        channel_id,
+                                        message,
+                                    })
+                                    .await;
                             }
                         }
                     }
@@ -179,10 +186,12 @@ fn start_command_loop(
                                     .next()
                                     .filter(|message| message.message_id == message_id)
                                 {
-                                    client.publish_event(AppEvent::ThreadPreviewLoaded {
-                                        channel_id,
-                                        message,
-                                    });
+                                    client
+                                        .publish_event(AppEvent::ThreadPreviewLoaded {
+                                            channel_id,
+                                            message,
+                                        })
+                                        .await;
                                 } else {
                                     logging::error(
                                         "history",
@@ -192,10 +201,12 @@ fn start_command_loop(
                                             message_id.get(),
                                         ),
                                     );
-                                    client.publish_event(AppEvent::ThreadPreviewLoadFailed {
-                                        channel_id,
-                                        message_id,
-                                    });
+                                    client
+                                        .publish_event(AppEvent::ThreadPreviewLoadFailed {
+                                            channel_id,
+                                            message_id,
+                                        })
+                                        .await;
                                 }
                             }
                             Err(error) => {
@@ -211,10 +222,12 @@ fn start_command_loop(
                                     started.elapsed(),
                                 );
                                 logging::error("history", &message);
-                                client.publish_event(AppEvent::ThreadPreviewLoadFailed {
-                                    channel_id,
-                                    message_id,
-                                });
+                                client
+                                    .publish_event(AppEvent::ThreadPreviewLoadFailed {
+                                        channel_id,
+                                        message_id,
+                                    })
+                                    .await;
                             }
                         }
                     }
@@ -245,13 +258,15 @@ fn start_command_loop(
                                         elapsed_ms,
                                     ),
                                 );
-                                client.publish_event(AppEvent::ForumPostsLoaded {
-                                    channel_id,
-                                    offset,
-                                    posts: page.posts,
-                                    preview_messages: page.preview_messages,
-                                    has_more: page.has_more,
-                                });
+                                client
+                                    .publish_event(AppEvent::ForumPostsLoaded {
+                                        channel_id,
+                                        offset,
+                                        posts: page.posts,
+                                        preview_messages: page.preview_messages,
+                                        has_more: page.has_more,
+                                    })
+                                    .await;
                             }
                             Err(error) => {
                                 let message = format!("load forum posts failed: {error}");
@@ -267,24 +282,30 @@ fn start_command_loop(
                                     started.elapsed(),
                                 );
                                 logging::error("history", &message);
-                                client.publish_event(AppEvent::ForumPostsLoadFailed {
-                                    channel_id,
-                                    offset,
-                                    message,
-                                });
+                                client
+                                    .publish_event(AppEvent::ForumPostsLoadFailed {
+                                        channel_id,
+                                        offset,
+                                        message,
+                                    })
+                                    .await;
                             }
                         }
                     }
                     AppCommand::LoadGuildMembers { guild_id } => {
                         if let Err(message) = client.request_guild_members(guild_id) {
                             logging::error("app", &message);
-                            client.publish_event(AppEvent::GatewayError { message });
+                            client
+                                .publish_event(AppEvent::GatewayError { message })
+                                .await;
                         }
                     }
                     AppCommand::SubscribeDirectMessage { channel_id } => {
                         if let Err(message) = client.subscribe_direct_message(channel_id) {
                             logging::error("app", &message);
-                            client.publish_event(AppEvent::GatewayError { message });
+                            client
+                                .publish_event(AppEvent::GatewayError { message })
+                                .await;
                         }
                     }
                     AppCommand::SubscribeGuildChannel {
@@ -293,7 +314,9 @@ fn start_command_loop(
                     } => {
                         if let Err(message) = client.subscribe_guild_channel(guild_id, channel_id) {
                             logging::error("app", &message);
-                            client.publish_event(AppEvent::GatewayError { message });
+                            client
+                                .publish_event(AppEvent::GatewayError { message })
+                                .await;
                         }
                     }
                     AppCommand::UpdateMemberListSubscription {
@@ -305,7 +328,9 @@ fn start_command_loop(
                             client.update_member_list_subscription(guild_id, channel_id, ranges)
                         {
                             logging::error("app", &message);
-                            client.publish_event(AppEvent::GatewayError { message });
+                            client
+                                .publish_event(AppEvent::GatewayError { message })
+                                .await;
                         }
                     }
                     AppCommand::LoadAttachmentPreview { url } => {
@@ -315,24 +340,30 @@ fn start_command_loop(
                             Err(_) => {
                                 let message = "download image preview timed out".to_owned();
                                 logging::error("preview", &message);
-                                client.publish_event(AppEvent::AttachmentPreviewLoadFailed {
-                                    url,
-                                    message,
-                                });
+                                client
+                                    .publish_event(AppEvent::AttachmentPreviewLoadFailed {
+                                        url,
+                                        message,
+                                    })
+                                    .await;
                             }
                             Ok(bytes) => match bytes {
                                 Ok(bytes) => {
-                                    client.publish_event(AppEvent::AttachmentPreviewLoaded {
-                                        url,
-                                        bytes,
-                                    })
+                                    client
+                                        .publish_event(AppEvent::AttachmentPreviewLoaded {
+                                            url,
+                                            bytes,
+                                        })
+                                        .await
                                 }
                                 Err(message) => {
                                     logging::error("preview", &message);
-                                    client.publish_event(AppEvent::AttachmentPreviewLoadFailed {
-                                        url,
-                                        message,
-                                    });
+                                    client
+                                        .publish_event(AppEvent::AttachmentPreviewLoadFailed {
+                                            url,
+                                            message,
+                                        })
+                                        .await;
                                 }
                             },
                         }
@@ -342,20 +373,24 @@ fn start_command_loop(
                         content,
                         reply_to,
                     } => match client.send_message(channel_id, &content, reply_to).await {
-                        Ok(message) => client.publish_event(message_create_event(message)),
+                        Ok(message) => client.publish_event(message_create_event(message)).await,
                         Err(error) => {
                             log_app_error("send message failed", &error);
-                            client.publish_event(AppEvent::GatewayError {
-                                message: format!("send message failed: {error}"),
-                            });
+                            client
+                                .publish_event(AppEvent::GatewayError {
+                                    message: format!("send message failed: {error}"),
+                                })
+                                .await;
                         }
                     },
                     AppCommand::OpenUrl { url } => {
                         if let Err(error) = open_url(&url) {
                             logging::error("app", format!("open attachment failed: {error}"));
-                            client.publish_event(AppEvent::GatewayError {
-                                message: format!("open attachment failed: {error}"),
-                            });
+                            client
+                                .publish_event(AppEvent::GatewayError {
+                                    message: format!("open attachment failed: {error}"),
+                                })
+                                .await;
                         }
                     }
                     AppCommand::DownloadAttachment { url, filename } => {
@@ -368,14 +403,25 @@ fn start_command_loop(
                             Err(_) => {
                                 let message = "download attachment timed out".to_owned();
                                 logging::error("attachment", &message);
-                                client.publish_event(AppEvent::GatewayError { message });
+                                client
+                                    .publish_event(AppEvent::GatewayError { message })
+                                    .await;
                             }
-                            Ok(Ok(path)) => client.publish_event(AppEvent::StatusMessage {
-                                message: format!("downloaded attachment to {}", path.display()),
-                            }),
+                            Ok(Ok(path)) => {
+                                client
+                                    .publish_event(AppEvent::StatusMessage {
+                                        message: format!(
+                                            "downloaded attachment to {}",
+                                            path.display()
+                                        ),
+                                    })
+                                    .await
+                            }
                             Ok(Err(message)) => {
                                 logging::error("attachment", &message);
-                                client.publish_event(AppEvent::GatewayError { message });
+                                client
+                                    .publish_event(AppEvent::GatewayError { message })
+                                    .await;
                             }
                         }
                     }
@@ -385,20 +431,26 @@ fn start_command_loop(
                         emoji,
                     } => match client.add_reaction(channel_id, message_id, &emoji).await {
                         Ok(()) => {
-                            client.publish_event(AppEvent::CurrentUserReactionAdd {
-                                channel_id,
-                                message_id,
-                                emoji: emoji.clone(),
-                            });
-                            client.publish_event(AppEvent::StatusMessage {
-                                message: format!("added {} reaction", emoji.status_label()),
-                            });
+                            client
+                                .publish_event(AppEvent::CurrentUserReactionAdd {
+                                    channel_id,
+                                    message_id,
+                                    emoji: emoji.clone(),
+                                })
+                                .await;
+                            client
+                                .publish_event(AppEvent::StatusMessage {
+                                    message: format!("added {} reaction", emoji.status_label()),
+                                })
+                                .await;
                         }
                         Err(error) => {
                             log_app_error("add reaction failed", &error);
-                            client.publish_event(AppEvent::GatewayError {
-                                message: format!("add reaction failed: {error}"),
-                            });
+                            client
+                                .publish_event(AppEvent::GatewayError {
+                                    message: format!("add reaction failed: {error}"),
+                                })
+                                .await;
                         }
                     },
                     AppCommand::RemoveReaction {
@@ -410,20 +462,26 @@ fn start_command_loop(
                         .await
                     {
                         Ok(()) => {
-                            client.publish_event(AppEvent::CurrentUserReactionRemove {
-                                channel_id,
-                                message_id,
-                                emoji: emoji.clone(),
-                            });
-                            client.publish_event(AppEvent::StatusMessage {
-                                message: format!("removed {} reaction", emoji.status_label()),
-                            });
+                            client
+                                .publish_event(AppEvent::CurrentUserReactionRemove {
+                                    channel_id,
+                                    message_id,
+                                    emoji: emoji.clone(),
+                                })
+                                .await;
+                            client
+                                .publish_event(AppEvent::StatusMessage {
+                                    message: format!("removed {} reaction", emoji.status_label()),
+                                })
+                                .await;
                         }
                         Err(error) => {
                             log_app_error("remove reaction failed", &error);
-                            client.publish_event(AppEvent::GatewayError {
-                                message: format!("remove reaction failed: {error}"),
-                            });
+                            client
+                                .publish_event(AppEvent::GatewayError {
+                                    message: format!("remove reaction failed: {error}"),
+                                })
+                                .await;
                         }
                     },
                     AppCommand::LoadReactionUsers {
@@ -443,36 +501,44 @@ fn start_command_loop(
                                 }
                                 Err(error) => {
                                     log_app_error("load reaction users failed", &error);
-                                    client.publish_event(AppEvent::GatewayError {
-                                        message: format!("load reaction users failed: {error}"),
-                                    });
+                                    client
+                                        .publish_event(AppEvent::GatewayError {
+                                            message: format!("load reaction users failed: {error}"),
+                                        })
+                                        .await;
                                     failed = true;
                                     break;
                                 }
                             }
                         }
                         if !failed {
-                            client.publish_event(AppEvent::ReactionUsersLoaded {
-                                channel_id,
-                                message_id,
-                                reactions: loaded_reactions,
-                            });
+                            client
+                                .publish_event(AppEvent::ReactionUsersLoaded {
+                                    channel_id,
+                                    message_id,
+                                    reactions: loaded_reactions,
+                                })
+                                .await;
                         }
                     }
                     AppCommand::LoadPinnedMessages { channel_id } => {
                         match client.load_pinned_messages(channel_id).await {
                             Ok(messages) => {
-                                client.publish_event(AppEvent::PinnedMessagesLoaded {
-                                    channel_id,
-                                    messages,
-                                });
+                                client
+                                    .publish_event(AppEvent::PinnedMessagesLoaded {
+                                        channel_id,
+                                        messages,
+                                    })
+                                    .await;
                             }
                             Err(error) => {
                                 log_app_error("load pinned messages failed", &error);
-                                client.publish_event(AppEvent::PinnedMessagesLoadFailed {
-                                    channel_id,
-                                    message: format!("load pinned messages failed: {error}"),
-                                });
+                                client
+                                    .publish_event(AppEvent::PinnedMessagesLoadFailed {
+                                        channel_id,
+                                        message: format!("load pinned messages failed: {error}"),
+                                    })
+                                    .await;
                             }
                         }
                     }
@@ -485,24 +551,30 @@ fn start_command_loop(
                         .await
                     {
                         Ok(()) => {
-                            client.publish_event(AppEvent::MessagePinnedUpdate {
-                                channel_id,
-                                message_id,
-                                pinned,
-                            });
-                            client.publish_event(AppEvent::StatusMessage {
-                                message: if pinned {
-                                    "pinned message".to_owned()
-                                } else {
-                                    "unpinned message".to_owned()
-                                },
-                            });
+                            client
+                                .publish_event(AppEvent::MessagePinnedUpdate {
+                                    channel_id,
+                                    message_id,
+                                    pinned,
+                                })
+                                .await;
+                            client
+                                .publish_event(AppEvent::StatusMessage {
+                                    message: if pinned {
+                                        "pinned message".to_owned()
+                                    } else {
+                                        "unpinned message".to_owned()
+                                    },
+                                })
+                                .await;
                         }
                         Err(error) => {
                             log_app_error("set pin failed", &error);
-                            client.publish_event(AppEvent::GatewayError {
-                                message: format!("set pin failed: {error}"),
-                            });
+                            client
+                                .publish_event(AppEvent::GatewayError {
+                                    message: format!("set pin failed: {error}"),
+                                })
+                                .await;
                         }
                     },
                     AppCommand::VotePoll {
@@ -511,37 +583,47 @@ fn start_command_loop(
                         answer_ids,
                     } => match client.vote_poll(channel_id, message_id, &answer_ids).await {
                         Ok(()) => {
-                            client.publish_event(AppEvent::CurrentUserPollVoteUpdate {
-                                channel_id,
-                                message_id,
-                                answer_ids,
-                            });
-                            client.publish_event(AppEvent::StatusMessage {
-                                message: "updated poll vote".to_owned(),
-                            });
+                            client
+                                .publish_event(AppEvent::CurrentUserPollVoteUpdate {
+                                    channel_id,
+                                    message_id,
+                                    answer_ids,
+                                })
+                                .await;
+                            client
+                                .publish_event(AppEvent::StatusMessage {
+                                    message: "updated poll vote".to_owned(),
+                                })
+                                .await;
                         }
                         Err(error) => {
                             log_app_error("poll vote failed", &error);
-                            client.publish_event(AppEvent::GatewayError {
-                                message: format!("poll vote failed: {error}"),
-                            });
+                            client
+                                .publish_event(AppEvent::GatewayError {
+                                    message: format!("poll vote failed: {error}"),
+                                })
+                                .await;
                         }
                     },
                     AppCommand::LoadUserProfile { user_id, guild_id } => {
                         match client.load_user_profile(user_id, guild_id).await {
                             Ok(profile) => {
-                                client.publish_event(AppEvent::UserProfileLoaded {
-                                    guild_id,
-                                    profile,
-                                });
+                                client
+                                    .publish_event(AppEvent::UserProfileLoaded {
+                                        guild_id,
+                                        profile,
+                                    })
+                                    .await;
                             }
                             Err(error) => {
                                 log_app_error("load user profile failed", &error);
-                                client.publish_event(AppEvent::UserProfileLoadFailed {
-                                    user_id,
-                                    guild_id,
-                                    message: error.to_string(),
-                                });
+                                client
+                                    .publish_event(AppEvent::UserProfileLoadFailed {
+                                        user_id,
+                                        guild_id,
+                                        message: error.to_string(),
+                                    })
+                                    .await;
                             }
                         }
                     }

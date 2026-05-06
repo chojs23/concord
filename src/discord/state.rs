@@ -284,6 +284,17 @@ pub struct DiscordState {
     max_messages_per_channel: usize,
 }
 
+#[derive(Clone, Debug)]
+pub struct SnapshotRevision {
+    pub revision: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct DiscordSnapshot {
+    pub revision: u64,
+    pub state: DiscordState,
+}
+
 struct MessageUpdateFields {
     poll: Option<PollInfo>,
     content: Option<String>,

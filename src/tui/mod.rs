@@ -8,7 +8,10 @@ mod selection;
 mod state;
 mod ui;
 
-use std::{collections::HashSet, io::stdout};
+use std::{
+    collections::{HashSet, VecDeque},
+    io::stdout,
+};
 
 use crate::discord::ids::{
     Id,
@@ -23,11 +26,11 @@ use crossterm::{
 };
 use futures::StreamExt;
 use ratatui::layout::Rect;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{mpsc, watch};
 
 use crate::{
     Result,
-    discord::{AppCommand, AppEvent, DiscordClient},
+    discord::{AppCommand, AppEvent, DiscordClient, SequencedAppEvent, SnapshotRevision},
     logging,
 };
 
@@ -42,14 +45,27 @@ use requests::{
 };
 use state::DashboardState;
 
-const MAX_DRAINED_APP_EVENTS: usize = 1024;
+const MAX_DRAINED_EFFECT_EVENTS: usize = 1024;
+
+struct EffectContext<'a> {
+    state: &'a mut DashboardState,
+    image_previews: &'a mut ImagePreviewCache,
+    avatar_images: &'a mut AvatarImageCache,
+    emoji_images: &'a mut EmojiImageCache,
+    history_requests: &'a mut HistoryRequests,
+    forum_post_requests: &'a mut ForumPostRequests,
+    pinned_message_requests: &'a mut PinnedMessageRequests,
+    thread_preview_requests: &'a mut ThreadPreviewRequests,
+    preview_decode_tx: &'a mpsc::UnboundedSender<ImagePreviewDecodeResult>,
+}
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
 }
 
 pub async fn run(
-    mut events: broadcast::Receiver<AppEvent>,
+    mut effects: mpsc::Receiver<SequencedAppEvent>,
+    mut snapshots: watch::Receiver<SnapshotRevision>,
     commands: mpsc::Sender<AppCommand>,
     client: DiscordClient,
 ) -> Result<()> {
@@ -62,7 +78,14 @@ pub async fn run(
         }
     };
 
-    run_dashboard(&mut terminal, &mut events, commands, client).await
+    run_dashboard(
+        &mut terminal,
+        &mut effects,
+        &mut snapshots,
+        commands,
+        client,
+    )
+    .await
 }
 
 pub(super) struct TerminalRestoreGuard {
@@ -100,70 +123,67 @@ impl Drop for TerminalRestoreGuard {
     }
 }
 
-fn process_app_event(
-    event: AppEvent,
-    state: &mut DashboardState,
-    image_previews: &mut ImagePreviewCache,
-    avatar_images: &mut AvatarImageCache,
-    emoji_images: &mut EmojiImageCache,
-    history_requests: &mut HistoryRequests,
-    forum_post_requests: &mut ForumPostRequests,
-    pinned_message_requests: &mut PinnedMessageRequests,
-    thread_preview_requests: &mut ThreadPreviewRequests,
-    preview_decode_tx: &mpsc::UnboundedSender<ImagePreviewDecodeResult>,
-) {
-    for job in image_previews.record_event(&event) {
-        spawn_image_preview_decode(job, preview_decode_tx.clone());
+fn process_effect_event(event: AppEvent, ctx: &mut EffectContext<'_>) {
+    for job in ctx.image_previews.record_event(&event) {
+        spawn_image_preview_decode(job, ctx.preview_decode_tx.clone());
     }
-    avatar_images.record_event(&event);
-    emoji_images.record_event(&event);
-    history_requests.record_event(&event);
-    forum_post_requests.record_event(&event);
-    pinned_message_requests.record_event(&event);
-    thread_preview_requests.record_event(&event);
-    state.push_event(event);
+    ctx.avatar_images.record_event(&event);
+    ctx.emoji_images.record_event(&event);
+    ctx.history_requests.record_event(&event);
+    ctx.forum_post_requests.record_event(&event);
+    ctx.pinned_message_requests.record_event(&event);
+    ctx.thread_preview_requests.record_event(&event);
+    if matches!(event, AppEvent::GatewayClosed) {
+        handle_gateway_closed(ctx.state);
+    } else {
+        ctx.state.push_effect(event);
+    }
 }
 
-fn recover_after_lag(
-    skipped: u64,
-    events: &mut broadcast::Receiver<AppEvent>,
-    client: &DiscordClient,
-    state: &mut DashboardState,
-    history_requests: &mut HistoryRequests,
-    forum_post_requests: &mut ForumPostRequests,
-    pinned_message_requests: &mut PinnedMessageRequests,
-    member_requests: &mut MemberRequests,
-    thread_preview_requests: &mut ThreadPreviewRequests,
-    last_member_subscription: &mut Option<(Id<GuildMarker>, Id<ChannelMarker>, u32)>,
-    requested_author_profiles: &mut HashSet<(Id<UserMarker>, Id<GuildMarker>)>,
+fn process_sequenced_effect(
+    event: SequencedAppEvent,
+    current_snapshot_revision: u64,
+    deferred_effects: &mut VecDeque<SequencedAppEvent>,
+    ctx: &mut EffectContext<'_>,
 ) {
-    logging::error("tui", format!("resynced after {skipped} missed updates"));
-    state.record_recovered_lag(skipped);
-    let (snapshot, next_events) = client.navigation_snapshot_and_subscribe();
-    state.restore_discord_snapshot(snapshot);
-    *events = next_events;
-    history_requests.reset_after_lag();
-    forum_post_requests.reset_after_lag();
-    pinned_message_requests.reset_after_lag();
-    member_requests.reset_after_lag();
-    thread_preview_requests.reset_after_lag();
-    *last_member_subscription = None;
-    requested_author_profiles.clear();
+    if event.revision > current_snapshot_revision {
+        deferred_effects.push_back(event);
+        return;
+    }
+    process_effect_event(event.event, ctx);
+}
+
+fn process_deferred_effects(
+    current_snapshot_revision: u64,
+    deferred_effects: &mut VecDeque<SequencedAppEvent>,
+    ctx: &mut EffectContext<'_>,
+) {
+    for _ in 0..deferred_effects.len() {
+        let Some(event) = deferred_effects.pop_front() else {
+            break;
+        };
+        process_sequenced_effect(event, current_snapshot_revision, deferred_effects, ctx);
+    }
 }
 
 fn handle_gateway_closed(state: &mut DashboardState) {
     logging::error("tui", "gateway closed");
-    state.push_event(AppEvent::GatewayClosed);
+    state.push_effect(AppEvent::GatewayClosed);
     state.quit();
 }
 
 async fn run_dashboard(
     terminal: &mut ratatui::DefaultTerminal,
-    events: &mut broadcast::Receiver<AppEvent>,
+    effects: &mut mpsc::Receiver<SequencedAppEvent>,
+    snapshots: &mut watch::Receiver<SnapshotRevision>,
     commands: mpsc::Sender<AppCommand>,
     client: DiscordClient,
 ) -> Result<()> {
     let mut state = DashboardState::new();
+    drop(snapshots.borrow_and_update());
+    let initial_snapshot = client.current_discord_snapshot();
+    let mut current_snapshot_revision = initial_snapshot.revision;
+    state.restore_discord_snapshot(initial_snapshot.state);
     let mut image_previews = ImagePreviewCache::new();
     let mut avatar_images = AvatarImageCache::new();
     let mut emoji_images = EmojiImageCache::new();
@@ -179,6 +199,7 @@ async fn run_dashboard(
     let mut image_targets = Vec::new();
     let mut avatar_targets = Vec::new();
     let mut emoji_targets = Vec::new();
+    let mut deferred_effects = VecDeque::new();
     let mut last_frame_area = Rect::default();
     let mut dirty = true;
 
@@ -216,7 +237,7 @@ async fn run_dashboard(
             for command in image_previews.next_requests(&image_targets) {
                 if commands.send(command).await.is_err() {
                     logging::error("tui", "command channel closed");
-                    state.push_event(AppEvent::GatewayError {
+                    state.push_effect(AppEvent::GatewayError {
                         message: "command channel closed".to_owned(),
                     });
                     dirty = true;
@@ -227,7 +248,7 @@ async fn run_dashboard(
             for command in avatar_images.next_requests(&avatar_targets) {
                 if commands.send(command).await.is_err() {
                     logging::error("tui", "command channel closed");
-                    state.push_event(AppEvent::GatewayError {
+                    state.push_effect(AppEvent::GatewayError {
                         message: "command channel closed".to_owned(),
                     });
                     dirty = true;
@@ -243,7 +264,7 @@ async fn run_dashboard(
                 && commands.send(command).await.is_err()
             {
                 logging::error("tui", "command channel closed");
-                state.push_event(AppEvent::GatewayError {
+                state.push_effect(AppEvent::GatewayError {
                     message: "command channel closed".to_owned(),
                 });
                 dirty = true;
@@ -251,7 +272,7 @@ async fn run_dashboard(
             for command in emoji_images.next_requests(&emoji_targets) {
                 if commands.send(command).await.is_err() {
                     logging::error("tui", "command channel closed");
-                    state.push_event(AppEvent::GatewayError {
+                    state.push_effect(AppEvent::GatewayError {
                         message: "command channel closed".to_owned(),
                     });
                     dirty = true;
@@ -269,7 +290,7 @@ async fn run_dashboard(
                             && commands.send(command).await.is_err()
                         {
                             logging::error("tui", "command channel closed");
-                            state.push_event(AppEvent::GatewayError {
+                            state.push_effect(AppEvent::GatewayError {
                                 message: "command channel closed".to_owned(),
                             });
                         }
@@ -298,53 +319,67 @@ async fn run_dashboard(
                 image_previews.store_decoded(result);
                 dirty = true;
             }
-            event = events.recv() => {
-                match event {
-                    Ok(event) => {
-                        process_app_event(
-                            event,
-                            &mut state,
-                            &mut image_previews,
-                            &mut avatar_images,
-                            &mut emoji_images,
-                            &mut history_requests,
-                            &mut forum_post_requests,
-                            &mut pinned_message_requests,
-                            &mut thread_preview_requests,
-                            &preview_decode_tx,
+            snapshot_changed = snapshots.changed() => {
+                match snapshot_changed {
+                    Ok(()) => {
+                        drop(snapshots.borrow_and_update());
+                        let snapshot = client.current_discord_snapshot();
+                        current_snapshot_revision = snapshot.revision;
+                        state.restore_discord_snapshot(snapshot.state);
+                        let mut ctx = EffectContext {
+                            state: &mut state,
+                            image_previews: &mut image_previews,
+                            avatar_images: &mut avatar_images,
+                            emoji_images: &mut emoji_images,
+                            history_requests: &mut history_requests,
+                            forum_post_requests: &mut forum_post_requests,
+                            pinned_message_requests: &mut pinned_message_requests,
+                            thread_preview_requests: &mut thread_preview_requests,
+                            preview_decode_tx: &preview_decode_tx,
+                        };
+                        process_deferred_effects(
+                            current_snapshot_revision,
+                            &mut deferred_effects,
+                            &mut ctx,
                         );
-                        for _ in 0..MAX_DRAINED_APP_EVENTS {
-                            match events.try_recv() {
-                                Ok(event) => process_app_event(
-                                    event,
-                                    &mut state,
-                                    &mut image_previews,
-                                    &mut avatar_images,
-                                    &mut emoji_images,
-                                    &mut history_requests,
-                                    &mut forum_post_requests,
-                                    &mut pinned_message_requests,
-                                    &mut thread_preview_requests,
-                                    &preview_decode_tx,
+                    }
+                    Err(_) => {
+                        logging::error("tui", "snapshot stream closed");
+                        state.quit();
+                    }
+                }
+                dirty = true;
+            }
+            maybe_effect = effects.recv() => {
+                match maybe_effect {
+                    Some(effect) => {
+                        let mut ctx = EffectContext {
+                            state: &mut state,
+                            image_previews: &mut image_previews,
+                            avatar_images: &mut avatar_images,
+                            emoji_images: &mut emoji_images,
+                            history_requests: &mut history_requests,
+                            forum_post_requests: &mut forum_post_requests,
+                            pinned_message_requests: &mut pinned_message_requests,
+                            thread_preview_requests: &mut thread_preview_requests,
+                            preview_decode_tx: &preview_decode_tx,
+                        };
+                        process_sequenced_effect(
+                            effect,
+                            current_snapshot_revision,
+                            &mut deferred_effects,
+                            &mut ctx,
+                        );
+                        for _ in 0..MAX_DRAINED_EFFECT_EVENTS {
+                            match effects.try_recv() {
+                                Ok(effect) => process_sequenced_effect(
+                                    effect,
+                                    current_snapshot_revision,
+                                    &mut deferred_effects,
+                                    &mut ctx,
                                 ),
-                                Err(broadcast::error::TryRecvError::Empty) => break,
-                                Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
-                                    recover_after_lag(
-                                        skipped,
-                                        events,
-                                        &client,
-                                        &mut state,
-                                        &mut history_requests,
-                                        &mut forum_post_requests,
-                                        &mut pinned_message_requests,
-                                        &mut member_requests,
-                                        &mut thread_preview_requests,
-                                        &mut last_member_subscription,
-                                        &mut requested_author_profiles,
-                                    );
-                                    break;
-                                }
-                                Err(broadcast::error::TryRecvError::Closed) => {
+                                Err(mpsc::error::TryRecvError::Empty) => break,
+                                Err(mpsc::error::TryRecvError::Disconnected) => {
                                     handle_gateway_closed(&mut state);
                                     break;
                                 }
@@ -352,23 +387,7 @@ async fn run_dashboard(
                         }
                         dirty = true;
                     }
-                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        recover_after_lag(
-                            skipped,
-                            events,
-                            &client,
-                            &mut state,
-                            &mut history_requests,
-                            &mut forum_post_requests,
-                            &mut pinned_message_requests,
-                            &mut member_requests,
-                            &mut thread_preview_requests,
-                            &mut last_member_subscription,
-                            &mut requested_author_profiles,
-                        );
-                        dirty = true;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
+                    None => {
                         handle_gateway_closed(&mut state);
                         dirty = true;
                     }
@@ -387,7 +406,7 @@ async fn run_dashboard(
         {
             history_requests.mark_failed(channel_id);
             logging::error("tui", "command channel closed");
-            state.push_event(AppEvent::GatewayError {
+            state.push_effect(AppEvent::GatewayError {
                 message: "command channel closed".to_owned(),
             });
             dirty = true;
@@ -402,7 +421,7 @@ async fn run_dashboard(
         {
             pinned_message_requests.mark_failed(channel_id);
             logging::error("tui", "command channel closed");
-            state.push_event(AppEvent::GatewayError {
+            state.push_effect(AppEvent::GatewayError {
                 message: "command channel closed".to_owned(),
             });
             dirty = true;
@@ -427,7 +446,7 @@ async fn run_dashboard(
         {
             forum_post_requests.mark_failed(channel_id, offset);
             logging::error("tui", "command channel closed");
-            state.push_event(AppEvent::GatewayError {
+            state.push_effect(AppEvent::GatewayError {
                 message: "command channel closed".to_owned(),
             });
             dirty = true;
@@ -441,7 +460,7 @@ async fn run_dashboard(
             {
                 member_requests.remove(guild_id);
                 logging::error("tui", "command channel closed");
-                state.push_event(AppEvent::GatewayError {
+                state.push_effect(AppEvent::GatewayError {
                     message: "command channel closed".to_owned(),
                 });
                 dirty = true;
@@ -462,7 +481,7 @@ async fn run_dashboard(
                     .is_err()
             {
                 logging::error("tui", "command channel closed");
-                state.push_event(AppEvent::GatewayError {
+                state.push_effect(AppEvent::GatewayError {
                     message: "command channel closed".to_owned(),
                 });
                 dirty = true;
@@ -482,7 +501,7 @@ async fn run_dashboard(
                 .is_err()
             {
                 logging::error("tui", "command channel closed");
-                state.push_event(AppEvent::GatewayError {
+                state.push_effect(AppEvent::GatewayError {
                     message: "command channel closed".to_owned(),
                 });
                 dirty = true;
@@ -502,7 +521,7 @@ async fn run_dashboard(
             {
                 thread_preview_requests.remove((channel_id, latest_message_id));
                 logging::error("tui", "command channel closed");
-                state.push_event(AppEvent::GatewayError {
+                state.push_effect(AppEvent::GatewayError {
                     message: "command channel closed".to_owned(),
                 });
                 dirty = true;
@@ -532,7 +551,7 @@ async fn run_dashboard(
                     .is_err()
                 {
                     logging::error("tui", "command channel closed");
-                    state.push_event(AppEvent::GatewayError {
+                    state.push_effect(AppEvent::GatewayError {
                         message: "command channel closed".to_owned(),
                     });
                     dirty = true;
@@ -544,4 +563,79 @@ async fn run_dashboard(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+
+    use crate::discord::{AppEvent, SequencedAppEvent};
+
+    use super::{
+        AvatarImageCache, EffectContext, EmojiImageCache, ForumPostRequests, HistoryRequests,
+        ImagePreviewCache, PinnedMessageRequests, ThreadPreviewRequests, process_deferred_effects,
+        process_sequenced_effect,
+    };
+    use crate::tui::state::DashboardState;
+
+    #[test]
+    fn effect_waits_until_snapshot_revision_catches_up() {
+        let mut state = DashboardState::new();
+        let mut image_previews = ImagePreviewCache::new();
+        let mut avatar_images = AvatarImageCache::new();
+        let mut emoji_images = EmojiImageCache::new();
+        let mut history_requests = HistoryRequests::default();
+        let mut forum_post_requests = ForumPostRequests::default();
+        let mut pinned_message_requests = PinnedMessageRequests::default();
+        let mut thread_preview_requests = ThreadPreviewRequests::default();
+        let (preview_decode_tx, _preview_decode_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut deferred_effects = VecDeque::new();
+
+        {
+            let mut ctx = EffectContext {
+                state: &mut state,
+                image_previews: &mut image_previews,
+                avatar_images: &mut avatar_images,
+                emoji_images: &mut emoji_images,
+                history_requests: &mut history_requests,
+                forum_post_requests: &mut forum_post_requests,
+                pinned_message_requests: &mut pinned_message_requests,
+                thread_preview_requests: &mut thread_preview_requests,
+                preview_decode_tx: &preview_decode_tx,
+            };
+            process_sequenced_effect(
+                SequencedAppEvent {
+                    revision: 2,
+                    event: AppEvent::Ready {
+                        user: "tester".to_owned(),
+                        user_id: None,
+                    },
+                },
+                1,
+                &mut deferred_effects,
+                &mut ctx,
+            );
+        }
+
+        assert_eq!(deferred_effects.len(), 1);
+        assert_eq!(state.current_user(), None);
+
+        {
+            let mut ctx = EffectContext {
+                state: &mut state,
+                image_previews: &mut image_previews,
+                avatar_images: &mut avatar_images,
+                emoji_images: &mut emoji_images,
+                history_requests: &mut history_requests,
+                forum_post_requests: &mut forum_post_requests,
+                pinned_message_requests: &mut pinned_message_requests,
+                thread_preview_requests: &mut thread_preview_requests,
+                preview_decode_tx: &preview_decode_tx,
+            };
+            process_deferred_effects(2, &mut deferred_effects, &mut ctx);
+        }
+
+        assert!(deferred_effects.is_empty());
+        assert_eq!(state.current_user(), Some("tester"));
+    }
 }

@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, atomic::AtomicU64},
     time::{Duration, Instant},
 };
 
@@ -14,7 +14,7 @@ use crate::discord::ids::{
 use futures::{SinkExt, StreamExt};
 use rand::Rng;
 use serde_json::{Value, json};
-use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::sync::{Mutex, mpsc, watch};
 use tokio::time::sleep;
 use tokio_tungstenite::{
     connect_async,
@@ -26,10 +26,14 @@ use super::{
     FriendStatus, GuildFolder, MemberInfo, MentionInfo, MessageInfo, MessageKind,
     MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus,
     ReactionInfo, ReplyInfo, RoleInfo,
+    client::publish_app_event,
     commands::ReactionEmoji,
     events::default_avatar_url,
-    events::{AppEvent, AttachmentUpdate, PermissionOverwriteInfo, PermissionOverwriteKind},
-    state::DiscordState,
+    events::{
+        AppEvent, AttachmentUpdate, PermissionOverwriteInfo, PermissionOverwriteKind,
+        SequencedAppEvent,
+    },
+    state::{DiscordState, SnapshotRevision},
 };
 use crate::logging;
 
@@ -96,6 +100,22 @@ type GatewayStream =
 /// behind a `Mutex<Arc<…>>` instead of being moved into either side.
 type WriterHandle = Arc<Mutex<futures::stream::SplitSink<GatewayStream, WsMessage>>>;
 
+#[derive(Clone, Copy)]
+struct GatewayPublishContext<'a> {
+    effects_tx: &'a mpsc::Sender<SequencedAppEvent>,
+    snapshots_tx: &'a watch::Sender<SnapshotRevision>,
+    state: &'a Arc<RwLock<DiscordState>>,
+    revision: &'a Arc<AtomicU64>,
+    publish_lock: &'a Arc<Mutex<()>>,
+}
+
+#[derive(Clone, Copy)]
+struct FrameContext<'a> {
+    sequence_cell: &'a Arc<Mutex<Option<u64>>>,
+    writer: &'a WriterHandle,
+    publish: GatewayPublishContext<'a>,
+}
+
 /// What to do after one connection lifecycle ends.
 enum ConnectionOutcome {
     /// The websocket dropped or Discord asked us to reconnect; try to RESUME
@@ -141,26 +161,35 @@ impl SessionState {
 
 pub async fn run_gateway(
     token: String,
-    tx: broadcast::Sender<AppEvent>,
+    effects_tx: mpsc::Sender<SequencedAppEvent>,
+    snapshots_tx: watch::Sender<SnapshotRevision>,
     mut commands: mpsc::UnboundedReceiver<GatewayCommand>,
     state: Arc<RwLock<DiscordState>>,
+    revision: Arc<AtomicU64>,
+    publish_lock: Arc<Mutex<()>>,
 ) {
     let mut session = SessionState::default();
     let mut backoff = RECONNECT_BASE_DELAY;
 
     loop {
-        let outcome = match connect_and_run(&token, &tx, &mut commands, &mut session, &state).await
-        {
+        let publish = GatewayPublishContext {
+            effects_tx: &effects_tx,
+            snapshots_tx: &snapshots_tx,
+            state: &state,
+            revision: &revision,
+            publish_lock: &publish_lock,
+        };
+        let outcome = match connect_and_run(&token, &mut commands, &mut session, publish).await {
             Ok(outcome) => outcome,
             Err(error) => {
                 logging::error("gateway", format!("connection error: {error}"));
                 publish_gateway_event(
-                    &tx,
-                    &state,
+                    publish,
                     AppEvent::GatewayError {
                         message: format!("connection error: {error}"),
                     },
-                );
+                )
+                .await;
                 ConnectionOutcome::Resume
             }
         };
@@ -187,15 +216,21 @@ pub async fn run_gateway(
         backoff = (backoff * 2).min(RECONNECT_MAX_DELAY);
     }
 
-    publish_gateway_event(&tx, &state, AppEvent::GatewayClosed);
+    let publish = GatewayPublishContext {
+        effects_tx: &effects_tx,
+        snapshots_tx: &snapshots_tx,
+        state: &state,
+        revision: &revision,
+        publish_lock: &publish_lock,
+    };
+    publish_gateway_event(publish, AppEvent::GatewayClosed).await;
 }
 
 async fn connect_and_run(
     token: &str,
-    tx: &broadcast::Sender<AppEvent>,
     commands: &mut mpsc::UnboundedReceiver<GatewayCommand>,
     session: &mut SessionState,
-    state: &Arc<RwLock<DiscordState>>,
+    publish: GatewayPublishContext<'_>,
 ) -> Result<ConnectionOutcome, String> {
     let url = session.next_url();
     logging::debug("gateway", format!("connecting to {url}"));
@@ -309,7 +344,17 @@ async fn connect_and_run(
                                 continue;
                             }
                         };
-                        match handle_frame(value, &text, session, &sequence_cell, tx, &writer, state).await {
+                        let frame_context = FrameContext {
+                            sequence_cell: &sequence_cell,
+                            writer: &writer,
+                            publish,
+                        };
+                        match handle_frame(
+                            value,
+                            &text,
+                            session,
+                            frame_context,
+                        ).await {
                             FrameOutcome::Continue => {}
                             FrameOutcome::Resume => break ConnectionOutcome::Resume,
                             FrameOutcome::Reidentify => break ConnectionOutcome::Reidentify,
@@ -360,10 +405,7 @@ async fn handle_frame(
     value: Value,
     raw: &str,
     session: &mut SessionState,
-    sequence_cell: &Arc<Mutex<Option<u64>>>,
-    tx: &broadcast::Sender<AppEvent>,
-    writer: &WriterHandle,
-    state: &Arc<RwLock<DiscordState>>,
+    context: FrameContext<'_>,
 ) -> FrameOutcome {
     let op = value.get("op").and_then(Value::as_u64).unwrap_or_default();
     match op {
@@ -371,7 +413,7 @@ async fn handle_frame(
         0 => {
             if let Some(seq) = value.get("s").and_then(Value::as_u64) {
                 session.last_sequence = Some(seq);
-                *sequence_cell.lock().await = Some(seq);
+                *context.sequence_cell.lock().await = Some(seq);
             }
             let dispatch_type = value.get("t").and_then(Value::as_str).unwrap_or("");
             // Capture the session_id and resume_url from READY so a later
@@ -392,16 +434,16 @@ async fn handle_frame(
             let events = parse_user_account_event(raw);
             logging::timing("gateway", "dispatch parse", started.elapsed());
             for app_event in events {
-                publish_gateway_event(tx, state, app_event);
+                publish_gateway_event(context.publish, app_event).await;
             }
             FrameOutcome::Continue
         }
         // Heartbeat request from Discord — answer immediately even though our
         // background task is pacing things.
         1 => {
-            let seq = *sequence_cell.lock().await;
+            let seq = *context.sequence_cell.lock().await;
             let payload = json!({"op": 1, "d": seq}).to_string();
-            let _ = send_text(writer, payload).await;
+            let _ = send_text(context.writer, payload).await;
             FrameOutcome::Continue
         }
         // Reconnect — Discord wants us to drop and resume. Saved
@@ -430,14 +472,16 @@ async fn handle_frame(
     }
 }
 
-fn publish_gateway_event(
-    tx: &broadcast::Sender<AppEvent>,
-    state: &Arc<RwLock<DiscordState>>,
-    event: AppEvent,
-) {
-    let mut state = state.write().expect("discord state lock is not poisoned");
-    state.apply_event(&event);
-    let _ = tx.send(event);
+async fn publish_gateway_event(context: GatewayPublishContext<'_>, event: AppEvent) {
+    publish_app_event(
+        context.effects_tx,
+        context.snapshots_tx,
+        context.state,
+        context.revision,
+        context.publish_lock,
+        &event,
+    )
+    .await;
 }
 
 fn close_outcome(frame: Option<&CloseFrame>) -> ConnectionOutcome {

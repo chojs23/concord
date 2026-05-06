@@ -4,17 +4,8 @@ use super::{ActiveGuildScope, DashboardState};
 use crate::logging;
 
 impl DashboardState {
-    pub fn record_recovered_lag(&mut self, skipped: u64) {
-        self.skipped_events += skipped;
-    }
-
     pub fn last_status(&self) -> Option<&str> {
         self.last_status.as_deref()
-    }
-
-    #[cfg(test)]
-    pub fn skipped_events(&self) -> u64 {
-        self.skipped_events
     }
 
     pub fn is_debug_log_popup_open(&self) -> bool {

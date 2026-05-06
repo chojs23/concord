@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{
+    Arc, Mutex, RwLock,
+    atomic::{AtomicU64, Ordering},
+};
 
 use crate::discord::ids::{
     Id,
@@ -6,7 +9,7 @@ use crate::discord::ids::{
 };
 use reqwest::header::HeaderValue;
 use tokio::{
-    sync::{broadcast, mpsc},
+    sync::{Mutex as AsyncMutex, mpsc, watch},
     task::JoinHandle,
 };
 
@@ -14,18 +17,22 @@ use crate::{AppError, Result};
 
 use super::{
     MessageInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
-    events::AppEvent,
+    events::{AppEvent, SequencedAppEvent},
     gateway::{GatewayCommand, run_gateway},
     rest::{DiscordRest, ForumPostPage},
-    state::DiscordState,
+    state::{DiscordSnapshot, DiscordState, SnapshotRevision},
 };
 
 #[derive(Clone, Debug)]
 pub struct DiscordClient {
     token: String,
     rest: DiscordRest,
-    events_tx: broadcast::Sender<AppEvent>,
+    effects_tx: mpsc::Sender<SequencedAppEvent>,
+    effects_rx: Arc<Mutex<Option<mpsc::Receiver<SequencedAppEvent>>>>,
+    snapshots_tx: watch::Sender<SnapshotRevision>,
     state: Arc<RwLock<DiscordState>>,
+    revision: Arc<AtomicU64>,
+    publish_lock: Arc<AsyncMutex<()>>,
     gateway_commands_tx: mpsc::UnboundedSender<GatewayCommand>,
     gateway_commands_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<GatewayCommand>>>>,
 }
@@ -34,48 +41,68 @@ impl DiscordClient {
     pub fn new(token: String) -> Result<Self> {
         validate_token_header(&token)?;
         let rest = DiscordRest::new(token.clone());
-        let (events_tx, _) = broadcast::channel(4096);
+        let initial_state = DiscordState::default();
+        let (effects_tx, effects_rx) = mpsc::channel(4096);
+        let (snapshots_tx, _) = watch::channel(SnapshotRevision { revision: 0 });
         let (gateway_commands_tx, gateway_commands_rx) = mpsc::unbounded_channel();
 
         Ok(Self {
             token,
             rest,
-            events_tx,
-            state: Arc::new(RwLock::new(DiscordState::default())),
+            effects_tx,
+            effects_rx: Arc::new(Mutex::new(Some(effects_rx))),
+            snapshots_tx,
+            state: Arc::new(RwLock::new(initial_state)),
+            revision: Arc::new(AtomicU64::new(0)),
+            publish_lock: Arc::new(AsyncMutex::new(())),
             gateway_commands_tx,
             gateway_commands_rx: Arc::new(Mutex::new(Some(gateway_commands_rx))),
         })
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
-        self.events_tx.subscribe()
+    pub fn take_effects(&self) -> mpsc::Receiver<SequencedAppEvent> {
+        self.effects_rx
+            .lock()
+            .expect("effect receiver mutex is not poisoned")
+            .take()
+            .expect("effect stream can only be taken once")
     }
 
-    pub fn publish_event(&self, event: AppEvent) {
-        let mut state = self
-            .state
-            .write()
-            .expect("discord state lock is not poisoned");
-        state.apply_event(&event);
-        let _ = self.events_tx.send(event);
+    pub fn subscribe_snapshots(&self) -> watch::Receiver<SnapshotRevision> {
+        self.snapshots_tx.subscribe()
     }
 
-    pub fn navigation_snapshot_and_subscribe(
-        &self,
-    ) -> (DiscordState, broadcast::Receiver<AppEvent>) {
+    pub fn current_discord_snapshot(&self) -> DiscordSnapshot {
         let state = self
             .state
             .read()
             .expect("discord state lock is not poisoned");
-        let snapshot = state.navigation_snapshot();
-        let events = self.events_tx.subscribe();
-        (snapshot, events)
+        let revision = self.revision.load(Ordering::Acquire);
+        DiscordSnapshot {
+            revision,
+            state: state.clone(),
+        }
+    }
+
+    pub async fn publish_event(&self, event: AppEvent) {
+        publish_app_event(
+            &self.effects_tx,
+            &self.snapshots_tx,
+            &self.state,
+            &self.revision,
+            &self.publish_lock,
+            &event,
+        )
+        .await;
     }
 
     pub fn start_gateway(&self) -> JoinHandle<()> {
         let token = self.token.clone();
-        let events_tx = self.events_tx.clone();
+        let effects_tx = self.effects_tx.clone();
+        let snapshots_tx = self.snapshots_tx.clone();
         let state = Arc::clone(&self.state);
+        let revision = Arc::clone(&self.revision);
+        let publish_lock = Arc::clone(&self.publish_lock);
         let gateway_commands = self
             .gateway_commands_rx
             .lock()
@@ -84,7 +111,16 @@ impl DiscordClient {
             .expect("gateway can only be started once");
 
         tokio::spawn(async move {
-            run_gateway(token, events_tx, gateway_commands, state).await;
+            run_gateway(
+                token,
+                effects_tx,
+                snapshots_tx,
+                gateway_commands,
+                state,
+                revision,
+                publish_lock,
+            )
+            .await;
         })
     }
 
@@ -238,6 +274,37 @@ impl DiscordClient {
     }
 }
 
+pub(super) async fn publish_app_event(
+    effects_tx: &mpsc::Sender<SequencedAppEvent>,
+    snapshots_tx: &watch::Sender<SnapshotRevision>,
+    state: &Arc<RwLock<DiscordState>>,
+    revision: &Arc<AtomicU64>,
+    publish_lock: &Arc<AsyncMutex<()>>,
+    event: &AppEvent,
+) {
+    let _publish_guard = publish_lock.lock().await;
+    let revision = if event.mutates_discord_state() {
+        let revision = {
+            let mut state = state.write().expect("discord state lock is not poisoned");
+            state.apply_event(event);
+            revision.fetch_add(1, Ordering::AcqRel) + 1
+        };
+        let _ = snapshots_tx.send(SnapshotRevision { revision });
+        revision
+    } else {
+        revision.load(Ordering::Acquire)
+    };
+
+    if event.needs_effect_delivery() {
+        let _ = effects_tx
+            .send(SequencedAppEvent {
+                revision,
+                event: event.clone(),
+            })
+            .await;
+    }
+}
+
 fn validate_token_header(token: &str) -> Result<()> {
     HeaderValue::from_str(token)
         .map_err(|source| AppError::InvalidDiscordTokenHeader { source })?;
@@ -246,7 +313,88 @@ fn validate_token_header(token: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_token_header;
+    use crate::discord::{AppEvent, ids::Id};
+
+    use super::{DiscordClient, validate_token_header};
+
+    #[tokio::test]
+    async fn publish_event_sends_matching_snapshot_and_effect_revisions() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let mut effects = client.take_effects();
+        let mut snapshots = client.subscribe_snapshots();
+
+        client
+            .publish_event(AppEvent::MessageHistoryLoaded {
+                channel_id: Id::new(1),
+                before: None,
+                messages: Vec::new(),
+            })
+            .await;
+
+        snapshots.changed().await.expect("snapshot is published");
+        let snapshot = snapshots.borrow_and_update().clone();
+        let effect = effects.recv().await.expect("effect is published");
+        let state_snapshot = client.current_discord_snapshot();
+
+        assert_eq!(snapshot.revision, 1);
+        assert_eq!(effect.revision, 1);
+        assert_eq!(state_snapshot.revision, 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_publishers_emit_ordered_effect_revisions() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let mut effects = client.take_effects();
+        let mut snapshots = client.subscribe_snapshots();
+
+        let mut tasks = Vec::new();
+        for index in 0..32_u64 {
+            let client = client.clone();
+            tasks.push(tokio::spawn(async move {
+                client
+                    .publish_event(AppEvent::MessageHistoryLoaded {
+                        channel_id: Id::new(index + 1),
+                        before: None,
+                        messages: Vec::new(),
+                    })
+                    .await;
+            }));
+        }
+
+        for task in tasks {
+            task.await.expect("publish task completes");
+        }
+
+        for expected_revision in 1..=32 {
+            let effect = effects.recv().await.expect("effect is published");
+            assert_eq!(effect.revision, expected_revision);
+        }
+
+        snapshots.changed().await.expect("snapshot is published");
+        let snapshot = snapshots.borrow_and_update().clone();
+        assert_eq!(snapshot.revision, 32);
+        assert_eq!(client.current_discord_snapshot().revision, 32);
+    }
+
+    #[tokio::test]
+    async fn effect_only_events_do_not_publish_snapshots() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let mut effects = client.take_effects();
+        let snapshots = client.subscribe_snapshots();
+
+        client
+            .publish_event(AppEvent::GatewayError {
+                message: "boom".to_owned(),
+            })
+            .await;
+
+        let effect = effects.recv().await.expect("effect is published");
+        assert_eq!(effect.revision, 0);
+        assert!(!snapshots.has_changed().expect("snapshot stream is open"));
+    }
 
     #[tokio::test]
     async fn accepts_raw_user_token_header() {

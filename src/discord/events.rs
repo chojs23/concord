@@ -584,6 +584,52 @@ pub enum AppEvent {
     GatewayClosed,
 }
 
+#[derive(Clone, Debug)]
+pub struct SequencedAppEvent {
+    pub revision: u64,
+    pub event: AppEvent,
+}
+
+impl AppEvent {
+    pub fn mutates_discord_state(&self) -> bool {
+        !matches!(
+            self,
+            AppEvent::GatewayError { .. }
+                | AppEvent::StatusMessage { .. }
+                | AppEvent::ReactionUsersLoaded { .. }
+                | AppEvent::AttachmentPreviewLoaded { .. }
+                | AppEvent::AttachmentPreviewLoadFailed { .. }
+                | AppEvent::ThreadPreviewLoadFailed { .. }
+                | AppEvent::ForumPostsLoadFailed { .. }
+                | AppEvent::MessageHistoryLoadFailed { .. }
+                | AppEvent::PinnedMessagesLoadFailed { .. }
+                | AppEvent::UserProfileLoadFailed { .. }
+                | AppEvent::GatewayClosed
+        )
+    }
+
+    pub fn needs_effect_delivery(&self) -> bool {
+        matches!(
+            self,
+            AppEvent::MessageHistoryLoaded { .. }
+                | AppEvent::MessageHistoryLoadFailed { .. }
+                | AppEvent::ThreadPreviewLoaded { .. }
+                | AppEvent::ThreadPreviewLoadFailed { .. }
+                | AppEvent::ForumPostsLoaded { .. }
+                | AppEvent::ForumPostsLoadFailed { .. }
+                | AppEvent::PinnedMessagesLoaded { .. }
+                | AppEvent::PinnedMessagesLoadFailed { .. }
+                | AppEvent::ReactionUsersLoaded { .. }
+                | AppEvent::GatewayError { .. }
+                | AppEvent::StatusMessage { .. }
+                | AppEvent::AttachmentPreviewLoaded { .. }
+                | AppEvent::AttachmentPreviewLoadFailed { .. }
+                | AppEvent::UserProfileLoadFailed { .. }
+                | AppEvent::GatewayClosed
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum FriendStatus {
     None,

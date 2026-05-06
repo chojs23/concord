@@ -59,17 +59,6 @@ fn gateway_error_stays_out_of_footer_state() {
 }
 
 #[test]
-fn recovered_lag_keeps_count_for_debug_without_footer_status() {
-    let mut state = DashboardState::new();
-
-    state.record_recovered_lag(2);
-    state.record_recovered_lag(3);
-
-    assert_eq!(state.skipped_events(), 5);
-    assert_eq!(state.last_status(), None);
-}
-
-#[test]
 fn toggles_debug_log_popup() {
     let mut state = DashboardState::new();
 
@@ -4395,10 +4384,8 @@ fn restoring_discord_snapshot_recovers_missed_guilds_and_direct_messages() {
     }));
 
     let mut state = DashboardState::new();
-    state.record_recovered_lag(3);
     state.restore_discord_snapshot(snapshot);
 
-    assert_eq!(state.skipped_events(), 3);
     assert_eq!(state.last_status(), None);
     assert_eq!(state.current_user(), Some("neo"));
     assert_eq!(state.current_user_id, Some(Id::new(10)));
