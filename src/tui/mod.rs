@@ -30,7 +30,10 @@ use tokio::sync::{mpsc, watch};
 
 use crate::{
     Result,
-    discord::{AppCommand, AppEvent, DiscordClient, SequencedAppEvent, SnapshotRevision},
+    discord::{
+        AppCommand, AppEvent, DiscordClient, MessageState, PresenceStatus, SequencedAppEvent,
+        SnapshotRevision,
+    },
     logging,
 };
 
@@ -172,6 +175,202 @@ fn handle_gateway_closed(state: &mut DashboardState) {
     state.quit();
 }
 
+#[derive(Default)]
+struct RedrawDiagnostics {
+    key_presses: u32,
+    mouse_events: u32,
+    resizes: u32,
+    terminal_closed: u32,
+    preview_decodes: u32,
+    snapshot_events: u32,
+    effect_events: u32,
+    redraw_timer_fires: u32,
+    media_requests: u32,
+    request_failures: u32,
+    visible_image_previews_max: usize,
+    snapshot_message_changes: u32,
+    snapshot_member_changes: u32,
+    snapshot_channel_changes: u32,
+    snapshot_guild_changes: u32,
+    snapshot_popup_changes: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VisibleDashboardSignature {
+    focus: state::FocusPane,
+    current_user: Option<String>,
+    selected_guild_id: Option<Id<GuildMarker>>,
+    selected_channel_id: Option<Id<ChannelMarker>>,
+    selected_message: usize,
+    message_scroll: usize,
+    message_line_scroll: usize,
+    selected_member: usize,
+    member_scroll: usize,
+    message_pane_title: String,
+    typing_footer: Option<String>,
+    status_message: Option<String>,
+    popups: VisiblePopupSignature,
+    visible_guilds: Vec<String>,
+    visible_channels: Vec<String>,
+    visible_messages: Vec<MessageState>,
+    visible_forum_posts: Vec<state::ChannelThreadItem>,
+    visible_members: Vec<MemberEntrySignature>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VisiblePopupSignature {
+    message_action_open: bool,
+    guild_action_open: bool,
+    channel_action_open: bool,
+    member_action_open: bool,
+    emoji_picker_open: bool,
+    reaction_users_open: bool,
+    poll_vote_picker_open: bool,
+    user_profile_open: bool,
+    debug_log_open: bool,
+    user_profile_data: String,
+    user_profile_error: Option<String>,
+    user_profile_status: PresenceStatus,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MemberEntrySignature {
+    user_id: Id<UserMarker>,
+    display_name: String,
+    username: Option<String>,
+    is_bot: bool,
+    status: PresenceStatus,
+}
+
+fn visible_dashboard_signature(state: &DashboardState) -> VisibleDashboardSignature {
+    let member_start = state.member_scroll();
+    let member_end = member_start.saturating_add(state.member_content_height());
+    VisibleDashboardSignature {
+        focus: state.focus(),
+        current_user: state.current_user().map(str::to_owned),
+        selected_guild_id: state.selected_guild_id(),
+        selected_channel_id: state.selected_channel_id(),
+        selected_message: state.selected_message(),
+        message_scroll: state.message_scroll(),
+        message_line_scroll: state.message_line_scroll(),
+        selected_member: state.selected_member(),
+        member_scroll: state.member_scroll(),
+        message_pane_title: state.message_pane_title(),
+        typing_footer: state.typing_footer_for_selected_channel(),
+        status_message: state.last_status().map(str::to_owned),
+        popups: VisiblePopupSignature {
+            message_action_open: state.is_message_action_menu_open(),
+            guild_action_open: state.is_guild_action_menu_open(),
+            channel_action_open: state.is_channel_action_menu_open(),
+            member_action_open: state.is_member_action_menu_open(),
+            emoji_picker_open: state.is_emoji_reaction_picker_open(),
+            reaction_users_open: state.is_reaction_users_popup_open(),
+            poll_vote_picker_open: state.is_poll_vote_picker_open(),
+            user_profile_open: state.is_user_profile_popup_open(),
+            debug_log_open: state.is_debug_log_popup_open(),
+            user_profile_data: format!("{:?}", state.user_profile_popup_data()),
+            user_profile_error: state.user_profile_popup_load_error().map(str::to_owned),
+            user_profile_status: state.user_profile_popup_status(),
+        },
+        visible_guilds: state
+            .visible_guild_pane_entries()
+            .into_iter()
+            .map(|entry| format!("{entry:?}"))
+            .collect(),
+        visible_channels: state
+            .visible_channel_pane_entries()
+            .into_iter()
+            .map(|entry| format!("{entry:?}"))
+            .collect(),
+        visible_messages: state.visible_messages().into_iter().cloned().collect(),
+        visible_forum_posts: state.visible_forum_post_items(),
+        visible_members: state
+            .flattened_members()
+            .into_iter()
+            .skip(member_start)
+            .take(member_end.saturating_sub(member_start))
+            .map(|entry| MemberEntrySignature {
+                user_id: entry.user_id(),
+                display_name: entry.display_name(),
+                username: entry.username(),
+                is_bot: entry.is_bot(),
+                status: entry.status(),
+            })
+            .collect(),
+    }
+}
+
+fn record_visible_signature_change(
+    diagnostics: &mut RedrawDiagnostics,
+    before: &VisibleDashboardSignature,
+    after: &VisibleDashboardSignature,
+) {
+    if before.selected_channel_id != after.selected_channel_id
+        || before.message_pane_title != after.message_pane_title
+        || before.selected_message != after.selected_message
+        || before.message_scroll != after.message_scroll
+        || before.message_line_scroll != after.message_line_scroll
+        || before.typing_footer != after.typing_footer
+        || before.visible_messages != after.visible_messages
+        || before.visible_forum_posts != after.visible_forum_posts
+    {
+        diagnostics.snapshot_message_changes =
+            diagnostics.snapshot_message_changes.saturating_add(1);
+    }
+
+    if before.selected_member != after.selected_member
+        || before.member_scroll != after.member_scroll
+        || before.visible_members != after.visible_members
+    {
+        diagnostics.snapshot_member_changes = diagnostics.snapshot_member_changes.saturating_add(1);
+    }
+
+    if before.selected_channel_id != after.selected_channel_id
+        || before.visible_channels != after.visible_channels
+    {
+        diagnostics.snapshot_channel_changes =
+            diagnostics.snapshot_channel_changes.saturating_add(1);
+    }
+
+    if before.selected_guild_id != after.selected_guild_id
+        || before.visible_guilds != after.visible_guilds
+    {
+        diagnostics.snapshot_guild_changes = diagnostics.snapshot_guild_changes.saturating_add(1);
+    }
+
+    if before.focus != after.focus
+        || before.current_user != after.current_user
+        || before.status_message != after.status_message
+        || before.popups != after.popups
+    {
+        diagnostics.snapshot_popup_changes = diagnostics.snapshot_popup_changes.saturating_add(1);
+    }
+}
+
+fn only_visible_member_signature_changed(
+    before: &VisibleDashboardSignature,
+    after: &VisibleDashboardSignature,
+) -> bool {
+    before.focus == after.focus
+        && before.current_user == after.current_user
+        && before.selected_guild_id == after.selected_guild_id
+        && before.selected_channel_id == after.selected_channel_id
+        && before.selected_message == after.selected_message
+        && before.message_scroll == after.message_scroll
+        && before.message_line_scroll == after.message_line_scroll
+        && before.message_pane_title == after.message_pane_title
+        && before.typing_footer == after.typing_footer
+        && before.status_message == after.status_message
+        && before.popups == after.popups
+        && before.visible_guilds == after.visible_guilds
+        && before.visible_channels == after.visible_channels
+        && before.visible_messages == after.visible_messages
+        && before.visible_forum_posts == after.visible_forum_posts
+        && (before.selected_member != after.selected_member
+            || before.member_scroll != after.member_scroll
+            || before.visible_members != after.visible_members)
+}
+
 async fn run_dashboard(
     terminal: &mut ratatui::DefaultTerminal,
     effects: &mut mpsc::Receiver<SequencedAppEvent>,
@@ -210,6 +409,7 @@ async fn run_dashboard(
     let mut snapshot_changes: u32 = 0;
     let mut total_draw_ms: u64 = 0;
     let mut max_draw_ms: u64 = 0;
+    let mut redraw_diagnostics = RedrawDiagnostics::default();
     let mut redraw_window_start = std::time::Instant::now();
     // Snapshot/effect-driven redraws are coalesced into the next pending
     // deadline so bursts of background Discord events (presence, typing,
@@ -225,13 +425,35 @@ async fn run_dashboard(
                 "tui",
                 format!(
                     "redraws/sec={frames_drawn} snapshot_changes/sec={snapshot_changes} \
-                     total_draw_ms={total_draw_ms} max_draw_ms={max_draw_ms}"
+                     total_draw_ms={total_draw_ms} max_draw_ms={max_draw_ms} \
+                     dirty_key={} dirty_mouse={} dirty_resize={} dirty_terminal_closed={} \
+                     preview_decodes={} snapshot_events={} effect_events={} redraw_timer={} \
+                     media_requests={} request_failures={} visible_image_previews_max={} \
+                     snapshot_msg={} snapshot_member={} snapshot_channel={} snapshot_guild={} \
+                     snapshot_popup={}",
+                    redraw_diagnostics.key_presses,
+                    redraw_diagnostics.mouse_events,
+                    redraw_diagnostics.resizes,
+                    redraw_diagnostics.terminal_closed,
+                    redraw_diagnostics.preview_decodes,
+                    redraw_diagnostics.snapshot_events,
+                    redraw_diagnostics.effect_events,
+                    redraw_diagnostics.redraw_timer_fires,
+                    redraw_diagnostics.media_requests,
+                    redraw_diagnostics.request_failures,
+                    redraw_diagnostics.visible_image_previews_max,
+                    redraw_diagnostics.snapshot_message_changes,
+                    redraw_diagnostics.snapshot_member_changes,
+                    redraw_diagnostics.snapshot_channel_changes,
+                    redraw_diagnostics.snapshot_guild_changes,
+                    redraw_diagnostics.snapshot_popup_changes,
                 ),
             );
             frames_drawn = 0;
             snapshot_changes = 0;
             total_draw_ms = 0;
             max_draw_ms = 0;
+            redraw_diagnostics = RedrawDiagnostics::default();
             redraw_window_start = std::time::Instant::now();
         }
 
@@ -247,6 +469,9 @@ async fn run_dashboard(
                     preview_layout.max_preview_height,
                 );
                 image_targets = visible_image_preview_targets(&state, preview_layout);
+                redraw_diagnostics.visible_image_previews_max = redraw_diagnostics
+                    .visible_image_previews_max
+                    .max(image_targets.len());
                 avatar_targets = visible_avatar_targets(&state, preview_layout);
                 emoji_targets = visible_emoji_image_targets(&state);
                 let image_previews = image_previews.render_state(&image_targets);
@@ -271,7 +496,11 @@ async fn run_dashboard(
             max_draw_ms = max_draw_ms.max(draw_ms);
 
             for command in image_previews.next_requests(&image_targets) {
+                redraw_diagnostics.media_requests =
+                    redraw_diagnostics.media_requests.saturating_add(1);
                 if commands.send(command).await.is_err() {
+                    redraw_diagnostics.request_failures =
+                        redraw_diagnostics.request_failures.saturating_add(1);
                     logging::error("tui", "command channel closed");
                     state.push_effect(AppEvent::GatewayError {
                         message: "command channel closed".to_owned(),
@@ -282,7 +511,11 @@ async fn run_dashboard(
                 dirty = true;
             }
             for command in avatar_images.next_requests(&avatar_targets) {
+                redraw_diagnostics.media_requests =
+                    redraw_diagnostics.media_requests.saturating_add(1);
                 if commands.send(command).await.is_err() {
+                    redraw_diagnostics.request_failures =
+                        redraw_diagnostics.request_failures.saturating_add(1);
                     logging::error("tui", "command channel closed");
                     state.push_effect(AppEvent::GatewayError {
                         message: "command channel closed".to_owned(),
@@ -297,16 +530,25 @@ async fn run_dashboard(
             // dedupe with anything already requested for messages.
             if let Some(url) = state.user_profile_popup_avatar_url().map(str::to_owned)
                 && let Some(command) = avatar_images.next_request_for_url(&url)
-                && commands.send(command).await.is_err()
             {
-                logging::error("tui", "command channel closed");
-                state.push_effect(AppEvent::GatewayError {
-                    message: "command channel closed".to_owned(),
-                });
-                dirty = true;
+                redraw_diagnostics.media_requests =
+                    redraw_diagnostics.media_requests.saturating_add(1);
+                if commands.send(command).await.is_err() {
+                    redraw_diagnostics.request_failures =
+                        redraw_diagnostics.request_failures.saturating_add(1);
+                    logging::error("tui", "command channel closed");
+                    state.push_effect(AppEvent::GatewayError {
+                        message: "command channel closed".to_owned(),
+                    });
+                    dirty = true;
+                }
             }
             for command in emoji_images.next_requests(&emoji_targets) {
+                redraw_diagnostics.media_requests =
+                    redraw_diagnostics.media_requests.saturating_add(1);
                 if commands.send(command).await.is_err() {
+                    redraw_diagnostics.request_failures =
+                        redraw_diagnostics.request_failures.saturating_add(1);
                     logging::error("tui", "command channel closed");
                     state.push_effect(AppEvent::GatewayError {
                         message: "command channel closed".to_owned(),
@@ -331,6 +573,8 @@ async fn run_dashboard(
                             });
                         }
                         if key.kind == KeyEventKind::Press {
+                            redraw_diagnostics.key_presses =
+                                redraw_diagnostics.key_presses.saturating_add(1);
                             dirty = true;
                         }
                     }
@@ -350,22 +594,29 @@ async fn run_dashboard(
                             });
                         }
                         if outcome.handled {
+                            redraw_diagnostics.mouse_events =
+                                redraw_diagnostics.mouse_events.saturating_add(1);
                             dirty = true;
                         }
                     }
                     Some(Ok(TerminalEvent::Resize(width, height))) => {
                         last_frame_area = Rect::new(0, 0, width, height);
+                        redraw_diagnostics.resizes = redraw_diagnostics.resizes.saturating_add(1);
                         dirty = true;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(error)) => return Err(error.into()),
                     None => {
                         state.quit();
+                        redraw_diagnostics.terminal_closed =
+                            redraw_diagnostics.terminal_closed.saturating_add(1);
                         dirty = true;
                     }
                 }
             }
             Some(result) = preview_decode_rx.recv() => {
+                redraw_diagnostics.preview_decodes =
+                    redraw_diagnostics.preview_decodes.saturating_add(1);
                 image_previews.store_decoded(result);
                 if pending_redraw_deadline.is_none() {
                     pending_redraw_deadline =
@@ -373,13 +624,17 @@ async fn run_dashboard(
                 }
             }
             snapshot_changed = snapshots.changed() => {
+                redraw_diagnostics.snapshot_events =
+                    redraw_diagnostics.snapshot_events.saturating_add(1);
                 snapshot_changes = snapshot_changes.saturating_add(1);
-                match snapshot_changed {
+                let should_redraw_for_snapshot = match snapshot_changed {
                     Ok(()) => {
+                        let before_signature = visible_dashboard_signature(&state);
                         drop(snapshots.borrow_and_update());
                         let snapshot = client.current_discord_snapshot();
                         current_snapshot_revision = snapshot.revision;
                         state.restore_discord_snapshot(snapshot.state);
+                        let had_deferred_effects = !deferred_effects.is_empty();
                         let mut ctx = EffectContext {
                             state: &mut state,
                             image_previews: &mut image_previews,
@@ -396,13 +651,30 @@ async fn run_dashboard(
                             &mut deferred_effects,
                             &mut ctx,
                         );
+                        let after_signature = visible_dashboard_signature(&state);
+                        let signature_changed = before_signature != after_signature;
+                        if signature_changed {
+                            record_visible_signature_change(
+                                &mut redraw_diagnostics,
+                                &before_signature,
+                                &after_signature,
+                            );
+                        }
+                        let suppress_member_only_redraw = !image_targets.is_empty()
+                            && state.focus() != state::FocusPane::Members
+                            && only_visible_member_signature_changed(
+                                &before_signature,
+                                &after_signature,
+                            );
+                        had_deferred_effects || (signature_changed && !suppress_member_only_redraw)
                     }
                     Err(_) => {
                         logging::error("tui", "snapshot stream closed");
                         state.quit();
+                        true
                     }
-                }
-                if pending_redraw_deadline.is_none() {
+                };
+                if should_redraw_for_snapshot && pending_redraw_deadline.is_none() {
                     pending_redraw_deadline =
                         Some(tokio::time::Instant::now() + BACKGROUND_REDRAW_DEBOUNCE);
                 }
@@ -410,6 +682,8 @@ async fn run_dashboard(
             maybe_effect = effects.recv() => {
                 match maybe_effect {
                     Some(effect) => {
+                        redraw_diagnostics.effect_events =
+                            redraw_diagnostics.effect_events.saturating_add(1);
                         let mut ctx = EffectContext {
                             state: &mut state,
                             image_previews: &mut image_previews,
@@ -461,6 +735,8 @@ async fn run_dashboard(
                 }
             } => {
                 pending_redraw_deadline = None;
+                redraw_diagnostics.redraw_timer_fires =
+                    redraw_diagnostics.redraw_timer_fires.saturating_add(1);
                 dirty = true;
             }
         }
