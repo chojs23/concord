@@ -1305,7 +1305,9 @@ mod tests {
 
         let command = handle_key(&mut state, key(KeyCode::Enter));
 
-        assert!(!state.is_composing());
+        // Composer stays open after submit so the user can keep typing
+        // back-to-back messages.
+        assert!(state.is_composing());
         assert_eq!(state.composer_input(), "");
         assert_eq!(
             command,

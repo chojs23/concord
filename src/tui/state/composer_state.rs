@@ -146,9 +146,12 @@ impl DashboardState {
         }
 
         self.composer_input.clear();
-        self.composer_active = false;
         self.reset_mention_picker_state();
         let reply_to = self.reply_target_message_id.take();
+        // Stay in insert mode so the user can send several messages in a
+        // row without re-pressing `i`. The composer closes only when the
+        // user explicitly bails with Esc or the channel revokes
+        // SEND_MESSAGES (handled above).
         Some(AppCommand::SendMessage {
             channel_id,
             content,
