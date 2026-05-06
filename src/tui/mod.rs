@@ -216,8 +216,7 @@ async fn run_dashboard(
     // off-screen messages) do not each trigger a fresh OSC 1337 emission for
     // every visible image. Key/mouse/image-decode arms still mark `dirty`
     // immediately to keep input responsiveness intact.
-    const BACKGROUND_REDRAW_DEBOUNCE: std::time::Duration =
-        std::time::Duration::from_millis(80);
+    const BACKGROUND_REDRAW_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
 
     while !state.should_quit() {

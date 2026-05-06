@@ -13,7 +13,8 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{
     format::{
-        RenderedText, TextHighlight, TextHighlightKind, truncate_display_width, truncate_text,
+        InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind,
+        replace_custom_emoji_markup_in_rendered, truncate_display_width, truncate_text,
     },
     state::{DashboardState, ThreadSummary, discord_color},
 };
@@ -35,6 +36,7 @@ pub(super) struct MessageContentLine {
     pub(super) style: Style,
     mention_highlights: Vec<TextHighlight>,
     styled_prefixes: Vec<StyledPrefix>,
+    pub(super) image_slots: Vec<MessageContentImageSlot>,
 }
 
 #[derive(Clone, Copy)]
@@ -44,6 +46,18 @@ struct StyledPrefix {
     style: Style,
 }
 
+/// Per-line projection of [`InlineEmojiSlot`]: `col` is where the image
+/// lands and `byte_start..byte_start+byte_len` is the `:name:` fallback the
+/// renderer blanks once the image arrives.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct MessageContentImageSlot {
+    pub(super) col: u16,
+    pub(super) byte_start: usize,
+    pub(super) byte_len: usize,
+    pub(super) display_width: u16,
+    pub(super) url: String,
+}
+
 impl MessageContentLine {
     pub(super) fn plain(text: String) -> Self {
         Self {
@@ -51,6 +65,7 @@ impl MessageContentLine {
             style: Style::default(),
             mention_highlights: Vec::new(),
             styled_prefixes: Vec::new(),
+            image_slots: Vec::new(),
         }
     }
 
@@ -60,6 +75,7 @@ impl MessageContentLine {
             style,
             mention_highlights,
             styled_prefixes: Vec::new(),
+            image_slots: Vec::new(),
         }
     }
 
@@ -69,6 +85,7 @@ impl MessageContentLine {
             style: Style::default().fg(DIM),
             mention_highlights: Vec::new(),
             styled_prefixes: Vec::new(),
+            image_slots: Vec::new(),
         }
     }
 
@@ -78,6 +95,43 @@ impl MessageContentLine {
             style: Style::default().fg(ACCENT),
             mention_highlights: Vec::new(),
             styled_prefixes: Vec::new(),
+            image_slots: Vec::new(),
+        }
+    }
+
+    fn with_image_slots(mut self, slots: Vec<MessageContentImageSlot>) -> Self {
+        self.image_slots = slots;
+        self
+    }
+
+    /// Blanks the `:name:` fallback of slots whose image is loaded, so the
+    /// overlay is the only visible thing. Slots without a loaded image keep
+    /// the textual fallback as a readable placeholder.
+    pub(super) fn blank_loaded_emoji_fallbacks(
+        &mut self,
+        mut loaded_predicate: impl FnMut(&str) -> bool,
+    ) {
+        if self.image_slots.is_empty() {
+            return;
+        }
+        let slots: Vec<(usize, usize, String)> = self
+            .image_slots
+            .iter()
+            .map(|slot| (slot.byte_start, slot.byte_len, slot.url.clone()))
+            .collect();
+        for (byte_start, byte_len, url) in slots {
+            if !loaded_predicate(&url) {
+                continue;
+            }
+            let end = byte_start.saturating_add(byte_len);
+            if end > self.text.len()
+                || !self.text.is_char_boundary(byte_start)
+                || !self.text.is_char_boundary(end)
+            {
+                continue;
+            }
+            let spaces = " ".repeat(byte_len);
+            self.text.replace_range(byte_start..end, &spaces);
         }
     }
 
@@ -331,11 +385,14 @@ fn push_embed_text(
     let Some(value) = value.filter(|value| !value.is_empty()) else {
         return;
     };
-    lines.extend(
-        wrap_text_lines(value, width)
-            .into_iter()
-            .map(|line| MessageContentLine::styled_text(line, style, Vec::new())),
-    );
+    // Skip the mention pass; embeds never carry user mentions but custom
+    // emojis in title/fields/footer must still produce slots.
+    let rendered = replace_custom_emoji_markup_in_rendered(RenderedText {
+        text: value.to_owned(),
+        highlights: Vec::new(),
+        emoji_slots: Vec::new(),
+    });
+    lines.extend(wrap_rendered_text_lines(rendered, width, style));
 }
 
 fn embed_provider_style() -> Style {
@@ -494,16 +551,24 @@ fn wrap_rendered_text_lines(
     width: usize,
     style: Style,
 ) -> Vec<MessageContentLine> {
-    wrap_text_with_highlights(&rendered.text, &rendered.highlights, width)
-        .into_iter()
-        .map(|(text, mention_highlights)| {
-            MessageContentLine::styled_text(text, style, mention_highlights)
-        })
-        .collect()
+    wrap_text_with_extras(
+        &rendered.text,
+        &rendered.highlights,
+        &rendered.emoji_slots,
+        width,
+    )
+    .into_iter()
+    .map(|(text, mention_highlights, image_slots)| {
+        MessageContentLine::styled_text(text, style, mention_highlights)
+            .with_image_slots(image_slots)
+    })
+    .collect()
 }
 
 fn rendered_text_line(rendered: RenderedText, style: Style) -> MessageContentLine {
+    let image_slots = emoji_slots_to_image_slots(&rendered.text, &rendered.emoji_slots);
     MessageContentLine::styled_text(rendered.text, style, rendered.highlights)
+        .with_image_slots(image_slots)
 }
 
 fn prepend_rendered_text(prefix: String, mut rendered: RenderedText) -> RenderedText {
@@ -511,6 +576,9 @@ fn prepend_rendered_text(prefix: String, mut rendered: RenderedText) -> Rendered
     for highlight in &mut rendered.highlights {
         highlight.start = highlight.start.saturating_add(shift);
         highlight.end = highlight.end.saturating_add(shift);
+    }
+    for slot in &mut rendered.emoji_slots {
+        slot.byte_start = slot.byte_start.saturating_add(shift);
     }
     rendered.text.insert_str(0, &prefix);
     rendered
@@ -534,20 +602,57 @@ fn truncate_rendered_text(rendered: RenderedText, limit: usize) -> RenderedText 
             kind: highlight.kind,
         })
         .collect();
-    RenderedText { text, highlights }
+    let emoji_slots = rendered
+        .emoji_slots
+        .into_iter()
+        .filter(|slot| slot.byte_start.saturating_add(slot.byte_len) <= cutoff)
+        .collect();
+    RenderedText {
+        text,
+        highlights,
+        emoji_slots,
+    }
 }
 
 fn prefix_message_content_line(prefix: &str, mut line: MessageContentLine) -> MessageContentLine {
-    let shift = prefix.len();
+    let byte_shift = prefix.len();
+    let col_shift = u16::try_from(prefix.width()).unwrap_or(u16::MAX);
     for highlight in &mut line.mention_highlights {
-        highlight.start = highlight.start.saturating_add(shift);
-        highlight.end = highlight.end.saturating_add(shift);
+        highlight.start = highlight.start.saturating_add(byte_shift);
+        highlight.end = highlight.end.saturating_add(byte_shift);
     }
     for styled_prefix in &mut line.styled_prefixes {
-        styled_prefix.start = styled_prefix.start.saturating_add(shift);
+        styled_prefix.start = styled_prefix.start.saturating_add(byte_shift);
+    }
+    for slot in &mut line.image_slots {
+        slot.col = slot.col.saturating_add(col_shift);
+        slot.byte_start = slot.byte_start.saturating_add(byte_shift);
     }
     line.text.insert_str(0, prefix);
     line
+}
+
+/// Single-line variant of slot distribution; used where wrapping is skipped.
+fn emoji_slots_to_image_slots(
+    text: &str,
+    emoji_slots: &[InlineEmojiSlot],
+) -> Vec<MessageContentImageSlot> {
+    if emoji_slots.is_empty() {
+        return Vec::new();
+    }
+    let mut output = Vec::with_capacity(emoji_slots.len());
+    for slot in emoji_slots {
+        let prefix = text.get(..slot.byte_start).unwrap_or("");
+        let col = u16::try_from(prefix.width()).unwrap_or(u16::MAX);
+        output.push(MessageContentImageSlot {
+            col,
+            byte_start: slot.byte_start,
+            byte_len: slot.byte_len,
+            display_width: slot.display_width,
+            url: slot.url.clone(),
+        });
+    }
+    output
 }
 
 fn prefix_message_content_line_without_underline(
@@ -606,21 +711,25 @@ pub(super) fn wrap_text_lines(value: &str, width: usize) -> Vec<String> {
     lines
 }
 
-fn wrap_text_with_highlights(
+/// Wraps `value` to `width`, distributing mention highlights and custom-
+/// emoji slots per line. Each slot is treated as an atomic `display_width`
+/// unit so the `:name:` fallback cannot straddle a wrap edge.
+fn wrap_text_with_extras(
     value: &str,
     highlights: &[TextHighlight],
+    emoji_slots: &[InlineEmojiSlot],
     width: usize,
-) -> Vec<(String, Vec<TextHighlight>)> {
+) -> Vec<(String, Vec<TextHighlight>, Vec<MessageContentImageSlot>)> {
     if value.is_empty() {
         return Vec::new();
     }
 
     let width = width.max(1);
-    let mut lines = Vec::new();
+    let mut lines: Vec<(String, Vec<TextHighlight>, Vec<MessageContentImageSlot>)> = Vec::new();
     let mut line_start = 0usize;
     for line in value.split('\n') {
         if line.is_empty() {
-            lines.push((String::new(), Vec::new()));
+            lines.push((String::new(), Vec::new(), Vec::new()));
             line_start = line_start.saturating_add(1);
             continue;
         }
@@ -629,21 +738,43 @@ fn wrap_text_with_highlights(
         let mut current_width = 0usize;
         let mut current_start = line_start;
         let mut current_end = line_start;
+        let mut current_slots: Vec<MessageContentImageSlot> = Vec::new();
         for (relative_start, grapheme) in line.grapheme_indices(true) {
             let grapheme_start = line_start.saturating_add(relative_start);
             let grapheme_end = grapheme_start.saturating_add(grapheme.len());
             let grapheme_width = grapheme.width();
+            let slot_at_grapheme = emoji_slots
+                .iter()
+                .find(|slot| slot.byte_start == grapheme_start);
+            // First grapheme of a slot reserves the full `:name:` width.
+            let effective_width = match slot_at_grapheme {
+                Some(slot) => slot.display_width as usize,
+                None => grapheme_width,
+            };
             if current_width > 0
-                && grapheme_width > 0
-                && current_width.saturating_add(grapheme_width) > width
+                && effective_width > 0
+                && current_width.saturating_add(effective_width) > width
             {
                 let text = std::mem::take(&mut current);
+                let line_slots = std::mem::take(&mut current_slots);
                 lines.push((
                     text,
                     highlights_for_range(highlights, current_start, current_end),
+                    line_slots,
                 ));
                 current_width = 0;
                 current_start = grapheme_start;
+            }
+
+            if let Some(slot) = slot_at_grapheme {
+                let line_byte_start = current.len();
+                current_slots.push(MessageContentImageSlot {
+                    col: u16::try_from(current_width).unwrap_or(u16::MAX),
+                    byte_start: line_byte_start,
+                    byte_len: slot.byte_len,
+                    display_width: slot.display_width,
+                    url: slot.url.clone(),
+                });
             }
 
             current.push_str(grapheme);
@@ -653,6 +784,7 @@ fn wrap_text_with_highlights(
         lines.push((
             current,
             highlights_for_range(highlights, current_start, current_end),
+            current_slots,
         ));
         line_start = line_start.saturating_add(line.len()).saturating_add(1);
     }
@@ -1279,6 +1411,7 @@ mod tests {
                 len: ">> ".len(),
                 style: Style::default().fg(Color::Red),
             }],
+            image_slots: Vec::new(),
         };
 
         let spans = line.spans();
@@ -1294,6 +1427,61 @@ mod tests {
             spans[2].style.bg,
             mention_highlight_style(TextHighlightKind::SelfMention).bg
         );
+    }
+
+    #[test]
+    fn wrap_distributes_emoji_slots_per_line_with_correct_columns() {
+        // Two `:e:` placeholders (each 3 cells wide) at byte offsets 2 and 7.
+        let text = "ab:e:cd:e:";
+        let slots = vec![
+            InlineEmojiSlot {
+                byte_start: 2,
+                byte_len: 3,
+                display_width: 3,
+                url: "u-first".to_owned(),
+            },
+            InlineEmojiSlot {
+                byte_start: 7,
+                byte_len: 3,
+                display_width: 3,
+                url: "u-second".to_owned(),
+            },
+        ];
+
+        let lines = wrap_text_with_extras(text, &[], &slots, 7);
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].0, "ab:e:cd");
+        assert_eq!(lines[0].2.len(), 1);
+        assert_eq!(lines[0].2[0].col, 2);
+        assert_eq!(lines[0].2[0].byte_start, 2);
+        assert_eq!(lines[0].2[0].byte_len, 3);
+        assert_eq!(lines[0].2[0].url, "u-first");
+        assert_eq!(lines[1].0, ":e:");
+        assert_eq!(lines[1].2.len(), 1);
+        assert_eq!(lines[1].2[0].col, 0);
+        assert_eq!(lines[1].2[0].byte_start, 0);
+        assert_eq!(lines[1].2[0].url, "u-second");
+    }
+
+    #[test]
+    fn wrap_keeps_emoji_text_fallback_atomic_at_line_edge() {
+        // width 4 cannot fit "ab" + 3-cell ":e:" on one line — emoji wraps.
+        let text = "ab:e:";
+        let slots = vec![InlineEmojiSlot {
+            byte_start: 2,
+            byte_len: 3,
+            display_width: 3,
+            url: "u".to_owned(),
+        }];
+        let lines = wrap_text_with_extras(text, &[], &slots, 4);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].0, "ab");
+        assert_eq!(lines[0].2.len(), 0);
+        assert_eq!(lines[1].0, ":e:");
+        assert_eq!(lines[1].2.len(), 1);
+        assert_eq!(lines[1].2[0].col, 0);
+        assert_eq!(lines[1].2[0].byte_start, 0);
     }
 
     #[test]

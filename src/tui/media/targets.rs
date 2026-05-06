@@ -3,10 +3,15 @@ use std::collections::HashSet;
 use crate::discord::ids::{Id, marker::MessageMarker};
 
 use super::super::{
+    message_format::format_message_content_lines,
     selection,
     state::DashboardState,
     ui::{self, ImagePreviewLayout},
 };
+
+/// Wide-enough wrap width for the prefetch walk. URL emission is
+/// wrap-independent; we just need to defeat slot truncation in reply previews.
+const EMOJI_PREFETCH_FORMAT_WIDTH: usize = 10_000;
 use super::AVATAR_PREVIEW_HEIGHT;
 
 const IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
@@ -181,8 +186,8 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
         }
     }
 
-    // Custom-emoji reactions on currently visible messages so they can be
-    // overlaid as inline images below each message body.
+    // Reactions + every body slot the renderer will draw. Walking the same
+    // formatter as `message_viewport_lines` keeps prefetch and render in lockstep.
     for message in state.visible_messages() {
         for reaction in &message.reactions {
             if reaction.count == 0 {
@@ -192,6 +197,15 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
                 && seen.insert(url.clone())
             {
                 targets.push(EmojiImageTarget { url });
+            }
+        }
+        for line in format_message_content_lines(message, state, EMOJI_PREFETCH_FORMAT_WIDTH) {
+            for slot in &line.image_slots {
+                if seen.insert(slot.url.clone()) {
+                    targets.push(EmojiImageTarget {
+                        url: slot.url.clone(),
+                    });
+                }
             }
         }
     }

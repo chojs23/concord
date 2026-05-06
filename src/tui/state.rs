@@ -11,6 +11,7 @@ use crate::discord::{
 
 use super::format::{
     RenderedText, TextHighlightKind, render_user_mentions, render_user_mentions_with_highlights,
+    replace_custom_emoji_markup, replace_custom_emoji_markup_in_rendered,
 };
 use super::{media, message_format, ui};
 
@@ -482,7 +483,8 @@ impl DashboardState {
         mentions: &[MentionInfo],
         value: &str,
     ) -> String {
-        render_user_mentions(value, |user_id| {
+        let value = replace_custom_emoji_markup(value);
+        render_user_mentions(&value, |user_id| {
             self.resolve_mention_display_name(guild_id, mentions, user_id)
         })
     }
@@ -510,7 +512,7 @@ impl DashboardState {
             add_literal_mention_highlights(&mut rendered, "@here");
         }
         normalize_text_highlights(&mut rendered.highlights);
-        rendered
+        replace_custom_emoji_markup_in_rendered(rendered)
     }
 
     fn resolve_mention_display_name(

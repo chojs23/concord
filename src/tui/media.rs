@@ -53,17 +53,46 @@ enum AvatarImageEntry {
     Failed,
 }
 
+/// Cap on the URL-keyed emoji image cache. Each entry is a small terminal
+/// protocol payload, so 256 fits realistic loads and bounds worst-case
+/// memory if many unique emoji ids arrive.
+const MAX_EMOJI_IMAGE_CACHE_ENTRIES: usize = 256;
+
 pub(super) struct EmojiImageCache {
     picker: Option<Picker>,
     entries: HashMap<String, EmojiImageEntry>,
+    tick: u64,
 }
 
 enum EmojiImageEntry {
-    Loading,
+    Loading {
+        last_used: u64,
+    },
     Ready {
         protocol: ratatui_image::protocol::Protocol,
+        last_used: u64,
     },
-    Failed,
+    Failed {
+        last_used: u64,
+    },
+}
+
+impl EmojiImageEntry {
+    fn last_used(&self) -> u64 {
+        match self {
+            EmojiImageEntry::Loading { last_used }
+            | EmojiImageEntry::Ready { last_used, .. }
+            | EmojiImageEntry::Failed { last_used } => *last_used,
+        }
+    }
+
+    fn touch(&mut self, tick: u64) {
+        match self {
+            EmojiImageEntry::Loading { last_used }
+            | EmojiImageEntry::Ready { last_used, .. }
+            | EmojiImageEntry::Failed { last_used } => *last_used = tick,
+        }
+    }
 }
 
 impl AvatarImageCache {
@@ -189,14 +218,26 @@ impl EmojiImageCache {
         Self {
             picker: query_image_picker("emoji", "emoji image picker unavailable"),
             entries: HashMap::new(),
+            tick: 0,
         }
     }
 
-    pub(super) fn render_state(&self, targets: &[EmojiImageTarget]) -> Vec<EmojiReactionImage<'_>> {
+    /// Returns decoded protocols for visible targets and refreshes their
+    /// LRU timestamps so they survive the next pruning pass.
+    pub(super) fn render_state(
+        &mut self,
+        targets: &[EmojiImageTarget],
+    ) -> Vec<EmojiReactionImage<'_>> {
+        let touch_tick = self.next_tick();
+        for target in targets {
+            if let Some(entry) = self.entries.get_mut(&target.url) {
+                entry.touch(touch_tick);
+            }
+        }
         targets
             .iter()
             .filter_map(|target| {
-                let EmojiImageEntry::Ready { protocol } = self.entries.get(&target.url)? else {
+                let EmojiImageEntry::Ready { protocol, .. } = self.entries.get(&target.url)? else {
                     return None;
                 };
                 Some(EmojiReactionImage {
@@ -214,19 +255,21 @@ impl EmojiImageCache {
 
         let mut commands = Vec::new();
         let mut requested_urls = HashSet::new();
-        for target in targets {
+        for target in targets.iter().take(MAX_EMOJI_IMAGE_CACHE_ENTRIES) {
             if self.entries.contains_key(&target.url) {
                 continue;
             }
 
+            let last_used = self.next_tick();
             self.entries
-                .insert(target.url.clone(), EmojiImageEntry::Loading);
+                .insert(target.url.clone(), EmojiImageEntry::Loading { last_used });
             if requested_urls.insert(target.url.clone()) {
                 commands.push(AppCommand::LoadAttachmentPreview {
                     url: target.url.clone(),
                 });
             }
         }
+        self.prune_to_limit(targets);
         commands
     }
 
@@ -238,13 +281,46 @@ impl EmojiImageCache {
         }
     }
 
+    fn next_tick(&mut self) -> u64 {
+        self.tick = self.tick.saturating_add(1);
+        self.tick
+    }
+
+    /// Drops LRU entries while protecting URLs in the current frame's
+    /// targets so a flood of unique ids can never evict what is on screen.
+    fn prune_to_limit(&mut self, targets: &[EmojiImageTarget]) {
+        if self.entries.len() <= MAX_EMOJI_IMAGE_CACHE_ENTRIES {
+            return;
+        }
+        let protected: HashSet<&str> = targets
+            .iter()
+            .take(MAX_EMOJI_IMAGE_CACHE_ENTRIES)
+            .map(|target| target.url.as_str())
+            .collect();
+        let mut removable: Vec<(String, u64)> = self
+            .entries
+            .iter()
+            .filter(|(url, _)| !protected.contains(url.as_str()))
+            .map(|(url, entry)| (url.clone(), entry.last_used()))
+            .collect();
+        removable.sort_by_key(|(_, last_used)| *last_used);
+        for (url, _) in removable {
+            if self.entries.len() <= MAX_EMOJI_IMAGE_CACHE_ENTRIES {
+                break;
+            }
+            self.entries.remove(&url);
+        }
+    }
+
     fn store_loaded(&mut self, url: &str, bytes: &[u8]) {
         if !self.entries.contains_key(url) {
             return;
         }
+        let last_used = self.next_tick();
 
         let Some(picker) = self.picker.as_ref() else {
-            self.entries.insert(url.to_owned(), EmojiImageEntry::Failed);
+            self.entries
+                .insert(url.to_owned(), EmojiImageEntry::Failed { last_used });
             return;
         };
 
@@ -259,21 +335,30 @@ impl EmojiImageCache {
                     accent_color: None,
                 };
                 if let Some(protocol) = clipped_preview_protocol(picker, &image, render_info) {
-                    self.entries
-                        .insert(url.to_owned(), EmojiImageEntry::Ready { protocol });
+                    self.entries.insert(
+                        url.to_owned(),
+                        EmojiImageEntry::Ready {
+                            protocol,
+                            last_used,
+                        },
+                    );
                 } else {
-                    self.entries.insert(url.to_owned(), EmojiImageEntry::Failed);
+                    self.entries
+                        .insert(url.to_owned(), EmojiImageEntry::Failed { last_used });
                 }
             }
             Err(_) => {
-                self.entries.insert(url.to_owned(), EmojiImageEntry::Failed);
+                self.entries
+                    .insert(url.to_owned(), EmojiImageEntry::Failed { last_used });
             }
         }
     }
 
     fn store_failed(&mut self, url: &str) {
         if self.entries.contains_key(url) {
-            self.entries.insert(url.to_owned(), EmojiImageEntry::Failed);
+            let last_used = self.next_tick();
+            self.entries
+                .insert(url.to_owned(), EmojiImageEntry::Failed { last_used });
         }
     }
 }
@@ -288,17 +373,11 @@ struct ImagePreviewRenderInfo {
     accent_color: Option<u32>,
 }
 
-impl ImagePreviewRenderInfo {
-    fn needs_crop(self) -> bool {
-        self.top_clip_rows > 0 || self.visible_preview_height < self.preview_height
-    }
-}
-
-fn clipped_preview_protocol(
-    picker: &Picker,
+fn clipped_preview_image(
     image: &DynamicImage,
+    font_size: (u16, u16),
     render_info: ImagePreviewRenderInfo,
-) -> Option<ratatui_image::protocol::Protocol> {
+) -> Option<DynamicImage> {
     if render_info.preview_width == 0
         || render_info.preview_height == 0
         || render_info.visible_preview_height == 0
@@ -306,7 +385,7 @@ fn clipped_preview_protocol(
         return None;
     }
 
-    let (font_width, font_height) = picker.font_size();
+    let (font_width, font_height) = font_size;
     let full_width = u32::from(render_info.preview_width).checked_mul(u32::from(font_width))?;
     let full_height = u32::from(render_info.preview_height).checked_mul(u32::from(font_height))?;
     let crop_top = u32::from(render_info.top_clip_rows).checked_mul(u32::from(font_height))?;
@@ -318,10 +397,18 @@ fn clipped_preview_protocol(
     }
 
     let fitted = fit_image_to_canvas(image, full_width, full_height);
-    let cropped = fitted.crop_imm(0, crop_top, full_width, crop_height);
+    Some(fitted.crop_imm(0, crop_top, full_width, crop_height))
+}
+
+fn clipped_preview_protocol(
+    picker: &Picker,
+    image: &DynamicImage,
+    render_info: ImagePreviewRenderInfo,
+) -> Option<ratatui_image::protocol::Protocol> {
+    let image = clipped_preview_image(image, picker.font_size(), render_info)?;
     picker
         .new_protocol(
-            cropped,
+            image,
             Rect::new(
                 0,
                 0,
@@ -749,12 +836,15 @@ mod tests {
             tick: 0,
             decode_generation: 0,
         };
-        let key = image_preview_target(1).key();
+        let target = image_preview_target(1);
+        let key = target.key();
+        let render_info = target.preview_render_info();
         cache.entries.insert(
             key.clone(),
             ImagePreviewEntry::Decoding {
                 filename: "loading.png".to_owned(),
                 generation: 1,
+                render_info,
                 last_used: 1,
             },
         );
@@ -811,12 +901,15 @@ mod tests {
             tick: 0,
             decode_generation: 0,
         };
-        let key = image_preview_target(1).key();
+        let target = image_preview_target(1);
+        let key = target.key();
+        let render_info = target.preview_render_info();
         cache.entries.insert(
             key.clone(),
             ImagePreviewEntry::Decoding {
                 filename: "newer.png".to_owned(),
                 generation: 2,
+                render_info,
                 last_used: 2,
             },
         );
@@ -1060,6 +1153,7 @@ mod tests {
         let mut cache = EmojiImageCache {
             picker: None,
             entries: HashMap::new(),
+            tick: 0,
         };
         let target = EmojiImageTarget {
             url: "https://cdn.discordapp.com/emojis/50.png".to_owned(),
@@ -1069,6 +1163,37 @@ mod tests {
 
         assert!(requests.is_empty());
         assert!(cache.entries.is_empty());
+    }
+
+    #[test]
+    fn emoji_image_cache_evicts_least_recently_used_when_over_capacity() {
+        let mut cache = EmojiImageCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+        };
+        for id in 0..MAX_EMOJI_IMAGE_CACHE_ENTRIES {
+            cache.entries.insert(
+                format!("https://cdn.discordapp.com/emojis/{id}.png"),
+                EmojiImageEntry::Failed {
+                    last_used: id as u64,
+                },
+            );
+        }
+        cache.tick = MAX_EMOJI_IMAGE_CACHE_ENTRIES as u64;
+        cache.entries.insert(
+            "https://cdn.discordapp.com/emojis/oldest.png".to_owned(),
+            EmojiImageEntry::Failed { last_used: 0 },
+        );
+
+        let visible_url = "https://cdn.discordapp.com/emojis/0.png".to_owned();
+        let targets = vec![EmojiImageTarget {
+            url: visible_url.clone(),
+        }];
+        cache.prune_to_limit(&targets);
+
+        assert_eq!(cache.entries.len(), MAX_EMOJI_IMAGE_CACHE_ENTRIES);
+        assert!(cache.entries.contains_key(&visible_url));
     }
 
     #[test]

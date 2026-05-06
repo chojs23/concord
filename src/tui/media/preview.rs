@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    ImagePreviewRenderInfo, ImagePreviewTarget, clipped_preview_protocol, query_image_picker,
+    ImagePreviewRenderInfo, ImagePreviewTarget, clipped_preview_image, query_image_picker,
 };
 
 pub(super) const MAX_IMAGE_PREVIEW_CACHE_ENTRIES: usize = 32;
@@ -55,11 +55,13 @@ pub(super) enum ImagePreviewEntry {
     Decoding {
         filename: String,
         generation: u64,
+        render_info: ImagePreviewRenderInfo,
         last_used: u64,
     },
     Ready {
         filename: String,
         image: DynamicImage,
+        protocol_render_info: ImagePreviewRenderInfo,
         protocol: Box<StatefulProtocol>,
         last_used: u64,
     },
@@ -105,18 +107,21 @@ impl ImagePreviewCache {
                     filename: filename.clone(),
                 },
                 ImagePreviewEntry::Ready {
-                    image, protocol, ..
+                    image,
+                    protocol,
+                    protocol_render_info,
+                    ..
                 } => {
-                    if render_info.needs_crop()
-                        && let Some(protocol) = picker
-                            .as_ref()
-                            .and_then(|picker| clipped_preview_protocol(picker, image, render_info))
+                    if *protocol_render_info != render_info
+                        && let Some(picker) = picker.as_ref()
+                        && let Some(updated_protocol) =
+                            clipped_preview_stateful_protocol(picker, image, render_info)
                     {
-                        ImagePreviewState::ReadyCropped(protocol)
-                    } else {
-                        ImagePreviewState::Ready {
-                            protocol: protocol.as_mut(),
-                        }
+                        *protocol = updated_protocol;
+                        *protocol_render_info = render_info;
+                    }
+                    ImagePreviewState::Ready {
+                        protocol: protocol.as_mut(),
                     }
                 }
                 ImagePreviewEntry::Failed {
@@ -246,6 +251,7 @@ impl ImagePreviewCache {
                 ImagePreviewEntry::Decoding {
                     filename,
                     generation,
+                    render_info,
                     last_used,
                 },
             );
@@ -261,18 +267,28 @@ impl ImagePreviewCache {
     }
 
     pub(in crate::tui) fn store_decoded(&mut self, result: ImagePreviewDecodeResult) {
-        let Some(ImagePreviewEntry::Decoding {
-            filename,
-            generation,
-            ..
-        }) = self.entries.get(&result.key)
+        let Some((filename, generation, render_info)) =
+            self.entries.get(&result.key).and_then(|entry| {
+                if let ImagePreviewEntry::Decoding {
+                    filename,
+                    generation,
+                    render_info,
+                    ..
+                } = entry
+                {
+                    Some((filename.clone(), *generation, *render_info))
+                } else {
+                    None
+                }
+            })
         else {
             return;
         };
-        if *generation != result.generation {
+
+        if generation != result.generation {
             return;
         }
-        let filename = filename.clone();
+
         let last_used = self.next_tick();
         match result.result {
             Ok(image) => {
@@ -287,12 +303,25 @@ impl ImagePreviewCache {
                     );
                     return;
                 };
+                let Some(protocol) = clipped_preview_stateful_protocol(picker, &image, render_info)
+                else {
+                    self.entries.insert(
+                        result.key,
+                        ImagePreviewEntry::Failed {
+                            filename,
+                            message: "inline preview dimensions unavailable".to_owned(),
+                            last_used,
+                        },
+                    );
+                    return;
+                };
                 self.entries.insert(
                     result.key,
                     ImagePreviewEntry::Ready {
                         filename,
                         image: image.clone(),
-                        protocol: Box::new(picker.new_resize_protocol(image)),
+                        protocol_render_info: render_info,
+                        protocol,
                         last_used,
                     },
                 );
@@ -312,10 +341,9 @@ impl ImagePreviewCache {
 
     fn render_info_for_key(&self, key: &ImagePreviewKey) -> Option<ImagePreviewRenderInfo> {
         match self.entries.get(key)? {
-            ImagePreviewEntry::Loading { render_info, .. } => Some(*render_info),
-            ImagePreviewEntry::Decoding { .. }
-            | ImagePreviewEntry::Ready { .. }
-            | ImagePreviewEntry::Failed { .. } => None,
+            ImagePreviewEntry::Loading { render_info, .. }
+            | ImagePreviewEntry::Decoding { render_info, .. } => Some(*render_info),
+            ImagePreviewEntry::Ready { .. } | ImagePreviewEntry::Failed { .. } => None,
         }
     }
 
@@ -387,6 +415,15 @@ impl ImagePreviewCache {
             .unwrap_or("image")
             .to_owned()
     }
+}
+
+fn clipped_preview_stateful_protocol(
+    picker: &Picker,
+    image: &DynamicImage,
+    render_info: ImagePreviewRenderInfo,
+) -> Option<Box<StatefulProtocol>> {
+    let image = clipped_preview_image(image, picker.font_size(), render_info)?;
+    Some(Box::new(picker.new_resize_protocol(image)))
 }
 
 impl ImagePreviewTarget {

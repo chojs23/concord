@@ -77,7 +77,6 @@ pub enum ImagePreviewState<'a> {
     Loading { filename: String },
     Failed { filename: String, message: String },
     Ready { protocol: &'a mut StatefulProtocol },
-    ReadyCropped(ratatui_image::protocol::Protocol),
 }
 
 #[derive(Clone, Copy)]
@@ -578,6 +577,7 @@ fn render_messages(
         content_width,
         message_areas.list.width as usize,
         &image_previews,
+        emoji_images,
     );
 
     frame.render_widget(Paragraph::new(lines), message_areas.list);
@@ -595,6 +595,14 @@ fn render_messages(
         state,
         content_width,
         &image_previews,
+        emoji_images,
+    );
+    render_inline_message_body_emojis(
+        frame,
+        message_areas.list,
+        &messages,
+        state,
+        content_width,
         emoji_images,
     );
     let mut previous_preview_rows = 0usize;
@@ -741,6 +749,101 @@ fn render_inline_reaction_emojis(
     }
 }
 
+/// Body-emoji counterpart to `render_inline_reaction_emojis`. Walks visible
+/// messages, recovers per-line slots from `format_message_content_lines`,
+/// and blits the cached image over each slot's first two cells.
+fn render_inline_message_body_emojis(
+    frame: &mut Frame,
+    list: Rect,
+    messages: &[&MessageState],
+    state: &DashboardState,
+    content_width: usize,
+    emoji_images: &[EmojiReactionImage<'_>],
+) {
+    if emoji_images.is_empty() || list.height == 0 || list.width <= MESSAGE_AVATAR_OFFSET {
+        return;
+    }
+
+    let list_top = list.y as isize;
+    let list_bottom = list_top + list.height as isize;
+    let list_left = list.x as isize;
+    let list_right = list_left + list.width as isize;
+    let avatar_offset = MESSAGE_AVATAR_OFFSET as isize;
+
+    let mut rendered_rows: isize = 0;
+
+    for (index, message) in messages.iter().enumerate() {
+        if rendered_rows >= list.height as isize {
+            break;
+        }
+        let line_offset = if index == 0 {
+            state.message_line_scroll() as isize
+        } else {
+            0
+        };
+        let global_index = state.message_scroll().saturating_add(index);
+        let separator_lines = state.message_extra_top_lines(global_index) as isize;
+        let body_base_rows =
+            state.message_base_line_count_for_width(message, content_width) as isize;
+
+        let message_top = rendered_rows - line_offset;
+        let body_top = message_top + separator_lines;
+
+        let body_lines = format_message_content_lines(message, state, content_width.max(8));
+        for (line_idx, line) in body_lines.iter().enumerate() {
+            if line.image_slots.is_empty() {
+                continue;
+            }
+            let row_in_list = body_top + 1 + line_idx as isize;
+            if row_in_list < 0 || row_in_list >= list.height as isize {
+                continue;
+            }
+            let absolute_row = list_top + row_in_list;
+            if absolute_row >= list_bottom {
+                continue;
+            }
+            for slot in &line.image_slots {
+                let absolute_col = list_left + avatar_offset + slot.col as isize;
+                if absolute_col >= list_right {
+                    continue;
+                }
+                let Some(image) = emoji_images.iter().find(|img| img.url == slot.url) else {
+                    continue;
+                };
+                let max_width = (list_right - absolute_col).max(0) as u16;
+                let image_width = EMOJI_REACTION_IMAGE_WIDTH.min(max_width);
+                if image_width == 0 {
+                    continue;
+                }
+                let image_area = Rect {
+                    x: absolute_col as u16,
+                    y: absolute_row as u16,
+                    width: image_width,
+                    height: 1,
+                };
+                frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+            }
+        }
+
+        let preview_height = message
+            .first_inline_preview()
+            .map(|preview| {
+                let preview_width = inline_image_preview_width(list);
+                let max_preview_height = inline_image_preview_height(list, true);
+                super::media::image_preview_height_for_dimensions(
+                    preview_width,
+                    max_preview_height,
+                    preview.width,
+                    preview.height,
+                )
+            })
+            .unwrap_or(0) as isize;
+        let block_rows = body_base_rows + separator_lines;
+        rendered_rows = rendered_rows
+            .saturating_add((block_rows + preview_height + MESSAGE_ROW_GAP as isize) - line_offset);
+    }
+}
+
 fn render_image_preview(frame: &mut Frame, area: Rect, image_preview: ImagePreviewState<'_>) {
     match image_preview {
         ImagePreviewState::Loading { filename } => frame.render_widget(
@@ -758,9 +861,6 @@ fn render_image_preview(frame: &mut Frame, area: Rect, image_preview: ImagePrevi
         ImagePreviewState::Ready { protocol, .. } => {
             let widget = StatefulImage::new().resize(Resize::Fit(None));
             frame.render_stateful_widget(widget, area, protocol);
-        }
-        ImagePreviewState::ReadyCropped(protocol) => {
-            frame.render_widget(RatatuiImage::new(&protocol), area);
         }
     }
 }
@@ -781,12 +881,18 @@ fn message_viewport_lines(
     content_width: usize,
     list_width: usize,
     image_previews: &[ImagePreview<'_>],
+    emoji_images: &[EmojiReactionImage<'_>],
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for (index, message) in messages.iter().enumerate() {
         let author = message.author.clone();
         let author_style = message_author_style(state.message_author_role_color(message));
-        let content = format_message_content_lines(message, state, content_width.max(8));
+        let mut content = format_message_content_lines(message, state, content_width.max(8));
+        for line in content.iter_mut() {
+            line.blank_loaded_emoji_fallbacks(|url| {
+                emoji_images.iter().any(|image| image.url == url)
+            });
+        }
         let preview = preview_for_message(image_previews, index);
         let preview_height = preview.map(|preview| preview.preview_height).unwrap_or(0);
 
@@ -3191,7 +3297,7 @@ mod tests {
         });
 
         let messages = state.messages();
-        let lines = message_viewport_lines(&messages, None, &state, 40, 80, &[]);
+        let lines = message_viewport_lines(&messages, None, &state, 40, 80, &[], &[]);
 
         assert_eq!(
             lines[1].spans[1].style.fg,
@@ -3396,7 +3502,7 @@ mod tests {
         });
 
         let messages = state.messages();
-        let lines = message_viewport_lines(&messages, None, &state, 40, 80, &[]);
+        let lines = message_viewport_lines(&messages, None, &state, 40, 80, &[], &[]);
 
         assert_eq!(
             lines[1].spans[1].style.fg,
@@ -3595,6 +3701,24 @@ mod tests {
                 .style
                 .add_modifier
                 .contains(Modifier::UNDERLINED)
+        );
+    }
+
+    #[test]
+    fn embed_text_emits_inline_emoji_slot_for_image_overlay() {
+        let mut message = message_with_content(Some("see embed".to_owned()));
+        let mut embed = youtube_embed();
+        embed.title = Some("look <:party:99>!".to_owned());
+        message.embeds = vec![embed];
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+        let slots: Vec<_> = lines.iter().flat_map(|line| line.image_slots.iter()).collect();
+
+        assert!(!slots.is_empty());
+        assert!(
+            slots
+                .iter()
+                .any(|slot| slot.url == "https://cdn.discordapp.com/emojis/99.png")
         );
     }
 
@@ -5390,7 +5514,7 @@ mod tests {
         let messages = [&selected, &tall_following];
 
         let visible_rows =
-            message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, 80, &[])
+            message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, 80, &[], &[])
                 .into_iter()
                 .take(5)
                 .collect::<Vec<_>>();
@@ -5411,7 +5535,7 @@ mod tests {
         let message = message_with_content(Some("abcdefghijkl".to_owned()));
         let messages = [&message];
 
-        let lines = message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, 80, &[]);
+        let lines = message_viewport_lines(&messages, Some(0), &DashboardState::new(), 5, 80, &[], &[]);
         let sent_time = format_message_sent_time(Id::new(1));
 
         assert_eq!(
