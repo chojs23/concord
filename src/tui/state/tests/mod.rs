@@ -4089,6 +4089,141 @@ fn member_scroll_uses_scrolloff() {
 }
 
 #[test]
+fn viewport_scroll_does_not_move_list_pane_selection() {
+    let mut guild_state = state_with_many_guilds(8);
+    guild_state.focus_pane(FocusPane::Guilds);
+    guild_state.set_guild_view_height(3);
+    let selected_guild = guild_state.selected_guild();
+    let guild_scroll = guild_state.guild_scroll();
+
+    guild_state.scroll_focused_pane_viewport_down();
+    guild_state.scroll_focused_pane_viewport_down();
+    assert_eq!(guild_state.selected_guild(), selected_guild);
+    assert_eq!(guild_state.guild_scroll(), guild_scroll + 2);
+    assert_eq!(guild_state.focused_guild_selection(), None);
+
+    guild_state.scroll_focused_pane_viewport_up();
+    assert_eq!(guild_state.selected_guild(), selected_guild);
+    assert_eq!(guild_state.guild_scroll(), guild_scroll + 1);
+
+    let mut channel_state = state_with_many_channels(8);
+    channel_state.focus_pane(FocusPane::Channels);
+    channel_state.set_channel_view_height(3);
+    let selected_channel = channel_state.selected_channel();
+    let channel_scroll = channel_state.channel_scroll();
+
+    channel_state.scroll_focused_pane_viewport_down();
+    assert_eq!(channel_state.selected_channel(), selected_channel);
+    assert_eq!(channel_state.channel_scroll(), channel_scroll + 1);
+    assert_eq!(channel_state.focused_channel_selection(), None);
+
+    let mut member_state = state_with_members(8);
+    member_state.focus_pane(FocusPane::Members);
+    member_state.set_member_view_height(3);
+    let selected_member = member_state.selected_member();
+    let member_scroll = member_state.member_scroll();
+
+    member_state.scroll_focused_pane_viewport_down();
+    member_state.scroll_focused_pane_viewport_down();
+    assert_eq!(member_state.selected_member(), selected_member);
+    assert_eq!(member_state.member_scroll(), member_scroll + 2);
+    assert_eq!(member_state.focused_member_selection_line(), None);
+}
+
+#[test]
+fn repeated_viewport_scroll_survives_view_height_sync() {
+    let mut guild_state = state_with_many_guilds(12);
+    guild_state.focus_pane(FocusPane::Guilds);
+    guild_state.set_guild_view_height(4);
+    let selected_guild = guild_state.selected_guild();
+    let guild_scroll = guild_state.guild_scroll();
+    for _ in 0..3 {
+        guild_state.scroll_focused_pane_viewport_down();
+        guild_state.set_guild_view_height(4);
+    }
+    assert_eq!(guild_state.selected_guild(), selected_guild);
+    assert_eq!(guild_state.guild_scroll(), guild_scroll + 3);
+
+    let mut channel_state = state_with_many_channels(12);
+    channel_state.focus_pane(FocusPane::Channels);
+    channel_state.set_channel_view_height(4);
+    let selected_channel = channel_state.selected_channel();
+    let channel_scroll = channel_state.channel_scroll();
+    for _ in 0..3 {
+        channel_state.scroll_focused_pane_viewport_down();
+        channel_state.set_channel_view_height(4);
+    }
+    assert_eq!(channel_state.selected_channel(), selected_channel);
+    assert_eq!(channel_state.channel_scroll(), channel_scroll + 3);
+
+    let mut member_state = state_with_members(12);
+    member_state.focus_pane(FocusPane::Members);
+    member_state.set_member_view_height(4);
+    let selected_member = member_state.selected_member();
+    let member_scroll = member_state.member_scroll();
+    for _ in 0..3 {
+        member_state.scroll_focused_pane_viewport_down();
+        member_state.set_member_view_height(4);
+    }
+    assert_eq!(member_state.selected_member(), selected_member);
+    assert_eq!(member_state.member_scroll(), member_scroll + 3);
+}
+
+#[test]
+fn viewport_scroll_survives_selection_clamp_after_events() {
+    let mut guild_state = state_with_many_guilds(12);
+    guild_state.focus_pane(FocusPane::Guilds);
+    guild_state.set_guild_view_height(4);
+    let selected_guild = guild_state.selected_guild();
+    guild_state.scroll_focused_pane_viewport_down();
+    guild_state.scroll_focused_pane_viewport_down();
+    let guild_scroll = guild_state.guild_scroll();
+    guild_state.push_event(AppEvent::StatusMessage {
+        message: "tick".to_owned(),
+    });
+    assert_eq!(guild_state.selected_guild(), selected_guild);
+    assert_eq!(guild_state.guild_scroll(), guild_scroll);
+    let guild_snapshot = guild_state.discord.clone();
+    guild_state.restore_discord_snapshot(guild_snapshot);
+    assert_eq!(guild_state.selected_guild(), selected_guild);
+    assert_eq!(guild_state.guild_scroll(), guild_scroll);
+
+    let mut channel_state = state_with_many_channels(12);
+    channel_state.focus_pane(FocusPane::Channels);
+    channel_state.set_channel_view_height(4);
+    let selected_channel = channel_state.selected_channel();
+    channel_state.scroll_focused_pane_viewport_down();
+    channel_state.scroll_focused_pane_viewport_down();
+    let channel_scroll = channel_state.channel_scroll();
+    channel_state.push_event(AppEvent::StatusMessage {
+        message: "tick".to_owned(),
+    });
+    assert_eq!(channel_state.selected_channel(), selected_channel);
+    assert_eq!(channel_state.channel_scroll(), channel_scroll);
+    let channel_snapshot = channel_state.discord.clone();
+    channel_state.restore_discord_snapshot(channel_snapshot);
+    assert_eq!(channel_state.selected_channel(), selected_channel);
+    assert_eq!(channel_state.channel_scroll(), channel_scroll);
+
+    let mut member_state = state_with_members(12);
+    member_state.focus_pane(FocusPane::Members);
+    member_state.set_member_view_height(4);
+    let selected_member = member_state.selected_member();
+    member_state.scroll_focused_pane_viewport_down();
+    member_state.scroll_focused_pane_viewport_down();
+    let member_scroll = member_state.member_scroll();
+    member_state.push_event(AppEvent::StatusMessage {
+        message: "tick".to_owned(),
+    });
+    assert_eq!(member_state.selected_member(), selected_member);
+    assert_eq!(member_state.member_scroll(), member_scroll);
+    let member_snapshot = member_state.discord.clone();
+    member_state.restore_discord_snapshot(member_snapshot);
+    assert_eq!(member_state.selected_member(), selected_member);
+    assert_eq!(member_state.member_scroll(), member_scroll);
+}
+
+#[test]
 fn member_half_page_scrolls_by_rendered_lines() {
     let mut state = state_with_grouped_members();
     state.focus_pane(FocusPane::Members);

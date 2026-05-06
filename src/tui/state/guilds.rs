@@ -8,8 +8,8 @@ use super::{
     model::{FocusPane, GuildActionItem, GuildActionKind, GuildBranch, GuildPaneEntry},
     popups::GuildActionMenuState,
     scroll::{
-        clamp_selected_index, close_collapsed_key, move_index_down, move_index_up,
-        open_collapsed_key, pane_content_height, toggle_collapsed_key,
+        clamp_list_viewport, clamp_selected_index, close_collapsed_key, move_index_down,
+        move_index_up, open_collapsed_key, pane_content_height, toggle_collapsed_key,
     },
 };
 
@@ -131,7 +131,13 @@ impl DashboardState {
 
     pub fn focused_guild_selection(&self) -> Option<usize> {
         if self.focus == FocusPane::Guilds && !self.guild_pane_entries().is_empty() {
-            Some(self.selected_guild().saturating_sub(self.guild_scroll))
+            let selected = self.selected_guild();
+            let visible_len = self.visible_guild_pane_entries().len();
+            if selected >= self.guild_scroll && selected < self.guild_scroll + visible_len {
+                Some(selected - self.guild_scroll)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -139,7 +145,15 @@ impl DashboardState {
 
     pub fn set_guild_view_height(&mut self, height: usize) {
         self.guild_view_height = height;
-        self.clamp_guild_viewport();
+        let height = pane_content_height(self.guild_view_height);
+        let len = self.guild_pane_entries().len();
+        clamp_list_viewport(
+            self.selected_guild,
+            &mut self.guild_scroll,
+            height,
+            len,
+            self.guild_keep_selection_visible,
+        );
     }
 
     pub fn selected_guild_id(&self) -> Option<Id<GuildMarker>> {
@@ -217,6 +231,17 @@ impl DashboardState {
         }
     }
 
+    pub fn select_guild_action_row(&mut self, row: usize) -> bool {
+        if row >= self.selected_guild_action_items().len() {
+            return false;
+        }
+        if let Some(menu) = self.guild_action_menu.as_mut() {
+            menu.selected = row;
+            return true;
+        }
+        false
+    }
+
     pub fn activate_selected_guild_action(&mut self) -> Option<crate::discord::AppCommand> {
         let menu = self.guild_action_menu.clone()?;
         let items = self.selected_guild_action_items();
@@ -267,6 +292,7 @@ impl DashboardState {
         self.active_guild = scope;
         self.selected_channel = 0;
         self.channel_scroll = 0;
+        self.channel_keep_selection_visible = true;
         self.active_channel_id = None;
         self.pinned_message_view_channel_id = None;
         self.pinned_message_view_return_target = None;
@@ -276,6 +302,8 @@ impl DashboardState {
         self.message_keep_selection_visible = true;
         self.message_auto_follow = true;
         self.selected_member = 0;
+        self.member_scroll = 0;
+        self.member_keep_selection_visible = true;
     }
 
     fn selected_folder_key(&self) -> Option<FolderKey> {

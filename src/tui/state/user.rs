@@ -108,6 +108,17 @@ impl DashboardState {
         }
     }
 
+    pub fn select_member_action_row(&mut self, row: usize) -> bool {
+        if row >= self.selected_member_action_items().len() {
+            return false;
+        }
+        if let Some(menu) = self.member_action_menu.as_mut() {
+            menu.selected = row;
+            return true;
+        }
+        false
+    }
+
     pub fn activate_selected_member_action(&mut self) -> Option<AppCommand> {
         let menu = self.member_action_menu.clone()?;
         let items = self.selected_member_action_items();

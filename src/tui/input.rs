@@ -184,7 +184,11 @@ pub fn handle_mouse_event(
     clicks: &mut MouseClickTracker,
 ) -> MouseOutcome {
     let target = ui::mouse_target_at(area, state, mouse.column, mouse.row);
-    if ignores_dashboard_mouse(state)
+    let action_menu_mouse = matches!(
+        target,
+        Some(ui::MouseTarget::ActionRow { .. } | ui::MouseTarget::ModalBackdrop)
+    );
+    if (ignores_dashboard_mouse(state) && !action_menu_mouse)
         || state.is_composing() && target != Some(ui::MouseTarget::Composer)
     {
         return MouseOutcome::ignored();
@@ -200,6 +204,10 @@ pub fn handle_mouse_event(
         }
         MouseEventKind::ScrollDown => {
             clicks.clear();
+            if action_menu_mouse {
+                move_action_menu_down(state);
+                return MouseOutcome::handled(None);
+            }
             let pane = ui::focus_pane_at(area, mouse.column, mouse.row);
             if let Some(pane) = pane {
                 state.focus_pane(pane);
@@ -209,6 +217,10 @@ pub fn handle_mouse_event(
         }
         MouseEventKind::ScrollUp => {
             clicks.clear();
+            if action_menu_mouse {
+                move_action_menu_up(state);
+                return MouseOutcome::handled(None);
+            }
             let pane = ui::focus_pane_at(area, mouse.column, mouse.row);
             if let Some(pane) = pane {
                 state.focus_pane(pane);
@@ -216,6 +228,7 @@ pub fn handle_mouse_event(
             scroll_focused_pane_up(state);
             MouseOutcome::handled(None)
         }
+        MouseEventKind::Up(MouseButton::Left) => MouseOutcome::handled(None),
         _ => {
             clicks.clear();
             MouseOutcome::ignored()
@@ -253,6 +266,23 @@ fn handle_left_click(
             state.start_composer();
             MouseOutcome::handled(None)
         }
+        ui::MouseTarget::ModalBackdrop => {
+            clicks.clear();
+            MouseOutcome::handled(None)
+        }
+        ui::MouseTarget::ActionRow { menu, row } => {
+            let selected = select_action_menu_row(state, menu, row);
+            if !selected {
+                clicks.clear();
+                return MouseOutcome::handled(None);
+            }
+            let command = if clicks.record_left_click(target) {
+                activate_action_menu(state, menu)
+            } else {
+                None
+            };
+            MouseOutcome::handled(command)
+        }
         ui::MouseTarget::Pane(pane) => {
             clicks.clear();
             state.focus_pane(pane);
@@ -272,6 +302,55 @@ fn handle_left_click(
             };
             MouseOutcome::handled(command)
         }
+    }
+}
+
+fn select_action_menu_row(
+    state: &mut DashboardState,
+    menu: ui::ActionMenuTarget,
+    row: usize,
+) -> bool {
+    match menu {
+        ui::ActionMenuTarget::Message => state.select_message_action_row(row),
+        ui::ActionMenuTarget::Guild => state.select_guild_action_row(row),
+        ui::ActionMenuTarget::Channel => state.select_channel_action_row(row),
+        ui::ActionMenuTarget::Member => state.select_member_action_row(row),
+    }
+}
+
+fn activate_action_menu(
+    state: &mut DashboardState,
+    menu: ui::ActionMenuTarget,
+) -> Option<AppCommand> {
+    match menu {
+        ui::ActionMenuTarget::Message => state.activate_selected_message_action(),
+        ui::ActionMenuTarget::Guild => state.activate_selected_guild_action(),
+        ui::ActionMenuTarget::Channel => state.activate_selected_channel_action(),
+        ui::ActionMenuTarget::Member => state.activate_selected_member_action(),
+    }
+}
+
+fn move_action_menu_down(state: &mut DashboardState) {
+    if state.is_message_action_menu_open() {
+        state.move_message_action_down();
+    } else if state.is_guild_action_menu_open() {
+        state.move_guild_action_down();
+    } else if state.is_channel_action_menu_open() {
+        state.move_channel_action_down();
+    } else if state.is_member_action_menu_open() {
+        state.move_member_action_down();
+    }
+}
+
+fn move_action_menu_up(state: &mut DashboardState) {
+    if state.is_message_action_menu_open() {
+        state.move_message_action_up();
+    } else if state.is_guild_action_menu_open() {
+        state.move_guild_action_up();
+    } else if state.is_channel_action_menu_open() {
+        state.move_channel_action_up();
+    } else if state.is_member_action_menu_open() {
+        state.move_member_action_up();
     }
 }
 
@@ -300,19 +379,11 @@ fn ignores_dashboard_mouse(state: &DashboardState) -> bool {
 }
 
 fn scroll_focused_pane_down(state: &mut DashboardState) {
-    if state.focus() == FocusPane::Messages {
-        state.scroll_message_viewport_down();
-    } else {
-        state.move_down();
-    }
+    state.scroll_focused_pane_viewport_down();
 }
 
 fn scroll_focused_pane_up(state: &mut DashboardState) {
-    if state.focus() == FocusPane::Messages {
-        state.scroll_message_viewport_up();
-    } else {
-        state.move_up();
-    }
+    state.scroll_focused_pane_viewport_up();
 }
 
 fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
@@ -574,6 +645,10 @@ mod tests {
 
     fn message_row_point(row: u16) -> (u16, u16) {
         (50, 1 + row)
+    }
+
+    fn message_action_row_point(row: u16) -> (u16, u16) {
+        (46, 6 + row)
     }
 
     fn dashboard_area() -> Rect {
@@ -861,6 +936,43 @@ mod tests {
     }
 
     #[test]
+    fn terminal_click_release_sequence_still_double_clicks_like_enter() {
+        let mut state = state_with_channel_tree();
+        let mut clicks = MouseClickTracker::default();
+        let (column, row) = channel_row_point(1);
+
+        let first = handle_mouse_event(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+            dashboard_area(),
+            &mut clicks,
+        );
+        let release = handle_mouse_event(
+            &mut state,
+            mouse(MouseEventKind::Up(MouseButton::Left), column, row),
+            dashboard_area(),
+            &mut clicks,
+        );
+        let second = handle_mouse_event(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+            dashboard_area(),
+            &mut clicks,
+        );
+
+        assert!(first.handled);
+        assert!(release.handled);
+        assert!(second.handled);
+        assert_eq!(
+            second.command,
+            Some(AppCommand::SubscribeGuildChannel {
+                guild_id: Id::new(1),
+                channel_id: Id::new(11),
+            })
+        );
+    }
+
+    #[test]
     fn scroll_between_clicks_prevents_stale_double_click_activation() {
         let mut state = state_with_channel_tree();
         let mut clicks = MouseClickTracker::default();
@@ -986,9 +1098,11 @@ mod tests {
     }
 
     #[test]
-    fn mouse_wheel_focuses_hovered_non_message_pane_and_moves_selection() {
+    fn mouse_wheel_scrolls_hovered_channel_viewport_without_moving_selection() {
         let mut state = state_with_channel_tree();
         state.focus_pane(FocusPane::Messages);
+        state.set_channel_view_height(2);
+        let selected = state.selected_channel();
 
         assert!(handle_mouse(
             &mut state,
@@ -997,14 +1111,42 @@ mod tests {
         ));
 
         assert_eq!(state.focus(), FocusPane::Channels);
-        assert_eq!(state.selected_channel(), 1);
+        assert_eq!(state.selected_channel(), selected);
+        assert_eq!(state.channel_scroll(), 1);
 
         assert!(handle_mouse(
             &mut state,
             mouse(MouseEventKind::ScrollUp, 21, 1),
             dashboard_area(),
         ));
-        assert_eq!(state.selected_channel(), 0);
+        assert_eq!(state.selected_channel(), selected);
+        assert_eq!(state.channel_scroll(), 0);
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_hovered_member_viewport_without_moving_selection() {
+        let mut state = state_with_members(10);
+        state.focus_pane(FocusPane::Messages);
+        state.set_member_view_height(4);
+        let selected = state.selected_member();
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::ScrollDown, 100, 1),
+            dashboard_area(),
+        ));
+
+        assert_eq!(state.focus(), FocusPane::Members);
+        assert_eq!(state.selected_member(), selected);
+        assert_eq!(state.member_scroll(), 1);
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::ScrollUp, 100, 1),
+            dashboard_area(),
+        ));
+        assert_eq!(state.selected_member(), selected);
+        assert_eq!(state.member_scroll(), 0);
     }
 
     #[test]
@@ -1149,6 +1291,76 @@ mod tests {
         handle_key(&mut state, char_key(' '));
 
         assert!(state.is_message_action_menu_open());
+    }
+
+    #[test]
+    fn mouse_click_selects_message_action_row() {
+        let mut state = state_with_messages(1);
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Enter));
+        let (column, row) = message_action_row_point(1);
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+            dashboard_area(),
+        ));
+
+        assert_eq!(state.selected_message_action_index(), Some(1));
+    }
+
+    #[test]
+    fn mouse_double_click_activates_message_action_row_like_enter() {
+        let mut state = state_with_messages(1);
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Enter));
+        let mut clicks = MouseClickTracker::default();
+        let (column, row) = message_action_row_point(1);
+
+        handle_mouse_event(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+            dashboard_area(),
+            &mut clicks,
+        );
+        handle_mouse_event(
+            &mut state,
+            mouse(MouseEventKind::Up(MouseButton::Left), column, row),
+            dashboard_area(),
+            &mut clicks,
+        );
+        let second = handle_mouse_event(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+            dashboard_area(),
+            &mut clicks,
+        );
+
+        assert_eq!(second.command, None);
+        assert!(!state.is_message_action_menu_open());
+        assert!(state.is_emoji_reaction_picker_open());
+    }
+
+    #[test]
+    fn mouse_wheel_moves_message_action_selection() {
+        let mut state = state_with_messages(1);
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Enter));
+        let (column, row) = message_action_row_point(0);
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::ScrollDown, column, row),
+            dashboard_area(),
+        ));
+        assert_eq!(state.selected_message_action_index(), Some(1));
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::ScrollUp, column, row),
+            dashboard_area(),
+        ));
+        assert_eq!(state.selected_message_action_index(), Some(0));
     }
 
     #[test]

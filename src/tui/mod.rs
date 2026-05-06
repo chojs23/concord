@@ -203,9 +203,41 @@ async fn run_dashboard(
     let mut deferred_effects = VecDeque::new();
     let mut last_frame_area = Rect::default();
     let mut dirty = true;
+    // Diagnostic: count redraws and snapshot-change wakeups per second so we
+    // can confirm whether the Discord backend snapshot stream is what's
+    // saturating ConPTY with OSC 1337 traffic. Removed once the lag fix lands.
+    let mut frames_drawn: u32 = 0;
+    let mut snapshot_changes: u32 = 0;
+    let mut total_draw_ms: u64 = 0;
+    let mut max_draw_ms: u64 = 0;
+    let mut redraw_window_start = std::time::Instant::now();
+    // Snapshot/effect-driven redraws are coalesced into the next pending
+    // deadline so bursts of background Discord events (presence, typing,
+    // off-screen messages) do not each trigger a fresh OSC 1337 emission for
+    // every visible image. Key/mouse/image-decode arms still mark `dirty`
+    // immediately to keep input responsiveness intact.
+    const BACKGROUND_REDRAW_DEBOUNCE: std::time::Duration =
+        std::time::Duration::from_millis(80);
+    let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
 
     while !state.should_quit() {
+        if redraw_window_start.elapsed() >= std::time::Duration::from_secs(1) {
+            logging::debug(
+                "tui",
+                format!(
+                    "redraws/sec={frames_drawn} snapshot_changes/sec={snapshot_changes} \
+                     total_draw_ms={total_draw_ms} max_draw_ms={max_draw_ms}"
+                ),
+            );
+            frames_drawn = 0;
+            snapshot_changes = 0;
+            total_draw_ms = 0;
+            max_draw_ms = 0;
+            redraw_window_start = std::time::Instant::now();
+        }
+
         if dirty {
+            let draw_start = std::time::Instant::now();
             terminal.draw(|frame| {
                 last_frame_area = frame.area();
                 ui::sync_view_heights(frame.area(), &mut state);
@@ -234,6 +266,10 @@ async fn run_dashboard(
                 );
             })?;
             dirty = false;
+            let draw_ms = draw_start.elapsed().as_millis() as u64;
+            frames_drawn = frames_drawn.saturating_add(1);
+            total_draw_ms = total_draw_ms.saturating_add(draw_ms);
+            max_draw_ms = max_draw_ms.max(draw_ms);
 
             for command in image_previews.next_requests(&image_targets) {
                 if commands.send(command).await.is_err() {
@@ -332,9 +368,13 @@ async fn run_dashboard(
             }
             Some(result) = preview_decode_rx.recv() => {
                 image_previews.store_decoded(result);
-                dirty = true;
+                if pending_redraw_deadline.is_none() {
+                    pending_redraw_deadline =
+                        Some(tokio::time::Instant::now() + BACKGROUND_REDRAW_DEBOUNCE);
+                }
             }
             snapshot_changed = snapshots.changed() => {
+                snapshot_changes = snapshot_changes.saturating_add(1);
                 match snapshot_changed {
                     Ok(()) => {
                         drop(snapshots.borrow_and_update());
@@ -363,7 +403,10 @@ async fn run_dashboard(
                         state.quit();
                     }
                 }
-                dirty = true;
+                if pending_redraw_deadline.is_none() {
+                    pending_redraw_deadline =
+                        Some(tokio::time::Instant::now() + BACKGROUND_REDRAW_DEBOUNCE);
+                }
             }
             maybe_effect = effects.recv() => {
                 match maybe_effect {
@@ -400,13 +443,26 @@ async fn run_dashboard(
                                 }
                             }
                         }
-                        dirty = true;
+                        if pending_redraw_deadline.is_none() {
+                            pending_redraw_deadline = Some(
+                                tokio::time::Instant::now() + BACKGROUND_REDRAW_DEBOUNCE,
+                            );
+                        }
                     }
                     None => {
                         handle_gateway_closed(&mut state);
                         dirty = true;
                     }
                 }
+            }
+            _ = async {
+                match pending_redraw_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                pending_redraw_deadline = None;
+                dirty = true;
             }
         }
 

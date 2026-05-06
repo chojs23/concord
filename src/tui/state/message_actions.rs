@@ -41,6 +41,17 @@ impl DashboardState {
         }
     }
 
+    pub fn select_message_action_row(&mut self, row: usize) -> bool {
+        if row >= self.selected_message_action_items().len() {
+            return false;
+        }
+        if let Some(menu) = &mut self.message_action_menu {
+            menu.selected = row;
+            return true;
+        }
+        false
+    }
+
     pub fn selected_message_action_items(&self) -> Vec<MessageActionItem> {
         let Some(message) = self.selected_message_state() else {
             return Vec::new();

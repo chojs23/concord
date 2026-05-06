@@ -15,8 +15,8 @@ use super::{
     popups::ChannelActionMenuState,
     presentation::{is_direct_message_channel, sort_channels, sort_direct_message_channels},
     scroll::{
-        clamp_selected_index, close_collapsed_key, move_index_down, move_index_up,
-        open_collapsed_key, pane_content_height, toggle_collapsed_key,
+        clamp_list_viewport, clamp_selected_index, close_collapsed_key, move_index_down,
+        move_index_up, open_collapsed_key, pane_content_height, toggle_collapsed_key,
     },
 };
 
@@ -334,6 +334,30 @@ impl DashboardState {
         }
     }
 
+    pub fn select_channel_action_row(&mut self, row: usize) -> bool {
+        let len = match self.channel_action_menu.as_ref() {
+            Some(ChannelActionMenuState::Actions { .. }) => {
+                self.selected_channel_action_items().len()
+            }
+            Some(ChannelActionMenuState::Threads { .. }) => {
+                self.channel_action_thread_items().len()
+            }
+            None => return false,
+        };
+        if row >= len {
+            return false;
+        }
+        if let Some(menu) = self.channel_action_menu.as_mut() {
+            let selected = match menu {
+                ChannelActionMenuState::Actions { selected, .. }
+                | ChannelActionMenuState::Threads { selected, .. } => selected,
+            };
+            *selected = row;
+            return true;
+        }
+        false
+    }
+
     pub fn activate_selected_channel_action(&mut self) -> Option<AppCommand> {
         let menu = self.channel_action_menu.clone()?;
         match menu {
@@ -502,7 +526,13 @@ impl DashboardState {
 
     pub fn focused_channel_selection(&self) -> Option<usize> {
         if self.focus == FocusPane::Channels && !self.channel_pane_entries().is_empty() {
-            Some(self.selected_channel().saturating_sub(self.channel_scroll))
+            let selected = self.selected_channel();
+            let visible_len = self.visible_channel_pane_entries().len();
+            if selected >= self.channel_scroll && selected < self.channel_scroll + visible_len {
+                Some(selected - self.channel_scroll)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -510,7 +540,15 @@ impl DashboardState {
 
     pub fn set_channel_view_height(&mut self, height: usize) {
         self.channel_view_height = height;
-        self.clamp_channel_viewport();
+        let height = pane_content_height(self.channel_view_height);
+        let len = self.channel_pane_entries().len();
+        clamp_list_viewport(
+            self.selected_channel,
+            &mut self.channel_scroll,
+            height,
+            len,
+            self.channel_keep_selection_visible,
+        );
     }
 
     pub(super) fn restore_channel_cursor(&mut self, channel_id: Option<Id<ChannelMarker>>) {

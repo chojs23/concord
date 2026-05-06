@@ -29,6 +29,33 @@ pub(super) fn move_index_up_by(selected: &mut usize, distance: usize) {
     *selected = selected.saturating_sub(distance);
 }
 
+pub(super) fn scroll_list_down(scroll: &mut usize, height: usize, len: usize) {
+    let max_scroll = len.saturating_sub(height);
+    *scroll = scroll.saturating_add(1).min(max_scroll);
+}
+
+pub(super) fn scroll_list_up(scroll: &mut usize) {
+    *scroll = scroll.saturating_sub(1);
+}
+
+pub(super) fn clamp_list_scroll_to_bounds(scroll: &mut usize, height: usize, len: usize) {
+    *scroll = (*scroll).min(len.saturating_sub(height));
+}
+
+pub(super) fn clamp_list_viewport(
+    selected: usize,
+    scroll: &mut usize,
+    height: usize,
+    len: usize,
+    keep_selection_visible: bool,
+) {
+    if keep_selection_visible {
+        *scroll = clamp_list_scroll(selected, *scroll, height, len);
+    } else {
+        clamp_list_scroll_to_bounds(scroll, height, len);
+    }
+}
+
 pub(super) fn last_index(len: usize) -> usize {
     len.saturating_sub(1)
 }

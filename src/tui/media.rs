@@ -2,10 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use image::{DynamicImage, ImageBuffer, Rgba, imageops::FilterType};
 use ratatui::layout::Rect;
-use ratatui_image::{
-    Resize,
-    picker::{Picker, ProtocolType},
-};
+use ratatui_image::{Resize, picker::Picker};
 
 mod preview;
 mod targets;
@@ -37,49 +34,12 @@ const EMOJI_REACTION_THUMB_WIDTH: u16 = 2;
 const EMOJI_REACTION_THUMB_HEIGHT: u16 = 1;
 fn query_image_picker(target: &str, unavailable_message: &str) -> Option<Picker> {
     match Picker::from_query_stdio() {
-        Ok(mut picker) => {
-            // Windows ConPTY swallows terminal capability-query responses, so
-            // `from_query_stdio` lands in its `NoStdinResponse` branch and
-            // locks in `Halfblocks` even inside terminals that natively render
-            // OSC 1337 (iTerm2 inline images). We promote the picker to
-            // iTerm2 for terminals whose env vars say they speak that
-            // protocol — Sixel was rejected after testing because ConPTY also
-            // filters DCS sequences, and Kitty in ratatui-image relies on
-            // Unicode placeholders that WezTerm does not implement. The
-            // crate's success path already consults the same env var hints,
-            // so on macOS / Linux this branch is a no-op (the query succeeds
-            // and we never see Halfblocks here).
-            if picker.protocol_type() == ProtocolType::Halfblocks
-                && terminal_supports_iterm2_protocol()
-            {
-                picker.set_protocol_type(ProtocolType::Iterm2);
-            }
-            logging::debug(
-                target,
-                format!("image picker protocol: {:?}", picker.protocol_type()),
-            );
-            Some(picker)
-        }
+        Ok(picker) => Some(picker),
         Err(error) => {
             logging::error(target, format!("{unavailable_message}: {error}"));
             None
         }
     }
-}
-
-fn terminal_supports_iterm2_protocol() -> bool {
-    if std::env::var("WEZTERM_EXECUTABLE").is_ok_and(|value| !value.is_empty()) {
-        return true;
-    }
-    if std::env::var("ITERM_SESSION_ID").is_ok_and(|value| !value.is_empty()) {
-        return true;
-    }
-    std::env::var("TERM_PROGRAM").is_ok_and(|term_program| {
-        term_program.contains("iTerm")
-            || term_program.contains("WezTerm")
-            || term_program.contains("mintty")
-            || term_program.contains("WarpTerminal")
-    })
 }
 
 pub(super) struct AvatarImageCache {

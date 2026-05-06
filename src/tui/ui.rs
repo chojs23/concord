@@ -103,6 +103,16 @@ pub(crate) enum MouseTarget {
     Pane(FocusPane),
     PaneRow { pane: FocusPane, row: usize },
     Composer,
+    ActionRow { menu: ActionMenuTarget, row: usize },
+    ModalBackdrop,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ActionMenuTarget {
+    Message,
+    Guild,
+    Channel,
+    Member,
 }
 
 struct UserProfilePopupText {
@@ -202,6 +212,9 @@ pub(crate) fn mouse_target_at(
     row: u16,
 ) -> Option<MouseTarget> {
     let areas = dashboard_areas(area);
+    if let Some(target) = action_menu_mouse_target(areas.messages, state, column, row) {
+        return Some(target);
+    }
     if let Some(target) = pane_row_mouse_target(areas.guilds, FocusPane::Guilds, column, row) {
         return Some(target);
     }
@@ -215,6 +228,105 @@ pub(crate) fn mouse_target_at(
         return Some(target);
     }
     None
+}
+
+fn action_menu_mouse_target(
+    area: Rect,
+    state: &DashboardState,
+    column: u16,
+    row: u16,
+) -> Option<MouseTarget> {
+    if state.is_message_action_menu_open() {
+        return action_menu_row_target(
+            message_action_menu_area(area, state),
+            state.selected_message_action_items().len(),
+            ActionMenuTarget::Message,
+            column,
+            row,
+        );
+    }
+    if state.is_guild_action_menu_open() {
+        return action_menu_row_target(
+            guild_action_menu_area(area, state),
+            state.selected_guild_action_items().len(),
+            ActionMenuTarget::Guild,
+            column,
+            row,
+        );
+    }
+    if state.is_channel_action_menu_open() {
+        let item_count = if state.is_channel_action_threads_phase() {
+            state.channel_action_thread_items().len()
+        } else {
+            state.selected_channel_action_items().len()
+        };
+        return action_menu_row_target(
+            channel_action_menu_area(area, state),
+            item_count,
+            ActionMenuTarget::Channel,
+            column,
+            row,
+        );
+    }
+    if state.is_member_action_menu_open() {
+        return action_menu_row_target(
+            member_action_menu_area(area, state),
+            state.selected_member_action_items().len(),
+            ActionMenuTarget::Member,
+            column,
+            row,
+        );
+    }
+    None
+}
+
+fn action_menu_row_target(
+    popup: Option<Rect>,
+    item_count: usize,
+    menu: ActionMenuTarget,
+    column: u16,
+    row: u16,
+) -> Option<MouseTarget> {
+    let Some(popup) = popup else {
+        return Some(MouseTarget::ModalBackdrop);
+    };
+    if !rect_contains(popup, column, row) {
+        return Some(MouseTarget::ModalBackdrop);
+    }
+    let inner = panel_block("", false).inner(popup);
+    if rect_contains(inner, column, row) {
+        let row = row.saturating_sub(inner.y) as usize;
+        if row < item_count {
+            return Some(MouseTarget::ActionRow { menu, row });
+        }
+    }
+    Some(MouseTarget::ModalBackdrop)
+}
+
+fn message_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
+    let actions = state.selected_message_action_items();
+    (!actions.is_empty()).then(|| centered_rect(area, 54, (actions.len() as u16).saturating_add(4)))
+}
+
+fn guild_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
+    let actions = state.selected_guild_action_items();
+    (!actions.is_empty()).then(|| centered_rect(area, 48, (actions.len() as u16).saturating_add(4)))
+}
+
+fn channel_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
+    if state.is_channel_action_threads_phase() {
+        let row_count = state.channel_action_thread_items().len().max(1) as u16;
+        Some(centered_rect(area, 54, row_count.saturating_add(4)))
+    } else {
+        let actions = state.selected_channel_action_items();
+        (!actions.is_empty())
+            .then(|| centered_rect(area, 54, (actions.len() as u16).saturating_add(4)))
+    }
+}
+
+fn member_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
+    let actions = state.selected_member_action_items();
+    (!actions.is_empty()).then(|| centered_rect(area, 48, (actions.len() as u16).saturating_add(4)))
 }
 
 fn pane_row_mouse_target(

@@ -38,9 +38,10 @@ use popups::{
     ChannelActionMenuState, GuildActionMenuState, MemberActionMenuState, UserProfilePopupState,
 };
 use scroll::{
-    SCROLL_OFF, clamp_list_scroll, clamp_selected_index, last_index, move_index_down,
-    move_index_down_by, move_index_up, move_index_up_by, normalize_message_line_scroll,
-    pane_content_height, scroll_message_row_down, scroll_message_row_up,
+    SCROLL_OFF, clamp_list_scroll, clamp_list_viewport, clamp_selected_index, last_index,
+    move_index_down, move_index_down_by, move_index_up, move_index_up_by,
+    normalize_message_line_scroll, pane_content_height, scroll_list_down, scroll_list_up,
+    scroll_message_row_down, scroll_message_row_up,
 };
 
 pub use composer::{MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry};
@@ -105,9 +106,11 @@ pub struct DashboardState {
     active_channel_id: Option<Id<ChannelMarker>>,
     selected_guild: usize,
     guild_scroll: usize,
+    guild_keep_selection_visible: bool,
     guild_view_height: usize,
     selected_channel: usize,
     channel_scroll: usize,
+    channel_keep_selection_visible: bool,
     channel_view_height: usize,
     selected_message: usize,
     message_scroll: usize,
@@ -123,6 +126,7 @@ pub struct DashboardState {
     thread_return_target: Option<ThreadReturnTarget>,
     selected_member: usize,
     member_scroll: usize,
+    member_keep_selection_visible: bool,
     member_view_height: usize,
     composer_input: String,
     composer_active: bool,
@@ -176,9 +180,11 @@ impl DashboardState {
             // list is still empty.
             selected_guild: 1,
             guild_scroll: 0,
+            guild_keep_selection_visible: true,
             guild_view_height: 1,
             selected_channel: 0,
             channel_scroll: 0,
+            channel_keep_selection_visible: true,
             channel_view_height: 1,
             selected_message: 0,
             message_scroll: 0,
@@ -194,6 +200,7 @@ impl DashboardState {
             thread_return_target: None,
             selected_member: 0,
             member_scroll: 0,
+            member_keep_selection_visible: true,
             member_view_height: 1,
             composer_input: String::new(),
             composer_active: false,
@@ -987,10 +994,14 @@ impl DashboardState {
 
     pub fn focused_member_selection_line(&self) -> Option<usize> {
         if self.focus == FocusPane::Members && !self.flattened_members().is_empty() {
-            Some(
-                self.selected_member_line()
-                    .saturating_sub(self.member_scroll),
-            )
+            let selected_line = self.selected_member_line();
+            if selected_line >= self.member_scroll
+                && selected_line < self.member_scroll + self.member_content_height()
+            {
+                Some(selected_line - self.member_scroll)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -1010,7 +1021,16 @@ impl DashboardState {
 
     pub fn set_member_view_height(&mut self, height: usize) {
         self.member_view_height = height;
-        self.clamp_member_viewport();
+        let selected_line = self.selected_member_line();
+        let height = pane_content_height(self.member_view_height);
+        let len = self.count_member_lines();
+        clamp_list_viewport(
+            selected_line,
+            &mut self.member_scroll,
+            height,
+            len,
+            self.member_keep_selection_visible,
+        );
     }
 
     pub fn move_down(&mut self) {
@@ -1018,11 +1038,13 @@ impl DashboardState {
             FocusPane::Guilds => {
                 let len = self.guild_pane_entries().len();
                 move_index_down(&mut self.selected_guild, len);
+                self.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 let len = self.channel_pane_entries().len();
                 move_index_down(&mut self.selected_channel, len);
+                self.channel_keep_selection_visible = true;
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
@@ -1034,6 +1056,7 @@ impl DashboardState {
             FocusPane::Members => {
                 let len = self.flattened_members().len();
                 move_index_down(&mut self.selected_member, len);
+                self.member_keep_selection_visible = true;
                 self.clamp_member_viewport();
             }
         }
@@ -1043,10 +1066,12 @@ impl DashboardState {
         match self.focus {
             FocusPane::Guilds => {
                 move_index_up(&mut self.selected_guild);
+                self.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 move_index_up(&mut self.selected_channel);
+                self.channel_keep_selection_visible = true;
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
@@ -1057,6 +1082,7 @@ impl DashboardState {
             }
             FocusPane::Members => {
                 move_index_up(&mut self.selected_member);
+                self.member_keep_selection_visible = true;
                 self.clamp_member_viewport();
             }
         }
@@ -1066,10 +1092,12 @@ impl DashboardState {
         match self.focus {
             FocusPane::Guilds => {
                 self.selected_guild = 0;
+                self.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 self.selected_channel = 0;
+                self.channel_keep_selection_visible = true;
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
@@ -1080,6 +1108,7 @@ impl DashboardState {
             }
             FocusPane::Members => {
                 self.selected_member = 0;
+                self.member_keep_selection_visible = true;
                 self.clamp_member_viewport();
             }
         }
@@ -1089,10 +1118,12 @@ impl DashboardState {
         match self.focus {
             FocusPane::Guilds => {
                 self.selected_guild = last_index(self.guild_pane_entries().len());
+                self.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 self.selected_channel = last_index(self.channel_pane_entries().len());
+                self.channel_keep_selection_visible = true;
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
@@ -1102,6 +1133,7 @@ impl DashboardState {
             }
             FocusPane::Members => {
                 self.selected_member = last_index(self.flattened_members().len());
+                self.member_keep_selection_visible = true;
                 self.clamp_member_viewport();
             }
         }
@@ -1113,12 +1145,14 @@ impl DashboardState {
                 let distance = pane_content_height(self.guild_view_height) / 2;
                 let len = self.guild_pane_entries().len();
                 move_index_down_by(&mut self.selected_guild, len, distance.max(1));
+                self.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 let distance = pane_content_height(self.channel_view_height) / 2;
                 let len = self.channel_pane_entries().len();
                 move_index_down_by(&mut self.selected_channel, len, distance.max(1));
+                self.channel_keep_selection_visible = true;
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
@@ -1133,6 +1167,7 @@ impl DashboardState {
                 self.select_member_near_line(
                     self.selected_member_line().saturating_add(distance.max(1)),
                 );
+                self.member_keep_selection_visible = true;
                 self.clamp_member_viewport();
             }
         }
@@ -1143,11 +1178,13 @@ impl DashboardState {
             FocusPane::Guilds => {
                 let distance = pane_content_height(self.guild_view_height) / 2;
                 move_index_up_by(&mut self.selected_guild, distance.max(1));
+                self.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 let distance = pane_content_height(self.channel_view_height) / 2;
                 move_index_up_by(&mut self.selected_channel, distance.max(1));
+                self.channel_keep_selection_visible = true;
                 self.clamp_channel_viewport();
             }
             FocusPane::Messages => {
@@ -1162,6 +1199,7 @@ impl DashboardState {
                 self.select_member_near_line(
                     self.selected_member_line().saturating_sub(distance.max(1)),
                 );
+                self.member_keep_selection_visible = true;
                 self.clamp_member_viewport();
             }
         }
@@ -1242,6 +1280,48 @@ impl DashboardState {
         );
     }
 
+    pub fn scroll_focused_pane_viewport_down(&mut self) {
+        match self.focus {
+            FocusPane::Guilds => {
+                let height = pane_content_height(self.guild_view_height);
+                let len = self.guild_pane_entries().len();
+                self.guild_keep_selection_visible = false;
+                scroll_list_down(&mut self.guild_scroll, height, len);
+            }
+            FocusPane::Channels => {
+                let height = pane_content_height(self.channel_view_height);
+                let len = self.channel_pane_entries().len();
+                self.channel_keep_selection_visible = false;
+                scroll_list_down(&mut self.channel_scroll, height, len);
+            }
+            FocusPane::Messages => self.scroll_message_viewport_down(),
+            FocusPane::Members => {
+                let height = pane_content_height(self.member_view_height);
+                let len = self.count_member_lines();
+                self.member_keep_selection_visible = false;
+                scroll_list_down(&mut self.member_scroll, height, len);
+            }
+        }
+    }
+
+    pub fn scroll_focused_pane_viewport_up(&mut self) {
+        match self.focus {
+            FocusPane::Guilds => {
+                self.guild_keep_selection_visible = false;
+                scroll_list_up(&mut self.guild_scroll);
+            }
+            FocusPane::Channels => {
+                self.channel_keep_selection_visible = false;
+                scroll_list_up(&mut self.channel_scroll);
+            }
+            FocusPane::Messages => self.scroll_message_viewport_up(),
+            FocusPane::Members => {
+                self.member_keep_selection_visible = false;
+                scroll_list_up(&mut self.member_scroll);
+            }
+        }
+    }
+
     pub fn cycle_focus(&mut self) {
         self.focus = match self.focus {
             FocusPane::Guilds => FocusPane::Channels,
@@ -1270,6 +1350,7 @@ impl DashboardState {
             return false;
         }
         self.selected_guild = index;
+        self.guild_keep_selection_visible = true;
         true
     }
 
@@ -1279,6 +1360,7 @@ impl DashboardState {
             return false;
         }
         self.selected_channel = index;
+        self.channel_keep_selection_visible = true;
         true
     }
 
@@ -1337,6 +1419,7 @@ impl DashboardState {
         for (member_index, line_index) in self.member_line_indices() {
             if line_index == target_line {
                 self.selected_member = member_index;
+                self.member_keep_selection_visible = true;
                 return true;
             }
         }
@@ -1389,6 +1472,8 @@ impl DashboardState {
         self.message_line_scroll = 0;
         self.message_keep_selection_visible = true;
         self.message_auto_follow = true;
+        self.channel_keep_selection_visible = true;
+        self.member_keep_selection_visible = true;
         self.cancel_composer();
         self.close_message_action_menu();
         self.close_channel_action_menu();
@@ -1407,22 +1492,24 @@ impl DashboardState {
     fn clamp_guild_viewport(&mut self) {
         let entries_len = self.guild_pane_entries().len();
         self.selected_guild = clamp_selected_index(self.selected_guild, entries_len);
-        self.guild_scroll = clamp_list_scroll(
+        clamp_list_viewport(
             self.selected_guild,
-            self.guild_scroll,
+            &mut self.guild_scroll,
             pane_content_height(self.guild_view_height),
             entries_len,
+            self.guild_keep_selection_visible,
         );
     }
 
     fn clamp_channel_viewport(&mut self) {
         let entries_len = self.channel_pane_entries().len();
         self.selected_channel = clamp_selected_index(self.selected_channel, entries_len);
-        self.channel_scroll = clamp_list_scroll(
+        clamp_list_viewport(
             self.selected_channel,
-            self.channel_scroll,
+            &mut self.channel_scroll,
             pane_content_height(self.channel_view_height),
             entries_len,
+            self.channel_keep_selection_visible,
         );
     }
 
@@ -1435,11 +1522,15 @@ impl DashboardState {
         }
 
         self.selected_member = self.selected_member.min(members_len - 1);
-        self.member_scroll = clamp_list_scroll(
-            self.selected_member_line(),
-            self.member_scroll,
-            pane_content_height(self.member_view_height),
-            self.count_member_lines(),
+        let selected_line = self.selected_member_line();
+        let height = pane_content_height(self.member_view_height);
+        let len = self.count_member_lines();
+        clamp_list_viewport(
+            selected_line,
+            &mut self.member_scroll,
+            height,
+            len,
+            self.member_keep_selection_visible,
         );
     }
 
