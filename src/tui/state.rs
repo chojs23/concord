@@ -613,11 +613,9 @@ impl DashboardState {
         if self.selected_channel_is_forum() {
             return Vec::new();
         }
-        self.channel_messages()
-            .into_iter()
-            .rev()
-            .filter(|message| message.pinned)
-            .collect()
+        self.selected_channel_id()
+            .map(|channel_id| self.discord.pinned_messages_for_channel(channel_id))
+            .unwrap_or_default()
     }
 
     fn channel_messages(&self) -> Vec<&MessageState> {

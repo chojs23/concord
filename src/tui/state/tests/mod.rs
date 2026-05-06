@@ -1981,6 +1981,50 @@ fn pinned_message_view_does_not_request_older_history() {
 }
 
 #[test]
+fn pinned_only_messages_stay_out_of_normal_history() {
+    let channel_id: Id<ChannelMarker> = Id::new(2);
+    let mut state = state_with_message_ids([10, 11, 12]);
+
+    state.push_event(AppEvent::PinnedMessagesLoaded {
+        channel_id,
+        messages: vec![message_info(channel_id, 5)],
+    });
+
+    assert_eq!(
+        state
+            .messages()
+            .into_iter()
+            .map(|message| message.id.get())
+            .collect::<Vec<_>>(),
+        vec![10, 11, 12]
+    );
+
+    state.enter_pinned_message_view(channel_id);
+    assert_eq!(state.messages().first().map(|message| message.id), Some(Id::new(5)));
+}
+
+#[test]
+fn pinned_only_messages_do_not_become_older_history_cursor() {
+    let channel_id: Id<ChannelMarker> = Id::new(2);
+    let mut state = state_with_message_ids([10, 11, 12]);
+
+    state.push_event(AppEvent::PinnedMessagesLoaded {
+        channel_id,
+        messages: vec![message_info(channel_id, 5)],
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.jump_top();
+
+    assert_eq!(
+        state.next_older_history_command(),
+        Some(AppCommand::LoadMessageHistory {
+            channel_id,
+            before: Some(Id::new(10)),
+        })
+    );
+}
+
+#[test]
 fn channel_change_exits_pinned_message_view() {
     let mut state = state_with_many_channels(2);
     state.confirm_selected_channel();

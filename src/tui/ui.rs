@@ -49,6 +49,7 @@ const MAX_REACTION_USERS_VISIBLE_LINES: usize = 14;
 const IMAGE_VIEWER_POPUP_WIDTH: u16 = 78;
 const IMAGE_VIEWER_POPUP_HEIGHT: u16 = 16;
 const SELECTED_FORUM_POST_BORDER: Color = Color::Green;
+const SELECTED_MESSAGE_BORDER: Color = Color::Green;
 const SELECTED_MESSAGE_CONTENT_OFFSET: u16 = 2;
 
 pub struct ImagePreview<'a> {
@@ -563,11 +564,21 @@ fn render_messages(
         let posts = state.visible_forum_post_items();
         let selected = state.focused_forum_post_selection();
         let is_loading = state.selected_forum_posts_loading();
+        let forum_viewport_len = forum_post_scrollbar_visible_count(message_areas.list.height);
+        let forum_scrollbar_visible = vertical_scrollbar_visible(
+            message_areas.list,
+            forum_viewport_len,
+            state.selected_forum_post_items().len(),
+        );
+        let forum_card_width = selected_message_card_width(
+            message_areas.list.width as usize,
+            forum_scrollbar_visible,
+        );
         frame.render_widget(
             Paragraph::new(forum_post_viewport_lines(
                 &posts,
                 selected,
-                message_areas.list.width as usize,
+                forum_card_width,
                 is_loading,
             )),
             message_areas.list,
@@ -583,7 +594,7 @@ fn render_messages(
             frame,
             message_areas.list,
             state.message_scroll(),
-            forum_post_scrollbar_visible_count(message_areas.list.height),
+            forum_viewport_len,
             state.selected_forum_post_items().len(),
         );
         render_typing_footer(frame, message_areas.typing, state);
@@ -597,12 +608,27 @@ fn render_messages(
 
     let preview_width = inline_image_preview_width(message_areas.list);
     let max_preview_height = inline_image_preview_height(message_areas.list, true);
+    let message_total_rows = state.message_total_rendered_rows(
+        content_width,
+        preview_width,
+        max_preview_height,
+    );
+    let message_scrollbar_visible = vertical_scrollbar_visible(
+        message_areas.list,
+        message_areas.list.height as usize,
+        message_total_rows,
+    );
+    let selected_card_width = selected_message_card_width(
+        message_areas.list.width as usize,
+        message_scrollbar_visible,
+    );
     let lines = message_viewport_lines(
         &messages,
         selected,
         state,
         content_width,
         message_areas.list.width as usize,
+        selected_card_width,
         preview_width,
         max_preview_height,
         emoji_images,
@@ -686,7 +712,7 @@ fn render_messages(
         message_areas.list,
         state.message_scroll_row_position(content_width, preview_width, max_preview_height),
         message_areas.list.height as usize,
-        state.message_total_rendered_rows(content_width, preview_width, max_preview_height),
+        message_total_rows,
     );
     render_typing_footer(frame, message_areas.typing, state);
     render_composer(frame, message_areas.composer, state);
@@ -1028,6 +1054,7 @@ fn message_viewport_lines(
     state: &DashboardState,
     content_width: usize,
     list_width: usize,
+    selected_card_width: usize,
     preview_width: u16,
     max_preview_height: u16,
     emoji_images: &[EmojiReactionImage<'_>],
@@ -1036,12 +1063,6 @@ fn message_viewport_lines(
     for (index, message) in messages.iter().enumerate() {
         let author = message.author.clone();
         let author_style = message_author_style(state.message_author_role_color(message));
-        let mut content = format_message_content_lines(message, state, content_width.max(8));
-        for line in content.iter_mut() {
-            line.blank_loaded_emoji_fallbacks(|url| {
-                emoji_images.iter().any(|image| image.url == url)
-            });
-        }
         let preview_spacers =
             inline_preview_spacers_for_message(message, preview_width, max_preview_height);
 
@@ -1052,9 +1073,21 @@ fn message_viewport_lines(
         let separator_lines = usize::from(separator_line.is_some());
         let line_offset = usize::from(index == 0) * state.message_line_scroll();
         let body_skip = line_offset.saturating_sub(separator_lines);
+        let item_content_width = if selected == Some(index) {
+            selected_message_content_width(selected_card_width)
+        } else {
+            content_width
+        };
 
         if let Some(line) = separator_line.filter(|_| line_offset == 0) {
             lines.push(line);
+        }
+
+        let mut content = format_message_content_lines(message, state, item_content_width.max(8));
+        for line in content.iter_mut() {
+            line.blank_loaded_emoji_fallbacks(|url| {
+                emoji_images.iter().any(|image| image.url == url)
+            });
         }
 
         let item_lines = message_item_lines_with_previews(
@@ -1062,14 +1095,14 @@ fn message_viewport_lines(
             author_style,
             format_message_sent_time(message.id),
             content,
-            content_width,
+            item_content_width,
             &preview_spacers,
             body_skip,
         );
         if selected == Some(index) {
             lines.extend(selected_message_lines(
                 item_lines,
-                selected_message_card_inner_width(list_width),
+                selected_message_card_inner_width(selected_card_width),
                 body_skip == 0,
             ));
         } else {
@@ -1571,6 +1604,10 @@ fn selected_message_content_line(
     inner_width: usize,
     kind: SelectedMessageLineKind,
 ) -> Line<'static> {
+    if matches!(kind, SelectedMessageLineKind::Top) {
+        return selected_message_top_line(line, inner_width);
+    }
+
     let inner_width = inner_width.max(1);
     let used_width = line
         .spans
@@ -1578,15 +1615,47 @@ fn selected_message_content_line(
         .map(|span| span.content.width())
         .sum::<usize>();
     let padding = inner_width.saturating_sub(used_width);
-    let (left_border, right_border) = match kind {
-        SelectedMessageLineKind::Top => ("╭ ", " ╮"),
-        SelectedMessageLineKind::Body => ("│ ", " │"),
-    };
     let border_style = selected_message_border_style();
-    let mut spans = vec![Span::styled(left_border, border_style)];
+    let mut spans = vec![Span::styled("│ ", border_style)];
     spans.extend(line.spans);
     spans.push(Span::raw(" ".repeat(padding)));
-    spans.push(Span::styled(right_border, border_style));
+    spans.push(Span::styled(" │", border_style));
+    Line::from(spans)
+}
+
+fn selected_message_top_line(line: Line<'static>, inner_width: usize) -> Line<'static> {
+    const TOP_HEADER_LEFT_FILL: usize = 1;
+
+    let border_style = selected_message_border_style();
+    let header_width = line
+        .spans
+        .iter()
+        .map(|span| span.content.width())
+        .sum::<usize>();
+    let right_gap = usize::from(
+        TOP_HEADER_LEFT_FILL
+            .saturating_add(header_width)
+            .saturating_add(1)
+            <= inner_width.saturating_add(2),
+    );
+    let right_fill_width = inner_width
+        .saturating_add(2)
+        .saturating_sub(TOP_HEADER_LEFT_FILL)
+        .saturating_sub(header_width)
+        .saturating_sub(right_gap);
+
+    let mut spans = vec![Span::styled(
+        format!("╭{}", "─".repeat(TOP_HEADER_LEFT_FILL)),
+        border_style,
+    )];
+    spans.extend(line.spans);
+    if right_gap > 0 {
+        spans.push(Span::styled(" ", border_style));
+    }
+    spans.push(Span::styled(
+        format!("{}╮", "─".repeat(right_fill_width)),
+        border_style,
+    ));
     Line::from(spans)
 }
 
@@ -1599,7 +1668,9 @@ fn selected_message_bottom_line(inner_width: usize) -> Line<'static> {
 }
 
 fn selected_message_border_style() -> Style {
-    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(SELECTED_MESSAGE_BORDER)
+        .add_modifier(Modifier::BOLD)
 }
 
 fn selected_message_content_x_offset(selected: bool) -> u16 {
@@ -1616,6 +1687,18 @@ fn selected_avatar_x_offset(selected_body_top: Option<isize>, avatar_row: isize)
     } else {
         0
     }
+}
+
+fn selected_message_card_width(list_width: usize, scrollbar_visible: bool) -> usize {
+    list_width
+        .saturating_sub(usize::from(scrollbar_visible))
+        .max(4)
+}
+
+fn selected_message_content_width(card_width: usize) -> usize {
+    selected_message_card_inner_width(card_width)
+        .saturating_sub(MESSAGE_AVATAR_OFFSET as usize)
+        .max(8)
 }
 
 fn selected_message_card_inner_width(list_width: usize) -> usize {
@@ -2782,7 +2865,7 @@ fn render_vertical_scrollbar(
     viewport_len: usize,
     content_len: usize,
 ) {
-    if area.height == 0 || viewport_len == 0 || content_len <= viewport_len {
+    if !vertical_scrollbar_visible(area, viewport_len, content_len) {
         return;
     }
 
@@ -2801,6 +2884,10 @@ fn render_vertical_scrollbar(
         .track_style(Style::default().fg(DIM));
 
     frame.render_stateful_widget(scrollbar, area, &mut state);
+}
+
+fn vertical_scrollbar_visible(area: Rect, viewport_len: usize, content_len: usize) -> bool {
+    area.height > 0 && viewport_len > 0 && content_len > viewport_len
 }
 
 fn reaction_users_visible_line_count(area: Rect) -> usize {
@@ -3435,8 +3522,8 @@ mod tests {
 
     use super::{
         ACCENT, DIM, DISCORD_EPOCH_MILLIS, ImagePreview, ImagePreviewState, MemberEntry,
-        SELECTED_FORUM_POST_BORDER, SNOWFLAKE_TIMESTAMP_SHIFT, channel_action_menu_lines,
-        channel_name_style, composer_content_line_count, composer_lines,
+        SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, SNOWFLAKE_TIMESTAMP_SHIFT,
+        channel_action_menu_lines, channel_name_style, composer_content_line_count, composer_lines,
         composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
         emoji_reaction_picker_lines, focus_pane_at, footer_hint, format_message_sent_time,
         format_unix_millis_with_offset, forum_post_reaction_summary,
@@ -3445,8 +3532,9 @@ mod tests {
         member_name_style, message_action_menu_lines, message_author_style, message_item_lines,
         message_starts_new_day, message_viewport_lines, poll_vote_picker_lines,
         reaction_users_popup_lines, reaction_users_visible_line_count, selected_avatar_x_offset,
-        selected_message_content_x_offset, sync_view_heights, user_profile_display_name_style,
-        user_profile_popup_lines, user_profile_popup_text, user_profile_popup_visible_lines,
+        selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
+        user_profile_display_name_style, user_profile_popup_lines, user_profile_popup_text,
+        user_profile_popup_visible_lines,
     };
     use crate::{
         discord::{
@@ -3661,7 +3749,7 @@ mod tests {
         });
 
         let messages = state.messages();
-        let lines = message_viewport_lines(&messages, None, &state, 40, 80, 16, 3, &[]);
+        let lines = message_viewport_lines(&messages, None, &state, 40, 80, 80, 16, 3, &[]);
 
         assert_eq!(
             lines[1].spans[1].style.fg,
@@ -3676,6 +3764,7 @@ mod tests {
             channel_id: Id::new(2),
             messages: vec![message_info(10, "mod", "important announcement", true)],
         });
+        state.enter_pinned_message_view(Id::new(2));
         state.jump_bottom();
 
         assert_eq!(
@@ -3696,6 +3785,9 @@ mod tests {
             channel_id: Id::new(2),
             messages: vec![message_info(10, "mod", "important announcement", true)],
         });
+
+        assert!(state.messages().into_iter().all(|message| message.id != Id::new(10)));
+
         state.push_event(AppEvent::MessageHistoryLoaded {
             channel_id: Id::new(2),
             before: None,
@@ -3737,6 +3829,7 @@ mod tests {
 
         assert_eq!(texts.len(), 5);
         assert!(texts[0].starts_with("› ╭"));
+        assert!(texts.iter().all(|text| text.width() == 80));
         assert!(texts[1].contains("A useful Rust crate"));
         assert!(texts[1].contains("PINNED"));
         assert!(texts[2].contains("neo: This crate solves"));
@@ -3787,6 +3880,38 @@ mod tests {
     fn forum_post_scrollbar_visible_count_uses_card_count() {
         assert_eq!(forum_post_scrollbar_visible_count(10), 2);
         assert_eq!(forum_post_scrollbar_visible_count(9), 1);
+    }
+
+    #[test]
+    fn forum_post_lines_can_reserve_scrollbar_column() {
+        let post = ChannelThreadItem {
+            channel_id: Id::new(30),
+            label: "A useful Rust crate".to_owned(),
+            archived: false,
+            locked: false,
+            pinned: false,
+            preview_author_id: Some(Id::new(99)),
+            preview_author: Some("neo".to_owned()),
+            preview_author_color: None,
+            preview_content: Some("short preview".to_owned()),
+            preview_reactions: Vec::new(),
+            comment_count: Some(1),
+            last_activity_message_id: Some(Id::new(30)),
+        };
+
+        let lines = forum_post_viewport_lines(
+            &[post],
+            Some(0),
+            selected_message_card_width(80, true),
+            false,
+        );
+        let texts = line_texts_from_ratatui(&lines);
+
+        assert!(texts[0].starts_with("› ╭"));
+        assert!(texts[0].ends_with("╮"));
+        assert!(texts[1].ends_with("│"));
+        assert!(texts[4].ends_with("╯"));
+        assert!(texts.iter().all(|text| text.width() == 79));
     }
 
     #[test]
@@ -3874,7 +3999,7 @@ mod tests {
         });
 
         let messages = state.messages();
-        let lines = message_viewport_lines(&messages, None, &state, 40, 80, 16, 3, &[]);
+        let lines = message_viewport_lines(&messages, None, &state, 40, 80, 80, 16, 3, &[]);
 
         assert_eq!(
             lines[1].spans[1].style.fg,
@@ -5644,7 +5769,7 @@ mod tests {
         let messages = [&message];
 
         let lines =
-            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 16, 3, &[]);
+            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 80, 16, 3, &[]);
 
         assert_eq!(lines.len(), 8);
     }
@@ -5656,7 +5781,7 @@ mod tests {
         let messages = [&message];
 
         let lines =
-            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 16, 3, &[]);
+            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 80, 16, 3, &[]);
 
         assert_eq!(lines.len(), 9);
     }
@@ -5668,7 +5793,7 @@ mod tests {
         let messages = [&message];
 
         let lines =
-            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 16, 3, &[]);
+            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 80, 16, 3, &[]);
 
         assert_eq!(lines.len(), 10);
     }
@@ -5680,7 +5805,7 @@ mod tests {
         let messages = [&message];
 
         let lines =
-            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 16, 3, &[]);
+            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 80, 16, 3, &[]);
 
         assert_eq!(lines.len(), 12);
         assert!(line_texts_from_ratatui(&lines).contains(&"   +1 more images".to_owned()));
@@ -5971,6 +6096,7 @@ mod tests {
             &DashboardState::new(),
             5,
             80,
+            80,
             16,
             3,
             &[],
@@ -5981,7 +6107,7 @@ mod tests {
         let visible_text = line_texts_from_ratatui(&visible_rows);
         let sent_time = format_message_sent_time(Id::new(1));
 
-        assert!(visible_text[0].starts_with("╭ oo "));
+        assert!(visible_text[0].starts_with("╭─oo "));
         assert!(visible_text[0].contains(&sent_time));
         assert!(visible_text[1].contains("selected"));
         assert!(visible_text[2].starts_with("╰"));
@@ -6001,6 +6127,7 @@ mod tests {
             &DashboardState::new(),
             5,
             80,
+            80,
             16,
             3,
             &[],
@@ -6009,18 +6136,17 @@ mod tests {
 
         let texts = line_texts_from_ratatui(&lines);
 
-        assert_eq!(texts.len(), 4);
-        assert!(texts[0].starts_with(&format!("╭ oo . {sent_time}")));
-        assert!(texts[0].ends_with(" ╮"));
-        assert!(texts[1].starts_with("│    abcdefgh"));
+        assert_eq!(texts.len(), 3);
+        assert!(texts[0].starts_with(&format!("╭─oo neo {sent_time}")));
+        assert!(texts[0].ends_with("╮"));
+        assert!(texts[0].contains(" ─"));
+        assert!(texts[1].starts_with("│    abcdefghijkl"));
         assert!(texts[1].ends_with(" │"));
-        assert!(texts[2].starts_with("│    ijkl"));
-        assert!(texts[2].ends_with(" │"));
-        assert!(texts[3].starts_with("╰"));
-        assert!(texts[3].ends_with("╯"));
+        assert!(texts[2].starts_with("╰"));
+        assert!(texts[2].ends_with("╯"));
         assert!(texts.iter().all(|text| text.width() == 80));
-        assert_eq!(lines[0].spans[0].style.fg, Some(ACCENT));
-        assert_eq!(lines[1].spans[0].style.fg, Some(ACCENT));
+        assert_eq!(lines[0].spans[0].style.fg, Some(SELECTED_MESSAGE_BORDER));
+        assert_eq!(lines[1].spans[0].style.fg, Some(SELECTED_MESSAGE_BORDER));
         assert!(
             lines[1].spans[0]
                 .style
@@ -6033,6 +6159,31 @@ mod tests {
                 .flat_map(|line| line.spans.iter())
                 .all(|span| span.style.bg.is_none())
         );
+    }
+
+    #[test]
+    fn selected_message_right_border_can_reserve_scrollbar_column() {
+        let message = message_with_content(Some("a".repeat(73)));
+        let messages = [&message];
+
+        let texts = line_texts_from_ratatui(&message_viewport_lines(
+            &messages,
+            Some(0),
+            &DashboardState::new(),
+            40,
+            80,
+            selected_message_card_width(80, true),
+            16,
+            3,
+            &[],
+        ));
+
+        assert!(texts[0].starts_with("╭─oo"));
+        assert!(texts[0].ends_with("╮"));
+        assert!(texts[1].ends_with("│"));
+        assert!(texts[2].ends_with("│"));
+        assert!(texts[3].ends_with("╯"));
+        assert!(texts.iter().all(|text| text.width() == 79));
     }
 
     #[test]
@@ -6203,7 +6354,7 @@ mod tests {
         let messages = [&message];
 
         let lines =
-            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 16, 3, &[]);
+            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 80, 16, 3, &[]);
 
         assert!(line_texts_from_ratatui(&lines).contains(&"   +2 more images".to_owned()));
     }
