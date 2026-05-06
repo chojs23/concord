@@ -85,6 +85,7 @@ pub const FORUM_POST_CARD_HEIGHT: usize = 5;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelThreadItem {
     pub channel_id: Id<ChannelMarker>,
+    pub section_label: Option<String>,
     pub label: String,
     pub archived: bool,
     pub locked: bool,
@@ -96,6 +97,12 @@ pub struct ChannelThreadItem {
     pub preview_reactions: Vec<ReactionInfo>,
     pub comment_count: Option<u64>,
     pub last_activity_message_id: Option<Id<MessageMarker>>,
+}
+
+impl ChannelThreadItem {
+    pub fn rendered_height(&self) -> usize {
+        FORUM_POST_CARD_HEIGHT + usize::from(self.section_label.is_some())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

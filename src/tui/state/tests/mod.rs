@@ -14,10 +14,10 @@ use super::{
 };
 use crate::discord::{
     AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, ChannelVisibilityStats,
-    CustomEmojiInfo, DiscordState, FriendStatus, MemberInfo, MessageInfo, MessageKind,
-    MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo, PermissionOverwriteInfo,
-    PermissionOverwriteKind, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo,
-    ReactionUsersInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+    CustomEmojiInfo, DiscordState, ForumPostArchiveState, FriendStatus, MemberInfo, MessageInfo,
+    MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo,
+    PermissionOverwriteInfo, PermissionOverwriteKind, PresenceStatus, ReactionEmoji, ReactionInfo,
+    ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo, UserProfileInfo,
 };
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -2000,7 +2000,10 @@ fn pinned_only_messages_stay_out_of_normal_history() {
     );
 
     state.enter_pinned_message_view(channel_id);
-    assert_eq!(state.messages().first().map(|message| message.id), Some(Id::new(5)));
+    assert_eq!(
+        state.messages().first().map(|message| message.id),
+        Some(Id::new(5))
+    );
 }
 
 #[test]
@@ -3000,7 +3003,8 @@ fn forum_channel_renders_loaded_posts_in_message_pane() {
     state.move_down();
 
     assert_eq!(state.selected_forum_post(), 1);
-    assert_eq!(state.focused_forum_post_selection(), Some(1));
+    assert_eq!(state.message_scroll(), 1);
+    assert_eq!(state.focused_forum_post_selection(), Some(0));
 }
 
 #[test]
@@ -3048,7 +3052,9 @@ fn forum_posts_loaded_event_populates_selected_forum_items() {
 
     state.push_event(AppEvent::ForumPostsLoaded {
         channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
         offset: 0,
+        next_offset: 1,
         posts: vec![ChannelInfo {
             guild_id: Some(guild_id),
             channel_id: Id::new(30),
@@ -3088,6 +3094,7 @@ fn forum_posts_loaded_event_populates_selected_forum_items() {
     assert_eq!(post.preview_reactions.len(), 1);
     assert_eq!(post.comment_count, Some(1));
     assert_eq!(post.last_activity_message_id, Some(Id::new(300)));
+    assert_eq!(post.section_label.as_deref(), Some("Active posts"));
 }
 
 #[test]
@@ -3111,7 +3118,9 @@ fn missing_message_author_profile_requests_include_visible_forum_preview_authors
     state.confirm_selected_channel();
     state.push_event(AppEvent::ForumPostsLoaded {
         channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
         offset: 0,
+        next_offset: 1,
         posts: vec![forum_thread_info(
             guild_id,
             forum_id,
@@ -3165,7 +3174,9 @@ fn forum_post_first_page_starts_cursor_at_top_and_next_page_appends() {
 
     state.push_event(AppEvent::ForumPostsLoaded {
         channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
         offset: 0,
+        next_offset: 2,
         posts: vec![
             forum_thread_info(guild_id, forum_id, 30, "newest", Some(300), false),
             forum_thread_info(guild_id, forum_id, 31, "middle", Some(200), false),
@@ -3187,7 +3198,9 @@ fn forum_post_first_page_starts_cursor_at_top_and_next_page_appends() {
 
     state.push_event(AppEvent::ForumPostsLoaded {
         channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
         offset: 2,
+        next_offset: 3,
         posts: vec![forum_thread_info(
             guild_id,
             forum_id,
@@ -3208,6 +3221,72 @@ fn forum_post_first_page_starts_cursor_at_top_and_next_page_appends() {
             .map(|post| post.label.as_str())
             .collect::<Vec<_>>(),
         vec!["newest", "middle", "older"]
+    );
+}
+
+#[test]
+fn archived_forum_posts_render_after_active_posts_without_moving_shared_active_posts() {
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![forum_channel_info(guild_id, forum_id)],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+
+    state.push_event(AppEvent::ForumPostsLoaded {
+        channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
+        offset: 0,
+        next_offset: 2,
+        posts: vec![
+            forum_thread_info(guild_id, forum_id, 30, "active", Some(300), false),
+            forum_thread_info(guild_id, forum_id, 31, "shared", Some(200), false),
+        ],
+        preview_messages: Vec::new(),
+        has_more: false,
+    });
+    state.push_event(AppEvent::ForumPostsLoaded {
+        channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Archived,
+        offset: 0,
+        next_offset: 2,
+        posts: vec![
+            forum_thread_info(guild_id, forum_id, 31, "shared", Some(400), true),
+            forum_thread_info(guild_id, forum_id, 32, "archived", Some(100), true),
+        ],
+        preview_messages: Vec::new(),
+        has_more: false,
+    });
+
+    assert_eq!(
+        state
+            .selected_forum_post_items()
+            .iter()
+            .map(|post| {
+                (
+                    post.label.as_str(),
+                    post.section_label.as_deref(),
+                    post.archived,
+                    post.last_activity_message_id,
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            ("active", Some("Active posts"), false, Some(Id::new(300))),
+            ("shared", None, false, Some(Id::new(200))),
+            ("archived", Some("Archived posts"), true, Some(Id::new(100)),),
+        ]
     );
 }
 
@@ -3240,7 +3319,9 @@ fn forum_posts_resort_by_last_message_id_when_server_index_is_stale() {
     // the newest message id sits in the middle of the list.
     state.push_event(AppEvent::ForumPostsLoaded {
         channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
         offset: 0,
+        next_offset: 3,
         posts: vec![
             forum_thread_info(guild_id, forum_id, 30, "stale-top", Some(100), false),
             forum_thread_info(guild_id, forum_id, 31, "newest-activity", Some(500), false),
@@ -3294,7 +3375,9 @@ fn forum_pinned_posts_float_to_top_preserving_relative_order() {
 
     state.push_event(AppEvent::ForumPostsLoaded {
         channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
         offset: 0,
+        next_offset: 4,
         posts: vec![newest, pinned, middle, older],
         preview_messages: Vec::new(),
         has_more: false,
@@ -3554,7 +3637,7 @@ fn state_with_many_forum_channel_posts(count: u64) -> DashboardState {
 
     // Discord's `/threads/search` returns posts newest-first, so emit them in
     // reverse channel-id order to match what the live API would deliver.
-    let posts = (0..count)
+    let posts: Vec<_> = (0..count)
         .rev()
         .map(|index| ChannelInfo {
             guild_id: Some(guild_id),
@@ -3581,7 +3664,9 @@ fn state_with_many_forum_channel_posts(count: u64) -> DashboardState {
         .collect();
     state.push_event(AppEvent::ForumPostsLoaded {
         channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
         offset: 0,
+        next_offset: posts.len(),
         posts,
         preview_messages: Vec::new(),
         has_more: false,

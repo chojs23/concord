@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 use crate::{
     AppError, Result,
     discord::{
-        ChannelInfo, FriendStatus, MessageInfo, MutualGuildInfo, ReactionEmoji, ReactionUserInfo,
-        UserProfileInfo,
+        ChannelInfo, ForumPostArchiveState, FriendStatus, MessageInfo, MutualGuildInfo,
+        ReactionEmoji, ReactionUserInfo, UserProfileInfo,
         gateway::{parse_channel_info, parse_message_info},
     },
 };
@@ -29,6 +29,7 @@ pub struct ForumPostPage {
     pub posts: Vec<ChannelInfo>,
     pub preview_messages: Vec<MessageInfo>,
     pub has_more: bool,
+    pub next_offset: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -152,6 +153,7 @@ impl DiscordRest {
         &self,
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
+        archive_state: ForumPostArchiveState,
         offset: usize,
     ) -> Result<ForumPostPage> {
         // The `last_message_time` index excludes posts where nobody has
@@ -162,26 +164,29 @@ impl DiscordRest {
         // only need `last_message_time` because zero-reply posts are almost
         // always recent and already covered by the first response.
         if offset == 0 {
-            let (active, recent) = tokio::join!(
+            let (activity, recent) = tokio::join!(
                 self.load_forum_post_search_page(
                     guild_id,
                     channel_id,
+                    archive_state,
                     offset,
                     ForumSearchSort::LastMessageTime,
                 ),
                 self.load_forum_post_search_page(
                     guild_id,
                     channel_id,
+                    archive_state,
                     offset,
                     ForumSearchSort::CreationTime,
                 ),
             );
-            return Ok(merge_forum_pages(active?, recent?));
+            return Ok(merge_forum_pages(activity?, recent?));
         }
 
         self.load_forum_post_search_page(
             guild_id,
             channel_id,
+            archive_state,
             offset,
             ForumSearchSort::LastMessageTime,
         )
@@ -192,6 +197,7 @@ impl DiscordRest {
         &self,
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
+        archive_state: ForumPostArchiveState,
         offset: usize,
         sort_by: ForumSearchSort,
     ) -> Result<ForumPostPage> {
@@ -207,14 +213,21 @@ impl DiscordRest {
             }
             let started = std::time::Instant::now();
             match self
-                .request_forum_post_search_page(guild_id, channel_id, offset, sort_by)
+                .request_forum_post_search_page(
+                    guild_id,
+                    channel_id,
+                    archive_state,
+                    offset,
+                    sort_by,
+                )
                 .await
             {
                 Ok(page) => {
                     crate::logging::error(
                         "history",
                         format!(
-                            "TIMING op=forum_search sort={} channel_id={} offset={} duration={:.0}ms",
+                            "TIMING op=forum_search archive_state={} sort={} channel_id={} offset={} duration={:.0}ms",
+                            archive_state.as_log_label(),
                             sort_by.as_str(),
                             channel_id.get(),
                             offset,
@@ -236,6 +249,7 @@ impl DiscordRest {
         &self,
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
+        archive_state: ForumPostArchiveState,
         offset: usize,
         sort_by: ForumSearchSort,
     ) -> Result<ForumPostPage> {
@@ -247,10 +261,11 @@ impl DiscordRest {
             ))
             .header(AUTHORIZATION, &self.token)
             .query(&[
-                ("archived", "false".to_owned()),
+                ("archived", archive_state.as_query_value().to_owned()),
                 ("sort_by", sort_by.as_str().to_owned()),
                 ("sort_order", "desc".to_owned()),
                 ("limit", FORUM_POST_SEARCH_PAGE_LIMIT.to_string()),
+                ("tag_setting", "match_some".to_owned()),
                 ("offset", offset.to_string()),
             ])
             .send()
@@ -275,9 +290,10 @@ impl DiscordRest {
             })?;
 
         let posts = parse_forum_thread_page(&raw, Some(guild_id), channel_id, true);
-        let preview_messages = parse_forum_first_messages(&raw, &posts);
+        let preview_messages = parse_forum_preview_messages(&raw, &posts);
 
         Ok(ForumPostPage {
+            next_offset: offset.saturating_add(posts.len()),
             posts,
             preview_messages,
             has_more: raw
@@ -727,8 +743,21 @@ fn parse_forum_thread_page(
         .unwrap_or_default()
 }
 
-fn parse_forum_first_messages(raw: &Value, posts: &[ChannelInfo]) -> Vec<MessageInfo> {
-    raw.get("first_messages")
+fn parse_forum_preview_messages(raw: &Value, posts: &[ChannelInfo]) -> Vec<MessageInfo> {
+    let mut seen = std::collections::HashSet::new();
+    ["first_messages", "messages", "most_recent_messages"]
+        .into_iter()
+        .flat_map(|field| parse_forum_messages_from_field(raw, posts, field))
+        .filter(|message| seen.insert(message.message_id))
+        .collect()
+}
+
+fn parse_forum_messages_from_field(
+    raw: &Value,
+    posts: &[ChannelInfo],
+    field: &str,
+) -> Vec<MessageInfo> {
+    raw.get(field)
         .and_then(Value::as_array)
         .map(|messages| {
             messages
@@ -795,6 +824,7 @@ fn merge_forum_pages(active: ForumPostPage, recent: ForumPostPage) -> ForumPostP
         }
     }
     ForumPostPage {
+        next_offset: active.next_offset,
         posts,
         preview_messages,
         has_more: active.has_more,
@@ -849,7 +879,7 @@ mod tests {
             ChannelInfo, ReactionEmoji,
             rest::{
                 ForumPostPage, ForumSearchSort, is_search_index_warming, merge_forum_pages,
-                next_reaction_users_after, parse_forum_first_messages, parse_forum_thread_page,
+                next_reaction_users_after, parse_forum_preview_messages, parse_forum_thread_page,
                 parse_user_profile_response, poll_vote_request_body, reaction_route_component,
                 validate_message_content,
             },
@@ -987,7 +1017,7 @@ mod tests {
             ]
         });
 
-        let messages = parse_forum_first_messages(&raw, &posts);
+        let messages = parse_forum_preview_messages(&raw, &posts);
 
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].guild_id, Some(guild_id));
@@ -996,6 +1026,53 @@ mod tests {
         assert_eq!(
             messages[0].content.as_deref(),
             Some("hello from the first post")
+        );
+    }
+
+    #[test]
+    fn forum_preview_messages_accept_search_message_fields() {
+        let guild_id = Id::<GuildMarker>::new(1);
+        let forum_id = Id::<ChannelMarker>::new(20);
+        let posts = vec![forum_post(forum_id, 30, "welcome")];
+        let raw = serde_json::json!({
+            "messages": [
+                {
+                    "id": "300",
+                    "channel_id": "30",
+                    "guild_id": "1",
+                    "author": { "id": "10", "username": "neo" },
+                    "type": 0,
+                    "pinned": false,
+                    "content": "archived search preview",
+                    "mentions": [],
+                    "attachments": [],
+                    "embeds": []
+                }
+            ],
+            "most_recent_messages": [
+                {
+                    "id": "300",
+                    "channel_id": "30",
+                    "guild_id": "1",
+                    "author": { "id": "10", "username": "neo" },
+                    "type": 0,
+                    "pinned": false,
+                    "content": "duplicate preview",
+                    "mentions": [],
+                    "attachments": [],
+                    "embeds": []
+                }
+            ]
+        });
+
+        let messages = parse_forum_preview_messages(&raw, &posts);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].guild_id, Some(guild_id));
+        assert_eq!(messages[0].channel_id, Id::new(30));
+        assert_eq!(
+            messages[0].content.as_deref(),
+            Some("archived search preview")
         );
     }
 
@@ -1012,6 +1089,7 @@ mod tests {
     fn merge_forum_pages_dedupes_posts_and_keeps_last_message_time_has_more() {
         let forum_id = Id::<ChannelMarker>::new(20);
         let active = ForumPostPage {
+            next_offset: 25,
             posts: vec![
                 forum_post(forum_id, 100, "active-only"),
                 forum_post(forum_id, 200, "shared"),
@@ -1020,6 +1098,7 @@ mod tests {
             has_more: true,
         };
         let recent = ForumPostPage {
+            next_offset: 25,
             posts: vec![
                 forum_post(forum_id, 200, "shared-from-creation"),
                 forum_post(forum_id, 300, "creation-only"),
@@ -1035,6 +1114,7 @@ mod tests {
         let names: Vec<_> = merged.posts.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, vec!["active-only", "shared", "creation-only"]);
         assert!(merged.has_more, "must follow last_message_time has_more");
+        assert_eq!(merged.next_offset, 25);
     }
 
     #[test]

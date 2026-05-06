@@ -17,6 +17,7 @@ use crate::{AppError, Result};
 
 use super::{
     MessageInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
+    commands::ForumPostArchiveState,
     events::{AppEvent, SequencedAppEvent},
     gateway::{GatewayCommand, run_gateway},
     rest::{DiscordRest, ForumPostPage},
@@ -198,10 +199,11 @@ impl DiscordClient {
         &self,
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
+        archive_state: ForumPostArchiveState,
         offset: usize,
     ) -> Result<ForumPostPage> {
         self.rest
-            .load_forum_posts(guild_id, channel_id, offset)
+            .load_forum_posts(guild_id, channel_id, archive_state, offset)
             .await
     }
 

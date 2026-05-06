@@ -5,7 +5,7 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker},
 };
 
-use crate::discord::AppEvent;
+use crate::discord::{AppEvent, ForumPostArchiveState};
 
 #[derive(Default)]
 pub(super) struct HistoryRequests {
@@ -86,23 +86,25 @@ impl ForumPostRequests {
         match event {
             AppEvent::ForumPostsLoaded {
                 channel_id,
-                offset,
-                posts,
+                archive_state,
+                offset: _,
+                next_offset,
                 has_more,
                 ..
             } => {
-                self.requests.insert(
-                    *channel_id,
-                    ForumPostRequestState::Loaded {
-                        next_offset: offset.saturating_add(posts.len()),
-                        has_more: *has_more,
-                    },
+                self.requests.entry(*channel_id).or_default().set_loaded(
+                    *archive_state,
+                    *next_offset,
+                    *has_more,
                 );
             }
             AppEvent::ForumPostsLoadFailed {
-                channel_id, offset, ..
+                channel_id,
+                archive_state,
+                offset,
+                ..
             } => {
-                self.mark_failed(*channel_id, *offset);
+                self.mark_failed(*channel_id, *archive_state, *offset);
             }
             _ => {}
         }
@@ -111,7 +113,12 @@ impl ForumPostRequests {
     pub(super) fn next(
         &mut self,
         target: Option<ForumPostRequestTarget>,
-    ) -> Option<(Id<GuildMarker>, Id<ChannelMarker>, usize)> {
+    ) -> Option<(
+        Id<GuildMarker>,
+        Id<ChannelMarker>,
+        ForumPostArchiveState,
+        usize,
+    )> {
         let Some(ForumPostRequestTarget {
             guild_id,
             channel_id,
@@ -124,38 +131,21 @@ impl ForumPostRequests {
         let channel_changed = self.last_channel != Some(channel_id);
         self.last_channel = Some(channel_id);
 
-        match self.requests.get(&channel_id).copied() {
-            None => {
-                self.requests
-                    .insert(channel_id, ForumPostRequestState::Requested { offset: 0 });
-                Some((guild_id, channel_id, 0))
-            }
-            Some(ForumPostRequestState::Failed { offset }) if channel_changed => {
-                self.requests
-                    .insert(channel_id, ForumPostRequestState::Requested { offset });
-                Some((guild_id, channel_id, offset))
-            }
-            Some(ForumPostRequestState::Loaded {
-                next_offset,
-                has_more: true,
-            }) if should_load_more => {
-                self.requests.insert(
-                    channel_id,
-                    ForumPostRequestState::Requested {
-                        offset: next_offset,
-                    },
-                );
-                Some((guild_id, channel_id, next_offset))
-            }
-            Some(ForumPostRequestState::Requested { .. })
-            | Some(ForumPostRequestState::Loaded { .. })
-            | Some(ForumPostRequestState::Failed { .. }) => None,
-        }
+        let state = self.requests.entry(channel_id).or_default();
+        let next = state.next(channel_changed, should_load_more)?;
+        Some((guild_id, channel_id, next.archive_state, next.offset))
     }
 
-    pub(super) fn mark_failed(&mut self, channel_id: Id<ChannelMarker>, offset: usize) {
+    pub(super) fn mark_failed(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        archive_state: ForumPostArchiveState,
+        offset: usize,
+    ) {
         self.requests
-            .insert(channel_id, ForumPostRequestState::Failed { offset });
+            .entry(channel_id)
+            .or_default()
+            .set_failed(archive_state, offset);
     }
 }
 
@@ -280,10 +270,121 @@ enum HistoryRequestState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ForumPostRequestState {
-    Requested { offset: usize },
-    Loaded { next_offset: usize, has_more: bool },
-    Failed { offset: usize },
+struct ForumPostRequestCursor {
+    archive_state: ForumPostArchiveState,
+    offset: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ForumPostRequestState {
+    active: ForumPostPageRequestState,
+    archived: ForumPostPageRequestState,
+}
+
+impl ForumPostRequestState {
+    fn next(
+        &mut self,
+        channel_changed: bool,
+        should_load_more: bool,
+    ) -> Option<ForumPostRequestCursor> {
+        if let Some(offset) = self.active.next(channel_changed, true, should_load_more) {
+            return Some(ForumPostRequestCursor {
+                archive_state: ForumPostArchiveState::Active,
+                offset,
+            });
+        }
+        if let Some(offset) =
+            self.archived
+                .next(channel_changed, should_load_more, should_load_more)
+        {
+            return Some(ForumPostRequestCursor {
+                archive_state: ForumPostArchiveState::Archived,
+                offset,
+            });
+        }
+        None
+    }
+
+    fn set_loaded(
+        &mut self,
+        archive_state: ForumPostArchiveState,
+        next_offset: usize,
+        has_more: bool,
+    ) {
+        self.page_mut(archive_state)
+            .set_loaded(next_offset, has_more);
+    }
+
+    fn set_failed(&mut self, archive_state: ForumPostArchiveState, offset: usize) {
+        self.page_mut(archive_state).set_failed(offset);
+    }
+
+    fn page_mut(&mut self, archive_state: ForumPostArchiveState) -> &mut ForumPostPageRequestState {
+        match archive_state {
+            ForumPostArchiveState::Active => &mut self.active,
+            ForumPostArchiveState::Archived => &mut self.archived,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ForumPostPageRequestState {
+    #[default]
+    NotRequested,
+    Requested {
+        offset: usize,
+    },
+    Loaded {
+        next_offset: usize,
+        has_more: bool,
+    },
+    Failed {
+        offset: usize,
+    },
+}
+
+impl ForumPostPageRequestState {
+    fn next(
+        &mut self,
+        channel_changed: bool,
+        allow_initial: bool,
+        should_load_more: bool,
+    ) -> Option<usize> {
+        match *self {
+            Self::NotRequested if allow_initial => {
+                *self = Self::Requested { offset: 0 };
+                Some(0)
+            }
+            Self::Failed { offset } if channel_changed => {
+                *self = Self::Requested { offset };
+                Some(offset)
+            }
+            Self::Loaded {
+                next_offset,
+                has_more: true,
+            } if should_load_more => {
+                *self = Self::Requested {
+                    offset: next_offset,
+                };
+                Some(next_offset)
+            }
+            Self::NotRequested
+            | Self::Requested { .. }
+            | Self::Loaded { .. }
+            | Self::Failed { .. } => None,
+        }
+    }
+
+    fn set_loaded(&mut self, next_offset: usize, has_more: bool) {
+        *self = Self::Loaded {
+            next_offset,
+            has_more,
+        };
+    }
+
+    fn set_failed(&mut self, offset: usize) {
+        *self = Self::Failed { offset };
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -297,7 +398,7 @@ enum PinnedMessageRequestState {
 mod tests {
     use crate::discord::ids::Id;
 
-    use crate::discord::{AppEvent, ChannelInfo};
+    use crate::discord::{AppEvent, ChannelInfo, ForumPostArchiveState};
 
     use super::{
         ForumPostRequestTarget, ForumPostRequests, HistoryRequests, MemberRequests,
@@ -342,12 +443,12 @@ mod tests {
         assert_eq!(requests.next(None), None);
         assert_eq!(
             requests.next(Some(target(guild, first, false))),
-            Some((guild, first, 0))
+            Some((guild, first, ForumPostArchiveState::Active, 0))
         );
         assert_eq!(requests.next(Some(target(guild, first, false))), None);
         assert_eq!(
             requests.next(Some(target(guild, second, false))),
-            Some((guild, second, 0))
+            Some((guild, second, ForumPostArchiveState::Active, 0))
         );
     }
 
@@ -360,21 +461,22 @@ mod tests {
 
         assert_eq!(
             requests.next(Some(target(guild, first, false))),
-            Some((guild, first, 0))
+            Some((guild, first, ForumPostArchiveState::Active, 0))
         );
         requests.record_event(&AppEvent::ForumPostsLoadFailed {
             channel_id: first,
+            archive_state: ForumPostArchiveState::Active,
             offset: 0,
             message: "temporary failure".to_owned(),
         });
         assert_eq!(requests.next(Some(target(guild, first, false))), None);
         assert_eq!(
             requests.next(Some(target(guild, second, false))),
-            Some((guild, second, 0))
+            Some((guild, second, ForumPostArchiveState::Active, 0))
         );
         assert_eq!(
             requests.next(Some(target(guild, first, false))),
-            Some((guild, first, 0))
+            Some((guild, first, ForumPostArchiveState::Active, 0))
         );
     }
 
@@ -386,11 +488,13 @@ mod tests {
 
         assert_eq!(
             requests.next(Some(target(guild, channel, false))),
-            Some((guild, channel, 0))
+            Some((guild, channel, ForumPostArchiveState::Active, 0))
         );
         requests.record_event(&AppEvent::ForumPostsLoaded {
             channel_id: channel,
+            archive_state: ForumPostArchiveState::Active,
             offset: 0,
+            next_offset: 2,
             posts: vec![forum_post(channel, 10), forum_post(channel, 11)],
             preview_messages: Vec::new(),
             has_more: true,
@@ -399,17 +503,88 @@ mod tests {
         assert_eq!(requests.next(Some(target(guild, channel, false))), None);
         assert_eq!(
             requests.next(Some(target(guild, channel, true))),
-            Some((guild, channel, 2))
+            Some((guild, channel, ForumPostArchiveState::Active, 2))
         );
         requests.record_event(&AppEvent::ForumPostsLoaded {
             channel_id: channel,
+            archive_state: ForumPostArchiveState::Active,
             offset: 2,
+            next_offset: 3,
             posts: vec![forum_post(channel, 12)],
             preview_messages: Vec::new(),
             has_more: false,
         });
 
-        assert_eq!(requests.next(Some(target(guild, channel, true))), None);
+        assert_eq!(requests.next(Some(target(guild, channel, false))), None);
+        assert_eq!(
+            requests.next(Some(target(guild, channel, true))),
+            Some((guild, channel, ForumPostArchiveState::Archived, 0))
+        );
+    }
+
+    #[test]
+    fn forum_post_request_tracks_archived_pages_separately() {
+        let mut requests = ForumPostRequests::default();
+        let guild = Id::new(100);
+        let channel = Id::new(1);
+
+        assert_eq!(
+            requests.next(Some(target(guild, channel, false))),
+            Some((guild, channel, ForumPostArchiveState::Active, 0))
+        );
+        requests.record_event(&AppEvent::ForumPostsLoaded {
+            channel_id: channel,
+            archive_state: ForumPostArchiveState::Active,
+            offset: 0,
+            next_offset: 1,
+            posts: vec![forum_post(channel, 10)],
+            preview_messages: Vec::new(),
+            has_more: false,
+        });
+        assert_eq!(
+            requests.next(Some(target(guild, channel, true))),
+            Some((guild, channel, ForumPostArchiveState::Archived, 0))
+        );
+        requests.record_event(&AppEvent::ForumPostsLoaded {
+            channel_id: channel,
+            archive_state: ForumPostArchiveState::Archived,
+            offset: 0,
+            next_offset: 2,
+            posts: vec![forum_post(channel, 11), forum_post(channel, 12)],
+            preview_messages: Vec::new(),
+            has_more: true,
+        });
+
+        assert_eq!(
+            requests.next(Some(target(guild, channel, true))),
+            Some((guild, channel, ForumPostArchiveState::Archived, 2))
+        );
+    }
+
+    #[test]
+    fn forum_post_request_uses_server_next_offset() {
+        let mut requests = ForumPostRequests::default();
+        let guild = Id::new(100);
+        let channel = Id::new(1);
+
+        assert_eq!(
+            requests.next(Some(target(guild, channel, false))),
+            Some((guild, channel, ForumPostArchiveState::Active, 0))
+        );
+        requests.record_event(&AppEvent::ForumPostsLoaded {
+            channel_id: channel,
+            archive_state: ForumPostArchiveState::Active,
+            offset: 0,
+            next_offset: 25,
+            posts: vec![forum_post(channel, 10), forum_post(channel, 11)],
+            preview_messages: Vec::new(),
+            has_more: true,
+        });
+
+        assert_eq!(
+            requests.next(Some(target(guild, channel, true))),
+            Some((guild, channel, ForumPostArchiveState::Active, 25))
+        );
     }
 
     fn target(

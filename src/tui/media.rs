@@ -1392,7 +1392,9 @@ mod tests {
         state.confirm_selected_channel();
         state.push_event(AppEvent::ForumPostsLoaded {
             channel_id: forum_id,
+            archive_state: crate::discord::ForumPostArchiveState::Active,
             offset: 0,
+            next_offset: 1,
             posts: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 channel_id: thread_id,

@@ -13,6 +13,29 @@ pub enum ReactionEmoji {
     },
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ForumPostArchiveState {
+    #[default]
+    Active,
+    Archived,
+}
+
+impl ForumPostArchiveState {
+    pub fn as_query_value(self) -> &'static str {
+        match self {
+            Self::Active => "false",
+            Self::Archived => "true",
+        }
+    }
+
+    pub fn as_log_label(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Archived => "archived",
+        }
+    }
+}
+
 impl ReactionEmoji {
     pub fn status_label(&self) -> String {
         match self {
@@ -50,6 +73,7 @@ pub enum AppCommand {
     LoadForumPosts {
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
+        archive_state: ForumPostArchiveState,
         offset: usize,
     },
     LoadGuildMembers {

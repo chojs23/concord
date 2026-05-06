@@ -784,17 +784,19 @@ async fn run_dashboard(
                 should_load_more,
             },
         );
-        if let Some((guild_id, channel_id, offset)) = forum_post_requests.next(forum_post_target)
+        if let Some((guild_id, channel_id, archive_state, offset)) =
+            forum_post_requests.next(forum_post_target)
             && commands
                 .send(AppCommand::LoadForumPosts {
                     guild_id,
                     channel_id,
+                    archive_state,
                     offset,
                 })
                 .await
                 .is_err()
         {
-            forum_post_requests.mark_failed(channel_id, offset);
+            forum_post_requests.mark_failed(channel_id, archive_state, offset);
             logging::error("tui", "command channel closed");
             state.push_effect(AppEvent::GatewayError {
                 message: "command channel closed".to_owned(),

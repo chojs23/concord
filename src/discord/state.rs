@@ -1478,7 +1478,10 @@ impl DiscordState {
     fn replace_pinned_messages(&mut self, channel_id: Id<ChannelMarker>, pins: &[MessageInfo]) {
         let channel_guild_id = self.channel_guild_id(channel_id);
         let mut by_id = BTreeMap::new();
-        for pin in pins.iter().filter(|message| message.channel_id == channel_id) {
+        for pin in pins
+            .iter()
+            .filter(|message| message.channel_id == channel_id)
+        {
             self.record_message_author_role_ids(pin);
             let mut pinned = self.message_state_from_info(channel_guild_id, pin);
             pinned.pinned = true;
@@ -1795,7 +1798,10 @@ fn remove_gateway_reaction_in(
     message.reactions.retain(|reaction| reaction.count > 0);
 }
 
-fn clear_gateway_reactions_in(messages: &mut VecDeque<MessageState>, message_id: Id<MessageMarker>) {
+fn clear_gateway_reactions_in(
+    messages: &mut VecDeque<MessageState>,
+    message_id: Id<MessageMarker>,
+) {
     let Some(message) = messages.iter_mut().find(|message| message.id == message_id) else {
         return;
     };
@@ -3511,9 +3517,11 @@ mod tests {
             channel_id,
             message_id: Id::new(20),
         });
-        assert!(state.pinned_messages_for_channel(channel_id)[0]
-            .reactions
-            .is_empty());
+        assert!(
+            state.pinned_messages_for_channel(channel_id)[0]
+                .reactions
+                .is_empty()
+        );
     }
 
     #[test]

@@ -234,10 +234,14 @@ fn start_command_loop(
                     AppCommand::LoadForumPosts {
                         guild_id,
                         channel_id,
+                        archive_state,
                         offset,
                     } => {
                         let started = Instant::now();
-                        match client.load_forum_posts(guild_id, channel_id, offset).await {
+                        match client
+                            .load_forum_posts(guild_id, channel_id, archive_state, offset)
+                            .await
+                        {
                             Ok(page) => {
                                 let elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0;
                                 // Surface forum-load timing at error level so it
@@ -250,8 +254,9 @@ fn start_command_loop(
                                 logging::error(
                                     "history",
                                     format!(
-                                        "TIMING op=load_forum_posts channel_id={} offset={} posts={} has_more={} duration={:.0}ms",
+                                        "TIMING op=load_forum_posts channel_id={} archive_state={} offset={} posts={} has_more={} duration={:.0}ms",
                                         channel_id.get(),
+                                        archive_state.as_log_label(),
                                         offset,
                                         page.posts.len(),
                                         page.has_more,
@@ -261,7 +266,9 @@ fn start_command_loop(
                                 client
                                     .publish_event(AppEvent::ForumPostsLoaded {
                                         channel_id,
+                                        archive_state,
                                         offset,
+                                        next_offset: page.next_offset,
                                         posts: page.posts,
                                         preview_messages: page.preview_messages,
                                         has_more: page.has_more,
@@ -274,9 +281,10 @@ fn start_command_loop(
                                 logging::timing(
                                     "history",
                                     format!(
-                                        "op=load_forum_posts guild_id={} channel_id={} offset={} posts=0 {message}; detail={detail}",
+                                        "op=load_forum_posts guild_id={} channel_id={} archive_state={} offset={} posts=0 {message}; detail={detail}",
                                         guild_id.get(),
                                         channel_id.get(),
+                                        archive_state.as_log_label(),
                                         offset,
                                     ),
                                     started.elapsed(),
@@ -285,6 +293,7 @@ fn start_command_loop(
                                 client
                                     .publish_event(AppEvent::ForumPostsLoadFailed {
                                         channel_id,
+                                        archive_state,
                                         offset,
                                         message,
                                     })

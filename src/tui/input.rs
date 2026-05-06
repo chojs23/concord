@@ -1055,7 +1055,9 @@ mod tests {
         let mut state = state_with_forum_channel_posts();
         state.push_event(AppEvent::ForumPostsLoaded {
             channel_id: Id::new(20),
+            archive_state: crate::discord::ForumPostArchiveState::Active,
             offset: 2,
+            next_offset: 3,
             posts: vec![ChannelInfo {
                 guild_id: Some(Id::new(1)),
                 channel_id: Id::new(29),
@@ -2377,7 +2379,9 @@ mod tests {
         // descending channel-id order so the test sees the same layout.
         state.push_event(AppEvent::ForumPostsLoaded {
             channel_id: forum_id,
+            archive_state: crate::discord::ForumPostArchiveState::Active,
             offset: 0,
+            next_offset: 2,
             posts: vec![
                 ChannelInfo {
                     guild_id: Some(guild_id),

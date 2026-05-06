@@ -10,8 +10,8 @@ mod rest;
 mod state;
 
 pub use client::DiscordClient;
-pub use commands::AppCommand;
 pub use commands::ReactionEmoji;
+pub use commands::{AppCommand, ForumPostArchiveState};
 pub use events::{
     AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
     EmbedFieldInfo, EmbedInfo, FriendStatus, GuildFolder, InlinePreviewInfo, MemberInfo,

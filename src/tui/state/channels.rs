@@ -125,31 +125,15 @@ impl DashboardState {
         let Some(list) = self.forum_post_lists.get(&channel.id) else {
             return Vec::new();
         };
-        // Two corrections versus the order Discord's `/threads/search` returns:
-        //
-        //  1. Pinned posts come back interleaved with everything else by
-        //     activity time, but the official client lifts them to the top.
-        //  2. The server-side `sort_by=last_message_time` index can be stale —
-        //     posts with newer messages sometimes sit below older ones. The
-        //     `last_message_id` snowflake encodes the actual message
-        //     timestamp, and we keep it fresh via gateway updates, so a local
-        //     resort by that field tracks Discord's UI more closely.
-        let (mut pinned, mut rest): (Vec<_>, Vec<_>) = list
-            .post_ids
-            .iter()
-            .filter_map(|post_id| self.discord.channel(*post_id))
-            .filter(|post| post.is_thread() && post.parent_id == Some(channel.id))
-            .partition(|post| post.thread_pinned.unwrap_or(false));
-        let by_last_message = |post: &&ChannelState| {
-            std::cmp::Reverse(post.last_message_id.map(|id| id.get()).unwrap_or(0))
-        };
-        pinned.sort_by_key(by_last_message);
-        rest.sort_by_key(by_last_message);
-        pinned
-            .into_iter()
-            .chain(rest)
-            .map(|post| self.forum_thread_item(post))
-            .collect()
+        let mut items =
+            self.forum_post_section_items(&list.active_post_ids, channel.id, "Active posts", false);
+        items.extend(self.forum_post_section_items(
+            &list.archived_post_ids,
+            channel.id,
+            "Archived posts",
+            true,
+        ));
+        items
     }
 
     pub fn selected_forum_posts_loading(&self) -> bool {
@@ -163,11 +147,25 @@ impl DashboardState {
     }
 
     pub fn visible_forum_post_items(&self) -> Vec<ChannelThreadItem> {
-        self.selected_forum_post_items()
+        let height = self.message_content_height();
+        let mut rows = 0usize;
+        let mut visible = Vec::new();
+        for post in self
+            .selected_forum_post_items()
             .into_iter()
             .skip(self.message_scroll)
-            .take(self.forum_post_visible_count())
-            .collect()
+        {
+            let rendered_height = post.rendered_height();
+            if !visible.is_empty() && rows.saturating_add(rendered_height) > height {
+                break;
+            }
+            rows = rows.saturating_add(rendered_height);
+            visible.push(post);
+            if rows >= height {
+                break;
+            }
+        }
+        visible
     }
 
     pub fn selected_forum_post(&self) -> usize {
@@ -246,11 +244,59 @@ impl DashboardState {
         sort_thread_channels(&mut threads);
         threads
             .into_iter()
-            .map(|thread| self.forum_thread_item(thread))
+            .map(|thread| {
+                self.forum_thread_item(thread, None, thread.thread_archived.unwrap_or(false))
+            })
             .collect()
     }
 
-    fn forum_thread_item(&self, channel: &ChannelState) -> ChannelThreadItem {
+    fn forum_post_section_items(
+        &self,
+        post_ids: &[Id<ChannelMarker>],
+        forum_channel_id: Id<ChannelMarker>,
+        section_label: &str,
+        archived: bool,
+    ) -> Vec<ChannelThreadItem> {
+        // Two corrections versus the order Discord's `/threads/search` returns:
+        //
+        //  1. Pinned posts come back interleaved with everything else by
+        //     activity time, but the official client lifts them to the top.
+        //  2. The server-side `sort_by=last_message_time` index can be stale —
+        //     posts with newer messages sometimes sit below older ones. The
+        //     `last_message_id` snowflake encodes the actual message
+        //     timestamp, and we keep it fresh via gateway updates, so a local
+        //     resort by that field tracks Discord's UI more closely.
+        let (mut pinned, mut rest): (Vec<_>, Vec<_>) = post_ids
+            .iter()
+            .filter_map(|post_id| self.discord.channel(*post_id))
+            .filter(|post| post.is_thread() && post.parent_id == Some(forum_channel_id))
+            .partition(|post| post.thread_pinned.unwrap_or(false));
+        let by_last_message = |post: &&ChannelState| {
+            std::cmp::Reverse(post.last_message_id.map(|id| id.get()).unwrap_or(0))
+        };
+        pinned.sort_by_key(by_last_message);
+        rest.sort_by_key(by_last_message);
+
+        pinned
+            .into_iter()
+            .chain(rest)
+            .enumerate()
+            .map(|(index, post)| {
+                self.forum_thread_item(
+                    post,
+                    (index == 0).then(|| section_label.to_owned()),
+                    archived,
+                )
+            })
+            .collect()
+    }
+
+    fn forum_thread_item(
+        &self,
+        channel: &ChannelState,
+        section_label: Option<String>,
+        archived: bool,
+    ) -> ChannelThreadItem {
         let preview = self
             .discord
             .messages_for_channel(channel.id)
@@ -258,8 +304,9 @@ impl DashboardState {
             .next();
         ChannelThreadItem {
             channel_id: channel.id,
+            section_label,
             label: channel.name.clone(),
-            archived: channel.thread_archived.unwrap_or(false),
+            archived,
             locked: channel.thread_locked.unwrap_or(false),
             pinned: channel.thread_pinned.unwrap_or(false),
             preview_author_id: preview.map(|message| message.author_id),
@@ -281,15 +328,19 @@ impl DashboardState {
         let Some(list) = self.forum_post_lists.get(&channel_id) else {
             return false;
         };
-        if !list.has_more || list.post_ids.is_empty() {
+        if !list.has_more {
             return false;
         }
         let visible_bottom = self
             .message_scroll
-            .saturating_add(self.forum_post_visible_count())
+            .saturating_add(self.visible_forum_post_items().len().max(1))
             .saturating_add(5);
         let selected_bottom = self.selected_forum_post().saturating_add(5);
-        visible_bottom >= list.post_ids.len() || selected_bottom >= list.post_ids.len()
+        let len = list
+            .active_post_ids
+            .len()
+            .saturating_add(list.archived_post_ids.len());
+        visible_bottom >= len || selected_bottom >= len
     }
 
     pub fn selected_channel_action_index(&self) -> Option<usize> {

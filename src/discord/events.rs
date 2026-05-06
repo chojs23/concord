@@ -6,7 +6,7 @@ use crate::discord::ids::{
     },
 };
 
-use super::commands::ReactionEmoji;
+use super::commands::{ForumPostArchiveState, ReactionEmoji};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum PresenceStatus {
@@ -430,13 +430,16 @@ pub enum AppEvent {
     },
     ForumPostsLoaded {
         channel_id: Id<ChannelMarker>,
+        archive_state: ForumPostArchiveState,
         offset: usize,
+        next_offset: usize,
         posts: Vec<ChannelInfo>,
         preview_messages: Vec<MessageInfo>,
         has_more: bool,
     },
     ForumPostsLoadFailed {
         channel_id: Id<ChannelMarker>,
+        archive_state: ForumPostArchiveState,
         offset: usize,
         message: String,
     },

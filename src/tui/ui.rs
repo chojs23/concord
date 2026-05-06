@@ -565,15 +565,11 @@ fn render_messages(
         let selected = state.focused_forum_post_selection();
         let is_loading = state.selected_forum_posts_loading();
         let forum_viewport_len = forum_post_scrollbar_visible_count(message_areas.list.height);
-        let forum_scrollbar_visible = vertical_scrollbar_visible(
-            message_areas.list,
-            forum_viewport_len,
-            state.selected_forum_post_items().len(),
-        );
-        let forum_card_width = selected_message_card_width(
-            message_areas.list.width as usize,
-            forum_scrollbar_visible,
-        );
+        let forum_total_rows = state.message_total_rendered_rows(content_width, 0, 0);
+        let forum_scrollbar_visible =
+            vertical_scrollbar_visible(message_areas.list, forum_viewport_len, forum_total_rows);
+        let forum_card_width =
+            selected_message_card_width(message_areas.list.width as usize, forum_scrollbar_visible);
         frame.render_widget(
             Paragraph::new(forum_post_viewport_lines(
                 &posts,
@@ -587,15 +583,15 @@ fn render_messages(
             frame,
             message_areas.list,
             &posts,
-            message_areas.list.width as usize,
+            forum_card_width,
             emoji_images,
         );
         render_vertical_scrollbar(
             frame,
             message_areas.list,
-            state.message_scroll(),
+            state.message_scroll_row_position(content_width, 0, 0),
             forum_viewport_len,
-            state.selected_forum_post_items().len(),
+            forum_total_rows,
         );
         render_typing_footer(frame, message_areas.typing, state);
         render_composer(frame, message_areas.composer, state);
@@ -608,20 +604,15 @@ fn render_messages(
 
     let preview_width = inline_image_preview_width(message_areas.list);
     let max_preview_height = inline_image_preview_height(message_areas.list, true);
-    let message_total_rows = state.message_total_rendered_rows(
-        content_width,
-        preview_width,
-        max_preview_height,
-    );
+    let message_total_rows =
+        state.message_total_rendered_rows(content_width, preview_width, max_preview_height);
     let message_scrollbar_visible = vertical_scrollbar_visible(
         message_areas.list,
         message_areas.list.height as usize,
         message_total_rows,
     );
-    let selected_card_width = selected_message_card_width(
-        message_areas.list.width as usize,
-        message_scrollbar_visible,
-    );
+    let selected_card_width =
+        selected_message_card_width(message_areas.list.width as usize, message_scrollbar_visible);
     let lines = message_viewport_lines(
         &messages,
         selected,
@@ -1128,15 +1119,18 @@ fn forum_post_viewport_lines(
         return vec![Line::from(Span::styled(message, Style::default().fg(DIM)))];
     }
 
-    posts
-        .iter()
-        .enumerate()
-        .flat_map(|(index, post)| forum_post_card_lines(post, selected == Some(index), width))
-        .collect()
+    let mut lines = Vec::new();
+    for (index, post) in posts.iter().enumerate() {
+        if let Some(label) = post.section_label.as_deref() {
+            lines.push(forum_post_section_header_line(label, width));
+        }
+        lines.extend(forum_post_card_lines(post, selected == Some(index), width));
+    }
+    lines
 }
 
 fn forum_post_scrollbar_visible_count(list_height: u16) -> usize {
-    (usize::from(list_height) / FORUM_POST_CARD_HEIGHT).max(1)
+    usize::from(list_height).max(1)
 }
 
 fn forum_post_card_lines(
@@ -1183,6 +1177,17 @@ fn forum_post_card_lines(
             ),
         ]),
     ]
+}
+
+fn forum_post_section_header_line(label: &str, width: usize) -> Line<'static> {
+    let label = truncate_display_width(label, width);
+    let padding = width.saturating_sub(label.width());
+    Line::from(Span::styled(
+        format!("{label}{}", " ".repeat(padding)),
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    ))
 }
 
 fn forum_post_title_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Span<'static>> {
@@ -1376,10 +1381,12 @@ fn render_forum_post_reaction_emojis(
     let card_width = width.saturating_sub(2).max(4);
     let inner_width = card_width.saturating_sub(4).max(1);
 
-    for (index, post) in posts.iter().enumerate() {
-        let row = index
-            .saturating_mul(FORUM_POST_CARD_HEIGHT)
-            .saturating_add(3);
+    let mut rendered_row = 0usize;
+    for post in posts {
+        if post.section_label.is_some() {
+            rendered_row = rendered_row.saturating_add(1);
+        }
+        let row = rendered_row.saturating_add(3);
         if row >= list.height as usize {
             break;
         }
@@ -1417,6 +1424,7 @@ fn render_forum_post_reaction_emojis(
                 },
             );
         }
+        rendered_row = rendered_row.saturating_add(FORUM_POST_CARD_HEIGHT);
     }
 }
 
@@ -3786,7 +3794,12 @@ mod tests {
             messages: vec![message_info(10, "mod", "important announcement", true)],
         });
 
-        assert!(state.messages().into_iter().all(|message| message.id != Id::new(10)));
+        assert!(
+            state
+                .messages()
+                .into_iter()
+                .all(|message| message.id != Id::new(10))
+        );
 
         state.push_event(AppEvent::MessageHistoryLoaded {
             channel_id: Id::new(2),
@@ -3807,6 +3820,7 @@ mod tests {
     fn forum_post_lines_render_title_author_and_preview() {
         let post = ChannelThreadItem {
             channel_id: Id::new(30),
+            section_label: Some("Active posts".to_owned()),
             label: "A useful Rust crate".to_owned(),
             archived: false,
             locked: true,
@@ -3827,29 +3841,31 @@ mod tests {
         let lines = forum_post_viewport_lines(&[post], Some(0), 80, false);
         let texts = line_texts_from_ratatui(&lines);
 
-        assert_eq!(texts.len(), 5);
-        assert!(texts[0].starts_with("› ╭"));
+        assert_eq!(texts.len(), 6);
+        assert_eq!(texts[0].trim_end(), "Active posts");
+        assert!(texts[1].starts_with("› ╭"));
+        assert!(!texts[1].contains("Active posts"));
         assert!(texts.iter().all(|text| text.width() == 80));
-        assert!(texts[1].contains("A useful Rust crate"));
-        assert!(texts[1].contains("PINNED"));
-        assert!(texts[2].contains("neo: This crate solves"));
-        assert!(texts[3].contains("4 comments"));
-        assert!(texts[3].contains("[👍 2]"));
-        assert!(!texts[3].contains("pinned"));
-        assert!(texts[3].contains("locked"));
-        assert!(texts[4].starts_with("  ╰"));
-        assert_eq!(lines[1].spans[2].style.fg, Some(Color::White));
-        assert_eq!(lines[1].spans[3].style.fg, Some(Color::Yellow));
+        assert!(texts[2].contains("A useful Rust crate"));
+        assert!(texts[2].contains("PINNED"));
+        assert!(texts[3].contains("neo: This crate solves"));
+        assert!(texts[4].contains("4 comments"));
+        assert!(texts[4].contains("[👍 2]"));
+        assert!(!texts[4].contains("pinned"));
+        assert!(texts[4].contains("locked"));
+        assert!(texts[5].starts_with("  ╰"));
+        assert_eq!(lines[2].spans[2].style.fg, Some(Color::White));
+        assert_eq!(lines[2].spans[3].style.fg, Some(Color::Yellow));
         assert_eq!(
-            lines[2].spans[2].style.fg,
+            lines[3].spans[2].style.fg,
             Some(Color::Rgb(0x33, 0x66, 0xCC))
         );
-        assert_eq!(lines[2].spans[4].style.fg, Some(Color::White));
-        assert_eq!(lines[3].spans[2].style.fg, Some(Color::White));
-        assert_eq!(lines[3].spans[4].style.fg, Some(ACCENT));
-        assert_eq!(lines[3].spans[6].style.fg, Some(Color::White));
-        assert_eq!(lines[0].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
+        assert_eq!(lines[3].spans[4].style.fg, Some(Color::White));
+        assert_eq!(lines[4].spans[2].style.fg, Some(Color::White));
+        assert_eq!(lines[4].spans[4].style.fg, Some(ACCENT));
+        assert_eq!(lines[4].spans[6].style.fg, Some(Color::White));
         assert_eq!(lines[1].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
+        assert_eq!(lines[2].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
         assert!(
             lines
                 .iter()
@@ -3877,15 +3893,16 @@ mod tests {
     }
 
     #[test]
-    fn forum_post_scrollbar_visible_count_uses_card_count() {
-        assert_eq!(forum_post_scrollbar_visible_count(10), 2);
-        assert_eq!(forum_post_scrollbar_visible_count(9), 1);
+    fn forum_post_scrollbar_visible_count_uses_rendered_rows() {
+        assert_eq!(forum_post_scrollbar_visible_count(10), 10);
+        assert_eq!(forum_post_scrollbar_visible_count(0), 1);
     }
 
     #[test]
     fn forum_post_lines_can_reserve_scrollbar_column() {
         let post = ChannelThreadItem {
             channel_id: Id::new(30),
+            section_label: None,
             label: "A useful Rust crate".to_owned(),
             archived: false,
             locked: false,
@@ -5768,8 +5785,17 @@ mod tests {
         message.attachments = image_attachments(2);
         let messages = [&message];
 
-        let lines =
-            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 80, 16, 3, &[]);
+        let lines = message_viewport_lines(
+            &messages,
+            None,
+            &DashboardState::new(),
+            200,
+            80,
+            80,
+            16,
+            3,
+            &[],
+        );
 
         assert_eq!(lines.len(), 8);
     }
@@ -5780,8 +5806,17 @@ mod tests {
         message.attachments = image_attachments(3);
         let messages = [&message];
 
-        let lines =
-            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 80, 16, 3, &[]);
+        let lines = message_viewport_lines(
+            &messages,
+            None,
+            &DashboardState::new(),
+            200,
+            80,
+            80,
+            16,
+            3,
+            &[],
+        );
 
         assert_eq!(lines.len(), 9);
     }
@@ -5792,8 +5827,17 @@ mod tests {
         message.attachments = image_attachments(4);
         let messages = [&message];
 
-        let lines =
-            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 80, 16, 3, &[]);
+        let lines = message_viewport_lines(
+            &messages,
+            None,
+            &DashboardState::new(),
+            200,
+            80,
+            80,
+            16,
+            3,
+            &[],
+        );
 
         assert_eq!(lines.len(), 10);
     }
@@ -5804,8 +5848,17 @@ mod tests {
         message.attachments = image_attachments(5);
         let messages = [&message];
 
-        let lines =
-            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 80, 16, 3, &[]);
+        let lines = message_viewport_lines(
+            &messages,
+            None,
+            &DashboardState::new(),
+            200,
+            80,
+            80,
+            16,
+            3,
+            &[],
+        );
 
         assert_eq!(lines.len(), 12);
         assert!(line_texts_from_ratatui(&lines).contains(&"   +1 more images".to_owned()));
@@ -6353,8 +6406,17 @@ mod tests {
         message.attachments = image_attachments(6);
         let messages = [&message];
 
-        let lines =
-            message_viewport_lines(&messages, None, &DashboardState::new(), 200, 80, 80, 16, 3, &[]);
+        let lines = message_viewport_lines(
+            &messages,
+            None,
+            &DashboardState::new(),
+            200,
+            80,
+            80,
+            16,
+            3,
+            &[],
+        );
 
         assert!(line_texts_from_ratatui(&lines).contains(&"   +2 more images".to_owned()));
     }
@@ -6553,7 +6615,7 @@ mod tests {
         state.confirm_selected_channel();
         state.focus_pane(FocusPane::Messages);
 
-        let posts = (0..post_count)
+        let posts: Vec<_> = (0..post_count)
             .map(|index| {
                 let id = 100 + u64::try_from(index).expect("post index should fit u64");
                 ChannelInfo {
@@ -6576,7 +6638,9 @@ mod tests {
             .collect();
         state.push_event(AppEvent::ForumPostsLoaded {
             channel_id: forum_id,
+            archive_state: crate::discord::ForumPostArchiveState::Active,
             offset: 0,
+            next_offset: posts.len(),
             posts,
             preview_messages: Vec::new(),
             has_more: false,

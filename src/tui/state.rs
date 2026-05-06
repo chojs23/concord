@@ -6,7 +6,8 @@ use crate::discord::ids::{
 };
 
 use crate::discord::{
-    AppCommand, AppEvent, DiscordState, MentionInfo, MessageInfo, MessageSnapshotInfo, MessageState,
+    AppCommand, AppEvent, DiscordState, ForumPostArchiveState, MentionInfo, MessageInfo,
+    MessageSnapshotInfo, MessageState,
 };
 
 use super::format::{
@@ -98,7 +99,8 @@ struct PinnedMessageViewReturnTarget {
 
 #[derive(Debug, Default)]
 struct ForumPostListState {
-    post_ids: Vec<Id<ChannelMarker>>,
+    active_post_ids: Vec<Id<ChannelMarker>>,
+    archived_post_ids: Vec<Id<ChannelMarker>>,
     has_more: bool,
 }
 
@@ -286,12 +288,20 @@ impl DashboardState {
             }
             AppEvent::ForumPostsLoaded {
                 channel_id,
+                archive_state,
                 offset,
+                next_offset: _,
                 posts,
                 has_more,
                 ..
             } => {
-                self.record_forum_posts_loaded(*channel_id, *offset, posts, *has_more);
+                self.record_forum_posts_loaded(
+                    *channel_id,
+                    *archive_state,
+                    *offset,
+                    posts,
+                    *has_more,
+                );
             }
             AppEvent::MessageHistoryLoaded {
                 channel_id,
@@ -313,7 +323,8 @@ impl DashboardState {
             _ => {}
         }
         if apply_discord {
-            self.discord.apply_event(&event);
+            let discord_event = self.discord_event_for_apply(&event);
+            self.discord.apply_event(&discord_event);
         }
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);
@@ -325,6 +336,42 @@ impl DashboardState {
         }
         self.clamp_list_viewports();
         self.clamp_message_viewport();
+    }
+
+    fn discord_event_for_apply(&self, event: &AppEvent) -> AppEvent {
+        let AppEvent::ForumPostsLoaded {
+            channel_id,
+            archive_state: ForumPostArchiveState::Archived,
+            offset,
+            next_offset,
+            posts,
+            preview_messages,
+            has_more,
+        } = event
+        else {
+            return event.clone();
+        };
+
+        let Some(list) = self.forum_post_lists.get(channel_id) else {
+            return event.clone();
+        };
+        AppEvent::ForumPostsLoaded {
+            channel_id: *channel_id,
+            archive_state: ForumPostArchiveState::Archived,
+            offset: *offset,
+            next_offset: *next_offset,
+            posts: posts
+                .iter()
+                .filter(|post| !list.active_post_ids.contains(&post.channel_id))
+                .cloned()
+                .collect(),
+            preview_messages: preview_messages
+                .iter()
+                .filter(|message| !list.active_post_ids.contains(&message.channel_id))
+                .cloned()
+                .collect(),
+            has_more: *has_more,
+        }
     }
 
     pub fn restore_discord_snapshot(&mut self, discord: DiscordState) {
@@ -577,26 +624,47 @@ impl DashboardState {
     fn record_forum_posts_loaded(
         &mut self,
         channel_id: Id<ChannelMarker>,
+        archive_state: ForumPostArchiveState,
         offset: usize,
         posts: &[crate::discord::ChannelInfo],
         has_more: bool,
     ) {
         let list = self.forum_post_lists.entry(channel_id).or_default();
-        if offset == 0 {
-            list.post_ids.clear();
+        if archive_state == ForumPostArchiveState::Active && offset == 0 {
+            list.active_post_ids.clear();
             if self.active_channel_id == Some(channel_id) {
                 self.selected_message = 0;
                 self.message_scroll = 0;
                 self.message_line_scroll = 0;
                 self.message_auto_follow = false;
             }
+        } else if archive_state == ForumPostArchiveState::Archived && offset == 0 {
+            list.archived_post_ids.clear();
         }
         for post in posts {
-            if !list.post_ids.contains(&post.channel_id) {
-                list.post_ids.push(post.channel_id);
+            match archive_state {
+                ForumPostArchiveState::Active => {
+                    list.archived_post_ids.retain(|id| *id != post.channel_id);
+                    if !list.active_post_ids.contains(&post.channel_id) {
+                        list.active_post_ids.push(post.channel_id);
+                    }
+                }
+                ForumPostArchiveState::Archived => {
+                    if !list.active_post_ids.contains(&post.channel_id)
+                        && !list.archived_post_ids.contains(&post.channel_id)
+                    {
+                        list.archived_post_ids.push(post.channel_id);
+                    }
+                }
             }
         }
-        list.has_more = has_more;
+        list.has_more = match archive_state {
+            // Once active search is exhausted, the archived search stream may
+            // still have old forum posts. Keep the UI asking for more until an
+            // archived page says it is exhausted.
+            ForumPostArchiveState::Active => true,
+            ForumPostArchiveState::Archived => has_more,
+        };
     }
 
     pub fn messages(&self) -> Vec<&MessageState> {
@@ -748,7 +816,12 @@ impl DashboardState {
         max_preview_height: u16,
     ) -> usize {
         if self.selected_channel_is_forum() {
-            return self.message_scroll;
+            return self
+                .selected_forum_post_items()
+                .into_iter()
+                .take(self.message_scroll)
+                .map(|post| post.rendered_height())
+                .sum();
         }
         (0..self.message_scroll)
             .map(|index| {
@@ -770,7 +843,11 @@ impl DashboardState {
         max_preview_height: u16,
     ) -> usize {
         if self.selected_channel_is_forum() {
-            return self.selected_forum_post_items().len();
+            return self
+                .selected_forum_post_items()
+                .into_iter()
+                .map(|post| post.rendered_height())
+                .sum();
         }
         (0..self.messages().len())
             .map(|index| {
@@ -1405,18 +1482,27 @@ impl DashboardState {
     }
 
     fn select_visible_forum_post_row(&mut self, row: usize) -> bool {
-        let visible_index = row / FORUM_POST_CARD_HEIGHT;
-        if visible_index >= self.visible_forum_post_items().len() {
-            return false;
+        let mut rendered_row = 0usize;
+        for (visible_index, post) in self.visible_forum_post_items().into_iter().enumerate() {
+            if post.section_label.is_some() {
+                if row == rendered_row {
+                    return false;
+                }
+                rendered_row = rendered_row.saturating_add(1);
+            }
+            if row < rendered_row.saturating_add(FORUM_POST_CARD_HEIGHT) {
+                let index = self.message_scroll.saturating_add(visible_index);
+                if index >= self.selected_forum_post_items().len() {
+                    return false;
+                }
+                self.selected_message = index;
+                self.message_auto_follow = false;
+                self.message_keep_selection_visible = false;
+                return true;
+            }
+            rendered_row = rendered_row.saturating_add(FORUM_POST_CARD_HEIGHT);
         }
-        let index = self.message_scroll.saturating_add(visible_index);
-        if index >= self.selected_forum_post_items().len() {
-            return false;
-        }
-        self.selected_message = index;
-        self.message_auto_follow = false;
-        self.message_keep_selection_visible = false;
-        true
+        false
     }
 
     fn select_visible_member_line(&mut self, row: usize) -> bool {
@@ -1621,12 +1707,7 @@ impl DashboardState {
         max_preview_height: u16,
     ) {
         if self.selected_channel_is_forum() {
-            self.message_scroll = clamp_list_scroll(
-                self.selected_message,
-                self.message_scroll,
-                self.forum_post_visible_count(),
-                self.selected_forum_post_items().len(),
-            );
+            self.clamp_forum_post_viewport();
             self.message_line_scroll = 0;
             return;
         }
@@ -1681,12 +1762,7 @@ impl DashboardState {
         self.selected_message = self.selected_message.min(item_count - 1);
         self.message_scroll = self.message_scroll.min(item_count - 1);
         if self.selected_channel_is_forum() {
-            self.message_scroll = clamp_list_scroll(
-                self.selected_message,
-                self.message_scroll,
-                self.forum_post_visible_count(),
-                item_count,
-            );
+            self.clamp_forum_post_viewport();
             self.message_line_scroll = 0;
             return;
         }
@@ -1848,8 +1924,26 @@ impl DashboardState {
         pane_content_height(self.message_view_height)
     }
 
-    fn forum_post_visible_count(&self) -> usize {
-        (self.message_content_height() / FORUM_POST_CARD_HEIGHT).max(1)
+    fn clamp_forum_post_viewport(&mut self) {
+        let posts = self.selected_forum_post_items();
+        if posts.is_empty() {
+            self.message_scroll = 0;
+            return;
+        }
+
+        let selected = self.selected_message.min(posts.len() - 1);
+        self.message_scroll = self.message_scroll.min(selected);
+        let height = self.message_content_height().max(1);
+        while self.message_scroll < selected {
+            let rendered_rows: usize = posts[self.message_scroll..=selected]
+                .iter()
+                .map(|post| post.rendered_height())
+                .sum();
+            if rendered_rows <= height {
+                break;
+            }
+            self.message_scroll = self.message_scroll.saturating_add(1);
+        }
     }
 
     fn message_pane_item_count(&self) -> usize {
