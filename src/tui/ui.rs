@@ -48,6 +48,8 @@ const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
 const MAX_REACTION_USERS_VISIBLE_LINES: usize = 14;
 const IMAGE_VIEWER_POPUP_WIDTH: u16 = 78;
 const IMAGE_VIEWER_POPUP_HEIGHT: u16 = 16;
+const SELECTED_FORUM_POST_BORDER: Color = Color::Green;
+const SELECTED_MESSAGE_CONTENT_OFFSET: u16 = 2;
 
 pub struct ImagePreview<'a> {
     pub viewer: bool,
@@ -593,22 +595,37 @@ fn render_messages(
     let messages = state.visible_messages();
     let selected = state.focused_message_selection();
 
+    let preview_width = inline_image_preview_width(message_areas.list);
+    let max_preview_height = inline_image_preview_height(message_areas.list, true);
     let lines = message_viewport_lines(
         &messages,
         selected,
         state,
         content_width,
         message_areas.list.width as usize,
-        inline_image_preview_width(message_areas.list),
-        inline_image_preview_height(message_areas.list, true),
+        preview_width,
+        max_preview_height,
         emoji_images,
     );
 
     frame.render_widget(Paragraph::new(lines), message_areas.list);
+    let selected_avatar_body_top = selected.and_then(|selected| {
+        message_body_top_row(
+            &messages,
+            state,
+            selected,
+            content_width,
+            preview_width,
+            max_preview_height,
+        )
+    });
     for avatar in avatar_images {
-        if let Some(area) =
-            message_avatar_area(message_areas.list, avatar.row, avatar.visible_height)
-        {
+        if let Some(area) = message_avatar_area(
+            message_areas.list,
+            avatar.row,
+            avatar.visible_height,
+            selected_avatar_x_offset(selected_avatar_body_top, avatar.row),
+        ) {
             frame.render_widget(RatatuiImage::new(&avatar.protocol), area);
         }
     }
@@ -618,6 +635,7 @@ fn render_messages(
         &messages,
         state,
         content_width,
+        selected,
         emoji_images,
     );
     render_inline_message_body_emojis(
@@ -626,10 +644,9 @@ fn render_messages(
         &messages,
         state,
         content_width,
+        selected,
         emoji_images,
     );
-    let preview_width = inline_image_preview_width(message_areas.list);
-    let max_preview_height = inline_image_preview_height(message_areas.list, true);
     for image_preview in image_previews.into_iter() {
         let preview_rows_before_cell = inline_preview_rows_before_message(
             &messages,
@@ -649,7 +666,9 @@ fn render_messages(
         if let Some(preview_area) = inline_image_preview_area(
             message_areas.list,
             row,
-            image_preview.preview_x_offset_columns,
+            image_preview.preview_x_offset_columns.saturating_add(
+                selected_message_content_x_offset(selected == Some(image_preview.message_index)),
+            ),
             image_preview.preview_width,
             image_preview.preview_height,
             image_preview.accent_color,
@@ -702,6 +721,7 @@ fn render_inline_reaction_emojis(
     messages: &[&MessageState],
     state: &DashboardState,
     content_width: usize,
+    selected: Option<usize>,
     emoji_images: &[EmojiReactionImage<'_>],
 ) {
     if emoji_images.is_empty() || list.height == 0 || list.width <= MESSAGE_AVATAR_OFFSET {
@@ -757,7 +777,10 @@ fn render_inline_reaction_emojis(
                     continue;
                 };
                 let absolute_row = list_top + row_in_list;
-                let absolute_col = list_left + avatar_offset + slot.col as isize;
+                let absolute_col = list_left
+                    + avatar_offset
+                    + selected_message_content_x_offset(selected == Some(index)) as isize
+                    + slot.col as isize;
                 if absolute_col >= list_right {
                     continue;
                 }
@@ -793,6 +816,7 @@ fn render_inline_message_body_emojis(
     messages: &[&MessageState],
     state: &DashboardState,
     content_width: usize,
+    selected: Option<usize>,
     emoji_images: &[EmojiReactionImage<'_>],
 ) {
     if emoji_images.is_empty() || list.height == 0 || list.width <= MESSAGE_AVATAR_OFFSET {
@@ -838,7 +862,10 @@ fn render_inline_message_body_emojis(
                 continue;
             }
             for slot in &line.image_slots {
-                let absolute_col = list_left + avatar_offset + slot.col as isize;
+                let absolute_col = list_left
+                    + avatar_offset
+                    + selected_message_content_x_offset(selected == Some(index)) as isize
+                    + slot.col as isize;
                 if absolute_col >= list_right {
                     continue;
                 }
@@ -1040,7 +1067,11 @@ fn message_viewport_lines(
             body_skip,
         );
         if selected == Some(index) {
-            lines.extend(item_lines.into_iter().map(highlight_message_line));
+            lines.extend(selected_message_lines(
+                item_lines,
+                selected_message_card_inner_width(list_width),
+                body_skip == 0,
+            ));
         } else {
             lines.extend(item_lines);
         }
@@ -1083,11 +1114,11 @@ fn forum_post_card_lines(
     let marker = if selected { "› " } else { "  " };
     let card_width = width.saturating_sub(marker.width()).max(4);
     let inner_width = card_width.saturating_sub(4).max(1);
-    let border_style = forum_post_card_style(Style::default().fg(ACCENT), selected);
+    let border_style = forum_post_border_style(selected);
 
     [
         Line::from(vec![
-            Span::styled(marker, Style::default().fg(ACCENT)),
+            Span::styled(marker, forum_post_marker_style(selected)),
             Span::styled(
                 format!("╭{}╮", "─".repeat(card_width.saturating_sub(2))),
                 border_style,
@@ -1095,19 +1126,19 @@ fn forum_post_card_lines(
         ]),
         forum_post_inner_line(
             "  ",
-            forum_post_title_spans(post, inner_width, selected),
+            forum_post_title_spans(post, inner_width),
             inner_width,
             selected,
         ),
         forum_post_inner_line(
             "  ",
-            forum_post_preview_spans(post, inner_width, selected),
+            forum_post_preview_spans(post, inner_width),
             inner_width,
             selected,
         ),
         forum_post_inner_line(
             "  ",
-            forum_post_metadata_spans(post, inner_width, selected),
+            forum_post_metadata_spans(post, inner_width),
             inner_width,
             selected,
         ),
@@ -1121,12 +1152,8 @@ fn forum_post_card_lines(
     ]
 }
 
-fn forum_post_title_spans(
-    post: &ChannelThreadItem,
-    inner_width: usize,
-    selected: bool,
-) -> Vec<Span<'static>> {
-    let title_style = forum_post_card_style(Style::default().fg(Color::White).bold(), selected);
+fn forum_post_title_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Span<'static>> {
+    let title_style = Style::default().fg(Color::White).bold();
     if !post.pinned {
         return vec![Span::styled(
             truncate_display_width(&post.label, inner_width),
@@ -1142,29 +1169,22 @@ fn forum_post_title_spans(
             truncate_display_width(&post.label, title_width),
             title_style,
         ),
-        Span::styled(
-            badge,
-            forum_post_card_style(Style::default().fg(Color::Yellow).bold(), selected),
-        ),
+        Span::styled(badge, Style::default().fg(Color::Yellow).bold()),
     ]
 }
 
-fn forum_post_preview_spans(
-    post: &ChannelThreadItem,
-    inner_width: usize,
-    selected: bool,
-) -> Vec<Span<'static>> {
-    let preview_style = forum_post_card_style(Style::default().fg(Color::White), selected);
+fn forum_post_preview_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Span<'static>> {
+    let preview_style = Style::default().fg(Color::White);
     let Some(author) = post.preview_author.as_deref() else {
         return vec![Span::styled(
             "Preview unavailable",
-            forum_post_card_style(Style::default().fg(DIM), selected),
+            Style::default().fg(DIM),
         )];
     };
     let Some(content) = post.preview_content.as_deref() else {
         return vec![Span::styled(
             "Preview unavailable",
-            forum_post_card_style(Style::default().fg(DIM), selected),
+            Style::default().fg(DIM),
         )];
     };
 
@@ -1175,10 +1195,7 @@ fn forum_post_preview_spans(
         .saturating_sub(2)
         .max(1);
     vec![
-        Span::styled(
-            author,
-            forum_post_card_style(message_author_style(post.preview_author_color), selected),
-        ),
+        Span::styled(author, message_author_style(post.preview_author_color)),
         Span::styled(": ", preview_style),
         Span::styled(
             truncate_display_width(content, content_width),
@@ -1187,14 +1204,10 @@ fn forum_post_preview_spans(
     ]
 }
 
-fn forum_post_metadata_spans(
-    post: &ChannelThreadItem,
-    width: usize,
-    selected: bool,
-) -> Vec<Span<'static>> {
-    let primary_style = forum_post_card_style(Style::default().fg(Color::White), selected);
-    let reaction_style = forum_post_card_style(Style::default().fg(ACCENT), selected);
-    let muted_style = forum_post_card_style(Style::default().fg(DIM), selected);
+fn forum_post_metadata_spans(post: &ChannelThreadItem, width: usize) -> Vec<Span<'static>> {
+    let primary_style = Style::default().fg(Color::White);
+    let reaction_style = Style::default().fg(ACCENT);
+    let muted_style = Style::default().fg(DIM);
     let mut spans = Vec::new();
     let mut used_width = 0usize;
 
@@ -1385,8 +1398,8 @@ fn forum_post_inner_line(
         .map(|span| span.content.width())
         .sum::<usize>();
     let padding = inner_width.saturating_sub(content_width);
-    let border_style = forum_post_card_style(Style::default().fg(ACCENT), selected);
-    let fill_style = forum_post_card_style(Style::default(), selected);
+    let border_style = forum_post_border_style(selected);
+    let fill_style = Style::default();
     let mut spans = vec![
         Span::raw(marker.to_owned()),
         Span::styled("│ ", border_style),
@@ -1397,11 +1410,23 @@ fn forum_post_inner_line(
     Line::from(spans)
 }
 
-fn forum_post_card_style(style: Style, selected: bool) -> Style {
+fn forum_post_border_style(selected: bool) -> Style {
     if selected {
-        style.bg(Color::Rgb(40, 45, 90))
+        Style::default()
+            .fg(SELECTED_FORUM_POST_BORDER)
+            .add_modifier(Modifier::BOLD)
     } else {
-        style
+        Style::default().fg(ACCENT)
+    }
+}
+
+fn forum_post_marker_style(selected: bool) -> Style {
+    if selected {
+        Style::default()
+            .fg(SELECTED_FORUM_POST_BORDER)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(ACCENT)
     }
 }
 
@@ -1483,7 +1508,7 @@ fn message_content_width(list: Rect) -> usize {
         .max(8)
 }
 
-fn message_avatar_area(list: Rect, row: isize, visible_height: u16) -> Option<Rect> {
+fn message_avatar_area(list: Rect, row: isize, visible_height: u16, x_offset: u16) -> Option<Rect> {
     if visible_height == 0 {
         return None;
     }
@@ -1496,7 +1521,7 @@ fn message_avatar_area(list: Rect, row: isize, visible_height: u16) -> Option<Re
     }
 
     Some(Rect {
-        x: list.x,
+        x: list.x.saturating_add(x_offset),
         y: u16::try_from(top).ok()?,
         width: MESSAGE_AVATAR_PLACEHOLDER.width() as u16,
         height: visible_height,
@@ -1514,11 +1539,119 @@ fn message_avatar_spacer_span() -> Span<'static> {
     Span::raw(" ".repeat(MESSAGE_AVATAR_OFFSET as usize))
 }
 
-fn highlight_message_line(mut line: Line<'static>) -> Line<'static> {
-    for span in line.spans.iter_mut().skip(1) {
-        span.style = span.style.patch(highlight_style());
+fn selected_message_lines(
+    lines: Vec<Line<'static>>,
+    inner_width: usize,
+    top_visible: bool,
+) -> Vec<Line<'static>> {
+    let last_index = lines.len().saturating_sub(1);
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            if index == last_index {
+                selected_message_bottom_line(inner_width)
+            } else if index == 0 && top_visible {
+                selected_message_content_line(line, inner_width, SelectedMessageLineKind::Top)
+            } else {
+                selected_message_content_line(line, inner_width, SelectedMessageLineKind::Body)
+            }
+        })
+        .collect()
+}
+
+#[derive(Clone, Copy)]
+enum SelectedMessageLineKind {
+    Top,
+    Body,
+}
+
+fn selected_message_content_line(
+    line: Line<'static>,
+    inner_width: usize,
+    kind: SelectedMessageLineKind,
+) -> Line<'static> {
+    let inner_width = inner_width.max(1);
+    let used_width = line
+        .spans
+        .iter()
+        .map(|span| span.content.width())
+        .sum::<usize>();
+    let padding = inner_width.saturating_sub(used_width);
+    let (left_border, right_border) = match kind {
+        SelectedMessageLineKind::Top => ("╭ ", " ╮"),
+        SelectedMessageLineKind::Body => ("│ ", " │"),
+    };
+    let border_style = selected_message_border_style();
+    let mut spans = vec![Span::styled(left_border, border_style)];
+    spans.extend(line.spans);
+    spans.push(Span::raw(" ".repeat(padding)));
+    spans.push(Span::styled(right_border, border_style));
+    Line::from(spans)
+}
+
+fn selected_message_bottom_line(inner_width: usize) -> Line<'static> {
+    let card_width = inner_width.saturating_add(4).max(4);
+    Line::from(Span::styled(
+        format!("╰{}╯", "─".repeat(card_width.saturating_sub(2))),
+        selected_message_border_style(),
+    ))
+}
+
+fn selected_message_border_style() -> Style {
+    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+}
+
+fn selected_message_content_x_offset(selected: bool) -> u16 {
+    if selected {
+        SELECTED_MESSAGE_CONTENT_OFFSET
+    } else {
+        0
     }
-    line
+}
+
+fn selected_avatar_x_offset(selected_body_top: Option<isize>, avatar_row: isize) -> u16 {
+    if selected_body_top.is_some_and(|row| avatar_row == row.max(0)) {
+        SELECTED_MESSAGE_CONTENT_OFFSET
+    } else {
+        0
+    }
+}
+
+fn selected_message_card_inner_width(list_width: usize) -> usize {
+    list_width.saturating_sub(4).max(1)
+}
+
+fn message_body_top_row(
+    messages: &[&MessageState],
+    state: &DashboardState,
+    local_index: usize,
+    content_width: usize,
+    preview_width: u16,
+    max_preview_height: u16,
+) -> Option<isize> {
+    let mut rendered_rows = 0usize;
+    for (index, message) in messages.iter().enumerate() {
+        let line_offset = usize::from(index == 0) * state.message_line_scroll();
+        let global_index = state.message_scroll().saturating_add(index);
+        let separator_lines = state.message_extra_top_lines(global_index);
+        let body_top = rendered_rows as isize - line_offset as isize + separator_lines as isize;
+        if index == local_index {
+            return Some(body_top);
+        }
+
+        let body_base_rows = state.message_base_line_count_for_width(message, content_width);
+        let preview_height =
+            total_inline_preview_height_for_message(message, preview_width, max_preview_height);
+        rendered_rows = rendered_rows.saturating_add(
+            body_base_rows
+                .saturating_add(separator_lines)
+                .saturating_add(preview_height)
+                .saturating_add(MESSAGE_ROW_GAP)
+                .saturating_sub(line_offset),
+        );
+    }
+    None
 }
 
 fn format_message_sent_time(message_id: Id<MessageMarker>) -> String {
@@ -3302,18 +3435,18 @@ mod tests {
 
     use super::{
         ACCENT, DIM, DISCORD_EPOCH_MILLIS, ImagePreview, ImagePreviewState, MemberEntry,
-        SNOWFLAKE_TIMESTAMP_SHIFT, channel_action_menu_lines, channel_name_style,
-        composer_content_line_count, composer_lines, composer_prompt_line_count, composer_text,
-        date_separator_line, debug_log_popup_lines, emoji_reaction_picker_lines, focus_pane_at,
-        footer_hint, format_message_sent_time, format_unix_millis_with_offset,
-        forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
-        guild_action_menu_lines, highlight_style, inline_image_preview_area,
-        inline_image_preview_row, member_display_label, member_name_style,
-        message_action_menu_lines, message_author_style, message_item_lines,
+        SELECTED_FORUM_POST_BORDER, SNOWFLAKE_TIMESTAMP_SHIFT, channel_action_menu_lines,
+        channel_name_style, composer_content_line_count, composer_lines,
+        composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
+        emoji_reaction_picker_lines, focus_pane_at, footer_hint, format_message_sent_time,
+        format_unix_millis_with_offset, forum_post_reaction_summary,
+        forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
+        inline_image_preview_area, inline_image_preview_row, member_display_label,
+        member_name_style, message_action_menu_lines, message_author_style, message_item_lines,
         message_starts_new_day, message_viewport_lines, poll_vote_picker_lines,
-        reaction_users_popup_lines, reaction_users_visible_line_count, sync_view_heights,
-        user_profile_display_name_style, user_profile_popup_lines, user_profile_popup_text,
-        user_profile_popup_visible_lines,
+        reaction_users_popup_lines, reaction_users_visible_line_count, selected_avatar_x_offset,
+        selected_message_content_x_offset, sync_view_heights, user_profile_display_name_style,
+        user_profile_popup_lines, user_profile_popup_text, user_profile_popup_visible_lines,
     };
     use crate::{
         discord::{
@@ -3622,6 +3755,14 @@ mod tests {
         assert_eq!(lines[3].spans[2].style.fg, Some(Color::White));
         assert_eq!(lines[3].spans[4].style.fg, Some(ACCENT));
         assert_eq!(lines[3].spans[6].style.fg, Some(Color::White));
+        assert_eq!(lines[0].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
+        assert_eq!(lines[1].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
+        assert!(
+            lines
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .all(|span| span.style.bg.is_none())
+        );
     }
 
     #[test]
@@ -5840,17 +5981,17 @@ mod tests {
         let visible_text = line_texts_from_ratatui(&visible_rows);
         let sent_time = format_message_sent_time(Id::new(1));
 
-        assert!(visible_text[0].starts_with("oo "));
-        assert!(visible_text[0].ends_with(&sent_time));
-        assert!(visible_text[1].ends_with("selected"));
-        assert_eq!(visible_text[2], "");
+        assert!(visible_text[0].starts_with("╭ oo "));
+        assert!(visible_text[0].contains(&sent_time));
+        assert!(visible_text[1].contains("selected"));
+        assert!(visible_text[2].starts_with("╰"));
         assert!(visible_text[3].starts_with("oo "));
         assert!(visible_text[3].ends_with(&sent_time));
         assert!(visible_text[4].ends_with("abcdefgh"));
     }
 
     #[test]
-    fn selected_message_highlight_skips_avatar_column() {
+    fn selected_message_uses_border_without_background() {
         let message = message_with_content(Some("abcdefghijkl".to_owned()));
         let messages = [&message];
 
@@ -5866,18 +6007,38 @@ mod tests {
         );
         let sent_time = format_message_sent_time(Id::new(1));
 
-        assert_eq!(
-            line_texts_from_ratatui(&lines),
-            vec![
-                format!("oo . {sent_time}"),
-                "   abcdefgh".to_owned(),
-                "   ijkl".to_owned(),
-                "".to_owned(),
-            ]
+        let texts = line_texts_from_ratatui(&lines);
+
+        assert_eq!(texts.len(), 4);
+        assert!(texts[0].starts_with(&format!("╭ oo . {sent_time}")));
+        assert!(texts[0].ends_with(" ╮"));
+        assert!(texts[1].starts_with("│    abcdefgh"));
+        assert!(texts[1].ends_with(" │"));
+        assert!(texts[2].starts_with("│    ijkl"));
+        assert!(texts[2].ends_with(" │"));
+        assert!(texts[3].starts_with("╰"));
+        assert!(texts[3].ends_with("╯"));
+        assert!(texts.iter().all(|text| text.width() == 80));
+        assert_eq!(lines[0].spans[0].style.fg, Some(ACCENT));
+        assert_eq!(lines[1].spans[0].style.fg, Some(ACCENT));
+        assert!(
+            lines[1].spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
         );
-        assert_eq!(lines[0].spans[0].style.bg, None);
-        assert_eq!(lines[1].spans[0].style.bg, None);
-        assert_eq!(lines[1].spans[1].style.bg, highlight_style().bg);
+        assert!(
+            lines
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .all(|span| span.style.bg.is_none())
+        );
+    }
+
+    #[test]
+    fn selected_message_avatar_moves_inside_border() {
+        assert_eq!(selected_avatar_x_offset(Some(0), 0), 2);
+        assert_eq!(selected_avatar_x_offset(Some(1), 0), 0);
     }
 
     #[test]
@@ -5906,6 +6067,17 @@ mod tests {
         assert_eq!(
             inline_image_preview_area(area, 2, 0, 77, 4, Some(0xff0000)),
             Some(Rect::new(17, 8, 73, 4))
+        );
+    }
+
+    #[test]
+    fn selected_inline_image_preview_area_follows_bordered_message_content() {
+        let area = Rect::new(10, 5, 80, 12);
+        let selected_offset = selected_message_content_x_offset(true);
+
+        assert_eq!(
+            inline_image_preview_area(area, 2, selected_offset, 77, 4, None),
+            Some(Rect::new(15, 8, 75, 4))
         );
     }
 
