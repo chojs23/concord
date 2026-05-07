@@ -21,6 +21,7 @@ use super::{
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
+const OLDER_HISTORY_EXTRA_WINDOW_MULTIPLIER: usize = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuildState {
@@ -1294,6 +1295,7 @@ impl DiscordState {
         history: &[MessageInfo],
     ) {
         let channel_guild_id = self.channel_guild_id(channel_id);
+        let older_history_message_limit = self.older_history_message_limit();
         let incoming_messages = history
             .iter()
             .filter(|message| message.channel_id == channel_id)
@@ -1329,10 +1331,19 @@ impl DiscordState {
             while messages.len() > self.max_messages_per_channel {
                 messages.pop_front();
             }
+        } else {
+            while messages.len() > older_history_message_limit {
+                messages.pop_back();
+            }
         }
         if let Some(last_message_id) = messages.back().map(|message| message.id) {
             self.record_channel_message_id(channel_id, last_message_id);
         }
+    }
+
+    fn older_history_message_limit(&self) -> usize {
+        self.max_messages_per_channel
+            .saturating_mul(OLDER_HISTORY_EXTRA_WINDOW_MULTIPLIER)
     }
 
     fn replace_pinned_messages(&mut self, channel_id: Id<ChannelMarker>, pins: &[MessageInfo]) {
@@ -3811,6 +3822,43 @@ mod tests {
                 .map(|message| message.id.get())
                 .collect::<Vec<_>>(),
             vec![5, 10, 11, 12]
+        );
+    }
+
+    #[test]
+    fn older_history_is_bounded_by_extra_window() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::new(3);
+
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![
+                message_info(channel_id, 10, "old"),
+                message_info(channel_id, 11, "middle"),
+                message_info(channel_id, 12, "new"),
+            ],
+        });
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: Some(Id::new(10)),
+            messages: vec![
+                message_info(channel_id, 1, "older 1"),
+                message_info(channel_id, 2, "older 2"),
+                message_info(channel_id, 3, "older 3"),
+                message_info(channel_id, 4, "older 4"),
+                message_info(channel_id, 5, "older 5"),
+            ],
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages.len(), 6);
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.id.get())
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3, 4, 5, 10]
         );
     }
 
