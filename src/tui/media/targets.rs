@@ -18,6 +18,11 @@ const EMOJI_PREFETCH_FORMAT_WIDTH: usize = 10_000;
 use super::AVATAR_PREVIEW_HEIGHT;
 
 const IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
+const IMAGE_PREVIEW_SOURCE_PIXELS_PER_ROW: u64 = IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN * 3;
+const DISCORD_MEDIA_PROXY_ATTACHMENTS_PREFIX: &str = "https://media.discordapp.net/attachments/";
+const DISCORD_MEDIA_PROXY_PREVIEW_FORMAT: &str = "webp";
+const DISCORD_MEDIA_PROXY_PREVIEW_QUALITY: &str = "lossless";
+const DISCORD_MEDIA_PROXY_MAX_PREVIEW_DIMENSION: u64 = 1000;
 
 pub(in crate::tui) struct ImagePreviewTarget {
     pub(super) viewer: bool,
@@ -94,7 +99,7 @@ pub(in crate::tui) fn visible_image_preview_targets(
             top_clip_rows: 0,
             accent_color: preview.accent_color,
             message_id,
-            url: preview.url.to_owned(),
+            url: preview_request_url(preview, layout.viewer_preview_width, preview_height),
             filename: preview.filename.to_owned(),
         }];
     }
@@ -147,7 +152,7 @@ pub(in crate::tui) fn visible_image_preview_targets(
                     top_clip_rows: u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX),
                     accent_color: album_accent_color,
                     message_id: message.id,
-                    url: preview.url.to_owned(),
+                    url: preview_request_url(preview, cell.width, cell.height),
                     filename: preview.filename.to_owned(),
                 });
             }
@@ -163,6 +168,56 @@ pub(in crate::tui) fn visible_image_preview_targets(
     }
 
     targets
+}
+
+fn preview_request_url(
+    preview: InlinePreviewInfo<'_>,
+    width_columns: u16,
+    height_rows: u16,
+) -> String {
+    let Some(proxy_url) = preview.proxy_url else {
+        return preview.url.to_owned();
+    };
+    if !proxy_url.starts_with(DISCORD_MEDIA_PROXY_ATTACHMENTS_PREFIX) {
+        return preview.url.to_owned();
+    }
+
+    discord_media_proxy_preview_url(proxy_url, width_columns, height_rows)
+}
+
+fn discord_media_proxy_preview_url(
+    proxy_url: &str,
+    width_columns: u16,
+    height_rows: u16,
+) -> String {
+    let width = preview_dimension_pixels(
+        u64::from(width_columns),
+        IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN,
+    );
+    let height =
+        preview_dimension_pixels(u64::from(height_rows), IMAGE_PREVIEW_SOURCE_PIXELS_PER_ROW);
+    let (base, query) = proxy_url.split_once('?').unwrap_or((proxy_url, ""));
+    let mut params = query
+        .split('&')
+        .filter(|param| !param.is_empty())
+        .filter(|param| {
+            let key = param.split_once('=').map_or(*param, |(key, _)| key);
+            !matches!(key, "format" | "quality" | "width" | "height")
+        })
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    params.push(format!("format={DISCORD_MEDIA_PROXY_PREVIEW_FORMAT}"));
+    params.push(format!("quality={DISCORD_MEDIA_PROXY_PREVIEW_QUALITY}"));
+    params.push(format!("width={width}"));
+    params.push(format!("height={height}"));
+
+    format!("{base}?{}", params.join("&"))
+}
+
+fn preview_dimension_pixels(cells: u64, pixels_per_cell: u64) -> u64 {
+    cells
+        .saturating_mul(pixels_per_cell)
+        .clamp(1, DISCORD_MEDIA_PROXY_MAX_PREVIEW_DIMENSION)
 }
 
 pub(in crate::tui) fn visible_avatar_targets(

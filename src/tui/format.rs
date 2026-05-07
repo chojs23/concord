@@ -678,12 +678,8 @@ mod tests {
 
     #[test]
     fn keeps_zero_channel_mentions_raw() {
-        let text = render_user_mentions(
-            "see <#0>",
-            |_| None,
-            |_| None,
-            |_| Some("never".to_owned()),
-        );
+        let text =
+            render_user_mentions("see <#0>", |_| None, |_| None, |_| Some("never".to_owned()));
         assert_eq!(text, "see <#0>");
     }
 

@@ -534,8 +534,8 @@ async fn run_dashboard(
                 dirty = true;
             }
             // Profile popup avatar isn't part of the message-pane targets, so
-            // schedule its fetch separately. The cache is URL-keyed and will
-            // dedupe with anything already requested for messages.
+            // schedule its fetch separately. It uses a larger avatar CDN size
+            // than message-pane avatars, so it may have its own cache entry.
             if let Some(url) = state.user_profile_popup_avatar_url().map(str::to_owned)
                 && let Some(command) = avatar_images.next_request_for_url(&url)
             {

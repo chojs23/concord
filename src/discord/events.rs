@@ -182,6 +182,7 @@ pub struct EmbedInfo {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InlinePreviewInfo<'a> {
     pub url: &'a str,
+    pub proxy_url: Option<&'a str>,
     pub filename: &'a str,
     pub width: Option<u64>,
     pub height: Option<u64>,
@@ -753,6 +754,7 @@ impl AttachmentInfo {
     pub fn inline_preview_info(&self) -> Option<InlinePreviewInfo<'_>> {
         Some(InlinePreviewInfo {
             url: self.inline_preview_url()?,
+            proxy_url: (!self.proxy_url.is_empty()).then_some(self.proxy_url.as_str()),
             filename: self.filename.as_str(),
             width: self.width,
             height: self.height,
@@ -766,6 +768,7 @@ impl EmbedInfo {
         if let Some(url) = self.thumbnail_url.as_deref() {
             return Some(InlinePreviewInfo {
                 url,
+                proxy_url: None,
                 filename: "embed-thumbnail",
                 width: self.thumbnail_width,
                 height: self.thumbnail_height,
@@ -775,6 +778,7 @@ impl EmbedInfo {
 
         self.image_url.as_deref().map(|url| InlinePreviewInfo {
             url,
+            proxy_url: None,
             filename: "embed-image",
             width: self.image_width,
             height: self.image_height,
@@ -864,6 +868,12 @@ mod tests {
         assert_eq!(
             attachment.inline_preview_url(),
             Some("https://cdn.discordapp.com/cat.png")
+        );
+        assert_eq!(
+            attachment
+                .inline_preview_info()
+                .and_then(|info| info.proxy_url),
+            Some("https://media.discordapp.net/cat.png")
         );
     }
 

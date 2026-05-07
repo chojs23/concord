@@ -29,6 +29,11 @@ const AVATAR_PREVIEW_WIDTH: u16 = 2;
 const AVATAR_PREVIEW_HEIGHT: u16 = 2;
 const PROFILE_POPUP_AVATAR_WIDTH: u16 = 8;
 const PROFILE_POPUP_AVATAR_HEIGHT: u16 = 4;
+const AVATAR_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
+const AVATAR_SOURCE_PIXELS_PER_ROW: u64 = AVATAR_SOURCE_PIXELS_PER_COLUMN * 3;
+const DISCORD_AVATAR_CDN_PREFIX: &str = "https://cdn.discordapp.com/avatars/";
+const DISCORD_AVATAR_MIN_SIZE: u64 = 16;
+const DISCORD_AVATAR_MAX_SIZE: u64 = 1024;
 const EMOJI_REACTION_THUMB_WIDTH: u16 = 2;
 const EMOJI_REACTION_THUMB_HEIGHT: u16 = 1;
 
@@ -44,6 +49,41 @@ fn query_image_picker(target: &str, unavailable_message: &str) -> Option<Picker>
             None
         }
     }
+}
+
+fn avatar_preview_url(url: &str, width_columns: u16, height_rows: u16) -> String {
+    if !is_discord_avatar_url(url) {
+        return url.to_owned();
+    }
+
+    let size = avatar_preview_size(width_columns, height_rows);
+    let (base, query) = url.split_once('?').unwrap_or((url, ""));
+    let mut params = query
+        .split('&')
+        .filter(|param| !param.is_empty())
+        .filter(|param| {
+            let key = param.split_once('=').map_or(*param, |(key, _)| key);
+            key != "size"
+        })
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    params.push(format!("size={size}"));
+
+    format!("{base}?{}", params.join("&"))
+}
+
+fn is_discord_avatar_url(url: &str) -> bool {
+    url.starts_with(DISCORD_AVATAR_CDN_PREFIX)
+}
+
+fn avatar_preview_size(width_columns: u16, height_rows: u16) -> u64 {
+    let width = u64::from(width_columns).saturating_mul(AVATAR_SOURCE_PIXELS_PER_COLUMN);
+    let height = u64::from(height_rows).saturating_mul(AVATAR_SOURCE_PIXELS_PER_ROW);
+    let needed = width.max(height).max(1);
+    needed
+        .clamp(DISCORD_AVATAR_MIN_SIZE, DISCORD_AVATAR_MAX_SIZE)
+        .next_power_of_two()
+        .min(DISCORD_AVATAR_MAX_SIZE)
 }
 
 pub(super) struct AvatarImageCache {
@@ -130,7 +170,8 @@ impl AvatarImageCache {
     pub(super) fn render_state(&mut self, targets: &[AvatarTarget]) -> Vec<AvatarImage> {
         let touch_tick = self.next_tick();
         for target in targets {
-            if let Some(entry) = self.entries.get_mut(&target.url) {
+            let url = avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
+            if let Some(entry) = self.entries.get_mut(&url) {
                 entry.touch(touch_tick);
             }
         }
@@ -141,7 +182,9 @@ impl AvatarImageCache {
         targets
             .iter()
             .filter_map(|target| {
-                let AvatarImageEntry::Ready { image, .. } = self.entries.get(&target.url)? else {
+                let url =
+                    avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
+                let AvatarImageEntry::Ready { image, .. } = self.entries.get(&url)? else {
                     return None;
                 };
                 let render_info = ImagePreviewRenderInfo {
@@ -169,7 +212,11 @@ impl AvatarImageCache {
         let commands = targets
             .iter()
             .take(MAX_AVATAR_IMAGE_CACHE_ENTRIES)
-            .filter_map(|target| self.next_request_for_url(&target.url))
+            .filter_map(|target| {
+                let url =
+                    avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
+                self.next_request_for_cache_url(&url)
+            })
             .collect();
         self.prune_to_limit(targets);
         commands
@@ -178,6 +225,11 @@ impl AvatarImageCache {
     /// Schedules an out-of-band avatar fetch (used by the profile popup,
     /// whose URL does not appear in the message-pane avatar targets).
     pub(super) fn next_request_for_url(&mut self, url: &str) -> Option<AppCommand> {
+        let url = avatar_preview_url(url, PROFILE_POPUP_AVATAR_WIDTH, PROFILE_POPUP_AVATAR_HEIGHT);
+        self.next_request_for_cache_url(&url)
+    }
+
+    fn next_request_for_cache_url(&mut self, url: &str) -> Option<AppCommand> {
         if self.entries.contains_key(url) {
             return None;
         }
@@ -190,14 +242,15 @@ impl AvatarImageCache {
         })
     }
 
-    /// Renders a freshly sized protocol for the profile popup. The cache is
-    /// keyed by URL, so this reuses any image already fetched by the message
-    /// pane and naturally requests when the popup opens an unseen avatar.
+    /// Renders a freshly sized protocol for the profile popup. Profile avatars
+    /// use a larger CDN `size` than message-pane avatars, so they get a
+    /// separate cache entry when the same user is opened in the popup.
     pub(super) fn popup_avatar_image(&mut self, url: &str) -> Option<AvatarImage> {
+        let url = avatar_preview_url(url, PROFILE_POPUP_AVATAR_WIDTH, PROFILE_POPUP_AVATAR_HEIGHT);
         let touch_tick = self.next_tick();
-        self.entries.get_mut(url)?.touch(touch_tick);
+        self.entries.get_mut(&url)?.touch(touch_tick);
         let picker = self.picker.as_ref()?;
-        let AvatarImageEntry::Ready { image, .. } = self.entries.get(url)? else {
+        let AvatarImageEntry::Ready { image, .. } = self.entries.get(&url)? else {
             return None;
         };
         let render_info = ImagePreviewRenderInfo {
@@ -272,7 +325,9 @@ impl AvatarImageCache {
         let protected = targets
             .iter()
             .take(MAX_AVATAR_IMAGE_CACHE_ENTRIES)
-            .map(|target| target.url.as_str())
+            .map(|target| {
+                avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT)
+            })
             .collect::<HashSet<_>>();
         let mut removable = self
             .entries
@@ -620,6 +675,49 @@ mod tests {
     }
 
     #[test]
+    fn image_preview_targets_use_resized_discord_media_proxy_url() {
+        let mut state = state_with_image_messages(0, &[]);
+        let mut attachment = image_attachment(1);
+        attachment.proxy_url = concat!(
+            "https://media.discordapp.net/attachments/691/150/photo.png",
+            "?ex=abc&is=def&hm=123&format=png&width=4000&height=3000"
+        )
+        .to_owned();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("photo".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: vec![attachment],
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let target = visible_image_preview_targets(&state, layout(12))
+            .into_iter()
+            .next()
+            .expect("image attachment should produce preview target");
+
+        assert_eq!(
+            target.url,
+            concat!(
+                "https://media.discordapp.net/attachments/691/150/photo.png",
+                "?ex=abc&is=def&hm=123&format=webp&quality=lossless&width=160&height=90"
+            )
+        );
+    }
+
+    #[test]
     fn image_preview_targets_layout_three_images_as_large_left_tile() {
         let mut state = state_with_image_messages(0, &[]);
         push_album_message(&mut state, 1, 3);
@@ -750,6 +848,30 @@ mod tests {
     }
 
     #[test]
+    fn avatar_preview_url_adds_power_of_two_size_for_user_avatar() {
+        assert_eq!(
+            avatar_preview_url("https://cdn.discordapp.com/avatars/1/hash.png", 2, 2),
+            "https://cdn.discordapp.com/avatars/1/hash.png?size=64"
+        );
+        assert_eq!(
+            avatar_preview_url(
+                "https://cdn.discordapp.com/avatars/1/hash.png?size=1024&foo=bar",
+                8,
+                4
+            ),
+            "https://cdn.discordapp.com/avatars/1/hash.png?foo=bar&size=128"
+        );
+    }
+
+    #[test]
+    fn avatar_preview_url_leaves_default_avatar_unchanged() {
+        assert_eq!(
+            avatar_preview_url("https://cdn.discordapp.com/embed/avatars/0.png", 8, 4),
+            "https://cdn.discordapp.com/embed/avatars/0.png"
+        );
+    }
+
+    #[test]
     fn avatar_targets_clip_first_message_avatar_after_line_scroll() {
         let mut state = state_with_avatar_messages(1);
         state.focus_pane(FocusPane::Messages);
@@ -773,8 +895,13 @@ mod tests {
             tick: 0,
         };
         for id in 0..MAX_AVATAR_IMAGE_CACHE_ENTRIES {
+            let url = avatar_preview_url(
+                &format!("https://cdn.discordapp.com/avatars/{id}.png"),
+                AVATAR_PREVIEW_WIDTH,
+                AVATAR_PREVIEW_HEIGHT,
+            );
             cache.entries.insert(
-                format!("https://cdn.discordapp.com/avatars/{id}.png"),
+                url,
                 AvatarImageEntry::Failed {
                     last_used: id as u64,
                 },
@@ -787,6 +914,8 @@ mod tests {
         );
 
         let visible_url = "https://cdn.discordapp.com/avatars/0.png".to_owned();
+        let visible_cache_url =
+            avatar_preview_url(&visible_url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
         let targets = vec![AvatarTarget {
             row: 0,
             visible_height: 1,
@@ -796,7 +925,7 @@ mod tests {
         cache.prune_to_limit(&targets);
 
         assert_eq!(cache.entries.len(), MAX_AVATAR_IMAGE_CACHE_ENTRIES);
-        assert!(cache.entries.contains_key(&visible_url));
+        assert!(cache.entries.contains_key(&visible_cache_url));
         assert!(
             !cache
                 .entries
@@ -822,12 +951,17 @@ mod tests {
 
         let request = cache.next_request_for_url("https://cdn.discordapp.com/avatars/new.png");
 
-        assert!(request.is_some());
+        assert_eq!(
+            request,
+            Some(AppCommand::LoadAttachmentPreview {
+                url: "https://cdn.discordapp.com/avatars/new.png?size=128".to_owned(),
+            })
+        );
         assert_eq!(cache.entries.len(), MAX_AVATAR_IMAGE_CACHE_ENTRIES);
         assert!(
             cache
                 .entries
-                .contains_key("https://cdn.discordapp.com/avatars/new.png")
+                .contains_key("https://cdn.discordapp.com/avatars/new.png?size=128")
         );
     }
 
