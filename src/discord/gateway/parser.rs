@@ -1100,6 +1100,11 @@ fn parse_embed(value: &Value) -> Option<EmbedInfo> {
             .and_then(|thumbnail| thumbnail.get("url"))
             .and_then(Value::as_str)
             .map(str::to_owned),
+        thumbnail_proxy_url: value
+            .get("thumbnail")
+            .and_then(|thumbnail| thumbnail.get("proxy_url"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         thumbnail_width: value
             .get("thumbnail")
             .and_then(|thumbnail| thumbnail.get("width"))
@@ -1111,6 +1116,11 @@ fn parse_embed(value: &Value) -> Option<EmbedInfo> {
         image_url: value
             .get("image")
             .and_then(|image| image.get("url"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        image_proxy_url: value
+            .get("image")
+            .and_then(|image| image.get("proxy_url"))
             .and_then(Value::as_str)
             .map(str::to_owned),
         image_width: value
@@ -3378,11 +3388,13 @@ mod tests {
                 "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                 "thumbnail": {
                     "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+                    "proxy_url": "https://images-ext-1.discordapp.net/external/thumb/hash/https/i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
                     "width": 480,
                     "height": 360
                 },
                 "image": {
                     "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg",
+                    "proxy_url": "https://images-ext-2.discordapp.net/external/image/hash/https/i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg",
                     "width": 1280,
                     "height": 720
                 },
@@ -3402,11 +3414,23 @@ mod tests {
             embeds[0].thumbnail_url.as_deref(),
             Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg")
         );
+        assert_eq!(
+            embeds[0].thumbnail_proxy_url.as_deref(),
+            Some(
+                "https://images-ext-1.discordapp.net/external/thumb/hash/https/i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"
+            )
+        );
         assert_eq!(embeds[0].thumbnail_width, Some(480));
         assert_eq!(embeds[0].thumbnail_height, Some(360));
         assert_eq!(
             embeds[0].image_url.as_deref(),
             Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg")
+        );
+        assert_eq!(
+            embeds[0].image_proxy_url.as_deref(),
+            Some(
+                "https://images-ext-2.discordapp.net/external/image/hash/https/i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg"
+            )
         );
         assert_eq!(embeds[0].image_width, Some(1280));
         assert_eq!(embeds[0].image_height, Some(720));

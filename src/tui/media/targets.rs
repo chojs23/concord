@@ -19,7 +19,10 @@ use super::AVATAR_PREVIEW_HEIGHT;
 
 const IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
 const IMAGE_PREVIEW_SOURCE_PIXELS_PER_ROW: u64 = IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN * 3;
-const DISCORD_MEDIA_PROXY_ATTACHMENTS_PREFIX: &str = "https://media.discordapp.net/attachments/";
+const DISCORD_MEDIA_PROXY_PREFIX: &str = "https://media.discordapp.net/";
+const DISCORD_IMAGES_EXTERNAL_PREFIX: &str = "https://images-ext-";
+const DISCORD_IMAGES_EXTERNAL_HOST_SUFFIX: &str = ".discordapp.net";
+const DISCORD_EXTERNAL_PROXY_PATH: &str = "/external/";
 const DISCORD_MEDIA_PROXY_PREVIEW_FORMAT: &str = "webp";
 const DISCORD_MEDIA_PROXY_PREVIEW_QUALITY: &str = "lossless";
 const DISCORD_MEDIA_PROXY_MAX_PREVIEW_DIMENSION: u64 = 1000;
@@ -132,7 +135,9 @@ pub(in crate::tui) fn visible_image_preview_targets(
         let line_offset = usize::from(message_index == 0) * state.message_line_scroll();
         let global_index = state.message_scroll().saturating_add(message_index);
         let separator_lines = state.message_extra_top_lines(global_index);
+        let body_rows = state.message_body_line_count_for_width(message, layout.content_width);
         let base_rows = state.message_base_line_count_for_width(message, layout.content_width);
+        let preview_rows_before_message = body_rows.saturating_add(separator_lines);
         let block_rows = base_rows.saturating_add(separator_lines);
 
         let previews = message.inline_previews();
@@ -148,9 +153,10 @@ pub(in crate::tui) fn visible_image_preview_targets(
             } else {
                 0
             };
-            let preview_top =
-                rendered_rows as isize + block_rows as isize + cell.y_offset_rows as isize
-                    - line_offset as isize;
+            let preview_top = rendered_rows as isize
+                + preview_rows_before_message as isize
+                + cell.y_offset_rows as isize
+                - line_offset as isize;
             let preview_bottom = preview_top.saturating_add(cell.height as isize);
             let visible_top = preview_top.max(0);
             let visible_bottom = preview_bottom.min(layout.list_height as isize);
@@ -192,18 +198,14 @@ fn preview_request_url(
     width_columns: u16,
     height_rows: u16,
 ) -> String {
-    if let Some(url) = youtube_thumbnail_preview_url(preview.url, width_columns, height_rows) {
-        return url;
+    if let Some(proxy_url) = preview.proxy_url
+        && discord_media_proxy_supports_preview_resize(proxy_url)
+    {
+        return discord_media_proxy_preview_url(proxy_url, width_columns, height_rows);
     }
 
-    let Some(proxy_url) = preview.proxy_url else {
-        return preview.url.to_owned();
-    };
-    if !proxy_url.starts_with(DISCORD_MEDIA_PROXY_ATTACHMENTS_PREFIX) {
-        return preview.url.to_owned();
-    }
-
-    discord_media_proxy_preview_url(proxy_url, width_columns, height_rows)
+    youtube_thumbnail_preview_url(preview.url, width_columns, height_rows)
+        .unwrap_or_else(|| preview.url.to_owned())
 }
 
 fn youtube_thumbnail_preview_url(
@@ -290,6 +292,24 @@ fn discord_media_proxy_preview_url(
     params.push(format!("height={height}"));
 
     format!("{base}?{}", params.join("&"))
+}
+
+fn discord_media_proxy_supports_preview_resize(proxy_url: &str) -> bool {
+    if let Some(path) = proxy_url.strip_prefix(DISCORD_MEDIA_PROXY_PREFIX) {
+        return path.starts_with("attachments/")
+            || path.starts_with("ephemeral-attachments/")
+            || path.starts_with("external/");
+    }
+
+    let Some(rest) = proxy_url.strip_prefix(DISCORD_IMAGES_EXTERNAL_PREFIX) else {
+        return false;
+    };
+    let Some((host_tail, path)) = rest.split_once('/') else {
+        return false;
+    };
+
+    host_tail.ends_with(DISCORD_IMAGES_EXTERNAL_HOST_SUFFIX)
+        && path.starts_with(&DISCORD_EXTERNAL_PROXY_PATH[1..])
 }
 
 fn preview_dimension_pixels(cells: u64, pixels_per_cell: u64) -> u64 {

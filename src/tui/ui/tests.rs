@@ -2420,6 +2420,28 @@ fn message_viewport_lines_reserve_rows_for_multiple_attachment_summaries() {
 }
 
 #[test]
+fn message_viewport_lines_put_reactions_below_image_preview_rows() {
+    let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
+    message.reactions = vec![ReactionInfo {
+        emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        count: 3,
+        me: true,
+    }];
+    let messages = [&message];
+
+    let lines = message_viewport_lines(
+        &messages,
+        None,
+        &DashboardState::new(),
+        super::message_viewport_layout(200, 80, 80, 16, 3),
+        &[],
+    );
+
+    assert_eq!(lines.len(), 8);
+    assert_eq!(line_texts_from_ratatui(&lines)[6], "   [● 👍 3]");
+}
+
+#[test]
 fn message_viewport_lines_reserve_rows_for_three_image_album() {
     let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
     message.attachments = image_attachments(3);
@@ -3012,6 +3034,20 @@ fn second_inline_preview_slot_uses_album_column_offset() {
 }
 
 #[test]
+fn inline_image_preview_row_ignores_reaction_footer_for_current_message() {
+    let mut message = message_with_attachment(Some("one".to_owned()), image_attachment());
+    message.reactions = vec![ReactionInfo {
+        emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        count: 3,
+        me: true,
+    }];
+    let messages = [&message];
+    let state = DashboardState::new();
+
+    assert_eq!(inline_image_preview_row(&messages, &state, 0, 200, 0, 0), 2);
+}
+
+#[test]
 fn forwarded_card_rows_push_inline_preview_slot_down() {
     let mut snapshot = forwarded_snapshot(Some("hello"), vec![image_attachment()]);
     snapshot.source_channel_id = Some(Id::new(9));
@@ -3172,9 +3208,11 @@ fn youtube_embed() -> EmbedInfo {
         footer_text: None,
         url: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
         thumbnail_url: Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".to_owned()),
+        thumbnail_proxy_url: None,
         thumbnail_width: Some(480),
         thumbnail_height: Some(360),
         image_url: Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".to_owned()),
+        image_proxy_url: None,
         image_width: Some(480),
         image_height: Some(360),
         video_url: None,

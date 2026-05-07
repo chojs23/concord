@@ -2270,7 +2270,19 @@ impl DashboardState {
         message: &MessageState,
         content_width: usize,
     ) -> usize {
-        1 + message_format::format_message_content_lines(message, self, content_width).len()
+        let (body_lines, reaction_lines) =
+            message_format::format_message_content_sections(message, self, content_width);
+        1 + body_lines.len() + reaction_lines.len()
+    }
+
+    pub(crate) fn message_body_line_count_for_width(
+        &self,
+        message: &MessageState,
+        content_width: usize,
+    ) -> usize {
+        let (body_lines, _) =
+            message_format::format_message_content_sections(message, self, content_width);
+        1 + body_lines.len()
     }
 
     fn message_rendered_height(

@@ -262,9 +262,10 @@ fn render_inline_reaction_emojis(
         };
         let global_index = state.message_scroll().saturating_add(index);
         let separator_lines = state.message_extra_top_lines(global_index) as isize;
-        let body_base_rows =
+        let body_rows = state.message_body_line_count_for_width(message, content_width) as isize;
+        let total_base_rows =
             state.message_base_line_count_for_width(message, content_width) as isize;
-        let block_rows = body_base_rows + separator_lines;
+        let block_rows = total_base_rows + separator_lines;
         let preview_height = total_inline_preview_height_for_message(
             message,
             inline_image_preview_width(list),
@@ -273,15 +274,13 @@ fn render_inline_reaction_emojis(
 
         let layout = lay_out_reaction_chips(&message.reactions, content_width);
         if !layout.slots.is_empty() {
-            // Reactions live in the last `layout.lines.len()` rows of the
-            // message's base content (header + body), before the preview
-            // spacer. The body starts after the optional date separator,
-            // so the reaction strip begins at:
-            //     body_top + (body_base_rows - reaction_lines)
+            // Reactions are rendered after the body and inline preview spacer.
+            // The body starts after the optional date separator, so the
+            // reaction strip begins at:
+            //     body_top + body_rows + preview_height
             let message_top = rendered_rows - line_offset;
             let body_top = message_top + separator_lines;
-            let reaction_strip_top =
-                body_top + body_base_rows.saturating_sub(layout.lines.len() as isize);
+            let reaction_strip_top = body_top + body_rows + preview_height;
 
             for slot in layout.slots {
                 let row_in_list = reaction_strip_top + slot.line as isize;
@@ -493,8 +492,9 @@ pub(super) fn message_viewport_lines(
             lines.push(line);
         }
 
-        let mut content = format_message_content_lines(message, state, item_content_width.max(8));
-        for line in content.iter_mut() {
+        let (mut content, mut reactions) =
+            format_message_content_sections(message, state, item_content_width.max(8));
+        for line in content.iter_mut().chain(reactions.iter_mut()) {
             line.blank_loaded_emoji_fallbacks(|url| {
                 emoji_images.iter().any(|image| image.url == url)
             });
@@ -505,6 +505,7 @@ pub(super) fn message_viewport_lines(
             author_style,
             format_message_sent_time(message.id),
             content,
+            reactions,
             item_content_width,
             &preview_spacers,
             body_skip,
@@ -564,6 +565,7 @@ pub(super) fn message_item_lines(
         author_style,
         sent_time,
         content,
+        Vec::new(),
         content_width,
         &preview_spacers,
         line_offset,
@@ -575,6 +577,7 @@ fn message_item_lines_with_previews(
     author_style: Style,
     sent_time: String,
     content: Vec<MessageContentLine>,
+    reactions: Vec<MessageContentLine>,
     content_width: usize,
     preview_spacers: &[InlinePreviewSpacer],
     line_offset: usize,
@@ -599,6 +602,11 @@ fn message_item_lines_with_previews(
     for spacer in preview_spacers {
         lines.extend(image_preview_spacer_lines(spacer));
     }
+    lines.extend(reactions.into_iter().map(|line| {
+        let mut spans = vec![message_avatar_spacer_span()];
+        spans.extend(line.spans());
+        Line::from(spans)
+    }));
     lines.push(Line::from(""));
     lines.into_iter().skip(line_offset).collect()
 }
@@ -970,16 +978,26 @@ pub(super) fn inline_image_preview_row(
     line_offset: usize,
     previous_preview_rows: usize,
 ) -> isize {
-    let row = messages
+    let prior_rows = messages
         .iter()
         .enumerate()
-        .take(message_index.saturating_add(1))
+        .take(message_index)
         .map(|(local_idx, message)| {
             let global = state.message_scroll().saturating_add(local_idx);
             state.message_base_line_count_for_width(message, content_width)
                 + state.message_extra_top_lines(global)
         })
-        .sum::<usize>()
+        .sum::<usize>();
+    let current_rows = messages
+        .get(message_index)
+        .map(|message| {
+            let global = state.message_scroll().saturating_add(message_index);
+            state.message_body_line_count_for_width(message, content_width)
+                + state.message_extra_top_lines(global)
+        })
+        .unwrap_or(0);
+    let row = prior_rows
+        .saturating_add(current_rows)
         .saturating_add(previous_preview_rows)
         .saturating_add(message_index.saturating_mul(MESSAGE_ROW_GAP))
         .saturating_sub(1);

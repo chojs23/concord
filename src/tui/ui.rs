@@ -19,8 +19,8 @@ use super::{
     format::truncate_display_width,
     message_format::{
         EMOJI_REACTION_IMAGE_WIDTH, MessageContentLine, ReactionLayout, embed_color,
-        format_message_content_lines, format_message_relative_age, lay_out_reaction_chips,
-        wrap_text_lines,
+        format_message_content_lines, format_message_content_sections, format_message_relative_age,
+        lay_out_reaction_chips, wrap_text_lines,
     },
     state::{
         ChannelActionItem, ChannelThreadItem, DashboardState, EmojiReactionItem,

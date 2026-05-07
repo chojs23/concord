@@ -171,9 +171,11 @@ pub struct EmbedInfo {
     pub footer_text: Option<String>,
     pub url: Option<String>,
     pub thumbnail_url: Option<String>,
+    pub thumbnail_proxy_url: Option<String>,
     pub thumbnail_width: Option<u64>,
     pub thumbnail_height: Option<u64>,
     pub image_url: Option<String>,
+    pub image_proxy_url: Option<String>,
     pub image_width: Option<u64>,
     pub image_height: Option<u64>,
     pub video_url: Option<String>,
@@ -768,7 +770,7 @@ impl EmbedInfo {
         if let Some(url) = self.thumbnail_url.as_deref() {
             return Some(InlinePreviewInfo {
                 url,
-                proxy_url: None,
+                proxy_url: self.thumbnail_proxy_url.as_deref(),
                 filename: "embed-thumbnail",
                 width: self.thumbnail_width,
                 height: self.thumbnail_height,
@@ -778,7 +780,7 @@ impl EmbedInfo {
 
         self.image_url.as_deref().map(|url| InlinePreviewInfo {
             url,
-            proxy_url: None,
+            proxy_url: self.image_proxy_url.as_deref(),
             filename: "embed-image",
             width: self.image_width,
             height: self.image_height,

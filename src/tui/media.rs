@@ -718,6 +718,169 @@ mod tests {
     }
 
     #[test]
+    fn image_preview_targets_use_resized_embed_media_proxy_url() {
+        let mut embed = youtube_embed();
+        embed.thumbnail_url = Some("https://example.com/photo.png".to_owned());
+        embed.thumbnail_proxy_url = Some(
+            concat!(
+                "https://media.discordapp.net/external/cache-key/https/example.com/photo.png",
+                "?ex=abc&is=def&hm=123&format=png&width=4000&height=3000"
+            )
+            .to_owned(),
+        );
+        let mut state = state_with_image_messages(1, &[]);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("https://example.com/post".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: vec![embed],
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let targets = visible_image_preview_targets(&state, layout(8));
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
+        assert_eq!(
+            targets[0].url,
+            concat!(
+                "https://media.discordapp.net/external/cache-key/https/example.com/photo.png",
+                "?ex=abc&is=def&hm=123&format=webp&quality=lossless&width=160&height=90"
+            )
+        );
+        assert_eq!(targets[0].filename, "embed-thumbnail");
+    }
+
+    #[test]
+    fn image_preview_targets_use_resized_ephemeral_media_proxy_url() {
+        let mut state = state_with_image_messages(0, &[]);
+        let mut attachment = image_attachment(1);
+        attachment.proxy_url = concat!(
+            "https://media.discordapp.net/ephemeral-attachments/691/150/photo.png",
+            "?ex=abc&is=def&hm=123&width=4000&height=3000"
+        )
+        .to_owned();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("photo".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: vec![attachment],
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let target = visible_image_preview_targets(&state, layout(12))
+            .into_iter()
+            .next()
+            .expect("image attachment should produce preview target");
+
+        assert_eq!(
+            target.url,
+            concat!(
+                "https://media.discordapp.net/ephemeral-attachments/691/150/photo.png",
+                "?ex=abc&is=def&hm=123&format=webp&quality=lossless&width=160&height=90"
+            )
+        );
+    }
+
+    #[test]
+    fn image_preview_targets_ignore_unsupported_embed_proxy_url() {
+        let mut embed = youtube_embed();
+        embed.thumbnail_url = Some("https://example.com/photo.png".to_owned());
+        embed.thumbnail_proxy_url =
+            Some("https://media.discordapp.net/avatars/1/hash.png".to_owned());
+        let mut state = state_with_image_messages(1, &[]);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("https://example.com/post".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: vec![embed],
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let targets = visible_image_preview_targets(&state, layout(8));
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
+        assert_eq!(targets[0].url, "https://example.com/photo.png");
+        assert_eq!(targets[0].filename, "embed-thumbnail");
+    }
+
+    #[test]
+    fn image_preview_targets_use_resized_images_ext_embed_proxy_url() {
+        let mut embed = youtube_embed();
+        embed.thumbnail_url = Some("https://example.com/photo.png".to_owned());
+        embed.thumbnail_proxy_url = Some(concat!(
+            "https://images-ext-1.discordapp.net/external/cache-key/https/example.com/photo.png",
+            "?width=4000&height=3000"
+        ).to_owned());
+        let mut state = state_with_image_messages(1, &[]);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("https://example.com/post".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: vec![embed],
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let targets = visible_image_preview_targets(&state, layout(8));
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
+        assert_eq!(
+            targets[0].url,
+            concat!(
+                "https://images-ext-1.discordapp.net/external/cache-key/https/example.com/photo.png",
+                "?format=webp&quality=lossless&width=160&height=90"
+            )
+        );
+    }
+
+    #[test]
     fn image_preview_targets_layout_three_images_as_large_left_tile() {
         let mut state = state_with_image_messages(0, &[]);
         push_album_message(&mut state, 1, 3);
@@ -2262,9 +2425,11 @@ mod tests {
             footer_text: None,
             url: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
             thumbnail_url: Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".to_owned()),
+            thumbnail_proxy_url: None,
             thumbnail_width: Some(480),
             thumbnail_height: Some(360),
             image_url: None,
+            image_proxy_url: None,
             image_width: None,
             image_height: None,
             video_url: Some("https://www.youtube.com/embed/dQw4w9WgXcQ".to_owned()),

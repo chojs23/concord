@@ -239,6 +239,16 @@ pub(super) fn format_message_content_lines(
     state: &DashboardState,
     width: usize,
 ) -> Vec<MessageContentLine> {
+    let (mut lines, reaction_lines) = format_message_content_sections(message, state, width);
+    lines.extend(reaction_lines);
+    lines
+}
+
+pub(super) fn format_message_content_sections(
+    message: &MessageState,
+    state: &DashboardState,
+    width: usize,
+) -> (Vec<MessageContentLine>, Vec<MessageContentLine>) {
     let attachment_summary_lines = if message.attachments.is_empty() {
         Vec::new()
     } else {
@@ -247,7 +257,7 @@ pub(super) fn format_message_content_lines(
     let mut lines = Vec::new();
 
     if let Some(system_lines) = format_system_message_lines(message, state, width) {
-        return system_lines;
+        return (system_lines, Vec::new());
     }
 
     let renders_poll_card = message.reply.is_none() && message.poll.is_some();
@@ -307,11 +317,8 @@ pub(super) fn format_message_content_lines(
         append_edited_marker(&mut lines, width);
     }
 
-    if !message.reactions.is_empty() {
-        lines.extend(format_reaction_lines(&message.reactions, width));
-    }
-
-    lines
+    let reaction_lines = format_message_reaction_lines(&message.reactions, width);
+    (lines, reaction_lines)
 }
 
 fn append_edited_marker(lines: &mut Vec<MessageContentLine>, width: usize) {
@@ -467,7 +474,10 @@ pub(super) fn embed_color(color: u32) -> Color {
     )
 }
 
-fn format_reaction_lines(reactions: &[ReactionInfo], width: usize) -> Vec<MessageContentLine> {
+pub(super) fn format_message_reaction_lines(
+    reactions: &[ReactionInfo],
+    width: usize,
+) -> Vec<MessageContentLine> {
     lay_out_reaction_chips(reactions, width)
         .lines
         .into_iter()
