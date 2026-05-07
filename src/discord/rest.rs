@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::discord::fingerprint::discord_rest_client;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
@@ -41,7 +42,7 @@ pub struct DiscordRest {
 impl DiscordRest {
     pub fn new(token: String) -> Self {
         Self {
-            raw_http: reqwest::Client::new(),
+            raw_http: discord_rest_client(),
             token,
         }
     }

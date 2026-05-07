@@ -25,6 +25,11 @@ reqwest = { version = "0.12", default-features = false, features = [
   "json",
   "charset",
   "http2",
+  "cookies",
+  "gzip",
+  "deflate",
+  "brotli",
+  "zstd",
 ] }
 rsa = "0.9"
 rustls = { version = "0.23.39", default-features = false, features = [
@@ -49,6 +54,7 @@ tokio-tungstenite = { version = "0.27", default-features = false, features = [
 ] }
 unicode-segmentation = "1.12.0"
 unicode-width = "0.2.2"
+uuid = { version = "1.23.1", features = ["v4"] }
 
 [profile.dist]
 inherits = "release"

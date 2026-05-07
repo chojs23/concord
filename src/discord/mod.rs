@@ -2,6 +2,7 @@ mod auth_http;
 mod client;
 mod commands;
 mod events;
+mod fingerprint;
 mod gateway;
 pub mod ids;
 pub mod password_auth;
