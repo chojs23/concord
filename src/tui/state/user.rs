@@ -12,10 +12,19 @@ use super::{
         MemberEntry, MemberGroup, channel_recipient_group, flatten_member_groups,
         guild_member_groups,
     },
-    model::{FocusPane, GuildPaneEntry, MemberActionItem, MemberActionKind},
+    model::{FocusPane, MemberActionItem, MemberActionKind},
     popups::{MemberActionMenuState, UserProfilePopupState},
     scroll::{clamp_selected_index, move_index_down, move_index_up},
 };
+
+/// Holds `popup.scroll` inside `[0, max(0, total_lines - view_height)]` so
+/// the renderer never asks for rows past the laid-out content. Re-applied
+/// on every render hook because mutual-server data and bio paragraphs can
+/// change between frames as the profile loads.
+fn clamp_user_profile_popup_scroll(popup: &mut UserProfilePopupState) {
+    let max_scroll = popup.total_lines.saturating_sub(popup.view_height);
+    popup.scroll = popup.scroll.min(max_scroll);
+}
 
 impl DashboardState {
     pub fn is_user_profile_popup_open(&self) -> bool {
@@ -148,7 +157,9 @@ impl DashboardState {
             user_id,
             guild_id,
             load_error: None,
-            mutual_cursor: None,
+            scroll: 0,
+            view_height: 0,
+            total_lines: 0,
         });
         if self.discord.user_profile(user_id, guild_id).is_some() {
             None
@@ -209,42 +220,42 @@ impl DashboardState {
         self.user_profile_popup_data()?.avatar_url.as_deref()
     }
 
-    /// Index of the currently highlighted mutual-server line, if the user has
-    /// moved into the list with j/k. None while the cursor sits idle.
-    pub fn user_profile_popup_mutual_cursor(&self) -> Option<usize> {
-        let popup = self.user_profile_popup.as_ref()?;
-        let cursor = popup.mutual_cursor?;
-        let len = self.user_profile_popup_data()?.mutual_guilds.len();
-        if len == 0 {
-            None
-        } else {
-            Some(cursor.min(len - 1))
-        }
-    }
-
-    fn user_profile_popup_mutual_len(&self) -> usize {
-        self.user_profile_popup_data()
-            .map(|profile| profile.mutual_guilds.len())
+    /// Top-of-viewport row for the popup body. Used by the renderer.
+    pub fn user_profile_popup_scroll(&self) -> usize {
+        self.user_profile_popup
+            .as_ref()
+            .map(|popup| popup.scroll)
             .unwrap_or(0)
     }
 
-    pub fn move_user_profile_popup_down(&mut self) {
-        let len = self.user_profile_popup_mutual_len();
-        if len == 0 {
-            return;
-        }
+    /// Renderer hook: passes the latest viewport height back so scroll
+    /// methods can clamp without snapping past the last visible row.
+    pub fn set_user_profile_popup_view_height(&mut self, height: usize) {
         if let Some(popup) = self.user_profile_popup.as_mut() {
-            let next = popup.mutual_cursor.map(|c| c + 1).unwrap_or(0);
-            popup.mutual_cursor = Some(next.min(len - 1));
+            popup.view_height = height;
+            clamp_user_profile_popup_scroll(popup);
         }
     }
 
-    pub fn move_user_profile_popup_up(&mut self) {
+    /// Renderer hook: stash the laid-out content height so scroll
+    /// clamping is a constant-time check instead of recomputing layout.
+    pub fn set_user_profile_popup_total_lines(&mut self, total_lines: usize) {
         if let Some(popup) = self.user_profile_popup.as_mut() {
-            popup.mutual_cursor = match popup.mutual_cursor {
-                Some(0) | None => Some(0),
-                Some(c) => Some(c - 1),
-            };
+            popup.total_lines = total_lines;
+            clamp_user_profile_popup_scroll(popup);
+        }
+    }
+
+    pub fn scroll_user_profile_popup_down(&mut self) {
+        if let Some(popup) = self.user_profile_popup.as_mut() {
+            popup.scroll = popup.scroll.saturating_add(1);
+            clamp_user_profile_popup_scroll(popup);
+        }
+    }
+
+    pub fn scroll_user_profile_popup_up(&mut self) {
+        if let Some(popup) = self.user_profile_popup.as_mut() {
+            popup.scroll = popup.scroll.saturating_sub(1);
         }
     }
 
@@ -287,30 +298,6 @@ impl DashboardState {
             .map(|channel| channel.id)
     }
 
-    /// Activates the mutual server highlighted in the popup and closes the
-    /// popup. Returns None when no cursor is set or the data isn't loaded
-    /// yet — Enter then falls through to a no-op (the caller can still rely
-    /// on Esc to close).
-    pub fn activate_selected_user_profile_mutual(&mut self) -> Option<AppCommand> {
-        let cursor = self.user_profile_popup_mutual_cursor()?;
-        let guild_id = self
-            .user_profile_popup_data()?
-            .mutual_guilds
-            .get(cursor)?
-            .guild_id;
-        // Bail out if we don't actually know the guild yet (rare; the popup
-        // can list mutual_guilds whose GUILD_CREATE hasn't been delivered for
-        // this session).
-        self.discord.guild(guild_id)?;
-        self.activate_guild(ActiveGuildScope::Guild(guild_id));
-        if let Some(index) = self.guild_pane_entries().iter().position(
-            |entry| matches!(entry, GuildPaneEntry::Guild { state, .. } if state.id == guild_id),
-        ) {
-            self.selected_guild = index;
-        }
-        self.close_user_profile_popup();
-        None
-    }
 
     pub fn members_grouped(&self) -> Vec<MemberGroup<'_>> {
         let Some(guild_id) = self.selected_guild_id() else {

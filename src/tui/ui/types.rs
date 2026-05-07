@@ -107,5 +107,4 @@ pub(crate) enum ActionMenuTarget {
 
 pub(super) struct UserProfilePopupText {
     pub(super) lines: Vec<Line<'static>>,
-    pub(super) selected_line: Option<usize>,
 }

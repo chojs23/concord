@@ -61,7 +61,8 @@ use self::popups::{
     render_channel_action_menu, render_debug_log_popup, render_emoji_reaction_picker,
     render_guild_action_menu, render_image_viewer, render_image_viewer_action_menu,
     render_member_action_menu, render_message_action_menu, render_poll_vote_picker,
-    render_reaction_users_popup, render_user_profile_popup,
+    render_reaction_users_popup, render_user_profile_popup, user_profile_popup_text_geometry,
+    user_profile_popup_total_lines,
 };
 use self::types::{
     ACCENT, DIM, DISCORD_EPOCH_MILLIS, EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET,
@@ -88,7 +89,6 @@ use self::{
         channel_action_menu_lines, debug_log_popup_lines, emoji_reaction_picker_lines,
         guild_action_menu_lines, message_action_menu_lines, poll_vote_picker_lines,
         reaction_users_popup_lines, user_profile_display_name_style, user_profile_popup_lines,
-        user_profile_popup_text, user_profile_popup_visible_lines,
     },
 };
 
@@ -99,6 +99,17 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
     state.set_message_view_height(message_list_area(areas.messages, state).height as usize);
     state.set_member_view_height(panel_content_height(areas.members, "Members"));
     state.set_reaction_users_popup_view_height(reaction_users_visible_line_count(areas.messages));
+    if state.is_user_profile_popup_open() {
+        // The popup body shrinks when the avatar slot is in use, so use
+        // the same has-avatar predicate the renderer uses to keep the
+        // total-line / view-height pair consistent with what gets drawn.
+        let has_avatar = state.user_profile_popup_avatar_url().is_some();
+        let (text_width, text_height) =
+            user_profile_popup_text_geometry(areas.messages, has_avatar);
+        let total_lines = user_profile_popup_total_lines(state, text_width);
+        state.set_user_profile_popup_view_height(text_height as usize);
+        state.set_user_profile_popup_total_lines(total_lines);
+    }
 }
 
 pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewLayout {

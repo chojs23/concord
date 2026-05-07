@@ -29,10 +29,15 @@ pub(super) struct UserProfilePopupState {
     pub(super) user_id: Id<UserMarker>,
     pub(super) guild_id: Option<Id<GuildMarker>>,
     pub(super) load_error: Option<String>,
-    /// `Some(index)` once the user has moved into the mutual server list with
-    /// j/k. `None` while the popup is purely informational. Enter on a
-    /// selected mutual server activates that guild and closes the popup.
-    pub(super) mutual_cursor: Option<usize>,
+    /// First visible row of the popup body. Behaves like the channel/guild
+    /// pane scroll: j/k and the mouse wheel adjust this, never moving a
+    /// cursor that the renderer would have to chase.
+    pub(super) scroll: usize,
+    /// Last rendered viewport height for the popup body. The renderer
+    /// updates it each frame so scroll-clamping has the latest figure.
+    pub(super) view_height: usize,
+    /// Last rendered total content height. Same reason as `view_height`.
+    pub(super) total_lines: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

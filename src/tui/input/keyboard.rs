@@ -182,11 +182,8 @@ fn handle_user_profile_popup_key(state: &mut DashboardState, key: KeyEvent) -> O
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => state.close_user_profile_popup(),
         KeyCode::Char('m') => return state.open_direct_message_with_profile_target(),
-        code if is_down_key(code) => state.move_user_profile_popup_down(),
-        code if is_up_key(code) => state.move_user_profile_popup_up(),
-        code if is_confirm_key(code) => {
-            return state.activate_selected_user_profile_mutual();
-        }
+        code if is_down_key(code) => state.scroll_user_profile_popup_down(),
+        code if is_up_key(code) => state.scroll_user_profile_popup_up(),
         _ => {}
     }
     None

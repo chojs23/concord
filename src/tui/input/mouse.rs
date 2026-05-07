@@ -68,6 +68,13 @@ pub fn handle_mouse_event(
 
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
+            // The user-profile popup absorbs left clicks (Esc closes it,
+            // wheel scrolls). Letting the click fall through would
+            // activate whichever pane row sits underneath the popup body.
+            if state.is_user_profile_popup_open() {
+                clicks.clear();
+                return MouseOutcome::handled(None);
+            }
             let Some(target) = target else {
                 clicks.clear();
                 return MouseOutcome::ignored();
@@ -78,6 +85,14 @@ pub fn handle_mouse_event(
             clicks.clear();
             if action_menu_mouse {
                 move_action_menu_down(state);
+                return MouseOutcome::handled(None);
+            }
+            // Wheel events while the user-profile popup is open scroll the
+            // popup body — not the pane below it. The popup is modal for
+            // keyboard input but transparent for wheel events otherwise,
+            // which feels jarring (the page underneath jumps).
+            if state.is_user_profile_popup_open() {
+                state.scroll_user_profile_popup_down();
                 return MouseOutcome::handled(None);
             }
             let pane = ui::focus_pane_at(area, mouse.column, mouse.row);
@@ -91,6 +106,10 @@ pub fn handle_mouse_event(
             clicks.clear();
             if action_menu_mouse {
                 move_action_menu_up(state);
+                return MouseOutcome::handled(None);
+            }
+            if state.is_user_profile_popup_open() {
+                state.scroll_user_profile_popup_up();
                 return MouseOutcome::handled(None);
             }
             let pane = ui::focus_pane_at(area, mouse.column, mouse.row);
@@ -248,7 +267,6 @@ fn ignores_dashboard_mouse(state: &DashboardState) -> bool {
         || state.is_guild_action_menu_open()
         || state.is_channel_action_menu_open()
         || state.is_member_action_menu_open()
-        || state.is_user_profile_popup_open()
 }
 
 fn scroll_focused_pane_down(state: &mut DashboardState) {

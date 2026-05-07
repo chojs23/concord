@@ -22,8 +22,7 @@ use super::{
     message_viewport_lines, new_messages_notice_line, poll_vote_picker_lines,
     reaction_users_popup_lines, reaction_users_visible_line_count, selected_avatar_x_offset,
     selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
-    user_profile_display_name_style, user_profile_popup_lines, user_profile_popup_text,
-    user_profile_popup_visible_lines,
+    user_profile_display_name_style, user_profile_popup_lines,
 };
 use crate::{
     discord::{
@@ -531,7 +530,7 @@ fn user_profile_popup_styles_name_by_status() {
     let profile = user_profile_info(10, "neo");
     let state = DashboardState::new();
 
-    let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Idle, None);
+    let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Idle);
 
     assert_eq!(lines[0].spans[0].style.fg, Some(Color::Rgb(180, 140, 0)));
     assert!(
@@ -543,23 +542,24 @@ fn user_profile_popup_styles_name_by_status() {
 }
 
 #[test]
-fn user_profile_popup_visible_lines_follow_selected_mutual_server() {
+fn user_profile_popup_lists_mutual_servers_without_selection_marker() {
     let mut profile = user_profile_info(10, "neo");
-    profile.mutual_guilds = (1_u64..=12)
+    profile.mutual_guilds = (1_u64..=3)
         .map(|id| MutualGuildInfo {
             guild_id: Id::new(id),
             nick: None,
         })
         .collect();
     let state = DashboardState::new();
-    let popup_text =
-        user_profile_popup_text(&profile, &state, 40, PresenceStatus::Online, Some(10));
+    let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Online);
+    let texts = line_texts_from_ratatui(&lines);
 
-    let visible = user_profile_popup_visible_lines(popup_text.lines, popup_text.selected_line, 6);
-    let texts = line_texts_from_ratatui(&visible);
-
-    assert!(texts.iter().any(|line| line == "› • guild-11"));
-    assert!(!texts.iter().any(|line| line == "  • guild-1"));
+    // The popup no longer drives a per-row cursor — every mutual entry
+    // gets a uniform "  • name" prefix and the user navigates by
+    // scrolling.
+    assert!(texts.iter().any(|line| line == "  • guild-1"));
+    assert!(texts.iter().any(|line| line == "  • guild-3"));
+    assert!(!texts.iter().any(|line| line.starts_with("› ")));
 }
 
 #[test]

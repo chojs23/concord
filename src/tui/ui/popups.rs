@@ -332,13 +332,8 @@ pub(super) fn render_user_profile_popup(
         return;
     }
 
-    const POPUP_WIDTH: u16 = 60;
-    const POPUP_HEIGHT: u16 = 24;
-    const AVATAR_CELL_WIDTH: u16 = 8;
     const AVATAR_CELL_HEIGHT: u16 = 4;
-    let width = POPUP_WIDTH.min(area.width.saturating_sub(2)).max(8);
-    let height = POPUP_HEIGHT.min(area.height.saturating_sub(2)).max(6);
-    let popup = centered_rect(area, width, height);
+    let popup = user_profile_popup_area(area);
     frame.render_widget(Clear, popup);
 
     let block = panel_block("Profile", true);
@@ -349,9 +344,61 @@ pub(super) fn render_user_profile_popup(
     // so the text section starts cleanly to its right.
     let has_avatar = avatar.is_some()
         && state.user_profile_popup_avatar_url().is_some()
-        && inner.width > AVATAR_CELL_WIDTH + 2;
-    let text_area = if has_avatar {
-        let gutter = AVATAR_CELL_WIDTH + 2;
+        && inner.width > USER_PROFILE_POPUP_AVATAR_CELL_WIDTH + 2;
+    let text_area = user_profile_popup_text_area_inside(inner, has_avatar);
+
+    let popup_text = user_profile_popup_text_for_render(state, text_area.width);
+    let total_lines = popup_text.lines.len();
+    let viewport = text_area.height as usize;
+    let scroll_position = state.user_profile_popup_scroll().min(
+        total_lines.saturating_sub(viewport),
+    );
+    let lines = popup_text
+        .lines
+        .into_iter()
+        .skip(scroll_position)
+        .take(viewport)
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), text_area);
+    render_vertical_scrollbar(
+        frame,
+        text_area,
+        scroll_position,
+        viewport,
+        total_lines,
+    );
+
+    if let Some(avatar) = avatar.filter(|_| has_avatar) {
+        let avatar_area = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: USER_PROFILE_POPUP_AVATAR_CELL_WIDTH.min(inner.width),
+            height: AVATAR_CELL_HEIGHT.min(inner.height),
+        };
+        frame.render_widget(RatatuiImage::new(&avatar.protocol), avatar_area);
+    }
+}
+
+const USER_PROFILE_POPUP_WIDTH: u16 = 60;
+const USER_PROFILE_POPUP_HEIGHT: u16 = 24;
+const USER_PROFILE_POPUP_AVATAR_CELL_WIDTH: u16 = 8;
+
+/// Centered popup rect inside the messages area. Shared so the geometry
+/// computation lives in one place and the scroll-clamping pass uses the
+/// exact same width/height the renderer ends up drawing into.
+pub(super) fn user_profile_popup_area(area: Rect) -> Rect {
+    let width = USER_PROFILE_POPUP_WIDTH
+        .min(area.width.saturating_sub(2))
+        .max(8);
+    let height = USER_PROFILE_POPUP_HEIGHT
+        .min(area.height.saturating_sub(2))
+        .max(6);
+    centered_rect(area, width, height)
+}
+
+fn user_profile_popup_text_area_inside(inner: Rect, has_avatar: bool) -> Rect {
+    if has_avatar {
+        let gutter = USER_PROFILE_POPUP_AVATAR_CELL_WIDTH + 2;
         Rect {
             x: inner.x + gutter,
             y: inner.y,
@@ -360,26 +407,36 @@ pub(super) fn render_user_profile_popup(
         }
     } else {
         inner
-    };
+    }
+}
 
-    let popup_text = if let Some(profile) = state.user_profile_popup_data() {
-        user_profile_popup_text(
-            profile,
-            state,
-            text_area.width.saturating_sub(0),
-            state.user_profile_popup_status(),
-            state.user_profile_popup_mutual_cursor(),
-        )
+/// Geometry the scroll-clamping pass needs: the inner text rect plus the
+/// available width that `user_profile_popup_text` will lay out into.
+pub(super) fn user_profile_popup_text_geometry(
+    area: Rect,
+    has_avatar: bool,
+) -> (u16, u16) {
+    let popup = user_profile_popup_area(area);
+    let inner = panel_block("Profile", true).inner(popup);
+    let text_area = user_profile_popup_text_area_inside(inner, has_avatar);
+    (text_area.width, text_area.height)
+}
+
+fn user_profile_popup_text_for_render(
+    state: &DashboardState,
+    width: u16,
+) -> UserProfilePopupText {
+    if let Some(profile) = state.user_profile_popup_data() {
+        user_profile_popup_text(profile, state, width, state.user_profile_popup_status())
     } else if let Some(message) = state.user_profile_popup_load_error() {
         UserProfilePopupText {
             lines: vec![Line::from(Span::styled(
                 truncate_display_width(
                     &format!("Failed to load profile: {message}"),
-                    text_area.width.into(),
+                    width.into(),
                 ),
                 Style::default().fg(Color::Red),
             ))],
-            selected_line: None,
         }
     } else {
         UserProfilePopupText {
@@ -387,36 +444,15 @@ pub(super) fn render_user_profile_popup(
                 "Loading profile...",
                 Style::default().fg(DIM),
             ))],
-            selected_line: None,
         }
-    };
-    let total_lines = popup_text.lines.len();
-    let selected_line = popup_text.selected_line;
-    let scroll_position =
-        user_profile_popup_scroll_position(total_lines, selected_line, text_area.height as usize);
-    let lines = user_profile_popup_visible_lines(
-        popup_text.lines,
-        selected_line,
-        text_area.height as usize,
-    );
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), text_area);
-    render_vertical_scrollbar(
-        frame,
-        text_area,
-        scroll_position,
-        text_area.height as usize,
-        total_lines,
-    );
-
-    if let Some(avatar) = avatar.filter(|_| has_avatar) {
-        let avatar_area = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: AVATAR_CELL_WIDTH.min(inner.width),
-            height: AVATAR_CELL_HEIGHT.min(inner.height),
-        };
-        frame.render_widget(RatatuiImage::new(&avatar.protocol), avatar_area);
     }
+}
+
+/// Counts the lines the popup will draw, mirroring
+/// `user_profile_popup_text_for_render` so the scroll-clamping pass in
+/// `sync_view_heights` matches the eventual render exactly.
+pub(super) fn user_profile_popup_total_lines(state: &DashboardState, width: u16) -> usize {
+    user_profile_popup_text_for_render(state, width).lines.len()
 }
 
 #[cfg(test)]
@@ -425,9 +461,8 @@ pub(super) fn user_profile_popup_lines(
     state: &DashboardState,
     width: u16,
     status: PresenceStatus,
-    mutual_cursor: Option<usize>,
 ) -> Vec<Line<'static>> {
-    user_profile_popup_text(profile, state, width, status, mutual_cursor).lines
+    user_profile_popup_text(profile, state, width, status).lines
 }
 
 pub(super) fn user_profile_popup_text(
@@ -435,11 +470,9 @@ pub(super) fn user_profile_popup_text(
     state: &DashboardState,
     width: u16,
     status: PresenceStatus,
-    mutual_cursor: Option<usize>,
 ) -> UserProfilePopupText {
     let inner_width = usize::from(width.max(8));
     let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut selected_line = None;
 
     let display_name = profile.display_name().to_owned();
     lines.push(Line::from(Span::styled(
@@ -501,29 +534,20 @@ pub(super) fn user_profile_popup_text(
             Style::default().fg(DIM),
         )));
     } else {
-        for (index, entry) in profile.mutual_guilds.iter().enumerate() {
+        for entry in &profile.mutual_guilds {
             let name = state
                 .guild_name(entry.guild_id)
                 .map(str::to_owned)
                 .unwrap_or_else(|| format!("guild-{}", entry.guild_id.get()));
-            let selected = mutual_cursor == Some(index);
-            let marker = if selected { "› " } else { "  " };
             let body = match entry.nick.as_deref() {
                 Some(nick) => format!("• {name} — {nick}"),
                 None => format!("• {name}"),
             };
-            let mut style = Style::default();
-            if selected {
-                selected_line = Some(lines.len());
-                style = style
-                    .bg(Color::Rgb(40, 45, 90))
-                    .add_modifier(Modifier::BOLD);
-            }
             lines.push(Line::from(vec![
-                Span::styled(marker.to_owned(), Style::default().fg(ACCENT)),
+                Span::styled("  ".to_owned(), Style::default().fg(ACCENT)),
                 Span::styled(
                     truncate_display_width(&body, inner_width.saturating_sub(2)),
-                    style,
+                    Style::default(),
                 ),
             ]));
         }
@@ -537,43 +561,10 @@ pub(super) fn user_profile_popup_text(
 
     lines.push(Line::from(Span::raw(String::new())));
     lines.push(Line::from(Span::styled(
-        "j/k pick · Enter open · m send DM · Esc close",
+        "j/k scroll · m send DM · Esc close",
         Style::default().fg(DIM),
     )));
-    UserProfilePopupText {
-        lines,
-        selected_line,
-    }
-}
-
-pub(super) fn user_profile_popup_visible_lines(
-    lines: Vec<Line<'static>>,
-    selected_line: Option<usize>,
-    visible_height: usize,
-) -> Vec<Line<'static>> {
-    if visible_height == 0 {
-        return Vec::new();
-    }
-
-    let scroll = user_profile_popup_scroll_position(lines.len(), selected_line, visible_height);
-
-    lines
-        .into_iter()
-        .skip(scroll)
-        .take(visible_height)
-        .collect()
-}
-
-fn user_profile_popup_scroll_position(
-    total_lines: usize,
-    selected_line: Option<usize>,
-    visible_height: usize,
-) -> usize {
-    let max_scroll = total_lines.saturating_sub(visible_height);
-    selected_line
-        .map(|line| line.saturating_add(1).saturating_sub(visible_height))
-        .unwrap_or(0)
-        .min(max_scroll)
+    UserProfilePopupText { lines }
 }
 
 pub(super) fn user_profile_display_name_style(status: PresenceStatus) -> Style {
