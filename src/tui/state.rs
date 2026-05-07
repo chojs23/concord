@@ -11,8 +11,9 @@ use crate::discord::{
 };
 
 use super::format::{
-    RenderedText, TextHighlightKind, render_user_mentions, render_user_mentions_with_highlights,
-    replace_custom_emoji_markup, replace_custom_emoji_markup_in_rendered,
+    MentionTarget, RenderedText, TextHighlightKind, render_user_mentions,
+    render_user_mentions_with_highlights, replace_custom_emoji_markup,
+    replace_custom_emoji_markup_in_rendered,
 };
 use super::{media, message_format, ui};
 
@@ -619,9 +620,11 @@ impl DashboardState {
         value: &str,
     ) -> String {
         let value = replace_custom_emoji_markup(value);
-        render_user_mentions(&value, |user_id| {
-            self.resolve_mention_display_name(guild_id, mentions, user_id)
-        })
+        render_user_mentions(
+            &value,
+            |user_id| self.resolve_mention_display_name(guild_id, mentions, user_id),
+            |role_id| self.resolve_role_mention_name(guild_id, role_id),
+        )
     }
 
     pub(crate) fn render_user_mentions_with_highlights(
@@ -634,12 +637,23 @@ impl DashboardState {
         let mut rendered = render_user_mentions_with_highlights(
             value,
             |user_id| self.resolve_mention_display_name(guild_id, mentions, user_id),
-            |user_id| {
-                if current_user_id == Some(user_id) {
-                    Some(TextHighlightKind::SelfMention)
-                } else {
-                    Some(TextHighlightKind::OtherMention)
+            |role_id| self.resolve_role_mention_name(guild_id, role_id),
+            |target| match target {
+                MentionTarget::User(user_id) => {
+                    if current_user_id == Some(user_id) {
+                        Some(TextHighlightKind::SelfMention)
+                    } else {
+                        Some(TextHighlightKind::OtherMention)
+                    }
                 }
+                // Discord notifies role members on a role mention, but
+                // computing the membership check here would require the
+                // current user's role list. For the highlight pass we treat
+                // every role mention as informational; the message-level
+                // mention notification still drives self-targeted styling
+                // through the literal `@everyone`/`@here` pass below when
+                // those are used.
+                MentionTarget::Role(_) => Some(TextHighlightKind::OtherMention),
             },
         );
         if current_user_id.is_some() {
@@ -648,6 +662,19 @@ impl DashboardState {
         }
         normalize_text_highlights(&mut rendered.highlights);
         replace_custom_emoji_markup_in_rendered(rendered)
+    }
+
+    fn resolve_role_mention_name(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        role_id: u64,
+    ) -> Option<String> {
+        let guild_id = guild_id?;
+        self.discord
+            .roles_for_guild(guild_id)
+            .into_iter()
+            .find(|role| role.id.get() == role_id)
+            .map(|role| role.name.clone())
     }
 
     fn resolve_mention_display_name(

@@ -38,9 +38,22 @@ pub fn truncate_display_width(value: &str, limit: usize) -> String {
     text
 }
 
-pub fn render_user_mentions<F>(value: &str, mut resolve_name: F) -> String
+/// Identifies what kind of mention `<@…>` markup refers to. Used by the
+/// renderer to dispatch to the right name resolver and highlight class.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MentionTarget {
+    User(u64),
+    Role(u64),
+}
+
+pub fn render_user_mentions<U, R>(
+    value: &str,
+    mut resolve_user_name: U,
+    mut resolve_role_name: R,
+) -> String
 where
-    F: FnMut(u64) -> Option<String>,
+    U: FnMut(u64) -> Option<String>,
+    R: FnMut(u64) -> Option<String>,
 {
     if !value.contains("<@") {
         return value.to_owned();
@@ -52,13 +65,17 @@ where
         let start = cursor.saturating_add(relative_start);
         rendered.push_str(&value[cursor..start]);
 
-        let Some((end, user_id)) = parse_user_mention(value, start) else {
+        let Some((end, target)) = parse_mention(value, start) else {
             rendered.push_str("<@");
             cursor = start.saturating_add(2);
             continue;
         };
 
-        match resolve_name(user_id) {
+        let resolved = match target {
+            MentionTarget::User(user_id) => resolve_user_name(user_id),
+            MentionTarget::Role(role_id) => resolve_role_name(role_id),
+        };
+        match resolved {
             Some(name) => {
                 rendered.push('@');
                 rendered.push_str(&name);
@@ -110,14 +127,16 @@ pub enum TextHighlightKind {
     OtherMention,
 }
 
-pub fn render_user_mentions_with_highlights<F, H>(
+pub fn render_user_mentions_with_highlights<U, R, H>(
     value: &str,
-    mut resolve_name: F,
+    mut resolve_user_name: U,
+    mut resolve_role_name: R,
     mut highlight_kind: H,
 ) -> RenderedText
 where
-    F: FnMut(u64) -> Option<String>,
-    H: FnMut(u64) -> Option<TextHighlightKind>,
+    U: FnMut(u64) -> Option<String>,
+    R: FnMut(u64) -> Option<String>,
+    H: FnMut(MentionTarget) -> Option<TextHighlightKind>,
 {
     if !value.contains("<@") {
         return RenderedText {
@@ -134,19 +153,23 @@ where
         let start = cursor.saturating_add(relative_start);
         rendered.push_str(&value[cursor..start]);
 
-        let Some((end, user_id)) = parse_user_mention(value, start) else {
+        let Some((end, target)) = parse_mention(value, start) else {
             rendered.push_str("<@");
             cursor = start.saturating_add(2);
             continue;
         };
 
-        match resolve_name(user_id) {
+        let resolved = match target {
+            MentionTarget::User(user_id) => resolve_user_name(user_id),
+            MentionTarget::Role(role_id) => resolve_role_name(role_id),
+        };
+        match resolved {
             Some(name) => {
                 let highlight_start = rendered.len();
                 rendered.push('@');
                 rendered.push_str(&name);
                 let highlight_end = rendered.len();
-                if let Some(kind) = highlight_kind(user_id) {
+                if let Some(kind) = highlight_kind(target) {
                     highlights.push(TextHighlight {
                         start: highlight_start,
                         end: highlight_end,
@@ -360,16 +383,25 @@ fn parse_custom_emoji(value: &str, start: usize) -> Option<(usize, &str)> {
     Some((end, name))
 }
 
-fn parse_user_mention(value: &str, start: usize) -> Option<(usize, u64)> {
+fn parse_mention(value: &str, start: usize) -> Option<(usize, MentionTarget)> {
     let bytes = value.as_bytes();
     if bytes.get(start..start.saturating_add(2)) != Some(b"<@") {
         return None;
     }
 
     let mut index = start.saturating_add(2);
-    if bytes.get(index) == Some(&b'!') {
-        index = index.saturating_add(1);
-    }
+    let is_role = match bytes.get(index) {
+        Some(&b'&') => {
+            index = index.saturating_add(1);
+            true
+        }
+        Some(&b'!') => {
+            // Legacy nickname-mention prefix; same target as a plain user mention.
+            index = index.saturating_add(1);
+            false
+        }
+        _ => false,
+    };
 
     let digits_start = index;
     while matches!(bytes.get(index), Some(byte) if byte.is_ascii_digit()) {
@@ -379,11 +411,16 @@ fn parse_user_mention(value: &str, start: usize) -> Option<(usize, u64)> {
         return None;
     }
 
-    let user_id = value[digits_start..index].parse().ok()?;
-    if user_id == 0 {
+    let id: u64 = value[digits_start..index].parse().ok()?;
+    if id == 0 {
         return None;
     }
-    Some((index.saturating_add(1), user_id))
+    let target = if is_role {
+        MentionTarget::Role(id)
+    } else {
+        MentionTarget::User(id)
+    };
+    Some((index.saturating_add(1), target))
 }
 
 #[cfg(test)]
@@ -535,54 +572,72 @@ mod tests {
 
     #[test]
     fn renders_deprecated_nickname_mentions_like_user_mentions() {
-        let text = render_user_mentions("hello <@!10>", |user_id| {
-            (user_id == 10).then(|| "alice".to_owned())
-        });
+        let text = render_user_mentions(
+            "hello <@!10>",
+            |user_id| (user_id == 10).then(|| "alice".to_owned()),
+            |_| None,
+        );
 
         assert_eq!(text, "hello @alice");
     }
 
     #[test]
     fn keeps_zero_user_mentions_raw() {
-        let text = render_user_mentions("hello <@0>", |user_id| {
-            (user_id == 0).then(|| "nobody".to_owned())
-        });
+        let text = render_user_mentions(
+            "hello <@0>",
+            |user_id| (user_id == 0).then(|| "nobody".to_owned()),
+            |_| None,
+        );
 
         assert_eq!(text, "hello <@0>");
     }
 
     #[test]
-    fn keeps_role_mentions_raw() {
-        let text = render_user_mentions("hello <@&10>", |user_id| {
-            (user_id == 10).then(|| "role".to_owned())
-        });
+    fn renders_role_mentions_with_role_name() {
+        let text = render_user_mentions(
+            "hello <@&10>",
+            |_| None,
+            |role_id| (role_id == 10).then(|| "Mods".to_owned()),
+        );
 
+        assert_eq!(text, "hello @Mods");
+    }
+
+    #[test]
+    fn keeps_unknown_role_mentions_raw() {
+        let text = render_user_mentions("hello <@&10>", |_| None, |_| None);
         assert_eq!(text, "hello <@&10>");
     }
 
     #[test]
     fn keeps_overflowing_user_mentions_raw() {
-        let text = render_user_mentions("hello <@18446744073709551616>", |_| {
-            Some("overflow".to_owned())
-        });
+        let text = render_user_mentions(
+            "hello <@18446744073709551616>",
+            |_| Some("overflow".to_owned()),
+            |_| None,
+        );
 
         assert_eq!(text, "hello <@18446744073709551616>");
     }
 
     #[test]
     fn renders_user_mentions_next_to_unicode() {
-        let text = render_user_mentions("café<@10>!", |user_id| {
-            (user_id == 10).then(|| "alice".to_owned())
-        });
+        let text = render_user_mentions(
+            "café<@10>!",
+            |user_id| (user_id == 10).then(|| "alice".to_owned()),
+            |_| None,
+        );
 
         assert_eq!(text, "café@alice!");
     }
 
     #[test]
     fn keeps_malformed_user_mentions_raw() {
-        let text = render_user_mentions("hello <@abc> <@10", |user_id| {
-            (user_id == 10).then(|| "alice".to_owned())
-        });
+        let text = render_user_mentions(
+            "hello <@abc> <@10",
+            |user_id| (user_id == 10).then(|| "alice".to_owned()),
+            |_| None,
+        );
 
         assert_eq!(text, "hello <@abc> <@10");
     }
