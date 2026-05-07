@@ -624,6 +624,7 @@ impl DashboardState {
             &value,
             |user_id| self.resolve_mention_display_name(guild_id, mentions, user_id),
             |role_id| self.resolve_role_mention_name(guild_id, role_id),
+            |channel_id| self.resolve_channel_mention_name(channel_id),
         )
     }
 
@@ -638,6 +639,7 @@ impl DashboardState {
             value,
             |user_id| self.resolve_mention_display_name(guild_id, mentions, user_id),
             |role_id| self.resolve_role_mention_name(guild_id, role_id),
+            |channel_id| self.resolve_channel_mention_name(channel_id),
             |target| match target {
                 MentionTarget::User(user_id) => {
                     if current_user_id == Some(user_id) {
@@ -654,6 +656,10 @@ impl DashboardState {
                 // through the literal `@everyone`/`@here` pass below when
                 // those are used.
                 MentionTarget::Role(_) => Some(TextHighlightKind::OtherMention),
+                // Channel mentions never notify, but we highlight them so
+                // the rendered `#channel-name` stays visually distinct from
+                // surrounding text — same treatment as role mentions.
+                MentionTarget::Channel(_) => Some(TextHighlightKind::OtherMention),
             },
         );
         if current_user_id.is_some() {
@@ -675,6 +681,13 @@ impl DashboardState {
             .into_iter()
             .find(|role| role.id.get() == role_id)
             .map(|role| role.name.clone())
+    }
+
+    fn resolve_channel_mention_name(&self, channel_id: u64) -> Option<String> {
+        // `parse_mention` already rejects zero ids, so the `Id::new` call
+        // never sees the forbidden value.
+        let id = Id::<ChannelMarker>::new(channel_id);
+        self.discord.channel(id).map(|channel| channel.name.clone())
     }
 
     fn resolve_mention_display_name(

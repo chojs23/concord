@@ -38,46 +38,50 @@ pub fn truncate_display_width(value: &str, limit: usize) -> String {
     text
 }
 
-/// Identifies what kind of mention `<@…>` markup refers to. Used by the
-/// renderer to dispatch to the right name resolver and highlight class.
+/// Identifies what kind of mention markup refers to. `<@id>` and `<@!id>` are
+/// users, `<@&id>` is a role, `<#id>` is a channel. Used by the renderer to
+/// dispatch to the right name resolver and highlight class.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MentionTarget {
     User(u64),
     Role(u64),
+    Channel(u64),
 }
 
-pub fn render_user_mentions<U, R>(
+pub fn render_user_mentions<U, R, C>(
     value: &str,
     mut resolve_user_name: U,
     mut resolve_role_name: R,
+    mut resolve_channel_name: C,
 ) -> String
 where
     U: FnMut(u64) -> Option<String>,
     R: FnMut(u64) -> Option<String>,
+    C: FnMut(u64) -> Option<String>,
 {
-    if !value.contains("<@") {
+    if !contains_any_mention_prefix(value) {
         return value.to_owned();
     }
 
     let mut rendered = String::with_capacity(value.len());
     let mut cursor = 0usize;
-    while let Some(relative_start) = value[cursor..].find("<@") {
-        let start = cursor.saturating_add(relative_start);
+    while let Some(start) = next_mention_start(value, cursor) {
         rendered.push_str(&value[cursor..start]);
 
         let Some((end, target)) = parse_mention(value, start) else {
-            rendered.push_str("<@");
-            cursor = start.saturating_add(2);
+            rendered.push('<');
+            cursor = start.saturating_add(1);
             continue;
         };
 
         let resolved = match target {
             MentionTarget::User(user_id) => resolve_user_name(user_id),
             MentionTarget::Role(role_id) => resolve_role_name(role_id),
+            MentionTarget::Channel(channel_id) => resolve_channel_name(channel_id),
         };
         match resolved {
             Some(name) => {
-                rendered.push('@');
+                rendered.push(mention_prefix(target));
                 rendered.push_str(&name);
             }
             None => rendered.push_str(&value[start..end]),
@@ -86,6 +90,30 @@ where
     }
     rendered.push_str(&value[cursor..]);
     rendered
+}
+
+fn mention_prefix(target: MentionTarget) -> char {
+    match target {
+        MentionTarget::Channel(_) => '#',
+        MentionTarget::User(_) | MentionTarget::Role(_) => '@',
+    }
+}
+
+fn contains_any_mention_prefix(value: &str) -> bool {
+    value.contains("<@") || value.contains("<#")
+}
+
+fn next_mention_start(value: &str, cursor: usize) -> Option<usize> {
+    let rest = &value[cursor..];
+    let user = rest.find("<@");
+    let channel = rest.find("<#");
+    let relative = match (user, channel) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (None, None) => return None,
+    };
+    Some(cursor.saturating_add(relative))
 }
 
 const CUSTOM_EMOJI_CDN_BASE: &str = "https://cdn.discordapp.com/emojis";
@@ -127,18 +155,20 @@ pub enum TextHighlightKind {
     OtherMention,
 }
 
-pub fn render_user_mentions_with_highlights<U, R, H>(
+pub fn render_user_mentions_with_highlights<U, R, C, H>(
     value: &str,
     mut resolve_user_name: U,
     mut resolve_role_name: R,
+    mut resolve_channel_name: C,
     mut highlight_kind: H,
 ) -> RenderedText
 where
     U: FnMut(u64) -> Option<String>,
     R: FnMut(u64) -> Option<String>,
+    C: FnMut(u64) -> Option<String>,
     H: FnMut(MentionTarget) -> Option<TextHighlightKind>,
 {
-    if !value.contains("<@") {
+    if !contains_any_mention_prefix(value) {
         return RenderedText {
             text: value.to_owned(),
             highlights: Vec::new(),
@@ -149,24 +179,24 @@ where
     let mut rendered = String::with_capacity(value.len());
     let mut highlights = Vec::new();
     let mut cursor = 0usize;
-    while let Some(relative_start) = value[cursor..].find("<@") {
-        let start = cursor.saturating_add(relative_start);
+    while let Some(start) = next_mention_start(value, cursor) {
         rendered.push_str(&value[cursor..start]);
 
         let Some((end, target)) = parse_mention(value, start) else {
-            rendered.push_str("<@");
-            cursor = start.saturating_add(2);
+            rendered.push('<');
+            cursor = start.saturating_add(1);
             continue;
         };
 
         let resolved = match target {
             MentionTarget::User(user_id) => resolve_user_name(user_id),
             MentionTarget::Role(role_id) => resolve_role_name(role_id),
+            MentionTarget::Channel(channel_id) => resolve_channel_name(channel_id),
         };
         match resolved {
             Some(name) => {
                 let highlight_start = rendered.len();
-                rendered.push('@');
+                rendered.push(mention_prefix(target));
                 rendered.push_str(&name);
                 let highlight_end = rendered.len();
                 if let Some(kind) = highlight_kind(target) {
@@ -385,22 +415,38 @@ fn parse_custom_emoji(value: &str, start: usize) -> Option<(usize, &str)> {
 
 fn parse_mention(value: &str, start: usize) -> Option<(usize, MentionTarget)> {
     let bytes = value.as_bytes();
-    if bytes.get(start..start.saturating_add(2)) != Some(b"<@") {
+    if bytes.get(start) != Some(&b'<') {
         return None;
     }
 
-    let mut index = start.saturating_add(2);
-    let is_role = match bytes.get(index) {
-        Some(&b'&') => {
+    enum Prefix {
+        User,
+        Role,
+        Channel,
+    }
+
+    let mut index = start.saturating_add(1);
+    let prefix = match bytes.get(index) {
+        Some(&b'@') => {
             index = index.saturating_add(1);
-            true
+            match bytes.get(index) {
+                Some(&b'&') => {
+                    index = index.saturating_add(1);
+                    Prefix::Role
+                }
+                Some(&b'!') => {
+                    // Legacy nickname-mention prefix; same target as a plain user mention.
+                    index = index.saturating_add(1);
+                    Prefix::User
+                }
+                _ => Prefix::User,
+            }
         }
-        Some(&b'!') => {
-            // Legacy nickname-mention prefix; same target as a plain user mention.
+        Some(&b'#') => {
             index = index.saturating_add(1);
-            false
+            Prefix::Channel
         }
-        _ => false,
+        _ => return None,
     };
 
     let digits_start = index;
@@ -415,10 +461,10 @@ fn parse_mention(value: &str, start: usize) -> Option<(usize, MentionTarget)> {
     if id == 0 {
         return None;
     }
-    let target = if is_role {
-        MentionTarget::Role(id)
-    } else {
-        MentionTarget::User(id)
+    let target = match prefix {
+        Prefix::User => MentionTarget::User(id),
+        Prefix::Role => MentionTarget::Role(id),
+        Prefix::Channel => MentionTarget::Channel(id),
     };
     Some((index.saturating_add(1), target))
 }
@@ -576,6 +622,7 @@ mod tests {
             "hello <@!10>",
             |user_id| (user_id == 10).then(|| "alice".to_owned()),
             |_| None,
+            |_| None,
         );
 
         assert_eq!(text, "hello @alice");
@@ -586,6 +633,7 @@ mod tests {
         let text = render_user_mentions(
             "hello <@0>",
             |user_id| (user_id == 0).then(|| "nobody".to_owned()),
+            |_| None,
             |_| None,
         );
 
@@ -598,6 +646,7 @@ mod tests {
             "hello <@&10>",
             |_| None,
             |role_id| (role_id == 10).then(|| "Mods".to_owned()),
+            |_| None,
         );
 
         assert_eq!(text, "hello @Mods");
@@ -605,8 +654,49 @@ mod tests {
 
     #[test]
     fn keeps_unknown_role_mentions_raw() {
-        let text = render_user_mentions("hello <@&10>", |_| None, |_| None);
+        let text = render_user_mentions("hello <@&10>", |_| None, |_| None, |_| None);
         assert_eq!(text, "hello <@&10>");
+    }
+
+    #[test]
+    fn renders_channel_mentions_with_channel_name() {
+        let text = render_user_mentions(
+            "see <#42> for details",
+            |_| None,
+            |_| None,
+            |channel_id| (channel_id == 42).then(|| "general".to_owned()),
+        );
+
+        assert_eq!(text, "see #general for details");
+    }
+
+    #[test]
+    fn keeps_unknown_channel_mentions_raw() {
+        let text = render_user_mentions("see <#42>", |_| None, |_| None, |_| None);
+        assert_eq!(text, "see <#42>");
+    }
+
+    #[test]
+    fn keeps_zero_channel_mentions_raw() {
+        let text = render_user_mentions(
+            "see <#0>",
+            |_| None,
+            |_| None,
+            |_| Some("never".to_owned()),
+        );
+        assert_eq!(text, "see <#0>");
+    }
+
+    #[test]
+    fn renders_mixed_mentions_in_one_string() {
+        let text = render_user_mentions(
+            "hi <@10> in <#20> and <@&30>",
+            |user_id| (user_id == 10).then(|| "alice".to_owned()),
+            |role_id| (role_id == 30).then(|| "Mods".to_owned()),
+            |channel_id| (channel_id == 20).then(|| "general".to_owned()),
+        );
+
+        assert_eq!(text, "hi @alice in #general and @Mods");
     }
 
     #[test]
@@ -614,6 +704,7 @@ mod tests {
         let text = render_user_mentions(
             "hello <@18446744073709551616>",
             |_| Some("overflow".to_owned()),
+            |_| None,
             |_| None,
         );
 
@@ -626,6 +717,7 @@ mod tests {
             "café<@10>!",
             |user_id| (user_id == 10).then(|| "alice".to_owned()),
             |_| None,
+            |_| None,
         );
 
         assert_eq!(text, "café@alice!");
@@ -636,6 +728,7 @@ mod tests {
         let text = render_user_mentions(
             "hello <@abc> <@10",
             |user_id| (user_id == 10).then(|| "alice".to_owned()),
+            |_| None,
             |_| None,
         );
 
