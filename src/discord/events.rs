@@ -133,6 +133,16 @@ pub struct GuildFolder {
     pub guild_ids: Vec<Id<GuildMarker>>,
 }
 
+/// One entry from `READY.read_state.entries[]`. The Discord wire field
+/// `last_message_id` is renamed here because it actually carries the
+/// last *ACKED* id, not the newest message in the channel.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReadStateInfo {
+    pub channel_id: Id<ChannelMarker>,
+    pub last_acked_message_id: Option<Id<MessageMarker>>,
+    pub mention_count: u32,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CustomEmojiInfo {
     pub id: Id<EmojiMarker>,
@@ -628,6 +638,15 @@ pub enum AppEvent {
     /// arrived first).
     ActivateChannel {
         channel_id: Id<ChannelMarker>,
+    },
+    ReadStateInit {
+        entries: Vec<ReadStateInfo>,
+    },
+    /// Gateway `MESSAGE_ACK` or a locally synthesized ack on activation.
+    MessageAck {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        mention_count: u32,
     },
     GatewayClosed,
 }

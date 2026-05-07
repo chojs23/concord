@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::discord::ids::{
     Id,
@@ -6,8 +6,8 @@ use crate::discord::ids::{
 };
 
 use crate::discord::{
-    AppCommand, AppEvent, DiscordState, ForumPostArchiveState, MentionInfo, MessageInfo,
-    MessageSnapshotInfo, MessageState,
+    AppCommand, AppEvent, ChannelUnreadState, DiscordState, ForumPostArchiveState, MentionInfo,
+    MessageInfo, MessageSnapshotInfo, MessageState,
 };
 
 use super::format::{
@@ -171,6 +171,7 @@ pub struct DashboardState {
     /// "folders" (id = None) are never collapsible since they have no header.
     collapsed_folders: HashSet<FolderKey>,
     collapsed_channel_categories: HashSet<Id<ChannelMarker>>,
+    pending_commands: VecDeque<AppCommand>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -240,7 +241,12 @@ impl DashboardState {
             forum_post_lists: HashMap::new(),
             collapsed_folders: HashSet::new(),
             collapsed_channel_categories: HashSet::new(),
+            pending_commands: VecDeque::new(),
         }
+    }
+
+    pub fn drain_pending_commands(&mut self) -> Vec<AppCommand> {
+        self.pending_commands.drain(..).collect()
     }
 
     #[cfg(test)]
@@ -506,6 +512,10 @@ impl DashboardState {
 
     pub fn focus(&self) -> FocusPane {
         self.focus
+    }
+
+    pub fn channel_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
+        self.discord.channel_unread(channel_id)
     }
 
     pub fn current_user(&self) -> Option<&str> {

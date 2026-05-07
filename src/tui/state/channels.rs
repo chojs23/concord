@@ -4,7 +4,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
-use crate::discord::{AppCommand, ChannelState};
+use crate::discord::{AppCommand, AppEvent, ChannelState};
 
 use super::{ActiveGuildScope, DashboardState, ThreadReturnTarget};
 use super::{
@@ -823,6 +823,22 @@ impl DashboardState {
         };
         self.message_scroll = 0;
         self.clamp_message_viewport();
+        self.queue_channel_ack(channel_id);
+    }
+
+    /// Optimistic local ack + queued REST POST so the unread badge clears
+    /// immediately on activation.
+    fn queue_channel_ack(&mut self, channel_id: Id<ChannelMarker>) {
+        let Some(message_id) = self.discord.channel_ack_target(channel_id) else {
+            return;
+        };
+        self.discord.apply_event(&AppEvent::MessageAck {
+            channel_id,
+            message_id,
+            mention_count: 0,
+        });
+        self.pending_commands
+            .push_back(AppCommand::AckChannel { channel_id, message_id });
     }
 
     fn selected_channel_category_id(&self) -> Option<Id<ChannelMarker>> {

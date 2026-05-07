@@ -29,9 +29,20 @@ use super::{
     },
 };
 use crate::discord::{
-    ChannelState, ChannelVisibilityStats, FriendStatus, MessageState, PresenceStatus, ReactionInfo,
-    ReactionUsersInfo, UserProfileInfo,
+    ChannelState, ChannelUnreadState, ChannelVisibilityStats, FriendStatus, MessageState,
+    PresenceStatus, ReactionInfo, ReactionUsersInfo, UserProfileInfo,
 };
+
+/// `#FFA500` — Discord's "you were mentioned" orange.
+const MENTION_ORANGE: Color = Color::Rgb(255, 165, 0);
+
+/// Explicit RGB instead of `Modifier::DIM` so CJK wide characters dim
+/// uniformly with ASCII (most terminals ignore SGR dim on wide glyphs).
+const READ_DIM: Color = Color::Rgb(130, 130, 130);
+
+/// Explicit RGB instead of relying on `Modifier::BOLD` alone, which most
+/// monospace fonts can't apply to CJK glyphs.
+const UNREAD_BRIGHT: Color = Color::Rgb(255, 255, 255);
 
 mod forum;
 mod interaction;
@@ -262,13 +273,36 @@ fn channel_prefix(kind: &str) -> &'static str {
     }
 }
 
-fn channel_name_style(channel: &ChannelState, active: bool) -> Style {
-    match one_to_one_dm_recipient_status(channel) {
-        Some(status) if active => Style::default()
-            .fg(presence_color(status))
-            .add_modifier(Modifier::BOLD),
-        Some(status) => Style::default().fg(presence_color(status)),
-        None => active_text_style(active, Style::default()),
+fn dm_presence_dot_span(channel: &ChannelState) -> Option<Span<'static>> {
+    let status = one_to_one_dm_recipient_status(channel)?;
+    Some(Span::styled(
+        "● ",
+        Style::default().fg(presence_color(status)),
+    ))
+}
+
+/// Active channels skip decoration; the highlight bar handles them and
+/// the activate-time ack clears their unread state anyway.
+fn channel_unread_decoration(
+    unread: ChannelUnreadState,
+    base: Style,
+    active: bool,
+) -> (Option<Span<'static>>, Style) {
+    if active {
+        return (None, base);
+    }
+    match unread {
+        ChannelUnreadState::Mentioned(count) => {
+            let style = Style::default()
+                .fg(MENTION_ORANGE)
+                .add_modifier(Modifier::BOLD);
+            (Some(Span::styled(format!("({count}) "), style)), style)
+        }
+        ChannelUnreadState::Unread => (
+            None,
+            base.fg(UNREAD_BRIGHT).add_modifier(Modifier::BOLD),
+        ),
+        ChannelUnreadState::Seen => (None, base.fg(READ_DIM)),
     }
 }
 

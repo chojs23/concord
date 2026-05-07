@@ -10,7 +10,7 @@ use crate::{
         AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, EmbedFieldInfo,
         EmbedInfo, FriendStatus, GuildFolder, MemberInfo, MentionInfo, MessageInfo, MessageKind,
         MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus,
-        ReactionEmoji, ReactionInfo, ReplyInfo, RoleInfo,
+        ReactionEmoji, ReactionInfo, ReadStateInfo, ReplyInfo, RoleInfo,
         events::default_avatar_url,
         events::{AppEvent, AttachmentUpdate, PermissionOverwriteInfo, PermissionOverwriteKind},
         ids::{
@@ -67,6 +67,7 @@ pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         "MESSAGE_REACTION_REMOVE_EMOJI" => parse_message_reaction_remove_emoji(data)
             .into_iter()
             .collect(),
+        "MESSAGE_ACK" => parse_message_ack(data).into_iter().collect(),
         "GUILD_MEMBER_ADD" => parse_member_add(data).into_iter().collect(),
         "GUILD_MEMBER_UPDATE" => parse_member_upsert(data).into_iter().collect(),
         "GUILD_MEMBER_LIST_UPDATE" => parse_member_list_update(data),
@@ -196,6 +197,22 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
             events.push(AppEvent::RelationshipsLoaded {
                 relationships: parsed,
             });
+        }
+    }
+
+    // VERSIONED_READ_STATES wraps the array as `{ entries, version, partial }`;
+    // older shards send a bare array. Accept both.
+    if let Some(entries) = data
+        .get("read_state")
+        .and_then(|node| node.get("entries").or(Some(node)))
+        .and_then(Value::as_array)
+    {
+        let parsed: Vec<ReadStateInfo> = entries
+            .iter()
+            .filter_map(parse_read_state_entry)
+            .collect();
+        if !parsed.is_empty() {
+            events.push(AppEvent::ReadStateInit { entries: parsed });
         }
     }
 
@@ -882,6 +899,31 @@ fn parse_message_delete(data: &Value) -> Option<AppEvent> {
         guild_id,
         channel_id,
         message_id,
+    })
+}
+
+fn parse_read_state_entry(value: &Value) -> Option<ReadStateInfo> {
+    let channel_id = parse_id::<ChannelMarker>(value.get("id")?)?;
+    Some(ReadStateInfo {
+        channel_id,
+        last_acked_message_id: value
+            .get("last_message_id")
+            .and_then(parse_id::<MessageMarker>),
+        mention_count: value
+            .get("mention_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+    })
+}
+
+fn parse_message_ack(data: &Value) -> Option<AppEvent> {
+    Some(AppEvent::MessageAck {
+        channel_id: parse_id::<ChannelMarker>(data.get("channel_id")?)?,
+        message_id: parse_id::<MessageMarker>(data.get("message_id")?)?,
+        mention_count: data
+            .get("mention_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
     })
 }
 
@@ -4154,6 +4196,72 @@ mod tests {
         assert_eq!(recipients[0].user_id, Id::new(20));
         assert_eq!(recipients[0].display_name, "global");
         assert_eq!(recipients[0].username.as_deref(), Some("asdf"));
+    }
+
+    #[test]
+    fn message_ack_carries_channel_message_and_mention_count() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "MESSAGE_ACK",
+                "d": {
+                    "channel_id": "42",
+                    "message_id": "99",
+                    "mention_count": 2,
+                }
+            })
+            .to_string(),
+        );
+
+        match events.as_slice() {
+            [
+                AppEvent::MessageAck {
+                    channel_id,
+                    message_id,
+                    mention_count,
+                },
+            ] => {
+                assert_eq!(*channel_id, Id::new(42));
+                assert_eq!(*message_id, Id::new(99));
+                assert_eq!(*mention_count, 2);
+            }
+            other => panic!("expected one MessageAck, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ready_payload_emits_read_state_init_with_ack_pointers() {
+        // Minimal READY: a `user`, an empty guild list (so the test stays
+        // light), and a `read_state.entries[]` array with two channels.
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY",
+                "d": {
+                    "user": { "id": "1", "username": "neo" },
+                    "guilds": [],
+                    "read_state": {
+                        "entries": [
+                            { "id": "11", "last_message_id": "20", "mention_count": 0 },
+                            { "id": "12", "last_message_id": "30", "mention_count": 4 },
+                        ]
+                    }
+                }
+            })
+            .to_string(),
+        );
+
+        let entries = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::ReadStateInit { entries } => Some(entries.clone()),
+                _ => None,
+            })
+            .expect("READY should emit a ReadStateInit");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].channel_id, Id::new(11));
+        assert_eq!(entries[0].last_acked_message_id, Some(Id::new(20)));
+        assert_eq!(entries[0].mention_count, 0);
+        assert_eq!(entries[1].channel_id, Id::new(12));
+        assert_eq!(entries[1].mention_count, 4);
     }
 
     #[test]

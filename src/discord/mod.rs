@@ -18,12 +18,13 @@ pub use events::{
     EmbedFieldInfo, EmbedInfo, FriendStatus, GuildFolder, InlinePreviewInfo, MemberInfo,
     MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
     MutualGuildInfo, PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo,
-    PresenceStatus, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo,
-    SequencedAppEvent, UserProfileInfo,
+    PresenceStatus, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo,
+    RoleInfo, SequencedAppEvent, UserProfileInfo,
 };
 pub use ids::{Id, marker};
 pub use rest::ForumPostPage;
 pub use state::{
-    ChannelRecipientState, ChannelState, ChannelVisibilityStats, DiscordSnapshot, DiscordState,
-    GuildMemberState, GuildState, MessageCapabilities, MessageState, RoleState, SnapshotRevision,
+    ChannelRecipientState, ChannelState, ChannelUnreadState, ChannelVisibilityStats,
+    DiscordSnapshot, DiscordState, GuildMemberState, GuildState, MessageCapabilities, MessageState,
+    RoleState, SnapshotRevision,
 };

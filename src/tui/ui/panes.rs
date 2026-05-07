@@ -19,7 +19,8 @@ use super::super::{
     },
 };
 use super::{
-    active_text_style, channel_name_style, channel_prefix, highlight_style,
+    active_text_style, channel_prefix, channel_unread_decoration, dm_presence_dot_span,
+    highlight_style,
     layout::{composer_inner_width, panel_scrollbar_area},
     panel_block, panel_block_owned, panel_content_height, render_vertical_scrollbar,
     selection_marker, styled_list_item,
@@ -103,6 +104,7 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
 }
 
 pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    let dashboard = state;
     let entries = state.visible_channel_pane_entries();
     let max_width = area.width.saturating_sub(8) as usize;
     let selected = state.focused_channel_selection();
@@ -111,7 +113,7 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
         .enumerate()
         .map(|(index, entry)| {
             let is_selected = selected == Some(index);
-            let is_active = state.is_active_channel_entry(entry);
+            let is_active = dashboard.is_active_channel_entry(entry);
             styled_list_item(
                 match entry {
                     ChannelPaneEntry::CategoryHeader { state, collapsed } => {
@@ -128,19 +130,38 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                     }
                     ChannelPaneEntry::Channel { state, branch } => {
                         let branch_prefix = branch.prefix();
-                        let channel_prefix = channel_prefix(&state.kind);
+                        let prefix_span = dm_presence_dot_span(state).unwrap_or_else(|| {
+                            Span::styled(
+                                channel_prefix(&state.kind),
+                                Style::default().fg(DIM),
+                            )
+                        });
+                        let prefix_width = prefix_span.content.width();
+                        let base_style = active_text_style(is_active, Style::default());
+                        let unread = dashboard.channel_unread(state.id);
+                        let (badge, name_style) =
+                            channel_unread_decoration(unread, base_style, is_active);
+                        let badge_width = badge
+                            .as_ref()
+                            .map(|span| span.content.width())
+                            .unwrap_or(0);
                         let label_width = max_width
                             .saturating_sub(branch_prefix.width())
-                            .saturating_sub(channel_prefix.width());
-                        ListItem::new(Line::from(vec![
+                            .saturating_sub(prefix_width)
+                            .saturating_sub(badge_width);
+                        let mut spans = vec![
                             selection_marker(is_selected),
                             Span::styled(branch_prefix, Style::default().fg(DIM)),
-                            Span::styled(channel_prefix, Style::default().fg(DIM)),
-                            Span::styled(
-                                truncate_display_width(&state.name, label_width),
-                                channel_name_style(state, is_active),
-                            ),
-                        ]))
+                        ];
+                        if let Some(badge) = badge {
+                            spans.push(badge);
+                        }
+                        spans.push(prefix_span);
+                        spans.push(Span::styled(
+                            truncate_display_width(&state.name, label_width),
+                            name_style,
+                        ));
+                        ListItem::new(Line::from(spans))
                     }
                 },
                 is_selected,

@@ -503,6 +503,16 @@ async fn run_dashboard(
             total_draw_ms = total_draw_ms.saturating_add(draw_ms);
             max_draw_ms = max_draw_ms.max(draw_ms);
 
+            for command in state.drain_pending_commands() {
+                if commands.send(command).await.is_err() {
+                    logging::error("tui", "command channel closed");
+                    state.push_effect(AppEvent::GatewayError {
+                        message: "command channel closed".to_owned(),
+                    });
+                    dirty = true;
+                    break;
+                }
+            }
             for command in image_previews.next_requests(&image_targets) {
                 redraw_diagnostics.media_requests =
                     redraw_diagnostics.media_requests.saturating_add(1);

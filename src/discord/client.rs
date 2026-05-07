@@ -203,6 +203,14 @@ impl DiscordClient {
         self.rest.delete_message(channel_id, message_id).await
     }
 
+    pub async fn ack_channel(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    ) -> Result<()> {
+        self.rest.ack_channel(channel_id, message_id).await
+    }
+
     pub async fn load_message_history(
         &self,
         channel_id: Id<ChannelMarker>,

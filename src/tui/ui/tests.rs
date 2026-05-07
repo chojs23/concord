@@ -10,9 +10,10 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    ACCENT, DIM, DISCORD_EPOCH_MILLIS, ImagePreview, ImagePreviewState, MemberEntry,
-    SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, SNOWFLAKE_TIMESTAMP_SHIFT,
-    channel_action_menu_lines, channel_name_style, composer_content_line_count, composer_lines,
+    ACCENT, DIM, DISCORD_EPOCH_MILLIS, ImagePreview, ImagePreviewState, MENTION_ORANGE,
+    MemberEntry, SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, SNOWFLAKE_TIMESTAMP_SHIFT,
+    READ_DIM, UNREAD_BRIGHT, channel_action_menu_lines, channel_unread_decoration,
+    composer_content_line_count, composer_lines, dm_presence_dot_span,
     composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
     emoji_reaction_picker_lines, focus_pane_at, footer_hint, format_message_sent_time,
     format_unix_millis_with_offset, forum_post_reaction_summary,
@@ -28,10 +29,10 @@ use super::{
 use crate::{
     discord::{
         AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientState, ChannelState,
-        ChannelVisibilityStats, EmbedInfo, FriendStatus, GuildMemberState, MemberInfo, MentionInfo,
-        MessageInfo, MessageKind, MessageSnapshotInfo, MessageState, MutualGuildInfo,
-        PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo,
-        ReactionUsersInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+        ChannelUnreadState, ChannelVisibilityStats, EmbedInfo, FriendStatus, GuildMemberState,
+        MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageSnapshotInfo, MessageState,
+        MutualGuildInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
+        ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo, UserProfileInfo,
     },
     tui::{
         format::{TextHighlightKind, truncate_display_width},
@@ -141,15 +142,55 @@ fn reply_composer_hint_line_is_dim() {
 }
 
 #[test]
-fn one_to_one_dm_channel_name_uses_recipient_status_color() {
+fn one_to_one_dm_carries_presence_in_dot() {
     let channel = channel_with_recipients("dm", &[PresenceStatus::DoNotDisturb]);
 
-    let inactive_style = channel_name_style(&channel, false);
-    let active_style = channel_name_style(&channel, true);
+    let dot = dm_presence_dot_span(&channel).expect("1-on-1 DM should produce a presence dot");
+    assert_eq!(dot.content.as_ref(), "● ");
+    assert_eq!(dot.style.fg, Some(Color::Red));
+}
 
-    assert_eq!(inactive_style.fg, Some(Color::Red));
-    assert_eq!(active_style.fg, Some(Color::Red));
-    assert!(active_style.add_modifier.contains(Modifier::BOLD));
+#[test]
+fn channel_unread_decoration_seen_dims_inactive_label() {
+    let base = Style::default().fg(Color::White);
+    let (badge, style) = channel_unread_decoration(ChannelUnreadState::Seen, base, false);
+
+    assert!(badge.is_none());
+    assert!(!style.add_modifier.contains(Modifier::BOLD));
+    assert!(!style.add_modifier.contains(Modifier::DIM));
+    assert_eq!(style.fg, Some(READ_DIM));
+}
+
+#[test]
+fn channel_unread_decoration_unread_brightens_and_bolds() {
+    let base = Style::default().fg(Color::White);
+    let (badge, style) = channel_unread_decoration(ChannelUnreadState::Unread, base, false);
+
+    assert!(badge.is_none());
+    assert!(style.add_modifier.contains(Modifier::BOLD));
+    assert_eq!(style.fg, Some(UNREAD_BRIGHT));
+}
+
+#[test]
+fn channel_unread_decoration_mentioned_uses_orange_with_count_badge() {
+    let base = Style::default().fg(Color::White);
+    let (badge, style) = channel_unread_decoration(ChannelUnreadState::Mentioned(3), base, false);
+
+    let badge = badge.expect("mention should include a count badge");
+    assert_eq!(badge.content.as_ref(), "(3) ");
+    assert_eq!(badge.style.fg, Some(MENTION_ORANGE));
+    assert!(badge.style.add_modifier.contains(Modifier::BOLD));
+    assert_eq!(style.fg, Some(MENTION_ORANGE));
+    assert!(style.add_modifier.contains(Modifier::BOLD));
+}
+
+#[test]
+fn channel_unread_decoration_active_skips_decoration() {
+    let base = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
+    let (badge, style) = channel_unread_decoration(ChannelUnreadState::Mentioned(2), base, true);
+
+    assert!(badge.is_none());
+    assert_eq!(style, base);
 }
 
 #[test]
@@ -618,30 +659,21 @@ fn user_profile_popup_lists_mutual_servers_without_selection_marker() {
 }
 
 #[test]
-fn unknown_dm_status_uses_dim_channel_style() {
+fn unknown_dm_status_uses_dim_presence_dot() {
     let channel = channel_with_recipients("dm", &[PresenceStatus::Unknown]);
 
-    assert_eq!(
-        channel_name_style(&channel, false).fg,
-        Some(Color::DarkGray)
-    );
-    assert_eq!(channel_name_style(&channel, true).fg, Some(Color::DarkGray));
-    assert!(
-        channel_name_style(&channel, true)
-            .add_modifier
-            .contains(Modifier::BOLD)
-    );
+    let dot = dm_presence_dot_span(&channel).expect("DM should still produce a dot");
+    assert_eq!(dot.style.fg, Some(Color::DarkGray));
 }
 
 #[test]
-fn group_dm_channel_name_keeps_default_channel_style() {
+fn group_dm_has_no_presence_dot() {
     let channel = channel_with_recipients(
         "group-dm",
         &[PresenceStatus::Online, PresenceStatus::DoNotDisturb],
     );
 
-    assert_eq!(channel_name_style(&channel, false).fg, None);
-    assert_eq!(channel_name_style(&channel, true).fg, Some(Color::Green));
+    assert!(dm_presence_dot_span(&channel).is_none());
 }
 
 #[test]

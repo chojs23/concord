@@ -20,6 +20,19 @@ use super::{
     PresenceStatus, ReactionInfo, ReplyInfo, RoleInfo, UserProfileInfo,
 };
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ChannelReadState {
+    last_acked_message_id: Option<Id<MessageMarker>>,
+    mention_count: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChannelUnreadState {
+    Seen,
+    Unread,
+    Mentioned(u32),
+}
+
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
 const OLDER_HISTORY_EXTRA_WINDOW_MULTIPLIER: usize = 2;
 
@@ -313,6 +326,7 @@ pub struct DiscordState {
     /// the indicator every ~10 seconds; readers prune stale entries via
     /// `typing_users` so the map stays small.
     typing: BTreeMap<Id<ChannelMarker>, BTreeMap<Id<UserMarker>, Instant>>,
+    read_states: BTreeMap<Id<ChannelMarker>, ChannelReadState>,
     max_messages_per_channel: usize,
 }
 
@@ -364,6 +378,7 @@ impl DiscordState {
             current_user_id: None,
             current_user: None,
             typing: BTreeMap::new(),
+            read_states: BTreeMap::new(),
             max_messages_per_channel,
         }
     }
@@ -496,6 +511,14 @@ impl DiscordState {
             } => {
                 let guild_id = guild_id.or_else(|| self.channel_guild_id(*channel_id));
                 self.record_author_role_ids(*channel_id, *message_id, author_role_ids);
+                // Self-authored mentions never bump our own sidebar.
+                if let Some(self_id) = self.current_user_id
+                    && *author_id != self_id
+                    && mentions.iter().any(|mention| mention.user_id == self_id)
+                {
+                    let entry = self.read_states.entry(*channel_id).or_default();
+                    entry.mention_count = entry.mention_count.saturating_add(1);
+                }
                 self.upsert_message(MessageState {
                     id: *message_id,
                     guild_id,
@@ -737,6 +760,27 @@ impl DiscordState {
                     self.current_user_id = Some(*user_id);
                 }
             }
+            AppEvent::ReadStateInit { entries } => {
+                self.read_states.clear();
+                for entry in entries {
+                    self.read_states.insert(
+                        entry.channel_id,
+                        ChannelReadState {
+                            last_acked_message_id: entry.last_acked_message_id,
+                            mention_count: entry.mention_count,
+                        },
+                    );
+                }
+            }
+            AppEvent::MessageAck {
+                channel_id,
+                message_id,
+                mention_count,
+            } => {
+                let entry = self.read_states.entry(*channel_id).or_default();
+                entry.last_acked_message_id = Some(*message_id);
+                entry.mention_count = *mention_count;
+            }
             AppEvent::GatewayError { .. }
             | AppEvent::StatusMessage { .. }
             | AppEvent::ReactionUsersLoaded { .. }
@@ -747,6 +791,42 @@ impl DiscordState {
             | AppEvent::UserProfileLoadFailed { .. }
             | AppEvent::ActivateChannel { .. }
             | AppEvent::GatewayClosed => {}
+        }
+    }
+
+    pub fn channel_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
+        let Some(channel) = self.channels.get(&channel_id) else {
+            return ChannelUnreadState::Seen;
+        };
+        let Some(latest) = channel.last_message_id else {
+            return ChannelUnreadState::Seen;
+        };
+        let read = self.read_states.get(&channel_id).copied().unwrap_or_default();
+        if read.mention_count > 0 {
+            return ChannelUnreadState::Mentioned(read.mention_count);
+        }
+        let acked = read.last_acked_message_id;
+        if acked.is_none_or(|acked| acked < latest) {
+            ChannelUnreadState::Unread
+        } else {
+            ChannelUnreadState::Seen
+        }
+    }
+
+    /// `None` when the channel is already fully read or has no messages.
+    pub fn channel_ack_target(
+        &self,
+        channel_id: Id<ChannelMarker>,
+    ) -> Option<Id<MessageMarker>> {
+        let channel = self.channels.get(&channel_id)?;
+        let latest = channel.last_message_id?;
+        let acked = self
+            .read_states
+            .get(&channel_id)
+            .and_then(|state| state.last_acked_message_id);
+        match acked {
+            Some(acked) if acked >= latest => None,
+            _ => Some(latest),
         }
     }
 
@@ -1858,11 +1938,12 @@ mod tests {
     };
 
     use crate::discord::{
-        AppEvent, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, ChannelVisibilityStats,
-        CustomEmojiInfo, DiscordState, FriendStatus, MemberInfo, MentionInfo, MessageInfo,
-        MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MessageState, MutualGuildInfo,
-        PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus,
-        ReactionEmoji, ReactionInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+        AppEvent, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, ChannelUnreadState,
+        ChannelVisibilityStats, CustomEmojiInfo, DiscordState, FriendStatus, MemberInfo,
+        MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+        MessageState, MutualGuildInfo, PermissionOverwriteInfo, PermissionOverwriteKind,
+        PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo,
+        ReplyInfo, RoleInfo, UserProfileInfo,
     };
 
     fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -5870,5 +5951,151 @@ mod tests {
             source_channel_id: None,
             timestamp: None,
         }
+    }
+
+    fn channel_with_last_message(
+        channel_id: Id<ChannelMarker>,
+        last_message_id: u64,
+    ) -> ChannelInfo {
+        ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: Some(Id::new(last_message_id)),
+            name: "general".to_owned(),
+            kind: "text".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn channel_with_no_ack_pointer_is_unread_when_messages_exist() {
+        let channel_id = Id::new(7);
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
+            channel_id, 100,
+        )));
+
+        // No ReadStateInit at all — Discord never told us about this channel,
+        // so any non-empty channel should light up as unread.
+        assert_eq!(
+            state.channel_unread(channel_id),
+            ChannelUnreadState::Unread
+        );
+    }
+
+    #[test]
+    fn channel_with_ack_pointer_below_latest_is_unread() {
+        let channel_id = Id::new(7);
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
+            channel_id, 200,
+        )));
+        state.apply_event(&AppEvent::ReadStateInit {
+            entries: vec![ReadStateInfo {
+                channel_id,
+                last_acked_message_id: Some(Id::new(150)),
+                mention_count: 0,
+            }],
+        });
+
+        assert_eq!(
+            state.channel_unread(channel_id),
+            ChannelUnreadState::Unread
+        );
+    }
+
+    #[test]
+    fn channel_with_ack_at_latest_is_seen() {
+        let channel_id = Id::new(7);
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
+            channel_id, 200,
+        )));
+        state.apply_event(&AppEvent::ReadStateInit {
+            entries: vec![ReadStateInfo {
+                channel_id,
+                last_acked_message_id: Some(Id::new(200)),
+                mention_count: 0,
+            }],
+        });
+
+        assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Seen);
+    }
+
+    #[test]
+    fn channel_with_pending_mentions_reports_mention_count() {
+        let channel_id = Id::new(7);
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
+            channel_id, 200,
+        )));
+        state.apply_event(&AppEvent::ReadStateInit {
+            entries: vec![ReadStateInfo {
+                channel_id,
+                last_acked_message_id: Some(Id::new(200)),
+                mention_count: 3,
+            }],
+        });
+
+        assert_eq!(
+            state.channel_unread(channel_id),
+            ChannelUnreadState::Mentioned(3)
+        );
+    }
+
+    #[test]
+    fn message_ack_clears_outstanding_mentions_and_advances_pointer() {
+        let channel_id = Id::new(7);
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
+            channel_id, 500,
+        )));
+        state.apply_event(&AppEvent::ReadStateInit {
+            entries: vec![ReadStateInfo {
+                channel_id,
+                last_acked_message_id: Some(Id::new(100)),
+                mention_count: 5,
+            }],
+        });
+        assert_eq!(
+            state.channel_unread(channel_id),
+            ChannelUnreadState::Mentioned(5)
+        );
+
+        state.apply_event(&AppEvent::MessageAck {
+            channel_id,
+            message_id: Id::new(500),
+            mention_count: 0,
+        });
+
+        assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Seen);
+        assert_eq!(
+            state.channel_ack_target(channel_id),
+            None,
+            "fully-acked channels need no further ack"
+        );
+    }
+
+    #[test]
+    fn channel_ack_target_returns_latest_when_unread() {
+        let channel_id = Id::new(7);
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
+            channel_id, 500,
+        )));
+
+        // No ack pointer at all -> ack target is the channel's last message.
+        assert_eq!(
+            state.channel_ack_target(channel_id),
+            Some(Id::new(500))
+        );
     }
 }
