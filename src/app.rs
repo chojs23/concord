@@ -3,6 +3,7 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
     time::Instant,
 };
 
@@ -10,7 +11,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, MessageMarker},
 };
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 use tokio::time::{Duration, timeout};
 
 use crate::{
@@ -25,6 +26,7 @@ const THREAD_PREVIEW_LIMIT: u16 = 1;
 const MAX_ATTACHMENT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ATTACHMENT_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
 const ATTACHMENT_PREVIEW_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_CONCURRENT_ATTACHMENT_PREVIEWS: usize = 4;
 
 #[derive(Default)]
 pub struct App;
@@ -89,6 +91,8 @@ fn start_command_loop(
     mut commands: mpsc::Receiver<AppCommand>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let attachment_preview_permits =
+            Arc::new(Semaphore::new(MAX_CONCURRENT_ATTACHMENT_PREVIEWS));
         // Each command spawns its own task so they run concurrently. The
         // previous serial loop blocked the queue: a slow LoadGuildMembers
         // could delay the LoadForumPosts behind it for seconds. The HTTP
@@ -96,6 +100,7 @@ fn start_command_loop(
         // spawning costs almost nothing here.
         while let Some(command) = commands.recv().await {
             let client = client.clone();
+            let attachment_preview_permits = attachment_preview_permits.clone();
             tokio::spawn(async move {
                 match command {
                     AppCommand::LoadMessageHistory { channel_id, before } => {
@@ -343,6 +348,17 @@ fn start_command_loop(
                         }
                     }
                     AppCommand::LoadAttachmentPreview { url } => {
+                        let Ok(_permit) = attachment_preview_permits.acquire_owned().await else {
+                            let message = "attachment preview limiter closed".to_owned();
+                            logging::error("preview", &message);
+                            client
+                                .publish_event(AppEvent::AttachmentPreviewLoadFailed {
+                                    url,
+                                    message,
+                                })
+                                .await;
+                            return;
+                        };
                         match timeout(ATTACHMENT_PREVIEW_TIMEOUT, fetch_attachment_preview(&url))
                             .await
                         {
@@ -801,18 +817,23 @@ async fn fetch_limited_bytes(
         ));
     }
 
-    let bytes = response
-        .bytes()
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|error| format!("{read_error}: {error}"))?;
-    if bytes.len() > max_bytes {
-        return Err(format!(
-            "{size_label} is too large: {} bytes (max {max_bytes})",
-            bytes.len()
-        ));
+        .map_err(|error| format!("{read_error}: {error}"))?
+    {
+        if bytes.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(format!(
+                "{size_label} is too large: {} bytes (max {max_bytes})",
+                bytes.len().saturating_add(chunk.len())
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
     }
 
-    Ok(bytes.to_vec())
+    Ok(bytes)
 }
 
 fn downloads_directory() -> std::result::Result<PathBuf, String> {
