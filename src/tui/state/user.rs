@@ -259,46 +259,6 @@ impl DashboardState {
         }
     }
 
-    /// Resolves a one-on-one DM channel with the user the popup is showing,
-    /// switching the dashboard to it. If a DM is already in state, opens it
-    /// immediately. Otherwise emits an `OpenDirectMessage` command so the
-    /// REST handler can create or fetch the channel and (via
-    /// `AppEvent::ActivateChannel`) bring the UI to it once it lands.
-    pub fn open_direct_message_with_profile_target(&mut self) -> Option<AppCommand> {
-        let user_id = self.user_profile_popup.as_ref()?.user_id;
-        if Some(user_id) == self.current_user_id {
-            // Discord doesn't expose self-DMs; quietly do nothing rather
-            // than firing a REST call we know will fail.
-            return None;
-        }
-        if let Some(channel_id) = self.find_one_on_one_dm_channel(user_id) {
-            self.close_user_profile_popup();
-            self.activate_guild(ActiveGuildScope::DirectMessages);
-            self.activate_channel(channel_id);
-            return None;
-        }
-        self.close_user_profile_popup();
-        Some(AppCommand::OpenDirectMessage { user_id })
-    }
-
-    fn find_one_on_one_dm_channel(
-        &self,
-        user_id: Id<UserMarker>,
-    ) -> Option<crate::discord::ids::Id<crate::discord::ids::marker::ChannelMarker>> {
-        self.discord
-            .channels_for_guild(None)
-            .into_iter()
-            .find(|channel| {
-                channel.kind == "dm"
-                    && channel.recipients.len() == 1
-                    && channel
-                        .recipients
-                        .iter()
-                        .any(|recipient| recipient.user_id == user_id)
-            })
-            .map(|channel| channel.id)
-    }
-
     pub fn members_grouped(&self) -> Vec<MemberGroup<'_>> {
         let Some(guild_id) = self.selected_guild_id() else {
             return self.selected_channel_recipient_group();

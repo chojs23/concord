@@ -542,35 +542,6 @@ impl DiscordRest {
         Ok(())
     }
 
-    /// Resolves a one-on-one DM channel with `recipient_id`, creating it if
-    /// the user has never DM'd them before. Discord's
-    /// `POST /users/@me/channels` endpoint returns the existing channel
-    /// when one already exists, so this call is idempotent and safe to
-    /// invoke from a "Send DM" button.
-    pub async fn create_direct_message(&self, recipient_id: Id<UserMarker>) -> Result<ChannelInfo> {
-        let body = json!({ "recipient_id": recipient_id.to_string() });
-        let raw = self
-            .raw_http
-            .post("https://discord.com/api/v9/users/@me/channels")
-            .header(AUTHORIZATION, &self.token)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|error| {
-                AppError::DiscordRequest(format!("create dm request failed: {error}"))
-            })?
-            .error_for_status()
-            .map_err(|error| AppError::DiscordRequest(format!("create dm failed: {error}")))?
-            .json::<Value>()
-            .await
-            .map_err(|error| {
-                AppError::DiscordRequest(format!("create dm decode failed: {error}"))
-            })?;
-        parse_channel_info(&raw, None).ok_or_else(|| {
-            AppError::DiscordRequest("create dm response was missing required fields".to_owned())
-        })
-    }
-
     pub async fn load_user_profile(
         &self,
         user_id: Id<UserMarker>,

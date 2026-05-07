@@ -512,10 +512,6 @@ impl DashboardState {
         self.current_user.as_deref()
     }
 
-    pub fn current_user_id(&self) -> Option<Id<UserMarker>> {
-        self.current_user_id
-    }
-
     pub fn is_channel_action_menu_open(&self) -> bool {
         self.channel_action_menu.is_some()
     }

@@ -544,7 +544,7 @@ fn user_profile_popup_styles_name_by_status() {
 }
 
 #[test]
-fn user_profile_popup_hides_dm_hint_for_current_user() {
+fn user_profile_popup_does_not_show_dm_hint_for_current_user() {
     let profile = user_profile_info(10, "neo");
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
@@ -560,7 +560,7 @@ fn user_profile_popup_hides_dm_hint_for_current_user() {
 }
 
 #[test]
-fn user_profile_popup_shows_dm_hint_for_other_users() {
+fn user_profile_popup_does_not_show_dm_hint_for_other_users() {
     let profile = user_profile_info(10, "alice");
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
@@ -571,11 +571,8 @@ fn user_profile_popup_shows_dm_hint_for_other_users() {
     let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Online);
     let texts = line_texts_from_ratatui(&lines);
 
-    assert!(
-        texts
-            .iter()
-            .any(|line| line == "j/k scroll · m send DM · Esc close")
-    );
+    assert!(texts.iter().any(|line| line == "j/k scroll · Esc close"));
+    assert!(!texts.iter().any(|line| line.contains("m send DM")));
 }
 
 #[test]

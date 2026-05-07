@@ -37,37 +37,6 @@ fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
     }
 }
 
-fn dm_channel_info(kind: &str, channel_id: u64, recipients: &[u64]) -> ChannelInfo {
-    ChannelInfo {
-        guild_id: None,
-        channel_id: Id::new(channel_id),
-        parent_id: None,
-        position: None,
-        last_message_id: None,
-        name: kind.to_owned(),
-        kind: kind.to_owned(),
-        message_count: None,
-        total_message_sent: None,
-        thread_archived: None,
-        thread_locked: None,
-        thread_pinned: None,
-        recipients: Some(
-            recipients
-                .iter()
-                .map(|user_id| ChannelRecipientInfo {
-                    user_id: Id::new(*user_id),
-                    display_name: format!("user-{user_id}"),
-                    username: None,
-                    is_bot: false,
-                    avatar_url: None,
-                    status: None,
-                })
-                .collect(),
-        ),
-        permission_overwrites: Vec::new(),
-    }
-}
-
 #[test]
 fn tracks_current_user_from_ready() {
     let mut state = DashboardState::new();
@@ -300,39 +269,6 @@ fn user_profile_popup_status_prefers_cached_presence_over_unknown_recipient() {
     state.open_user_profile_popup(user_id, None);
 
     assert_eq!(state.user_profile_popup_status(), PresenceStatus::Idle);
-}
-
-#[test]
-fn profile_dm_shortcut_opens_cached_one_to_one_dm() {
-    let user_id: Id<UserMarker> = Id::new(10);
-    let mut state = DashboardState::new();
-
-    state.push_event(AppEvent::ChannelUpsert(dm_channel_info("dm", 20, &[10])));
-    state.open_user_profile_popup(user_id, None);
-
-    assert_eq!(state.open_direct_message_with_profile_target(), None);
-    assert!(!state.is_user_profile_popup_open());
-    assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
-}
-
-#[test]
-fn profile_dm_shortcut_ignores_group_dm_with_matching_recipient() {
-    let user_id: Id<UserMarker> = Id::new(10);
-    let mut state = DashboardState::new();
-
-    state.push_event(AppEvent::ChannelUpsert(dm_channel_info(
-        "group-dm",
-        30,
-        &[10, 11],
-    )));
-    state.open_user_profile_popup(user_id, None);
-
-    assert_eq!(
-        state.open_direct_message_with_profile_target(),
-        Some(AppCommand::OpenDirectMessage { user_id })
-    );
-    assert!(!state.is_user_profile_popup_open());
-    assert_ne!(state.selected_channel_id(), Some(Id::new(30)));
 }
 
 #[test]

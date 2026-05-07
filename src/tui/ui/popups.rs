@@ -556,12 +556,10 @@ pub(super) fn user_profile_popup_text(
     );
 
     lines.push(Line::from(Span::raw(String::new())));
-    let footer = if Some(profile.user_id) == state.current_user_id() {
-        "j/k scroll · Esc close"
-    } else {
-        "j/k scroll · m send DM · Esc close"
-    };
-    lines.push(Line::from(Span::styled(footer, Style::default().fg(DIM))));
+    lines.push(Line::from(Span::styled(
+        "j/k scroll · Esc close",
+        Style::default().fg(DIM),
+    )));
     UserProfilePopupText { lines }
 }
 
