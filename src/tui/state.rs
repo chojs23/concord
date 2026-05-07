@@ -260,9 +260,11 @@ impl DashboardState {
         //   tracking the latest after the event applies. The cursor is
         //   preserved by message id.
         // * Auto-follow: a superset of auto-scroll that also moves the
-        //   cursor to the new latest message. Triggers when the user was
-        //   still following the latest message, or when this event is a
-        //   message the current user just sent into the active channel.
+        //   cursor to the new latest message. Triggers only when the user
+        //   was already following the latest message (cursor on last AND
+        //   viewport at bottom). Self-sent messages no longer force-follow;
+        //   if the user is reading older history, sending a message keeps
+        //   the viewport parked.
         //
         // Both share the `message_auto_follow` flag — that flag really means
         // "next render should align the viewport to the bottom" and applies
@@ -270,11 +272,11 @@ impl DashboardState {
         let was_auto_follow = self.message_auto_follow;
         let was_at_latest = was_auto_follow || self.is_viewport_at_latest_message();
         let was_cursor_on_last = self.cursor_on_last_message();
-        let was_following_cursor = was_auto_follow && was_cursor_on_last;
+        let was_following_cursor = was_at_latest && was_cursor_on_last;
         let user_just_sent = self.event_is_self_message_in_active_channel(&event);
         let active_new_message_id = self.active_channel_message_create_id(&event);
-        let preserve_selection = !(was_following_cursor || user_just_sent);
-        let preserve_scroll = !(was_at_latest || was_following_cursor || user_just_sent);
+        let preserve_selection = !was_following_cursor;
+        let preserve_scroll = !(was_at_latest || was_following_cursor);
         let selected_message_id = preserve_selection
             .then(|| {
                 self.messages()
@@ -361,7 +363,7 @@ impl DashboardState {
         self.clear_missing_new_messages_marker();
         let in_message_view =
             !self.selected_channel_is_forum() && !self.is_pinned_message_view_active();
-        let should_follow = (was_following_cursor || user_just_sent) && in_message_view;
+        let should_follow = was_following_cursor && in_message_view;
         let should_scroll = should_follow || (was_at_latest && in_message_view);
         if should_follow {
             self.follow_latest_message();
@@ -429,7 +431,7 @@ impl DashboardState {
         let was_auto_follow = self.message_auto_follow;
         let was_at_latest = was_auto_follow || self.is_viewport_at_latest_message();
         let was_cursor_on_last = self.cursor_on_last_message();
-        let was_following_cursor = was_auto_follow && was_cursor_on_last;
+        let was_following_cursor = was_at_latest && was_cursor_on_last;
         let preserve_selection = !was_following_cursor;
         let preserve_scroll = !(was_at_latest || was_following_cursor);
         let selected_message_id = preserve_selection
@@ -1393,7 +1395,7 @@ impl DashboardState {
         // user can over-scroll without the next render re-aligning to the
         // natural bottom. The event handler still re-engages follow when a
         // new message arrives and the viewport actually shows the latest,
-        // via `is_viewport_at_bottom()`.
+        // via `is_viewport_at_latest_message()`.
         self.message_auto_follow = false;
         self.message_keep_selection_visible = false;
         self.scroll_message_viewport_down_one_row(
@@ -1452,6 +1454,7 @@ impl DashboardState {
             self.message_preview_width,
             self.message_max_preview_height,
         );
+        self.refresh_message_auto_follow();
     }
 
     pub fn scroll_focused_pane_viewport_down(&mut self) {
@@ -1785,7 +1788,7 @@ impl DashboardState {
     /// Returns true when the cursor sits on the last message in the active
     /// channel. This is the auto-follow trigger condition: when an event
     /// arrives, follow (cursor jump + scroll) only fires if the cursor was
-    /// already on the latest message (or the user just sent a message).
+    /// already on the latest message and the viewport was at the latest.
     fn cursor_on_last_message(&self) -> bool {
         if self.selected_channel_is_forum() || self.is_pinned_message_view_active() {
             return false;
@@ -1828,15 +1831,17 @@ impl DashboardState {
         total.saturating_sub(pos) <= viewport
     }
 
-    /// Resets the persistent flag to track *cursor* position only. Viewport
-    /// scrolls don't update the flag — they're captured fresh at event time
-    /// via `is_viewport_at_latest_message`. Keeping this flag cursor-based
-    /// is important so that moving the cursor away from the last message
-    /// disengages the bottom-snap in
-    /// `clamp_message_viewport_for_image_previews`, which would otherwise
-    /// fight cursor-visibility centering and push the cursor off-screen.
+    /// Re-engages auto-follow only when both invariants hold: the cursor is
+    /// on the last message and the viewport is currently showing it. Either
+    /// condition alone is not enough — if the user has scrolled the viewport
+    /// off the bottom while the cursor remains on the last message, the
+    /// next render must not snap the viewport back. Moving the cursor away
+    /// from the last message also disengages, so the bottom-snap inside
+    /// `clamp_message_viewport_for_image_previews` won't fight
+    /// cursor-visibility centering.
     fn refresh_message_auto_follow(&mut self) {
-        self.message_auto_follow = self.cursor_on_last_message();
+        self.message_auto_follow =
+            self.cursor_on_last_message() && self.is_viewport_at_latest_message();
         if self.message_auto_follow {
             self.clear_new_messages_marker();
         }

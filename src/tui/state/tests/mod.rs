@@ -1174,7 +1174,7 @@ fn message_scroll_preserves_position_when_not_following() {
 }
 
 #[test]
-fn user_sent_message_triggers_auto_follow_from_history_position() {
+fn user_sent_message_from_history_position_does_not_force_follow() {
     let me: Id<UserMarker> = Id::new(10);
     let mut state = state_with_messages(5);
     // Pretend the Ready event came through so the state knows who "we" are.
@@ -1193,8 +1193,12 @@ fn user_sent_message_triggers_auto_follow_from_history_position() {
     assert_eq!(state.selected_message(), 1);
     assert!(!state.message_auto_follow());
 
+    let parked_message_id = state.messages()[state.selected_message()].id;
+
     // Simulate the REST send response arriving as a self-authored
-    // MessageCreate.
+    // MessageCreate. Auto-follow must NOT yank the cursor down — the user
+    // was reading older history, and that intent outranks the convenience
+    // of jumping to their own send.
     state.push_event(AppEvent::MessageCreate {
         guild_id: Some(Id::new(1)),
         channel_id: Id::new(2),
@@ -1214,10 +1218,9 @@ fn user_sent_message_triggers_auto_follow_from_history_position() {
         forwarded_snapshots: Vec::new(),
     });
 
-    // Auto-follow should have moved the cursor to the new latest message.
     let messages = state.messages();
-    assert_eq!(messages[state.selected_message()].id, Id::new(99));
-    assert!(state.message_auto_follow());
+    assert_eq!(messages[state.selected_message()].id, parked_message_id);
+    assert!(!state.message_auto_follow());
 }
 
 #[test]
@@ -2412,6 +2415,32 @@ fn new_messages_marker_clears_when_viewport_scrolls_to_latest() {
     }
 
     assert_eq!(state.new_messages_marker_message_id(), None);
+}
+
+#[test]
+fn viewport_scroll_back_to_latest_re_engages_auto_follow_when_cursor_is_latest() {
+    let mut state = state_with_messages(10);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(5);
+    state.clamp_message_viewport_for_image_previews(80, 16, 3);
+    let selected = state.selected_message();
+
+    state.scroll_message_viewport_up();
+    state.scroll_message_viewport_up();
+    assert_eq!(state.selected_message(), selected);
+    assert!(!state.message_auto_follow());
+
+    for _ in 0..50 {
+        state.scroll_message_viewport_down();
+    }
+
+    assert_eq!(state.selected_message(), selected);
+    assert!(!state.message_auto_follow());
+
+    push_text_message(&mut state, 11, "new while viewport is latest again");
+
+    assert_eq!(state.messages()[state.selected_message()].id, Id::new(11));
+    assert!(state.message_auto_follow());
 }
 
 #[test]
