@@ -37,6 +37,37 @@ fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
     }
 }
 
+fn dm_channel_info(kind: &str, channel_id: u64, recipients: &[u64]) -> ChannelInfo {
+    ChannelInfo {
+        guild_id: None,
+        channel_id: Id::new(channel_id),
+        parent_id: None,
+        position: None,
+        last_message_id: None,
+        name: kind.to_owned(),
+        kind: kind.to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        thread_pinned: None,
+        recipients: Some(
+            recipients
+                .iter()
+                .map(|user_id| ChannelRecipientInfo {
+                    user_id: Id::new(*user_id),
+                    display_name: format!("user-{user_id}"),
+                    username: None,
+                    is_bot: false,
+                    avatar_url: None,
+                    status: None,
+                })
+                .collect(),
+        ),
+        permission_overwrites: Vec::new(),
+    }
+}
+
 #[test]
 fn tracks_current_user_from_ready() {
     let mut state = DashboardState::new();
@@ -272,6 +303,39 @@ fn user_profile_popup_status_prefers_cached_presence_over_unknown_recipient() {
 }
 
 #[test]
+fn profile_dm_shortcut_opens_cached_one_to_one_dm() {
+    let user_id: Id<UserMarker> = Id::new(10);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_info("dm", 20, &[10])));
+    state.open_user_profile_popup(user_id, None);
+
+    assert_eq!(state.open_direct_message_with_profile_target(), None);
+    assert!(!state.is_user_profile_popup_open());
+    assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
+}
+
+#[test]
+fn profile_dm_shortcut_ignores_group_dm_with_matching_recipient() {
+    let user_id: Id<UserMarker> = Id::new(10);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_info(
+        "group-dm",
+        30,
+        &[10, 11],
+    )));
+    state.open_user_profile_popup(user_id, None);
+
+    assert_eq!(
+        state.open_direct_message_with_profile_target(),
+        Some(AppCommand::OpenDirectMessage { user_id })
+    );
+    assert!(!state.is_user_profile_popup_open());
+    assert_ne!(state.selected_channel_id(), Some(Id::new(30)));
+}
+
+#[test]
 fn cycle_focus_uses_four_top_level_panes() {
     let mut state = DashboardState::new();
 
@@ -334,6 +398,7 @@ fn loaded_messages_are_unselected_until_message_pane_is_focused() {
             reply: None,
             poll: None,
             content: Some(format!("msg {id}")),
+            sticker_names: Vec::new(),
             mentions: Vec::new(),
             attachments: Vec::new(),
             embeds: Vec::new(),
@@ -384,6 +449,7 @@ fn startup_events_do_not_auto_open_direct_messages() {
         reply: None,
         poll: None,
         content: Some("hello".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -1020,6 +1086,7 @@ fn emoji_picker_uses_channel_guild_when_selected_message_lacks_guild_id() {
         reply: None,
         poll: None,
         content: Some("history message without guild".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -1067,6 +1134,7 @@ fn emoji_picker_items_stay_unicode_only_for_direct_messages() {
         reply: None,
         poll: None,
         content: Some("hello".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -1124,6 +1192,7 @@ fn message_creation_keeps_viewport_on_latest() {
             reply: None,
             poll: None,
             content: Some(format!("msg {id}")),
+            sticker_names: Vec::new(),
             mentions: Vec::new(),
             attachments: Vec::new(),
             embeds: Vec::new(),
@@ -1160,6 +1229,7 @@ fn message_scroll_preserves_position_when_not_following() {
         reply: None,
         poll: None,
         content: Some("msg 6".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -1212,6 +1282,7 @@ fn user_sent_message_from_history_position_does_not_force_follow() {
         reply: None,
         poll: None,
         content: Some("hello".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -1413,6 +1484,7 @@ fn forwarded_mentions_affect_height_from_source_channel_guild() {
         embeds: Vec::new(),
         forwarded_snapshots: vec![MessageSnapshotInfo {
             content: Some("<@10><@10>".to_owned()),
+            sticker_names: Vec::new(),
             mentions: Vec::new(),
             attachments: Vec::new(),
             embeds: Vec::new(),
@@ -1576,6 +1648,7 @@ fn forwarded_snapshot_wrapped_content_increases_rendered_height() {
         embeds: Vec::new(),
         forwarded_snapshots: vec![MessageSnapshotInfo {
             content: Some("abcdefghijkl".to_owned()),
+            sticker_names: Vec::new(),
             mentions: Vec::new(),
             attachments: vec![image_attachment(1)],
             embeds: Vec::new(),
@@ -1609,6 +1682,7 @@ fn forwarded_snapshot_wide_content_uses_terminal_width() {
         embeds: Vec::new(),
         forwarded_snapshots: vec![MessageSnapshotInfo {
             content: Some("漢字仮名交じ".to_owned()),
+            sticker_names: Vec::new(),
             mentions: Vec::new(),
             attachments: vec![image_attachment(1)],
             embeds: Vec::new(),
@@ -1723,6 +1797,7 @@ fn reply_preview_reserves_connector_row_without_extra_type_label() {
         reply: Some(ReplyInfo {
             author: "casey".to_owned(),
             content: Some("looks good".to_owned()),
+            sticker_names: Vec::new(),
             mentions: Vec::new(),
         }),
         poll: None,
@@ -1818,6 +1893,7 @@ fn thread_starter_message_reserves_system_card_rows() {
     message.reply = Some(ReplyInfo {
         author: "alice".to_owned(),
         content: Some("original topic".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
     });
 
@@ -2066,6 +2142,7 @@ fn own_attachment_only_message_can_be_deleted_but_not_edited() {
         reply: None,
         poll: None,
         content: None,
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: vec![image_attachment(1)],
         embeds: Vec::new(),
@@ -2092,6 +2169,81 @@ fn own_attachment_only_message_can_be_deleted_but_not_edited() {
             channel_id: Id::new(2),
             message_id: Id::new(1),
         })
+    );
+}
+
+#[test]
+fn non_image_attachment_action_downloads_with_proxy_url_fallback() {
+    let mut state = state_with_message_ids([]);
+    let mut attachment = video_attachment(1);
+    attachment.url.clear();
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("clip".to_owned()),
+        sticker_names: Vec::new(),
+        mentions: Vec::new(),
+        attachments: vec![attachment],
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+
+    let actions = state.selected_message_action_items();
+    assert!(actions.iter().any(|action| {
+        action.kind == MessageActionKind::DownloadAttachment(0)
+            && action.label == "Download clip-1.mp4"
+    }));
+    assert!(state.select_message_action_row(1));
+
+    assert_eq!(
+        state.activate_selected_message_action(),
+        Some(AppCommand::DownloadAttachment {
+            url: "https://media.discordapp.net/clip-1.mp4".to_owned(),
+            filename: "clip-1.mp4".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn non_regular_message_actions_do_not_include_attachment_downloads() {
+    let mut state = state_with_message_ids([]);
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: MessageKind::new(7),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: None,
+        sticker_names: Vec::new(),
+        mentions: Vec::new(),
+        attachments: vec![video_attachment(1)],
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    state.focus_pane(FocusPane::Messages);
+
+    assert!(
+        !state
+            .selected_message_action_items()
+            .iter()
+            .any(|action| matches!(action.kind, MessageActionKind::DownloadAttachment(_)))
     );
 }
 
@@ -2712,6 +2864,7 @@ fn state_with_thread_created_message_after_regular_message() -> DashboardState {
         reply: None,
         poll: None,
         content: Some("older parent message ".repeat(20)),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -2734,6 +2887,7 @@ fn state_with_thread_created_message_after_regular_message() -> DashboardState {
         reply: None,
         poll: None,
         content: Some("release notes ".repeat(20)),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -3820,6 +3974,7 @@ fn poll_vote_actions_are_available_by_default() {
         reply: None,
         poll: Some(poll_info(false)),
         content: Some(String::new()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -3914,6 +4069,7 @@ fn forum_preview_message(
         pinned: false,
         reactions: Vec::new(),
         content: Some(content.to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -4012,6 +4168,7 @@ fn message_action_items_keep_image_action_for_poll_messages() {
         reply: None,
         poll: Some(poll_info(false)),
         content: Some(String::new()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: vec![image_attachment(1)],
         embeds: Vec::new(),
@@ -4051,6 +4208,7 @@ fn poll_vote_action_can_remove_existing_vote() {
         reply: None,
         poll: Some(poll_info(false)),
         content: Some(String::new()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -4090,6 +4248,7 @@ fn multi_select_poll_action_opens_picker_and_submits_selected_answers() {
         reply: None,
         poll: Some(poll_info(true)),
         content: Some(String::new()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -4278,6 +4437,7 @@ fn viewport_scroll_moves_to_next_message_after_current_message() {
         reply: None,
         poll: None,
         content: Some("next".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -4322,6 +4482,7 @@ fn focused_message_selection_returns_none_when_viewport_scrolled_past_selection(
         reply: None,
         poll: None,
         content: Some("next".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -4358,6 +4519,7 @@ fn moving_cursor_to_first_message_resets_top_line_scroll() {
         reply: None,
         poll: None,
         content: Some("next".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -4418,6 +4580,7 @@ fn viewport_scrolls_by_rendered_line_when_selected_message_is_below_top() {
         reply: None,
         poll: None,
         content: Some("next".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -4468,6 +4631,7 @@ fn tall_message_clamp_keeps_next_selected_message_visible() {
         reply: None,
         poll: None,
         content: Some("next".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -4507,6 +4671,7 @@ fn viewport_scroll_up_enters_previous_long_message_at_last_line() {
         reply: None,
         poll: None,
         content: Some("next".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -4966,6 +5131,20 @@ fn direct_message_selection_waits_for_channel_confirmation() {
 }
 
 #[test]
+fn activate_channel_effect_moves_direct_message_cursor_to_target() {
+    let mut state = state_with_direct_messages();
+    state.confirm_selected_guild();
+    assert_eq!(state.selected_channel(), 0);
+
+    state.push_effect(AppEvent::ActivateChannel {
+        channel_id: Id::new(30),
+    });
+
+    assert_eq!(state.selected_channel_id(), Some(Id::new(30)));
+    assert_eq!(state.selected_channel(), 2);
+}
+
+#[test]
 fn direct_message_sorting_uses_channel_id_fallback() {
     let mut state = DashboardState::new();
     for (channel_id, name) in [(Id::new(10), "older-id"), (Id::new(30), "newer-id")] {
@@ -5084,6 +5263,7 @@ fn direct_message_cursor_stays_on_same_channel_after_recency_sort() {
         reply: None,
         poll: None,
         content: Some("new empty dm".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),

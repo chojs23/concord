@@ -1068,6 +1068,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(format!("msg {message_id}")),
+            sticker_names: Vec::new(),
             mentions: Vec::new(),
             attachments: Vec::new(),
             embeds: Vec::new(),

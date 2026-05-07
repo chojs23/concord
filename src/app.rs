@@ -694,9 +694,7 @@ fn start_command_loop(
                                 // ChannelUpsert is idempotent if the gateway
                                 // also delivers a CHANNEL_CREATE for the same
                                 // DM later.
-                                client
-                                    .publish_event(AppEvent::ChannelUpsert(channel))
-                                    .await;
+                                client.publish_event(AppEvent::ChannelUpsert(channel)).await;
                                 client
                                     .publish_event(AppEvent::ActivateChannel { channel_id })
                                     .await;
@@ -756,6 +754,7 @@ fn message_create_event(message: MessageInfo) -> AppEvent {
         reply: message.reply,
         poll: message.poll,
         content: message.content,
+        sticker_names: message.sticker_names,
         mentions: message.mentions,
         attachments: message.attachments,
         embeds: message.embeds,
@@ -770,6 +769,7 @@ fn message_update_event(message: MessageInfo) -> AppEvent {
         message_id: message.message_id,
         poll: message.poll,
         content: message.content,
+        sticker_names: Some(message.sticker_names),
         mentions: Some(message.mentions),
         attachments: AttachmentUpdate::Replace(message.attachments),
         embeds: Some(message.embeds),

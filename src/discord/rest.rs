@@ -547,10 +547,7 @@ impl DiscordRest {
     /// `POST /users/@me/channels` endpoint returns the existing channel
     /// when one already exists, so this call is idempotent and safe to
     /// invoke from a "Send DM" button.
-    pub async fn create_direct_message(
-        &self,
-        recipient_id: Id<UserMarker>,
-    ) -> Result<ChannelInfo> {
+    pub async fn create_direct_message(&self, recipient_id: Id<UserMarker>) -> Result<ChannelInfo> {
         let body = json!({ "recipient_id": recipient_id.to_string() });
         let raw = self
             .raw_http
@@ -559,12 +556,16 @@ impl DiscordRest {
             .json(&body)
             .send()
             .await
-            .map_err(|error| AppError::DiscordRequest(format!("create dm request failed: {error}")))?
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("create dm request failed: {error}"))
+            })?
             .error_for_status()
             .map_err(|error| AppError::DiscordRequest(format!("create dm failed: {error}")))?
             .json::<Value>()
             .await
-            .map_err(|error| AppError::DiscordRequest(format!("create dm decode failed: {error}")))?;
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("create dm decode failed: {error}"))
+            })?;
         parse_channel_info(&raw, None).ok_or_else(|| {
             AppError::DiscordRequest("create dm response was missing required fields".to_owned())
         })

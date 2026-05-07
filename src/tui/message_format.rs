@@ -259,28 +259,24 @@ pub(super) fn format_message_content_lines(
     {
         lines.push(line);
     } else if let Some(poll) = message.poll.as_ref() {
-        let content = message
-            .content
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .map(|value| {
-                state.render_user_mentions_with_highlights(
-                    message.guild_id,
-                    &message.mentions,
-                    value,
-                )
-            });
+        let content = display_text_with_stickers(
+            message.content.as_deref(),
+            &message.sticker_names,
+        )
+        .map(|value| {
+            state.render_user_mentions_with_highlights(message.guild_id, &message.mentions, &value)
+        });
         lines.extend(format_poll_lines(poll, content, width));
     } else if let Some(line) = format_message_kind_line(message.message_kind) {
         lines.push(line);
     }
 
     let standalone_content = (!renders_poll_card)
-        .then(|| message.content.as_deref().filter(|value| !value.is_empty()))
+        .then(|| display_text_with_stickers(message.content.as_deref(), &message.sticker_names))
         .flatten();
     if let Some(value) = standalone_content {
         lines.extend(wrap_rendered_text_lines(
-            state.render_user_mentions_with_highlights(message.guild_id, &message.mentions, value),
+            state.render_user_mentions_with_highlights(message.guild_id, &message.mentions, &value),
             width,
             Style::default(),
         ));
@@ -997,17 +993,35 @@ fn format_reply_line(
     state: &DashboardState,
     width: usize,
 ) -> MessageContentLine {
-    let content = reply
-        .content
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .unwrap_or("<empty message>");
-    let content = state.render_user_mentions_with_highlights(guild_id, &reply.mentions, content);
+    let content = display_text_with_stickers(reply.content.as_deref(), &reply.sticker_names)
+        .unwrap_or_else(|| "<empty message>".to_owned());
+    let content = state.render_user_mentions_with_highlights(guild_id, &reply.mentions, &content);
     let content = prepend_rendered_text(format!("╭─ {} : ", reply.author), content);
     rendered_text_line(
         truncate_rendered_text(content, width),
         Style::default().fg(DIM),
     )
+}
+
+fn display_text_with_stickers(content: Option<&str>, sticker_names: &[String]) -> Option<String> {
+    let content = content.filter(|value| !value.is_empty());
+    let stickers = sticker_display_text(sticker_names);
+    match (content, stickers) {
+        (Some(content), Some(stickers)) => Some(format!("{content}\n{stickers}")),
+        (Some(content), None) => Some(content.to_owned()),
+        (None, Some(stickers)) => Some(stickers),
+        (None, None) => None,
+    }
+}
+
+fn sticker_display_text(sticker_names: &[String]) -> Option<String> {
+    (!sticker_names.is_empty()).then(|| {
+        sticker_names
+            .iter()
+            .map(|name| format!("[Sticker: {name}]"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    })
 }
 
 fn format_message_kind_line(message_kind: MessageKind) -> Option<MessageContentLine> {
@@ -1326,16 +1340,14 @@ fn format_forwarded_snapshot(
         format_attachment_summary_lines(&snapshot.attachments)
     };
     let mut lines = vec![MessageContentLine::plain("↱ Forwarded".to_owned())];
-    if let Some(content) = snapshot
-        .content
-        .as_deref()
-        .filter(|value| !value.is_empty())
+    if let Some(content) =
+        display_text_with_stickers(snapshot.content.as_deref(), &snapshot.sticker_names)
     {
         let content_width = width.saturating_sub(2).max(1);
         let content = state.render_user_mentions_with_highlights(
             state.forwarded_snapshot_mention_guild_id(snapshot),
             &snapshot.mentions,
-            content,
+            &content,
         );
         lines.extend(
             wrap_rendered_text_lines(content, content_width, Style::default())

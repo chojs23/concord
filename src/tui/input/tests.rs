@@ -583,6 +583,29 @@ fn mouse_wheel_scrolls_message_viewport_without_changing_selection() {
 }
 
 #[test]
+fn user_profile_popup_absorbs_left_clicks_only_inside_popup() {
+    let mut state = DashboardState::new();
+    state.focus_pane(FocusPane::Messages);
+    state.open_user_profile_popup(Id::new(10), None);
+
+    assert!(handle_mouse(
+        &mut state,
+        mouse(MouseEventKind::Down(MouseButton::Left), 60, 10),
+        dashboard_area(),
+    ));
+    assert_eq!(state.focus(), FocusPane::Messages);
+    assert!(state.is_user_profile_popup_open());
+
+    assert!(handle_mouse(
+        &mut state,
+        mouse(MouseEventKind::Down(MouseButton::Left), 100, 1),
+        dashboard_area(),
+    ));
+    assert_eq!(state.focus(), FocusPane::Members);
+    assert!(state.is_user_profile_popup_open());
+}
+
+#[test]
 fn number_keys_type_digits_while_composing() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
@@ -1466,6 +1489,7 @@ fn state_with_messages(count: u64) -> DashboardState {
             reply: None,
             poll: None,
             content: Some(format!("msg {id}")),
+            sticker_names: Vec::new(),
             mentions: Vec::new(),
             attachments: Vec::new(),
             embeds: Vec::new(),
@@ -1592,6 +1616,7 @@ fn state_with_thread_created_message() -> DashboardState {
         reply: None,
         poll: None,
         content: Some("release notes".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -1634,6 +1659,7 @@ fn state_with_multiselect_poll() -> DashboardState {
             total_votes: Some(3),
         }),
         content: Some("msg 1".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -1693,6 +1719,7 @@ fn state_with_custom_emoji_message() -> DashboardState {
         reply: None,
         poll: None,
         content: Some("msg 1".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -1828,6 +1855,7 @@ fn state_with_image_message() -> DashboardState {
         reply: None,
         poll: None,
         content: Some(String::new()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: vec![
             crate::discord::AttachmentInfo {

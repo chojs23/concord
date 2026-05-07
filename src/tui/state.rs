@@ -292,7 +292,7 @@ impl DashboardState {
                     .map(|message| message.id)
             })
             .flatten();
-        let channel_cursor_id = self.selected_channel_cursor_id();
+        let mut channel_cursor_id = self.selected_channel_cursor_id();
 
         match &event {
             AppEvent::Ready { user, user_id } => {
@@ -354,16 +354,18 @@ impl DashboardState {
             }
             AppEvent::ActivateChannel { channel_id } => {
                 let channel_id = *channel_id;
-                let scope = self
-                    .discord
-                    .channel(channel_id)
-                    .map(|channel| match channel.guild_id {
-                        Some(guild_id) => ActiveGuildScope::Guild(guild_id),
-                        None => ActiveGuildScope::DirectMessages,
-                    });
+                let scope =
+                    self.discord
+                        .channel(channel_id)
+                        .map(|channel| match channel.guild_id {
+                            Some(guild_id) => ActiveGuildScope::Guild(guild_id),
+                            None => ActiveGuildScope::DirectMessages,
+                        });
                 if let Some(scope) = scope {
                     self.activate_guild(scope);
                     self.activate_channel(channel_id);
+                    self.channel_keep_selection_visible = true;
+                    channel_cursor_id = Some(channel_id);
                 }
             }
             _ => {}
@@ -510,6 +512,10 @@ impl DashboardState {
         self.current_user.as_deref()
     }
 
+    pub fn current_user_id(&self) -> Option<Id<UserMarker>> {
+        self.current_user_id
+    }
+
     pub fn is_channel_action_menu_open(&self) -> bool {
         self.channel_action_menu.is_some()
     }
@@ -590,13 +596,11 @@ impl DashboardState {
     }
 
     fn thread_message_preview_text(&self, message: &MessageState) -> String {
-        if let Some(content) = message
-            .content
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
+        if let Some(content) =
+            message_preview_text(message.content.as_deref(), &message.sticker_names)
         {
             return self
-                .render_user_mentions(message.guild_id, &message.mentions, content)
+                .render_user_mentions(message.guild_id, &message.mentions, &content)
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ");
@@ -2295,6 +2299,17 @@ impl DashboardState {
         self.message_rendered_height(message, content_width, preview_width, max_preview_height)
             + self.message_extra_top_lines(index)
     }
+}
+
+fn message_preview_text(content: Option<&str>, sticker_names: &[String]) -> Option<String> {
+    content
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            sticker_names
+                .first()
+                .map(|name| format!("[Sticker: {name}]"))
+        })
 }
 
 #[cfg(test)]

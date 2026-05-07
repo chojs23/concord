@@ -22,7 +22,8 @@ use super::{
     message_viewport_lines, new_messages_notice_line, poll_vote_picker_lines,
     reaction_users_popup_lines, reaction_users_visible_line_count, selected_avatar_x_offset,
     selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
-    user_profile_display_name_style, user_profile_popup_lines,
+    user_profile_display_name_style, user_profile_popup_has_avatar, user_profile_popup_lines,
+    user_profile_popup_text_geometry,
 };
 use crate::{
     discord::{
@@ -230,6 +231,7 @@ fn message_viewport_author_uses_resolved_role_color() {
         reply: None,
         poll: None,
         content: Some("hello".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -538,6 +540,62 @@ fn user_profile_popup_styles_name_by_status() {
             .style
             .add_modifier
             .contains(Modifier::BOLD)
+    );
+}
+
+#[test]
+fn user_profile_popup_hides_dm_hint_for_current_user() {
+    let profile = user_profile_info(10, "neo");
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+
+    let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Online);
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert!(texts.iter().any(|line| line == "j/k scroll · Esc close"));
+    assert!(!texts.iter().any(|line| line.contains("m send DM")));
+}
+
+#[test]
+fn user_profile_popup_shows_dm_hint_for_other_users() {
+    let profile = user_profile_info(10, "alice");
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(99)),
+    });
+
+    let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Online);
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert!(
+        texts
+            .iter()
+            .any(|line| line == "j/k scroll · m send DM · Esc close")
+    );
+}
+
+#[test]
+fn user_profile_popup_avatar_gutter_matches_geometry_in_narrow_layouts() {
+    let narrow_area = Rect::new(0, 0, 10, 20);
+    let wide_area = Rect::new(0, 0, 80, 20);
+
+    assert!(!user_profile_popup_has_avatar(narrow_area, true));
+    assert_eq!(
+        user_profile_popup_text_geometry(narrow_area, false),
+        user_profile_popup_text_geometry(
+            narrow_area,
+            user_profile_popup_has_avatar(narrow_area, true),
+        )
+    );
+
+    assert!(user_profile_popup_has_avatar(wide_area, true));
+    assert_ne!(
+        user_profile_popup_text_geometry(wide_area, false),
+        user_profile_popup_text_geometry(wide_area, user_profile_popup_has_avatar(wide_area, true)),
     );
 }
 
@@ -1028,6 +1086,44 @@ fn message_content_highlights_here_mentions_for_current_user() {
 }
 
 #[test]
+fn message_content_highlights_role_mentions_with_role_name() {
+    let message = message_with_content(Some("hello <@&10>".to_owned()));
+    let state = state_with_role(10, "moderators");
+
+    let lines = message_item_lines(
+        message.author.clone(),
+        message_author_style(None),
+        "00:00".to_owned(),
+        format_message_content_lines(&message, &state, 200),
+        40,
+        0,
+        None,
+        0,
+    );
+
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec!["oo neo 00:00", "   hello @moderators", ""]
+    );
+    assert_eq!(lines[1].spans[2].content.as_ref(), "@moderators");
+    assert_eq!(
+        lines[1].spans[2].style.bg,
+        mention_highlight_style(TextHighlightKind::OtherMention).bg
+    );
+}
+
+#[test]
+fn message_content_keeps_role_mentions_raw_without_guild_context() {
+    let mut message = message_with_content(Some("hello <@&10>".to_owned()));
+    message.guild_id = None;
+    let state = state_with_role(10, "moderators");
+
+    let lines = format_message_content_lines(&message, &state, 200);
+
+    assert_eq!(line_texts(&lines), vec!["hello <@&10>"]);
+}
+
+#[test]
 fn mention_like_display_name_does_not_duplicate_highlight_spans() {
     let mut message = message_with_content(Some("hello <@10>".to_owned()));
     message.mentions = vec![mention_info(10, "everyone")];
@@ -1226,6 +1322,7 @@ fn thread_created_message_uses_cached_thread_message_when_last_id_missing() {
         reply: None,
         poll: None,
         content: Some("latest reply".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -1304,6 +1401,7 @@ fn thread_starter_message_uses_referenced_message_card() {
     message.reply = Some(ReplyInfo {
         author: "alice".to_owned(),
         content: Some("original topic".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
     });
 
@@ -1352,6 +1450,7 @@ fn reply_message_uses_preview_instead_of_type_label() {
     message.reply = Some(ReplyInfo {
         author: "casey".to_owned(),
         content: Some("looks good".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
     });
 
@@ -1375,6 +1474,7 @@ fn reply_preview_renders_known_user_mentions() {
     message.reply = Some(ReplyInfo {
         author: "neo".to_owned(),
         content: Some("hello <@10>".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
     });
     let state = state_with_member(10, "alice");
@@ -1391,6 +1491,7 @@ fn reply_preview_renders_mentions_from_reply_metadata() {
     message.reply = Some(ReplyInfo {
         author: "neo".to_owned(),
         content: Some("hello <@10>".to_owned()),
+        sticker_names: Vec::new(),
         mentions: vec![mention_info(10, "alice")],
     });
 
@@ -3130,6 +3231,7 @@ fn state_with_message() -> DashboardState {
         reply: None,
         poll: None,
         content: Some("hello".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -3153,6 +3255,7 @@ fn state_with_image_message() -> DashboardState {
         reply: None,
         poll: None,
         content: Some(String::new()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: vec![image_attachment()],
         embeds: Vec::new(),
@@ -3244,6 +3347,7 @@ fn push_message(state: &mut DashboardState, message_id: u64, content: &str) {
         reply: None,
         poll: None,
         content: Some(content.to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -3267,6 +3371,7 @@ fn message_info(message_id: u64, author: &str, content: &str, pinned: bool) -> M
         pinned,
         reactions: Vec::new(),
         content: Some(content.to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -3327,6 +3432,7 @@ fn forwarded_snapshot(
 ) -> MessageSnapshotInfo {
     MessageSnapshotInfo {
         content: content.map(str::to_owned),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments,
         embeds: Vec::new(),
@@ -3345,6 +3451,29 @@ fn state_with_member(user_id: u64, display_name: &str) -> DashboardState {
         members: vec![member_info(user_id, display_name)],
         presences: vec![(Id::new(user_id), PresenceStatus::Online)],
         roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state
+}
+
+fn state_with_role(role_id: u64, name: &str) -> DashboardState {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: Vec::new(),
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: vec![RoleInfo {
+            id: Id::new(role_id),
+            name: name.to_owned(),
+            color: None,
+            position: 1,
+            hoist: false,
+            permissions: 0,
+        }],
         emojis: Vec::new(),
         owner_id: None,
     });

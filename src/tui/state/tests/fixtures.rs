@@ -666,6 +666,7 @@ pub(super) fn state_with_custom_emojis() -> DashboardState {
         reply: None,
         poll: None,
         content: Some("hello".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -720,6 +721,7 @@ pub(super) fn state_with_single_message_content(content: &str) -> DashboardState
         reply: None,
         poll: None,
         content: Some(content.to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -797,6 +799,7 @@ pub(super) fn state_with_thread_created_message() -> DashboardState {
         reply: None,
         poll: None,
         content: Some("release notes".to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -886,6 +889,7 @@ pub(super) fn state_with_messages_matching(
             reply: None,
             poll: None,
             content: Some(format!("msg {id}")),
+            sticker_names: Vec::new(),
             mentions: Vec::new(),
             attachments: has_image(id)
                 .then(|| image_attachment(id))
@@ -912,6 +916,7 @@ pub(super) fn push_text_message(state: &mut DashboardState, message_id: u64, con
         reply: None,
         poll: None,
         content: Some(content.to_owned()),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),
@@ -970,6 +975,7 @@ pub(super) fn youtube_embed() -> EmbedInfo {
 pub(super) fn forwarded_snapshot(id: u64) -> MessageSnapshotInfo {
     MessageSnapshotInfo {
         content: Some(format!("forwarded {id}")),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: vec![image_attachment(id)],
         embeds: Vec::new(),
@@ -994,6 +1000,7 @@ pub(super) fn message_info(channel_id: Id<ChannelMarker>, message_id: u64) -> Me
         pinned: false,
         reactions: Vec::new(),
         content: Some(format!("msg {message_id}")),
+        sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
         embeds: Vec::new(),

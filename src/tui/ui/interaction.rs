@@ -4,6 +4,7 @@ use super::super::state::{DashboardState, FocusPane};
 use super::{
     layout::{centered_rect, dashboard_areas, message_areas},
     panel_block, panel_block_owned,
+    popups::user_profile_popup_area,
     types::{ActionMenuTarget, MouseTarget},
 };
 
@@ -42,6 +43,11 @@ pub(crate) fn mouse_target_at(
         return Some(target);
     }
     None
+}
+
+pub(crate) fn user_profile_popup_contains(area: Rect, column: u16, row: u16) -> bool {
+    let areas = dashboard_areas(area);
+    rect_contains(user_profile_popup_area(areas.messages), column, row)
 }
 
 fn action_menu_mouse_target(

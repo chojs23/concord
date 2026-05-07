@@ -270,6 +270,7 @@ impl Default for MessageKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageSnapshotInfo {
     pub content: Option<String>,
+    pub sticker_names: Vec<String>,
     pub mentions: Vec<MentionInfo>,
     pub attachments: Vec<AttachmentInfo>,
     pub embeds: Vec<EmbedInfo>,
@@ -281,6 +282,7 @@ pub struct MessageSnapshotInfo {
 pub struct ReplyInfo {
     pub author: String,
     pub content: Option<String>,
+    pub sticker_names: Vec<String>,
     pub mentions: Vec<MentionInfo>,
 }
 
@@ -343,6 +345,7 @@ pub struct MessageInfo {
     pub pinned: bool,
     pub reactions: Vec<ReactionInfo>,
     pub content: Option<String>,
+    pub sticker_names: Vec<String>,
     pub mentions: Vec<MentionInfo>,
     pub attachments: Vec<AttachmentInfo>,
     pub embeds: Vec<EmbedInfo>,
@@ -367,6 +370,7 @@ impl Default for MessageInfo {
             pinned: false,
             reactions: Vec::new(),
             content: None,
+            sticker_names: Vec::new(),
             mentions: Vec::new(),
             attachments: Vec::new(),
             embeds: Vec::new(),
@@ -437,6 +441,7 @@ pub enum AppEvent {
         reply: Option<ReplyInfo>,
         poll: Option<PollInfo>,
         content: Option<String>,
+        sticker_names: Vec<String>,
         mentions: Vec<MentionInfo>,
         attachments: Vec<AttachmentInfo>,
         embeds: Vec<EmbedInfo>,
@@ -480,6 +485,7 @@ pub enum AppEvent {
         message_id: Id<MessageMarker>,
         poll: Option<PollInfo>,
         content: Option<String>,
+        sticker_names: Option<Vec<String>>,
         mentions: Option<Vec<MentionInfo>>,
         attachments: AttachmentUpdate,
         embeds: Option<Vec<EmbedInfo>>,
@@ -663,6 +669,7 @@ impl AppEvent {
                 | AppEvent::ReactionUsersLoaded { .. }
                 | AppEvent::GatewayError { .. }
                 | AppEvent::StatusMessage { .. }
+                | AppEvent::ActivateChannel { .. }
                 | AppEvent::AttachmentPreviewLoaded { .. }
                 | AppEvent::AttachmentPreviewLoadFailed { .. }
                 | AppEvent::UserProfileLoadFailed { .. }

@@ -289,7 +289,8 @@ impl DashboardState {
             .channels_for_guild(None)
             .into_iter()
             .find(|channel| {
-                channel.recipients.len() == 1
+                channel.kind == "dm"
+                    && channel.recipients.len() == 1
                     && channel
                         .recipients
                         .iter()
@@ -297,7 +298,6 @@ impl DashboardState {
             })
             .map(|channel| channel.id)
     }
-
 
     pub fn members_grouped(&self) -> Vec<MemberGroup<'_>> {
         let Some(guild_id) = self.selected_guild_id() else {

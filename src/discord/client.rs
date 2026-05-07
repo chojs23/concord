@@ -443,6 +443,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn activate_channel_is_delivered_as_effect_only_event() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let mut effects = client.take_effects();
+        let snapshots = client.subscribe_snapshots();
+
+        client
+            .publish_event(AppEvent::ActivateChannel {
+                channel_id: Id::new(42),
+            })
+            .await;
+
+        let effect = effects.recv().await.expect("effect is published");
+        assert_eq!(effect.revision, 0);
+        assert!(
+            matches!(effect.event, AppEvent::ActivateChannel { channel_id } if channel_id == Id::new(42))
+        );
+        assert!(!snapshots.has_changed().expect("snapshot stream is open"));
+    }
+
+    #[tokio::test]
     async fn accepts_raw_user_token_header() {
         validate_token_header("raw-user-token").expect("raw user token must be accepted");
     }
@@ -467,6 +488,7 @@ mod tests {
             reply: None,
             poll: None,
             content: Some(format!("msg {message_id}")),
+            sticker_names: Vec::new(),
             mentions: Vec::new(),
             attachments: Vec::new(),
             embeds: Vec::new(),

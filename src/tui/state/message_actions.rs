@@ -93,18 +93,23 @@ impl DashboardState {
                 enabled: true,
             });
         }
-        // Image attachments already have a download path through the image
-        // viewer's action menu, so the message-level menu only surfaces
-        // downloads for the file/video kinds that have no other entry point.
-        for (index, attachment) in message.attachments_in_display_order().enumerate() {
-            if attachment.is_image() && attachment.preferred_url().is_some() {
-                continue;
+        if message.message_kind.is_regular() {
+            // Image attachments already have a download path through the image
+            // viewer's action menu, so the message-level menu only surfaces
+            // downloads for the file/video kinds that have no other entry point.
+            for (index, attachment) in message.attachments_in_display_order().enumerate() {
+                if attachment.is_image() && attachment.preferred_url().is_some() {
+                    continue;
+                }
+                if attachment.preferred_url().is_none() {
+                    continue;
+                }
+                actions.push(MessageActionItem {
+                    kind: MessageActionKind::DownloadAttachment(index),
+                    label: format!("Download {}", attachment.filename),
+                    enabled: true,
+                });
             }
-            actions.push(MessageActionItem {
-                kind: MessageActionKind::DownloadAttachment(index),
-                label: format!("Download {}", attachment.filename),
-                enabled: true,
-            });
         }
         actions.push(MessageActionItem {
             kind: MessageActionKind::AddReaction,
@@ -231,7 +236,7 @@ impl DashboardState {
             MessageActionKind::DownloadAttachment(index) => {
                 let message = self.selected_message_state()?;
                 let attachment = message.attachments_in_display_order().nth(index)?;
-                let url = attachment.url.clone();
+                let url = attachment.preferred_url()?.to_owned();
                 let filename = attachment.filename.clone();
                 self.close_message_action_menu();
                 Some(AppCommand::DownloadAttachment { url, filename })

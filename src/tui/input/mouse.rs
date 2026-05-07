@@ -68,10 +68,12 @@ pub fn handle_mouse_event(
 
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            // The user-profile popup absorbs left clicks (Esc closes it,
-            // wheel scrolls). Letting the click fall through would
-            // activate whichever pane row sits underneath the popup body.
-            if state.is_user_profile_popup_open() {
+            // The user-profile popup absorbs clicks only inside its drawn
+            // rectangle. Clicks outside the popup should still reach the
+            // dashboard instead of making the whole screen inert.
+            if state.is_user_profile_popup_open()
+                && ui::user_profile_popup_contains(area, mouse.column, mouse.row)
+            {
                 clicks.clear();
                 return MouseOutcome::handled(None);
             }

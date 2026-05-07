@@ -41,7 +41,7 @@ mod panes;
 mod popups;
 mod types;
 
-pub(crate) use self::interaction::{focus_pane_at, mouse_target_at};
+pub(crate) use self::interaction::{focus_pane_at, mouse_target_at, user_profile_popup_contains};
 use self::layout::{
     centered_rect, dashboard_areas, image_viewer_image_area, image_viewer_popup,
     inline_image_preview_area, inline_image_preview_height, inline_image_preview_width,
@@ -61,8 +61,8 @@ use self::popups::{
     render_channel_action_menu, render_debug_log_popup, render_emoji_reaction_picker,
     render_guild_action_menu, render_image_viewer, render_image_viewer_action_menu,
     render_member_action_menu, render_message_action_menu, render_poll_vote_picker,
-    render_reaction_users_popup, render_user_profile_popup, user_profile_popup_text_geometry,
-    user_profile_popup_total_lines,
+    render_reaction_users_popup, render_user_profile_popup, user_profile_popup_has_avatar,
+    user_profile_popup_text_geometry, user_profile_popup_total_lines,
 };
 use self::types::{
     ACCENT, DIM, DISCORD_EPOCH_MILLIS, EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET,
@@ -103,7 +103,10 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
         // The popup body shrinks when the avatar slot is in use, so use
         // the same has-avatar predicate the renderer uses to keep the
         // total-line / view-height pair consistent with what gets drawn.
-        let has_avatar = state.user_profile_popup_avatar_url().is_some();
+        let has_avatar = user_profile_popup_has_avatar(
+            areas.messages,
+            state.user_profile_popup_avatar_url().is_some(),
+        );
         let (text_width, text_height) =
             user_profile_popup_text_geometry(areas.messages, has_avatar);
         let total_lines = user_profile_popup_total_lines(state, text_width);

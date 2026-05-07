@@ -744,6 +744,7 @@ fn parse_message_create(data: &Value) -> Option<AppEvent> {
         reply: message.reply,
         poll: message.poll,
         content: message.content,
+        sticker_names: message.sticker_names,
         mentions: message.mentions,
         attachments: message.attachments,
         embeds: message.embeds,
@@ -770,11 +771,7 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         .get("content")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    // Discord delivers stickers in `sticker_items` as a separate field
-    // alongside `content`; sticker-only messages have an empty content
-    // string. Inline a textual representation so the renderer doesn't
-    // collapse the message to "<empty message>".
-    let content = inject_sticker_text(content, data.get("sticker_items"));
+    let sticker_names = parse_sticker_names(data.get("sticker_items"));
     let mentions = parse_mentions(data.get("mentions"));
     let attachments = parse_attachments(data.get("attachments"));
     let embeds = parse_embeds(data.get("embeds"));
@@ -810,6 +807,7 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         pinned: data.get("pinned").and_then(Value::as_bool).unwrap_or(false),
         reactions: parse_reactions(data.get("reactions")),
         content,
+        sticker_names,
         mentions,
         attachments,
         embeds,
@@ -842,7 +840,9 @@ fn parse_message_update(data: &Value) -> Option<AppEvent> {
         .get("content")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let content = inject_sticker_text(content, data.get("sticker_items"));
+    let sticker_names = data
+        .get("sticker_items")
+        .map(|value| parse_sticker_names(Some(value)));
     let attachments = if data.get("attachments").is_some() {
         AttachmentUpdate::Replace(parse_attachments(data.get("attachments")))
     } else {
@@ -866,6 +866,7 @@ fn parse_message_update(data: &Value) -> Option<AppEvent> {
         message_id,
         poll,
         content,
+        sticker_names,
         mentions,
         attachments,
         embeds,
@@ -1035,31 +1036,16 @@ fn parse_attachments(value: Option<&Value>) -> Vec<AttachmentInfo> {
         .unwrap_or_default()
 }
 
-/// Build a textual representation of `sticker_items` and merge it into the
-/// message content. Sticker-only messages have an empty `content`, which the
-/// renderer would otherwise display as `<empty message>`. The injected text
-/// uses a `[Sticker: name]` form so the existing Discord-flavoured markup
-/// pipeline (mentions, emoji, etc.) leaves it alone.
-fn inject_sticker_text(content: Option<String>, value: Option<&Value>) -> Option<String> {
-    let Some(items) = value.and_then(Value::as_array) else {
-        return content;
-    };
-    let names: Vec<String> = items
-        .iter()
-        .filter_map(|item| item.get("name").and_then(Value::as_str).map(str::to_owned))
-        .collect();
-    if names.is_empty() {
-        return content;
-    }
-    let stickers = names
-        .into_iter()
-        .map(|name| format!("[Sticker: {name}]"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    Some(match content {
-        Some(text) if !text.is_empty() => format!("{text}\n{stickers}"),
-        _ => stickers,
-    })
+fn parse_sticker_names(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("name").and_then(Value::as_str).map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_embeds(value: Option<&Value>) -> Vec<EmbedInfo> {
@@ -1192,12 +1178,13 @@ fn parse_reply_info(value: &Value) -> Option<ReplyInfo> {
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
-    let content = inject_sticker_text(content, value.get("sticker_items"));
+    let sticker_names = parse_sticker_names(value.get("sticker_items"));
     let mentions = parse_mentions(value.get("mentions"));
 
     Some(ReplyInfo {
         author: author_name,
         content,
+        sticker_names,
         mentions,
     })
 }
@@ -1464,7 +1451,7 @@ fn parse_message_snapshot(
         .get("content")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let content = inject_sticker_text(content, message.get("sticker_items"));
+    let sticker_names = parse_sticker_names(message.get("sticker_items"));
     let attachments = parse_attachments(message.get("attachments"));
     let embeds = parse_embeds(message.get("embeds"));
     let mentions = parse_mentions(message.get("mentions"));
@@ -1474,6 +1461,7 @@ fn parse_message_snapshot(
         .map(str::to_owned);
 
     if content.as_deref().is_some_and(|value| !value.is_empty())
+        || !sticker_names.is_empty()
         || !attachments.is_empty()
         || !embeds.is_empty()
         || source_channel_id.is_some()
@@ -1481,6 +1469,7 @@ fn parse_message_snapshot(
     {
         Some(MessageSnapshotInfo {
             content,
+            sticker_names,
             mentions,
             attachments,
             embeds,
@@ -3596,6 +3585,7 @@ mod tests {
             Some(ReplyInfo {
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
+                sticker_names: Vec::new(),
                 mentions: Vec::new(),
             })
         );
@@ -3777,7 +3767,7 @@ mod tests {
     }
 
     #[test]
-    fn message_create_parser_injects_sticker_text_for_empty_content() {
+    fn message_create_parser_preserves_empty_content_and_sticker_names() {
         let event = parse_message_create(&json!({
             "id": "20",
             "channel_id": "10",
@@ -3788,14 +3778,20 @@ mod tests {
             ]
         }))
         .expect("message create should parse");
-        let AppEvent::MessageCreate { content, .. } = event else {
+        let AppEvent::MessageCreate {
+            content,
+            sticker_names,
+            ..
+        } = event
+        else {
             panic!("expected message create event");
         };
-        assert_eq!(content.as_deref(), Some("[Sticker: Wave]"));
+        assert_eq!(content.as_deref(), Some(""));
+        assert_eq!(sticker_names, vec!["Wave".to_owned()]);
     }
 
     #[test]
-    fn message_create_parser_appends_sticker_text_after_content() {
+    fn message_create_parser_preserves_content_and_sticker_names() {
         let event = parse_message_create(&json!({
             "id": "20",
             "channel_id": "10",
@@ -3807,13 +3803,16 @@ mod tests {
             ]
         }))
         .expect("message create should parse");
-        let AppEvent::MessageCreate { content, .. } = event else {
+        let AppEvent::MessageCreate {
+            content,
+            sticker_names,
+            ..
+        } = event
+        else {
             panic!("expected message create event");
         };
-        assert_eq!(
-            content.as_deref(),
-            Some("hello\n[Sticker: Wave] [Sticker: Heart]")
-        );
+        assert_eq!(content.as_deref(), Some("hello"));
+        assert_eq!(sticker_names, vec!["Wave".to_owned(), "Heart".to_owned()]);
     }
 
     #[test]
@@ -3883,6 +3882,41 @@ mod tests {
         assert_eq!(
             forwarded_snapshots[0].mentions,
             vec![mention_info(40, "alice")]
+        );
+    }
+
+    #[test]
+    fn message_create_parser_keeps_forwarded_snapshot_stickers() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "content": "",
+            "attachments": [],
+            "message_snapshots": [{
+                "message": {
+                    "content": "",
+                    "attachments": [],
+                    "sticker_items": [
+                        { "id": "40", "name": "Wave", "format_type": 1 }
+                    ]
+                }
+            }]
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate {
+            forwarded_snapshots,
+            ..
+        } = event
+        else {
+            panic!("expected message create event");
+        };
+        assert_eq!(forwarded_snapshots.len(), 1);
+        assert_eq!(forwarded_snapshots[0].content.as_deref(), Some(""));
+        assert_eq!(
+            forwarded_snapshots[0].sticker_names,
+            vec!["Wave".to_owned()]
         );
     }
 

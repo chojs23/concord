@@ -342,17 +342,18 @@ pub(super) fn render_user_profile_popup(
 
     // The avatar sits inside the inner area; reserve a fixed column gutter
     // so the text section starts cleanly to its right.
-    let has_avatar = avatar.is_some()
-        && state.user_profile_popup_avatar_url().is_some()
-        && inner.width > USER_PROFILE_POPUP_AVATAR_CELL_WIDTH + 2;
+    let has_avatar = user_profile_popup_has_avatar_inside(
+        inner,
+        state.user_profile_popup_avatar_url().is_some(),
+    );
     let text_area = user_profile_popup_text_area_inside(inner, has_avatar);
 
     let popup_text = user_profile_popup_text_for_render(state, text_area.width);
     let total_lines = popup_text.lines.len();
     let viewport = text_area.height as usize;
-    let scroll_position = state.user_profile_popup_scroll().min(
-        total_lines.saturating_sub(viewport),
-    );
+    let scroll_position = state
+        .user_profile_popup_scroll()
+        .min(total_lines.saturating_sub(viewport));
     let lines = popup_text
         .lines
         .into_iter()
@@ -360,13 +361,7 @@ pub(super) fn render_user_profile_popup(
         .take(viewport)
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), text_area);
-    render_vertical_scrollbar(
-        frame,
-        text_area,
-        scroll_position,
-        viewport,
-        total_lines,
-    );
+    render_vertical_scrollbar(frame, text_area, scroll_position, viewport, total_lines);
 
     if let Some(avatar) = avatar.filter(|_| has_avatar) {
         let avatar_area = Rect {
@@ -396,6 +391,16 @@ pub(super) fn user_profile_popup_area(area: Rect) -> Rect {
     centered_rect(area, width, height)
 }
 
+pub(super) fn user_profile_popup_has_avatar(area: Rect, has_avatar_url: bool) -> bool {
+    let popup = user_profile_popup_area(area);
+    let inner = panel_block("Profile", true).inner(popup);
+    user_profile_popup_has_avatar_inside(inner, has_avatar_url)
+}
+
+fn user_profile_popup_has_avatar_inside(inner: Rect, has_avatar_url: bool) -> bool {
+    has_avatar_url && inner.width > USER_PROFILE_POPUP_AVATAR_CELL_WIDTH + 2
+}
+
 fn user_profile_popup_text_area_inside(inner: Rect, has_avatar: bool) -> Rect {
     if has_avatar {
         let gutter = USER_PROFILE_POPUP_AVATAR_CELL_WIDTH + 2;
@@ -412,29 +417,20 @@ fn user_profile_popup_text_area_inside(inner: Rect, has_avatar: bool) -> Rect {
 
 /// Geometry the scroll-clamping pass needs: the inner text rect plus the
 /// available width that `user_profile_popup_text` will lay out into.
-pub(super) fn user_profile_popup_text_geometry(
-    area: Rect,
-    has_avatar: bool,
-) -> (u16, u16) {
+pub(super) fn user_profile_popup_text_geometry(area: Rect, has_avatar: bool) -> (u16, u16) {
     let popup = user_profile_popup_area(area);
     let inner = panel_block("Profile", true).inner(popup);
     let text_area = user_profile_popup_text_area_inside(inner, has_avatar);
     (text_area.width, text_area.height)
 }
 
-fn user_profile_popup_text_for_render(
-    state: &DashboardState,
-    width: u16,
-) -> UserProfilePopupText {
+fn user_profile_popup_text_for_render(state: &DashboardState, width: u16) -> UserProfilePopupText {
     if let Some(profile) = state.user_profile_popup_data() {
         user_profile_popup_text(profile, state, width, state.user_profile_popup_status())
     } else if let Some(message) = state.user_profile_popup_load_error() {
         UserProfilePopupText {
             lines: vec![Line::from(Span::styled(
-                truncate_display_width(
-                    &format!("Failed to load profile: {message}"),
-                    width.into(),
-                ),
+                truncate_display_width(&format!("Failed to load profile: {message}"), width.into()),
                 Style::default().fg(Color::Red),
             ))],
         }
@@ -560,10 +556,12 @@ pub(super) fn user_profile_popup_text(
     );
 
     lines.push(Line::from(Span::raw(String::new())));
-    lines.push(Line::from(Span::styled(
-        "j/k scroll · m send DM · Esc close",
-        Style::default().fg(DIM),
-    )));
+    let footer = if Some(profile.user_id) == state.current_user_id() {
+        "j/k scroll · Esc close"
+    } else {
+        "j/k scroll · m send DM · Esc close"
+    };
+    lines.push(Line::from(Span::styled(footer, Style::default().fg(DIM))));
     UserProfilePopupText { lines }
 }
 
