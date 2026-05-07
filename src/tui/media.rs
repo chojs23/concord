@@ -31,6 +31,11 @@ const PROFILE_POPUP_AVATAR_WIDTH: u16 = 8;
 const PROFILE_POPUP_AVATAR_HEIGHT: u16 = 4;
 const EMOJI_REACTION_THUMB_WIDTH: u16 = 2;
 const EMOJI_REACTION_THUMB_HEIGHT: u16 = 1;
+
+/// Avatar images are small on screen but decoded originals can still add up
+/// as users scroll through large servers. Keep a generous URL-keyed LRU cap.
+const MAX_AVATAR_IMAGE_CACHE_ENTRIES: usize = 256;
+
 fn query_image_picker(target: &str, unavailable_message: &str) -> Option<Picker> {
     match Picker::from_query_stdio() {
         Ok(picker) => Some(picker),
@@ -44,12 +49,31 @@ fn query_image_picker(target: &str, unavailable_message: &str) -> Option<Picker>
 pub(super) struct AvatarImageCache {
     picker: Option<Picker>,
     entries: HashMap<String, AvatarImageEntry>,
+    tick: u64,
 }
 
 enum AvatarImageEntry {
-    Loading,
-    Ready { image: DynamicImage },
-    Failed,
+    Loading { last_used: u64 },
+    Ready { image: DynamicImage, last_used: u64 },
+    Failed { last_used: u64 },
+}
+
+impl AvatarImageEntry {
+    fn last_used(&self) -> u64 {
+        match self {
+            AvatarImageEntry::Loading { last_used }
+            | AvatarImageEntry::Ready { last_used, .. }
+            | AvatarImageEntry::Failed { last_used } => *last_used,
+        }
+    }
+
+    fn touch(&mut self, tick: u64) {
+        match self {
+            AvatarImageEntry::Loading { last_used }
+            | AvatarImageEntry::Ready { last_used, .. }
+            | AvatarImageEntry::Failed { last_used } => *last_used = tick,
+        }
+    }
 }
 
 /// Cap on the URL-keyed emoji image cache. Each entry is a small terminal
@@ -99,10 +123,17 @@ impl AvatarImageCache {
         Self {
             picker: query_image_picker("avatar", "avatar image picker unavailable"),
             entries: HashMap::new(),
+            tick: 0,
         }
     }
 
-    pub(super) fn render_state(&self, targets: &[AvatarTarget]) -> Vec<AvatarImage> {
+    pub(super) fn render_state(&mut self, targets: &[AvatarTarget]) -> Vec<AvatarImage> {
+        let touch_tick = self.next_tick();
+        for target in targets {
+            if let Some(entry) = self.entries.get_mut(&target.url) {
+                entry.touch(touch_tick);
+            }
+        }
         let Some(picker) = self.picker.as_ref() else {
             return Vec::new();
         };
@@ -110,7 +141,7 @@ impl AvatarImageCache {
         targets
             .iter()
             .filter_map(|target| {
-                let AvatarImageEntry::Ready { image } = self.entries.get(&target.url)? else {
+                let AvatarImageEntry::Ready { image, .. } = self.entries.get(&target.url)? else {
                     return None;
                 };
                 let render_info = ImagePreviewRenderInfo {
@@ -135,10 +166,13 @@ impl AvatarImageCache {
     }
 
     pub(super) fn next_requests(&mut self, targets: &[AvatarTarget]) -> Vec<AppCommand> {
-        targets
+        let commands = targets
             .iter()
+            .take(MAX_AVATAR_IMAGE_CACHE_ENTRIES)
             .filter_map(|target| self.next_request_for_url(&target.url))
-            .collect()
+            .collect();
+        self.prune_to_limit(targets);
+        commands
     }
 
     /// Schedules an out-of-band avatar fetch (used by the profile popup,
@@ -147,8 +181,10 @@ impl AvatarImageCache {
         if self.entries.contains_key(url) {
             return None;
         }
+        let last_used = self.next_tick();
         self.entries
-            .insert(url.to_owned(), AvatarImageEntry::Loading);
+            .insert(url.to_owned(), AvatarImageEntry::Loading { last_used });
+        self.prune_to_limit(&[]);
         Some(AppCommand::LoadAttachmentPreview {
             url: url.to_owned(),
         })
@@ -157,9 +193,11 @@ impl AvatarImageCache {
     /// Renders a freshly sized protocol for the profile popup. The cache is
     /// keyed by URL, so this reuses any image already fetched by the message
     /// pane and naturally requests when the popup opens an unseen avatar.
-    pub(super) fn popup_avatar_image(&self, url: &str) -> Option<AvatarImage> {
+    pub(super) fn popup_avatar_image(&mut self, url: &str) -> Option<AvatarImage> {
+        let touch_tick = self.next_tick();
+        self.entries.get_mut(url)?.touch(touch_tick);
         let picker = self.picker.as_ref()?;
-        let AvatarImageEntry::Ready { image } = self.entries.get(url)? else {
+        let AvatarImageEntry::Ready { image, .. } = self.entries.get(url)? else {
             return None;
         };
         let render_info = ImagePreviewRenderInfo {
@@ -193,29 +231,62 @@ impl AvatarImageCache {
         if !self.entries.contains_key(url) {
             return;
         }
+        let last_used = self.next_tick();
 
         if self.picker.is_none() {
             self.entries
-                .insert(url.to_owned(), AvatarImageEntry::Failed);
+                .insert(url.to_owned(), AvatarImageEntry::Failed { last_used });
             return;
         }
 
         match image::load_from_memory(bytes) {
             Ok(image) => {
                 self.entries
-                    .insert(url.to_owned(), AvatarImageEntry::Ready { image });
+                    .insert(url.to_owned(), AvatarImageEntry::Ready { image, last_used });
             }
             Err(_) => {
                 self.entries
-                    .insert(url.to_owned(), AvatarImageEntry::Failed);
+                    .insert(url.to_owned(), AvatarImageEntry::Failed { last_used });
             }
         }
     }
 
     fn store_failed(&mut self, url: &str) {
         if self.entries.contains_key(url) {
+            let last_used = self.next_tick();
             self.entries
-                .insert(url.to_owned(), AvatarImageEntry::Failed);
+                .insert(url.to_owned(), AvatarImageEntry::Failed { last_used });
+        }
+    }
+
+    fn next_tick(&mut self) -> u64 {
+        self.tick = self.tick.saturating_add(1);
+        self.tick
+    }
+
+    fn prune_to_limit(&mut self, targets: &[AvatarTarget]) {
+        if self.entries.len() <= MAX_AVATAR_IMAGE_CACHE_ENTRIES {
+            return;
+        }
+
+        let protected = targets
+            .iter()
+            .take(MAX_AVATAR_IMAGE_CACHE_ENTRIES)
+            .map(|target| target.url.as_str())
+            .collect::<HashSet<_>>();
+        let mut removable = self
+            .entries
+            .iter()
+            .filter(|(url, _)| !protected.contains(url.as_str()))
+            .map(|(url, entry)| (url.clone(), entry.last_used()))
+            .collect::<Vec<_>>();
+        removable.sort_by_key(|(_, last_used)| *last_used);
+
+        for (url, _) in removable {
+            if self.entries.len() <= MAX_AVATAR_IMAGE_CACHE_ENTRIES {
+                break;
+            }
+            self.entries.remove(&url);
         }
     }
 }
@@ -692,6 +763,72 @@ mod tests {
         assert_eq!(targets[0].row, 0);
         assert_eq!(targets[0].visible_height, 1);
         assert_eq!(targets[0].top_clip_rows, 0);
+    }
+
+    #[test]
+    fn avatar_image_cache_evicts_least_recently_used_when_over_capacity() {
+        let mut cache = AvatarImageCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+        };
+        for id in 0..MAX_AVATAR_IMAGE_CACHE_ENTRIES {
+            cache.entries.insert(
+                format!("https://cdn.discordapp.com/avatars/{id}.png"),
+                AvatarImageEntry::Failed {
+                    last_used: id as u64,
+                },
+            );
+        }
+        cache.tick = MAX_AVATAR_IMAGE_CACHE_ENTRIES as u64;
+        cache.entries.insert(
+            "https://cdn.discordapp.com/avatars/oldest.png".to_owned(),
+            AvatarImageEntry::Failed { last_used: 0 },
+        );
+
+        let visible_url = "https://cdn.discordapp.com/avatars/0.png".to_owned();
+        let targets = vec![AvatarTarget {
+            row: 0,
+            visible_height: 1,
+            top_clip_rows: 0,
+            url: visible_url.clone(),
+        }];
+        cache.prune_to_limit(&targets);
+
+        assert_eq!(cache.entries.len(), MAX_AVATAR_IMAGE_CACHE_ENTRIES);
+        assert!(cache.entries.contains_key(&visible_url));
+        assert!(
+            !cache
+                .entries
+                .contains_key("https://cdn.discordapp.com/avatars/oldest.png")
+        );
+    }
+
+    #[test]
+    fn avatar_popup_request_prunes_cache_to_limit() {
+        let mut cache = AvatarImageCache {
+            picker: None,
+            entries: HashMap::new(),
+            tick: 0,
+        };
+        for id in 0..MAX_AVATAR_IMAGE_CACHE_ENTRIES {
+            cache.entries.insert(
+                format!("https://cdn.discordapp.com/avatars/{id}.png"),
+                AvatarImageEntry::Failed {
+                    last_used: id as u64,
+                },
+            );
+        }
+
+        let request = cache.next_request_for_url("https://cdn.discordapp.com/avatars/new.png");
+
+        assert!(request.is_some());
+        assert_eq!(cache.entries.len(), MAX_AVATAR_IMAGE_CACHE_ENTRIES);
+        assert!(
+            cache
+                .entries
+                .contains_key("https://cdn.discordapp.com/avatars/new.png")
+        );
     }
 
     #[test]

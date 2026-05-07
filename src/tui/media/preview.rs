@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use crate::discord::ids::{Id, marker::MessageMarker};
@@ -18,6 +18,7 @@ use super::{
 };
 
 pub(super) const MAX_IMAGE_PREVIEW_CACHE_ENTRIES: usize = 32;
+const MAX_CONCURRENT_IMAGE_PREVIEW_DECODES: usize = 2;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) struct ImagePreviewKey {
@@ -339,7 +340,7 @@ impl ImagePreviewCache {
                     result.key,
                     ImagePreviewEntry::Ready {
                         filename,
-                        image: image.clone(),
+                        image,
                         protocol_render_info: render_info,
                         protocol,
                         last_used,
@@ -515,10 +516,24 @@ pub(in crate::tui) fn spawn_image_preview_decode(
     job: ImagePreviewDecodeJob,
     tx: mpsc::UnboundedSender<ImagePreviewDecodeResult>,
 ) {
-    task::spawn_blocking(move || {
-        let result = decode_image_preview(job);
-        let _ = tx.send(result);
+    let decode_permits = image_preview_decode_permits().clone();
+    task::spawn(async move {
+        let Ok(_permit) = decode_permits.acquire_owned().await else {
+            return;
+        };
+        if let Ok(result) = task::spawn_blocking(move || decode_image_preview(job)).await {
+            let _ = tx.send(result);
+        }
     });
+}
+
+fn image_preview_decode_permits() -> &'static Arc<tokio::sync::Semaphore> {
+    static PERMITS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+    PERMITS.get_or_init(|| {
+        Arc::new(tokio::sync::Semaphore::new(
+            MAX_CONCURRENT_IMAGE_PREVIEW_DECODES,
+        ))
+    })
 }
 
 fn decode_image_preview(job: ImagePreviewDecodeJob) -> ImagePreviewDecodeResult {
