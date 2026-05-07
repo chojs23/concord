@@ -17,7 +17,7 @@ use super::{
     ImagePreviewRenderInfo, ImagePreviewTarget, clipped_preview_image, query_image_picker,
 };
 
-pub(super) const MAX_IMAGE_PREVIEW_CACHE_ENTRIES: usize = 32;
+pub(super) const MAX_IMAGE_PREVIEW_CACHE_ENTRIES: usize = 16;
 const MAX_CONCURRENT_IMAGE_PREVIEW_DECODES: usize = 2;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

@@ -34,7 +34,7 @@ const EMOJI_REACTION_THUMB_HEIGHT: u16 = 1;
 
 /// Avatar images are small on screen but decoded originals can still add up
 /// as users scroll through large servers. Keep a generous URL-keyed LRU cap.
-const MAX_AVATAR_IMAGE_CACHE_ENTRIES: usize = 256;
+const MAX_AVATAR_IMAGE_CACHE_ENTRIES: usize = 32;
 
 fn query_image_picker(target: &str, unavailable_message: &str) -> Option<Picker> {
     match Picker::from_query_stdio() {
@@ -77,9 +77,9 @@ impl AvatarImageEntry {
 }
 
 /// Cap on the URL-keyed emoji image cache. Each entry is a small terminal
-/// protocol payload, so 256 fits realistic loads and bounds worst-case
+/// protocol payload, so 256 or 128 fits realistic loads and bounds worst-case
 /// memory if many unique emoji ids arrive.
-const MAX_EMOJI_IMAGE_CACHE_ENTRIES: usize = 256;
+const MAX_EMOJI_IMAGE_CACHE_ENTRIES: usize = 128;
 
 pub(super) struct EmojiImageCache {
     picker: Option<Picker>,
