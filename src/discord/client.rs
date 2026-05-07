@@ -184,6 +184,13 @@ impl DiscordClient {
         self.rest.send_message(channel_id, content, reply_to).await
     }
 
+    pub async fn create_direct_message(
+        &self,
+        recipient_id: Id<UserMarker>,
+    ) -> Result<crate::discord::ChannelInfo> {
+        self.rest.create_direct_message(recipient_id).await
+    }
+
     pub async fn edit_message(
         &self,
         channel_id: Id<ChannelMarker>,

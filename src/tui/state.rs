@@ -351,6 +351,20 @@ impl DashboardState {
                     popup.load_error = Some(message.clone());
                 }
             }
+            AppEvent::ActivateChannel { channel_id } => {
+                let channel_id = *channel_id;
+                let scope = self
+                    .discord
+                    .channel(channel_id)
+                    .map(|channel| match channel.guild_id {
+                        Some(guild_id) => ActiveGuildScope::Guild(guild_id),
+                        None => ActiveGuildScope::DirectMessages,
+                    });
+                if let Some(scope) = scope {
+                    self.activate_guild(scope);
+                    self.activate_channel(channel_id);
+                }
+            }
             _ => {}
         }
         if apply_discord {

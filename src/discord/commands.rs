@@ -149,4 +149,11 @@ pub enum AppCommand {
         user_id: Id<UserMarker>,
         guild_id: Option<Id<GuildMarker>>,
     },
+    /// Resolve (creating if necessary) a one-on-one DM channel with the
+    /// recipient and switch the dashboard to it. Discord's
+    /// `POST /users/@me/channels` returns the existing channel when one
+    /// already exists, so this command is idempotent.
+    OpenDirectMessage {
+        user_id: Id<UserMarker>,
+    },
 }

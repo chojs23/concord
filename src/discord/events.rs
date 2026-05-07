@@ -612,6 +612,14 @@ pub enum AppEvent {
     RelationshipRemove {
         user_id: Id<UserMarker>,
     },
+    /// Tells the TUI to switch to a specific channel — emitted after a
+    /// REST-side action (e.g. opening a DM) creates or resolves a channel
+    /// outside the gateway flow. The channel itself must already be in
+    /// state (typically because a prior `ChannelUpsert` for the same id
+    /// arrived first).
+    ActivateChannel {
+        channel_id: Id<ChannelMarker>,
+    },
     GatewayClosed,
 }
 
@@ -635,6 +643,7 @@ impl AppEvent {
                 | AppEvent::MessageHistoryLoadFailed { .. }
                 | AppEvent::PinnedMessagesLoadFailed { .. }
                 | AppEvent::UserProfileLoadFailed { .. }
+                | AppEvent::ActivateChannel { .. }
                 | AppEvent::GatewayClosed
         )
     }

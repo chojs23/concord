@@ -537,7 +537,7 @@ pub(super) fn user_profile_popup_text(
 
     lines.push(Line::from(Span::raw(String::new())));
     lines.push(Line::from(Span::styled(
-        "j/k pick · Enter open · Esc close",
+        "j/k pick · Enter open · m send DM · Esc close",
         Style::default().fg(DIM),
     )));
     UserProfilePopupText {

@@ -685,6 +685,32 @@ fn start_command_loop(
                             }
                         }
                     }
+                    AppCommand::OpenDirectMessage { user_id } => {
+                        match client.create_direct_message(user_id).await {
+                            Ok(channel) => {
+                                let channel_id = channel.channel_id;
+                                // Land the channel in state first so the
+                                // ActivateChannel handler can look it up by id;
+                                // ChannelUpsert is idempotent if the gateway
+                                // also delivers a CHANNEL_CREATE for the same
+                                // DM later.
+                                client
+                                    .publish_event(AppEvent::ChannelUpsert(channel))
+                                    .await;
+                                client
+                                    .publish_event(AppEvent::ActivateChannel { channel_id })
+                                    .await;
+                            }
+                            Err(error) => {
+                                log_app_error("open direct message failed", &error);
+                                client
+                                    .publish_event(AppEvent::GatewayError {
+                                        message: format!("open direct message failed: {error}"),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
                 }
             });
         }

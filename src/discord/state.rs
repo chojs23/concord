@@ -737,6 +737,7 @@ impl DiscordState {
             | AppEvent::ThreadPreviewLoadFailed { .. }
             | AppEvent::ForumPostsLoadFailed { .. }
             | AppEvent::UserProfileLoadFailed { .. }
+            | AppEvent::ActivateChannel { .. }
             | AppEvent::GatewayClosed => {}
         }
     }
