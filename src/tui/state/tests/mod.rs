@@ -2321,6 +2321,110 @@ fn first_loaded_message_has_date_separator() {
 }
 
 #[test]
+fn incoming_message_while_scrolled_away_sets_new_messages_marker() {
+    let mut state = state_with_messages(5);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.jump_top();
+
+    push_text_message(&mut state, 6, "new while reading older messages");
+
+    assert_eq!(state.new_messages_marker_message_id(), Some(Id::new(6)));
+    assert_eq!(state.new_messages_count(), 1);
+    assert_eq!(state.message_extra_top_lines(5), 0);
+}
+
+#[test]
+fn new_messages_count_includes_messages_after_marker() {
+    let mut state = state_with_messages(5);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.jump_top();
+
+    push_text_message(&mut state, 6, "first unread");
+    push_text_message(&mut state, 7, "second unread");
+
+    assert_eq!(state.new_messages_marker_message_id(), Some(Id::new(6)));
+    assert_eq!(state.new_messages_count(), 2);
+}
+
+#[test]
+fn viewport_scroll_away_from_latest_sets_new_messages_marker_even_when_cursor_is_latest() {
+    let mut state = state_with_messages(10);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(5);
+    state.clamp_message_viewport_for_image_previews(80, 16, 3);
+    let selected = state.selected_message();
+
+    state.scroll_message_viewport_up();
+    state.scroll_message_viewport_up();
+    assert_eq!(state.selected_message(), selected);
+    assert!(!state.message_auto_follow());
+
+    push_text_message(&mut state, 11, "new while viewport is above latest");
+
+    assert_eq!(state.selected_message(), selected);
+    assert_eq!(state.new_messages_marker_message_id(), Some(Id::new(11)));
+    assert_eq!(state.new_messages_count(), 1);
+}
+
+#[test]
+fn new_messages_marker_clears_when_user_returns_to_latest() {
+    let mut state = state_with_messages(5);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.jump_top();
+    push_text_message(&mut state, 6, "new while reading older messages");
+
+    state.jump_bottom();
+
+    assert_eq!(state.new_messages_marker_message_id(), None);
+}
+
+#[test]
+fn new_messages_marker_clears_when_viewport_jumps_to_latest() {
+    let mut state = state_with_messages(5);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.clamp_message_viewport_for_image_previews(80, 16, 3);
+    state.jump_top();
+    push_text_message(&mut state, 6, "new while reading older messages");
+
+    state.scroll_message_viewport_bottom();
+
+    assert_eq!(state.new_messages_marker_message_id(), None);
+}
+
+#[test]
+fn new_messages_marker_clears_when_viewport_scrolls_to_latest() {
+    let mut state = state_with_messages(5);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.clamp_message_viewport_for_image_previews(80, 16, 3);
+    state.jump_top();
+    push_text_message(&mut state, 6, "new while reading older messages");
+
+    for _ in 0..50 {
+        if state.new_messages_marker_message_id().is_none() {
+            break;
+        }
+        state.scroll_message_viewport_down();
+    }
+
+    assert_eq!(state.new_messages_marker_message_id(), None);
+}
+
+#[test]
+fn incoming_message_at_latest_does_not_set_new_messages_marker() {
+    let mut state = state_with_messages(2);
+    state.focus_pane(FocusPane::Messages);
+
+    push_text_message(&mut state, 3, "new while following latest");
+
+    assert_eq!(state.new_messages_marker_message_id(), None);
+}
+
+#[test]
 fn reaction_users_loaded_opens_popup_state() {
     let mut state = state_with_messages(1);
 

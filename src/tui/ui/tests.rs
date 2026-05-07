@@ -19,10 +19,11 @@ use super::{
     forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
     inline_image_preview_area, inline_image_preview_row, member_display_label, member_name_style,
     message_action_menu_lines, message_author_style, message_item_lines, message_starts_new_day,
-    message_viewport_lines, poll_vote_picker_lines, reaction_users_popup_lines,
-    reaction_users_visible_line_count, selected_avatar_x_offset, selected_message_card_width,
-    selected_message_content_x_offset, sync_view_heights, user_profile_display_name_style,
-    user_profile_popup_lines, user_profile_popup_text, user_profile_popup_visible_lines,
+    message_viewport_lines, new_messages_notice_line, poll_vote_picker_lines,
+    reaction_users_popup_lines, reaction_users_visible_line_count, selected_avatar_x_offset,
+    selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
+    user_profile_display_name_style, user_profile_popup_lines, user_profile_popup_text,
+    user_profile_popup_visible_lines,
 };
 use crate::{
     discord::{
@@ -2638,6 +2639,97 @@ fn date_separator_line_centers_label_within_full_width() {
     // The label is "YYYY-MM-DD" wrapped in spaces, so 12 chars.
     let label_chars = text.matches(char::is_numeric).count();
     assert_eq!(label_chars, 8);
+}
+
+#[test]
+fn new_messages_notice_line_centers_count_within_full_width() {
+    let line = new_messages_notice_line(3, 30);
+    let text = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert_eq!(text.width(), 30);
+    assert!(text.contains("3 new messages"));
+    assert!(!text.contains('#'));
+    assert!(!text.contains('│'));
+    assert_eq!(line.spans[0].style.fg, Some(ACCENT));
+    assert_eq!(line.spans[0].style.bg, None);
+    assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
+}
+
+#[test]
+fn render_messages_shows_new_messages_notice_at_bottom_of_message_pane() {
+    let mut state = state_with_message();
+    push_message(&mut state, 2, "older second");
+    push_message(&mut state, 3, "older third");
+    push_message(&mut state, 4, "older fourth");
+    state.focus_pane(FocusPane::Messages);
+    state.jump_top();
+    push_message(&mut state, 5, "first unread");
+    push_message(&mut state, 6, "second unread");
+
+    let dump = render_dashboard_dump(100, 24, &mut state);
+
+    assert_notice_floats_at_list_bottom_above_composer(&dump, "2 new messages");
+}
+
+#[test]
+fn render_messages_shows_new_messages_notice_after_viewport_scrolls_up() {
+    let mut state = state_with_message();
+    for id in 2..=10 {
+        push_message(&mut state, id, &format!("older {id}"));
+    }
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(5);
+    state.clamp_message_viewport_for_image_previews(80, 16, 3);
+
+    state.scroll_message_viewport_up();
+    state.scroll_message_viewport_up();
+    push_message(&mut state, 11, "new after viewport scroll");
+
+    let dump = render_dashboard_dump(100, 24, &mut state);
+
+    assert_notice_floats_at_list_bottom_above_composer(&dump, "1 new messages");
+}
+
+#[test]
+fn new_messages_notice_does_not_reserve_message_list_height() {
+    let area = Rect::new(0, 0, 100, 24);
+    let mut state = state_with_message();
+    for id in 2..=10 {
+        push_message(&mut state, id, &format!("older {id}"));
+    }
+    state.focus_pane(FocusPane::Messages);
+    sync_view_heights(area, &mut state);
+    state.clamp_message_viewport_for_image_previews(80, 16, 3);
+    let height_without_notice = state.message_view_height();
+
+    state.scroll_message_viewport_up();
+    push_message(&mut state, 11, "first unread");
+    sync_view_heights(area, &mut state);
+
+    assert_eq!(state.new_messages_count(), 1);
+    assert_eq!(state.message_view_height(), height_without_notice);
+}
+
+fn assert_notice_floats_at_list_bottom_above_composer(dump: &[String], label: &str) {
+    let notice_row = dump
+        .iter()
+        .position(|line| line.contains(label))
+        .expect("new messages notice should render");
+    let composer_row = dump
+        .iter()
+        .position(|line| line.contains("Message Input"))
+        .expect("composer should render");
+
+    assert_eq!(
+        notice_row.saturating_add(1),
+        composer_row,
+        "new messages notice should float on the message-list bottom above composer:\n{}",
+        dump.join("\n")
+    );
 }
 
 #[test]

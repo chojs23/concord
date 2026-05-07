@@ -81,8 +81,8 @@ use self::{
     message_list::{
         date_separator_line, format_message_sent_time, format_unix_millis_with_offset,
         inline_image_preview_row, message_author_style, message_item_lines,
-        message_viewport_layout, message_viewport_lines, selected_avatar_x_offset,
-        selected_message_card_width, selected_message_content_x_offset,
+        message_viewport_layout, message_viewport_lines, new_messages_notice_line,
+        selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
     },
     popups::{
         channel_action_menu_lines, debug_log_popup_lines, emoji_reaction_picker_lines,

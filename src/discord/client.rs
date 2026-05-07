@@ -334,7 +334,7 @@ fn validate_token_header(token: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::discord::{AppEvent, ids::Id};
+    use crate::discord::{AppEvent, MessageKind, ids::Id};
 
     use super::{DiscordClient, validate_token_header};
 
@@ -361,6 +361,24 @@ mod tests {
         assert_eq!(snapshot.revision, 1);
         assert_eq!(effect.revision, 1);
         assert_eq!(state_snapshot.revision, 1);
+    }
+
+    #[tokio::test]
+    async fn message_create_publishes_matching_snapshot_and_effect_revisions() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let mut effects = client.take_effects();
+        let mut snapshots = client.subscribe_snapshots();
+
+        client.publish_event(message_create_event(1)).await;
+
+        snapshots.changed().await.expect("snapshot is published");
+        let snapshot = snapshots.borrow_and_update().clone();
+        let effect = effects.recv().await.expect("effect is published");
+
+        assert_eq!(snapshot.revision, 1);
+        assert_eq!(effect.revision, 1);
+        assert!(matches!(effect.event, AppEvent::MessageCreate { .. }));
     }
 
     #[tokio::test]
@@ -426,5 +444,26 @@ mod tests {
     async fn rejects_tokens_that_are_invalid_http_header_values() {
         validate_token_header("invalid\nuser-token")
             .expect_err("newlines are not valid authorization header values");
+    }
+
+    fn message_create_event(message_id: u64) -> AppEvent {
+        AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(message_id),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some(format!("msg {message_id}")),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        }
     }
 }

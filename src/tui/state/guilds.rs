@@ -301,6 +301,7 @@ impl DashboardState {
         self.message_line_scroll = 0;
         self.message_keep_selection_visible = true;
         self.message_auto_follow = true;
+        self.clear_new_messages_marker();
         self.selected_member = 0;
         self.member_scroll = 0;
         self.member_keep_selection_visible = true;

@@ -85,6 +85,7 @@ struct ThreadReturnTarget {
     message_line_scroll: usize,
     message_keep_selection_visible: bool,
     message_auto_follow: bool,
+    new_messages_marker_message_id: Option<Id<MessageMarker>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,6 +96,7 @@ struct PinnedMessageViewReturnTarget {
     message_line_scroll: usize,
     message_keep_selection_visible: bool,
     message_auto_follow: bool,
+    new_messages_marker_message_id: Option<Id<MessageMarker>>,
 }
 
 #[derive(Debug, Default)]
@@ -123,6 +125,7 @@ pub struct DashboardState {
     message_line_scroll: usize,
     message_keep_selection_visible: bool,
     message_auto_follow: bool,
+    new_messages_marker_message_id: Option<Id<MessageMarker>>,
     message_view_height: usize,
     message_content_width: usize,
     message_preview_width: u16,
@@ -199,6 +202,7 @@ impl DashboardState {
             message_line_scroll: 0,
             message_keep_selection_visible: true,
             message_auto_follow: true,
+            new_messages_marker_message_id: None,
             message_view_height: 1,
             message_content_width: usize::MAX,
             message_preview_width: 0,
@@ -256,18 +260,21 @@ impl DashboardState {
         //   tracking the latest after the event applies. The cursor is
         //   preserved by message id.
         // * Auto-follow: a superset of auto-scroll that also moves the
-        //   cursor to the new latest message. Triggers when the cursor was
-        //   already on the latest message, or when this event is a message
-        //   the current user just sent into the active channel.
+        //   cursor to the new latest message. Triggers when the user was
+        //   still following the latest message, or when this event is a
+        //   message the current user just sent into the active channel.
         //
         // Both share the `message_auto_follow` flag — that flag really means
         // "next render should align the viewport to the bottom" and applies
         // to both modes. Auto-follow simply adds the cursor jump.
-        let was_at_latest = self.message_auto_follow || self.is_viewport_at_latest_message();
+        let was_auto_follow = self.message_auto_follow;
+        let was_at_latest = was_auto_follow || self.is_viewport_at_latest_message();
         let was_cursor_on_last = self.cursor_on_last_message();
+        let was_following_cursor = was_auto_follow && was_cursor_on_last;
         let user_just_sent = self.event_is_self_message_in_active_channel(&event);
-        let preserve_selection = !(was_cursor_on_last || user_just_sent);
-        let preserve_scroll = !(was_at_latest || was_cursor_on_last || user_just_sent);
+        let active_new_message_id = self.active_channel_message_create_id(&event);
+        let preserve_selection = !(was_following_cursor || user_just_sent);
+        let preserve_scroll = !(was_at_latest || was_following_cursor || user_just_sent);
         let selected_message_id = preserve_selection
             .then(|| {
                 self.messages()
@@ -351,9 +358,10 @@ impl DashboardState {
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);
         self.clamp_selection_indices();
+        self.clear_missing_new_messages_marker();
         let in_message_view =
             !self.selected_channel_is_forum() && !self.is_pinned_message_view_active();
-        let should_follow = (was_cursor_on_last || user_just_sent) && in_message_view;
+        let should_follow = (was_following_cursor || user_just_sent) && in_message_view;
         let should_scroll = should_follow || (was_at_latest && in_message_view);
         if should_follow {
             self.follow_latest_message();
@@ -366,6 +374,13 @@ impl DashboardState {
             // last message even when only the viewport (not the cursor)
             // moves.
             self.message_auto_follow = true;
+            self.clear_new_messages_marker();
+        } else if in_message_view
+            && !was_at_latest
+            && !user_just_sent
+            && self.new_messages_marker_message_id.is_none()
+        {
+            self.new_messages_marker_message_id = active_new_message_id;
         }
         self.clamp_list_viewports();
         self.clamp_message_viewport();
@@ -411,10 +426,12 @@ impl DashboardState {
     }
 
     pub fn restore_discord_snapshot(&mut self, discord: DiscordState) {
-        let was_at_latest = self.message_auto_follow || self.is_viewport_at_latest_message();
+        let was_auto_follow = self.message_auto_follow;
+        let was_at_latest = was_auto_follow || self.is_viewport_at_latest_message();
         let was_cursor_on_last = self.cursor_on_last_message();
-        let preserve_selection = !was_cursor_on_last;
-        let preserve_scroll = !(was_at_latest || was_cursor_on_last);
+        let was_following_cursor = was_auto_follow && was_cursor_on_last;
+        let preserve_selection = !was_following_cursor;
+        let preserve_scroll = !(was_at_latest || was_following_cursor);
         let selected_message_id = preserve_selection
             .then(|| {
                 self.messages()
@@ -443,7 +460,7 @@ impl DashboardState {
         self.clamp_selection_indices();
         let in_message_view =
             !self.selected_channel_is_forum() && !self.is_pinned_message_view_active();
-        let should_follow = was_cursor_on_last && in_message_view;
+        let should_follow = was_following_cursor && in_message_view;
         let should_scroll = should_follow || (was_at_latest && in_message_view);
         if should_follow {
             self.follow_latest_message();
@@ -751,6 +768,7 @@ impl DashboardState {
         self.message_scroll = 0;
         self.message_line_scroll = 0;
         self.message_auto_follow = false;
+        self.clear_new_messages_marker();
         self.message_keep_selection_visible = true;
         self.clamp_message_viewport();
     }
@@ -766,6 +784,7 @@ impl DashboardState {
             message_line_scroll: self.message_line_scroll,
             message_keep_selection_visible: self.message_keep_selection_visible,
             message_auto_follow: self.message_auto_follow,
+            new_messages_marker_message_id: self.new_messages_marker_message_id,
         });
     }
 
@@ -788,6 +807,7 @@ impl DashboardState {
         self.message_line_scroll = target.message_line_scroll;
         self.message_keep_selection_visible = target.message_keep_selection_visible;
         self.message_auto_follow = target.message_auto_follow;
+        self.new_messages_marker_message_id = target.new_messages_marker_message_id;
         self.clamp_message_viewport();
         true
     }
@@ -926,11 +946,29 @@ impl DashboardState {
         super::ui::message_starts_new_day(current.id, previous_id)
     }
 
+    pub(crate) fn new_messages_count(&self) -> usize {
+        let Some(marker_id) = self.new_messages_marker_message_id else {
+            return 0;
+        };
+        let messages = self.messages();
+        messages
+            .iter()
+            .position(|message| message.id == marker_id)
+            .map(|index| messages.len().saturating_sub(index))
+            .unwrap_or(0)
+    }
+
     /// Number of extra rows that the message at `index` reserves above its
-    /// avatar/header line. Today this is 1 when a date separator should
-    /// appear, 0 otherwise.
+    /// avatar/header line. These rows are painted by `message_viewport_lines`
+    /// before the message body, so scroll and media-target math must use the
+    /// same count as the renderer.
     pub(crate) fn message_extra_top_lines(&self, index: usize) -> usize {
         usize::from(self.message_starts_new_day_at(index))
+    }
+
+    #[cfg(test)]
+    pub fn new_messages_marker_message_id(&self) -> Option<Id<MessageMarker>> {
+        self.new_messages_marker_message_id
     }
 
     #[cfg(test)]
@@ -1363,6 +1401,14 @@ impl DashboardState {
             self.message_preview_width,
             self.message_max_preview_height,
         );
+        if self.is_viewport_at_latest_message() {
+            self.clear_new_messages_marker();
+            self.normalize_message_line_scroll(
+                self.message_content_width,
+                self.message_preview_width,
+                self.message_max_preview_height,
+            );
+        }
     }
 
     pub fn scroll_message_viewport_up(&mut self) {
@@ -1400,6 +1446,7 @@ impl DashboardState {
         }
         self.message_auto_follow = false;
         self.message_keep_selection_visible = false;
+        self.clear_new_messages_marker();
         self.align_message_viewport_to_bottom(
             self.message_content_width,
             self.message_preview_width,
@@ -1608,6 +1655,7 @@ impl DashboardState {
         self.message_line_scroll = 0;
         self.message_keep_selection_visible = true;
         self.message_auto_follow = true;
+        self.clear_new_messages_marker();
         self.channel_keep_selection_visible = true;
         self.member_keep_selection_visible = true;
         self.cancel_composer();
@@ -1789,6 +1837,36 @@ impl DashboardState {
     /// fight cursor-visibility centering and push the cursor off-screen.
     fn refresh_message_auto_follow(&mut self) {
         self.message_auto_follow = self.cursor_on_last_message();
+        if self.message_auto_follow {
+            self.clear_new_messages_marker();
+        }
+    }
+
+    fn clear_new_messages_marker(&mut self) {
+        self.new_messages_marker_message_id = None;
+    }
+
+    fn clear_missing_new_messages_marker(&mut self) {
+        if let Some(marker_id) = self.new_messages_marker_message_id
+            && !self
+                .messages()
+                .iter()
+                .any(|message| message.id == marker_id)
+        {
+            self.clear_new_messages_marker();
+        }
+    }
+
+    fn active_channel_message_create_id(&self, event: &AppEvent) -> Option<Id<MessageMarker>> {
+        let AppEvent::MessageCreate {
+            channel_id,
+            message_id,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        (Some(*channel_id) == self.active_channel_id).then_some(*message_id)
     }
 
     fn event_is_self_message_in_active_channel(&self, event: &AppEvent) -> bool {

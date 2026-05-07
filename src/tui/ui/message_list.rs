@@ -181,9 +181,37 @@ pub(super) fn render_messages(
         message_areas.list.height as usize,
         message_total_rows,
     );
+    render_new_messages_notice(frame, message_areas.list, state);
     render_typing_footer(frame, message_areas.typing, state);
     render_composer(frame, message_areas.composer, state);
     render_composer_mention_picker(frame, message_areas, state);
+}
+
+fn render_new_messages_notice(frame: &mut Frame, list: Rect, state: &DashboardState) {
+    let count = state.new_messages_count();
+    if count == 0 || list.height == 0 || list.width == 0 {
+        return;
+    }
+
+    let label = new_messages_notice_label(count);
+    let width = u16::try_from(label.as_str().width())
+        .unwrap_or(u16::MAX)
+        .min(list.width);
+    if width == 0 {
+        return;
+    }
+    let area = Rect {
+        x: list.x.saturating_add(list.width.saturating_sub(width) / 2),
+        y: list.y.saturating_add(list.height.saturating_sub(1)),
+        width,
+        height: 1,
+    };
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(new_messages_notice_line(count, area.width as usize)),
+        area,
+    );
 }
 
 fn render_typing_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
@@ -448,10 +476,11 @@ pub(super) fn message_viewport_lines(
         );
 
         let global_index = state.message_scroll().saturating_add(index);
-        let separator_line = state
-            .message_starts_new_day_at(global_index)
-            .then(|| date_separator_line(message.id, layout.list_width));
-        let separator_lines = usize::from(separator_line.is_some());
+        let mut top_lines = Vec::new();
+        if state.message_starts_new_day_at(global_index) {
+            top_lines.push(date_separator_line(message.id, layout.list_width));
+        }
+        let separator_lines = top_lines.len();
         let line_offset = usize::from(index == 0) * state.message_line_scroll();
         let body_skip = line_offset.saturating_sub(separator_lines);
         let item_content_width = if selected == Some(index) {
@@ -460,7 +489,7 @@ pub(super) fn message_viewport_lines(
             layout.content_width
         };
 
-        if let Some(line) = separator_line.filter(|_| line_offset == 0) {
+        for line in top_lines.into_iter().skip(line_offset) {
             lines.push(line);
         }
 
@@ -808,14 +837,35 @@ pub(crate) fn message_starts_new_day(
 pub(super) fn date_separator_line(message_id: Id<MessageMarker>, width: usize) -> Line<'static> {
     let date = message_local_date(message_id);
     let label = format!(" {} ", date.format("%Y-%m-%d"));
-    let label_width = label.as_str().width();
+    separator_line(&label, width, Style::default().fg(DIM))
+}
+
+pub(super) fn new_messages_notice_line(count: usize, width: usize) -> Line<'static> {
+    let label = new_messages_notice_label(count);
+    let text = if label.as_str().width() > width {
+        truncate_display_width(&label, width)
+    } else {
+        let padding = width.saturating_sub(label.as_str().width());
+        let left = padding / 2;
+        let right = padding.saturating_sub(left);
+        format!("{}{}{}", " ".repeat(left), label, " ".repeat(right))
+    };
+    Line::from(Span::styled(text, Style::default().fg(ACCENT).bold()))
+}
+
+fn new_messages_notice_label(count: usize) -> String {
+    format!(" {count} new messages ")
+}
+
+fn separator_line(label: &str, width: usize, style: Style) -> Line<'static> {
+    let label_width = label.width();
     let total = width.max(label_width.saturating_add(2));
     let dashes = total.saturating_sub(label_width);
     let left = dashes / 2;
     let right = dashes.saturating_sub(left);
     Line::from(Span::styled(
         format!("{}{}{}", "─".repeat(left), label, "─".repeat(right)),
-        Style::default().fg(DIM),
+        style,
     ))
 }
 

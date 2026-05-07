@@ -204,6 +204,7 @@ struct VisibleDashboardSignature {
     selected_message: usize,
     message_scroll: usize,
     message_line_scroll: usize,
+    new_messages_count: usize,
     selected_member: usize,
     member_scroll: usize,
     message_pane_title: String,
@@ -255,6 +256,7 @@ fn visible_dashboard_signature(state: &DashboardState) -> VisibleDashboardSignat
         selected_message: state.selected_message(),
         message_scroll: state.message_scroll(),
         message_line_scroll: state.message_line_scroll(),
+        new_messages_count: state.new_messages_count(),
         selected_member: state.selected_member(),
         member_scroll: state.member_scroll(),
         message_pane_title: state.message_pane_title(),
@@ -314,6 +316,7 @@ fn record_visible_signature_change(
         || before.selected_message != after.selected_message
         || before.message_scroll != after.message_scroll
         || before.message_line_scroll != after.message_line_scroll
+        || before.new_messages_count != after.new_messages_count
         || before.typing_footer != after.typing_footer
         || before.visible_messages != after.visible_messages
         || before.visible_forum_posts != after.visible_forum_posts
@@ -362,6 +365,7 @@ fn only_visible_member_signature_changed(
         && before.selected_message == after.selected_message
         && before.message_scroll == after.message_scroll
         && before.message_line_scroll == after.message_line_scroll
+        && before.new_messages_count == after.new_messages_count
         && before.message_pane_title == after.message_pane_title
         && before.typing_footer == after.typing_footer
         && before.status_message == after.status_message
@@ -921,14 +925,18 @@ async fn run_dashboard(
 mod tests {
     use std::collections::VecDeque;
 
-    use crate::discord::{AppEvent, SequencedAppEvent};
+    use crate::discord::ids::{
+        Id,
+        marker::{ChannelMarker, GuildMarker},
+    };
+    use crate::discord::{AppEvent, ChannelInfo, MessageKind, SequencedAppEvent};
 
     use super::{
         AvatarImageCache, EffectContext, EmojiImageCache, ForumPostRequests, HistoryRequests,
         ImagePreviewCache, PinnedMessageRequests, ThreadPreviewRequests, process_deferred_effects,
-        process_sequenced_effect,
+        process_sequenced_effect, visible_dashboard_signature,
     };
-    use crate::tui::state::DashboardState;
+    use crate::tui::state::{DashboardState, FocusPane};
 
     #[test]
     fn effect_waits_until_snapshot_revision_catches_up() {
@@ -989,5 +997,81 @@ mod tests {
 
         assert!(deferred_effects.is_empty());
         assert_eq!(state.current_user(), Some("tester"));
+    }
+
+    #[test]
+    fn visible_signature_changes_when_new_messages_notice_count_changes() {
+        let mut state = state_with_messages(10);
+        state.focus_pane(FocusPane::Messages);
+        state.set_message_view_height(5);
+        state.clamp_message_viewport_for_image_previews(80, 16, 3);
+        state.scroll_message_viewport_up();
+        let before = visible_dashboard_signature(&state);
+
+        push_message(&mut state, 11);
+        let after = visible_dashboard_signature(&state);
+
+        assert_eq!(before.new_messages_count, 0);
+        assert_eq!(after.new_messages_count, 1);
+        assert_ne!(before, after);
+    }
+
+    fn state_with_messages(count: u64) -> DashboardState {
+        let guild_id: Id<GuildMarker> = Id::new(1);
+        let channel_id: Id<ChannelMarker> = Id::new(2);
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        for id in 1..=count {
+            push_message(&mut state, id);
+        }
+        state
+    }
+
+    fn push_message(state: &mut DashboardState, message_id: u64) {
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(message_id),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some(format!("msg {message_id}")),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
     }
 }

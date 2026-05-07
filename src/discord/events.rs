@@ -642,7 +642,8 @@ impl AppEvent {
     pub fn needs_effect_delivery(&self) -> bool {
         matches!(
             self,
-            AppEvent::MessageHistoryLoaded { .. }
+            AppEvent::MessageCreate { .. }
+                | AppEvent::MessageHistoryLoaded { .. }
                 | AppEvent::MessageHistoryLoadFailed { .. }
                 | AppEvent::ThreadPreviewLoaded { .. }
                 | AppEvent::ThreadPreviewLoadFailed { .. }

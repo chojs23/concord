@@ -762,6 +762,7 @@ impl DashboardState {
             message_line_scroll: self.message_line_scroll,
             message_keep_selection_visible: self.message_keep_selection_visible,
             message_auto_follow: self.message_auto_follow,
+            new_messages_marker_message_id: self.new_messages_marker_message_id,
         });
     }
 
@@ -790,6 +791,7 @@ impl DashboardState {
         self.message_line_scroll = target.message_line_scroll;
         self.message_keep_selection_visible = target.message_keep_selection_visible;
         self.message_auto_follow = target.message_auto_follow;
+        self.new_messages_marker_message_id = target.new_messages_marker_message_id;
         self.thread_return_target = None;
         self.clamp_message_viewport();
         true
@@ -811,6 +813,7 @@ impl DashboardState {
         self.pinned_message_view_channel_id = None;
         self.pinned_message_view_return_target = None;
         self.message_auto_follow = !is_forum;
+        self.clear_new_messages_marker();
         self.message_line_scroll = 0;
         self.message_keep_selection_visible = true;
         self.selected_message = if is_forum {
