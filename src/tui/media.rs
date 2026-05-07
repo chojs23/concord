@@ -1091,7 +1091,132 @@ mod tests {
         assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
         assert_eq!(
             targets[0].url,
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg"
+        );
+        assert_eq!(targets[0].filename, "embed-thumbnail");
+    }
+
+    #[test]
+    fn image_preview_targets_downscale_youtube_embed_image_url() {
+        let mut embed = youtube_embed();
+        embed.thumbnail_url = None;
+        embed.thumbnail_width = None;
+        embed.thumbnail_height = None;
+        embed.image_url =
+            Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg?token=abc".to_owned());
+        embed.image_width = Some(1280);
+        embed.image_height = Some(720);
+        let mut state = state_with_image_messages(1, &[]);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: vec![embed],
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let targets = visible_image_preview_targets(&state, layout(8));
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
+        assert_eq!(
+            targets[0].url,
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg?token=abc"
+        );
+        assert_eq!(targets[0].filename, "embed-image");
+    }
+
+    #[test]
+    fn image_viewer_target_caps_large_youtube_embed_image_url() {
+        let mut embed = youtube_embed();
+        embed.thumbnail_url = None;
+        embed.thumbnail_width = None;
+        embed.thumbnail_height = None;
+        embed.image_url = Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg".to_owned());
+        embed.image_width = Some(1280);
+        embed.image_height = Some(720);
+        let mut state = state_with_image_messages(1, &[]);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: vec![embed],
+            forwarded_snapshots: Vec::new(),
+        });
+        state.focus_pane(FocusPane::Messages);
+        state.open_selected_message_actions();
+        state.move_message_action_down();
+        state.activate_selected_message_action();
+
+        let target = visible_image_preview_targets(&state, layout(12))
+            .into_iter()
+            .next()
+            .expect("viewer should create one image target");
+
+        assert!(target.viewer);
+        assert_eq!(
+            target.url,
             "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"
+        );
+        assert_eq!(target.filename, "embed-image");
+    }
+
+    #[test]
+    fn image_preview_targets_keep_small_youtube_thumbnail_url() {
+        let mut embed = youtube_embed();
+        embed.thumbnail_url = Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/default.jpg".to_owned());
+        embed.thumbnail_width = Some(120);
+        embed.thumbnail_height = Some(90);
+        let mut state = state_with_image_messages(1, &[]);
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(2),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: vec![embed],
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let targets = visible_image_preview_targets(&state, layout(8));
+
+        assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
+        assert_eq!(
+            targets[0].url,
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/default.jpg"
         );
         assert_eq!(targets[0].filename, "embed-thumbnail");
     }

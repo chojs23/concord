@@ -23,6 +23,23 @@ const DISCORD_MEDIA_PROXY_ATTACHMENTS_PREFIX: &str = "https://media.discordapp.n
 const DISCORD_MEDIA_PROXY_PREVIEW_FORMAT: &str = "webp";
 const DISCORD_MEDIA_PROXY_PREVIEW_QUALITY: &str = "lossless";
 const DISCORD_MEDIA_PROXY_MAX_PREVIEW_DIMENSION: u64 = 1000;
+const YOUTUBE_THUMBNAIL_PREFIXES: [&str; 4] = [
+    "https://i.ytimg.com/vi/",
+    "https://i.ytimg.com/vi_webp/",
+    "https://img.youtube.com/vi/",
+    "https://img.youtube.com/vi_webp/",
+];
+const YOUTUBE_PREVIEW_MEDIUM: &str = "mqdefault";
+const YOUTUBE_PREVIEW_HIGH: &str = "hqdefault";
+const YOUTUBE_HIGH_PREVIEW_MIN_WIDTH: u64 = 321;
+const YOUTUBE_HIGH_PREVIEW_MIN_HEIGHT: u64 = 181;
+
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+enum YoutubeThumbnailSize {
+    Default,
+    Medium,
+    High,
+}
 
 pub(in crate::tui) struct ImagePreviewTarget {
     pub(super) viewer: bool,
@@ -175,6 +192,10 @@ fn preview_request_url(
     width_columns: u16,
     height_rows: u16,
 ) -> String {
+    if let Some(url) = youtube_thumbnail_preview_url(preview.url, width_columns, height_rows) {
+        return url;
+    }
+
     let Some(proxy_url) = preview.proxy_url else {
         return preview.url.to_owned();
     };
@@ -183,6 +204,63 @@ fn preview_request_url(
     }
 
     discord_media_proxy_preview_url(proxy_url, width_columns, height_rows)
+}
+
+fn youtube_thumbnail_preview_url(
+    url: &str,
+    width_columns: u16,
+    height_rows: u16,
+) -> Option<String> {
+    let prefix = YOUTUBE_THUMBNAIL_PREFIXES
+        .iter()
+        .find(|prefix| url.starts_with(**prefix))?;
+    let tail = &url[prefix.len()..];
+    let slash_index = tail.find('/')?;
+    let (video_id, file_and_query) = tail.split_at(slash_index);
+    if video_id.is_empty() {
+        return None;
+    }
+
+    let file_and_query = &file_and_query[1..];
+    let (file, query) = file_and_query
+        .split_once('?')
+        .unwrap_or((file_and_query, ""));
+    let (variant, extension) = file.rsplit_once('.')?;
+    let source_size = youtube_thumbnail_size(variant)?;
+
+    let width = preview_dimension_pixels(
+        u64::from(width_columns),
+        IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN,
+    );
+    let height =
+        preview_dimension_pixels(u64::from(height_rows), IMAGE_PREVIEW_SOURCE_PIXELS_PER_ROW);
+    let requested_size =
+        if width >= YOUTUBE_HIGH_PREVIEW_MIN_WIDTH || height >= YOUTUBE_HIGH_PREVIEW_MIN_HEIGHT {
+            YoutubeThumbnailSize::High
+        } else {
+            YoutubeThumbnailSize::Medium
+        };
+    let target_variant = match source_size.min(requested_size) {
+        YoutubeThumbnailSize::Default => "default",
+        YoutubeThumbnailSize::Medium => YOUTUBE_PREVIEW_MEDIUM,
+        YoutubeThumbnailSize::High => YOUTUBE_PREVIEW_HIGH,
+    };
+
+    let mut rewritten = format!("{prefix}{video_id}/{target_variant}.{extension}");
+    if !query.is_empty() {
+        rewritten.push('?');
+        rewritten.push_str(query);
+    }
+    Some(rewritten)
+}
+
+fn youtube_thumbnail_size(variant: &str) -> Option<YoutubeThumbnailSize> {
+    match variant {
+        "default" => Some(YoutubeThumbnailSize::Default),
+        "mqdefault" => Some(YoutubeThumbnailSize::Medium),
+        "maxresdefault" | "sddefault" | "hqdefault" | "hq720" => Some(YoutubeThumbnailSize::High),
+        _ => None,
+    }
 }
 
 fn discord_media_proxy_preview_url(
