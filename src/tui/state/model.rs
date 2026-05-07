@@ -21,6 +21,7 @@ pub enum MessageActionKind {
     OpenThread,
     ViewImage,
     DownloadImage,
+    DownloadAttachment(usize),
     AddReaction,
     RemoveReaction(usize),
     ShowReactionUsers,

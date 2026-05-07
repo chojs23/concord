@@ -93,6 +93,19 @@ impl DashboardState {
                 enabled: true,
             });
         }
+        // Image attachments already have a download path through the image
+        // viewer's action menu, so the message-level menu only surfaces
+        // downloads for the file/video kinds that have no other entry point.
+        for (index, attachment) in message.attachments_in_display_order().enumerate() {
+            if attachment.is_image() && attachment.preferred_url().is_some() {
+                continue;
+            }
+            actions.push(MessageActionItem {
+                kind: MessageActionKind::DownloadAttachment(index),
+                label: format!("Download {}", attachment.filename),
+                enabled: true,
+            });
+        }
         actions.push(MessageActionItem {
             kind: MessageActionKind::AddReaction,
             label: "Add reaction".to_owned(),
@@ -214,6 +227,14 @@ impl DashboardState {
             MessageActionKind::DownloadImage => {
                 self.close_message_action_menu();
                 None
+            }
+            MessageActionKind::DownloadAttachment(index) => {
+                let message = self.selected_message_state()?;
+                let attachment = message.attachments_in_display_order().nth(index)?;
+                let url = attachment.url.clone();
+                let filename = attachment.filename.clone();
+                self.close_message_action_menu();
+                Some(AppCommand::DownloadAttachment { url, filename })
             }
             MessageActionKind::AddReaction => {
                 self.open_emoji_reaction_picker();
