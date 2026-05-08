@@ -28,6 +28,20 @@ fn token_input_starts_empty() {
 }
 
 #[test]
+fn token_input_rejects_invalid_header_value() {
+    let mut state = LoginState::new(None);
+    state.screen = LoginScreen::TokenInput;
+    state.token_input = "bad\ntoken".to_owned();
+
+    let action = handle_terminal(&mut state, press(KeyCode::Enter));
+
+    assert!(action.is_none());
+    assert!(state.error.as_deref().is_some_and(|error| {
+        error.contains("Token is invalid") && error.contains("valid HTTP authorization header")
+    }));
+}
+
+#[test]
 fn password_submit_starts_login_and_clears_password_field() {
     let mut state = LoginState::new(None);
     state.screen = LoginScreen::PasswordInput;

@@ -334,7 +334,7 @@ pub(super) async fn publish_app_event(
     }
 }
 
-fn validate_token_header(token: &str) -> Result<()> {
+pub(crate) fn validate_token_header(token: &str) -> Result<()> {
     HeaderValue::from_str(token)
         .map_err(|source| AppError::InvalidDiscordTokenHeader { source })?;
     Ok(())

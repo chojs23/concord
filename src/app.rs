@@ -16,7 +16,10 @@ use tokio::time::{Duration, timeout};
 
 use crate::{
     DiscordClient, Result,
-    discord::{AppCommand, AppEvent, AttachmentUpdate, MessageInfo, ReactionUsersInfo},
+    discord::{
+        AppCommand, AppEvent, AttachmentUpdate, MessageInfo, ReactionUsersInfo,
+        validate_token_header,
+    },
     error::AppError,
     logging, token_store, tui,
 };
@@ -955,7 +958,13 @@ async fn resolve_token() -> Result<ResolvedToken> {
 
     match token_store::load_token() {
         Ok(Some(token)) => {
-            return Ok(ResolvedToken { token, warnings });
+            if let Err(error) = validate_token_header(&token) {
+                warnings.push(format!(
+                    "saved Discord token is invalid: {error}; enter a new token"
+                ));
+            } else {
+                return Ok(ResolvedToken { token, warnings });
+            }
         }
         Ok(None) => {}
         Err(error) => warnings.push(format!(
@@ -963,18 +972,28 @@ async fn resolve_token() -> Result<ResolvedToken> {
         )),
     }
 
-    let login_notice = if warnings.is_empty() {
-        None
-    } else {
-        Some("Credential storage is unavailable; token may not be saved.".to_owned())
-    };
+    let login_notice = login_notice_for_token_warnings(&warnings);
 
     let token = tui::prompt_login(login_notice).await?;
+    validate_token_header(&token)?;
     if let Err(error) = token_store::save_token(&token) {
         warnings.push(format!("token was not saved: {error}"));
     }
 
     Ok(ResolvedToken { token, warnings })
+}
+
+fn login_notice_for_token_warnings(warnings: &[String]) -> Option<String> {
+    if warnings
+        .iter()
+        .any(|warning| warning.starts_with("saved Discord token"))
+    {
+        Some("Saved Discord token is invalid; enter a new token.".to_owned())
+    } else if warnings.is_empty() {
+        None
+    } else {
+        Some("Credential storage is unavailable; token may not be saved.".to_owned())
+    }
 }
 
 async fn shutdown_gateway(gateway_task: tokio::task::JoinHandle<()>) {
@@ -993,7 +1012,10 @@ mod tests {
 
     use crate::discord::ids::Id;
 
-    use super::{format_message_history_endpoint, sanitize_filename, write_unique_download_file};
+    use super::{
+        format_message_history_endpoint, login_notice_for_token_warnings, sanitize_filename,
+        write_unique_download_file,
+    };
 
     fn unix_timestamp_nanos() -> u128 {
         std::time::SystemTime::now()
@@ -1027,6 +1049,26 @@ mod tests {
         assert_eq!(fs::read(&path).expect("new file should be written"), b"new");
 
         fs::remove_dir_all(&directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn login_notice_reports_invalid_saved_token() {
+        let warnings = vec!["saved Discord token is invalid: bad; enter a new token".to_owned()];
+
+        assert_eq!(
+            login_notice_for_token_warnings(&warnings).as_deref(),
+            Some("Saved Discord token is invalid; enter a new token.")
+        );
+    }
+
+    #[test]
+    fn login_notice_keeps_storage_warning_for_other_token_warnings() {
+        let warnings = vec!["credential store unavailable: permission denied".to_owned()];
+
+        assert_eq!(
+            login_notice_for_token_warnings(&warnings).as_deref(),
+            Some("Credential storage is unavailable; token may not be saved.")
+        );
     }
 
     #[test]

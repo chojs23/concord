@@ -1,6 +1,9 @@
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEventKind, KeyModifiers};
 
-use crate::discord::password_auth::{MfaChallenge, MfaMethod};
+use crate::discord::{
+    password_auth::{MfaChallenge, MfaMethod},
+    validate_token_header,
+};
 
 use super::state::{LoginScreen, LoginState, PasswordField};
 
@@ -61,6 +64,9 @@ pub(super) fn handle_terminal(state: &mut LoginState, event: TerminalEvent) -> O
                 let token = state.token_input.trim();
                 if token.is_empty() {
                     state.error = Some("Token cannot be empty".to_string());
+                    None
+                } else if let Err(error) = validate_token_header(token) {
+                    state.error = Some(format!("Token is invalid: {error}"));
                     None
                 } else {
                     Some(LoginAction::Submit(token.to_string()))

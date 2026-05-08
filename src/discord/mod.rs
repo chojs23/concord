@@ -11,6 +11,7 @@ mod rest;
 mod state;
 
 pub use client::DiscordClient;
+pub(crate) use client::validate_token_header;
 pub use commands::ReactionEmoji;
 pub use commands::{AppCommand, ForumPostArchiveState};
 pub use events::{
