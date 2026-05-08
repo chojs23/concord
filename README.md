@@ -20,14 +20,18 @@ Tokens are saved to `~/.concord/credential` in plain text. See the Security sect
 - Navigate text channels, threads, and forum channels
 - View and filter forum posts (active / archived)
 - Load pinned messages per channel
+- Open channel actions for pinned messages, thread lists, and mark-as-read
 - Track unread messages and mention counts per channel
 
 ### Messaging
 
 - Send, edit, and delete messages
 - Reply to specific messages
+- Use @mention autocomplete while composing messages
 - View full message history with pagination
-- Rich content display(embeds, attachments, stickers, and mentions)
+- Rich content display (embeds, attachments, stickers, and mentions)
+- Message action menu for reply, edit, delete, open thread, show profile,
+  pin/unpin, reactions, poll votes, and attachment/image actions
 
 ### Reactions & Polls
 
@@ -67,31 +71,71 @@ You can toggle image viewing on or off in the configuration file. When image vie
 
 ### Navigation & Keybindings
 
-Concord has Four-pane layout like discord.
+Concord has a four-pane layout like Discord.
 **Guilds (1)**, **Channels (2)**, **Messages (3)**, **Members (4)**
 
 With vim-style navigation:
 
-| Key                 | Action           |
-| ------------------- | ---------------- |
-| `1` `2` `3` `4`     | Focus pane       |
-| `j` / `k`           | Move down / up   |
-| `J`, `K` / `H`,`L`  | Scroll viewport  |
-| `Ctrl+d` / `Ctrl+u` | Half-page scroll |
-| `i`                 | Text insert mode |
-| `a`                 | Action menu      |
-| `o`                 | Options menu     |
-| `q` / `Ctrl+c`      | Quit             |
+| Key                       | Action                                 |
+| ------------------------- | -------------------------------------- |
+| `1` `2` `3` `4`           | Focus pane                             |
+| `Tab`                     | Cycle focus                            |
+| `j` / `k`, arrows         | Move down / up                         |
+| `J`, `K` / `H`, `L`       | Scroll viewport                        |
+| `Ctrl+d` / `Ctrl+u`       | Half-page scroll                       |
+| `g` / `G`, `Home` / `End` | Jump or scroll to top / bottom         |
+| `Enter` / `Space`         | Open or activate the selected item     |
+| `i`                       | Text insert mode                       |
+| `a`                       | Action menu for the focused item       |
+| `o`                       | Options menu                           |
+| `Esc`                     | Close popup, cancel mode, or go back   |
+| `q` / `Ctrl+c`            | Quit                                   |
 
-Full mouse support is also available.
+Action menus show local shortcuts next to each item. For example, message
+actions use keys such as `e` for edit and `d` for delete. List-style dialogs,
+such as emoji and poll pickers, use numbered shortcuts when that is clearer.
+
+In the composer, `Enter` sends, `Shift+Enter` inserts a newline, and `Esc`
+cancels. When the @mention picker is open, use `Up` / `Down`, `Ctrl+p` /
+`Ctrl+n`, `Tab`, or `Enter` to choose a mention.
+
+Mouse support is also available: click to focus or select rows, double-click to
+open or activate items, and use the wheel to scroll panes and popups.
 
 ### Configuration
 
 Display options are stored in `~/.concord/config.toml`:
 
+- Disable all image previews with one master switch
 - Toggle inline image previews
 - Toggle avatar display
 - Toggle custom emoji rendering
+
+You can change these from the in-app Options menu, and Concord saves them back
+to the config file.
+
+## Performance
+
+Concord is designed to stay lightweight in normal terminal use. In observed
+typical use, it usually uses about 20-40 MB of memory.
+
+Image-heavy screens can temporarily use more memory because compressed image
+bytes need to be decoded before they can be rendered in the terminal. When many
+images are loaded, memory can briefly rise to around 100-200 MB while decoding
+and then drop again as work completes and caches are pruned.
+
+To keep resource usage bounded, Concord limits media work in several places:
+
+- Attachment previews are downloaded with an 8 MiB per-preview cap.
+- Attachment downloads are capped at 64 MiB.
+- Up to 4 attachment previews are fetched at once.
+- Up to 2 inline image previews are decoded at once.
+- Inline image previews, avatars, and custom emoji use small LRU caches.
+- Image preview requests prefer resized Discord proxy URLs sized for the
+  terminal instead of original full-size media when possible.
+
+Message history is also cached with a per-channel limit, so long-running
+sessions do not keep every message in memory forever.
 
 ## Install
 
