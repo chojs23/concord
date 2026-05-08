@@ -4,6 +4,54 @@ Concord is a terminal user interface client for Discord. Full Discord experience
 
 <img width="1613" height="848" alt="concord" src="./docs/example.png" />
 
+## Installation
+
+### Homebrew
+
+```sh
+brew install chojs23/tap/concord
+```
+
+### Cargo
+
+```sh
+cargo install concord
+```
+
+To install the latest unreleased version directly from the Git repository:
+
+```sh
+cargo install --git https://github.com/chojs23/concord
+```
+
+### GitHub Release installer
+
+Install the latest release with the cargo-dist shell installer:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/chojs23/concord/releases/latest/download/concord-installer.sh | sh
+```
+
+The installer places `concord` under `$CARGO_HOME/bin`, which is usually
+`~/.cargo/bin`. Make sure that directory is on your `PATH` before running
+`concord`.
+
+### Build from source
+
+You need the Rust stable toolchain and Cargo.
+
+```sh
+git clone https://github.com/chojs23/concord.git
+cd concord
+cargo build --release
+```
+
+The release binary is produced at:
+
+```sh
+target/release/concord
+```
+
 ## Features
 
 ### Authentication
@@ -160,48 +208,6 @@ To keep resource usage bounded, Concord limits media work in several places:
 
 Message history is also cached with a per-channel limit, so long-running
 sessions do not keep every message in memory forever.
-
-## Install
-
-### Homebrew
-
-```sh
-brew install chojs23/tap/concord
-```
-
-### Cargo
-
-```sh
-cargo install --git https://github.com/chojs23/concord
-```
-
-### GitHub Release installer
-
-Install the latest release with the cargo-dist shell installer:
-
-```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/chojs23/concord/releases/latest/download/concord-installer.sh | sh
-```
-
-The installer places `concord` under `$CARGO_HOME/bin`, which is usually
-`~/.cargo/bin`. Make sure that directory is on your `PATH` before running
-`concord`.
-
-### Build from source
-
-You need the Rust stable toolchain and Cargo.
-
-```sh
-git clone https://github.com/chojs23/concord.git
-cd concord
-cargo build --release
-```
-
-The release binary is produced at:
-
-```sh
-target/release/concord
-```
 
 ## FAQ
 
