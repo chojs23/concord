@@ -8,9 +8,10 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    crane.url = "github:ipetkov/crane";
   };
 
-  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay, crane }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
@@ -22,22 +23,15 @@
         # is 1.90.
         rustToolchain = pkgs.rust-bin.stable."1.90.0".default;
 
-        rustPlatform = pkgs.makeRustPlatform {
-          cargo = rustToolchain;
-          rustc = rustToolchain;
-        };
+        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
         cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
 
-        concord = rustPlatform.buildRustPackage {
+        commonArgs = {
           pname = cargoToml.package.name;
           version = cargoToml.package.version;
 
-          src = ./.;
-
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-          };
+          src = craneLib.cleanCargoSource ./.;
 
           # zstd-sys builds the bundled C source by default, so it only needs
           # a C compiler from stdenv. pkg-config is included to keep the
@@ -57,7 +51,12 @@
           # disable them by default to keep `nix build` fast and reproducible.
           # Run `cargo test` inside `nix develop` for the full test suite.
           doCheck = false;
+        };
 
+        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+
+        concord = craneLib.buildPackage (commonArgs // {
+          inherit cargoArtifacts;
           meta = with pkgs.lib; {
             description = cargoToml.package.description;
             homepage = cargoToml.package.homepage;
@@ -65,7 +64,7 @@
             mainProgram = "concord";
             platforms = platforms.unix;
           };
-        };
+        });
       in
       {
         packages = {
@@ -78,7 +77,7 @@
           name = "concord";
         };
 
-        devShells.default = pkgs.mkShell {
+        devShells.default = craneLib.devShell {
           inputsFrom = [ concord ];
           packages = [
             rustToolchain
