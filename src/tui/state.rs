@@ -71,6 +71,12 @@ enum OlderHistoryRequestState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UnreadBanner {
+    pub since_message_id: Id<MessageMarker>,
+    pub unread_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ActiveGuildScope {
     Unset,
     DirectMessages,
@@ -87,6 +93,8 @@ struct ThreadReturnTarget {
     message_keep_selection_visible: bool,
     message_auto_follow: bool,
     new_messages_marker_message_id: Option<Id<MessageMarker>>,
+    unread_divider_last_acked_id: Option<Id<MessageMarker>>,
+    pending_unread_anchor_scroll: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -98,6 +106,8 @@ struct PinnedMessageViewReturnTarget {
     message_keep_selection_visible: bool,
     message_auto_follow: bool,
     new_messages_marker_message_id: Option<Id<MessageMarker>>,
+    unread_divider_last_acked_id: Option<Id<MessageMarker>>,
+    pending_unread_anchor_scroll: bool,
 }
 
 #[derive(Debug, Default)]
@@ -127,6 +137,19 @@ pub struct DashboardState {
     message_keep_selection_visible: bool,
     message_auto_follow: bool,
     new_messages_marker_message_id: Option<Id<MessageMarker>>,
+    /// Snowflake of the last message the user had acked at the moment the
+    /// active channel was opened. Captured *before* the activation-time
+    /// ack so it survives the immediate ack flush, lets the renderer place
+    /// a Discord-style red divider just above the first unread message,
+    /// and lets the scroll math anchor the viewport to the user's
+    /// last-read position once history arrives. `None` when the channel
+    /// had no unread state at activation.
+    unread_divider_last_acked_id: Option<Id<MessageMarker>>,
+    /// Set on activation when an unread anchor needs to be applied to the
+    /// viewport once history is available. Cleared the first frame the
+    /// anchor is found among the loaded messages, so subsequent navigation
+    /// is not pinned to the original anchor position.
+    pending_unread_anchor_scroll: bool,
     message_view_height: usize,
     message_content_width: usize,
     message_preview_width: u16,
@@ -205,6 +228,8 @@ impl DashboardState {
             message_keep_selection_visible: true,
             message_auto_follow: true,
             new_messages_marker_message_id: None,
+            unread_divider_last_acked_id: None,
+            pending_unread_anchor_scroll: false,
             message_view_height: 1,
             message_content_width: usize::MAX,
             message_preview_width: 0,
@@ -851,6 +876,8 @@ impl DashboardState {
             message_keep_selection_visible: self.message_keep_selection_visible,
             message_auto_follow: self.message_auto_follow,
             new_messages_marker_message_id: self.new_messages_marker_message_id,
+            unread_divider_last_acked_id: self.unread_divider_last_acked_id,
+            pending_unread_anchor_scroll: self.pending_unread_anchor_scroll,
         });
     }
 
@@ -874,6 +901,8 @@ impl DashboardState {
         self.message_keep_selection_visible = target.message_keep_selection_visible;
         self.message_auto_follow = target.message_auto_follow;
         self.new_messages_marker_message_id = target.new_messages_marker_message_id;
+        self.unread_divider_last_acked_id = target.unread_divider_last_acked_id;
+        self.pending_unread_anchor_scroll = target.pending_unread_anchor_scroll;
         self.clamp_message_viewport();
         true
     }
@@ -1029,7 +1058,57 @@ impl DashboardState {
     /// before the message body, so scroll and media-target math must use the
     /// same count as the renderer.
     pub(crate) fn message_extra_top_lines(&self, index: usize) -> usize {
-        usize::from(self.message_starts_new_day_at(index))
+        let mut extra = usize::from(self.message_starts_new_day_at(index));
+        if self.should_draw_unread_divider_at(index) {
+            extra += 1;
+        }
+        extra
+    }
+
+    /// Index of the first loaded message whose snowflake is newer than the
+    /// captured `unread_divider_last_acked_id`. Snowflake IDs encode message
+    /// ordering, so the comparison resolves the divider position even when
+    /// the originally-acked message is no longer in the loaded slice (e.g.
+    /// because history was trimmed). Returns `None` when no anchor is
+    /// captured or every loaded message is at-or-before the anchor.
+    pub(crate) fn unread_divider_message_index(&self) -> Option<usize> {
+        if self.is_pinned_message_view_active() {
+            return None;
+        }
+        let last_acked = self.unread_divider_last_acked_id?;
+        let messages = self.messages();
+        messages.iter().position(|message| message.id > last_acked)
+    }
+
+    pub(crate) fn should_draw_unread_divider_at(&self, index: usize) -> bool {
+        self.unread_divider_message_index() == Some(index)
+    }
+
+    /// Returns the captured snapshot together with the number of currently
+    /// loaded messages newer than it. The renderer uses this to draw the
+    /// Discord-style "since {time} you have {count} unread messages"
+    /// banner above the message pane. `None` when no anchor is captured
+    /// or no loaded message is newer than the snapshot.
+    pub(crate) fn unread_banner(&self) -> Option<UnreadBanner> {
+        if self.is_pinned_message_view_active() {
+            return None;
+        }
+        let last_acked = self.unread_divider_last_acked_id?;
+        let messages = self.messages();
+        let unread_count = messages.iter().filter(|m| m.id > last_acked).count();
+        if unread_count == 0 {
+            return None;
+        }
+        Some(UnreadBanner {
+            since_message_id: last_acked,
+            unread_count,
+        })
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn unread_divider_last_acked_id(&self) -> Option<Id<MessageMarker>> {
+        self.unread_divider_last_acked_id
     }
 
     #[cfg(test)]
@@ -1089,6 +1168,10 @@ impl DashboardState {
         self.message_content_width = content_width;
         self.message_preview_width = preview_width;
         self.message_max_preview_height = max_preview_height;
+        // Retry the unread-anchor snap until the originally-acked message
+        // is loaded. After it fires once, the pending flag clears and this
+        // is a cheap no-op.
+        self.try_apply_unread_anchor_scroll();
         self.clamp_message_viewport();
         if self.message_auto_follow {
             if self.message_view_height <= 1 {
@@ -1908,6 +1991,11 @@ impl DashboardState {
             self.cursor_on_last_message() && self.is_viewport_at_latest_message();
         if self.message_auto_follow {
             self.clear_new_messages_marker();
+            // Once the user has caught up (cursor + viewport on the
+            // latest), retire the unread divider/banner so the indicator
+            // doesn't linger after every unread message has been read.
+            self.unread_divider_last_acked_id = None;
+            self.pending_unread_anchor_scroll = false;
         }
     }
 
@@ -1959,6 +2047,36 @@ impl DashboardState {
         // stranding the viewport with empty space below the last message.
         self.selected_message = self.message_pane_item_count().saturating_sub(1);
         self.message_keep_selection_visible = true;
+    }
+
+    /// Snap the viewport so the user's last-read message sits at the top of
+    /// the message pane and the unread divider is visible just below it.
+    /// No-op until the captured `last_acked` snowflake is resolvable from
+    /// the loaded slice; the call is retried each frame so the snap fires
+    /// once history streams in. Once applied, the pending flag clears so
+    /// subsequent navigation is not pinned to the anchor.
+    pub(crate) fn try_apply_unread_anchor_scroll(&mut self) {
+        if !self.pending_unread_anchor_scroll {
+            return;
+        }
+        let Some(divider_index) = self.unread_divider_message_index() else {
+            return;
+        };
+        let item_count = self.message_pane_item_count();
+        if item_count == 0 {
+            return;
+        }
+        // Anchor: place the last-read message (one row above the divider)
+        // at the top of the viewport. Park the cursor on the first unread
+        // so j/k navigation begins where the user left off, and disable
+        // selection-keep so the next frame's centering pass does not pull
+        // the viewport away from the anchor.
+        self.message_scroll = divider_index.saturating_sub(1);
+        self.message_line_scroll = 0;
+        self.selected_message = divider_index.min(item_count.saturating_sub(1));
+        self.message_keep_selection_visible = false;
+        self.message_auto_follow = false;
+        self.pending_unread_anchor_scroll = false;
     }
 
     fn align_message_viewport_to_bottom(

@@ -9,6 +9,17 @@ struct InlinePreviewSpacer {
     overflow_count: usize,
 }
 
+struct MessageItemLinesInput<'a> {
+    author: String,
+    author_style: Style,
+    sent_time: String,
+    content: Vec<MessageContentLine>,
+    reactions: Vec<MessageContentLine>,
+    content_width: usize,
+    preview_spacers: &'a [InlinePreviewSpacer],
+    line_offset: usize,
+}
+
 #[derive(Clone, Copy)]
 enum SelectedMessageLineKind {
     Top,
@@ -32,6 +43,8 @@ pub(super) fn render_messages(
 
     let message_areas = message_areas(inner, state);
     let content_width = message_content_width(message_areas.list);
+
+    render_unread_banner(frame, message_areas.unread_banner, state);
 
     if state.selected_channel_is_forum() {
         let posts = state.visible_forum_post_items();
@@ -228,6 +241,68 @@ fn render_typing_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
         Paragraph::new(Line::from(Span::styled(text, Style::default().fg(DIM)))),
         area,
     );
+}
+
+fn render_unread_banner(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    // The banner row is reserved by `message_areas` based on the same
+    // `unread_banner()` predicate, so a missing payload here is a stale
+    // layout — bail out rather than paint an empty Discord-blue strip.
+    let Some(banner) = state.unread_banner() else {
+        return;
+    };
+
+    const BG: Color = Color::Rgb(88, 101, 242);
+    const FG: Color = Color::White;
+    let style = Style::default().fg(FG).bg(BG);
+
+    let since_label = format_unread_banner_since(banner.since_message_id);
+    let left = match since_label {
+        Some(time) => format!(" {} unread messages since {}", banner.unread_count, time),
+        None => format!(" {} unread messages", banner.unread_count),
+    };
+    let right = "channel action (a) to mark as read ";
+
+    frame.render_widget(
+        Paragraph::new(unread_banner_line(left, right, area.width as usize, style)).style(style),
+        area,
+    );
+}
+
+fn unread_banner_line(left: String, right: &str, width: usize, style: Style) -> Line<'static> {
+    let right_width = right.width();
+    let left_width = left.as_str().width();
+    if width == 0 {
+        return Line::from(Span::styled("", style));
+    }
+    if right_width >= width {
+        return Line::from(Span::styled(
+            truncate_display_width(right, width),
+            style.add_modifier(Modifier::BOLD),
+        ));
+    }
+    let max_left_width = width.saturating_sub(right_width);
+    let left = if left_width > max_left_width {
+        truncate_display_width(&left, max_left_width)
+    } else {
+        left
+    };
+    let used = left.as_str().width().saturating_add(right_width);
+    let padding = width.saturating_sub(used);
+    Line::from(vec![
+        Span::styled(left, style),
+        Span::styled(" ".repeat(padding), style),
+        Span::styled(right.to_owned(), style.add_modifier(Modifier::BOLD)),
+    ])
+}
+
+fn format_unread_banner_since(message_id: Id<MessageMarker>) -> Option<String> {
+    let unix_millis = (message_id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS;
+    let unix_millis = i64::try_from(unix_millis).ok()?;
+    let dt = DateTime::from_timestamp_millis(unix_millis)?.with_timezone(&Local);
+    Some(dt.format("%Y-%m-%d %H:%M").to_string())
 }
 
 fn render_inline_reaction_emojis(
@@ -479,6 +554,9 @@ pub(super) fn message_viewport_lines(
         if state.message_starts_new_day_at(global_index) {
             top_lines.push(date_separator_line(message.id, layout.list_width));
         }
+        if state.should_draw_unread_divider_at(global_index) {
+            top_lines.push(unread_divider_line(layout.list_width));
+        }
         let separator_lines = top_lines.len();
         let line_offset = usize::from(index == 0) * state.message_line_scroll();
         let body_skip = line_offset.saturating_sub(separator_lines);
@@ -500,16 +578,16 @@ pub(super) fn message_viewport_lines(
             });
         }
 
-        let item_lines = message_item_lines_with_previews(
+        let item_lines = message_item_lines_with_previews(MessageItemLinesInput {
             author,
             author_style,
-            format_message_sent_time(message.id),
+            sent_time: format_message_sent_time(message.id),
             content,
             reactions,
-            item_content_width,
-            &preview_spacers,
-            body_skip,
-        );
+            content_width: item_content_width,
+            preview_spacers: &preview_spacers,
+            line_offset: body_skip,
+        });
         if selected == Some(index) {
             lines.extend(selected_message_lines(
                 item_lines,
@@ -560,28 +638,29 @@ pub(super) fn message_item_lines(
         })
         .into_iter()
         .collect::<Vec<_>>();
-    message_item_lines_with_previews(
+    message_item_lines_with_previews(MessageItemLinesInput {
         author,
         author_style,
         sent_time,
         content,
-        Vec::new(),
+        reactions: Vec::new(),
         content_width,
-        &preview_spacers,
+        preview_spacers: &preview_spacers,
         line_offset,
-    )
+    })
 }
 
-fn message_item_lines_with_previews(
-    author: String,
-    author_style: Style,
-    sent_time: String,
-    content: Vec<MessageContentLine>,
-    reactions: Vec<MessageContentLine>,
-    content_width: usize,
-    preview_spacers: &[InlinePreviewSpacer],
-    line_offset: usize,
-) -> Vec<Line<'static>> {
+fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Line<'static>> {
+    let MessageItemLinesInput {
+        author,
+        author_style,
+        sent_time,
+        content,
+        reactions,
+        content_width,
+        preview_spacers,
+        line_offset,
+    } = input;
     let sent_time_width = sent_time.as_str().width();
     let author_width = content_width
         .saturating_sub(sent_time_width)
@@ -848,6 +927,27 @@ pub(super) fn date_separator_line(message_id: Id<MessageMarker>, width: usize) -
     separator_line(&label, width, Style::default().fg(DIM))
 }
 
+pub(super) fn unread_divider_line(width: usize) -> Line<'static> {
+    // Discord-style red bar with a small "New" tag pinned to the right
+    // edge so the unread boundary is unambiguous in dark and light themes.
+    const UNREAD: Color = Color::Rgb(237, 66, 69);
+    const TAG: &str = " New ";
+
+    let style = Style::default().fg(UNREAD);
+    if width == 0 {
+        return Line::from(Span::raw(""));
+    }
+    let tag_width = TAG.width();
+    if width <= tag_width.saturating_add(2) {
+        return Line::from(Span::styled("─".repeat(width), style));
+    }
+    let dash_count = width.saturating_sub(tag_width);
+    Line::from(vec![
+        Span::styled("─".repeat(dash_count), style),
+        Span::styled(TAG, style.bold()),
+    ])
+}
+
 pub(super) fn new_messages_notice_line(count: usize, width: usize) -> Line<'static> {
     let label = new_messages_notice_label(count);
     let text = if label.as_str().width() > width {
@@ -862,7 +962,7 @@ pub(super) fn new_messages_notice_line(count: usize, width: usize) -> Line<'stat
 }
 
 fn new_messages_notice_label(count: usize) -> String {
-    format!(" {count} new messages ")
+    format!("↓ {count} new messages ")
 }
 
 fn separator_line(label: &str, width: usize, style: Style) -> Line<'static> {

@@ -50,6 +50,7 @@ pub struct ImageViewerItem {
 pub enum ChannelActionKind {
     LoadPinnedMessages,
     ShowThreads,
+    MarkAsRead,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

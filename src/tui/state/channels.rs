@@ -88,11 +88,19 @@ impl DashboardState {
             .into_iter()
             .filter(|c| c.is_thread() && c.parent_id == Some(channel_id))
             .count();
-        let label = if thread_count == 0 {
+        let thread_label = if thread_count == 0 {
             "Show threads (none)".to_owned()
         } else {
             format!("Show threads ({thread_count})")
         };
+        // The Mark-as-read entry stays enabled only when the channel still
+        // has either an active unread divider/banner or pending unread
+        // bookkeeping, so it doesn't show as a no-op on already-read
+        // channels.
+        let active_channel_has_unread_snapshot = self.active_channel_id == Some(channel_id)
+            && (self.unread_divider_last_acked_id.is_some() || self.pending_unread_anchor_scroll);
+        let mark_as_read_enabled = active_channel_has_unread_snapshot
+            || self.discord.channel_ack_target(channel_id).is_some();
         vec![
             ChannelActionItem {
                 kind: ChannelActionKind::LoadPinnedMessages,
@@ -101,8 +109,13 @@ impl DashboardState {
             },
             ChannelActionItem {
                 kind: ChannelActionKind::ShowThreads,
-                label,
+                label: thread_label,
                 enabled: thread_count > 0,
+            },
+            ChannelActionItem {
+                kind: ChannelActionKind::MarkAsRead,
+                label: "Mark as read".to_owned(),
+                enabled: mark_as_read_enabled,
             },
         ]
     }
@@ -436,6 +449,14 @@ impl DashboardState {
                         });
                         None
                     }
+                    ChannelActionKind::MarkAsRead => {
+                        self.mark_channel_as_read(channel_id);
+                        self.close_channel_action_menu();
+                        // `mark_channel_as_read` already queued the
+                        // `AckChannel` command via `queue_channel_ack`, so
+                        // there's nothing extra for the dispatch loop here.
+                        None
+                    }
                 }
             }
             ChannelActionMenuState::Threads { .. } => {
@@ -763,6 +784,8 @@ impl DashboardState {
             message_keep_selection_visible: self.message_keep_selection_visible,
             message_auto_follow: self.message_auto_follow,
             new_messages_marker_message_id: self.new_messages_marker_message_id,
+            unread_divider_last_acked_id: self.unread_divider_last_acked_id,
+            pending_unread_anchor_scroll: self.pending_unread_anchor_scroll,
         });
     }
 
@@ -792,6 +815,8 @@ impl DashboardState {
         self.message_keep_selection_visible = target.message_keep_selection_visible;
         self.message_auto_follow = target.message_auto_follow;
         self.new_messages_marker_message_id = target.new_messages_marker_message_id;
+        self.unread_divider_last_acked_id = target.unread_divider_last_acked_id;
+        self.pending_unread_anchor_scroll = target.pending_unread_anchor_scroll;
         self.thread_return_target = None;
         self.clamp_message_viewport();
         true
@@ -812,18 +837,73 @@ impl DashboardState {
         self.active_channel_id = Some(channel_id);
         self.pinned_message_view_channel_id = None;
         self.pinned_message_view_return_target = None;
-        self.message_auto_follow = !is_forum;
+
+        // Capture the unread anchor BEFORE acking. The Discord-style red
+        // divider sits just above the first message newer than this
+        // snapshot, and the viewport tries to open at the user's last-read
+        // position. Capturing the snapshot rather than a resolved index
+        // means the divider still appears once history arrives later.
+        let last_acked_snapshot = if is_forum {
+            None
+        } else {
+            self.discord.channel_last_acked_message_id(channel_id)
+        };
+        let has_unread = last_acked_snapshot.is_some_and(|acked| {
+            self.discord
+                .channel(channel_id)
+                .and_then(|channel| channel.last_message_id)
+                .is_some_and(|latest| latest > acked)
+        });
+
         self.clear_new_messages_marker();
         self.message_line_scroll = 0;
-        self.message_keep_selection_visible = true;
+
+        if has_unread {
+            self.unread_divider_last_acked_id = last_acked_snapshot;
+            self.pending_unread_anchor_scroll = true;
+            self.message_auto_follow = false;
+            // Disable selection-keep until the snap lands; otherwise the
+            // centering pass in `clamp_message_viewport_for_image_previews`
+            // would pull the viewport to the latest message before the
+            // snap can pin it to the last-read anchor.
+            self.message_keep_selection_visible = false;
+        } else {
+            self.unread_divider_last_acked_id = None;
+            self.pending_unread_anchor_scroll = false;
+            self.message_auto_follow = !is_forum;
+            self.message_keep_selection_visible = true;
+        }
+
         self.selected_message = if is_forum {
             0
         } else {
             self.messages().len().saturating_sub(1)
         };
         self.message_scroll = 0;
+
+        // If the unread anchor's last-read message is already loaded, snap
+        // the viewport to it now so the first frame opens at the right
+        // spot. Otherwise the snap will be retried each frame inside
+        // `clamp_message_viewport_for_image_previews` until history
+        // arrives.
+        self.try_apply_unread_anchor_scroll();
+
         self.clamp_message_viewport();
         self.queue_channel_ack(channel_id);
+    }
+
+    /// Ack the channel up to its latest message and retire the unread
+    /// divider/banner immediately so the visible cue matches the new
+    /// fully-read state. Use this for explicit user actions like
+    /// "Mark as read"; activation already runs `queue_channel_ack` on its
+    /// own.
+    pub fn mark_channel_as_read(&mut self, channel_id: Id<ChannelMarker>) {
+        self.queue_channel_ack(channel_id);
+        if self.active_channel_id == Some(channel_id) {
+            self.unread_divider_last_acked_id = None;
+            self.pending_unread_anchor_scroll = false;
+            self.clear_new_messages_marker();
+        }
     }
 
     /// Optimistic local ack + queued REST POST so the unread badge clears

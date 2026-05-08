@@ -831,6 +831,18 @@ impl DiscordState {
         }
     }
 
+    /// Snowflake of the most recent message the user has acked in
+    /// `channel_id`. `None` when the channel has never been acked or no
+    /// read-state has been received yet.
+    pub fn channel_last_acked_message_id(
+        &self,
+        channel_id: Id<ChannelMarker>,
+    ) -> Option<Id<MessageMarker>> {
+        self.read_states
+            .get(&channel_id)
+            .and_then(|state| state.last_acked_message_id)
+    }
+
     pub fn guild_folders(&self) -> &[GuildFolder] {
         &self.guild_folders
     }

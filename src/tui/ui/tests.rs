@@ -2804,7 +2804,7 @@ fn new_messages_notice_line_centers_count_within_full_width() {
         .collect::<String>();
 
     assert_eq!(text.width(), 30);
-    assert!(text.contains("3 new messages"));
+    assert!(text.contains("↓ 3 new messages"));
     assert!(!text.contains('#'));
     assert!(!text.contains('│'));
     assert_eq!(line.spans[0].style.fg, Some(ACCENT));

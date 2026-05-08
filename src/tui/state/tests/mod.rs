@@ -17,7 +17,7 @@ use crate::discord::{
     CustomEmojiInfo, DiscordState, ForumPostArchiveState, FriendStatus, MemberInfo, MessageInfo,
     MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo,
     PermissionOverwriteInfo, PermissionOverwriteKind, PresenceStatus, ReactionEmoji, ReactionInfo,
-    ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+    ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
 };
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -2214,6 +2214,32 @@ fn pinned_message_view_title_mentions_channel_and_pins() {
 }
 
 #[test]
+fn pinned_message_view_suppresses_unread_divider_and_banner() {
+    let mut state = state_with_message_ids([1, 2, 3]);
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![ReadStateInfo {
+            channel_id: Id::new(2),
+            last_acked_message_id: Some(Id::new(1)),
+            mention_count: 0,
+        }],
+    });
+    state.activate_channel(Id::new(2));
+    assert_eq!(state.unread_divider_message_index(), Some(1));
+    assert!(state.unread_banner().is_some());
+
+    state.push_event(AppEvent::PinnedMessagesLoaded {
+        channel_id: Id::new(2),
+        messages: vec![message_info(Id::new(2), 3)],
+    });
+    state.enter_pinned_message_view(Id::new(2));
+
+    assert!(state.is_pinned_message_view());
+    assert_eq!(state.unread_divider_message_index(), None);
+    assert_eq!(state.unread_banner(), None);
+    assert_eq!(state.message_extra_top_lines(0), 1);
+}
+
+#[test]
 fn returning_from_pinned_message_view_restores_parent_message_window() {
     let mut state = state_with_message_ids([10, 11, 12, 13, 14]);
     state.focus_pane(FocusPane::Messages);
@@ -3316,12 +3342,14 @@ fn channel_action_menu_lists_threads_for_selected_channel() {
 
     assert!(state.is_channel_action_menu_open());
     let actions = state.selected_channel_action_items();
-    assert_eq!(actions.len(), 2);
+    assert_eq!(actions.len(), 3);
     assert_eq!(actions[0].kind, ChannelActionKind::LoadPinnedMessages);
     assert_eq!(actions[0].label, "Show pinned messages");
     assert!(actions[0].enabled);
     assert_eq!(actions[1].kind, ChannelActionKind::ShowThreads);
     assert!(actions[1].enabled);
+    assert_eq!(actions[2].kind, ChannelActionKind::MarkAsRead);
+    assert_eq!(actions[2].label, "Mark as read");
 
     state.move_channel_action_down();
     let command = state.activate_selected_channel_action();
@@ -3332,6 +3360,87 @@ fn channel_action_menu_lists_threads_for_selected_channel() {
     assert_eq!(threads.len(), 1);
     assert_eq!(threads[0].channel_id, Id::new(10));
     assert_eq!(threads[0].label, "release notes");
+}
+
+#[test]
+fn mark_as_read_action_enablement_is_scoped_to_action_channel() {
+    let guild_id: Id<GuildMarker> = Id::new(1);
+    let unread_channel: Id<ChannelMarker> = Id::new(2);
+    let read_channel: Id<ChannelMarker> = Id::new(3);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: unread_channel,
+                parent_id: None,
+                position: Some(0),
+                last_message_id: Some(Id::new(20)),
+                name: "unread".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: read_channel,
+                parent_id: None,
+                position: Some(1),
+                last_message_id: Some(Id::new(30)),
+                name: "read".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+        ],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![
+            ReadStateInfo {
+                channel_id: unread_channel,
+                last_acked_message_id: Some(Id::new(10)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: read_channel,
+                last_acked_message_id: Some(Id::new(30)),
+                mention_count: 0,
+            },
+        ],
+    });
+    state.activate_guild(super::ActiveGuildScope::Guild(guild_id));
+    state.activate_channel(unread_channel);
+    assert_eq!(state.unread_divider_last_acked_id(), Some(Id::new(10)));
+
+    state.focus_pane(FocusPane::Channels);
+    state.move_down();
+    state.open_selected_channel_actions();
+
+    let actions = state.selected_channel_action_items();
+    let mark_as_read = actions
+        .iter()
+        .find(|action| action.kind == ChannelActionKind::MarkAsRead)
+        .expect("channel actions include Mark as read");
+    assert!(!mark_as_read.enabled);
 }
 
 #[test]

@@ -80,6 +80,10 @@ pub(super) struct DashboardAreas {
 }
 
 pub(super) struct MessageAreas {
+    /// One-row strip pinned above the message list while the active channel
+    /// has unread messages. Height is zero (and the list reclaims the row)
+    /// when no banner needs to be shown.
+    pub(super) unread_banner: Rect,
     pub(super) list: Rect,
     /// One-row strip rendered between the message list and the composer when
     /// somebody else is typing in the selected channel. Width is zero when

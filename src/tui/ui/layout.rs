@@ -85,13 +85,16 @@ pub(super) fn message_list_area(area: Rect, state: &DashboardState) -> Rect {
 pub(super) fn message_areas(area: Rect, state: &DashboardState) -> MessageAreas {
     let composer_height = composer_height(area, state);
     let typing_height: u16 = state.typing_footer_for_selected_channel().is_some().into();
-    let [list, typing, composer] = Layout::vertical([
+    let banner_height: u16 = state.unread_banner().is_some().into();
+    let [unread_banner, list, typing, composer] = Layout::vertical([
+        Constraint::Length(banner_height),
         Constraint::Min(0),
         Constraint::Length(typing_height),
         Constraint::Length(composer_height),
     ])
     .areas(area);
     MessageAreas {
+        unread_banner,
         list,
         typing,
         composer,
