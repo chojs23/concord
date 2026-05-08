@@ -39,7 +39,7 @@ use crate::{
         message_format::{
             MessageContentLine, format_message_content, format_message_content_lines,
             lay_out_reaction_chips, mention_highlight_style, poll_box_border,
-            poll_card_inner_width, wrap_text_lines,
+            poll_card_inner_width, reaction_line_test_spans, wrap_text_lines,
         },
         state::{
             ChannelActionItem, ChannelActionKind, ChannelThreadItem, DashboardState,
@@ -406,7 +406,7 @@ fn forum_post_lines_render_title_author_and_preview() {
         preview_reactions: vec![ReactionInfo {
             emoji: ReactionEmoji::Unicode("👍".to_owned()),
             count: 2,
-            me: false,
+            me: true,
         }],
         comment_count: Some(4),
         last_activity_message_id: Some(Id::new(30)),
@@ -436,7 +436,7 @@ fn forum_post_lines_render_title_author_and_preview() {
     );
     assert_eq!(lines[3].spans[4].style.fg, Some(Color::White));
     assert_eq!(lines[4].spans[2].style.fg, Some(Color::White));
-    assert_eq!(lines[4].spans[4].style.fg, Some(ACCENT));
+    assert_eq!(lines[4].spans[4].style.fg, Some(Color::Yellow));
     assert_eq!(lines[4].spans[6].style.fg, Some(Color::White));
     assert_eq!(lines[1].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
     assert_eq!(lines[2].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
@@ -462,7 +462,7 @@ fn forum_post_reaction_summary_reserves_custom_emoji_image_slot() {
 
     assert_eq!(
         forum_post_reaction_summary(&reactions, 80).as_deref(),
-        Some("[●    1]")
+        Some("[   1]")
     );
 }
 
@@ -1665,8 +1665,10 @@ fn message_content_renders_reaction_chips_below_message() {
 
     let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
-    assert_eq!(line_texts(&lines), vec!["hello", "[● 👍 3]"]);
-    assert_eq!(lines[1].style, Style::default().fg(ACCENT));
+    assert_eq!(line_texts(&lines), vec!["hello", "[👍 3]"]);
+    let spans = lines[1].spans();
+    assert_eq!(spans[0].content.as_ref(), "[👍 3]");
+    assert_eq!(spans[0].style, Style::default().fg(Color::Yellow));
 }
 
 #[test]
@@ -1686,7 +1688,12 @@ fn lay_out_reaction_chips_unicode_only_emits_no_image_slots() {
 
     let layout = lay_out_reaction_chips(&reactions, 200);
 
-    assert_eq!(layout.lines, vec!["[● 👍 3]  [❤ 1]"]);
+    assert_eq!(layout.lines, vec!["[👍 3]  [❤ 1]"]);
+    assert_eq!(layout.self_ranges.len(), 1);
+    let spans = reaction_line_test_spans(&layout.lines[0], &layout.self_ranges, 0);
+    assert_eq!(spans[0].content.as_ref(), "[👍 3]");
+    assert_eq!(spans[0].style, Style::default().fg(Color::Yellow));
+    assert_eq!(spans[1].style, Style::default().fg(ACCENT));
     assert!(layout.slots.is_empty());
 }
 
@@ -1713,13 +1720,14 @@ fn lay_out_reaction_chips_custom_emoji_reserves_image_slot() {
 
     // First line concatenates both chips with two spaces; the custom-emoji
     // chip reserves two cells of spaces in place of the textual `:name:`.
-    assert_eq!(layout.lines, vec!["[👍 2]  [●    1]"]);
+    assert_eq!(layout.lines, vec!["[👍 2]  [   1]"]);
+    assert_eq!(layout.self_ranges.len(), 1);
     assert_eq!(layout.slots.len(), 1);
     let slot = &layout.slots[0];
     assert_eq!(slot.line, 0);
     // "[👍 2]" is 6 cells, plus "  " separator = 8 cells of preceding text.
-    // Inside the chip "[● " is 3 cells, so the image starts at col 8 + 3 = 11.
-    assert_eq!(slot.col, 11);
+    // Inside the chip "[" is 1 cell, so the image starts at col 8 + 1 = 9.
+    assert_eq!(slot.col, 9);
     assert!(slot.url.contains("42.png"));
 }
 
@@ -2515,7 +2523,7 @@ fn message_viewport_lines_put_reactions_below_image_preview_rows() {
     );
 
     assert_eq!(lines.len(), 8);
-    assert_eq!(line_texts_from_ratatui(&lines)[6], "   [● 👍 3]");
+    assert_eq!(line_texts_from_ratatui(&lines)[6], "   [👍 3]");
 }
 
 #[test]

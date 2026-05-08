@@ -25,6 +25,7 @@ use crate::discord::{
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
+const SELF_REACTION: Color = Color::Yellow;
 const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
 const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
 const THREAD_CARD_INDENT: &str = "  ";
@@ -499,11 +500,50 @@ pub(super) fn format_message_reaction_lines(
     width: usize,
     show_custom_emoji: bool,
 ) -> Vec<MessageContentLine> {
-    lay_out_reaction_chips_with_custom_emoji_images(reactions, width, show_custom_emoji)
-        .lines
+    let layout =
+        lay_out_reaction_chips_with_custom_emoji_images(reactions, width, show_custom_emoji);
+    let ReactionLayout {
+        lines, self_ranges, ..
+    } = layout;
+    lines
         .into_iter()
-        .map(MessageContentLine::accent)
+        .enumerate()
+        .map(|(line_index, text)| {
+            let mut line = MessageContentLine::accent(text);
+            for range in self_ranges
+                .iter()
+                .filter(|range| range.line as usize == line_index)
+            {
+                line.styled_range(range.start, range.len, Style::default().fg(SELF_REACTION));
+            }
+            line
+        })
         .collect()
+}
+
+pub(crate) fn reaction_line_spans(
+    text: &str,
+    ranges: &[ReactionStyleRange],
+    line_index: usize,
+    default_style: Style,
+) -> Vec<Span<'static>> {
+    let mut line = MessageContentLine::styled_text(text.to_owned(), default_style, Vec::new());
+    for range in ranges
+        .iter()
+        .filter(|range| range.line as usize == line_index)
+    {
+        line.styled_range(range.start, range.len, Style::default().fg(SELF_REACTION));
+    }
+    line.spans()
+}
+
+#[cfg(test)]
+pub(crate) fn reaction_line_test_spans(
+    text: &str,
+    ranges: &[ReactionStyleRange],
+    line_index: usize,
+) -> Vec<Span<'static>> {
+    reaction_line_spans(text, ranges, line_index, Style::default().fg(ACCENT))
 }
 
 /// Position of a custom-emoji image overlay relative to the start of a
@@ -515,10 +555,18 @@ pub(crate) struct ReactionImageSlot {
     pub(crate) url: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ReactionStyleRange {
+    pub(crate) line: u16,
+    pub(crate) start: usize,
+    pub(crate) len: usize,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ReactionLayout {
     pub(crate) lines: Vec<String>,
     pub(crate) slots: Vec<ReactionImageSlot>,
+    pub(crate) self_ranges: Vec<ReactionStyleRange>,
 }
 
 /// Builds a single chip's text plus the chip-internal column offset where its
@@ -528,29 +576,24 @@ pub(crate) struct ReactionLayout {
 fn build_reaction_chip(
     reaction: &ReactionInfo,
     show_custom_emoji: bool,
-) -> (String, Option<usize>, Option<String>) {
+) -> (String, Option<usize>, Option<String>, bool) {
     let count = reaction.count;
     match &reaction.emoji {
         ReactionEmoji::Unicode(emoji) => {
-            let chip = if reaction.me {
-                format!("[● {emoji} {count}]")
-            } else {
-                format!("[{emoji} {count}]")
-            };
-            (chip, None, None)
+            let chip = format!("[{emoji} {count}]");
+            (chip, None, None, reaction.me)
         }
         ReactionEmoji::Custom { id, .. } if !show_custom_emoji => {
             let label = id.get().to_string();
-            let prefix = if reaction.me { "[● " } else { "[" };
-            (format!("{prefix}{label} {count}]"), None, None)
+            (format!("[{label} {count}]"), None, None, reaction.me)
         }
         ReactionEmoji::Custom { .. } => {
             let url = reaction.emoji.custom_image_url();
             let placeholder = " ".repeat(EMOJI_REACTION_IMAGE_WIDTH as usize);
-            let prefix = if reaction.me { "[● " } else { "[" };
+            let prefix = "[";
             let chip = format!("{prefix}{placeholder} {count}]");
             let image_offset = prefix.width();
-            (chip, Some(image_offset), url)
+            (chip, Some(image_offset), url, reaction.me)
         }
     }
 }
@@ -570,7 +613,7 @@ pub(crate) fn lay_out_reaction_chips_with_custom_emoji_images(
     show_custom_emoji: bool,
 ) -> ReactionLayout {
     let width = width.max(1);
-    let chips: Vec<(String, Option<usize>, Option<String>)> = reactions
+    let chips: Vec<(String, Option<usize>, Option<String>, bool)> = reactions
         .iter()
         .filter(|reaction| reaction.count > 0)
         .map(|reaction| build_reaction_chip(reaction, show_custom_emoji))
@@ -581,10 +624,11 @@ pub(crate) fn lay_out_reaction_chips_with_custom_emoji_images(
 
     let mut lines: Vec<String> = Vec::new();
     let mut slots: Vec<ReactionImageSlot> = Vec::new();
+    let mut self_ranges: Vec<ReactionStyleRange> = Vec::new();
     let mut current = String::new();
     let mut current_width: usize = 0;
 
-    for (chip_text, image_offset, url) in chips {
+    for (chip_text, image_offset, url, is_self) in chips {
         let chip_width = chip_text.width();
         let separator_width = if current_width == 0 { 0 } else { 2 };
         let projected = current_width + separator_width + chip_width;
@@ -594,15 +638,22 @@ pub(crate) fn lay_out_reaction_chips_with_custom_emoji_images(
             current_width = 0;
         }
 
-        let chip_start_col = if current_width == 0 {
-            0usize
+        let (chip_start_col, chip_start_byte) = if current_width == 0 {
+            (0usize, current.len())
         } else {
             current.push_str("  ");
             current_width += 2;
-            current_width
+            (current_width, current.len())
         };
         current.push_str(&chip_text);
         current_width += chip_width;
+        if is_self {
+            self_ranges.push(ReactionStyleRange {
+                line: u16::try_from(lines.len()).unwrap_or(u16::MAX),
+                start: chip_start_byte,
+                len: chip_text.len(),
+            });
+        }
 
         if let (Some(offset), Some(url)) = (image_offset, url) {
             slots.push(ReactionImageSlot {
@@ -617,7 +668,11 @@ pub(crate) fn lay_out_reaction_chips_with_custom_emoji_images(
         lines.push(current);
     }
 
-    ReactionLayout { lines, slots }
+    ReactionLayout {
+        lines,
+        slots,
+        self_ranges,
+    }
 }
 
 fn wrap_rendered_text_lines(

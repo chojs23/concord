@@ -178,17 +178,15 @@ fn forum_post_metadata_spans(
             primary_style,
         );
     }
-    if let Some(reactions) = forum_post_reaction_summary_with_custom_emoji_images(
-        &post.preview_reactions,
-        width,
-        show_custom_emoji,
-    ) {
-        push_forum_metadata_part(
+    if let Some(layout) =
+        forum_post_reaction_layout_for_width(&post.preview_reactions, width, show_custom_emoji)
+    {
+        push_forum_metadata_reaction_part(
             &mut spans,
             &mut used_width,
             width,
-            reactions,
             reaction_style,
+            layout,
         );
     }
     if let Some(message_id) = post.last_activity_message_id {
@@ -256,6 +254,40 @@ fn push_forum_metadata_part(
     spans.push(Span::styled(text, style));
 }
 
+fn push_forum_metadata_reaction_part(
+    spans: &mut Vec<Span<'static>>,
+    used_width: &mut usize,
+    max_width: usize,
+    style: Style,
+    layout: ReactionLayout,
+) {
+    let Some(line) = layout.lines.first() else {
+        return;
+    };
+    if line.is_empty() {
+        return;
+    }
+
+    if *used_width > 0 {
+        let separator = " · ";
+        let remaining = max_width.saturating_sub(*used_width);
+        if remaining == 0 {
+            return;
+        }
+        let separator = truncate_display_width(separator, remaining);
+        *used_width = used_width.saturating_add(separator.width());
+        spans.push(Span::styled(separator, Style::default().fg(DIM)));
+    }
+
+    let remaining = max_width.saturating_sub(*used_width);
+    if remaining == 0 {
+        return;
+    }
+    let text = truncate_display_width(line, remaining);
+    *used_width = used_width.saturating_add(text.width());
+    spans.extend(reaction_line_spans(&text, &layout.self_ranges, 0, style));
+}
+
 fn forum_post_reaction_start_col(post: &ChannelThreadItem) -> usize {
     if let Some(count) = post.comment_count {
         let label = if count == 1 { "comment" } else { "comments" };
@@ -273,16 +305,29 @@ pub(super) fn forum_post_reaction_summary(
     forum_post_reaction_summary_with_custom_emoji_images(reactions, width, true)
 }
 
+#[cfg(test)]
 fn forum_post_reaction_summary_with_custom_emoji_images(
     reactions: &[ReactionInfo],
     width: usize,
     show_custom_emoji: bool,
 ) -> Option<String> {
-    lay_out_reaction_chips_with_custom_emoji_images(reactions, width, show_custom_emoji)
-        .lines
-        .into_iter()
-        .next()
+    forum_post_reaction_layout_for_width(reactions, width, show_custom_emoji)
+        .and_then(|layout| layout.lines.into_iter().next())
         .filter(|line| !line.is_empty())
+}
+
+fn forum_post_reaction_layout_for_width(
+    reactions: &[ReactionInfo],
+    width: usize,
+    show_custom_emoji: bool,
+) -> Option<ReactionLayout> {
+    let layout =
+        lay_out_reaction_chips_with_custom_emoji_images(reactions, width, show_custom_emoji);
+    if layout.lines.first().is_some_and(|line| !line.is_empty()) {
+        Some(layout)
+    } else {
+        None
+    }
 }
 
 fn forum_post_reaction_layout(
