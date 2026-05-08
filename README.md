@@ -17,6 +17,22 @@ It connects to Discord through the gateway and REST APIs, renders a keyboard and
 
 ## Install
 
+### GitHub Release installer
+
+Install the latest release with the cargo-dist shell installer:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/chojs23/concord/releases/latest/download/concord-installer.sh | sh
+```
+
+If you prefer to inspect the installer before running it, download it first:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf -o concord-installer.sh https://github.com/chojs23/concord/releases/latest/download/concord-installer.sh
+less concord-installer.sh
+sh concord-installer.sh
+```
+
 ### Homebrew
 
 ```sh
