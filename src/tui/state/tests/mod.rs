@@ -14,11 +14,12 @@ use super::{
     presence_marker,
 };
 use crate::discord::{
-    AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, ChannelVisibilityStats,
-    CustomEmojiInfo, DiscordState, ForumPostArchiveState, FriendStatus, MemberInfo, MessageInfo,
-    MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo,
-    PermissionOverwriteInfo, PermissionOverwriteKind, PresenceStatus, ReactionEmoji, ReactionInfo,
-    ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+    ActivityInfo, ActivityKind, AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo,
+    ChannelVisibilityStats, CustomEmojiInfo, DiscordState, ForumPostArchiveState, FriendStatus,
+    MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+    MutualGuildInfo, PermissionOverwriteInfo, PermissionOverwriteKind, PresenceStatus,
+    ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo,
+    RoleInfo, UserProfileInfo,
 };
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -229,6 +230,7 @@ fn user_profile_popup_status_uses_cached_presence_without_guild() {
     state.push_event(AppEvent::UserPresenceUpdate {
         user_id,
         status: PresenceStatus::Idle,
+        activities: Vec::new(),
     });
     state.open_user_profile_popup(user_id, None);
 
@@ -243,6 +245,7 @@ fn user_profile_popup_status_prefers_cached_presence_over_unknown_recipient() {
     state.push_event(AppEvent::UserPresenceUpdate {
         user_id,
         status: PresenceStatus::Idle,
+        activities: Vec::new(),
     });
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         guild_id: None,
@@ -5063,6 +5066,42 @@ fn viewport_scroll_survives_selection_clamp_after_events() {
     member_state.restore_discord_snapshot(member_snapshot);
     assert_eq!(member_state.selected_member(), selected_member);
     assert_eq!(member_state.member_scroll(), member_scroll);
+}
+
+#[test]
+fn member_navigation_skips_over_activity_subrows() {
+    let mut state = state_with_members(3);
+    state.focus_pane(FocusPane::Members);
+    state.set_member_view_height(20);
+
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: Id::new(1),
+        user_id: Id::new(2),
+        status: PresenceStatus::Online,
+        activities: vec![ActivityInfo {
+            kind: ActivityKind::Playing,
+            name: "Concord".to_owned(),
+            details: None,
+            state: None,
+            url: None,
+            application_id: None,
+            emoji: None,
+        }],
+    });
+
+    // Lines: 0 group header, 1 member 1, 2 member 2, 3 activity, 4 member 3.
+    assert_eq!(state.selected_member(), 0);
+    assert_eq!(state.selected_member_line(), 1);
+
+    state.move_down();
+    assert_eq!(state.selected_member(), 1);
+    assert_eq!(state.selected_member_line(), 2);
+
+    state.move_down();
+    assert_eq!(state.selected_member(), 2);
+    assert_eq!(state.selected_member_line(), 4);
+
+    assert_eq!(state.member_line_count(), 5);
 }
 
 #[test]

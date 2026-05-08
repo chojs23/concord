@@ -7,7 +7,9 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::discord::{ChannelUnreadState, MessageState, PresenceStatus};
+use crate::discord::{
+    ActivityInfo, ActivityKind, ChannelUnreadState, MessageState, PresenceStatus,
+};
 
 use super::super::{
     format::{truncate_display_width, truncate_display_width_from, truncate_text},
@@ -496,6 +498,27 @@ pub(super) fn render_members(frame: &mut Frame, area: Rect, state: &DashboardSta
                 Span::styled(display, name_style),
             ]));
             line_index += 1;
+
+            // Three-space indent + max_name_width matches the name row's
+            // envelope so the activity row never overflows or wraps.
+            if !matches!(
+                member.status(),
+                PresenceStatus::Offline | PresenceStatus::Unknown
+            ) {
+                let activities = state.user_activities(member.user_id());
+                if let Some(summary) = primary_activity_summary(activities) {
+                    let summary = truncate_display_width_from(
+                        &summary,
+                        state.member_horizontal_scroll(),
+                        max_name_width,
+                    );
+                    lines.push(Line::from(vec![
+                        Span::raw("   "),
+                        Span::styled(summary, Style::default().fg(DIM)),
+                    ]));
+                    line_index += 1;
+                }
+            }
         }
     }
 
@@ -587,6 +610,65 @@ pub(super) fn member_display_label(
         ),
         BOT_SUFFIX
     )
+}
+
+/// Priority: Custom > Streaming > Listening > Playing > Watching > Competing > Unknown.
+pub(super) fn primary_activity_summary(activities: &[ActivityInfo]) -> Option<String> {
+    activities
+        .iter()
+        .min_by_key(|activity| activity_priority(activity.kind))
+        .map(format_activity_summary)
+}
+
+fn activity_priority(kind: ActivityKind) -> u8 {
+    match kind {
+        ActivityKind::Custom => 0,
+        ActivityKind::Streaming => 1,
+        ActivityKind::Listening => 2,
+        ActivityKind::Playing => 3,
+        ActivityKind::Watching => 4,
+        ActivityKind::Competing => 5,
+        ActivityKind::Unknown => 6,
+    }
+}
+
+fn format_activity_summary(activity: &ActivityInfo) -> String {
+    match activity.kind {
+        ActivityKind::Custom => {
+            let emoji = activity
+                .emoji
+                .as_ref()
+                .map(|emoji| {
+                    if emoji.id.is_some() {
+                        format!(":{}:", emoji.name)
+                    } else {
+                        emoji.name.clone()
+                    }
+                })
+                .unwrap_or_default();
+            let body = activity.state.clone().unwrap_or_default();
+            match (emoji.is_empty(), body.is_empty()) {
+                (true, true) => activity.name.clone(),
+                (false, true) => emoji,
+                (true, false) => body,
+                (false, false) => format!("{emoji} {body}"),
+            }
+        }
+        ActivityKind::Playing => format!("Playing {}", activity.name),
+        ActivityKind::Streaming => format!("Streaming {}", activity.name),
+        ActivityKind::Listening => {
+            match (activity.details.as_deref(), activity.state.as_deref()) {
+                (Some(track), Some(artist)) => {
+                    format!("Listening to {} — {} by {}", activity.name, track, artist)
+                }
+                (Some(track), None) => format!("Listening to {} — {}", activity.name, track),
+                _ => format!("Listening to {}", activity.name),
+            }
+        }
+        ActivityKind::Watching => format!("Watching {}", activity.name),
+        ActivityKind::Competing => format!("Competing in {}", activity.name),
+        ActivityKind::Unknown => activity.name.clone(),
+    }
 }
 
 pub(super) fn render_header(frame: &mut Frame, area: Rect) {

@@ -21,20 +21,22 @@ use super::{
     inline_image_preview_area, inline_image_preview_row, member_action_menu_lines,
     member_display_label, member_name_style, message_action_menu_lines, message_author_style,
     message_item_lines, message_starts_new_day, message_viewport_lines, new_messages_notice_line,
-    options_popup_lines, poll_vote_picker_lines, reaction_users_popup_lines,
-    reaction_users_visible_line_count, render_channels, render_guilds, selected_avatar_x_offset,
+    options_popup_lines, poll_vote_picker_lines, primary_activity_summary,
+    reaction_users_popup_lines, reaction_users_visible_line_count, render_channels, render_guilds,
+    selected_avatar_x_offset,
     selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
     user_profile_display_name_style, user_profile_popup_has_avatar, user_profile_popup_lines,
-    user_profile_popup_text_geometry,
+    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
 };
 use crate::{
     config::DisplayOptions,
     discord::{
-        AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientState, ChannelState,
-        ChannelUnreadState, ChannelVisibilityStats, EmbedInfo, FriendStatus, GuildMemberState,
-        MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageSnapshotInfo, MessageState,
-        MutualGuildInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
-        ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+        ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, AttachmentInfo, ChannelInfo,
+        ChannelRecipientState, ChannelState, ChannelUnreadState, ChannelVisibilityStats, EmbedInfo,
+        FriendStatus, GuildMemberState, MemberInfo, MentionInfo, MessageInfo, MessageKind,
+        MessageSnapshotInfo, MessageState, MutualGuildInfo, PollAnswerInfo, PollInfo,
+        PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
+        ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
     },
     tui::{
         format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
@@ -890,6 +892,127 @@ fn user_profile_popup_avatar_gutter_matches_geometry_in_narrow_layouts() {
         user_profile_popup_text_geometry(wide_area, false),
         user_profile_popup_text_geometry(wide_area, user_profile_popup_has_avatar(wide_area, true)),
     );
+}
+
+#[test]
+fn user_profile_popup_renders_activity_section() {
+    let profile = user_profile_info(10, "neo");
+    let state = DashboardState::new();
+    let activities = vec![
+        ActivityInfo {
+            kind: ActivityKind::Custom,
+            name: "Custom Status".to_owned(),
+            details: None,
+            state: Some("Coding hard".to_owned()),
+            url: None,
+            application_id: None,
+            emoji: Some(ActivityEmoji {
+                name: "🦀".to_owned(),
+                id: None,
+                animated: false,
+            }),
+        },
+        ActivityInfo {
+            kind: ActivityKind::Listening,
+            name: "Spotify".to_owned(),
+            details: Some("Bohemian Rhapsody".to_owned()),
+            state: Some("Queen".to_owned()),
+            url: None,
+            application_id: None,
+            emoji: None,
+        },
+        ActivityInfo {
+            kind: ActivityKind::Playing,
+            name: "Concord".to_owned(),
+            details: None,
+            state: None,
+            url: None,
+            application_id: None,
+            emoji: None,
+        },
+    ];
+
+    let lines = user_profile_popup_lines_with_activities(
+        &profile,
+        &state,
+        60,
+        PresenceStatus::Online,
+        &activities,
+    );
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert!(texts.iter().any(|line| line == "ACTIVITY"));
+    assert!(texts.iter().any(|line| line == "🦀 Coding hard"));
+    assert!(texts.iter().any(|line| line == "Listening to Spotify"));
+    assert!(texts.iter().any(|line| line == "Bohemian Rhapsody"));
+    assert!(texts.iter().any(|line| line == "by Queen"));
+    assert!(texts.iter().any(|line| line == "Playing Concord"));
+}
+
+#[test]
+fn primary_activity_summary_picks_custom_status_first() {
+    let activities = vec![
+        ActivityInfo {
+            kind: ActivityKind::Playing,
+            name: "Concord".to_owned(),
+            details: None,
+            state: None,
+            url: None,
+            application_id: None,
+            emoji: None,
+        },
+        ActivityInfo {
+            kind: ActivityKind::Custom,
+            name: "Custom Status".to_owned(),
+            details: None,
+            state: Some("Coding hard".to_owned()),
+            url: None,
+            application_id: None,
+            emoji: Some(ActivityEmoji {
+                name: "🦀".to_owned(),
+                id: None,
+                animated: false,
+            }),
+        },
+    ];
+
+    assert_eq!(
+        primary_activity_summary(&activities),
+        Some("🦀 Coding hard".to_owned())
+    );
+}
+
+#[test]
+fn primary_activity_summary_listening_includes_track_and_artist() {
+    let activities = vec![ActivityInfo {
+        kind: ActivityKind::Listening,
+        name: "Spotify".to_owned(),
+        details: Some("Bohemian Rhapsody".to_owned()),
+        state: Some("Queen".to_owned()),
+        url: None,
+        application_id: None,
+        emoji: None,
+    }];
+    assert_eq!(
+        primary_activity_summary(&activities),
+        Some("Listening to Spotify — Bohemian Rhapsody by Queen".to_owned())
+    );
+}
+
+#[test]
+fn primary_activity_summary_returns_none_when_no_activities() {
+    assert_eq!(primary_activity_summary(&[]), None);
+}
+
+#[test]
+fn user_profile_popup_omits_activity_section_when_empty() {
+    let profile = user_profile_info(10, "neo");
+    let state = DashboardState::new();
+    let lines =
+        user_profile_popup_lines_with_activities(&profile, &state, 60, PresenceStatus::Online, &[]);
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert!(!texts.iter().any(|line| line == "ACTIVITY"));
 }
 
 #[test]

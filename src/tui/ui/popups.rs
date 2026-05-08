@@ -489,7 +489,13 @@ pub(super) fn user_profile_popup_text_geometry(area: Rect, has_avatar: bool) -> 
 
 fn user_profile_popup_text_for_render(state: &DashboardState, width: u16) -> UserProfilePopupText {
     if let Some(profile) = state.user_profile_popup_data() {
-        user_profile_popup_text(profile, state, width, state.user_profile_popup_status())
+        user_profile_popup_text(
+            profile,
+            state,
+            width,
+            state.user_profile_popup_status(),
+            state.user_profile_popup_activities(),
+        )
     } else if let Some(message) = state.user_profile_popup_load_error() {
         UserProfilePopupText {
             lines: vec![Line::from(Span::styled(
@@ -521,7 +527,18 @@ pub(super) fn user_profile_popup_lines(
     width: u16,
     status: PresenceStatus,
 ) -> Vec<Line<'static>> {
-    user_profile_popup_text(profile, state, width, status).lines
+    user_profile_popup_text(profile, state, width, status, &[]).lines
+}
+
+#[cfg(test)]
+pub(super) fn user_profile_popup_lines_with_activities(
+    profile: &UserProfileInfo,
+    state: &DashboardState,
+    width: u16,
+    status: PresenceStatus,
+    activities: &[ActivityInfo],
+) -> Vec<Line<'static>> {
+    user_profile_popup_text(profile, state, width, status, activities).lines
 }
 
 pub(super) fn user_profile_popup_text(
@@ -529,6 +546,7 @@ pub(super) fn user_profile_popup_text(
     state: &DashboardState,
     width: u16,
     status: PresenceStatus,
+    activities: &[ActivityInfo],
 ) -> UserProfilePopupText {
     let inner_width = usize::from(width.max(8));
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -557,6 +575,14 @@ pub(super) fn user_profile_popup_text(
             .fg(badge_color)
             .add_modifier(Modifier::BOLD),
     )));
+
+    if !activities.is_empty() {
+        lines.push(Line::from(Span::raw(String::new())));
+        push_section_header(&mut lines, "ACTIVITY");
+        for activity in activities {
+            push_activity_lines(&mut lines, activity, inner_width);
+        }
+    }
 
     lines.push(Line::from(Span::raw(String::new())));
     push_section_header(&mut lines, "ABOUT ME");
@@ -647,6 +673,81 @@ fn push_section_header(lines: &mut Vec<Line<'static>>, label: &str) {
         label.to_owned(),
         Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
     )));
+}
+
+fn push_activity_lines(
+    lines: &mut Vec<Line<'static>>,
+    activity: &ActivityInfo,
+    width: usize,
+) {
+    let primary = activity_primary_line(activity);
+    if !primary.is_empty() {
+        lines.push(Line::from(Span::raw(truncate_display_width(
+            &primary, width,
+        ))));
+    }
+    if let Some(secondary) = activity_secondary_line(activity) {
+        lines.push(Line::from(Span::styled(
+            truncate_display_width(&secondary, width),
+            Style::default().fg(DIM),
+        )));
+    }
+    if let Some(tertiary) = activity_tertiary_line(activity) {
+        lines.push(Line::from(Span::styled(
+            truncate_display_width(&tertiary, width),
+            Style::default().fg(DIM),
+        )));
+    }
+}
+
+fn activity_primary_line(activity: &ActivityInfo) -> String {
+    match activity.kind {
+        ActivityKind::Custom => {
+            let emoji = activity
+                .emoji
+                .as_ref()
+                .map(|emoji| {
+                    if emoji.id.is_some() {
+                        format!(":{}:", emoji.name)
+                    } else {
+                        emoji.name.clone()
+                    }
+                })
+                .unwrap_or_default();
+            let body = activity.state.clone().unwrap_or_default();
+            match (emoji.is_empty(), body.is_empty()) {
+                (true, true) => String::new(),
+                (false, true) => emoji,
+                (true, false) => body,
+                (false, false) => format!("{emoji} {body}"),
+            }
+        }
+        ActivityKind::Playing => format!("Playing {}", activity.name),
+        ActivityKind::Streaming => format!("Streaming {}", activity.name),
+        ActivityKind::Listening => format!("Listening to {}", activity.name),
+        ActivityKind::Watching => format!("Watching {}", activity.name),
+        ActivityKind::Competing => format!("Competing in {}", activity.name),
+        ActivityKind::Unknown => activity.name.clone(),
+    }
+}
+
+fn activity_secondary_line(activity: &ActivityInfo) -> Option<String> {
+    match activity.kind {
+        ActivityKind::Custom => None,
+        _ => activity.details.clone(),
+    }
+}
+
+fn activity_tertiary_line(activity: &ActivityInfo) -> Option<String> {
+    match activity.kind {
+        ActivityKind::Custom => None,
+        ActivityKind::Listening => activity
+            .state
+            .as_deref()
+            .map(|artist| format!("by {artist}")),
+        ActivityKind::Streaming => activity.url.clone(),
+        _ => activity.state.clone(),
+    }
 }
 
 fn push_wrapped_paragraph(lines: &mut Vec<Line<'static>>, text: &str, width: usize) {

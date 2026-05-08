@@ -8,7 +8,7 @@ use crate::discord::ids::{
 use crate::config::DisplayOptions;
 use crate::discord::{
     AppCommand, AppEvent, ChannelUnreadState, DiscordState, ForumPostArchiveState, MentionInfo,
-    MessageInfo, MessageSnapshotInfo, MessageState,
+    MessageInfo, MessageSnapshotInfo, MessageState, PresenceStatus,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -1990,12 +1990,15 @@ impl DashboardState {
                 line_index += 1;
             }
             line_index += 1;
-            for _member in group.entries {
+            for member in group.entries {
                 if member_index == selected_member {
                     return line_index;
                 }
                 member_index += 1;
                 line_index += 1;
+                if self.member_has_activity_row(member) {
+                    line_index += 1;
+                }
             }
         }
         0
@@ -2025,10 +2028,13 @@ impl DashboardState {
                 line_index += 1;
             }
             line_index += 1;
-            for _member in group.entries {
+            for member in group.entries {
                 indices.push((member_index, line_index));
                 member_index += 1;
                 line_index += 1;
+                if self.member_has_activity_row(member) {
+                    line_index += 1;
+                }
             }
         }
         indices
@@ -2040,9 +2046,27 @@ impl DashboardState {
             if lines > 0 {
                 lines += 1;
             }
-            lines += 1 + group.entries.len();
+            lines += 1; // group header
+            for member in group.entries {
+                lines += 1; // member name row
+                if self.member_has_activity_row(member) {
+                    lines += 1; // activity sub-row
+                }
+            }
         }
         lines
+    }
+
+    /// Must mirror `tui::ui::panes::render_members` — line counting and
+    /// selection drift apart silently if the two predicates diverge.
+    fn member_has_activity_row(&self, member: MemberEntry<'_>) -> bool {
+        if matches!(
+            member.status(),
+            PresenceStatus::Offline | PresenceStatus::Unknown
+        ) {
+            return false;
+        }
+        !self.discord.user_activities(member.user_id()).is_empty()
     }
 
     /// Returns true when the cursor sits on the last message in the active

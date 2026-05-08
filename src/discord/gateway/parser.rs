@@ -7,10 +7,11 @@ use serde_json::Value;
 
 use crate::{
     discord::{
-        AttachmentInfo, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, EmbedFieldInfo,
-        EmbedInfo, FriendStatus, GuildFolder, MemberInfo, MentionInfo, MessageInfo, MessageKind,
-        MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus,
-        ReactionEmoji, ReactionInfo, ReadStateInfo, ReplyInfo, RoleInfo,
+        ActivityEmoji, ActivityInfo, ActivityKind, AttachmentInfo, ChannelInfo,
+        ChannelRecipientInfo, CustomEmojiInfo, EmbedFieldInfo, EmbedInfo, FriendStatus,
+        GuildFolder, MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
+        MessageSnapshotInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
+        ReadStateInfo, ReplyInfo, RoleInfo,
         events::default_avatar_url,
         events::{AppEvent, AttachmentUpdate, PermissionOverwriteInfo, PermissionOverwriteKind},
         ids::{
@@ -142,7 +143,9 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
 
     let mut merged_presences = parse_merged_presences(data);
     if let Some(presences) = data.get("presences").and_then(Value::as_array) {
-        merged_presences.extend(presences.iter().filter_map(parse_presence_entry));
+        merged_presences.extend(presences.iter().filter_map(parse_presence_entry).map(
+            |(user_id, status, activities)| (user_id, (status, activities)),
+        ));
     }
 
     // With DEDUPE_USER_OBJECTS in capabilities (bit 4), Discord ships every
@@ -182,7 +185,11 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
     stats.private_channels_duration = private_channels_started.elapsed();
 
     if let (Some(user_id), Some(status)) = (current_user_id, current_user_status) {
-        events.push(AppEvent::UserPresenceUpdate { user_id, status });
+        events.push(AppEvent::UserPresenceUpdate {
+            user_id,
+            status,
+            activities: Vec::new(),
+        });
     }
 
     // User-account READY ships the friend list as `relationships`. Capture
@@ -241,11 +248,13 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
 fn parse_ready_supplemental(data: &Value) -> Vec<AppEvent> {
     let mut events = parse_supplemental_guild_events(data);
     events.extend(parse_merged_member_events(data));
-    events.extend(
-        parse_merged_presences(data)
-            .into_iter()
-            .map(|(user_id, status)| AppEvent::UserPresenceUpdate { user_id, status }),
-    );
+    events.extend(parse_merged_presences(data).into_iter().map(
+        |(user_id, (status, activities))| AppEvent::UserPresenceUpdate {
+            user_id,
+            status,
+            activities,
+        },
+    ));
     events
 }
 
@@ -312,10 +321,11 @@ fn parse_supplemental_guild_events(data: &Value) -> Vec<AppEvent> {
         }
         if let Some(presences) = guild.get("presences").and_then(Value::as_array) {
             events.extend(presences.iter().filter_map(parse_presence_entry).map(
-                |(user_id, status)| AppEvent::PresenceUpdate {
+                |(user_id, status, activities)| AppEvent::PresenceUpdate {
                     guild_id,
                     user_id,
                     status,
+                    activities,
                 },
             ));
         }
@@ -397,8 +407,10 @@ fn parse_guild_folder(value: &Value) -> Option<GuildFolder> {
     })
 }
 
-fn parse_merged_presences(data: &Value) -> BTreeMap<Id<UserMarker>, PresenceStatus> {
-    let mut presences = BTreeMap::new();
+type MergedPresences = BTreeMap<Id<UserMarker>, (PresenceStatus, Vec<ActivityInfo>)>;
+
+fn parse_merged_presences(data: &Value) -> MergedPresences {
+    let mut presences = MergedPresences::new();
     if let Some(merged) = data.get("merged_presences") {
         collect_presence_entries(merged, &mut presences);
     }
@@ -419,12 +431,9 @@ fn parse_current_user_session_status(data: &Value) -> Option<PresenceStatus> {
         })
 }
 
-fn collect_presence_entries(
-    value: &Value,
-    presences: &mut BTreeMap<Id<UserMarker>, PresenceStatus>,
-) {
-    if let Some((user_id, status)) = parse_presence_entry(value) {
-        presences.insert(user_id, status);
+fn collect_presence_entries(value: &Value, presences: &mut MergedPresences) {
+    if let Some((user_id, status, activities)) = parse_presence_entry(value) {
+        presences.insert(user_id, (status, activities));
         return;
     }
 
@@ -439,15 +448,12 @@ fn collect_presence_entries(
     }
 }
 
-fn apply_recipient_presences(
-    channel: &mut ChannelInfo,
-    presences: &BTreeMap<Id<UserMarker>, PresenceStatus>,
-) {
+fn apply_recipient_presences(channel: &mut ChannelInfo, presences: &MergedPresences) {
     let Some(recipients) = channel.recipients.as_mut() else {
         return;
     };
     for recipient in recipients {
-        if let Some(status) = presences.get(&recipient.user_id) {
+        if let Some((status, _)) = presences.get(&recipient.user_id) {
             recipient.status = Some(*status);
         }
     }
@@ -565,10 +571,17 @@ fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         .unwrap_or_default();
     let member_count = data.get("member_count").and_then(Value::as_u64);
 
+    // Activities reach state via PresenceUpdate events, not GuildCreate.
     let presences = data
         .get("presences")
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(parse_presence_entry).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(parse_presence_entry)
+                .map(|(user_id, status, _activities)| (user_id, status))
+                .collect()
+        })
         .unwrap_or_default();
 
     let roles = data
@@ -993,10 +1006,11 @@ fn parse_member_chunk(data: &Value) -> Vec<AppEvent> {
 
     if let Some(presences) = data.get("presences").and_then(Value::as_array) {
         events.extend(presences.iter().filter_map(parse_presence_entry).map(
-            |(user_id, status)| AppEvent::PresenceUpdate {
+            |(user_id, status, activities)| AppEvent::PresenceUpdate {
                 guild_id,
                 user_id,
                 status,
+                activities,
             },
         ));
     }
@@ -1049,11 +1063,12 @@ fn parse_member_list_item(guild_id: Id<GuildMarker>, item: &Value) -> Vec<AppEve
         return Vec::new();
     };
     let user_id = member_info.user_id;
-    let status = member
-        .get("presence")
+    let presence = member.get("presence");
+    let status = presence
         .and_then(|presence| presence.get("status"))
         .and_then(Value::as_str)
         .map(parse_status);
+    let activities = presence.map(parse_activities).unwrap_or_default();
 
     let mut events = vec![AppEvent::GuildMemberUpsert {
         guild_id,
@@ -1064,6 +1079,7 @@ fn parse_member_list_item(guild_id: Id<GuildMarker>, item: &Value) -> Vec<AppEve
             guild_id,
             user_id,
             status,
+            activities,
         });
     }
     events
@@ -1573,7 +1589,7 @@ fn parse_member_remove(data: &Value) -> Option<AppEvent> {
 }
 
 fn parse_presence_update(data: &Value) -> Vec<AppEvent> {
-    let Some((user_id, status)) = parse_presence_entry(data) else {
+    let Some((user_id, status, activities)) = parse_presence_entry(data) else {
         return Vec::new();
     };
     if let Some(guild_id) = data.get("guild_id").and_then(parse_id::<GuildMarker>) {
@@ -1581,9 +1597,14 @@ fn parse_presence_update(data: &Value) -> Vec<AppEvent> {
             guild_id,
             user_id,
             status,
+            activities,
         }]
     } else {
-        vec![AppEvent::UserPresenceUpdate { user_id, status }]
+        vec![AppEvent::UserPresenceUpdate {
+            user_id,
+            status,
+            activities,
+        }]
     }
 }
 
@@ -1857,13 +1878,86 @@ fn raw_discriminator(user: &Value) -> Option<u16> {
     })
 }
 
-fn parse_presence_entry(value: &Value) -> Option<(Id<UserMarker>, PresenceStatus)> {
+fn parse_presence_entry(
+    value: &Value,
+) -> Option<(Id<UserMarker>, PresenceStatus, Vec<ActivityInfo>)> {
     let user_id = presence_user_id(value)?;
     let status = value
         .get("status")
         .and_then(Value::as_str)
         .map(parse_status)?;
-    Some((user_id, status))
+    let activities = parse_activities(value);
+    Some((user_id, status, activities))
+}
+
+fn parse_activities(value: &Value) -> Vec<ActivityInfo> {
+    value
+        .get("activities")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(parse_activity).collect())
+        .unwrap_or_default()
+}
+
+fn parse_activity(value: &Value) -> Option<ActivityInfo> {
+    let kind = ActivityKind::from_code(value.get("type").and_then(Value::as_u64).unwrap_or(0));
+    let name = value
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_default();
+
+    let details = value
+        .get("details")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    let state = value
+        .get("state")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    let url = value
+        .get("url")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    let application_id = value
+        .get("application_id")
+        .and_then(|node| {
+            node.as_str()
+                .map(str::to_owned)
+                .or_else(|| node.as_u64().map(|n| n.to_string()))
+        })
+        .filter(|s| !s.is_empty());
+    let emoji = value.get("emoji").and_then(parse_activity_emoji);
+
+    if kind == ActivityKind::Unknown && name.is_empty() && state.is_none() && emoji.is_none() {
+        return None;
+    }
+
+    Some(ActivityInfo {
+        kind,
+        name,
+        details,
+        state,
+        url,
+        application_id,
+        emoji,
+    })
+}
+
+fn parse_activity_emoji(value: &Value) -> Option<ActivityEmoji> {
+    let name = value
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())?
+        .to_owned();
+    let id = value.get("id").and_then(parse_id::<EmojiMarker>);
+    let animated = value
+        .get("animated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    Some(ActivityEmoji { name, id, animated })
 }
 
 fn presence_user_id(value: &Value) -> Option<Id<UserMarker>> {
@@ -1942,9 +2036,9 @@ mod tests {
         parse_message_create, parse_message_info, parse_message_update, parse_user_account_event,
     };
     use crate::discord::{
-        AppEvent, AttachmentUpdate, ChannelVisibilityStats, DiscordState, FriendStatus,
-        MentionInfo, MessageKind, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji,
-        ReplyInfo,
+        ActivityKind, AppEvent, AttachmentUpdate, ChannelVisibilityStats, DiscordState,
+        FriendStatus, MentionInfo, MessageKind, PollAnswerInfo, PollInfo, PresenceStatus,
+        ReactionEmoji, ReplyInfo,
     };
 
     #[test]
@@ -1985,7 +2079,7 @@ mod tests {
         )));
         assert!(events.iter().any(|event| matches!(
             event,
-            AppEvent::PresenceUpdate { guild_id, user_id, status }
+            AppEvent::PresenceUpdate { guild_id, user_id, status, .. }
                 if *guild_id == Id::new(10)
                     && *user_id == Id::new(20)
                     && *status == PresenceStatus::Idle
@@ -2090,14 +2184,14 @@ mod tests {
 
         assert!(events.iter().any(|event| matches!(
             event,
-            AppEvent::PresenceUpdate { guild_id, user_id, status }
+            AppEvent::PresenceUpdate { guild_id, user_id, status, .. }
                 if *guild_id == Id::new(10)
                     && *user_id == Id::new(20)
                     && *status == PresenceStatus::Online
         )));
         assert!(events.iter().any(|event| matches!(
             event,
-            AppEvent::PresenceUpdate { guild_id, user_id, status }
+            AppEvent::PresenceUpdate { guild_id, user_id, status, .. }
                 if *guild_id == Id::new(10)
                     && *user_id == Id::new(30)
                     && *status == PresenceStatus::DoNotDisturb
@@ -2224,7 +2318,7 @@ mod tests {
         assert_eq!(recipients[2].status, Some(PresenceStatus::Idle));
         assert!(events.iter().any(|event| matches!(
             event,
-            AppEvent::UserPresenceUpdate { user_id, status }
+            AppEvent::UserPresenceUpdate { user_id, status, .. }
                 if *user_id == Id::new(99) && *status == PresenceStatus::Idle
         )));
     }
@@ -2342,14 +2436,102 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert!(events.iter().any(|event| matches!(
             event,
-            AppEvent::UserPresenceUpdate { user_id, status }
+            AppEvent::UserPresenceUpdate { user_id, status, .. }
                 if *user_id == Id::new(20) && *status == PresenceStatus::Online
         )));
         assert!(events.iter().any(|event| matches!(
             event,
-            AppEvent::UserPresenceUpdate { user_id, status }
+            AppEvent::UserPresenceUpdate { user_id, status, .. }
                 if *user_id == Id::new(30) && *status == PresenceStatus::Idle
         )));
+    }
+
+    #[test]
+    fn raw_presence_update_extracts_activities() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "PRESENCE_UPDATE",
+                "d": {
+                    "guild_id": "10",
+                    "user": { "id": "20" },
+                    "status": "online",
+                    "activities": [
+                        {
+                            "type": 4,
+                            "name": "Custom Status",
+                            "state": "Coding hard",
+                            "emoji": { "name": "🦀" }
+                        },
+                        {
+                            "type": 2,
+                            "name": "Spotify",
+                            "details": "Bohemian Rhapsody",
+                            "state": "Queen"
+                        },
+                        {
+                            "type": 0,
+                            "name": "Concord"
+                        }
+                    ]
+                }
+            })
+            .to_string(),
+        );
+
+        let activities = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::PresenceUpdate { activities, .. } => Some(activities),
+                _ => None,
+            })
+            .expect("PRESENCE_UPDATE should produce a PresenceUpdate event");
+
+        assert_eq!(activities.len(), 3);
+        assert_eq!(activities[0].kind, ActivityKind::Custom);
+        assert_eq!(activities[0].state.as_deref(), Some("Coding hard"));
+        assert_eq!(
+            activities[0].emoji.as_ref().map(|e| e.name.as_str()),
+            Some("🦀")
+        );
+        assert_eq!(activities[1].kind, ActivityKind::Listening);
+        assert_eq!(activities[1].name, "Spotify");
+        assert_eq!(activities[1].details.as_deref(), Some("Bohemian Rhapsody"));
+        assert_eq!(activities[1].state.as_deref(), Some("Queen"));
+        assert_eq!(activities[2].kind, ActivityKind::Playing);
+        assert_eq!(activities[2].name, "Concord");
+    }
+
+    #[test]
+    fn raw_presence_update_without_guild_id_emits_user_event_with_activities() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "PRESENCE_UPDATE",
+                "d": {
+                    "user": { "id": "20" },
+                    "status": "dnd",
+                    "activities": [
+                        { "type": 1, "name": "Twitch", "url": "https://twitch.tv/foo" }
+                    ]
+                }
+            })
+            .to_string(),
+        );
+
+        let activities = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::UserPresenceUpdate { activities, .. } => Some(activities),
+                _ => None,
+            })
+            .expect("PRESENCE_UPDATE without guild_id should produce a UserPresenceUpdate");
+
+        assert_eq!(activities.len(), 1);
+        assert_eq!(activities[0].kind, ActivityKind::Streaming);
+        assert_eq!(activities[0].name, "Twitch");
+        assert_eq!(
+            activities[0].url.as_deref(),
+            Some("https://twitch.tv/foo")
+        );
     }
 
     #[test]
@@ -2509,7 +2691,7 @@ mod tests {
 
         assert!(matches!(
             events.as_slice(),
-            [AppEvent::UserPresenceUpdate { user_id, status }]
+            [AppEvent::UserPresenceUpdate { user_id, status, .. }]
                 if *user_id == Id::new(20) && *status == PresenceStatus::Online
         ));
     }
@@ -2547,7 +2729,7 @@ mod tests {
 
         assert!(matches!(
             events.as_slice(),
-            [AppEvent::UserPresenceUpdate { user_id, status }]
+            [AppEvent::UserPresenceUpdate { user_id, status, .. }]
                 if *user_id == Id::new(20) && *status == PresenceStatus::DoNotDisturb
         ));
     }
@@ -2567,7 +2749,7 @@ mod tests {
 
         assert!(matches!(
             events.as_slice(),
-            [AppEvent::UserPresenceUpdate { user_id, status }]
+            [AppEvent::UserPresenceUpdate { user_id, status, .. }]
                 if *user_id == Id::new(20) && *status == PresenceStatus::Online
         ));
     }
@@ -3039,14 +3221,14 @@ mod tests {
         ));
         assert!(matches!(
             &events[2],
-            AppEvent::PresenceUpdate { guild_id, user_id, status }
+            AppEvent::PresenceUpdate { guild_id, user_id, status, .. }
                 if *guild_id == Id::new(1)
                     && *user_id == Id::new(10)
                     && *status == PresenceStatus::Online
         ));
         assert!(matches!(
             &events[3],
-            AppEvent::PresenceUpdate { guild_id, user_id, status }
+            AppEvent::PresenceUpdate { guild_id, user_id, status, .. }
                 if *guild_id == Id::new(1)
                     && *user_id == Id::new(20)
                     && *status == PresenceStatus::Idle

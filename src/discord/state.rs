@@ -14,10 +14,11 @@ use crate::discord::ids::{
 };
 
 use super::{
-    AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
-    EmbedInfo, FriendStatus, GuildFolder, InlinePreviewInfo, MemberInfo, MentionInfo, MessageInfo,
-    MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PermissionOverwriteInfo, PollInfo,
-    PresenceStatus, ReactionInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+    ActivityInfo, AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo,
+    CustomEmojiInfo, EmbedInfo, FriendStatus, GuildFolder, InlinePreviewInfo, MemberInfo,
+    MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+    PermissionOverwriteInfo, PollInfo, PresenceStatus, ReactionInfo, ReplyInfo, RoleInfo,
+    UserProfileInfo,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -317,6 +318,7 @@ pub struct DiscordState {
     /// Last known presence by user id. This gives DM/profile views a fallback
     /// when the private-channel recipient payload omitted status.
     user_presences: BTreeMap<Id<UserMarker>, PresenceStatus>,
+    user_activities: BTreeMap<Id<UserMarker>, Vec<ActivityInfo>>,
     /// Snowflake of the authenticated user. Captured from the READY payload
     /// and consulted by `can_view_channel` to look up our own roles and
     /// match member-level permission overwrites.
@@ -375,6 +377,7 @@ impl DiscordState {
             user_profiles: BTreeMap::new(),
             relationships: BTreeMap::new(),
             user_presences: BTreeMap::new(),
+            user_activities: BTreeMap::new(),
             current_user_id: None,
             current_user: None,
             typing: BTreeMap::new(),
@@ -662,8 +665,10 @@ impl DiscordState {
                 guild_id,
                 user_id,
                 status,
+                activities,
             } => {
                 self.user_presences.insert(*user_id, *status);
+                self.update_user_activities(*user_id, activities);
                 let entry = self.members.entry(*guild_id).or_default();
                 if let Some(member) = entry.get_mut(user_id) {
                     member.status = *status;
@@ -683,8 +688,13 @@ impl DiscordState {
                 }
                 self.update_channel_recipient_presence(*user_id, *status);
             }
-            AppEvent::UserPresenceUpdate { user_id, status } => {
+            AppEvent::UserPresenceUpdate {
+                user_id,
+                status,
+                activities,
+            } => {
                 self.user_presences.insert(*user_id, *status);
+                self.update_user_activities(*user_id, activities);
                 self.update_channel_recipient_presence(*user_id, *status);
             }
             AppEvent::TypingStart {
@@ -979,6 +989,7 @@ impl DiscordState {
         self.user_profiles = snapshot.user_profiles.clone();
         self.relationships = snapshot.relationships.clone();
         self.user_presences = snapshot.user_presences.clone();
+        self.user_activities = snapshot.user_activities.clone();
         self.current_user_id = snapshot.current_user_id;
         self.current_user = snapshot.current_user.clone();
         self.typing = snapshot.typing.clone();
@@ -986,6 +997,13 @@ impl DiscordState {
 
     pub fn user_presence(&self, user_id: Id<UserMarker>) -> Option<PresenceStatus> {
         self.user_presences.get(&user_id).copied()
+    }
+
+    pub fn user_activities(&self, user_id: Id<UserMarker>) -> &[ActivityInfo] {
+        self.user_activities
+            .get(&user_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     /// Visible/hidden channel counts for a guild scope. DM scope reports
@@ -1227,6 +1245,18 @@ impl DiscordState {
                     recipient.status = status;
                 }
             }
+        }
+    }
+
+    fn update_user_activities(
+        &mut self,
+        user_id: Id<UserMarker>,
+        activities: &[ActivityInfo],
+    ) {
+        if activities.is_empty() {
+            self.user_activities.remove(&user_id);
+        } else {
+            self.user_activities.insert(user_id, activities.to_vec());
         }
     }
 
@@ -1994,12 +2024,12 @@ mod tests {
     };
 
     use crate::discord::{
-        AppEvent, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, ChannelUnreadState,
-        ChannelVisibilityStats, CustomEmojiInfo, DiscordState, FriendStatus, MemberInfo,
-        MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-        MessageState, MutualGuildInfo, PermissionOverwriteInfo, PermissionOverwriteKind,
-        PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo,
-        ReplyInfo, RoleInfo, UserProfileInfo,
+        ActivityInfo, ActivityKind, AppEvent, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo,
+        ChannelUnreadState, ChannelVisibilityStats, CustomEmojiInfo, DiscordState, FriendStatus,
+        MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
+        MessageSnapshotInfo, MessageState, MutualGuildInfo, PermissionOverwriteInfo,
+        PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji,
+        ReactionInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
     };
 
     fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -2470,6 +2500,7 @@ mod tests {
         state.apply_event(&AppEvent::UserPresenceUpdate {
             user_id,
             status: PresenceStatus::Idle,
+            activities: Vec::new(),
         });
         state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
             guild_id: None,
@@ -2532,10 +2563,44 @@ mod tests {
         state.apply_event(&AppEvent::UserPresenceUpdate {
             user_id: Id::new(20),
             status: PresenceStatus::DoNotDisturb,
+            activities: Vec::new(),
         });
 
         let channel = state.channel(channel_id).expect("channel should be stored");
         assert_eq!(channel.recipients[0].status, PresenceStatus::DoNotDisturb);
+    }
+
+    #[test]
+    fn presence_update_caches_user_activities() {
+        let mut state = DiscordState::default();
+        let user_id: Id<UserMarker> = Id::new(20);
+        let activity = ActivityInfo {
+            kind: ActivityKind::Playing,
+            name: "Concord".to_owned(),
+            details: None,
+            state: None,
+            url: None,
+            application_id: None,
+            emoji: None,
+        };
+
+        state.apply_event(&AppEvent::PresenceUpdate {
+            guild_id: Id::new(1),
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![activity.clone()],
+        });
+
+        assert_eq!(state.user_activities(user_id), std::slice::from_ref(&activity));
+
+        // Empty activities array clears the cached entry.
+        state.apply_event(&AppEvent::PresenceUpdate {
+            guild_id: Id::new(1),
+            user_id,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        });
+        assert!(state.user_activities(user_id).is_empty());
     }
 
     #[test]
@@ -2571,6 +2636,7 @@ mod tests {
             guild_id: Id::new(1),
             user_id: Id::new(20),
             status: PresenceStatus::Idle,
+            activities: Vec::new(),
         });
 
         let channel = state.channel(channel_id).expect("channel should be stored");
@@ -4346,6 +4412,7 @@ mod tests {
             guild_id,
             user_id: bob,
             status: PresenceStatus::Idle,
+            activities: Vec::new(),
         });
         assert_eq!(
             state
@@ -4714,6 +4781,7 @@ mod tests {
             guild_id,
             user_id: alice,
             status: PresenceStatus::Online,
+            activities: Vec::new(),
         });
 
         let members = state.members_for_guild(guild_id);
@@ -4897,6 +4965,7 @@ mod tests {
             guild_id,
             user_id: user,
             status: PresenceStatus::Online,
+            activities: Vec::new(),
         });
         state.apply_event(&AppEvent::GuildMemberUpsert {
             guild_id,

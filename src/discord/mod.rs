@@ -15,12 +15,13 @@ pub(crate) use client::validate_token_header;
 pub use commands::ReactionEmoji;
 pub use commands::{AppCommand, ForumPostArchiveState};
 pub use events::{
-    AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo,
-    EmbedFieldInfo, EmbedInfo, FriendStatus, GuildFolder, InlinePreviewInfo, MemberInfo,
-    MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    MutualGuildInfo, PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo,
-    PresenceStatus, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo,
-    RoleInfo, SequencedAppEvent, UserProfileInfo,
+    ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, AttachmentInfo, AttachmentUpdate,
+    ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, EmbedFieldInfo, EmbedInfo, FriendStatus,
+    GuildFolder, InlinePreviewInfo, MemberInfo, MentionInfo, MessageInfo, MessageKind,
+    MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo, PermissionOverwriteInfo,
+    PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus, ReactionInfo,
+    ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, SequencedAppEvent,
+    UserProfileInfo,
 };
 pub use ids::{Id, marker};
 pub use rest::ForumPostPage;

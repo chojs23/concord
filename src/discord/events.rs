@@ -29,6 +29,49 @@ impl PresenceStatus {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum ActivityKind {
+    Playing,
+    Streaming,
+    Listening,
+    Watching,
+    Custom,
+    Competing,
+    Unknown,
+}
+
+impl ActivityKind {
+    pub fn from_code(code: u64) -> Self {
+        match code {
+            0 => Self::Playing,
+            1 => Self::Streaming,
+            2 => Self::Listening,
+            3 => Self::Watching,
+            4 => Self::Custom,
+            5 => Self::Competing,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActivityEmoji {
+    pub name: String,
+    pub id: Option<Id<EmojiMarker>>,
+    pub animated: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActivityInfo {
+    pub kind: ActivityKind,
+    pub name: String,
+    pub details: Option<String>,
+    pub state: Option<String>,
+    pub url: Option<String>,
+    pub application_id: Option<String>,
+    pub emoji: Option<ActivityEmoji>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelInfo {
     pub guild_id: Option<Id<GuildMarker>>,
@@ -525,10 +568,12 @@ pub enum AppEvent {
         guild_id: Id<GuildMarker>,
         user_id: Id<UserMarker>,
         status: PresenceStatus,
+        activities: Vec<ActivityInfo>,
     },
     UserPresenceUpdate {
         user_id: Id<UserMarker>,
         status: PresenceStatus,
+        activities: Vec<ActivityInfo>,
     },
     /// Discord's TYPING_START dispatch: emitted ~10s before the typing
     /// indicator should expire. The dashboard tracks the latest timestamp

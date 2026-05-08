@@ -31,8 +31,8 @@ use super::{
     },
 };
 use crate::discord::{
-    ChannelState, ChannelUnreadState, ChannelVisibilityStats, FriendStatus, MessageState,
-    PresenceStatus, ReactionInfo, ReactionUsersInfo, UserProfileInfo,
+    ActivityInfo, ActivityKind, ChannelState, ChannelUnreadState, ChannelVisibilityStats,
+    FriendStatus, MessageState, PresenceStatus, ReactionInfo, ReactionUsersInfo, UserProfileInfo,
 };
 
 /// `#FFA500` — Discord's "you were mentioned" orange.
@@ -68,7 +68,7 @@ use self::message_list::render_messages;
 #[cfg(test)]
 use self::panes::{
     composer_lines, composer_text, footer_hint, footer_user_label, member_display_label,
-    member_name_style,
+    member_name_style, primary_activity_summary,
 };
 use self::panes::{render_channels, render_footer, render_guilds, render_header, render_members};
 use self::popups::{
@@ -105,6 +105,7 @@ use self::{
         guild_action_menu_lines, member_action_menu_lines, message_action_menu_lines,
         options_popup_lines, poll_vote_picker_lines, reaction_users_popup_lines,
         user_profile_display_name_style, user_profile_popup_lines,
+        user_profile_popup_lines_with_activities,
     },
 };
 

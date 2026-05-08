@@ -4,7 +4,7 @@ use crate::discord::ids::{
     Id,
     marker::{GuildMarker, UserMarker},
 };
-use crate::discord::{AppCommand, MessageState, PresenceStatus, UserProfileInfo};
+use crate::discord::{ActivityInfo, AppCommand, MessageState, PresenceStatus, UserProfileInfo};
 
 use super::{ActiveGuildScope, DashboardState};
 use super::{
@@ -230,6 +230,17 @@ impl DashboardState {
     /// has no avatar attachment.
     pub fn user_profile_popup_avatar_url(&self) -> Option<&str> {
         self.user_profile_popup_data()?.avatar_url.as_deref()
+    }
+
+    pub fn user_profile_popup_activities(&self) -> &[ActivityInfo] {
+        let Some(popup) = self.user_profile_popup.as_ref() else {
+            return &[];
+        };
+        self.discord.user_activities(popup.user_id)
+    }
+
+    pub fn user_activities(&self, user_id: Id<UserMarker>) -> &[ActivityInfo] {
+        self.discord.user_activities(user_id)
     }
 
     /// Top-of-viewport row for the popup body. Used by the renderer.
