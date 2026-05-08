@@ -11,20 +11,19 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{
     ACCENT, DIM, DISCORD_EPOCH_MILLIS, ImagePreview, ImagePreviewState, MENTION_ORANGE,
-    MemberEntry, SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, SNOWFLAKE_TIMESTAMP_SHIFT,
-    READ_DIM, UNREAD_BRIGHT, channel_action_menu_lines, channel_unread_decoration,
-    composer_content_line_count, composer_lines, dm_presence_dot_span,
-    composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
-    emoji_reaction_picker_lines, focus_pane_at, footer_hint, format_message_sent_time,
-    format_unix_millis_with_offset, forum_post_reaction_summary,
-    forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
-    inline_image_preview_area, inline_image_preview_row, member_display_label, member_name_style,
-    message_action_menu_lines, message_author_style, message_item_lines, message_starts_new_day,
-    message_viewport_lines, new_messages_notice_line, poll_vote_picker_lines,
-    reaction_users_popup_lines, reaction_users_visible_line_count, selected_avatar_x_offset,
-    selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
-    user_profile_display_name_style, user_profile_popup_has_avatar, user_profile_popup_lines,
-    user_profile_popup_text_geometry,
+    MemberEntry, READ_DIM, SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER,
+    SNOWFLAKE_TIMESTAMP_SHIFT, UNREAD_BRIGHT, channel_action_menu_lines, channel_unread_decoration,
+    composer_content_line_count, composer_lines, composer_prompt_line_count, composer_text,
+    date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_reaction_picker_lines,
+    focus_pane_at, footer_hint, format_message_sent_time, format_unix_millis_with_offset,
+    forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
+    guild_action_menu_lines, inline_image_preview_area, inline_image_preview_row,
+    member_display_label, member_name_style, message_action_menu_lines, message_author_style,
+    message_item_lines, message_starts_new_day, message_viewport_lines, new_messages_notice_line,
+    poll_vote_picker_lines, reaction_users_popup_lines, reaction_users_visible_line_count,
+    selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
+    sync_view_heights, user_profile_display_name_style, user_profile_popup_has_avatar,
+    user_profile_popup_lines, user_profile_popup_text_geometry,
 };
 use crate::{
     discord::{
@@ -186,7 +185,9 @@ fn channel_unread_decoration_mentioned_uses_orange_with_count_badge() {
 
 #[test]
 fn channel_unread_decoration_active_skips_decoration() {
-    let base = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
+    let base = Style::default()
+        .fg(Color::Green)
+        .add_modifier(Modifier::BOLD);
     let (badge, style) = channel_unread_decoration(ChannelUnreadState::Mentioned(2), base, true);
 
     assert!(badge.is_none());

@@ -131,20 +131,15 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                     ChannelPaneEntry::Channel { state, branch } => {
                         let branch_prefix = branch.prefix();
                         let prefix_span = dm_presence_dot_span(state).unwrap_or_else(|| {
-                            Span::styled(
-                                channel_prefix(&state.kind),
-                                Style::default().fg(DIM),
-                            )
+                            Span::styled(channel_prefix(&state.kind), Style::default().fg(DIM))
                         });
                         let prefix_width = prefix_span.content.width();
                         let base_style = active_text_style(is_active, Style::default());
                         let unread = dashboard.channel_unread(state.id);
                         let (badge, name_style) =
                             channel_unread_decoration(unread, base_style, is_active);
-                        let badge_width = badge
-                            .as_ref()
-                            .map(|span| span.content.width())
-                            .unwrap_or(0);
+                        let badge_width =
+                            badge.as_ref().map(|span| span.content.width()).unwrap_or(0);
                         let label_width = max_width
                             .saturating_sub(branch_prefix.width())
                             .saturating_sub(prefix_width)

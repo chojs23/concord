@@ -837,8 +837,10 @@ impl DashboardState {
             message_id,
             mention_count: 0,
         });
-        self.pending_commands
-            .push_back(AppCommand::AckChannel { channel_id, message_id });
+        self.pending_commands.push_back(AppCommand::AckChannel {
+            channel_id,
+            message_id,
+        });
     }
 
     fn selected_channel_category_id(&self) -> Option<Id<ChannelMarker>> {

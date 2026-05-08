@@ -801,7 +801,11 @@ impl DiscordState {
         let Some(latest) = channel.last_message_id else {
             return ChannelUnreadState::Seen;
         };
-        let read = self.read_states.get(&channel_id).copied().unwrap_or_default();
+        let read = self
+            .read_states
+            .get(&channel_id)
+            .copied()
+            .unwrap_or_default();
         if read.mention_count > 0 {
             return ChannelUnreadState::Mentioned(read.mention_count);
         }
@@ -814,10 +818,7 @@ impl DiscordState {
     }
 
     /// `None` when the channel is already fully read or has no messages.
-    pub fn channel_ack_target(
-        &self,
-        channel_id: Id<ChannelMarker>,
-    ) -> Option<Id<MessageMarker>> {
+    pub fn channel_ack_target(&self, channel_id: Id<ChannelMarker>) -> Option<Id<MessageMarker>> {
         let channel = self.channels.get(&channel_id)?;
         let latest = channel.last_message_id?;
         let acked = self
@@ -5985,10 +5986,7 @@ mod tests {
 
         // No ReadStateInit at all — Discord never told us about this channel,
         // so any non-empty channel should light up as unread.
-        assert_eq!(
-            state.channel_unread(channel_id),
-            ChannelUnreadState::Unread
-        );
+        assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Unread);
     }
 
     #[test]
@@ -6006,10 +6004,7 @@ mod tests {
             }],
         });
 
-        assert_eq!(
-            state.channel_unread(channel_id),
-            ChannelUnreadState::Unread
-        );
+        assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Unread);
     }
 
     #[test]
@@ -6093,9 +6088,6 @@ mod tests {
         )));
 
         // No ack pointer at all -> ack target is the channel's last message.
-        assert_eq!(
-            state.channel_ack_target(channel_id),
-            Some(Id::new(500))
-        );
+        assert_eq!(state.channel_ack_target(channel_id), Some(Id::new(500)));
     }
 }

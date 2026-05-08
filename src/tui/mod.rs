@@ -62,6 +62,26 @@ struct EffectContext<'a> {
     preview_decode_tx: &'a mpsc::UnboundedSender<ImagePreviewDecodeResult>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct EffectProcessingOutcome {
+    processed_event: bool,
+    force_redraw: bool,
+}
+
+impl EffectProcessingOutcome {
+    fn processed(event: &AppEvent) -> Self {
+        Self {
+            processed_event: true,
+            force_redraw: effect_forces_redraw(event),
+        }
+    }
+
+    fn combine(&mut self, other: Self) {
+        self.processed_event |= other.processed_event;
+        self.force_redraw |= other.force_redraw;
+    }
+}
+
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
 }
@@ -126,7 +146,20 @@ impl Drop for TerminalRestoreGuard {
     }
 }
 
-fn process_effect_event(event: AppEvent, ctx: &mut EffectContext<'_>) {
+fn effect_forces_redraw(event: &AppEvent) -> bool {
+    // Attachment preview events are the shared media-completion path for
+    // inline previews, avatars, emoji images, and profile-popup avatars. They
+    // must redraw even when the visible dashboard signature is unchanged.
+    matches!(
+        event,
+        AppEvent::AttachmentPreviewLoaded { .. }
+            | AppEvent::AttachmentPreviewLoadFailed { .. }
+            | AppEvent::GatewayClosed
+    )
+}
+
+fn process_effect_event(event: AppEvent, ctx: &mut EffectContext<'_>) -> EffectProcessingOutcome {
+    let outcome = EffectProcessingOutcome::processed(&event);
     for job in ctx.image_previews.record_event(&event) {
         spawn_image_preview_decode(job, ctx.preview_decode_tx.clone());
     }
@@ -141,6 +174,7 @@ fn process_effect_event(event: AppEvent, ctx: &mut EffectContext<'_>) {
     } else {
         ctx.state.push_effect(event);
     }
+    outcome
 }
 
 fn process_sequenced_effect(
@@ -148,25 +182,32 @@ fn process_sequenced_effect(
     current_snapshot_revision: u64,
     deferred_effects: &mut VecDeque<SequencedAppEvent>,
     ctx: &mut EffectContext<'_>,
-) {
+) -> EffectProcessingOutcome {
     if event.revision > current_snapshot_revision {
         deferred_effects.push_back(event);
-        return;
+        return EffectProcessingOutcome::default();
     }
-    process_effect_event(event.event, ctx);
+    process_effect_event(event.event, ctx)
 }
 
 fn process_deferred_effects(
     current_snapshot_revision: u64,
     deferred_effects: &mut VecDeque<SequencedAppEvent>,
     ctx: &mut EffectContext<'_>,
-) {
+) -> EffectProcessingOutcome {
+    let mut outcome = EffectProcessingOutcome::default();
     for _ in 0..deferred_effects.len() {
         let Some(event) = deferred_effects.pop_front() else {
             break;
         };
-        process_sequenced_effect(event, current_snapshot_revision, deferred_effects, ctx);
+        outcome.combine(process_sequenced_effect(
+            event,
+            current_snapshot_revision,
+            deferred_effects,
+            ctx,
+        ));
     }
+    outcome
 }
 
 fn handle_gateway_closed(state: &mut DashboardState) {
@@ -377,6 +418,70 @@ fn only_visible_member_signature_changed(
         && (before.selected_member != after.selected_member
             || before.member_scroll != after.member_scroll
             || before.visible_members != after.visible_members)
+}
+
+fn only_background_message_activity_changed(
+    before: &VisibleDashboardSignature,
+    after: &VisibleDashboardSignature,
+) -> bool {
+    before.focus == after.focus
+        && before.current_user == after.current_user
+        && before.selected_guild_id == after.selected_guild_id
+        && before.selected_channel_id == after.selected_channel_id
+        && before.selected_message == after.selected_message
+        && before.message_scroll == after.message_scroll
+        && before.message_line_scroll == after.message_line_scroll
+        && before.selected_member == after.selected_member
+        && before.member_scroll == after.member_scroll
+        && before.message_pane_title == after.message_pane_title
+        && before.typing_footer == after.typing_footer
+        && before.status_message == after.status_message
+        && before.popups == after.popups
+        && before.visible_guilds == after.visible_guilds
+        && before.visible_messages == after.visible_messages
+        && before.visible_forum_posts == after.visible_forum_posts
+        && before.visible_members == after.visible_members
+        && (before.new_messages_count != after.new_messages_count
+            || before.visible_channels != after.visible_channels)
+}
+
+fn should_suppress_image_redraw_for_signature_change(
+    before: &VisibleDashboardSignature,
+    after: &VisibleDashboardSignature,
+    image_surfaces_visible: bool,
+) -> bool {
+    image_surfaces_visible
+        && ((after.focus != state::FocusPane::Members
+            && only_visible_member_signature_changed(before, after))
+            || (after.focus != state::FocusPane::Channels
+                && only_background_message_activity_changed(before, after)))
+}
+
+fn should_redraw_after_visible_signature_change(
+    before: &VisibleDashboardSignature,
+    after: &VisibleDashboardSignature,
+    image_surfaces_visible: bool,
+    force_redraw: bool,
+) -> bool {
+    force_redraw
+        || (before != after
+            && !should_suppress_image_redraw_for_signature_change(
+                before,
+                after,
+                image_surfaces_visible,
+            ))
+}
+
+fn image_surfaces_visible(
+    state: &DashboardState,
+    image_targets_visible: bool,
+    avatar_targets_visible: bool,
+    emoji_targets_visible: bool,
+) -> bool {
+    image_targets_visible
+        || avatar_targets_visible
+        || emoji_targets_visible
+        || state.user_profile_popup_avatar_url().is_some()
 }
 
 async fn run_dashboard(
@@ -652,7 +757,6 @@ async fn run_dashboard(
                         let snapshot = client.current_discord_snapshot();
                         current_snapshot_revision = snapshot.revision;
                         state.restore_discord_snapshot(snapshot.state);
-                        let had_deferred_effects = !deferred_effects.is_empty();
                         let mut ctx = EffectContext {
                             state: &mut state,
                             image_previews: &mut image_previews,
@@ -664,7 +768,7 @@ async fn run_dashboard(
                             thread_preview_requests: &mut thread_preview_requests,
                             preview_decode_tx: &preview_decode_tx,
                         };
-                        process_deferred_effects(
+                        let deferred_outcome = process_deferred_effects(
                             current_snapshot_revision,
                             &mut deferred_effects,
                             &mut ctx,
@@ -678,13 +782,18 @@ async fn run_dashboard(
                                 &after_signature,
                             );
                         }
-                        let suppress_member_only_redraw = !image_targets.is_empty()
-                            && state.focus() != state::FocusPane::Members
-                            && only_visible_member_signature_changed(
-                                &before_signature,
-                                &after_signature,
-                            );
-                        had_deferred_effects || (signature_changed && !suppress_member_only_redraw)
+                        let images_visible = image_surfaces_visible(
+                            &state,
+                            !image_targets.is_empty(),
+                            !avatar_targets.is_empty(),
+                            !emoji_targets.is_empty(),
+                        );
+                        should_redraw_after_visible_signature_change(
+                            &before_signature,
+                            &after_signature,
+                            images_visible,
+                            deferred_outcome.force_redraw,
+                        )
                     }
                     Err(_) => {
                         logging::error("tui", "snapshot stream closed");
@@ -702,6 +811,8 @@ async fn run_dashboard(
                     Some(effect) => {
                         redraw_diagnostics.effect_events =
                             redraw_diagnostics.effect_events.saturating_add(1);
+                        let before_signature = visible_dashboard_signature(&state);
+                        let mut effect_outcome = EffectProcessingOutcome::default();
                         let mut ctx = EffectContext {
                             state: &mut state,
                             image_previews: &mut image_previews,
@@ -713,28 +824,45 @@ async fn run_dashboard(
                             thread_preview_requests: &mut thread_preview_requests,
                             preview_decode_tx: &preview_decode_tx,
                         };
-                        process_sequenced_effect(
+                        effect_outcome.combine(process_sequenced_effect(
                             effect,
                             current_snapshot_revision,
                             &mut deferred_effects,
                             &mut ctx,
-                        );
+                        ));
                         for _ in 0..MAX_DRAINED_EFFECT_EVENTS {
                             match effects.try_recv() {
-                                Ok(effect) => process_sequenced_effect(
-                                    effect,
-                                    current_snapshot_revision,
-                                    &mut deferred_effects,
-                                    &mut ctx,
-                                ),
+                                Ok(effect) => effect_outcome.combine(process_sequenced_effect(
+                                        effect,
+                                        current_snapshot_revision,
+                                        &mut deferred_effects,
+                                        &mut ctx,
+                                    )),
                                 Err(mpsc::error::TryRecvError::Empty) => break,
                                 Err(mpsc::error::TryRecvError::Disconnected) => {
-                                    handle_gateway_closed(&mut state);
+                                    effect_outcome.combine(process_effect_event(
+                                        AppEvent::GatewayClosed,
+                                        &mut ctx,
+                                    ));
                                     break;
                                 }
                             }
                         }
-                        if pending_redraw_deadline.is_none() {
+                        let after_signature = visible_dashboard_signature(&state);
+                        let images_visible = image_surfaces_visible(
+                            &state,
+                            !image_targets.is_empty(),
+                            !avatar_targets.is_empty(),
+                            !emoji_targets.is_empty(),
+                        );
+                        let should_redraw_for_effects = effect_outcome.processed_event
+                            && should_redraw_after_visible_signature_change(
+                                &before_signature,
+                                &after_signature,
+                                images_visible,
+                                effect_outcome.force_redraw,
+                            );
+                        if should_redraw_for_effects && pending_redraw_deadline.is_none() {
                             pending_redraw_deadline = Some(
                                 tokio::time::Instant::now() + BACKGROUND_REDRAW_DEBOUNCE,
                             );
@@ -943,8 +1071,10 @@ mod tests {
 
     use super::{
         AvatarImageCache, EffectContext, EmojiImageCache, ForumPostRequests, HistoryRequests,
-        ImagePreviewCache, PinnedMessageRequests, ThreadPreviewRequests, process_deferred_effects,
-        process_sequenced_effect, visible_dashboard_signature,
+        ImagePreviewCache, PinnedMessageRequests, ThreadPreviewRequests, effect_forces_redraw,
+        process_deferred_effects, process_sequenced_effect,
+        should_redraw_after_visible_signature_change,
+        should_suppress_image_redraw_for_signature_change, visible_dashboard_signature,
     };
     use crate::tui::state::{DashboardState, FocusPane};
 
@@ -1015,7 +1145,7 @@ mod tests {
         state.focus_pane(FocusPane::Messages);
         state.set_message_view_height(5);
         state.clamp_message_viewport_for_image_previews(80, 16, 3);
-        state.scroll_message_viewport_up();
+        state.scroll_message_viewport_top();
         let before = visible_dashboard_signature(&state);
 
         push_message(&mut state, 11);
@@ -1024,6 +1154,115 @@ mod tests {
         assert_eq!(before.new_messages_count, 0);
         assert_eq!(after.new_messages_count, 1);
         assert_ne!(before, after);
+    }
+
+    #[test]
+    fn new_message_count_only_change_is_suppressed_while_images_are_visible() {
+        let mut state = state_with_messages(5);
+        state.focus_pane(FocusPane::Messages);
+        state.set_message_view_height(3);
+        state.scroll_message_viewport_top();
+        let before = visible_dashboard_signature(&state);
+        let mut after = before.clone();
+        after.new_messages_count = 1;
+
+        assert_eq!(before.new_messages_count, 0);
+        assert_eq!(after.new_messages_count, 1);
+        assert!(should_suppress_image_redraw_for_signature_change(
+            &before, &after, true,
+        ));
+        assert!(!should_suppress_image_redraw_for_signature_change(
+            &before, &after, false,
+        ));
+        assert!(!should_redraw_after_visible_signature_change(
+            &before, &after, true, false,
+        ));
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, false, false,
+        ));
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, true, true,
+        ));
+    }
+
+    #[test]
+    fn real_background_message_activity_is_suppressed_while_images_are_visible() {
+        let mut state = state_with_messages(10);
+        state.focus_pane(FocusPane::Messages);
+        state.set_message_view_height(5);
+        state.clamp_message_viewport_for_image_previews(80, 16, 3);
+        state.scroll_message_viewport_top();
+        let before = visible_dashboard_signature(&state);
+
+        push_message(&mut state, 11);
+        let after = visible_dashboard_signature(&state);
+
+        assert_ne!(before, after);
+        assert_eq!(before.visible_messages, after.visible_messages);
+        assert!(!should_redraw_after_visible_signature_change(
+            &before, &after, true, false,
+        ));
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, false, false,
+        ));
+    }
+
+    #[test]
+    fn background_message_activity_redraws_while_channels_are_focused() {
+        let mut state = state_with_messages(10);
+        state.focus_pane(FocusPane::Messages);
+        state.set_message_view_height(5);
+        state.clamp_message_viewport_for_image_previews(80, 16, 3);
+        state.scroll_message_viewport_top();
+        state.focus_pane(FocusPane::Channels);
+        let before = visible_dashboard_signature(&state);
+
+        push_message(&mut state, 11);
+        let after = visible_dashboard_signature(&state);
+
+        assert_ne!(before, after);
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, true, false,
+        ));
+    }
+
+    #[test]
+    fn visible_message_changes_redraw_even_while_images_are_visible() {
+        let mut state = state_with_messages(2);
+        state.focus_pane(FocusPane::Messages);
+        state.set_message_view_height(8);
+        let before = visible_dashboard_signature(&state);
+
+        push_message(&mut state, 3);
+        let after = visible_dashboard_signature(&state);
+
+        assert_ne!(before.visible_messages, after.visible_messages);
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, true, false,
+        ));
+    }
+
+    #[test]
+    fn media_effects_force_redraw_without_signature_change() {
+        let state = state_with_messages(1);
+        let signature = visible_dashboard_signature(&state);
+        let loaded = AppEvent::AttachmentPreviewLoaded {
+            url: "https://cdn.discordapp.com/avatars/1/hash.png?size=32".to_owned(),
+            bytes: Vec::new(),
+        };
+        let failed = AppEvent::AttachmentPreviewLoadFailed {
+            url: "https://cdn.discordapp.com/emoji/1.png".to_owned(),
+            message: "failed".to_owned(),
+        };
+
+        assert!(effect_forces_redraw(&loaded));
+        assert!(effect_forces_redraw(&failed));
+        assert!(should_redraw_after_visible_signature_change(
+            &signature, &signature, true, true,
+        ));
+        assert!(!should_redraw_after_visible_signature_change(
+            &signature, &signature, true, false,
+        ));
     }
 
     fn state_with_messages(count: u64) -> DashboardState {

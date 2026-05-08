@@ -207,10 +207,8 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
         .and_then(|node| node.get("entries").or(Some(node)))
         .and_then(Value::as_array)
     {
-        let parsed: Vec<ReadStateInfo> = entries
-            .iter()
-            .filter_map(parse_read_state_entry)
-            .collect();
+        let parsed: Vec<ReadStateInfo> =
+            entries.iter().filter_map(parse_read_state_entry).collect();
         if !parsed.is_empty() {
             events.push(AppEvent::ReadStateInit { entries: parsed });
         }
