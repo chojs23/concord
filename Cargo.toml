@@ -10,7 +10,7 @@ license = "GPL-3.0-only"
 readme = "README.md"
 keywords = ["discord", "tui", "terminal", "ratatui", "client"]
 categories = ["command-line-utilities"]
-exclude = ["docs/", ".github/", ".omc/", ".claude/", "dist-workspace.toml"]
+exclude = ["docs/", ".github/", "dist-workspace.toml"]
 
 [dependencies]
 base64 = "0.22"
