@@ -24,6 +24,37 @@ To install the latest unreleased version directly from the Git repository:
 cargo install --git https://github.com/chojs23/concord
 ```
 
+### Nix
+
+Run without installing (requires flakes enabled):
+
+```sh
+nix run github:chojs23/concord
+```
+
+Install into your profile:
+
+```sh
+nix profile install github:chojs23/concord
+```
+
+Or add the flake as an input in your own `flake.nix`:
+
+```nix
+{
+  inputs.concord.url = "github:chojs23/concord";
+}
+```
+
+Then reference it as `concord.packages.${system}.default` in your configuration.
+
+A development shell with the pinned Rust toolchain and `rust-analyzer` is also
+available:
+
+```sh
+nix develop github:chojs23/concord
+```
+
 ### GitHub Release installer
 
 Install the latest release with the cargo-dist shell installer:
