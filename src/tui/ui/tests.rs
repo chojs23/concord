@@ -21,10 +21,10 @@ use super::{
     inline_image_preview_area, inline_image_preview_row, member_display_label, member_name_style,
     message_action_menu_lines, message_author_style, message_item_lines, message_starts_new_day,
     message_viewport_lines, new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
-    reaction_users_popup_lines, reaction_users_visible_line_count, selected_avatar_x_offset,
-    selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
-    user_profile_display_name_style, user_profile_popup_has_avatar, user_profile_popup_lines,
-    user_profile_popup_text_geometry,
+    reaction_users_popup_lines, reaction_users_visible_line_count, render_guilds,
+    selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
+    sync_view_heights, user_profile_display_name_style, user_profile_popup_has_avatar,
+    user_profile_popup_lines, user_profile_popup_text_geometry,
 };
 use crate::{
     config::DisplayOptions,
@@ -297,6 +297,84 @@ fn server_pane_shows_guild_mention_badge() {
         .collect::<Vec<_>>();
 
     assert!(server_rows.iter().any(|row| row.contains("(2)")));
+}
+
+#[test]
+fn active_server_mention_badge_keeps_active_name_style() {
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(2);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: Some(Id::new(10)),
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.set_guild_view_height(20);
+    assert!(state.select_visible_pane_row(FocusPane::Guilds, 1));
+    state.confirm_selected_guild();
+    state.focus_pane(FocusPane::Messages);
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![ReadStateInfo {
+            channel_id,
+            last_acked_message_id: Some(Id::new(10)),
+            mention_count: 2,
+        }],
+    });
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+
+    terminal
+        .draw(|frame| render_guilds(frame, frame.area(), &state))
+        .expect("draw should succeed");
+
+    let buffer = terminal.backend().buffer();
+    let mut checked = false;
+    for row in 0..buffer.area.height {
+        let text = (0..buffer.area.width)
+            .map(|col| buffer[(col, row)].symbol().to_owned())
+            .collect::<String>();
+        if let Some(badge_col) = text.find("(2)") {
+            let name_col = text[badge_col..]
+                .find('g')
+                .map(|offset| badge_col + offset)
+                .expect("guild name starts with g after mention badge");
+            assert_eq!(buffer[(badge_col as u16, row)].fg, MENTION_ORANGE);
+            assert_eq!(buffer[(name_col as u16, row)].fg, Color::Green);
+            assert!(
+                buffer[(name_col as u16, row)]
+                    .modifier
+                    .contains(Modifier::BOLD)
+            );
+            checked = true;
+            break;
+        }
+    }
+
+    assert!(
+        checked,
+        "active guild row should include mention badge and guild name"
+    );
 }
 
 #[test]

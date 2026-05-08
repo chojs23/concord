@@ -84,7 +84,10 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                         let prefix = branch.prefix();
                         let base_style = active_text_style(is_active, Style::default());
                         let unread = dashboard.guild_unread(guild.id);
-                        let (badge, name_style) = if unread == ChannelUnreadState::Seen {
+                        let (badge, name_style) = if is_active {
+                            let (badge, _) = channel_unread_decoration(unread, base_style, false);
+                            (badge, base_style)
+                        } else if unread == ChannelUnreadState::Seen {
                             (None, base_style)
                         } else {
                             channel_unread_decoration(unread, base_style, false)
