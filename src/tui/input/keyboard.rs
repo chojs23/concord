@@ -119,6 +119,7 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
                 state.jump_bottom();
             }
         }
+        KeyCode::BackTab => state.cycle_focus_backward(),
         KeyCode::Tab => state.cycle_focus(),
         // Tree headers act like a small tree: Enter/Space toggles, Right
         // opens, and Left closes. Anywhere else these keys are no-ops.

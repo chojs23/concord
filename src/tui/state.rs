@@ -1768,6 +1768,15 @@ impl DashboardState {
         };
     }
 
+    pub fn cycle_focus_backward(&mut self) {
+        self.focus = match self.focus {
+            FocusPane::Guilds => FocusPane::Members,
+            FocusPane::Channels => FocusPane::Guilds,
+            FocusPane::Messages => FocusPane::Channels,
+            FocusPane::Members => FocusPane::Messages,
+        };
+    }
+
     pub fn focus_pane(&mut self, pane: FocusPane) {
         self.focus = pane;
     }

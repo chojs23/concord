@@ -127,7 +127,7 @@ With vim-style navigation:
 | Key                       | Action                               |
 | ------------------------- | ------------------------------------ |
 | `1` `2` `3` `4`           | Focus pane                           |
-| `Tab`                     | Cycle focus                          |
+| `Tab` / `Shift+Tab`       | Cycle focus forward / backward       |
 | `j` / `k`, arrows         | Move down / up                       |
 | `J`, `K` / `H`, `L`       | Scroll viewport                      |
 | `Ctrl+d` / `Ctrl+u`       | Half-page scroll                     |
