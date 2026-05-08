@@ -1274,7 +1274,7 @@ fn parse_id<M>(value: &Value) -> Option<Id<M>> {
         .as_str()
         .and_then(|value| value.parse::<u64>().ok())
         .or_else(|| value.as_u64())
-        .map(Id::new)
+        .and_then(Id::new_checked)
 }
 #[cfg(test)]
 mod tests {
@@ -3689,6 +3689,41 @@ mod tests {
         assert_eq!(entries[0].mention_count, 0);
         assert_eq!(entries[1].channel_id, Id::new(12));
         assert_eq!(entries[1].mention_count, 4);
+    }
+
+    #[test]
+    fn ready_payload_treats_zero_read_state_ack_pointer_as_absent() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY",
+                "d": {
+                    "user": { "id": "1", "username": "neo" },
+                    "guilds": [],
+                    "read_state": {
+                        "entries": [
+                            { "id": "11", "last_message_id": "0", "mention_count": 0 },
+                            { "id": "12", "last_message_id": 0, "mention_count": 1 },
+                        ]
+                    }
+                }
+            })
+            .to_string(),
+        );
+
+        let entries = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::ReadStateInit { entries } => Some(entries.clone()),
+                _ => None,
+            })
+            .expect("READY should emit a ReadStateInit");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].channel_id, Id::new(11));
+        assert_eq!(entries[0].last_acked_message_id, None);
+        assert_eq!(entries[0].mention_count, 0);
+        assert_eq!(entries[1].channel_id, Id::new(12));
+        assert_eq!(entries[1].last_acked_message_id, None);
+        assert_eq!(entries[1].mention_count, 1);
     }
 
     #[test]
