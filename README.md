@@ -1,19 +1,97 @@
 # Concord
 
-Concord is a terminal user interface client for Discord, written in Rust.
+Concord is a terminal user interface client for Discord. Full Discord experience, right in your terminal.
 
-It connects to Discord through the gateway and REST APIs, renders a keyboard and mouse driven terminal UI, and keeps local Discord state in sync through an event driven app loop.
+<img width="1613" height="848" alt="concord" src="./docs/example.png" />
 
 ## Features
 
-- Terminal UI built with `ratatui` and `crossterm`.
-- Discord gateway and REST integration for live events and user actions.
-- QR login and password login flows, including MFA handling.
-- Local token storage at `~/.concord/credential`.
-- Guild, channel, DM, thread, forum post, member, presence, and typing state handling.
-- Message actions for loading history, sending, editing, deleting, replying, pinning, acknowledging, and opening related URLs.
-- Reactions, reaction user loading, poll voting, user profile loading, pinned messages, and attachment preview/download support.
-- Media-oriented UI support through avatar, emoji, image, and attachment preview caches.
+### Authentication
+
+- **Token** : paste an existing Discord token.
+- **Email / Password** : login with credentials. MFA (TOTP, SMS) is fully supported.
+- **QR Code** : scan the code from the Discord mobile app.
+
+Tokens are saved to `~/.concord/credential` in plain text. See the Security section below for details.
+
+### Guilds & Channels
+
+- Browse servers with guild folder grouping
+- Navigate text channels, threads, and forum channels
+- View and filter forum posts (active / archived)
+- Load pinned messages per channel
+- Track unread messages and mention counts per channel
+
+### Messaging
+
+- Send, edit, and delete messages
+- Reply to specific messages
+- View full message history with pagination
+- Rich content display(embeds, attachments, stickers, and mentions)
+
+### Reactions & Polls
+
+- View, add, and remove emoji reactions (Unicode and custom server emoji)
+- Browse who reacted with a specific emoji
+- View and vote on polls
+
+### Media & Images
+
+- Inline image previews directly in the terminal
+- Avatar and custom emoji rendering
+- Download attachments to `~/Downloads`
+- Full-screen image viewer with navigation
+
+Image rendering is powered by [ratatui-image](https://github.com/benjajaja/ratatui-image). On startup, Concord queries the terminal to detect the best available graphics protocol. Supported protocols:
+
+- **Kitty Graphics Protocol** - Kitty, WezTerm, Ghostty, etc.
+- **iTerm2 Inline Images** - iTerm2, WezTerm, mintty, etc.
+- **Sixel** - foot, mlterm, xterm (if compiled with Sixel support), etc.
+- **Halfblocks** (fallback) - works on any terminal, but uses block characters instead of true pixels.
+
+If your terminal does not support any graphics protocol, images will be rendered as halfblock approximations. For the best experience, use a terminal that supports the Kitty or iTerm2 protocol.
+
+You can toggle image viewing on or off in the configuration file. When image viewing is off, attachments and emojis will be shown as text placeholders.
+
+### Members & Profiles
+
+- Member list with grouping
+- Presence indicators (Online, Idle, DND, Offline)
+- User profile popups with guild-specific details
+
+### Typing Indicators & Read State
+
+- Live "user is typing..." indicators
+- Unread message tracking with mention counts
+- Mark channels as read
+
+### Navigation & Keybindings
+
+Concord has Four-pane layout like discord.
+**Guilds (1)**, **Channels (2)**, **Messages (3)**, **Members (4)**
+
+With vim-style navigation:
+
+| Key                 | Action           |
+| ------------------- | ---------------- |
+| `1` `2` `3` `4`     | Focus pane       |
+| `j` / `k`           | Move down / up   |
+| `J`, `K` / `H`,`L`  | Scroll viewport  |
+| `Ctrl+d` / `Ctrl+u` | Half-page scroll |
+| `i`                 | Text insert mode |
+| `a`                 | Action menu      |
+| `o`                 | Options menu     |
+| `q` / `Ctrl+c`      | Quit             |
+
+Full mouse support is also available.
+
+### Configuration
+
+Display options are stored in `~/.concord/config.toml`:
+
+- Toggle inline image previews
+- Toggle avatar display
+- Toggle custom emoji rendering
 
 ## Install
 
@@ -57,20 +135,6 @@ The release binary is produced at:
 target/release/concord
 ```
 
-## Authentication
-
-Concord supports three login methods:
-
-- Paste an existing Discord token.
-- Login with email or phone and password. MFA is supported when Discord requires it.
-- Login with a QR code by scanning it from the Discord mobile app.
-
-On startup, Concord first tries to load an existing token from `~/.concord/credential`. If no saved token is available, it opens the login flow. After a successful login, the token is saved back to the same path.
-
-Warning: the token is currently stored locally as plain text. On Unix systems, Concord creates the config directory with `0700` permissions and writes the credential file with `0600` permissions, but the token is not encrypted or stored in a system keychain.
-
-Email/password login and QR login can fail if Discord requires CAPTCHA. Concord does not support solving CAPTCHA in the terminal. If that happens, use token login instead.
-
 ## FAQ
 
 ### Can my account be blocked?
@@ -79,6 +143,16 @@ In day-to-day use, I have not seen an account block after several months of usin
 There was one path that did trigger a temporary block: trying to create new DM channel and send a message to an unknown user immediately blocked my account for 30 minutes. That feature has been removed. Other supported features have not caused blocks in my testing.
 
 That said, Concord is not an official Discord client. Using unofficial clients, automated user accounts, or self-bots can violate Discord's Terms of Service, so there is always some risk. Use it at your own discretion.
+
+### Does Concord support CAPTCHA?
+
+No. If Discord requires a CAPTCHA during login, use token login instead.
+
+## Security
+
+- Tokens are stored as **plain text** in `~/.concord/credential`. So keep that file secure and do not share it. You can use the token from that file to log in to the official Discord client, so treat it like a password.
+- On Unix, the config directory is created with `0700` and the credential file with `0600` permissions.
+- No system keychain integration yet.
 
 ## License
 
