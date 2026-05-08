@@ -10,6 +10,7 @@ use crate::discord::{
     AppCommand, AppEvent, ChannelUnreadState, DiscordState, ForumPostArchiveState, MentionInfo,
     MessageInfo, MessageSnapshotInfo, MessageState,
 };
+use unicode_width::UnicodeWidthStr;
 
 use super::format::{
     MentionTarget, RenderedText, TextHighlightKind, render_user_mentions,
@@ -1682,16 +1683,52 @@ impl DashboardState {
     pub fn scroll_focused_pane_horizontal_right(&mut self) {
         match self.focus {
             FocusPane::Guilds => {
-                self.guild_horizontal_scroll = self.guild_horizontal_scroll.saturating_add(1)
+                self.guild_horizontal_scroll = self
+                    .guild_horizontal_scroll
+                    .saturating_add(1)
+                    .min(self.max_guild_horizontal_scroll());
             }
             FocusPane::Channels => {
-                self.channel_horizontal_scroll = self.channel_horizontal_scroll.saturating_add(1)
+                self.channel_horizontal_scroll = self
+                    .channel_horizontal_scroll
+                    .saturating_add(1)
+                    .min(self.max_channel_horizontal_scroll());
             }
             FocusPane::Members => {
-                self.member_horizontal_scroll = self.member_horizontal_scroll.saturating_add(1)
+                self.member_horizontal_scroll = self
+                    .member_horizontal_scroll
+                    .saturating_add(1)
+                    .min(self.max_member_horizontal_scroll());
             }
             FocusPane::Messages => {}
         }
+    }
+
+    fn max_guild_horizontal_scroll(&self) -> usize {
+        self.guild_pane_entries()
+            .into_iter()
+            .map(|entry| entry.label().width().saturating_sub(1))
+            .max()
+            .unwrap_or_default()
+    }
+
+    fn max_channel_horizontal_scroll(&self) -> usize {
+        self.channel_pane_entries()
+            .into_iter()
+            .map(|entry| match entry {
+                ChannelPaneEntry::CategoryHeader { state, .. }
+                | ChannelPaneEntry::Channel { state, .. } => state.name.width().saturating_sub(1),
+            })
+            .max()
+            .unwrap_or_default()
+    }
+
+    fn max_member_horizontal_scroll(&self) -> usize {
+        self.flattened_members()
+            .into_iter()
+            .map(|member| member.display_name().width().saturating_sub(1))
+            .max()
+            .unwrap_or_default()
     }
 
     pub fn scroll_focused_pane_horizontal_left(&mut self) {

@@ -751,6 +751,7 @@ fn uppercase_h_l_scroll_focused_side_panes_horizontally() {
     handle_key(&mut state, char_key('L'));
     assert_eq!(state.channel_horizontal_scroll(), 1);
 
+    let mut state = state_with_members(1);
     state.focus_pane(FocusPane::Members);
     handle_key(&mut state, char_key('L'));
     assert_eq!(state.member_horizontal_scroll(), 1);

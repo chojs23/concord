@@ -6,6 +6,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
+use unicode_width::UnicodeWidthStr;
 
 use super::{
     ChannelActionKind, ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildActionKind,
@@ -1989,7 +1990,7 @@ fn normal_message_actions_do_not_include_poll_or_image_actions() {
 
 #[test]
 fn focused_pane_horizontal_scroll_is_scoped_by_focus() {
-    let mut state = DashboardState::new();
+    let mut state = state_with_many_channels(1);
 
     state.scroll_focused_pane_horizontal_right();
     state.scroll_focused_pane_horizontal_right();
@@ -2013,6 +2014,36 @@ fn focused_pane_horizontal_scroll_is_scoped_by_focus() {
     assert_eq!(state.guild_horizontal_scroll(), 2);
     assert_eq!(state.channel_horizontal_scroll(), 1);
     assert_eq!(state.member_horizontal_scroll(), 0);
+}
+
+#[test]
+fn focused_pane_horizontal_scroll_stops_before_blank_labels() {
+    let mut state = DashboardState::new();
+
+    for _ in 0..100 {
+        state.scroll_focused_pane_horizontal_right();
+    }
+
+    assert_eq!(
+        state.guild_horizontal_scroll(),
+        "Direct Messages".width() - 1
+    );
+
+    let mut state = state_with_many_channels(1);
+    state.focus_pane(FocusPane::Channels);
+    for _ in 0..100 {
+        state.scroll_focused_pane_horizontal_right();
+    }
+
+    assert_eq!(state.channel_horizontal_scroll(), "channel 1".width() - 1);
+
+    let mut state = state_with_members(1);
+    state.focus_pane(FocusPane::Members);
+    for _ in 0..100 {
+        state.scroll_focused_pane_horizontal_right();
+    }
+
+    assert_eq!(state.member_horizontal_scroll(), "member 1".width() - 1);
 }
 
 #[test]
