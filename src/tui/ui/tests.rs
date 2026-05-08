@@ -33,7 +33,7 @@ use crate::{
         ChannelUnreadState, ChannelVisibilityStats, EmbedInfo, FriendStatus, GuildMemberState,
         MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageSnapshotInfo, MessageState,
         MutualGuildInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
-        ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+        ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
     },
     tui::{
         format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
@@ -237,6 +237,66 @@ fn channel_unread_decoration_active_skips_decoration() {
 
     assert!(badge.is_none());
     assert_eq!(style, base);
+}
+
+#[test]
+fn server_pane_shows_guild_mention_badge() {
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(2);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: Some(Id::new(10)),
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![ReadStateInfo {
+            channel_id,
+            last_acked_message_id: Some(Id::new(10)),
+            mention_count: 2,
+        }],
+    });
+    let backend = TestBackend::new(80, 20);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+
+    terminal
+        .draw(|frame| {
+            sync_view_heights(frame.area(), &mut state);
+            super::render(frame, &state, Vec::new(), Vec::new(), Vec::new(), None);
+        })
+        .expect("draw should succeed");
+
+    let buffer = terminal.backend().buffer();
+    let server_rows = (0..buffer.area.height)
+        .map(|row| {
+            (0..20)
+                .map(|col| buffer[(col, row)].symbol().to_owned())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert!(server_rows.iter().any(|row| row.contains("(2)")));
 }
 
 #[test]

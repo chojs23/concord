@@ -558,6 +558,10 @@ impl DashboardState {
         self.discord.channel_unread(channel_id)
     }
 
+    pub fn guild_unread(&self, guild_id: Id<GuildMarker>) -> ChannelUnreadState {
+        self.discord.guild_unread(guild_id)
+    }
+
     pub fn current_user(&self) -> Option<&str> {
         self.current_user.as_deref()
     }

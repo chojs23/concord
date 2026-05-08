@@ -817,6 +817,28 @@ impl DiscordState {
         }
     }
 
+    pub fn guild_unread(&self, guild_id: Id<GuildMarker>) -> ChannelUnreadState {
+        let mut mention_count = 0u32;
+        let mut has_unread = false;
+        for channel in self.viewable_channels_for_guild(Some(guild_id)) {
+            match self.channel_unread(channel.id) {
+                ChannelUnreadState::Mentioned(count) => {
+                    mention_count = mention_count.saturating_add(count);
+                }
+                ChannelUnreadState::Unread => has_unread = true,
+                ChannelUnreadState::Seen => {}
+            }
+        }
+
+        if mention_count > 0 {
+            ChannelUnreadState::Mentioned(mention_count)
+        } else if has_unread {
+            ChannelUnreadState::Unread
+        } else {
+            ChannelUnreadState::Seen
+        }
+    }
+
     /// `None` when the channel is already fully read or has no messages.
     pub fn channel_ack_target(&self, channel_id: Id<ChannelMarker>) -> Option<Id<MessageMarker>> {
         let channel = self.channels.get(&channel_id)?;
@@ -6055,6 +6077,50 @@ mod tests {
         assert_eq!(
             state.channel_unread(channel_id),
             ChannelUnreadState::Mentioned(3)
+        );
+    }
+
+    #[test]
+    fn guild_unread_sums_channel_mentions_before_plain_unread() {
+        let first_channel_id = Id::new(7);
+        let second_channel_id = Id::new(8);
+        let third_channel_id = Id::new(9);
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
+            first_channel_id,
+            200,
+        )));
+        state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
+            second_channel_id,
+            300,
+        )));
+        state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
+            third_channel_id,
+            400,
+        )));
+        state.apply_event(&AppEvent::ReadStateInit {
+            entries: vec![
+                ReadStateInfo {
+                    channel_id: first_channel_id,
+                    last_acked_message_id: Some(Id::new(200)),
+                    mention_count: 2,
+                },
+                ReadStateInfo {
+                    channel_id: second_channel_id,
+                    last_acked_message_id: Some(Id::new(300)),
+                    mention_count: 3,
+                },
+                ReadStateInfo {
+                    channel_id: third_channel_id,
+                    last_acked_message_id: Some(Id::new(100)),
+                    mention_count: 0,
+                },
+            ],
+        });
+
+        assert_eq!(
+            state.guild_unread(Id::new(1)),
+            ChannelUnreadState::Mentioned(5)
         );
     }
 

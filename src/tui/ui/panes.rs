@@ -7,7 +7,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::discord::{MessageState, PresenceStatus};
+use crate::discord::{ChannelUnreadState, MessageState, PresenceStatus};
 
 use super::super::{
     format::{truncate_display_width, truncate_display_width_from, truncate_text},
@@ -28,6 +28,7 @@ use super::{
 };
 
 pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    let dashboard = state;
     let entries = state.visible_guild_pane_entries();
     let max_width = area.width.saturating_sub(6) as usize;
     let horizontal_scroll = state.guild_horizontal_scroll();
@@ -76,21 +77,39 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                             ),
                         ]))
                     }
-                    GuildPaneEntry::Guild { state, branch } => {
+                    GuildPaneEntry::Guild {
+                        state: guild,
+                        branch,
+                    } => {
                         let prefix = branch.prefix();
-                        let label_width = max_width.saturating_sub(prefix.width());
-                        ListItem::new(Line::from(vec![
+                        let base_style = active_text_style(is_active, Style::default());
+                        let unread = dashboard.guild_unread(guild.id);
+                        let (badge, name_style) = if unread == ChannelUnreadState::Seen {
+                            (None, base_style)
+                        } else {
+                            channel_unread_decoration(unread, base_style, false)
+                        };
+                        let badge_width =
+                            badge.as_ref().map(|span| span.content.width()).unwrap_or(0);
+                        let label_width = max_width
+                            .saturating_sub(prefix.width())
+                            .saturating_sub(badge_width);
+                        let mut spans = vec![
                             selection_marker(is_selected),
                             Span::styled(prefix, Style::default().fg(DIM)),
-                            Span::styled(
-                                truncate_display_width_from(
-                                    state.name.as_str(),
-                                    horizontal_scroll,
-                                    label_width,
-                                ),
-                                active_text_style(is_active, Style::default()),
+                        ];
+                        if let Some(badge) = badge {
+                            spans.push(badge);
+                        }
+                        spans.push(Span::styled(
+                            truncate_display_width_from(
+                                guild.name.as_str(),
+                                horizontal_scroll,
+                                label_width,
                             ),
-                        ]))
+                            name_style,
+                        ));
+                        ListItem::new(Line::from(spans))
                     }
                 },
                 is_selected,
