@@ -35,7 +35,7 @@ use crate::{
         ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo, UserProfileInfo,
     },
     tui::{
-        format::{TextHighlightKind, truncate_display_width},
+        format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
         message_format::{
             MessageContentLine, format_message_content, format_message_content_lines,
             lay_out_reaction_chips, mention_highlight_style, poll_box_border,
@@ -2676,7 +2676,7 @@ fn member_label_truncates_by_display_width() {
         status: PresenceStatus::Online,
     };
 
-    let label = member_display_label(MemberEntry::Guild(&member), 12);
+    let label = member_display_label(MemberEntry::Guild(&member), 0, 12);
 
     assert_eq!(label, "漢字仮名...");
     assert!(label.width() <= 12);
@@ -2688,6 +2688,38 @@ fn server_label_truncates_by_display_width() {
 
     assert_eq!(label, "漢字仮名...");
     assert!(label.width() <= 12);
+}
+
+#[test]
+fn horizontal_truncation_skips_display_width_offset() {
+    let label = truncate_display_width_from("abcdef", 2, 4);
+
+    assert_eq!(label, "cdef");
+}
+
+#[test]
+fn horizontal_truncation_respects_wide_character_boundaries() {
+    let label = truncate_display_width_from("가나다abc", 2, 6);
+
+    assert_eq!(label, "나...");
+    assert!(label.width() <= 6);
+}
+
+#[test]
+fn member_label_uses_horizontal_scroll_offset() {
+    let member = GuildMemberState {
+        user_id: Id::new(10),
+        display_name: "long-member-name".to_owned(),
+        username: None,
+        is_bot: false,
+        avatar_url: None,
+        role_ids: Vec::new(),
+        status: PresenceStatus::Online,
+    };
+
+    let label = member_display_label(MemberEntry::Guild(&member), 5, 8);
+
+    assert_eq!(label, "membe...");
 }
 
 #[test]

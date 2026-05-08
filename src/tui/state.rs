@@ -127,10 +127,12 @@ pub struct DashboardState {
     active_channel_id: Option<Id<ChannelMarker>>,
     selected_guild: usize,
     guild_scroll: usize,
+    guild_horizontal_scroll: usize,
     guild_keep_selection_visible: bool,
     guild_view_height: usize,
     selected_channel: usize,
     channel_scroll: usize,
+    channel_horizontal_scroll: usize,
     channel_keep_selection_visible: bool,
     channel_view_height: usize,
     selected_message: usize,
@@ -161,6 +163,7 @@ pub struct DashboardState {
     thread_return_target: Option<ThreadReturnTarget>,
     selected_member: usize,
     member_scroll: usize,
+    member_horizontal_scroll: usize,
     member_keep_selection_visible: bool,
     member_view_height: usize,
     composer_input: String,
@@ -221,10 +224,12 @@ impl DashboardState {
             // list is still empty.
             selected_guild: 1,
             guild_scroll: 0,
+            guild_horizontal_scroll: 0,
             guild_keep_selection_visible: true,
             guild_view_height: 1,
             selected_channel: 0,
             channel_scroll: 0,
+            channel_horizontal_scroll: 0,
             channel_keep_selection_visible: true,
             channel_view_height: 1,
             selected_message: 0,
@@ -244,6 +249,7 @@ impl DashboardState {
             thread_return_target: None,
             selected_member: 0,
             member_scroll: 0,
+            member_horizontal_scroll: 0,
             member_keep_selection_visible: true,
             member_view_height: 1,
             composer_input: String::new(),
@@ -1345,6 +1351,18 @@ impl DashboardState {
         self.member_scroll
     }
 
+    pub fn guild_horizontal_scroll(&self) -> usize {
+        self.guild_horizontal_scroll
+    }
+
+    pub fn channel_horizontal_scroll(&self) -> usize {
+        self.channel_horizontal_scroll
+    }
+
+    pub fn member_horizontal_scroll(&self) -> usize {
+        self.member_horizontal_scroll
+    }
+
     pub fn member_content_height(&self) -> usize {
         pane_content_height(self.member_view_height)
     }
@@ -1658,6 +1676,36 @@ impl DashboardState {
                 self.member_keep_selection_visible = false;
                 scroll_list_up(&mut self.member_scroll);
             }
+        }
+    }
+
+    pub fn scroll_focused_pane_horizontal_right(&mut self) {
+        match self.focus {
+            FocusPane::Guilds => {
+                self.guild_horizontal_scroll = self.guild_horizontal_scroll.saturating_add(1)
+            }
+            FocusPane::Channels => {
+                self.channel_horizontal_scroll = self.channel_horizontal_scroll.saturating_add(1)
+            }
+            FocusPane::Members => {
+                self.member_horizontal_scroll = self.member_horizontal_scroll.saturating_add(1)
+            }
+            FocusPane::Messages => {}
+        }
+    }
+
+    pub fn scroll_focused_pane_horizontal_left(&mut self) {
+        match self.focus {
+            FocusPane::Guilds => {
+                self.guild_horizontal_scroll = self.guild_horizontal_scroll.saturating_sub(1)
+            }
+            FocusPane::Channels => {
+                self.channel_horizontal_scroll = self.channel_horizontal_scroll.saturating_sub(1)
+            }
+            FocusPane::Members => {
+                self.member_horizontal_scroll = self.member_horizontal_scroll.saturating_sub(1)
+            }
+            FocusPane::Messages => {}
         }
     }
 

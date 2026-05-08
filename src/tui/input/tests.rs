@@ -737,6 +737,30 @@ fn options_popup_esc_closes_popup() {
 }
 
 #[test]
+fn uppercase_h_l_scroll_focused_side_panes_horizontally() {
+    let mut state = state_with_messages(1);
+
+    handle_key(&mut state, char_key('L'));
+    assert_eq!(state.guild_horizontal_scroll(), 1);
+
+    handle_key(&mut state, char_key('H'));
+    handle_key(&mut state, char_key('H'));
+    assert_eq!(state.guild_horizontal_scroll(), 0);
+
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, char_key('L'));
+    assert_eq!(state.channel_horizontal_scroll(), 1);
+
+    state.focus_pane(FocusPane::Members);
+    handle_key(&mut state, char_key('L'));
+    assert_eq!(state.member_horizontal_scroll(), 1);
+
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, char_key('L'));
+    assert_eq!(state.member_horizontal_scroll(), 1);
+}
+
+#[test]
 fn enter_and_space_open_message_action_menu() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);

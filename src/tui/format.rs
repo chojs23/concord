@@ -38,6 +38,28 @@ pub fn truncate_display_width(value: &str, limit: usize) -> String {
     text
 }
 
+pub fn truncate_display_width_from(value: &str, offset: usize, limit: usize) -> String {
+    if offset == 0 {
+        return truncate_display_width(value, limit);
+    }
+    if limit == 0 {
+        return String::new();
+    }
+
+    let mut skipped_width = 0usize;
+    let mut start = value.len();
+    for (index, grapheme) in value.grapheme_indices(true) {
+        let next_width = skipped_width.saturating_add(grapheme.width());
+        if next_width > offset {
+            start = index;
+            break;
+        }
+        skipped_width = next_width;
+    }
+
+    truncate_display_width(&value[start..], limit)
+}
+
 /// Identifies what kind of mention markup refers to. `<@id>` and `<@!id>` are
 /// users, `<@&id>` is a role, `<#id>` is a channel. Used by the renderer to
 /// dispatch to the right name resolver and highlight class.

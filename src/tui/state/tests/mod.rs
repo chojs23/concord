@@ -1988,6 +1988,34 @@ fn normal_message_actions_do_not_include_poll_or_image_actions() {
 }
 
 #[test]
+fn focused_pane_horizontal_scroll_is_scoped_by_focus() {
+    let mut state = DashboardState::new();
+
+    state.scroll_focused_pane_horizontal_right();
+    state.scroll_focused_pane_horizontal_right();
+    assert_eq!(state.guild_horizontal_scroll(), 2);
+    assert_eq!(state.channel_horizontal_scroll(), 0);
+    assert_eq!(state.member_horizontal_scroll(), 0);
+
+    state.focus_pane(FocusPane::Channels);
+    state.scroll_focused_pane_horizontal_right();
+    assert_eq!(state.guild_horizontal_scroll(), 2);
+    assert_eq!(state.channel_horizontal_scroll(), 1);
+
+    state.focus_pane(FocusPane::Members);
+    state.scroll_focused_pane_horizontal_right();
+    state.scroll_focused_pane_horizontal_left();
+    state.scroll_focused_pane_horizontal_left();
+    assert_eq!(state.member_horizontal_scroll(), 0);
+
+    state.focus_pane(FocusPane::Messages);
+    state.scroll_focused_pane_horizontal_right();
+    assert_eq!(state.guild_horizontal_scroll(), 2);
+    assert_eq!(state.channel_horizontal_scroll(), 1);
+    assert_eq!(state.member_horizontal_scroll(), 0);
+}
+
+#[test]
 fn own_regular_message_actions_include_edit_and_delete() {
     let mut state = state_with_messages(1);
     state.push_event(AppEvent::Ready {

@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::discord::{MessageState, PresenceStatus};
 
 use super::super::{
-    format::{truncate_display_width, truncate_text},
+    format::{truncate_display_width, truncate_display_width_from, truncate_text},
     message_format::format_attachment_summary,
     state::{
         ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MAX_MENTION_PICKER_VISIBLE,
@@ -30,6 +30,7 @@ use super::{
 pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let entries = state.visible_guild_pane_entries();
     let max_width = area.width.saturating_sub(6) as usize;
+    let horizontal_scroll = state.guild_horizontal_scroll();
     let selected = state.focused_guild_selection();
     let items: Vec<ListItem> = entries
         .iter()
@@ -42,7 +43,11 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                     GuildPaneEntry::DirectMessages => ListItem::new(Line::from(vec![
                         selection_marker(is_selected),
                         Span::styled(
-                            truncate_display_width(entry.label(), max_width),
+                            truncate_display_width_from(
+                                entry.label(),
+                                horizontal_scroll,
+                                max_width,
+                            ),
                             active_text_style(
                                 is_active,
                                 Style::default()
@@ -66,7 +71,7 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                             selection_marker(is_selected),
                             Span::styled(arrow, Style::default().fg(color)),
                             Span::styled(
-                                truncate_display_width(&title, label_width),
+                                truncate_display_width_from(&title, horizontal_scroll, label_width),
                                 Style::default().fg(color).add_modifier(Modifier::BOLD),
                             ),
                         ]))
@@ -78,7 +83,11 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                             selection_marker(is_selected),
                             Span::styled(prefix, Style::default().fg(DIM)),
                             Span::styled(
-                                truncate_display_width(state.name.as_str(), label_width),
+                                truncate_display_width_from(
+                                    state.name.as_str(),
+                                    horizontal_scroll,
+                                    label_width,
+                                ),
                                 active_text_style(is_active, Style::default()),
                             ),
                         ]))
@@ -107,6 +116,7 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
     let dashboard = state;
     let entries = state.visible_channel_pane_entries();
     let max_width = area.width.saturating_sub(8) as usize;
+    let horizontal_scroll = state.channel_horizontal_scroll();
     let selected = state.focused_channel_selection();
     let items: Vec<ListItem> = entries
         .iter()
@@ -123,7 +133,11 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                             selection_marker(is_selected),
                             Span::styled(arrow, Style::default().fg(ACCENT)),
                             Span::styled(
-                                truncate_display_width(&state.name, label_width),
+                                truncate_display_width_from(
+                                    &state.name,
+                                    horizontal_scroll,
+                                    label_width,
+                                ),
                                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
                             ),
                         ]))
@@ -153,7 +167,11 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                         }
                         spans.push(prefix_span);
                         spans.push(Span::styled(
-                            truncate_display_width(&state.name, label_width),
+                            truncate_display_width_from(
+                                &state.name,
+                                horizontal_scroll,
+                                label_width,
+                            ),
                             name_style,
                         ));
                         ListItem::new(Line::from(spans))
@@ -410,7 +428,8 @@ pub(super) fn render_members(frame: &mut Frame, area: Rect, state: &DashboardSta
             let name_style =
                 member_name_style(member, state.member_role_color(member), is_selected);
 
-            let display = member_display_label(member, max_name_width);
+            let display =
+                member_display_label(member, state.member_horizontal_scroll(), max_name_width);
             lines.push(Line::from(vec![
                 Span::styled(
                     format!(" {} ", presence_marker(member.status())),
@@ -481,21 +500,33 @@ pub(super) fn member_name_style(
     style
 }
 
-pub(super) fn member_display_label(member: MemberEntry<'_>, max_width: usize) -> String {
+pub(super) fn member_display_label(
+    member: MemberEntry<'_>,
+    horizontal_scroll: usize,
+    max_width: usize,
+) -> String {
     let display_name = member.display_name();
     if !member.is_bot() {
-        return truncate_display_width(&display_name, max_width);
+        return truncate_display_width_from(&display_name, horizontal_scroll, max_width);
     }
 
     const BOT_SUFFIX: &str = " [bot]";
     let suffix_width = BOT_SUFFIX.width();
     if max_width <= suffix_width {
-        return truncate_display_width(&format!("{}{}", display_name, BOT_SUFFIX), max_width);
+        return truncate_display_width_from(
+            &format!("{}{}", display_name, BOT_SUFFIX),
+            horizontal_scroll,
+            max_width,
+        );
     }
 
     format!(
         "{}{}",
-        truncate_display_width(&display_name, max_width.saturating_sub(suffix_width)),
+        truncate_display_width_from(
+            &display_name,
+            horizontal_scroll,
+            max_width.saturating_sub(suffix_width),
+        ),
         BOT_SUFFIX
     )
 }
@@ -562,10 +593,10 @@ pub(super) fn footer_hint(state: &DashboardState) -> &'static str {
             "j/k choose action | enter select | esc close | q quit"
         }
     } else if state.focus() == FocusPane::Members {
-        "tab/1-4 focus | j/k move | enter/space profile | a actions | i write | q quit"
+        "tab/1-4 focus | j/k move | H/L scroll name | enter/space profile | a actions | i write | q quit"
     } else if state.focus() == FocusPane::Channels {
-        "tab/1-4 focus | j/k move | enter/space open | h/← close | l/→ open | a actions | ` logs | i write | q quit"
+        "tab/1-4 focus | j/k move | H/L scroll name | enter/space open | h/← close | l/→ open | a actions | ` logs | i write | q quit"
     } else {
-        "tab/1-4 focus | j/k move | J/K scroll | enter/space action/tree | h/← close | l/→ open | ` logs | i write | esc cancel | q quit"
+        "tab/1-4 focus | j/k move | J/K scroll | H/L scroll name | enter/space action/tree | h/← close | l/→ open | ` logs | i write | esc cancel | q quit"
     }
 }

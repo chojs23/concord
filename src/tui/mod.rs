@@ -242,12 +242,15 @@ struct VisibleDashboardSignature {
     current_user: Option<String>,
     selected_guild_id: Option<Id<GuildMarker>>,
     selected_channel_id: Option<Id<ChannelMarker>>,
+    guild_horizontal_scroll: usize,
+    channel_horizontal_scroll: usize,
     selected_message: usize,
     message_scroll: usize,
     message_line_scroll: usize,
     new_messages_count: usize,
     selected_member: usize,
     member_scroll: usize,
+    member_horizontal_scroll: usize,
     message_pane_title: String,
     typing_footer: Option<String>,
     status_message: Option<String>,
@@ -297,12 +300,15 @@ fn visible_dashboard_signature(state: &DashboardState) -> VisibleDashboardSignat
         current_user: state.current_user().map(str::to_owned),
         selected_guild_id: state.selected_guild_id(),
         selected_channel_id: state.selected_channel_id(),
+        guild_horizontal_scroll: state.guild_horizontal_scroll(),
+        channel_horizontal_scroll: state.channel_horizontal_scroll(),
         selected_message: state.selected_message(),
         message_scroll: state.message_scroll(),
         message_line_scroll: state.message_line_scroll(),
         new_messages_count: state.new_messages_count(),
         selected_member: state.selected_member(),
         member_scroll: state.member_scroll(),
+        member_horizontal_scroll: state.member_horizontal_scroll(),
         message_pane_title: state.message_pane_title(),
         typing_footer: state.typing_footer_for_selected_channel(),
         status_message: state.last_status().map(str::to_owned),
@@ -374,12 +380,14 @@ fn record_visible_signature_change(
 
     if before.selected_member != after.selected_member
         || before.member_scroll != after.member_scroll
+        || before.member_horizontal_scroll != after.member_horizontal_scroll
         || before.visible_members != after.visible_members
     {
         diagnostics.snapshot_member_changes = diagnostics.snapshot_member_changes.saturating_add(1);
     }
 
     if before.selected_channel_id != after.selected_channel_id
+        || before.channel_horizontal_scroll != after.channel_horizontal_scroll
         || before.visible_channels != after.visible_channels
     {
         diagnostics.snapshot_channel_changes =
@@ -387,6 +395,7 @@ fn record_visible_signature_change(
     }
 
     if before.selected_guild_id != after.selected_guild_id
+        || before.guild_horizontal_scroll != after.guild_horizontal_scroll
         || before.visible_guilds != after.visible_guilds
     {
         diagnostics.snapshot_guild_changes = diagnostics.snapshot_guild_changes.saturating_add(1);
@@ -409,6 +418,8 @@ fn only_visible_member_signature_changed(
         && before.current_user == after.current_user
         && before.selected_guild_id == after.selected_guild_id
         && before.selected_channel_id == after.selected_channel_id
+        && before.guild_horizontal_scroll == after.guild_horizontal_scroll
+        && before.channel_horizontal_scroll == after.channel_horizontal_scroll
         && before.selected_message == after.selected_message
         && before.message_scroll == after.message_scroll
         && before.message_line_scroll == after.message_line_scroll
@@ -423,6 +434,7 @@ fn only_visible_member_signature_changed(
         && before.visible_forum_posts == after.visible_forum_posts
         && (before.selected_member != after.selected_member
             || before.member_scroll != after.member_scroll
+            || before.member_horizontal_scroll != after.member_horizontal_scroll
             || before.visible_members != after.visible_members)
 }
 
@@ -434,11 +446,14 @@ fn only_background_message_activity_changed(
         && before.current_user == after.current_user
         && before.selected_guild_id == after.selected_guild_id
         && before.selected_channel_id == after.selected_channel_id
+        && before.guild_horizontal_scroll == after.guild_horizontal_scroll
+        && before.channel_horizontal_scroll == after.channel_horizontal_scroll
         && before.selected_message == after.selected_message
         && before.message_scroll == after.message_scroll
         && before.message_line_scroll == after.message_line_scroll
         && before.selected_member == after.selected_member
         && before.member_scroll == after.member_scroll
+        && before.member_horizontal_scroll == after.member_horizontal_scroll
         && before.message_pane_title == after.message_pane_title
         && before.typing_footer == after.typing_footer
         && before.status_message == after.status_message

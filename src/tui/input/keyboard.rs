@@ -82,11 +82,13 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('4') => state.focus_pane(FocusPane::Members),
         KeyCode::Char('j') | KeyCode::Down => state.move_down(),
         KeyCode::Char('J') if focus == FocusPane::Messages => state.scroll_message_viewport_down(),
+        KeyCode::Char('L') => state.scroll_focused_pane_horizontal_right(),
         KeyCode::Char('k') | KeyCode::Up => {
             state.move_up();
             return state.next_older_history_command();
         }
         KeyCode::Char('K') if focus == FocusPane::Messages => state.scroll_message_viewport_up(),
+        KeyCode::Char('H') => state.scroll_focused_pane_horizontal_left(),
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.half_page_down()
         }
