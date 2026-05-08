@@ -29,8 +29,10 @@ pub(super) enum LoginAction {
 }
 
 pub(super) fn handle_terminal(state: &mut LoginState, event: TerminalEvent) -> Option<LoginAction> {
-    let TerminalEvent::Key(key) = event else {
-        return None;
+    let key = match event {
+        TerminalEvent::Key(key) => key,
+        TerminalEvent::Paste(text) => return handle_paste(state, &text),
+        _ => return None,
     };
     if key.kind != KeyEventKind::Press {
         return None;
@@ -243,11 +245,38 @@ pub(super) fn handle_terminal(state: &mut LoginState, event: TerminalEvent) -> O
     }
 }
 
+fn handle_paste(state: &mut LoginState, text: &str) -> Option<LoginAction> {
+    match state.screen {
+        LoginScreen::TokenInput => {
+            append_paste(&mut state.token_input, text);
+            state.error = None;
+        }
+        LoginScreen::PasswordInput if !state.password.in_progress => {
+            append_paste(active_password_input(state), text);
+            state.error = None;
+        }
+        LoginScreen::MfaCode if !state.password.in_progress => {
+            append_paste(&mut state.password.mfa_code, text);
+            state.error = None;
+        }
+        LoginScreen::ModeSelect
+        | LoginScreen::PasswordInput
+        | LoginScreen::MfaSelect
+        | LoginScreen::MfaCode
+        | LoginScreen::Qr => {}
+    }
+    None
+}
+
 fn active_password_input(state: &mut LoginState) -> &mut String {
     match state.password.active_field {
         PasswordField::Login => &mut state.password.login,
         PasswordField::Password => &mut state.password.password,
     }
+}
+
+fn append_paste(target: &mut String, text: &str) {
+    target.extend(text.chars().filter(|value| !matches!(value, '\r' | '\n')));
 }
 
 pub(super) fn mfa_supports(challenge: &Option<MfaChallenge>, method: MfaMethod) -> bool {

@@ -20,8 +20,9 @@ use crate::discord::ids::{
 };
 use crossterm::{
     event::{
-        DisableMouseCapture, EnableMouseCapture, Event as TerminalEvent, EventStream, KeyEventKind,
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event as TerminalEvent, EventStream, KeyEventKind, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
 };
@@ -118,6 +119,7 @@ pub async fn run(
 pub(super) struct TerminalRestoreGuard {
     keyboard_enhancement_enabled: bool,
     mouse_capture_enabled: bool,
+    bracketed_paste_enabled: bool,
 }
 
 impl TerminalRestoreGuard {
@@ -131,9 +133,11 @@ impl TerminalRestoreGuard {
         )
         .is_ok();
         let mouse_capture_enabled = execute!(stdout(), EnableMouseCapture).is_ok();
+        let bracketed_paste_enabled = execute!(stdout(), EnableBracketedPaste).is_ok();
         Ok(Self {
             keyboard_enhancement_enabled,
             mouse_capture_enabled,
+            bracketed_paste_enabled,
         })
     }
 }
@@ -145,6 +149,9 @@ impl Drop for TerminalRestoreGuard {
         }
         if self.mouse_capture_enabled {
             let _ = execute!(stdout(), DisableMouseCapture);
+        }
+        if self.bracketed_paste_enabled {
+            let _ = execute!(stdout(), DisableBracketedPaste);
         }
         ratatui::restore();
     }
@@ -482,6 +489,11 @@ async fn run_dashboard(
                         last_frame_area = Rect::new(0, 0, width, height);
                         redraw_diagnostics.resizes = redraw_diagnostics.resizes.saturating_add(1);
                         dirty = true;
+                    }
+                    Some(Ok(TerminalEvent::Paste(text))) => {
+                        if input::handle_paste(&mut state, &text) {
+                            dirty = true;
+                        }
                     }
                     Some(Ok(_)) => {}
                     Some(Err(error)) => return Err(error.into()),

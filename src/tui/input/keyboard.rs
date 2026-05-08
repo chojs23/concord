@@ -148,6 +148,19 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     None
 }
 
+pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
+    if !state.is_composing() {
+        return false;
+    }
+
+    let mut pasted = false;
+    for value in text.chars().filter(|value| *value != '\r') {
+        state.push_composer_char(value);
+        pasted = true;
+    }
+    pasted
+}
+
 fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match key.code {
         KeyCode::Esc => state.close_message_action_menu(),

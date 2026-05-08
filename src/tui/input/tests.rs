@@ -2,7 +2,7 @@ use crate::discord::ids::Id;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
-use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event};
+use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event, handle_paste};
 use crate::{
     config::ImagePreviewQualityPreset,
     discord::{
@@ -671,6 +671,28 @@ fn shift_enter_inserts_newline_while_composing() {
 
     assert!(state.is_composing());
     assert_eq!(state.composer_input(), "h\ni");
+}
+
+#[test]
+fn paste_inserts_text_while_composing() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+
+    assert!(handle_paste(&mut state, "hello\r\nworld"));
+
+    assert_eq!(state.composer_input(), "hello\nworld");
+}
+
+#[test]
+fn paste_is_ignored_when_not_composing() {
+    let mut state = state_with_channel_tree();
+
+    assert!(!handle_paste(&mut state, "hello"));
+
+    assert_eq!(state.composer_input(), "");
 }
 
 #[test]
