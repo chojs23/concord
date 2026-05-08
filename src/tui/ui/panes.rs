@@ -567,7 +567,7 @@ pub(super) fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardStat
 }
 
 pub(super) fn footer_user_label(state: &DashboardState) -> &str {
-    state.current_user().unwrap_or("Loading Discord...")
+    state.current_user().unwrap_or("Loading Concord...")
 }
 
 pub(super) fn footer_hint(state: &DashboardState) -> &'static str {
@@ -600,7 +600,9 @@ pub(super) fn footer_hint(state: &DashboardState) -> &'static str {
         "tab/1-4 focus | j/k move | H/L scroll name | enter/space profile | a actions | i write | q quit"
     } else if state.focus() == FocusPane::Channels {
         "tab/1-4 focus | j/k move | H/L scroll name | enter/space open | h/← close | l/→ open | a actions | ` logs | i write | q quit"
-    } else {
+    } else if state.focus() == FocusPane::Guilds {
         "tab/1-4 focus | j/k move | J/K scroll | H/L scroll name | enter/space action/tree | h/← close | l/→ open | ` logs | i write | esc cancel | q quit"
+    } else {
+        "tab/1-4 focus | j/k move | J/K scroll | enter/space actions | ` logs | i write | esc cancel | q quit"
     }
 }

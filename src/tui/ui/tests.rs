@@ -2191,7 +2191,7 @@ fn emoji_reaction_picker_windows_long_lists_around_selection() {
 fn footer_user_label_shows_initial_loading_before_ready() {
     let mut state = DashboardState::new();
 
-    assert_eq!(footer_user_label(&state), "Loading Discord...");
+    assert_eq!(footer_user_label(&state), "Loading Concord...");
 
     state.push_event(AppEvent::Ready {
         user: "neo".to_owned(),
@@ -2199,6 +2199,14 @@ fn footer_user_label_shows_initial_loading_before_ready() {
     });
 
     assert_eq!(footer_user_label(&state), "neo");
+}
+
+#[test]
+fn footer_hint_does_not_advertise_horizontal_scroll_for_messages() {
+    let mut state = state_with_message();
+    state.focus_pane(FocusPane::Messages);
+
+    assert!(!footer_hint(&state).contains("H/L scroll name"));
 }
 
 #[test]
