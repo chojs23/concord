@@ -1,11 +1,16 @@
 [package]
 name = "concord"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2024"
+rust-version = "1.85"
 description = "A terminal user interface client for Discord"
 homepage = "https://github.com/chojs23/concord"
 repository = "https://github.com/chojs23/concord"
 license = "GPL-3.0-only"
+readme = "README.md"
+keywords = ["discord", "tui", "terminal", "ratatui", "client"]
+categories = ["command-line-utilities"]
+exclude = ["docs/", ".github/", ".omc/", ".claude/", "dist-workspace.toml"]
 
 [dependencies]
 base64 = "0.22"
