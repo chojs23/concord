@@ -15,15 +15,16 @@ use super::{
     SNOWFLAKE_TIMESTAMP_SHIFT, UNREAD_BRIGHT, channel_action_menu_lines, channel_unread_decoration,
     composer_content_line_count, composer_lines, composer_prompt_line_count, composer_text,
     date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_reaction_picker_lines,
-    focus_pane_at, footer_hint, format_message_sent_time, format_unix_millis_with_offset,
-    forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
-    guild_action_menu_lines, inline_image_preview_area, inline_image_preview_row,
-    member_display_label, member_name_style, message_action_menu_lines, message_author_style,
-    message_item_lines, message_starts_new_day, message_viewport_lines, new_messages_notice_line,
-    options_popup_lines, poll_vote_picker_lines, reaction_users_popup_lines,
-    reaction_users_visible_line_count, selected_avatar_x_offset, selected_message_card_width,
-    selected_message_content_x_offset, sync_view_heights, user_profile_display_name_style,
-    user_profile_popup_has_avatar, user_profile_popup_lines, user_profile_popup_text_geometry,
+    focus_pane_at, footer_hint, footer_user_label, format_message_sent_time,
+    format_unix_millis_with_offset, forum_post_reaction_summary,
+    forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
+    inline_image_preview_area, inline_image_preview_row, member_display_label, member_name_style,
+    message_action_menu_lines, message_author_style, message_item_lines, message_starts_new_day,
+    message_viewport_lines, new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
+    reaction_users_popup_lines, reaction_users_visible_line_count, selected_avatar_x_offset,
+    selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
+    user_profile_display_name_style, user_profile_popup_has_avatar, user_profile_popup_lines,
+    user_profile_popup_text_geometry,
 };
 use crate::{
     config::DisplayOptions,
@@ -2184,6 +2185,20 @@ fn emoji_reaction_picker_windows_long_lists_around_selection() {
             "Enter/Space react · Esc close"
         ]
     );
+}
+
+#[test]
+fn footer_user_label_shows_initial_loading_before_ready() {
+    let mut state = DashboardState::new();
+
+    assert_eq!(footer_user_label(&state), "Loading Discord...");
+
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+
+    assert_eq!(footer_user_label(&state), "neo");
 }
 
 #[test]

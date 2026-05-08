@@ -544,7 +544,7 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect) {
 }
 
 pub(super) fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    let user = state.current_user().unwrap_or("connecting...");
+    let user = footer_user_label(state);
     let mut spans = vec![
         Span::styled(
             format!(" {user} "),
@@ -564,6 +564,10 @@ pub(super) fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardStat
         Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
         area,
     );
+}
+
+pub(super) fn footer_user_label(state: &DashboardState) -> &str {
+    state.current_user().unwrap_or("Loading Discord...")
 }
 
 pub(super) fn footer_hint(state: &DashboardState) -> &'static str {

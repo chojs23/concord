@@ -65,7 +65,8 @@ pub(crate) use self::message_list::message_starts_new_day;
 use self::message_list::render_messages;
 #[cfg(test)]
 use self::panes::{
-    composer_lines, composer_text, footer_hint, member_display_label, member_name_style,
+    composer_lines, composer_text, footer_hint, footer_user_label, member_display_label,
+    member_name_style,
 };
 use self::panes::{render_channels, render_footer, render_guilds, render_header, render_members};
 use self::popups::{
