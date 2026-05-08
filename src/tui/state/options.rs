@@ -1,0 +1,127 @@
+use crate::config::DisplayOptions;
+
+use super::{DashboardState, popups::OptionsPopupState};
+
+const OPTION_COUNT: usize = 4;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisplayOptionItem {
+    pub label: &'static str,
+    pub enabled: bool,
+    pub effective: bool,
+    pub description: &'static str,
+}
+
+impl DashboardState {
+    pub fn new_with_display_options(display_options: DisplayOptions) -> Self {
+        Self {
+            display_options,
+            ..Self::new()
+        }
+    }
+
+    pub fn display_options(&self) -> DisplayOptions {
+        self.display_options
+    }
+
+    pub fn show_avatars(&self) -> bool {
+        self.display_options.avatars_visible()
+    }
+
+    pub fn show_images(&self) -> bool {
+        self.display_options.images_visible()
+    }
+
+    pub fn show_custom_emoji(&self) -> bool {
+        self.display_options.custom_emoji_visible()
+    }
+
+    pub fn is_options_popup_open(&self) -> bool {
+        self.options_popup.is_some()
+    }
+
+    pub fn open_options_popup(&mut self) {
+        self.options_popup = Some(OptionsPopupState { selected: 0 });
+    }
+
+    pub fn close_options_popup(&mut self) {
+        self.options_popup = None;
+    }
+
+    pub fn move_option_down(&mut self) {
+        if let Some(popup) = &mut self.options_popup {
+            popup.selected = popup.selected.saturating_add(1).min(OPTION_COUNT - 1);
+        }
+    }
+
+    pub fn move_option_up(&mut self) {
+        if let Some(popup) = &mut self.options_popup {
+            popup.selected = popup.selected.saturating_sub(1);
+        }
+    }
+
+    pub fn selected_option_index(&self) -> Option<usize> {
+        self.options_popup
+            .as_ref()
+            .map(|popup| popup.selected.min(OPTION_COUNT - 1))
+    }
+
+    pub fn display_option_items(&self) -> Vec<DisplayOptionItem> {
+        let options = self.display_options;
+        vec![
+            DisplayOptionItem {
+                label: "Disable all image previews",
+                enabled: options.disable_image_preview,
+                effective: options.disable_image_preview,
+                description: "Master switch for avatars, images, and custom emoji images.",
+            },
+            DisplayOptionItem {
+                label: "Show avatars",
+                enabled: options.show_avatars,
+                effective: options.avatars_visible(),
+                description: "Message and profile avatars.",
+            },
+            DisplayOptionItem {
+                label: "Show images",
+                enabled: options.show_images,
+                effective: options.images_visible(),
+                description: "Attachment, embed, and image viewer previews.",
+            },
+            DisplayOptionItem {
+                label: "Show custom emoji images",
+                enabled: options.show_custom_emoji,
+                effective: options.custom_emoji_visible(),
+                description: "When off, custom emoji are shown as their emoji id.",
+            },
+        ]
+    }
+
+    pub fn toggle_selected_display_option(&mut self) {
+        let Some(selected) = self.selected_option_index() else {
+            return;
+        };
+
+        match selected {
+            0 => {
+                self.display_options.disable_image_preview =
+                    !self.display_options.disable_image_preview
+            }
+            1 => self.display_options.show_avatars = !self.display_options.show_avatars,
+            2 => self.display_options.show_images = !self.display_options.show_images,
+            3 => self.display_options.show_custom_emoji = !self.display_options.show_custom_emoji,
+            _ => return,
+        }
+        if !self.show_images() {
+            self.close_image_viewer();
+        }
+        self.display_options_save_pending = true;
+    }
+
+    pub(in crate::tui) fn take_display_options_save_request(&mut self) -> Option<DisplayOptions> {
+        if !self.display_options_save_pending {
+            return None;
+        }
+        self.display_options_save_pending = false;
+        Some(self.display_options)
+    }
+}

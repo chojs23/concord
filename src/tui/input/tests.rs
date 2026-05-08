@@ -700,13 +700,40 @@ fn enter_submits_multiline_composer() {
 }
 
 #[test]
-fn o_key_is_reserved_for_future_attachment_actions() {
+fn o_key_opens_options_popup() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
 
     let command = handle_key(&mut state, char_key('o'));
 
     assert_eq!(command, None);
+    assert!(state.is_options_popup_open());
+}
+
+#[test]
+fn options_popup_toggles_selected_setting() {
+    let mut state = state_with_messages(1);
+
+    handle_key(&mut state, char_key('o'));
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    assert!(state.is_options_popup_open());
+    assert!(!state.display_options().show_avatars);
+    assert_eq!(
+        state.take_display_options_save_request(),
+        Some(state.display_options())
+    );
+}
+
+#[test]
+fn options_popup_esc_closes_popup() {
+    let mut state = state_with_messages(1);
+
+    handle_key(&mut state, char_key('o'));
+    handle_key(&mut state, key(KeyCode::Esc));
+
+    assert!(!state.is_options_popup_open());
 }
 
 #[test]

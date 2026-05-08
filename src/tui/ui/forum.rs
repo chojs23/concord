@@ -1,11 +1,22 @@
 use super::message_list::message_author_style;
 use super::*;
 
+#[cfg(test)]
 pub(super) fn forum_post_viewport_lines(
     posts: &[ChannelThreadItem],
     selected: Option<usize>,
     width: usize,
     is_loading: bool,
+) -> Vec<Line<'static>> {
+    forum_post_viewport_lines_with_custom_emoji_images(posts, selected, width, is_loading, true)
+}
+
+pub(super) fn forum_post_viewport_lines_with_custom_emoji_images(
+    posts: &[ChannelThreadItem],
+    selected: Option<usize>,
+    width: usize,
+    is_loading: bool,
+    show_custom_emoji: bool,
 ) -> Vec<Line<'static>> {
     let width = width.max(1);
     if posts.is_empty() {
@@ -22,7 +33,12 @@ pub(super) fn forum_post_viewport_lines(
         if let Some(label) = post.section_label.as_deref() {
             lines.push(forum_post_section_header_line(label, width));
         }
-        lines.extend(forum_post_card_lines(post, selected == Some(index), width));
+        lines.extend(forum_post_card_lines(
+            post,
+            selected == Some(index),
+            width,
+            show_custom_emoji,
+        ));
     }
     lines
 }
@@ -35,6 +51,7 @@ fn forum_post_card_lines(
     post: &ChannelThreadItem,
     selected: bool,
     width: usize,
+    show_custom_emoji: bool,
 ) -> [Line<'static>; FORUM_POST_CARD_HEIGHT] {
     let marker = if selected { "› " } else { "  " };
     let card_width = width.saturating_sub(marker.width()).max(4);
@@ -63,7 +80,7 @@ fn forum_post_card_lines(
         ),
         forum_post_inner_line(
             "  ",
-            forum_post_metadata_spans(post, inner_width),
+            forum_post_metadata_spans(post, inner_width, show_custom_emoji),
             inner_width,
             selected,
         ),
@@ -140,7 +157,11 @@ fn forum_post_preview_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec
     ]
 }
 
-fn forum_post_metadata_spans(post: &ChannelThreadItem, width: usize) -> Vec<Span<'static>> {
+fn forum_post_metadata_spans(
+    post: &ChannelThreadItem,
+    width: usize,
+    show_custom_emoji: bool,
+) -> Vec<Span<'static>> {
     let primary_style = Style::default().fg(Color::White);
     let reaction_style = Style::default().fg(ACCENT);
     let muted_style = Style::default().fg(DIM);
@@ -157,7 +178,11 @@ fn forum_post_metadata_spans(post: &ChannelThreadItem, width: usize) -> Vec<Span
             primary_style,
         );
     }
-    if let Some(reactions) = forum_post_reaction_summary(&post.preview_reactions, width) {
+    if let Some(reactions) = forum_post_reaction_summary_with_custom_emoji_images(
+        &post.preview_reactions,
+        width,
+        show_custom_emoji,
+    ) {
         push_forum_metadata_part(
             &mut spans,
             &mut used_width,
@@ -240,11 +265,20 @@ fn forum_post_reaction_start_col(post: &ChannelThreadItem) -> usize {
     }
 }
 
+#[cfg(test)]
 pub(super) fn forum_post_reaction_summary(
     reactions: &[ReactionInfo],
     width: usize,
 ) -> Option<String> {
-    lay_out_reaction_chips(reactions, width)
+    forum_post_reaction_summary_with_custom_emoji_images(reactions, width, true)
+}
+
+fn forum_post_reaction_summary_with_custom_emoji_images(
+    reactions: &[ReactionInfo],
+    width: usize,
+    show_custom_emoji: bool,
+) -> Option<String> {
+    lay_out_reaction_chips_with_custom_emoji_images(reactions, width, show_custom_emoji)
         .lines
         .into_iter()
         .next()
@@ -257,7 +291,11 @@ fn forum_post_reaction_layout(
 ) -> Option<(usize, ReactionLayout)> {
     let start_col = forum_post_reaction_start_col(post);
     let available_width = width.saturating_sub(start_col).max(1);
-    let layout = lay_out_reaction_chips(&post.preview_reactions, available_width);
+    let layout = lay_out_reaction_chips_with_custom_emoji_images(
+        &post.preview_reactions,
+        available_width,
+        true,
+    );
     if layout.lines.first().is_some_and(|line| !line.is_empty()) {
         Some((start_col, layout))
     } else {

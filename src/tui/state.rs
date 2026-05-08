@@ -5,6 +5,7 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
+use crate::config::DisplayOptions;
 use crate::discord::{
     AppCommand, AppEvent, ChannelUnreadState, DiscordState, ForumPostArchiveState, MentionInfo,
     MessageInfo, MessageSnapshotInfo, MessageState,
@@ -13,7 +14,6 @@ use crate::discord::{
 use super::format::{
     MentionTarget, RenderedText, TextHighlightKind, render_user_mentions,
     render_user_mentions_with_highlights, replace_custom_emoji_markup,
-    replace_custom_emoji_markup_in_rendered,
 };
 use super::{media, message_format, ui};
 
@@ -28,6 +28,7 @@ mod member_grouping;
 mod message_actions;
 mod message_render;
 mod model;
+mod options;
 mod polls;
 mod popups;
 mod presentation;
@@ -59,6 +60,7 @@ pub use model::{
 };
 #[allow(unused_imports)]
 pub use model::{ChannelActionKind, ChannelBranch, GuildActionKind, GuildBranch};
+pub use options::DisplayOptionItem;
 pub use popups::{
     EmojiReactionPickerState, MessageActionMenuState, PollVotePickerState, ReactionUsersPopupState,
 };
@@ -175,6 +177,7 @@ pub struct DashboardState {
     /// submit even though the visible text is still the friendly form.
     composer_mention_completions: Vec<MentionCompletion>,
     message_action_menu: Option<MessageActionMenuState>,
+    options_popup: Option<popups::OptionsPopupState>,
     image_viewer: Option<ImageViewerState>,
     guild_action_menu: Option<GuildActionMenuState>,
     channel_action_menu: Option<ChannelActionMenuState>,
@@ -184,6 +187,8 @@ pub struct DashboardState {
     poll_vote_picker: Option<PollVotePickerState>,
     reaction_users_popup: Option<ReactionUsersPopupState>,
     debug_log_popup_open: bool,
+    display_options: DisplayOptions,
+    display_options_save_pending: bool,
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
     last_status: Option<String>,
@@ -249,6 +254,7 @@ impl DashboardState {
             composer_mention_selected: 0,
             composer_mention_completions: Vec::new(),
             message_action_menu: None,
+            options_popup: None,
             image_viewer: None,
             guild_action_menu: None,
             channel_action_menu: None,
@@ -258,6 +264,8 @@ impl DashboardState {
             poll_vote_picker: None,
             reaction_users_popup: None,
             debug_log_popup_open: false,
+            display_options: DisplayOptions::default(),
+            display_options_save_pending: false,
             current_user: None,
             current_user_id: None,
             last_status: None,
@@ -654,7 +662,11 @@ impl DashboardState {
         mentions: &[MentionInfo],
         value: &str,
     ) -> String {
-        let value = replace_custom_emoji_markup(value);
+        let value = if self.show_custom_emoji() {
+            replace_custom_emoji_markup(value)
+        } else {
+            super::format::replace_custom_emoji_markup_with_ids(value)
+        };
         render_user_mentions(
             &value,
             |user_id| self.resolve_mention_display_name(guild_id, mentions, user_id),
@@ -702,7 +714,10 @@ impl DashboardState {
             add_literal_mention_highlights(&mut rendered, "@here");
         }
         normalize_text_highlights(&mut rendered.highlights);
-        replace_custom_emoji_markup_in_rendered(rendered)
+        super::format::replace_custom_emoji_markup_in_rendered_with_images(
+            rendered,
+            self.show_custom_emoji(),
+        )
     }
 
     fn resolve_role_mention_name(

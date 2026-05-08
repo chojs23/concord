@@ -96,6 +96,10 @@ pub(in crate::tui) fn visible_image_preview_targets(
     state: &DashboardState,
     layout: ImagePreviewLayout,
 ) -> Vec<ImagePreviewTarget> {
+    if !state.show_images() {
+        return Vec::new();
+    }
+
     if let Some((message_id, preview_index, preview)) = state.selected_image_viewer_preview() {
         let preview_height = image_preview_height_for_dimensions(
             layout.viewer_preview_width,
@@ -322,6 +326,10 @@ pub(in crate::tui) fn visible_avatar_targets(
     state: &DashboardState,
     layout: ImagePreviewLayout,
 ) -> Vec<AvatarTarget> {
+    if !state.show_avatars() {
+        return Vec::new();
+    }
+
     let mut rendered_rows = 0usize;
     let mut targets = Vec::new();
 
@@ -369,6 +377,10 @@ pub(in crate::tui) fn visible_avatar_targets(
 }
 
 pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec<EmojiImageTarget> {
+    if !state.show_custom_emoji() {
+        return Vec::new();
+    }
+
     let mut seen: HashSet<String> = HashSet::new();
     let mut targets: Vec<EmojiImageTarget> = Vec::new();
 

@@ -20,12 +20,13 @@ use super::{
     guild_action_menu_lines, inline_image_preview_area, inline_image_preview_row,
     member_display_label, member_name_style, message_action_menu_lines, message_author_style,
     message_item_lines, message_starts_new_day, message_viewport_lines, new_messages_notice_line,
-    poll_vote_picker_lines, reaction_users_popup_lines, reaction_users_visible_line_count,
-    selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
-    sync_view_heights, user_profile_display_name_style, user_profile_popup_has_avatar,
-    user_profile_popup_lines, user_profile_popup_text_geometry,
+    options_popup_lines, poll_vote_picker_lines, reaction_users_popup_lines,
+    reaction_users_visible_line_count, selected_avatar_x_offset, selected_message_card_width,
+    selected_message_content_x_offset, sync_view_heights, user_profile_display_name_style,
+    user_profile_popup_has_avatar, user_profile_popup_lines, user_profile_popup_text_geometry,
 };
 use crate::{
+    config::DisplayOptions,
     discord::{
         AppEvent, AttachmentInfo, ChannelInfo, ChannelRecipientState, ChannelState,
         ChannelUnreadState, ChannelVisibilityStats, EmbedInfo, FriendStatus, GuildMemberState,
@@ -42,11 +43,54 @@ use crate::{
         },
         state::{
             ChannelActionItem, ChannelActionKind, ChannelThreadItem, DashboardState,
-            EmojiReactionItem, FocusPane, GuildActionItem, GuildActionKind, MessageActionItem,
-            MessageActionKind, PollVotePickerItem,
+            DisplayOptionItem, EmojiReactionItem, FocusPane, GuildActionItem, GuildActionKind,
+            MessageActionItem, MessageActionKind, PollVotePickerItem,
         },
     },
 };
+
+#[test]
+fn options_popup_lines_show_selected_toggle_state() {
+    let items = vec![
+        DisplayOptionItem {
+            label: "Disable all image previews",
+            enabled: false,
+            effective: false,
+            description: "Master switch.",
+        },
+        DisplayOptionItem {
+            label: "Show avatars",
+            enabled: true,
+            effective: true,
+            description: "Message and profile avatars.",
+        },
+    ];
+
+    let lines = options_popup_lines(&items, 1);
+
+    assert_eq!(lines[0].spans[1].content, "[ ] ");
+    assert_eq!(lines[1].spans[0].content, "› ");
+    assert_eq!(lines[1].spans[1].content, "[x] ");
+    assert!(
+        lines.last().expect("hint line").spans[0]
+            .content
+            .contains("config.toml")
+    );
+}
+
+#[test]
+fn custom_emoji_markup_uses_id_fallback_when_disabled() {
+    let message = message_with_content(Some("hello <:wave:42>".to_owned()));
+    let state = DashboardState::new_with_display_options(DisplayOptions {
+        show_custom_emoji: false,
+        ..DisplayOptions::default()
+    });
+
+    let lines = format_message_content_lines(&message, &state, 200);
+
+    assert_eq!(lines[0].text, "hello 42");
+    assert!(lines[0].image_slots.is_empty());
+}
 
 #[test]
 fn focus_pane_at_maps_dashboard_regions() {

@@ -13,6 +13,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_debug_log_popup_key(state, key);
     }
 
+    if state.is_options_popup_open() {
+        return handle_options_popup_key(state, key);
+    }
+
     if state.is_reaction_users_popup_open() {
         return handle_reaction_users_popup_key(state, key);
     }
@@ -69,6 +73,7 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         }
         KeyCode::Char('q') => state.quit(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
+        KeyCode::Char('o') => state.open_options_popup(),
         KeyCode::Char('a') => state.open_actions_for_focused_target(),
         KeyCode::Char('i') => state.start_composer(),
         KeyCode::Char('1') => state.focus_pane(FocusPane::Guilds),
@@ -274,6 +279,18 @@ fn handle_reaction_users_popup_key(
 fn handle_debug_log_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match key.code {
         KeyCode::Esc | KeyCode::Char('`') => state.close_debug_log_popup(),
+        _ => {}
+    }
+
+    None
+}
+
+fn handle_options_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('o') => state.close_options_popup(),
+        code if is_down_key(code) => state.move_option_down(),
+        code if is_up_key(code) => state.move_option_up(),
+        code if is_confirm_key(code) => state.toggle_selected_display_option(),
         _ => {}
     }
 

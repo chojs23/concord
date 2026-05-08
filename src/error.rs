@@ -23,6 +23,10 @@ pub enum AppError {
     DiscordRequest(String),
     #[error("terminal I/O failed")]
     Io(#[from] std::io::Error),
+    #[error("config file is not valid TOML")]
+    ConfigTomlDeserialize(#[from] toml::de::Error),
+    #[error("config file could not be written as TOML")]
+    ConfigTomlSerialize(#[from] toml::ser::Error),
     #[error("QR login failed: {0}")]
     QrLogin(String),
     #[error("QR login was cancelled in the Discord mobile app")]

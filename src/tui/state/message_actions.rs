@@ -1,4 +1,4 @@
-use crate::discord::AppCommand;
+use crate::discord::{AppCommand, ReactionEmoji};
 
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
 use super::{
@@ -86,7 +86,7 @@ impl DashboardState {
                 enabled: true,
             });
         }
-        if capabilities.has_image {
+        if capabilities.has_image && self.show_images() {
             actions.push(MessageActionItem {
                 kind: MessageActionKind::ViewImage,
                 label: "View image".to_owned(),
@@ -141,7 +141,10 @@ impl DashboardState {
             if reaction.me {
                 actions.push(MessageActionItem {
                     kind: MessageActionKind::RemoveReaction(index),
-                    label: format!("Remove {} reaction", reaction.emoji.status_label()),
+                    label: format!(
+                        "Remove {} reaction",
+                        action_reaction_label(&reaction.emoji, self.show_custom_emoji())
+                    ),
                     enabled: true,
                 });
             }
@@ -330,5 +333,12 @@ impl DashboardState {
                 })
             }
         }
+    }
+}
+
+fn action_reaction_label(emoji: &ReactionEmoji, show_custom_emoji: bool) -> String {
+    match emoji {
+        ReactionEmoji::Custom { id, .. } if !show_custom_emoji => id.get().to_string(),
+        _ => emoji.status_label(),
     }
 }

@@ -1878,6 +1878,22 @@ fn message_action_items_reflect_selected_message_capabilities() {
 }
 
 #[test]
+fn disabled_image_previews_hide_view_image_action() {
+    let mut state = state_with_image_messages(1, &[1]);
+    state.open_options_popup();
+    state.toggle_selected_display_option();
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+
+    assert!(
+        !actions
+            .iter()
+            .any(|action| action.kind == MessageActionKind::ViewImage)
+    );
+}
+
+#[test]
 fn image_message_action_opens_image_viewer() {
     let mut state = state_with_messages(1);
     state.push_event(AppEvent::MessageHistoryLoaded {
@@ -2398,6 +2414,40 @@ fn reaction_message_actions_use_single_reacted_users_item() {
         1
     );
     assert!(!actions.iter().any(|action| action.label == "Show 👍 users"));
+}
+
+#[test]
+fn custom_emoji_action_label_uses_id_when_images_are_disabled() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            reactions: vec![ReactionInfo {
+                emoji: ReactionEmoji::Custom {
+                    id: Id::new(50),
+                    name: Some("party".to_owned()),
+                    animated: false,
+                },
+                count: 1,
+                me: true,
+            }],
+            ..message_info(Id::new(2), 1)
+        }],
+    });
+    state.open_options_popup();
+    state.move_option_down();
+    state.move_option_down();
+    state.move_option_down();
+    state.toggle_selected_display_option();
+    state.close_options_popup();
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+
+    assert!(actions.iter().any(|action| {
+        action.kind == MessageActionKind::RemoveReaction(0) && action.label == "Remove 50 reaction"
+    }));
 }
 
 #[test]

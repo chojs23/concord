@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     format::{
         InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind,
-        replace_custom_emoji_markup_in_rendered, truncate_display_width, truncate_text,
+        replace_custom_emoji_markup_in_rendered_with_images, truncate_display_width, truncate_text,
     },
     state::{DashboardState, ThreadSummary, discord_color},
 };
@@ -294,6 +294,7 @@ pub(super) fn format_message_content_sections(
     lines.extend(format_embed_lines(
         &message.embeds,
         message.content.as_deref(),
+        state.show_custom_emoji(),
         width,
     ));
     for attachment in attachment_summary_lines {
@@ -317,7 +318,8 @@ pub(super) fn format_message_content_sections(
         append_edited_marker(&mut lines, width);
     }
 
-    let reaction_lines = format_message_reaction_lines(&message.reactions, width);
+    let reaction_lines =
+        format_message_reaction_lines(&message.reactions, width, state.show_custom_emoji());
     (lines, reaction_lines)
 }
 
@@ -340,17 +342,19 @@ fn append_edited_marker(lines: &mut Vec<MessageContentLine>, width: usize) {
 fn format_embed_lines(
     embeds: &[EmbedInfo],
     message_content: Option<&str>,
+    show_custom_emoji: bool,
     width: usize,
 ) -> Vec<MessageContentLine> {
     embeds
         .iter()
-        .flat_map(|embed| format_embed(embed, message_content, width))
+        .flat_map(|embed| format_embed(embed, message_content, show_custom_emoji, width))
         .collect()
 }
 
 fn format_embed(
     embed: &EmbedInfo,
     message_content: Option<&str>,
+    show_custom_emoji: bool,
     width: usize,
 ) -> Vec<MessageContentLine> {
     const PREFIX: &str = "  ▎ ";
@@ -360,18 +364,21 @@ fn format_embed(
     push_embed_text(
         &mut lines,
         embed.provider_name.as_deref(),
+        show_custom_emoji,
         inner_width,
         embed_provider_style(),
     );
     push_embed_text(
         &mut lines,
         embed.author_name.as_deref(),
+        show_custom_emoji,
         inner_width,
         embed_author_style(),
     );
     push_embed_text(
         &mut lines,
         embed.title.as_deref(),
+        show_custom_emoji,
         inner_width,
         embed_title_style(),
     );
@@ -379,12 +386,14 @@ fn format_embed(
         push_embed_text(
             &mut lines,
             Some(field.name.as_str()),
+            show_custom_emoji,
             inner_width,
             embed_field_name_style(),
         );
         push_embed_text(
             &mut lines,
             Some(field.value.as_str()),
+            show_custom_emoji,
             inner_width,
             Style::default(),
         );
@@ -392,6 +401,7 @@ fn format_embed(
     push_embed_text(
         &mut lines,
         embed.footer_text.as_deref(),
+        show_custom_emoji,
         inner_width,
         embed_footer_style(),
     );
@@ -400,7 +410,13 @@ fn format_embed(
         .filter_map(|url| url.as_deref())
         .filter(|url| !message_content.is_some_and(|content| content.contains(url)))
     {
-        push_embed_text(&mut lines, Some(url), inner_width, embed_url_style());
+        push_embed_text(
+            &mut lines,
+            Some(url),
+            show_custom_emoji,
+            inner_width,
+            embed_url_style(),
+        );
     }
 
     lines
@@ -412,6 +428,7 @@ fn format_embed(
 fn push_embed_text(
     lines: &mut Vec<MessageContentLine>,
     value: Option<&str>,
+    show_custom_emoji: bool,
     width: usize,
     style: Style,
 ) {
@@ -420,11 +437,14 @@ fn push_embed_text(
     };
     // Skip the mention pass; embeds never carry user mentions but custom
     // emojis in title/fields/footer must still produce slots.
-    let rendered = replace_custom_emoji_markup_in_rendered(RenderedText {
-        text: value.to_owned(),
-        highlights: Vec::new(),
-        emoji_slots: Vec::new(),
-    });
+    let rendered = replace_custom_emoji_markup_in_rendered_with_images(
+        RenderedText {
+            text: value.to_owned(),
+            highlights: Vec::new(),
+            emoji_slots: Vec::new(),
+        },
+        show_custom_emoji,
+    );
     lines.extend(wrap_rendered_text_lines(rendered, width, style));
 }
 
@@ -477,8 +497,9 @@ pub(super) fn embed_color(color: u32) -> Color {
 pub(super) fn format_message_reaction_lines(
     reactions: &[ReactionInfo],
     width: usize,
+    show_custom_emoji: bool,
 ) -> Vec<MessageContentLine> {
-    lay_out_reaction_chips(reactions, width)
+    lay_out_reaction_chips_with_custom_emoji_images(reactions, width, show_custom_emoji)
         .lines
         .into_iter()
         .map(MessageContentLine::accent)
@@ -504,7 +525,10 @@ pub(crate) struct ReactionLayout {
 /// image overlay should land (if any). Custom-emoji chips reserve a fixed
 /// `EMOJI_REACTION_IMAGE_WIDTH` of spaces in place of the textual `:name:`
 /// label so that loading the image later does not reflow the row.
-fn build_reaction_chip(reaction: &ReactionInfo) -> (String, Option<usize>, Option<String>) {
+fn build_reaction_chip(
+    reaction: &ReactionInfo,
+    show_custom_emoji: bool,
+) -> (String, Option<usize>, Option<String>) {
     let count = reaction.count;
     match &reaction.emoji {
         ReactionEmoji::Unicode(emoji) => {
@@ -514,6 +538,11 @@ fn build_reaction_chip(reaction: &ReactionInfo) -> (String, Option<usize>, Optio
                 format!("[{emoji} {count}]")
             };
             (chip, None, None)
+        }
+        ReactionEmoji::Custom { id, .. } if !show_custom_emoji => {
+            let label = id.get().to_string();
+            let prefix = if reaction.me { "[● " } else { "[" };
+            (format!("{prefix}{label} {count}]"), None, None)
         }
         ReactionEmoji::Custom { .. } => {
             let url = reaction.emoji.custom_image_url();
@@ -530,12 +559,21 @@ fn build_reaction_chip(reaction: &ReactionInfo) -> (String, Option<usize>, Optio
 /// chip is never split across rows. Returns both the rendered text rows and
 /// the absolute (line, col) position of every custom-emoji image overlay,
 /// relative to the first reaction row.
+#[cfg(test)]
 pub(crate) fn lay_out_reaction_chips(reactions: &[ReactionInfo], width: usize) -> ReactionLayout {
+    lay_out_reaction_chips_with_custom_emoji_images(reactions, width, true)
+}
+
+pub(crate) fn lay_out_reaction_chips_with_custom_emoji_images(
+    reactions: &[ReactionInfo],
+    width: usize,
+    show_custom_emoji: bool,
+) -> ReactionLayout {
     let width = width.max(1);
     let chips: Vec<(String, Option<usize>, Option<String>)> = reactions
         .iter()
         .filter(|reaction| reaction.count > 0)
-        .map(build_reaction_chip)
+        .map(|reaction| build_reaction_chip(reaction, show_custom_emoji))
         .collect();
     if chips.is_empty() {
         return ReactionLayout::default();
@@ -1375,6 +1413,7 @@ fn format_forwarded_snapshot(
         format_embed_lines(
             &snapshot.embeds,
             snapshot.content.as_deref(),
+            state.show_custom_emoji(),
             width.saturating_sub(2).max(1),
         )
         .into_iter()

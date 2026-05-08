@@ -19,6 +19,10 @@ impl DashboardState {
     }
 
     pub fn open_image_viewer_for_selected_message(&mut self) -> bool {
+        if !self.show_images() {
+            return false;
+        }
+
         let Some(message) = self.selected_message_state() else {
             return false;
         };

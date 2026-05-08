@@ -92,6 +92,59 @@ pub(super) fn render_message_action_menu(frame: &mut Frame, area: Rect, state: &
     );
 }
 
+pub(super) fn render_options_popup(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    if !state.is_options_popup_open() {
+        return;
+    }
+
+    let items = state.display_option_items();
+    let selected = state.selected_option_index().unwrap_or(0);
+    let popup = centered_rect(area, 66, (items.len() as u16).saturating_add(5));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(options_popup_lines(&items, selected))
+            .block(panel_block("Options", true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+pub(super) fn options_popup_lines(
+    items: &[DisplayOptionItem],
+    selected: usize,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let marker = if index == selected { "› " } else { "  " };
+            let check = if item.enabled { "[x]" } else { "[ ]" };
+            let mut style = if item.effective || index == 0 {
+                Style::default()
+            } else {
+                Style::default().fg(DIM)
+            };
+            if index == selected {
+                style = style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            Line::from(vec![
+                Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(format!("{check} "), style),
+                Span::styled(item.label, style),
+                Span::styled(" — ", Style::default().fg(DIM)),
+                Span::styled(item.description, Style::default().fg(DIM)),
+            ])
+        })
+        .collect();
+    lines.push(Line::from(Span::styled(
+        "Enter/Space toggle · j/k move · Esc close · saved to ~/.concord/config.toml",
+        Style::default().fg(DIM),
+    )));
+    lines
+}
+
 pub(super) fn render_guild_action_menu(frame: &mut Frame, area: Rect, state: &DashboardState) {
     if !state.is_guild_action_menu_open() {
         return;
@@ -189,24 +242,27 @@ pub(super) fn render_emoji_reaction_picker(
         super::super::selection::visible_item_range(reactions.len(), selected, visible_items);
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(emoji_reaction_picker_lines(
+        Paragraph::new(emoji_reaction_picker_lines_with_custom_emoji_images(
             &reactions,
             selected,
             visible_items,
             &ready_urls,
+            state.show_custom_emoji(),
         ))
         .block(block)
         .wrap(Wrap { trim: false }),
         popup,
     );
-    render_emoji_reaction_images(
-        frame,
-        content,
-        &reactions,
-        selected,
-        visible_items,
-        emoji_images,
-    );
+    if state.show_custom_emoji() {
+        render_emoji_reaction_images(
+            frame,
+            content,
+            &reactions,
+            selected,
+            visible_items,
+            emoji_images,
+        );
+    }
     render_vertical_scrollbar(
         frame,
         Rect {
@@ -344,7 +400,7 @@ pub(super) fn render_user_profile_popup(
     // so the text section starts cleanly to its right.
     let has_avatar = user_profile_popup_has_avatar_inside(
         inner,
-        state.user_profile_popup_avatar_url().is_some(),
+        state.show_avatars() && state.user_profile_popup_avatar_url().is_some(),
     );
     let text_area = user_profile_popup_text_area_inside(inner, has_avatar);
 
@@ -613,11 +669,12 @@ pub(super) fn render_reaction_users_popup(frame: &mut Frame, area: Rect, state: 
     let inner_width = usize::from(popup_width.saturating_sub(2));
 
     let max_visible_lines = reaction_users_visible_line_count(area);
-    let lines = reaction_users_popup_lines(
+    let lines = reaction_users_popup_lines_with_custom_emoji_images(
         popup_state.reactions(),
         popup_state.scroll(),
         max_visible_lines,
         inner_width,
+        state.show_custom_emoji(),
     );
     let popup = centered_rect(
         area,
@@ -856,13 +913,30 @@ pub(super) fn poll_vote_picker_lines(
     lines
 }
 
+#[cfg(test)]
 pub(super) fn reaction_users_popup_lines(
     reactions: &[ReactionUsersInfo],
     scroll: usize,
     max_visible_lines: usize,
     inner_width: usize,
 ) -> Vec<Line<'static>> {
-    let data_lines = reaction_users_popup_data_lines(reactions);
+    reaction_users_popup_lines_with_custom_emoji_images(
+        reactions,
+        scroll,
+        max_visible_lines,
+        inner_width,
+        true,
+    )
+}
+
+fn reaction_users_popup_lines_with_custom_emoji_images(
+    reactions: &[ReactionUsersInfo],
+    scroll: usize,
+    max_visible_lines: usize,
+    inner_width: usize,
+    show_custom_emoji: bool,
+) -> Vec<Line<'static>> {
+    let data_lines = reaction_users_popup_data_lines(reactions, show_custom_emoji);
     let visible_lines = max_visible_lines.min(data_lines.len());
     let scroll = scroll.min(data_lines.len().saturating_sub(visible_lines));
     let has_hidden_before = scroll > 0;
@@ -914,7 +988,10 @@ fn truncate_line_to_display_width(line: Line<'static>, max_width: usize) -> Line
     truncated
 }
 
-fn reaction_users_popup_data_lines(reactions: &[ReactionUsersInfo]) -> Vec<Line<'static>> {
+fn reaction_users_popup_data_lines(
+    reactions: &[ReactionUsersInfo],
+    show_custom_emoji: bool,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if reactions.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -927,7 +1004,10 @@ fn reaction_users_popup_data_lines(reactions: &[ReactionUsersInfo]) -> Vec<Line<
         let count = reaction.users.len();
         let user_label = if count == 1 { "user" } else { "users" };
         lines.push(Line::from(Span::styled(
-            format!("{} · {count} {user_label}", reaction.emoji.status_label()),
+            format!(
+                "{} · {count} {user_label}",
+                reaction_emoji_label(&reaction.emoji, show_custom_emoji)
+            ),
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         )));
         if reaction.users.is_empty() {
@@ -947,11 +1027,37 @@ fn reaction_users_popup_data_lines(reactions: &[ReactionUsersInfo]) -> Vec<Line<
     lines
 }
 
+fn reaction_emoji_label(emoji: &crate::discord::ReactionEmoji, show_custom_emoji: bool) -> String {
+    match emoji {
+        crate::discord::ReactionEmoji::Custom { id, .. } if !show_custom_emoji => {
+            id.get().to_string()
+        }
+        _ => emoji.status_label(),
+    }
+}
+
+#[cfg(test)]
 pub(super) fn emoji_reaction_picker_lines(
     reactions: &[EmojiReactionItem],
     selected: usize,
     max_visible_items: usize,
     thumbnail_urls: &[String],
+) -> Vec<Line<'static>> {
+    emoji_reaction_picker_lines_with_custom_emoji_images(
+        reactions,
+        selected,
+        max_visible_items,
+        thumbnail_urls,
+        true,
+    )
+}
+
+fn emoji_reaction_picker_lines_with_custom_emoji_images(
+    reactions: &[EmojiReactionItem],
+    selected: usize,
+    max_visible_items: usize,
+    thumbnail_urls: &[String],
+    show_custom_emoji: bool,
 ) -> Vec<Line<'static>> {
     let selected = selected.min(reactions.len().saturating_sub(1));
     let visible_items = max_visible_items.max(1).min(reactions.len().max(1));
@@ -970,12 +1076,16 @@ pub(super) fn emoji_reaction_picker_lines(
                     .bg(Color::Rgb(40, 45, 90))
                     .add_modifier(Modifier::BOLD);
             }
-            let thumbnail_ready = reaction
-                .custom_image_url()
-                .is_some_and(|url| thumbnail_urls.iter().any(|ready| ready == &url));
+            let thumbnail_ready = show_custom_emoji
+                && reaction
+                    .custom_image_url()
+                    .is_some_and(|url| thumbnail_urls.iter().any(|ready| ready == &url));
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(format_emoji_reaction_item(reaction, thumbnail_ready), style),
+                Span::styled(
+                    format_emoji_reaction_item(reaction, thumbnail_ready, show_custom_emoji),
+                    style,
+                ),
             ])
         })
         .collect();
@@ -1024,9 +1134,16 @@ fn render_emoji_reaction_images(
     }
 }
 
-fn format_emoji_reaction_item(reaction: &EmojiReactionItem, thumbnail_ready: bool) -> String {
+fn format_emoji_reaction_item(
+    reaction: &EmojiReactionItem,
+    thumbnail_ready: bool,
+    show_custom_emoji: bool,
+) -> String {
     match &reaction.emoji {
         crate::discord::ReactionEmoji::Unicode(emoji) => format!("{} {}", emoji, reaction.label),
+        crate::discord::ReactionEmoji::Custom { id, .. } if !show_custom_emoji => {
+            format!("{} {}", id.get(), reaction.label)
+        }
         crate::discord::ReactionEmoji::Custom { .. } if thumbnail_ready => format!(
             "{}{}",
             " ".repeat(usize::from(EMOJI_REACTION_IMAGE_WIDTH.saturating_add(1))),

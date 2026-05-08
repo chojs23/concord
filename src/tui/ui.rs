@@ -20,10 +20,10 @@ use super::{
     message_format::{
         EMOJI_REACTION_IMAGE_WIDTH, MessageContentLine, ReactionLayout, embed_color,
         format_message_content_lines, format_message_content_sections, format_message_relative_age,
-        lay_out_reaction_chips, wrap_text_lines,
+        lay_out_reaction_chips_with_custom_emoji_images, wrap_text_lines,
     },
     state::{
-        ChannelActionItem, ChannelThreadItem, DashboardState, EmojiReactionItem,
+        ChannelActionItem, ChannelThreadItem, DashboardState, DisplayOptionItem, EmojiReactionItem,
         FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, ImageViewerItem, MemberActionItem,
         MessageActionItem, PollVotePickerItem, discord_color, presence_color,
     },
@@ -71,9 +71,10 @@ use self::panes::{render_channels, render_footer, render_guilds, render_header, 
 use self::popups::{
     render_channel_action_menu, render_debug_log_popup, render_emoji_reaction_picker,
     render_guild_action_menu, render_image_viewer, render_image_viewer_action_menu,
-    render_member_action_menu, render_message_action_menu, render_poll_vote_picker,
-    render_reaction_users_popup, render_user_profile_popup, user_profile_popup_has_avatar,
-    user_profile_popup_text_geometry, user_profile_popup_total_lines,
+    render_member_action_menu, render_message_action_menu, render_options_popup,
+    render_poll_vote_picker, render_reaction_users_popup, render_user_profile_popup,
+    user_profile_popup_has_avatar, user_profile_popup_text_geometry,
+    user_profile_popup_total_lines,
 };
 use self::types::{
     ACCENT, DIM, DISCORD_EPOCH_MILLIS, EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET,
@@ -98,8 +99,9 @@ use self::{
     },
     popups::{
         channel_action_menu_lines, debug_log_popup_lines, emoji_reaction_picker_lines,
-        guild_action_menu_lines, message_action_menu_lines, poll_vote_picker_lines,
-        reaction_users_popup_lines, user_profile_display_name_style, user_profile_popup_lines,
+        guild_action_menu_lines, message_action_menu_lines, options_popup_lines,
+        poll_vote_picker_lines, reaction_users_popup_lines, user_profile_display_name_style,
+        user_profile_popup_lines,
     },
 };
 
@@ -116,7 +118,7 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
         // total-line / view-height pair consistent with what gets drawn.
         let has_avatar = user_profile_popup_has_avatar(
             areas.messages,
-            state.user_profile_popup_avatar_url().is_some(),
+            state.show_avatars() && state.user_profile_popup_avatar_url().is_some(),
         );
         let (text_width, text_height) =
             user_profile_popup_text_geometry(areas.messages, has_avatar);
@@ -176,6 +178,7 @@ pub fn render(
     render_guild_action_menu(frame, areas.messages, state);
     render_channel_action_menu(frame, areas.messages, state);
     render_member_action_menu(frame, areas.messages, state);
+    render_options_popup(frame, areas.messages, state);
     render_poll_vote_picker(frame, areas.messages, state);
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
     render_reaction_users_popup(frame, areas.messages, state);

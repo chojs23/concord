@@ -29,7 +29,7 @@ use ratatui::layout::Rect;
 use tokio::sync::{mpsc, watch};
 
 use crate::{
-    Result,
+    Result, config,
     discord::{
         AppCommand, AppEvent, DiscordClient, MessageState, PresenceStatus, SequencedAppEvent,
         SnapshotRevision,
@@ -267,6 +267,9 @@ struct VisiblePopupSignature {
     guild_action_open: bool,
     channel_action_open: bool,
     member_action_open: bool,
+    options_open: bool,
+    selected_option: Option<usize>,
+    display_options: config::DisplayOptions,
     emoji_picker_open: bool,
     reaction_users_open: bool,
     poll_vote_picker_open: bool,
@@ -310,6 +313,9 @@ fn visible_dashboard_signature(state: &DashboardState) -> VisibleDashboardSignat
             guild_action_open: state.is_guild_action_menu_open(),
             channel_action_open: state.is_channel_action_menu_open(),
             member_action_open: state.is_member_action_menu_open(),
+            options_open: state.is_options_popup_open(),
+            selected_option: state.selected_option_index(),
+            display_options: state.display_options(),
             emoji_picker_open: state.is_emoji_reaction_picker_open(),
             reaction_users_open: state.is_reaction_users_popup_open(),
             poll_vote_picker_open: state.is_poll_vote_picker_open(),
@@ -481,7 +487,7 @@ fn image_surfaces_visible(
     image_targets_visible
         || avatar_targets_visible
         || emoji_targets_visible
-        || state.user_profile_popup_avatar_url().is_some()
+        || (state.show_avatars() && state.user_profile_popup_avatar_url().is_some())
 }
 
 async fn run_dashboard(
@@ -491,7 +497,14 @@ async fn run_dashboard(
     commands: mpsc::Sender<AppCommand>,
     client: DiscordClient,
 ) -> Result<()> {
-    let mut state = DashboardState::new();
+    let display_options = match config::load_display_options() {
+        Ok(options) => options,
+        Err(error) => {
+            logging::error("config", format!("failed to load config: {error}"));
+            config::DisplayOptions::default()
+        }
+    };
+    let mut state = DashboardState::new_with_display_options(display_options);
     drop(snapshots.borrow_and_update());
     let initial_snapshot = client.current_discord_snapshot();
     let mut current_snapshot_revision = initial_snapshot.revision;
@@ -575,7 +588,13 @@ async fn run_dashboard(
             terminal.draw(|frame| {
                 last_frame_area = frame.area();
                 ui::sync_view_heights(frame.area(), &mut state);
-                let preview_layout = ui::image_preview_layout(frame.area(), &state);
+                let mut preview_layout = ui::image_preview_layout(frame.area(), &state);
+                if !state.show_images() {
+                    preview_layout.preview_width = 0;
+                    preview_layout.max_preview_height = 0;
+                    preview_layout.viewer_preview_width = 0;
+                    preview_layout.viewer_max_preview_height = 0;
+                }
                 state.clamp_message_viewport_for_image_previews(
                     preview_layout.content_width,
                     preview_layout.preview_width,
@@ -591,8 +610,13 @@ async fn run_dashboard(
                 let rendered_avatars = avatar_images.render_state(&avatar_targets);
                 let rendered_emojis = emoji_images.render_state(&emoji_targets);
                 let popup_avatar = state
-                    .user_profile_popup_avatar_url()
-                    .and_then(|url| avatar_images.popup_avatar_image(url));
+                    .show_avatars()
+                    .then(|| {
+                        state
+                            .user_profile_popup_avatar_url()
+                            .and_then(|url| avatar_images.popup_avatar_image(url))
+                    })
+                    .flatten();
                 ui::render(
                     frame,
                     &state,
@@ -651,7 +675,8 @@ async fn run_dashboard(
             // Profile popup avatar isn't part of the message-pane targets, so
             // schedule its fetch separately. It uses a larger avatar CDN size
             // than message-pane avatars, so it may have its own cache entry.
-            if let Some(url) = state.user_profile_popup_avatar_url().map(str::to_owned)
+            if state.show_avatars()
+                && let Some(url) = state.user_profile_popup_avatar_url().map(str::to_owned)
                 && let Some(command) = avatar_images.next_request_for_url(&url)
             {
                 redraw_diagnostics.media_requests =
@@ -696,6 +721,7 @@ async fn run_dashboard(
                             });
                         }
                         if key.kind == KeyEventKind::Press {
+                            save_display_options_if_needed(&mut state);
                             redraw_diagnostics.key_presses =
                                 redraw_diagnostics.key_presses.saturating_add(1);
                             dirty = true;
@@ -1057,6 +1083,21 @@ async fn run_dashboard(
     }
 
     Ok(())
+}
+
+fn save_display_options_if_needed(state: &mut DashboardState) {
+    let Some(options) = state.take_display_options_save_request() else {
+        return;
+    };
+
+    match config::save_display_options(&options) {
+        Ok(()) => state.push_effect(AppEvent::StatusMessage {
+            message: "Options saved.".to_owned(),
+        }),
+        Err(error) => state.push_effect(AppEvent::GatewayError {
+            message: format!("save options failed: {error}"),
+        }),
+    }
 }
 
 #[cfg(test)]

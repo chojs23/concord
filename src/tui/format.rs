@@ -252,10 +252,47 @@ pub fn replace_custom_emoji_markup(value: &str) -> String {
     output
 }
 
+/// Text fallback used when custom emoji images are disabled. The id is the
+/// most stable value Discord gives us and matches the user's requested
+/// fallback better than the display name, which can be missing or renamed.
+pub fn replace_custom_emoji_markup_with_ids(value: &str) -> String {
+    if !value.contains('<') {
+        return value.to_owned();
+    }
+
+    let mut output = String::with_capacity(value.len());
+    let mut cursor = 0usize;
+    while let Some(relative_start) = value[cursor..].find('<') {
+        let start = cursor.saturating_add(relative_start);
+        output.push_str(&value[cursor..start]);
+
+        match parse_custom_emoji_full(value, start) {
+            Some((end, _name, id, _animated)) => {
+                output.push_str(id);
+                cursor = end;
+            }
+            None => {
+                output.push('<');
+                cursor = start.saturating_add(1);
+            }
+        }
+    }
+    output.push_str(&value[cursor..]);
+    output
+}
+
 /// Image-overlay variant of [`replace_custom_emoji_markup`]: rewrites each
 /// match to its `:name:` fallback and records a slot the renderer can blit
 /// the image over. Mention highlights are remapped through the byte-shift.
+#[cfg(test)]
 pub fn replace_custom_emoji_markup_in_rendered(rendered: RenderedText) -> RenderedText {
+    replace_custom_emoji_markup_in_rendered_with_images(rendered, true)
+}
+
+pub fn replace_custom_emoji_markup_in_rendered_with_images(
+    rendered: RenderedText,
+    images_enabled: bool,
+) -> RenderedText {
     let matches = scan_custom_emoji_matches(&rendered.text);
     if matches.is_empty() {
         return rendered;
@@ -272,17 +309,23 @@ pub fn replace_custom_emoji_markup_in_rendered(rendered: RenderedText) -> Render
     for emoji in &matches {
         output.push_str(&text[cursor..emoji.input_start]);
         let slot_byte_start = output.len();
-        output.push(':');
-        output.push_str(&emoji.name);
-        output.push(':');
+        if images_enabled {
+            output.push(':');
+            output.push_str(&emoji.name);
+            output.push(':');
+        } else {
+            output.push_str(&emoji.id);
+        }
         let slot_byte_len = output.len() - slot_byte_start;
-        let extension = if emoji.animated { "gif" } else { "png" };
-        emoji_slots.push(InlineEmojiSlot {
-            byte_start: slot_byte_start,
-            byte_len: slot_byte_len,
-            display_width: u16::try_from(slot_byte_len).unwrap_or(u16::MAX),
-            url: format!("{CUSTOM_EMOJI_CDN_BASE}/{}.{extension}", emoji.id),
-        });
+        if images_enabled {
+            let extension = if emoji.animated { "gif" } else { "png" };
+            emoji_slots.push(InlineEmojiSlot {
+                byte_start: slot_byte_start,
+                byte_len: slot_byte_len,
+                display_width: u16::try_from(slot_byte_len).unwrap_or(u16::MAX),
+                url: format!("{CUSTOM_EMOJI_CDN_BASE}/{}.{extension}", emoji.id),
+            });
+        }
         cursor = emoji.input_end;
     }
     output.push_str(&text[cursor..]);
@@ -290,8 +333,8 @@ pub fn replace_custom_emoji_markup_in_rendered(rendered: RenderedText) -> Render
     let new_highlights = highlights
         .into_iter()
         .map(|highlight| TextHighlight {
-            start: remap_offset(&matches, highlight.start),
-            end: remap_offset(&matches, highlight.end),
+            start: remap_offset(&matches, highlight.start, images_enabled),
+            end: remap_offset(&matches, highlight.end, images_enabled),
             kind: highlight.kind,
         })
         .collect();
@@ -317,8 +360,12 @@ impl CustomEmojiMatch {
     }
 
     /// Bytes the textual fallback (`:name:`) consumes in the rewritten string.
-    fn output_len(&self) -> usize {
-        self.name.len() + 2
+    fn output_len(&self, images_enabled: bool) -> usize {
+        if images_enabled {
+            self.name.len() + 2
+        } else {
+            self.id.len()
+        }
     }
 }
 
@@ -347,11 +394,11 @@ fn scan_custom_emoji_matches(text: &str) -> Vec<CustomEmojiMatch> {
     matches
 }
 
-fn remap_offset(matches: &[CustomEmojiMatch], pos: usize) -> usize {
+fn remap_offset(matches: &[CustomEmojiMatch], pos: usize, images_enabled: bool) -> usize {
     let mut delta: isize = 0;
     for emoji in matches {
         if emoji.input_end <= pos {
-            delta += emoji.output_len() as isize - emoji.input_len() as isize;
+            delta += emoji.output_len(images_enabled) as isize - emoji.input_len() as isize;
         } else {
             break;
         }
@@ -476,6 +523,7 @@ mod tests {
     use super::{
         InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, render_user_mentions,
         replace_custom_emoji_markup, replace_custom_emoji_markup_in_rendered,
+        replace_custom_emoji_markup_in_rendered_with_images, replace_custom_emoji_markup_with_ids,
         truncate_display_width, truncate_text,
     };
 
@@ -511,6 +559,19 @@ mod tests {
             out.emoji_slots[0].url,
             "https://cdn.discordapp.com/emojis/42.gif"
         );
+    }
+
+    #[test]
+    fn rendered_replacer_uses_id_text_when_images_are_disabled() {
+        let rendered = RenderedText {
+            text: "hi <:wave:42>".to_owned(),
+            ..Default::default()
+        };
+
+        let out = replace_custom_emoji_markup_in_rendered_with_images(rendered, false);
+
+        assert_eq!(out.text, "hi 42");
+        assert!(out.emoji_slots.is_empty());
     }
 
     #[test]
@@ -572,6 +633,13 @@ mod tests {
     fn replaces_custom_emoji_markup_with_shorthand() {
         let text = replace_custom_emoji_markup("hi <:emoji_48:1146289325491892225>!");
         assert_eq!(text, "hi :emoji_48:!");
+    }
+
+    #[test]
+    fn replaces_custom_emoji_markup_with_ids() {
+        let text = replace_custom_emoji_markup_with_ids("hi <:emoji_48:1146289325491892225>!");
+
+        assert_eq!(text, "hi 1146289325491892225!");
     }
 
     #[test]

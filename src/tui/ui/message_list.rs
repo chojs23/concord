@@ -58,21 +58,24 @@ pub(super) fn render_messages(
         let forum_card_width =
             selected_message_card_width(message_areas.list.width as usize, forum_scrollbar_visible);
         frame.render_widget(
-            Paragraph::new(forum::forum_post_viewport_lines(
+            Paragraph::new(forum::forum_post_viewport_lines_with_custom_emoji_images(
                 &posts,
                 selected,
                 forum_card_width,
                 is_loading,
+                state.show_custom_emoji(),
             )),
             message_areas.list,
         );
-        forum::render_forum_post_reaction_emojis(
-            frame,
-            message_areas.list,
-            &posts,
-            forum_card_width,
-            emoji_images,
-        );
+        if state.show_custom_emoji() {
+            forum::render_forum_post_reaction_emojis(
+                frame,
+                message_areas.list,
+                &posts,
+                forum_card_width,
+                emoji_images,
+            );
+        }
         render_vertical_scrollbar(
             frame,
             message_areas.list,
@@ -89,8 +92,16 @@ pub(super) fn render_messages(
     let messages = state.visible_messages();
     let selected = state.focused_message_selection();
 
-    let preview_width = inline_image_preview_width(message_areas.list);
-    let max_preview_height = inline_image_preview_height(message_areas.list, true);
+    let preview_width = if state.show_images() {
+        inline_image_preview_width(message_areas.list)
+    } else {
+        0
+    };
+    let max_preview_height = if state.show_images() {
+        inline_image_preview_height(message_areas.list, true)
+    } else {
+        0
+    };
     let message_total_rows =
         state.message_total_rendered_rows(content_width, preview_width, max_preview_height);
     let message_scrollbar_visible = vertical_scrollbar_visible(
@@ -343,11 +354,23 @@ fn render_inline_reaction_emojis(
         let block_rows = total_base_rows + separator_lines;
         let preview_height = total_inline_preview_height_for_message(
             message,
-            inline_image_preview_width(list),
-            inline_image_preview_height(list, true),
+            if state.show_images() {
+                inline_image_preview_width(list)
+            } else {
+                0
+            },
+            if state.show_images() {
+                inline_image_preview_height(list, true)
+            } else {
+                0
+            },
         ) as isize;
 
-        let layout = lay_out_reaction_chips(&message.reactions, content_width);
+        let layout = lay_out_reaction_chips_with_custom_emoji_images(
+            &message.reactions,
+            content_width,
+            state.show_custom_emoji(),
+        );
         if !layout.slots.is_empty() {
             // Reactions are rendered after the body and inline preview spacer.
             // The body starts after the optional date separator, so the
@@ -475,8 +498,16 @@ fn render_inline_message_body_emojis(
 
         let preview_height = total_inline_preview_height_for_message(
             message,
-            inline_image_preview_width(list),
-            inline_image_preview_height(list, true),
+            if state.show_images() {
+                inline_image_preview_width(list)
+            } else {
+                0
+            },
+            if state.show_images() {
+                inline_image_preview_height(list, true)
+            } else {
+                0
+            },
         ) as isize;
         let block_rows = body_base_rows + separator_lines;
         rendered_rows = rendered_rows

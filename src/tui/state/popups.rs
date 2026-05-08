@@ -13,6 +13,11 @@ pub struct MessageActionMenuState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct OptionsPopupState {
+    pub(super) selected: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ImageViewerState {
     pub(super) message_id: Id<MessageMarker>,
     pub(super) selected: usize,
