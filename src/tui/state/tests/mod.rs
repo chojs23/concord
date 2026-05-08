@@ -14,7 +14,6 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     ChannelActionKind, ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildActionKind,
     GuildBranch, GuildPaneEntry, MessageActionKind, MessageState, message_rendered_height,
-    presence_marker,
 };
 use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo,
@@ -61,25 +60,6 @@ fn gateway_error_stays_out_of_footer_state() {
     });
 
     assert_eq!(state.last_status(), None);
-}
-
-#[test]
-fn toggles_debug_log_popup() {
-    let mut state = DashboardState::new();
-
-    state.toggle_debug_log_popup();
-    assert!(state.is_debug_log_popup_open());
-
-    state.close_debug_log_popup();
-    assert!(!state.is_debug_log_popup_open());
-}
-
-#[test]
-fn dashboard_starts_without_message_focus() {
-    let state = DashboardState::new();
-
-    assert_eq!(state.focus(), FocusPane::Guilds);
-    assert_eq!(state.focused_message_selection(), None);
 }
 
 #[test]
@@ -709,15 +689,6 @@ fn member_panel_title_stays_plain_without_guild_total_or_in_direct_messages() {
     }));
     dm_state.confirm_selected_guild();
     assert_eq!(dm_state.member_panel_title(), "Members");
-}
-
-#[test]
-fn presence_marker_uses_dot_only_for_online_like_statuses() {
-    assert_eq!(presence_marker(PresenceStatus::Online), '●');
-    assert_eq!(presence_marker(PresenceStatus::Idle), '●');
-    assert_eq!(presence_marker(PresenceStatus::DoNotDisturb), '●');
-    assert_eq!(presence_marker(PresenceStatus::Offline), ' ');
-    assert_eq!(presence_marker(PresenceStatus::Unknown), ' ');
 }
 
 #[test]

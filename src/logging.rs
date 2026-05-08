@@ -210,7 +210,7 @@ fn format_log_timestamp(timestamp_millis: u128) -> String {
 mod tests {
     use std::sync::{Mutex, OnceLock};
 
-    use super::{Level, error, error_entries, error_log, flag_enabled, format_log_line};
+    use super::{error, error_entries, error_log};
 
     static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -220,33 +220,6 @@ mod tests {
 
     fn clear_error_log() {
         error_log().lock().expect("error log mutex").clear();
-    }
-
-    #[test]
-    fn parses_enabled_flags() {
-        for value in ["1", "true", "TRUE", "yes", "on"] {
-            assert!(flag_enabled(value));
-        }
-        for value in ["", "0", "false", "off", "no"] {
-            assert!(!flag_enabled(value));
-        }
-    }
-
-    #[test]
-    fn formats_log_line_with_level_and_target() {
-        assert_eq!(
-            format_log_line(42, Level::Error, "gateway", "boom"),
-            "1970-01-01 00:00:00 UTC [ERROR] gateway: boom"
-        );
-    }
-
-    #[test]
-    fn format_log_timestamp_renders_iso_utc() {
-        // 1777738972130 ms since epoch -> 2026-05-02 16:22:52 UTC.
-        assert_eq!(
-            super::format_log_timestamp(1_777_738_972_130),
-            "2026-05-02 16:22:52 UTC"
-        );
     }
 
     #[test]

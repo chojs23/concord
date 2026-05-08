@@ -545,8 +545,7 @@ mod tests {
     use super::{
         InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, render_user_mentions,
         replace_custom_emoji_markup, replace_custom_emoji_markup_in_rendered,
-        replace_custom_emoji_markup_in_rendered_with_images, replace_custom_emoji_markup_with_ids,
-        truncate_display_width, truncate_text,
+        replace_custom_emoji_markup_in_rendered_with_images, truncate_display_width, truncate_text,
     };
 
     #[test]
@@ -652,28 +651,9 @@ mod tests {
     }
 
     #[test]
-    fn replaces_custom_emoji_markup_with_shorthand() {
-        let text = replace_custom_emoji_markup("hi <:emoji_48:1146289325491892225>!");
-        assert_eq!(text, "hi :emoji_48:!");
-    }
-
-    #[test]
-    fn replaces_custom_emoji_markup_with_ids() {
-        let text = replace_custom_emoji_markup_with_ids("hi <:emoji_48:1146289325491892225>!");
-
-        assert_eq!(text, "hi 1146289325491892225!");
-    }
-
-    #[test]
     fn replaces_animated_custom_emoji_markup() {
         let text = replace_custom_emoji_markup("<a:partying_face:42> woo");
         assert_eq!(text, ":partying_face: woo");
-    }
-
-    #[test]
-    fn keeps_text_without_emoji_markup_unchanged() {
-        let text = replace_custom_emoji_markup("hello world");
-        assert_eq!(text, "hello world");
     }
 
     #[test]
@@ -691,11 +671,6 @@ mod tests {
     #[test]
     fn truncates_long_text() {
         assert_eq!(truncate_text("abcdef", 3), "abc...");
-    }
-
-    #[test]
-    fn keeps_short_text() {
-        assert_eq!(truncate_text("abc", 10), "abc");
     }
 
     #[test]

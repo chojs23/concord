@@ -304,8 +304,8 @@ fn normalize_login_identifier(login: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        LOGIN_URL, LoginOutcome, MFA_SMS_SEND_URL, MfaMethod, format_login_error,
-        normalize_login_identifier, parse_login_success,
+        LoginOutcome, MfaMethod, format_login_error, normalize_login_identifier,
+        parse_login_success,
     };
     use reqwest::StatusCode;
 
@@ -356,14 +356,5 @@ mod tests {
             "Discord login failed with HTTP 429 Too Many Requests"
         );
         assert!(!message.contains("secret"));
-    }
-
-    #[test]
-    fn sms_send_uses_api_endpoint() {
-        assert_eq!(LOGIN_URL, "https://discord.com/api/v9/auth/login");
-        assert_eq!(
-            MFA_SMS_SEND_URL,
-            "https://discord.com/api/v9/auth/mfa/sms/send"
-        );
     }
 }

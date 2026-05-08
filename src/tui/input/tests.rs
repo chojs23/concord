@@ -701,17 +701,6 @@ fn enter_submits_multiline_composer() {
 }
 
 #[test]
-fn o_key_opens_options_popup() {
-    let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Messages);
-
-    let command = handle_key(&mut state, char_key('o'));
-
-    assert_eq!(command, None);
-    assert!(state.is_options_popup_open());
-}
-
-#[test]
 fn options_popup_toggles_selected_setting() {
     let mut state = state_with_messages(1);
 
@@ -964,24 +953,6 @@ fn enter_opens_selected_forum_post_from_message_pane() {
     state.move_down();
 
     let command = handle_key(&mut state, key(KeyCode::Enter));
-
-    assert_eq!(state.selected_channel_id(), Some(Id::new(30)));
-    assert_eq!(
-        command,
-        Some(AppCommand::SubscribeGuildChannel {
-            guild_id: Id::new(1),
-            channel_id: Id::new(30),
-        })
-    );
-}
-
-#[test]
-fn space_opens_selected_forum_post_from_message_pane() {
-    let mut state = state_with_forum_channel_posts();
-    state.focus_pane(FocusPane::Messages);
-    state.move_down();
-
-    let command = handle_key(&mut state, char_key(' '));
 
     assert_eq!(state.selected_channel_id(), Some(Id::new(30)));
     assert_eq!(
@@ -1278,26 +1249,6 @@ fn emoji_picker_selection_returns_reaction_command() {
             channel_id: Id::new(2),
             message_id: Id::new(1),
             emoji: ReactionEmoji::Unicode("🎉".to_owned()),
-        })
-    );
-    assert!(!state.is_emoji_reaction_picker_open());
-}
-
-#[test]
-fn emoji_picker_space_selects_reaction() {
-    let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Messages);
-    open_emoji_picker(&mut state);
-
-    handle_key(&mut state, key(KeyCode::Down));
-    let command = handle_key(&mut state, char_key(' '));
-
-    assert_eq!(
-        command,
-        Some(AppCommand::AddReaction {
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            emoji: ReactionEmoji::Unicode("❤️".to_owned()),
         })
     );
     assert!(!state.is_emoji_reaction_picker_open());

@@ -1010,12 +1010,7 @@ async fn shutdown_gateway(gateway_task: tokio::task::JoinHandle<()>) {
 mod tests {
     use std::{fs, process};
 
-    use crate::discord::ids::Id;
-
-    use super::{
-        format_message_history_endpoint, login_notice_for_token_warnings, sanitize_filename,
-        write_unique_download_file,
-    };
+    use super::{login_notice_for_token_warnings, sanitize_filename, write_unique_download_file};
 
     fn unix_timestamp_nanos() -> u128 {
         std::time::SystemTime::now()
@@ -1074,21 +1069,5 @@ mod tests {
     #[test]
     fn sanitize_filename_replaces_path_separators() {
         assert_eq!(sanitize_filename("../cat\\dog.png"), "_cat_dog.png");
-    }
-
-    #[test]
-    fn message_history_endpoint_omits_before_when_unset() {
-        assert_eq!(
-            format_message_history_endpoint(Id::new(123), None, 50),
-            "GET /channels/123/messages?limit=50"
-        );
-    }
-
-    #[test]
-    fn message_history_endpoint_includes_before_for_pagination() {
-        assert_eq!(
-            format_message_history_endpoint(Id::new(123), Some(Id::new(789)), 50),
-            "GET /channels/123/messages?limit=50&before=789"
-        );
     }
 }

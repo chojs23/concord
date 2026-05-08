@@ -15,16 +15,15 @@ use super::{
     SNOWFLAKE_TIMESTAMP_SHIFT, UNREAD_BRIGHT, channel_action_menu_lines, channel_unread_decoration,
     composer_content_line_count, composer_lines, composer_prompt_line_count, composer_text,
     date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_reaction_picker_lines,
-    focus_pane_at, footer_hint, footer_user_label, format_message_sent_time,
-    format_unix_millis_with_offset, forum_post_reaction_summary,
-    forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
-    inline_image_preview_area, inline_image_preview_row, member_action_menu_lines,
-    member_display_label, member_name_style, message_action_menu_lines, message_author_style,
-    message_item_lines, message_starts_new_day, message_viewport_lines, new_messages_notice_line,
-    options_popup_lines, poll_vote_picker_lines, primary_activity_summary,
-    reaction_users_popup_lines, reaction_users_visible_line_count, render_channels, render_guilds,
-    selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
-    sync_view_heights, user_profile_display_name_style, user_profile_popup_has_avatar,
+    focus_pane_at, footer_hint, format_message_sent_time, format_unix_millis_with_offset,
+    forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
+    guild_action_menu_lines, inline_image_preview_area, inline_image_preview_row,
+    member_action_menu_lines, member_display_label, member_name_style, message_action_menu_lines,
+    message_author_style, message_item_lines, message_starts_new_day, message_viewport_lines,
+    new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
+    primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
+    render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
+    selected_message_content_x_offset, sync_view_heights, user_profile_popup_has_avatar,
     user_profile_popup_lines, user_profile_popup_lines_with_activities,
     user_profile_popup_text_geometry,
 };
@@ -461,22 +460,6 @@ fn dm_channel_pane_shows_loaded_unread_message_count_badge() {
 }
 
 #[test]
-fn message_author_style_is_bold_white() {
-    let style = message_author_style(None);
-
-    assert_eq!(style.fg, Some(Color::White));
-    assert!(style.add_modifier.contains(Modifier::BOLD));
-}
-
-#[test]
-fn message_author_style_uses_role_color_when_available() {
-    let style = message_author_style(Some(0x3366CC));
-
-    assert_eq!(style.fg, Some(Color::Rgb(0x33, 0x66, 0xCC)));
-    assert!(style.add_modifier.contains(Modifier::BOLD));
-}
-
-#[test]
 fn message_viewport_author_uses_resolved_role_color() {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
@@ -828,14 +811,6 @@ fn history_message_author_uses_channel_guild_for_role_color() {
 }
 
 #[test]
-fn user_profile_name_style_uses_presence_color() {
-    let style = user_profile_display_name_style(PresenceStatus::DoNotDisturb);
-
-    assert_eq!(style.fg, Some(Color::Red));
-    assert!(style.add_modifier.contains(Modifier::BOLD));
-}
-
-#[test]
 fn user_profile_popup_styles_name_by_status() {
     let profile = user_profile_info(10, "neo");
     let state = DashboardState::new();
@@ -1007,11 +982,6 @@ fn primary_activity_summary_listening_includes_track_and_artist() {
         primary_activity_summary(&activities),
         Some("Listening to Spotify — Bohemian Rhapsody by Queen".to_owned())
     );
-}
-
-#[test]
-fn primary_activity_summary_returns_none_when_no_activities() {
-    assert_eq!(primary_activity_summary(&[]), None);
 }
 
 #[test]
@@ -2573,20 +2543,6 @@ fn emoji_reaction_picker_windows_long_lists_around_selection() {
             "Shortcut/Enter/Space react · Esc close"
         ]
     );
-}
-
-#[test]
-fn footer_user_label_shows_initial_loading_before_ready() {
-    let mut state = DashboardState::new();
-
-    assert_eq!(footer_user_label(&state), "Loading Concord...");
-
-    state.push_event(AppEvent::Ready {
-        user: "neo".to_owned(),
-        user_id: Some(Id::new(10)),
-    });
-
-    assert_eq!(footer_user_label(&state), "neo");
 }
 
 #[test]

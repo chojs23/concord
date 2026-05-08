@@ -405,23 +405,26 @@ mod tests {
     }
 
     #[test]
-    fn launch_signature_applies() {
+    fn launch_signature_applies_discord_mask() {
         let signature = generate_launch_signature();
         let uuid = Uuid::parse_str(&signature).expect("launch signature should be a UUID");
         let bytes = uuid.as_bytes();
 
-        assert_eq!(bytes[1] & 0b1000_0000, 0);
-        assert_eq!(bytes[2] & 0b0001_0000, 0);
-        assert_eq!(bytes[3] & 0b0001_0000, 0);
-        assert_eq!(bytes[4] & 0b0000_1000, 0);
-        assert_eq!(bytes[5] & 0b0001_0000, 0);
-        assert_eq!(bytes[6] & 0b0000_1000, 0);
-        assert_eq!(bytes[8] & 0b0010_0000, 0);
-        assert_eq!(bytes[9] & 0b1000_0000, 0);
-        assert_eq!(bytes[9] & 0b0000_0001, 0);
-        assert_eq!(bytes[11] & 0b0100_0000, 0);
-        assert_eq!(bytes[12] & 0b0000_0001, 0);
-        assert_eq!(bytes[14] & 0b0000_1000, 0);
+        for (index, mask) in [
+            (1, 0b1000_0000),
+            (2, 0b0001_0000),
+            (3, 0b0001_0000),
+            (4, 0b0000_1000),
+            (5, 0b0001_0000),
+            (6, 0b0000_1000),
+            (8, 0b0010_0000),
+            (9, 0b1000_0001),
+            (11, 0b0100_0000),
+            (12, 0b0000_0001),
+            (14, 0b0000_1000),
+        ] {
+            assert_eq!(bytes[index] & mask, 0);
+        }
     }
 
     fn assert_uuid_field(value: &Value, field: &str) {

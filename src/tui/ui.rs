@@ -67,8 +67,8 @@ pub(crate) use self::message_list::message_starts_new_day;
 use self::message_list::render_messages;
 #[cfg(test)]
 use self::panes::{
-    composer_lines, composer_text, footer_hint, footer_user_label, member_display_label,
-    member_name_style, primary_activity_summary,
+    composer_lines, composer_text, footer_hint, member_display_label, member_name_style,
+    primary_activity_summary,
 };
 use self::panes::{render_channels, render_footer, render_guilds, render_header, render_members};
 use self::popups::{
@@ -104,8 +104,7 @@ use self::{
         channel_action_menu_lines, debug_log_popup_lines, emoji_reaction_picker_lines,
         guild_action_menu_lines, member_action_menu_lines, message_action_menu_lines,
         options_popup_lines, poll_vote_picker_lines, reaction_users_popup_lines,
-        user_profile_display_name_style, user_profile_popup_lines,
-        user_profile_popup_lines_with_activities,
+        user_profile_popup_lines, user_profile_popup_lines_with_activities,
     },
 };
 
