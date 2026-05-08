@@ -38,7 +38,7 @@ fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
 }
 
 fn channel_row_point(row: u16) -> (u16, u16) {
-    (21, 1 + row)
+    (21, 2 + row)
 }
 
 fn composer_point() -> (u16, u16) {
@@ -46,11 +46,11 @@ fn composer_point() -> (u16, u16) {
 }
 
 fn message_row_point(row: u16) -> (u16, u16) {
-    (50, 1 + row)
+    (50, 2 + row)
 }
 
 fn message_action_row_point(row: u16) -> (u16, u16) {
-    (46, 6 + row)
+    (46, 7 + row)
 }
 
 fn dashboard_area() -> Rect {

@@ -12,7 +12,12 @@ use super::types::{
 };
 
 pub(super) fn dashboard_areas(area: Rect) -> DashboardAreas {
-    let [main, footer] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
+    let [header, main, footer] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .areas(area);
 
     let [guilds, channels, center, members] = Layout::horizontal([
         Constraint::Length(20),
@@ -23,6 +28,7 @@ pub(super) fn dashboard_areas(area: Rect) -> DashboardAreas {
     .areas(main);
 
     DashboardAreas {
+        header,
         guilds,
         channels,
         messages: center,

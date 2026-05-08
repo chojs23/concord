@@ -6,6 +6,30 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
+fn render_app_header(frame: &mut Frame) {
+    let area = frame.area();
+    if area.height == 0 {
+        return;
+    }
+    let header = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
+    let title = format!(" Concord - v{} ", env!("CARGO_PKG_VERSION"));
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .alignment(Alignment::Left),
+        header,
+    );
+}
+
 use crate::discord::password_auth::MfaMethod;
 
 use super::{
@@ -22,6 +46,7 @@ pub(super) fn render(frame: &mut Frame, state: &LoginState) {
         LoginScreen::MfaCode => render_mfa_code(frame, state),
         LoginScreen::Qr => render_qr(frame, state),
     }
+    render_app_header(frame);
 }
 
 fn render_mode_select(frame: &mut Frame, state: &LoginState) {
@@ -71,7 +96,7 @@ fn render_token_input(frame: &mut Frame, state: &LoginState) {
         Line::from(persistence_text),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Token  ", dim_style()),
+            Span::styled("> Token  ", dim_style()),
             Span::styled(masked, Style::default().fg(Color::Green)),
         ]),
     ];
@@ -98,16 +123,20 @@ fn render_token_input(frame: &mut Frame, state: &LoginState) {
 fn render_password_input(frame: &mut Frame, state: &LoginState) {
     let area = centered_rect(82, 18, frame.area());
     let password_mask = mask_chars(&state.password.password);
-    let login_style = if state.password.active_field == PasswordField::Login {
+    let login_active = state.password.active_field == PasswordField::Login;
+    let password_active = state.password.active_field == PasswordField::Password;
+    let login_style = if login_active {
         active_style()
     } else {
         plain_input_style()
     };
-    let password_style = if state.password.active_field == PasswordField::Password {
+    let password_style = if password_active {
         active_style()
     } else {
         plain_input_style()
     };
+    let login_marker = if login_active { "> " } else { "  " };
+    let password_marker = if password_active { "> " } else { "  " };
 
     let mut lines = vec![
         Line::from(Span::styled("Email/password login", accent_style())),
@@ -116,11 +145,11 @@ fn render_password_input(frame: &mut Frame, state: &LoginState) {
         Line::from("They are not saved. Captcha is not supported here."),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Email/phone  ", dim_style()),
+            Span::styled(format!("{login_marker}Email/phone  "), dim_style()),
             Span::styled(state.password.login.clone(), login_style),
         ]),
         Line::from(vec![
-            Span::styled("Password     ", dim_style()),
+            Span::styled(format!("{password_marker}Password     "), dim_style()),
             Span::styled(password_mask, password_style),
         ]),
         Line::from(""),

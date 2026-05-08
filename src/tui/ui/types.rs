@@ -72,6 +72,7 @@ pub enum ImagePreviewState<'a> {
 
 #[derive(Clone, Copy)]
 pub(super) struct DashboardAreas {
+    pub(super) header: Rect,
     pub(super) guilds: Rect,
     pub(super) channels: Rect,
     pub(super) messages: Rect,

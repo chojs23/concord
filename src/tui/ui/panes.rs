@@ -500,6 +500,18 @@ pub(super) fn member_display_label(member: MemberEntry<'_>, max_width: usize) ->
     )
 }
 
+pub(super) fn render_header(frame: &mut Frame, area: Rect) {
+    let title = format!(" Concord - v{} ", env!("CARGO_PKG_VERSION"));
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            title,
+            Style::default().fg(Color::Cyan).bold(),
+        )))
+        .alignment(Alignment::Left),
+        area,
+    );
+}
+
 pub(super) fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let user = state.current_user().unwrap_or("connecting...");
     let mut spans = vec![

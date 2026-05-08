@@ -67,7 +67,7 @@ use self::message_list::render_messages;
 use self::panes::{
     composer_lines, composer_text, footer_hint, member_display_label, member_name_style,
 };
-use self::panes::{render_channels, render_footer, render_guilds, render_members};
+use self::panes::{render_channels, render_footer, render_guilds, render_header, render_members};
 use self::popups::{
     render_channel_action_menu, render_debug_log_popup, render_emoji_reaction_picker,
     render_guild_action_menu, render_image_viewer, render_image_viewer_action_menu,
@@ -159,6 +159,7 @@ pub fn render(
         }
     }
 
+    render_header(frame, areas.header);
     render_guilds(frame, areas.guilds, state);
     render_channels(frame, areas.channels, state);
     render_messages(

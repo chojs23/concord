@@ -73,7 +73,7 @@ fn sync_view_heights_reserves_message_input_inside_messages_pane() {
 
     sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
 
-    assert_eq!(state.message_view_height(), 14);
+    assert_eq!(state.message_view_height(), 13);
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn sync_view_heights_reserves_multiline_message_input_inside_messages_pane() {
 
     sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
 
-    assert_eq!(state.message_view_height(), 12);
+    assert_eq!(state.message_view_height(), 11);
 }
 
 #[test]
@@ -2992,7 +2992,7 @@ fn message_preview_rows_do_not_shrink_message_viewport() {
 
     sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
 
-    assert_eq!(state.message_view_height(), 14);
+    assert_eq!(state.message_view_height(), 13);
 }
 
 #[test]
