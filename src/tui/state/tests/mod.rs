@@ -1206,6 +1206,7 @@ fn user_sent_message_from_history_position_does_not_force_follow() {
     let messages = state.messages();
     assert_eq!(messages[state.selected_message()].id, parked_message_id);
     assert!(!state.message_auto_follow());
+    assert_eq!(state.new_messages_marker_message_id(), None);
 }
 
 #[test]

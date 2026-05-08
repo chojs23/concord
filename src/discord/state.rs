@@ -513,6 +513,7 @@ impl DiscordState {
                 ..
             } => {
                 let guild_id = guild_id.or_else(|| self.channel_guild_id(*channel_id));
+                let is_current_user_message = self.current_user_id == Some(*author_id);
                 self.record_author_role_ids(*channel_id, *message_id, author_role_ids);
                 // Self-authored mentions never bump our own sidebar.
                 if let Some(self_id) = self.current_user_id
@@ -547,6 +548,9 @@ impl DiscordState {
                     forwarded_snapshots: forwarded_snapshots.clone(),
                     edited_timestamp: None,
                 });
+                if is_current_user_message {
+                    self.mark_message_read_locally(*channel_id, *message_id);
+                }
             }
             AppEvent::MessageHistoryLoaded {
                 channel_id,
@@ -1582,6 +1586,20 @@ impl DiscordState {
     ) {
         if let Some(channel) = self.channels.get_mut(&channel_id) {
             channel.last_message_id = channel.last_message_id.max(Some(message_id));
+        }
+    }
+
+    fn mark_message_read_locally(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    ) {
+        let entry = self.read_states.entry(channel_id).or_default();
+        if entry
+            .last_acked_message_id
+            .is_none_or(|acked| acked < message_id)
+        {
+            entry.last_acked_message_id = Some(message_id);
         }
     }
 
@@ -6146,6 +6164,51 @@ mod tests {
         });
 
         assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Seen);
+    }
+
+    #[test]
+    fn current_user_message_create_keeps_channel_seen() {
+        let channel_id = Id::new(7);
+        let current_user_id = Id::new(10);
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(current_user_id),
+        });
+        state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
+            channel_id, 100,
+        )));
+        state.apply_event(&AppEvent::ReadStateInit {
+            entries: vec![ReadStateInfo {
+                channel_id,
+                last_acked_message_id: Some(Id::new(100)),
+                mention_count: 0,
+            }],
+        });
+
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id,
+            message_id: Id::new(200),
+            author_id: current_user_id,
+            author: "me".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("sent from this account".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Seen);
+        assert_eq!(state.channel_ack_target(channel_id), None);
+        assert_eq!(state.channel_unread_message_count(channel_id), 0);
     }
 
     #[test]

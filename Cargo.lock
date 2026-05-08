@@ -421,7 +421,7 @@ checksum = "cc14f565cf027a105f7a44ccf9e5b424348421a1d8952a8fc9d499d313107789"
 
 [[package]]
 name = "concord"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "base64",
  "chrono",
