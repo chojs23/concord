@@ -273,6 +273,26 @@ fn number_keys_focus_top_level_panes() {
 }
 
 #[test]
+fn tab_and_shift_tab_cycle_focus() {
+    let mut state = DashboardState::new();
+
+    handle_key(&mut state, key(KeyCode::Tab));
+    assert_eq!(state.focus(), FocusPane::Channels);
+
+    handle_key(&mut state, key(KeyCode::Tab));
+    assert_eq!(state.focus(), FocusPane::Messages);
+
+    handle_key(&mut state, key(KeyCode::BackTab));
+    assert_eq!(state.focus(), FocusPane::Channels);
+
+    handle_key(&mut state, key(KeyCode::BackTab));
+    assert_eq!(state.focus(), FocusPane::Guilds);
+
+    handle_key(&mut state, key(KeyCode::BackTab));
+    assert_eq!(state.focus(), FocusPane::Members);
+}
+
+#[test]
 fn left_click_focuses_top_level_pane() {
     let mut state = DashboardState::new();
 
