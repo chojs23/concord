@@ -562,6 +562,14 @@ impl DashboardState {
         self.discord.guild_unread(guild_id)
     }
 
+    pub fn direct_message_unread_count(&self) -> usize {
+        self.discord.direct_message_unread_count()
+    }
+
+    pub fn channel_unread_message_count(&self, channel_id: Id<ChannelMarker>) -> usize {
+        self.discord.channel_unread_message_count(channel_id)
+    }
+
     pub fn current_user(&self) -> Option<&str> {
         self.current_user.as_deref()
     }

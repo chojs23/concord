@@ -21,7 +21,7 @@ use super::{
     inline_image_preview_area, inline_image_preview_row, member_display_label, member_name_style,
     message_action_menu_lines, message_author_style, message_item_lines, message_starts_new_day,
     message_viewport_lines, new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
-    reaction_users_popup_lines, reaction_users_visible_line_count, render_guilds,
+    reaction_users_popup_lines, reaction_users_visible_line_count, render_channels, render_guilds,
     selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
     sync_view_heights, user_profile_display_name_style, user_profile_popup_has_avatar,
     user_profile_popup_lines, user_profile_popup_text_geometry,
@@ -375,6 +375,75 @@ fn active_server_mention_badge_keeps_active_name_style() {
         checked,
         "active guild row should include mention badge and guild name"
     );
+}
+
+#[test]
+fn server_pane_shows_direct_message_unread_channel_count() {
+    let state = state_with_unread_direct_messages();
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+
+    terminal
+        .draw(|frame| render_guilds(frame, frame.area(), &state))
+        .expect("draw should succeed");
+
+    let buffer = terminal.backend().buffer();
+    let server_rows = (0..buffer.area.height)
+        .map(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, row)].symbol().to_owned())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert!(server_rows.iter().any(|row| row.contains("(1)")));
+}
+
+#[test]
+fn dm_channel_pane_shows_unread_channel_count_badge() {
+    let mut state = state_with_unread_direct_messages();
+    state.confirm_selected_guild();
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+
+    terminal
+        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .expect("draw should succeed");
+
+    let buffer = terminal.backend().buffer();
+    let channel_rows = (0..buffer.area.height)
+        .map(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, row)].symbol().to_owned())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert!(channel_rows.iter().any(|row| row.contains("(1) @ new")));
+}
+
+#[test]
+fn dm_channel_pane_shows_loaded_unread_message_count_badge() {
+    let mut state = state_with_unread_direct_messages_with_loaded_unread_messages(5);
+    state.confirm_selected_guild();
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+
+    terminal
+        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .expect("draw should succeed");
+
+    let buffer = terminal.backend().buffer();
+    let channel_rows = (0..buffer.area.height)
+        .map(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, row)].symbol().to_owned())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert!(channel_rows.iter().any(|row| row.contains("(5) @ new")));
+    assert!(!channel_rows.iter().any(|row| row.contains("(1) @ new")));
 }
 
 #[test]
@@ -3642,6 +3711,80 @@ fn state_with_forum_posts(post_count: usize) -> DashboardState {
         posts,
         preview_messages: Vec::new(),
         has_more: false,
+    });
+    state
+}
+
+fn state_with_unread_direct_messages() -> DashboardState {
+    let mut state = DashboardState::new();
+    for (channel_id, name, last_message_id) in [
+        (Id::new(10), "old", Some(Id::new(100))),
+        (Id::new(20), "new", Some(Id::new(200))),
+        (Id::new(30), "empty", None),
+    ] {
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id,
+            name: name.to_owned(),
+            kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }));
+    }
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![
+            ReadStateInfo {
+                channel_id: Id::new(10),
+                last_acked_message_id: Some(Id::new(100)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: Id::new(20),
+                last_acked_message_id: Some(Id::new(100)),
+                mention_count: 0,
+            },
+        ],
+    });
+    state
+}
+
+fn state_with_unread_direct_messages_with_loaded_unread_messages(count: u64) -> DashboardState {
+    let mut state = state_with_unread_direct_messages();
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(20),
+        before: None,
+        messages: (0..count)
+            .map(|offset| MessageInfo {
+                guild_id: None,
+                channel_id: Id::new(20),
+                message_id: Id::new(101 + offset),
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                author_avatar_url: None,
+                author_role_ids: Vec::new(),
+                message_kind: crate::discord::MessageKind::regular(),
+                reference: None,
+                reply: None,
+                poll: None,
+                pinned: false,
+                reactions: Vec::new(),
+                content: Some(format!("dm {offset}")),
+                sticker_names: Vec::new(),
+                mentions: Vec::new(),
+                attachments: Vec::new(),
+                embeds: Vec::new(),
+                forwarded_snapshots: Vec::new(),
+                ..MessageInfo::default()
+            })
+            .collect(),
     });
     state
 }

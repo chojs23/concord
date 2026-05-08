@@ -839,6 +839,27 @@ impl DiscordState {
         }
     }
 
+    pub fn direct_message_unread_count(&self) -> usize {
+        self.channels_for_guild(None)
+            .into_iter()
+            .filter(|channel| self.channel_unread(channel.id) != ChannelUnreadState::Seen)
+            .count()
+    }
+
+    pub fn channel_unread_message_count(&self, channel_id: Id<ChannelMarker>) -> usize {
+        let Some(messages) = self.messages.get(&channel_id) else {
+            return 0;
+        };
+        let last_acked = self
+            .read_states
+            .get(&channel_id)
+            .and_then(|state| state.last_acked_message_id);
+        messages
+            .iter()
+            .filter(|message| last_acked.is_none_or(|last_acked| message.id > last_acked))
+            .count()
+    }
+
     /// `None` when the channel is already fully read or has no messages.
     pub fn channel_ack_target(&self, channel_id: Id<ChannelMarker>) -> Option<Id<MessageMarker>> {
         let channel = self.channels.get(&channel_id)?;

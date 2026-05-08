@@ -41,22 +41,33 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
             let is_active = state.is_active_guild_entry(entry);
             styled_list_item(
                 match entry {
-                    GuildPaneEntry::DirectMessages => ListItem::new(Line::from(vec![
-                        selection_marker(is_selected),
-                        Span::styled(
+                    GuildPaneEntry::DirectMessages => {
+                        let base_style = active_text_style(
+                            is_active,
+                            Style::default()
+                                .fg(Color::Magenta)
+                                .add_modifier(Modifier::BOLD),
+                        );
+                        let unread_count = state.direct_message_unread_count();
+                        let badge =
+                            (unread_count > 0).then(|| notification_count_badge(unread_count));
+                        let badge_width =
+                            badge.as_ref().map(|span| span.content.width()).unwrap_or(0);
+                        let label_width = max_width.saturating_sub(badge_width);
+                        let mut spans = vec![selection_marker(is_selected)];
+                        if let Some(badge) = badge {
+                            spans.push(badge);
+                        }
+                        spans.push(Span::styled(
                             truncate_display_width_from(
                                 entry.label(),
                                 horizontal_scroll,
-                                max_width,
+                                label_width,
                             ),
-                            active_text_style(
-                                is_active,
-                                Style::default()
-                                    .fg(Color::Magenta)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                        ),
-                    ])),
+                            base_style,
+                        ));
+                        ListItem::new(Line::from(spans))
+                    }
                     GuildPaneEntry::FolderHeader { folder, collapsed } => {
                         let arrow = if *collapsed { "▶ " } else { "▼ " };
                         let icon = if *collapsed { "📁" } else { "📂" };
@@ -134,6 +145,16 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
     );
 }
 
+fn notification_count_badge(count: usize) -> Span<'static> {
+    let count = u32::try_from(count).unwrap_or(u32::MAX);
+    let (badge, _) = channel_unread_decoration(
+        ChannelUnreadState::Mentioned(count),
+        Style::default(),
+        false,
+    );
+    badge.expect("mentioned unread state always renders a badge")
+}
+
 pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let dashboard = state;
     let entries = state.visible_channel_pane_entries();
@@ -174,6 +195,21 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                         let unread = dashboard.channel_unread(state.id);
                         let (badge, name_style) =
                             channel_unread_decoration(unread, base_style, is_active);
+                        let badge = if state.guild_id.is_none()
+                            && !is_active
+                            && unread != ChannelUnreadState::Seen
+                        {
+                            let message_count = dashboard.channel_unread_message_count(state.id);
+                            if message_count > 0 {
+                                Some(notification_count_badge(message_count))
+                            } else if unread == ChannelUnreadState::Unread {
+                                Some(notification_count_badge(1))
+                            } else {
+                                badge
+                            }
+                        } else {
+                            badge
+                        };
                         let badge_width =
                             badge.as_ref().map(|span| span.content.width()).unwrap_or(0);
                         let label_width = max_width

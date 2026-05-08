@@ -5274,6 +5274,64 @@ fn direct_messages_are_sorted_by_latest_message_id() {
 }
 
 #[test]
+fn direct_message_unread_count_counts_unread_channels() {
+    let mut state = state_with_direct_messages();
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![
+            ReadStateInfo {
+                channel_id: Id::new(10),
+                last_acked_message_id: Some(Id::new(100)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: Id::new(20),
+                last_acked_message_id: Some(Id::new(100)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: Id::new(30),
+                last_acked_message_id: None,
+                mention_count: 5,
+            },
+        ],
+    });
+
+    assert_eq!(state.direct_message_unread_count(), 1);
+}
+
+#[test]
+fn channel_unread_message_count_counts_loaded_messages_after_ack() {
+    let mut state = state_with_direct_messages();
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![
+            ReadStateInfo {
+                channel_id: Id::new(10),
+                last_acked_message_id: Some(Id::new(100)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: Id::new(20),
+                last_acked_message_id: Some(Id::new(100)),
+                mention_count: 0,
+            },
+        ],
+    });
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(20),
+        before: None,
+        messages: (101..=105)
+            .map(|message_id| MessageInfo {
+                guild_id: None,
+                ..message_info(Id::new(20), message_id)
+            })
+            .collect(),
+    });
+
+    assert_eq!(state.channel_unread_message_count(Id::new(20)), 5);
+    assert_eq!(state.direct_message_unread_count(), 1);
+}
+
+#[test]
 fn direct_message_selection_waits_for_channel_confirmation() {
     let mut state = state_with_direct_messages();
 
