@@ -3,7 +3,10 @@ use crate::discord::ids::{Id, marker::GuildMarker};
 
 use super::emoji::{custom_emoji_reaction_item, unicode_emoji_reaction_items};
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
-use super::{DashboardState, EmojiReactionItem, EmojiReactionPickerState, ReactionUsersPopupState};
+use super::{
+    DashboardState, EmojiReactionItem, EmojiReactionPickerState, ReactionUsersPopupState,
+    indexed_shortcut,
+};
 
 impl DashboardState {
     pub fn is_emoji_reaction_picker_open(&self) -> bool {
@@ -110,6 +113,19 @@ impl DashboardState {
         };
         self.close_emoji_reaction_picker();
         Some(command)
+    }
+
+    pub fn activate_emoji_reaction_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
+        let shortcut = shortcut.to_ascii_lowercase();
+        let index = self
+            .emoji_reaction_items()
+            .iter()
+            .enumerate()
+            .position(|(index, _)| indexed_shortcut(index) == Some(shortcut))?;
+        if let Some(picker) = &mut self.emoji_reaction_picker {
+            picker.selected = index;
+        }
+        self.activate_selected_emoji_reaction()
     }
 
     pub(super) fn open_emoji_reaction_picker(&mut self) {

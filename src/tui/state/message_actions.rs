@@ -3,6 +3,7 @@ use crate::discord::{AppCommand, ReactionEmoji};
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
 use super::{
     DashboardState, FocusPane, MessageActionItem, MessageActionKind, MessageActionMenuState,
+    message_action_shortcut,
 };
 
 impl DashboardState {
@@ -333,6 +334,18 @@ impl DashboardState {
                 })
             }
         }
+    }
+
+    pub fn activate_message_action_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
+        let shortcut = shortcut.to_ascii_lowercase();
+        let actions = self.selected_message_action_items();
+        let index = actions.iter().enumerate().position(|(index, action)| {
+            action.enabled
+                && message_action_shortcut(&actions, index)
+                    .is_some_and(|candidate| candidate == shortcut)
+        })?;
+        self.select_message_action_row(index);
+        self.activate_selected_message_action()
     }
 }
 

@@ -18,13 +18,14 @@ use super::{
     focus_pane_at, footer_hint, footer_user_label, format_message_sent_time,
     format_unix_millis_with_offset, forum_post_reaction_summary,
     forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
-    inline_image_preview_area, inline_image_preview_row, member_display_label, member_name_style,
-    message_action_menu_lines, message_author_style, message_item_lines, message_starts_new_day,
-    message_viewport_lines, new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
-    reaction_users_popup_lines, reaction_users_visible_line_count, render_channels, render_guilds,
-    selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
-    sync_view_heights, user_profile_display_name_style, user_profile_popup_has_avatar,
-    user_profile_popup_lines, user_profile_popup_text_geometry,
+    inline_image_preview_area, inline_image_preview_row, member_action_menu_lines,
+    member_display_label, member_name_style, message_action_menu_lines, message_author_style,
+    message_item_lines, message_starts_new_day, message_viewport_lines, new_messages_notice_line,
+    options_popup_lines, poll_vote_picker_lines, reaction_users_popup_lines,
+    reaction_users_visible_line_count, render_channels, render_guilds, selected_avatar_x_offset,
+    selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
+    user_profile_display_name_style, user_profile_popup_has_avatar, user_profile_popup_lines,
+    user_profile_popup_text_geometry,
 };
 use crate::{
     config::DisplayOptions,
@@ -45,7 +46,8 @@ use crate::{
         state::{
             ChannelActionItem, ChannelActionKind, ChannelThreadItem, DashboardState,
             DisplayOptionItem, EmojiReactionItem, FocusPane, GuildActionItem, GuildActionKind,
-            MessageActionItem, MessageActionKind, PollVotePickerItem,
+            MemberActionItem, MemberActionKind, MessageActionItem, MessageActionKind,
+            PollVotePickerItem,
         },
     },
 };
@@ -1987,9 +1989,36 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
     assert_eq!(
         line_texts_from_ratatui(&lines),
         vec![
-            "  Reply",
-            "› Download image (unavailable)",
-            "Enter select · Esc close"
+            "  [r] Reply",
+            "› [d] Download image (unavailable)",
+            "Shortcut/Enter select · Esc close"
+        ]
+    );
+}
+
+#[test]
+fn message_action_menu_uses_numbered_shortcuts_for_duplicate_preferred_keys() {
+    let actions = vec![
+        MessageActionItem {
+            kind: MessageActionKind::Delete,
+            label: "Delete message".to_owned(),
+            enabled: true,
+        },
+        MessageActionItem {
+            kind: MessageActionKind::DownloadImage,
+            label: "Download image".to_owned(),
+            enabled: true,
+        },
+    ];
+
+    let lines = message_action_menu_lines(&actions, 0);
+
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec![
+            "› [1] Delete message",
+            "  [2] Download image",
+            "Shortcut/Enter select · Esc close"
         ]
     );
 }
@@ -2014,9 +2043,9 @@ fn channel_action_menu_renders_pinned_and_thread_actions() {
     assert_eq!(
         line_texts_from_ratatui(&lines),
         vec![
-            "› Show pinned messages",
-            "  Show threads (none)",
-            "Enter select · Esc close",
+            "› [p] Show pinned messages",
+            "  [t] Show threads (none)",
+            "Shortcut/Enter select · Esc close",
         ]
     );
 }
@@ -2033,7 +2062,26 @@ fn guild_action_menu_renders_placeholder_action() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["› No server actions yet", "Enter select · Esc close"]
+        vec![
+            "›     No server actions yet",
+            "Shortcut/Enter select · Esc close"
+        ]
+    );
+}
+
+#[test]
+fn member_action_menu_renders_profile_shortcut() {
+    let actions = vec![MemberActionItem {
+        kind: MemberActionKind::ShowProfile,
+        label: "Show profile".to_owned(),
+        enabled: true,
+    }];
+
+    let lines = member_action_menu_lines(&actions, 0);
+
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec!["› [p] Show profile", "Shortcut/Enter select · Esc close"]
     );
 }
 
@@ -2059,9 +2107,9 @@ fn emoji_reaction_picker_marks_selected_reaction() {
     assert_eq!(
         line_texts_from_ratatui(&lines),
         vec![
-            "  👍 Thumbs up",
-            "› :party: Party",
-            "Enter/Space react · Esc close"
+            "  [1] 👍 Thumbs up",
+            "› [2] :party: Party",
+            "Shortcut/Enter/Space react · Esc close"
         ]
     );
 }
@@ -2086,9 +2134,9 @@ fn poll_vote_picker_marks_selected_and_checked_answers() {
     assert_eq!(
         line_texts_from_ratatui(&lines),
         vec![
-            "  [x] Soup",
-            "› [ ] Noodles",
-            "Space toggle · Enter vote · Esc close",
+            "  [1] [x] Soup",
+            "› [2] [ ] Noodles",
+            "Shortcut/Space toggle · Enter vote · Esc close",
         ]
     );
 }
@@ -2362,7 +2410,7 @@ fn emoji_reaction_picker_reserves_space_for_loaded_custom_image() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["›    Party", "Enter/Space react · Esc close"]
+        vec!["› [1]    Party", "Shortcut/Enter/Space react · Esc close"]
     );
 }
 
@@ -2384,12 +2432,12 @@ fn emoji_reaction_picker_windows_long_lists_around_selection() {
     assert_eq!(
         line_texts_from_ratatui(&lines),
         vec![
-            "  :emoji_8: Emoji 8",
-            "  :emoji_9: Emoji 9",
-            "  :emoji_10: Emoji 10",
-            "  :emoji_11: Emoji 11",
-            "› :emoji_12: Emoji 12",
-            "Enter/Space react · Esc close"
+            "  [9] :emoji_8: Emoji 8",
+            "  [0] :emoji_9: Emoji 9",
+            "      :emoji_10: Emoji 10",
+            "      :emoji_11: Emoji 11",
+            "›     :emoji_12: Emoji 12",
+            "Shortcut/Enter/Space react · Esc close"
         ]
     );
 }

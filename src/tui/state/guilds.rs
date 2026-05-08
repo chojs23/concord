@@ -5,7 +5,10 @@ use crate::discord::{GuildFolder, GuildState};
 
 use super::{ActiveGuildScope, DashboardState, FolderKey};
 use super::{
-    model::{FocusPane, GuildActionItem, GuildActionKind, GuildBranch, GuildPaneEntry},
+    model::{
+        FocusPane, GuildActionItem, GuildActionKind, GuildBranch, GuildPaneEntry,
+        guild_action_shortcut,
+    },
     popups::GuildActionMenuState,
     scroll::{
         clamp_list_viewport, clamp_selected_index, close_collapsed_key, move_index_down,
@@ -252,6 +255,21 @@ impl DashboardState {
         match item.kind {
             GuildActionKind::NoActionsYet => None,
         }
+    }
+
+    pub fn activate_guild_action_shortcut(
+        &mut self,
+        shortcut: char,
+    ) -> Option<crate::discord::AppCommand> {
+        let shortcut = shortcut.to_ascii_lowercase();
+        let actions = self.selected_guild_action_items();
+        let index = actions.iter().enumerate().position(|(index, action)| {
+            action.enabled
+                && guild_action_shortcut(&actions, index)
+                    .is_some_and(|candidate| candidate == shortcut)
+        })?;
+        self.select_guild_action_row(index);
+        self.activate_selected_guild_action()
     }
 
     /// Toggles the collapse state of the folder under the selection. Does

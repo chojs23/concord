@@ -10,7 +10,7 @@ use super::{ActiveGuildScope, DashboardState, ThreadReturnTarget};
 use super::{
     model::{
         ChannelActionItem, ChannelActionKind, ChannelBranch, ChannelPaneEntry, ChannelThreadItem,
-        FocusPane,
+        FocusPane, channel_action_shortcut, indexed_shortcut,
     },
     popups::ChannelActionMenuState,
     presentation::{is_direct_message_channel, sort_channels, sort_direct_message_channels},
@@ -473,6 +473,31 @@ impl DashboardState {
                     guild_id,
                     channel_id: item.channel_id,
                 })
+            }
+        }
+    }
+
+    pub fn activate_channel_action_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
+        let shortcut = shortcut.to_ascii_lowercase();
+        match self.channel_action_menu.as_ref()? {
+            ChannelActionMenuState::Actions { .. } => {
+                let actions = self.selected_channel_action_items();
+                let index = actions.iter().enumerate().position(|(index, action)| {
+                    action.enabled
+                        && channel_action_shortcut(&actions, index)
+                            .is_some_and(|candidate| candidate == shortcut)
+                })?;
+                self.select_channel_action_row(index);
+                self.activate_selected_channel_action()
+            }
+            ChannelActionMenuState::Threads { .. } => {
+                let threads = self.channel_action_thread_items();
+                let index = threads
+                    .iter()
+                    .enumerate()
+                    .position(|(index, _)| indexed_shortcut(index) == Some(shortcut))?;
+                self.select_channel_action_row(index);
+                self.activate_selected_channel_action()
             }
         }
     }

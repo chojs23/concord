@@ -866,6 +866,23 @@ fn a_key_opens_current_channel_actions_from_message_pane() {
 }
 
 #[test]
+fn channel_action_shortcut_loads_pinned_messages() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, char_key('a'));
+
+    let command = handle_key(&mut state, char_key('p'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::LoadPinnedMessages {
+            channel_id: Id::new(2),
+        })
+    );
+    assert!(state.is_pinned_message_view());
+}
+
+#[test]
 fn a_key_opens_selected_channel_actions_from_channel_pane() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Channels);
@@ -899,6 +916,24 @@ fn a_key_opens_member_actions_from_member_pane() {
     assert_eq!(actions.len(), 1);
     assert_eq!(actions[0].label, "Show profile");
     assert!(actions[0].enabled);
+}
+
+#[test]
+fn member_action_shortcut_opens_profile() {
+    let mut state = state_with_members(1);
+    state.focus_pane(FocusPane::Members);
+    handle_key(&mut state, char_key('a'));
+
+    let command = handle_key(&mut state, char_key('p'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::LoadUserProfile {
+            user_id: Id::new(1),
+            guild_id: Some(Id::new(1)),
+        })
+    );
+    assert!(state.is_user_profile_popup_open());
 }
 
 #[test]
@@ -1041,6 +1076,47 @@ fn message_action_menu_reply_opens_composer() {
 }
 
 #[test]
+fn message_action_shortcuts_edit_and_delete_own_message() {
+    let mut edit_state = state_with_own_message();
+    edit_state.focus_pane(FocusPane::Messages);
+    handle_key(&mut edit_state, key(KeyCode::Enter));
+
+    let command = handle_key(&mut edit_state, char_key('e'));
+
+    assert_eq!(command, None);
+    assert!(!edit_state.is_message_action_menu_open());
+    assert!(edit_state.is_composing());
+
+    let mut delete_state = state_with_own_message();
+    delete_state.focus_pane(FocusPane::Messages);
+    handle_key(&mut delete_state, key(KeyCode::Enter));
+
+    let command = handle_key(&mut delete_state, char_key('d'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::DeleteMessage {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+        })
+    );
+    assert!(!delete_state.is_message_action_menu_open());
+}
+
+#[test]
+fn message_action_shortcuts_ignore_control_modified_keys() {
+    let mut state = state_with_own_message();
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    let command = handle_key(&mut state, ctrl_key('d'));
+
+    assert_eq!(command, None);
+    assert!(state.is_message_action_menu_open());
+    assert_eq!(state.selected_message_action_index(), Some(0));
+}
+
+#[test]
 fn canceling_reply_composer_clears_reply_target() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
@@ -1127,6 +1203,26 @@ fn message_action_menu_view_image_opens_viewer_and_esc_closes_nested_menu_first(
 }
 
 #[test]
+fn image_viewer_action_shortcut_downloads_image() {
+    let mut state = state_with_image_message();
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('v'));
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    let command = handle_key(&mut state, char_key('d'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::DownloadAttachment {
+            url: "https://cdn.discordapp.com/cat.png".to_owned(),
+            filename: "cat.png".to_owned(),
+        })
+    );
+    assert!(!state.is_image_viewer_action_menu_open());
+}
+
+#[test]
 fn message_action_menu_add_reaction_opens_emoji_picker() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
@@ -1174,6 +1270,25 @@ fn emoji_picker_space_selects_reaction() {
 
     handle_key(&mut state, key(KeyCode::Down));
     let command = handle_key(&mut state, char_key(' '));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::AddReaction {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: ReactionEmoji::Unicode("❤️".to_owned()),
+        })
+    );
+    assert!(!state.is_emoji_reaction_picker_open());
+}
+
+#[test]
+fn emoji_picker_number_shortcut_selects_reaction() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    open_emoji_picker(&mut state);
+
+    let command = handle_key(&mut state, char_key('2'));
 
     assert_eq!(
         command,
@@ -1313,6 +1428,26 @@ fn multiselect_poll_picker_toggles_and_submits_selected_answers() {
         })
     );
     assert!(!state.is_poll_vote_picker_open());
+}
+
+#[test]
+fn poll_picker_number_shortcut_toggles_answer() {
+    let mut state = state_with_multiselect_poll();
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('c'));
+
+    handle_key(&mut state, char_key('2'));
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::VotePoll {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            answer_ids: vec![1, 2],
+        })
+    );
 }
 
 fn state_with_folder() -> DashboardState {
@@ -1548,6 +1683,15 @@ fn state_with_messages(count: u64) -> DashboardState {
             forwarded_snapshots: Vec::new(),
         });
     }
+    state
+}
+
+fn state_with_own_message() -> DashboardState {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(99)),
+    });
     state
 }
 

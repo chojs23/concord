@@ -1,7 +1,9 @@
 use crate::discord::{AppCommand, InlinePreviewInfo, ids::Id, ids::marker::MessageMarker};
 
 use super::scroll::clamp_selected_index;
-use super::{DashboardState, ImageViewerItem, MessageActionItem, MessageActionKind};
+use super::{
+    DashboardState, ImageViewerItem, MessageActionItem, MessageActionKind, message_action_shortcut,
+};
 use crate::tui::state::popups::ImageViewerState;
 
 const IMAGE_VIEWER_ACTION_COUNT: usize = 1;
@@ -141,6 +143,20 @@ impl DashboardState {
             }
             _ => None,
         }
+    }
+
+    pub fn activate_image_viewer_action_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
+        let shortcut = shortcut.to_ascii_lowercase();
+        let actions = self.selected_image_viewer_action_items();
+        let index = actions.iter().enumerate().position(|(index, action)| {
+            action.enabled
+                && message_action_shortcut(&actions, index)
+                    .is_some_and(|candidate| candidate == shortcut)
+        })?;
+        if let Some(viewer) = &mut self.image_viewer {
+            viewer.action_menu_selected = Some(index);
+        }
+        self.activate_selected_image_viewer_action()
     }
 
     fn image_viewer_previews(

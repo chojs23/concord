@@ -326,6 +326,7 @@ pub(super) fn guild_action_menu_lines(
         .enumerate()
         .map(|(index, action)| {
             let marker = if index == selected { "› " } else { "  " };
+            let shortcut = shortcut_prefix(guild_action_shortcut(actions, index));
             let mut style = if action.enabled {
                 Style::default()
             } else {
@@ -338,23 +339,28 @@ pub(super) fn guild_action_menu_lines(
             }
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(shortcut, Style::default().fg(DIM)),
                 Span::styled(action.label.clone(), style),
             ])
         })
         .collect();
     lines.push(Line::from(Span::styled(
-        "Enter select · Esc close",
+        "Shortcut/Enter select · Esc close",
         Style::default().fg(DIM),
     )));
     lines
 }
 
-fn member_action_menu_lines(actions: &[MemberActionItem], selected: usize) -> Vec<Line<'static>> {
+pub(super) fn member_action_menu_lines(
+    actions: &[MemberActionItem],
+    selected: usize,
+) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = actions
         .iter()
         .enumerate()
         .map(|(index, action)| {
             let marker = if index == selected { "› " } else { "  " };
+            let shortcut = shortcut_prefix(member_action_shortcut(actions, index));
             let mut style = if action.enabled {
                 Style::default()
             } else {
@@ -367,12 +373,13 @@ fn member_action_menu_lines(actions: &[MemberActionItem], selected: usize) -> Ve
             }
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(shortcut, Style::default().fg(DIM)),
                 Span::styled(action.label.clone(), style),
             ])
         })
         .collect();
     lines.push(Line::from(Span::styled(
-        "Enter select · Esc close",
+        "Shortcut/Enter select · Esc close",
         Style::default().fg(DIM),
     )));
     lines
@@ -784,6 +791,7 @@ pub(super) fn message_action_menu_lines(
         .enumerate()
         .map(|(index, action)| {
             let marker = if index == selected { "› " } else { "  " };
+            let shortcut = shortcut_prefix(message_action_shortcut(actions, index));
             let label = if action.enabled {
                 action.label.to_owned()
             } else {
@@ -801,12 +809,13 @@ pub(super) fn message_action_menu_lines(
             }
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(shortcut, Style::default().fg(DIM)),
                 Span::styled(label, style),
             ])
         })
         .collect();
     lines.push(Line::from(Span::styled(
-        "Enter select · Esc close",
+        "Shortcut/Enter select · Esc close",
         Style::default().fg(DIM),
     )));
     lines
@@ -821,6 +830,7 @@ pub(super) fn channel_action_menu_lines(
         .enumerate()
         .map(|(index, action)| {
             let marker = if index == selected { "› " } else { "  " };
+            let shortcut = shortcut_prefix(channel_action_shortcut(actions, index));
             let mut style = if action.enabled {
                 Style::default()
             } else {
@@ -833,12 +843,13 @@ pub(super) fn channel_action_menu_lines(
             }
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(shortcut, Style::default().fg(DIM)),
                 Span::styled(action.label.clone(), style),
             ])
         })
         .collect();
     lines.push(Line::from(Span::styled(
-        "Enter select · Esc close",
+        "Shortcut/Enter select · Esc close",
         Style::default().fg(DIM),
     )));
     lines
@@ -856,6 +867,7 @@ fn channel_thread_menu_lines(threads: &[ChannelThreadItem], selected: usize) -> 
             .enumerate()
             .map(|(index, thread)| {
                 let marker = if index == selected { "› " } else { "  " };
+                let shortcut = shortcut_prefix(indexed_shortcut(index));
                 let mut suffix = String::new();
                 if thread.archived {
                     suffix.push_str(" [archived]");
@@ -871,6 +883,7 @@ fn channel_thread_menu_lines(threads: &[ChannelThreadItem], selected: usize) -> 
                 }
                 Line::from(vec![
                     Span::styled(marker, Style::default().fg(ACCENT)),
+                    Span::styled(shortcut, Style::default().fg(DIM)),
                     Span::styled(format!("» {}", thread.label), style),
                     Span::styled(suffix, Style::default().fg(DIM)),
                 ])
@@ -878,7 +891,7 @@ fn channel_thread_menu_lines(threads: &[ChannelThreadItem], selected: usize) -> 
             .collect()
     };
     lines.push(Line::from(Span::styled(
-        "Enter open · Esc back",
+        "Shortcut/Enter open · Esc back",
         Style::default().fg(DIM),
     )));
     lines
@@ -893,6 +906,7 @@ pub(super) fn poll_vote_picker_lines(
         .enumerate()
         .map(|(index, answer)| {
             let marker = if index == selected { "› " } else { "  " };
+            let shortcut = shortcut_prefix(indexed_shortcut(index));
             let checkbox = if answer.selected { "[x]" } else { "[ ]" };
             let mut style = Style::default();
             if index == selected {
@@ -902,12 +916,13 @@ pub(super) fn poll_vote_picker_lines(
             }
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(shortcut, Style::default().fg(DIM)),
                 Span::styled(format!("{checkbox} {}", answer.label), style),
             ])
         })
         .collect();
     lines.push(Line::from(Span::styled(
-        "Space toggle · Enter vote · Esc close",
+        "Shortcut/Space toggle · Enter vote · Esc close",
         Style::default().fg(DIM),
     )));
     lines
@@ -1070,6 +1085,7 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
         .map(|(offset, reaction)| {
             let index = visible_range.start + offset;
             let marker = if index == selected { "› " } else { "  " };
+            let shortcut = shortcut_prefix(indexed_shortcut(index));
             let mut style = Style::default();
             if index == selected {
                 style = style
@@ -1082,6 +1098,7 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
                     .is_some_and(|url| thumbnail_urls.iter().any(|ready| ready == &url));
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(shortcut, Style::default().fg(DIM)),
                 Span::styled(
                     format_emoji_reaction_item(reaction, thumbnail_ready, show_custom_emoji),
                     style,
@@ -1090,10 +1107,16 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
         })
         .collect();
     lines.push(Line::from(Span::styled(
-        "Enter/Space react · Esc close",
+        "Shortcut/Enter/Space react · Esc close",
         Style::default().fg(DIM),
     )));
     lines
+}
+
+fn shortcut_prefix(shortcut: Option<char>) -> String {
+    shortcut
+        .map(|shortcut| format!("[{shortcut}] "))
+        .unwrap_or_else(|| "    ".to_owned())
 }
 
 fn render_emoji_reaction_images(

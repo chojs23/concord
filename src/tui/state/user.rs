@@ -12,7 +12,7 @@ use super::{
         MemberEntry, MemberGroup, channel_recipient_group, flatten_member_groups,
         guild_member_groups,
     },
-    model::{FocusPane, MemberActionItem, MemberActionKind},
+    model::{FocusPane, MemberActionItem, MemberActionKind, member_action_shortcut},
     popups::{MemberActionMenuState, UserProfilePopupState},
     scroll::{clamp_selected_index, move_index_down, move_index_up},
 };
@@ -143,6 +143,18 @@ impl DashboardState {
                 self.open_user_profile_popup(menu.user_id, menu.guild_id)
             }
         }
+    }
+
+    pub fn activate_member_action_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
+        let shortcut = shortcut.to_ascii_lowercase();
+        let actions = self.selected_member_action_items();
+        let index = actions.iter().enumerate().position(|(index, action)| {
+            action.enabled
+                && member_action_shortcut(&actions, index)
+                    .is_some_and(|candidate| candidate == shortcut)
+        })?;
+        self.select_member_action_row(index);
+        self.activate_selected_member_action()
     }
 
     /// Opens the profile popup for `user_id`. Returns

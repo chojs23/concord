@@ -154,6 +154,9 @@ fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
         code if is_down_key(code) => state.move_message_action_down(),
         code if is_up_key(code) => state.move_message_action_up(),
         code if is_confirm_key(code) => return state.activate_selected_message_action(),
+        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
+            return state.activate_message_action_shortcut(shortcut);
+        }
         _ => {}
     }
 
@@ -179,6 +182,9 @@ fn handle_image_viewer_action_menu_key(
     match key.code {
         KeyCode::Esc => state.close_image_viewer_action_menu(),
         code if is_confirm_key(code) => return state.activate_selected_image_viewer_action(),
+        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
+            return state.activate_image_viewer_action_shortcut(shortcut);
+        }
         _ => {}
     }
 
@@ -201,6 +207,9 @@ fn handle_member_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> O
         code if is_down_key(code) => state.move_member_action_down(),
         code if is_up_key(code) => state.move_member_action_up(),
         code if is_confirm_key(code) => return state.activate_selected_member_action(),
+        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
+            return state.activate_member_action_shortcut(shortcut);
+        }
         _ => {}
     }
     None
@@ -212,6 +221,9 @@ fn handle_guild_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Op
         code if is_down_key(code) => state.move_guild_action_down(),
         code if is_up_key(code) => state.move_guild_action_up(),
         code if is_confirm_key(code) => return state.activate_selected_guild_action(),
+        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
+            return state.activate_guild_action_shortcut(shortcut);
+        }
         _ => {}
     }
     None
@@ -228,6 +240,9 @@ fn handle_channel_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
         code if is_down_key(code) => state.move_channel_action_down(),
         code if is_up_key(code) => state.move_channel_action_up(),
         code if is_confirm_key(code) => return state.activate_selected_channel_action(),
+        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
+            return state.activate_channel_action_shortcut(shortcut);
+        }
         _ => {}
     }
 
@@ -243,6 +258,9 @@ fn handle_emoji_reaction_picker_key(
         code if is_down_key(code) => state.move_emoji_reaction_down(),
         code if is_up_key(code) => state.move_emoji_reaction_up(),
         code if is_confirm_key(code) => return state.activate_selected_emoji_reaction(),
+        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
+            return state.activate_emoji_reaction_shortcut(shortcut);
+        }
         _ => {}
     }
 
@@ -256,6 +274,9 @@ fn handle_poll_vote_picker_key(state: &mut DashboardState, key: KeyEvent) -> Opt
         code if is_up_key(code) => state.move_poll_vote_picker_up(),
         KeyCode::Char(' ') => state.toggle_selected_poll_vote_answer(),
         KeyCode::Enter => return state.activate_poll_vote_picker(),
+        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
+            state.toggle_poll_vote_answer_shortcut(shortcut)
+        }
         _ => {}
     }
 
@@ -317,6 +338,10 @@ fn is_right_key(code: KeyCode) -> bool {
 
 fn is_confirm_key(code: KeyCode) -> bool {
     matches!(code, KeyCode::Enter | KeyCode::Char(' '))
+}
+
+fn is_shortcut_key(key: KeyEvent) -> bool {
+    key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT
 }
 
 fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {

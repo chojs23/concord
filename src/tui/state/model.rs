@@ -38,6 +38,36 @@ pub struct MessageActionItem {
     pub enabled: bool,
 }
 
+impl MessageActionKind {
+    fn preferred_shortcut(&self) -> Option<char> {
+        match self {
+            MessageActionKind::Reply => Some('r'),
+            MessageActionKind::Edit => Some('e'),
+            MessageActionKind::Delete => Some('d'),
+            MessageActionKind::OpenThread => Some('t'),
+            MessageActionKind::ViewImage => Some('v'),
+            MessageActionKind::DownloadImage => Some('d'),
+            MessageActionKind::DownloadAttachment(_) => Some('f'),
+            MessageActionKind::AddReaction => Some('a'),
+            MessageActionKind::RemoveReaction(_) => Some('x'),
+            MessageActionKind::ShowReactionUsers => Some('u'),
+            MessageActionKind::ShowProfile => Some('p'),
+            MessageActionKind::SetPinned(_) => Some('n'),
+            MessageActionKind::VotePollAnswer(_) => None,
+            MessageActionKind::OpenPollVotePicker => Some('c'),
+        }
+    }
+}
+
+pub fn message_action_shortcut(actions: &[MessageActionItem], index: usize) -> Option<char> {
+    let action = actions.get(index)?;
+    unique_preferred_shortcut(
+        action.kind.preferred_shortcut(),
+        actions.iter().map(|item| item.kind.preferred_shortcut()),
+    )
+    .or_else(|| indexed_shortcut(index))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ImageViewerItem {
     pub index: usize,
@@ -60,6 +90,27 @@ pub struct ChannelActionItem {
     pub enabled: bool,
 }
 
+impl ChannelActionKind {
+    fn preferred_shortcut(&self) -> char {
+        match self {
+            ChannelActionKind::LoadPinnedMessages => 'p',
+            ChannelActionKind::ShowThreads => 't',
+            ChannelActionKind::MarkAsRead => 'm',
+        }
+    }
+}
+
+pub fn channel_action_shortcut(actions: &[ChannelActionItem], index: usize) -> Option<char> {
+    let action = actions.get(index)?;
+    unique_preferred_shortcut(
+        Some(action.kind.preferred_shortcut()),
+        actions
+            .iter()
+            .map(|item| Some(item.kind.preferred_shortcut())),
+    )
+    .or_else(|| indexed_shortcut(index))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GuildActionKind {
     NoActionsYet,
@@ -72,6 +123,12 @@ pub struct GuildActionItem {
     pub enabled: bool,
 }
 
+pub fn guild_action_shortcut(actions: &[GuildActionItem], index: usize) -> Option<char> {
+    actions
+        .get(index)
+        .and_then(|action| action.enabled.then_some('s'))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MemberActionKind {
     ShowProfile,
@@ -82,6 +139,45 @@ pub struct MemberActionItem {
     pub kind: MemberActionKind,
     pub label: String,
     pub enabled: bool,
+}
+
+impl MemberActionKind {
+    fn preferred_shortcut(&self) -> char {
+        match self {
+            MemberActionKind::ShowProfile => 'p',
+        }
+    }
+}
+
+pub fn member_action_shortcut(actions: &[MemberActionItem], index: usize) -> Option<char> {
+    let action = actions.get(index)?;
+    unique_preferred_shortcut(
+        Some(action.kind.preferred_shortcut()),
+        actions
+            .iter()
+            .map(|item| Some(item.kind.preferred_shortcut())),
+    )
+    .or_else(|| indexed_shortcut(index))
+}
+
+pub fn indexed_shortcut(index: usize) -> Option<char> {
+    match index {
+        0..=8 => char::from_digit(u32::try_from(index + 1).ok()?, 10),
+        9 => Some('0'),
+        _ => None,
+    }
+}
+
+fn unique_preferred_shortcut(
+    preferred: Option<char>,
+    shortcuts: impl IntoIterator<Item = Option<char>>,
+) -> Option<char> {
+    let preferred = preferred?;
+    let matches = shortcuts
+        .into_iter()
+        .filter(|shortcut| shortcut.is_some_and(|shortcut| shortcut == preferred))
+        .count();
+    (matches == 1).then_some(preferred)
 }
 
 pub const FORUM_POST_CARD_HEIGHT: usize = 5;
