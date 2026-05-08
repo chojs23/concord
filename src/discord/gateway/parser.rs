@@ -143,9 +143,12 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
 
     let mut merged_presences = parse_merged_presences(data);
     if let Some(presences) = data.get("presences").and_then(Value::as_array) {
-        merged_presences.extend(presences.iter().filter_map(parse_presence_entry).map(
-            |(user_id, status, activities)| (user_id, (status, activities)),
-        ));
+        merged_presences.extend(
+            presences
+                .iter()
+                .filter_map(parse_presence_entry)
+                .map(|(user_id, status, activities)| (user_id, (status, activities))),
+        );
     }
 
     // With DEDUPE_USER_OBJECTS in capabilities (bit 4), Discord ships every
@@ -2528,10 +2531,7 @@ mod tests {
         assert_eq!(activities.len(), 1);
         assert_eq!(activities[0].kind, ActivityKind::Streaming);
         assert_eq!(activities[0].name, "Twitch");
-        assert_eq!(
-            activities[0].url.as_deref(),
-            Some("https://twitch.tv/foo")
-        );
+        assert_eq!(activities[0].url.as_deref(), Some("https://twitch.tv/foo"));
     }
 
     #[test]

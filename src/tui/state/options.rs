@@ -1,13 +1,14 @@
-use crate::config::DisplayOptions;
+use crate::config::{DisplayOptions, ImagePreviewQualityPreset};
 
 use super::{DashboardState, popups::OptionsPopupState};
 
-const OPTION_COUNT: usize = 4;
+const OPTION_COUNT: usize = 5;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisplayOptionItem {
     pub label: &'static str,
     pub enabled: bool,
+    pub value: Option<&'static str>,
     pub effective: bool,
     pub description: &'static str,
 }
@@ -30,6 +31,10 @@ impl DashboardState {
 
     pub fn show_images(&self) -> bool {
         self.display_options.images_visible()
+    }
+
+    pub fn image_preview_quality(&self) -> ImagePreviewQualityPreset {
+        self.display_options.image_preview_quality
     }
 
     pub fn show_custom_emoji(&self) -> bool {
@@ -72,24 +77,35 @@ impl DashboardState {
             DisplayOptionItem {
                 label: "Disable all image previews",
                 enabled: options.disable_image_preview,
+                value: None,
                 effective: options.disable_image_preview,
                 description: "Master switch for avatars, images, and custom emoji images.",
             },
             DisplayOptionItem {
                 label: "Show avatars",
                 enabled: options.show_avatars,
+                value: None,
                 effective: options.avatars_visible(),
                 description: "Message and profile avatars.",
             },
             DisplayOptionItem {
                 label: "Show images",
                 enabled: options.show_images,
+                value: None,
                 effective: options.images_visible(),
                 description: "Attachment, embed, and image viewer previews.",
             },
             DisplayOptionItem {
+                label: "Image preview quality",
+                enabled: true,
+                value: Some(options.image_preview_quality.label()),
+                effective: options.images_visible(),
+                description: "Quality preset for attachment, embed, and viewer previews.",
+            },
+            DisplayOptionItem {
                 label: "Show custom emoji images",
                 enabled: options.show_custom_emoji,
+                value: None,
                 effective: options.custom_emoji_visible(),
                 description: "When off, custom emoji are shown as their emoji id.",
             },
@@ -108,7 +124,11 @@ impl DashboardState {
             }
             1 => self.display_options.show_avatars = !self.display_options.show_avatars,
             2 => self.display_options.show_images = !self.display_options.show_images,
-            3 => self.display_options.show_custom_emoji = !self.display_options.show_custom_emoji,
+            3 => {
+                self.display_options.image_preview_quality =
+                    self.display_options.image_preview_quality.next()
+            }
+            4 => self.display_options.show_custom_emoji = !self.display_options.show_custom_emoji,
             _ => return,
         }
         if !self.show_images() {

@@ -1,8 +1,11 @@
 use std::collections::HashSet;
 
-use crate::discord::{
-    InlinePreviewInfo,
-    ids::{Id, marker::MessageMarker},
+use crate::{
+    config::ImagePreviewQualityPreset,
+    discord::{
+        InlinePreviewInfo,
+        ids::{Id, marker::MessageMarker},
+    },
 };
 
 use super::super::{
@@ -17,8 +20,8 @@ use super::super::{
 const EMOJI_PREFETCH_FORMAT_WIDTH: usize = 10_000;
 use super::AVATAR_PREVIEW_HEIGHT;
 
+const EFFICIENT_IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 6;
 const IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
-const IMAGE_PREVIEW_SOURCE_PIXELS_PER_ROW: u64 = IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN * 3;
 const DISCORD_MEDIA_PROXY_PREFIX: &str = "https://media.discordapp.net/";
 const DISCORD_IMAGES_EXTERNAL_PREFIX: &str = "https://images-ext-";
 const DISCORD_IMAGES_EXTERNAL_HOST_SUFFIX: &str = ".discordapp.net";
@@ -101,6 +104,7 @@ pub(in crate::tui) fn visible_image_preview_targets(
     }
 
     if let Some((message_id, preview_index, preview)) = state.selected_image_viewer_preview() {
+        let quality = state.image_preview_quality();
         let preview_height = image_preview_height_for_dimensions(
             layout.viewer_preview_width,
             layout.viewer_max_preview_height,
@@ -123,13 +127,19 @@ pub(in crate::tui) fn visible_image_preview_targets(
             top_clip_rows: 0,
             accent_color: preview.accent_color,
             message_id,
-            url: preview_request_url(preview, layout.viewer_preview_width, preview_height),
+            url: preview_request_url(
+                preview,
+                layout.viewer_preview_width,
+                preview_height,
+                quality,
+            ),
             filename: preview.filename.to_owned(),
         }];
     }
 
     let mut rendered_rows = 0usize;
     let mut targets = Vec::new();
+    let quality = state.image_preview_quality();
 
     for (message_index, message) in state.visible_messages().into_iter().enumerate() {
         if rendered_rows >= layout.list_height {
@@ -179,7 +189,7 @@ pub(in crate::tui) fn visible_image_preview_targets(
                     top_clip_rows: u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX),
                     accent_color: album_accent_color,
                     message_id: message.id,
-                    url: preview_request_url(preview, cell.width, cell.height),
+                    url: preview_request_url(preview, cell.width, cell.height, quality),
                     filename: preview.filename.to_owned(),
                 });
             }
@@ -201,14 +211,19 @@ fn preview_request_url(
     preview: InlinePreviewInfo<'_>,
     width_columns: u16,
     height_rows: u16,
+    quality: ImagePreviewQualityPreset,
 ) -> String {
+    if quality == ImagePreviewQualityPreset::Original {
+        return preview.url.to_owned();
+    }
+
     if let Some(proxy_url) = preview.proxy_url
         && discord_media_proxy_supports_preview_resize(proxy_url)
     {
-        return discord_media_proxy_preview_url(proxy_url, width_columns, height_rows);
+        return discord_media_proxy_preview_url(proxy_url, width_columns, height_rows, quality);
     }
 
-    youtube_thumbnail_preview_url(preview.url, width_columns, height_rows)
+    youtube_thumbnail_preview_url(preview.url, width_columns, height_rows, quality)
         .unwrap_or_else(|| preview.url.to_owned())
 }
 
@@ -216,6 +231,7 @@ fn youtube_thumbnail_preview_url(
     url: &str,
     width_columns: u16,
     height_rows: u16,
+    quality: ImagePreviewQualityPreset,
 ) -> Option<String> {
     let prefix = YOUTUBE_THUMBNAIL_PREFIXES
         .iter()
@@ -234,12 +250,9 @@ fn youtube_thumbnail_preview_url(
     let (variant, extension) = file.rsplit_once('.')?;
     let source_size = youtube_thumbnail_size(variant)?;
 
-    let width = preview_dimension_pixels(
-        u64::from(width_columns),
-        IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN,
-    );
-    let height =
-        preview_dimension_pixels(u64::from(height_rows), IMAGE_PREVIEW_SOURCE_PIXELS_PER_ROW);
+    let (pixels_per_column, pixels_per_row) = preview_source_pixels_per_cell(quality);
+    let width = preview_dimension_pixels(u64::from(width_columns), pixels_per_column);
+    let height = preview_dimension_pixels(u64::from(height_rows), pixels_per_row);
     let requested_size =
         if width >= YOUTUBE_HIGH_PREVIEW_MIN_WIDTH || height >= YOUTUBE_HIGH_PREVIEW_MIN_HEIGHT {
             YoutubeThumbnailSize::High
@@ -273,13 +286,11 @@ fn discord_media_proxy_preview_url(
     proxy_url: &str,
     width_columns: u16,
     height_rows: u16,
+    quality: ImagePreviewQualityPreset,
 ) -> String {
-    let width = preview_dimension_pixels(
-        u64::from(width_columns),
-        IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN,
-    );
-    let height =
-        preview_dimension_pixels(u64::from(height_rows), IMAGE_PREVIEW_SOURCE_PIXELS_PER_ROW);
+    let (pixels_per_column, pixels_per_row) = preview_source_pixels_per_cell(quality);
+    let width = preview_dimension_pixels(u64::from(width_columns), pixels_per_column);
+    let height = preview_dimension_pixels(u64::from(height_rows), pixels_per_row);
     let (base, query) = proxy_url.split_once('?').unwrap_or((proxy_url, ""));
     let mut params = query
         .split('&')
@@ -291,11 +302,23 @@ fn discord_media_proxy_preview_url(
         .map(str::to_owned)
         .collect::<Vec<_>>();
     params.push(format!("format={DISCORD_MEDIA_PROXY_PREVIEW_FORMAT}"));
-    params.push(format!("quality={DISCORD_MEDIA_PROXY_PREVIEW_QUALITY}"));
+    if quality == ImagePreviewQualityPreset::High {
+        params.push(format!("quality={DISCORD_MEDIA_PROXY_PREVIEW_QUALITY}"));
+    }
     params.push(format!("width={width}"));
     params.push(format!("height={height}"));
 
     format!("{base}?{}", params.join("&"))
+}
+
+fn preview_source_pixels_per_cell(quality: ImagePreviewQualityPreset) -> (u64, u64) {
+    let pixels_per_column = match quality {
+        ImagePreviewQualityPreset::Efficient => EFFICIENT_IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN,
+        ImagePreviewQualityPreset::Balanced
+        | ImagePreviewQualityPreset::High
+        | ImagePreviewQualityPreset::Original => IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN,
+    };
+    (pixels_per_column, pixels_per_column * 3)
 }
 
 fn discord_media_proxy_supports_preview_resize(proxy_url: &str) -> bool {

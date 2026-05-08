@@ -16,7 +16,38 @@ pub struct DisplayOptions {
     pub disable_image_preview: bool,
     pub show_avatars: bool,
     pub show_images: bool,
+    pub image_preview_quality: ImagePreviewQualityPreset,
     pub show_custom_emoji: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagePreviewQualityPreset {
+    Efficient,
+    #[default]
+    Balanced,
+    High,
+    Original,
+}
+
+impl ImagePreviewQualityPreset {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Efficient => "efficient",
+            Self::Balanced => "balanced",
+            Self::High => "high",
+            Self::Original => "original",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Efficient => Self::Balanced,
+            Self::Balanced => Self::High,
+            Self::High => Self::Original,
+            Self::Original => Self::Efficient,
+        }
+    }
 }
 
 impl Default for DisplayOptions {
@@ -25,6 +56,7 @@ impl Default for DisplayOptions {
             disable_image_preview: false,
             show_avatars: true,
             show_images: true,
+            image_preview_quality: ImagePreviewQualityPreset::default(),
             show_custom_emoji: true,
         }
     }
@@ -139,7 +171,8 @@ mod tests {
     };
 
     use super::{
-        AppConfig, DisplayOptions, load_display_options_from_path, save_display_options_to_path,
+        AppConfig, DisplayOptions, ImagePreviewQualityPreset, load_display_options_from_path,
+        save_display_options_to_path,
     };
 
     #[test]
@@ -149,6 +182,10 @@ mod tests {
         assert!(options.avatars_visible());
         assert!(options.images_visible());
         assert!(options.custom_emoji_visible());
+        assert_eq!(
+            options.image_preview_quality,
+            ImagePreviewQualityPreset::Balanced
+        );
     }
 
     #[test]
@@ -157,6 +194,7 @@ mod tests {
             disable_image_preview: true,
             show_avatars: true,
             show_images: true,
+            image_preview_quality: ImagePreviewQualityPreset::Balanced,
             show_custom_emoji: true,
         };
 
@@ -173,7 +211,22 @@ mod tests {
         assert!(config.display.disable_image_preview);
         assert!(config.display.show_avatars);
         assert!(config.display.show_images);
+        assert_eq!(
+            config.display.image_preview_quality,
+            ImagePreviewQualityPreset::Balanced
+        );
         assert!(config.display.show_custom_emoji);
+    }
+
+    #[test]
+    fn parses_image_preview_quality_preset() {
+        let config: AppConfig = toml::from_str("[display]\nimage_preview_quality = \"original\"\n")
+            .expect("quality preset config should parse");
+
+        assert_eq!(
+            config.display.image_preview_quality,
+            ImagePreviewQualityPreset::Original
+        );
     }
 
     #[test]
@@ -183,6 +236,7 @@ mod tests {
             disable_image_preview: true,
             show_avatars: false,
             show_images: false,
+            image_preview_quality: ImagePreviewQualityPreset::Original,
             show_custom_emoji: false,
         };
 

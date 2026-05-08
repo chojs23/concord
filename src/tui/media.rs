@@ -581,6 +581,7 @@ mod tests {
     use image::{DynamicImage, ImageBuffer, Rgba};
 
     use crate::{
+        config::{DisplayOptions, ImagePreviewQualityPreset},
         discord::{
             AppCommand, AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, EmbedInfo,
             MessageInfo, MessageSnapshotInfo, ReactionEmoji, ReactionInfo,
@@ -726,8 +727,249 @@ mod tests {
             target.url,
             concat!(
                 "https://media.discordapp.net/attachments/691/150/photo.png",
+                "?ex=abc&is=def&hm=123&format=webp&width=160&height=90"
+            )
+        );
+    }
+
+    #[test]
+    fn efficient_image_preview_quality_uses_smaller_proxy_dimensions() {
+        let mut state = state_with_image_messages_and_display_options(
+            0,
+            &[],
+            DisplayOptions {
+                image_preview_quality: ImagePreviewQualityPreset::Efficient,
+                ..DisplayOptions::default()
+            },
+        );
+        let mut attachment = image_attachment(1);
+        attachment.proxy_url = concat!(
+            "https://media.discordapp.net/attachments/691/150/photo.png",
+            "?ex=abc&is=def&hm=123&format=png&quality=lossless&width=4000&height=3000"
+        )
+        .to_owned();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("photo".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: vec![attachment],
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let target = visible_image_preview_targets(&state, layout(12))
+            .into_iter()
+            .next()
+            .expect("image attachment should produce preview target");
+
+        assert_eq!(
+            target.url,
+            concat!(
+                "https://media.discordapp.net/attachments/691/150/photo.png",
+                "?ex=abc&is=def&hm=123&format=webp&width=96&height=54"
+            )
+        );
+    }
+
+    #[test]
+    fn high_image_preview_quality_preserves_lossless_proxy_quality() {
+        let mut state = state_with_image_messages_and_display_options(
+            0,
+            &[],
+            DisplayOptions {
+                image_preview_quality: ImagePreviewQualityPreset::High,
+                ..DisplayOptions::default()
+            },
+        );
+        let mut attachment = image_attachment(1);
+        attachment.proxy_url = concat!(
+            "https://media.discordapp.net/attachments/691/150/photo.png",
+            "?ex=abc&is=def&hm=123&format=png&width=4000&height=3000"
+        )
+        .to_owned();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("photo".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: vec![attachment],
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let target = visible_image_preview_targets(&state, layout(12))
+            .into_iter()
+            .next()
+            .expect("image attachment should produce preview target");
+
+        assert_eq!(
+            target.url,
+            concat!(
+                "https://media.discordapp.net/attachments/691/150/photo.png",
                 "?ex=abc&is=def&hm=123&format=webp&quality=lossless&width=160&height=90"
             )
+        );
+    }
+
+    #[test]
+    fn original_image_preview_quality_uses_source_url_without_proxy_resize() {
+        let mut state = state_with_image_messages_and_display_options(
+            0,
+            &[],
+            DisplayOptions {
+                image_preview_quality: ImagePreviewQualityPreset::Original,
+                ..DisplayOptions::default()
+            },
+        );
+        let mut attachment = image_attachment(1);
+        attachment.proxy_url = concat!(
+            "https://media.discordapp.net/attachments/691/150/photo.png",
+            "?ex=abc&is=def&hm=123&format=png&width=4000&height=3000"
+        )
+        .to_owned();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("photo".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: vec![attachment],
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let target = visible_image_preview_targets(&state, layout(12))
+            .into_iter()
+            .next()
+            .expect("image attachment should produce preview target");
+
+        assert_eq!(target.url, "https://cdn.discordapp.com/image-1.png");
+    }
+
+    #[test]
+    fn original_image_preview_quality_applies_to_image_viewer_preview() {
+        let mut state = state_with_image_messages_and_display_options(
+            0,
+            &[],
+            DisplayOptions {
+                image_preview_quality: ImagePreviewQualityPreset::Original,
+                ..DisplayOptions::default()
+            },
+        );
+        let mut attachment = image_attachment(1);
+        attachment.proxy_url = concat!(
+            "https://media.discordapp.net/attachments/691/150/photo.png",
+            "?ex=abc&is=def&hm=123&format=png&width=4000&height=3000"
+        )
+        .to_owned();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("photo".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: vec![attachment],
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state.focus_pane(FocusPane::Messages);
+        assert!(state.open_image_viewer_for_selected_message());
+
+        let target = visible_image_preview_targets(&state, layout(12))
+            .into_iter()
+            .next()
+            .expect("image viewer should produce preview target");
+
+        assert!(target.viewer);
+        assert_eq!(target.url, "https://cdn.discordapp.com/image-1.png");
+    }
+
+    #[test]
+    fn image_preview_quality_does_not_change_avatar_or_custom_emoji_requests() {
+        let mut state = state_with_image_messages_and_display_options(
+            0,
+            &[],
+            DisplayOptions {
+                image_preview_quality: ImagePreviewQualityPreset::Original,
+                ..DisplayOptions::default()
+            },
+        );
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: Some("https://cdn.discordapp.com/avatars/1/hash.png".to_owned()),
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("hello <:party:50>".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        assert_eq!(
+            state.image_preview_quality(),
+            ImagePreviewQualityPreset::Original
+        );
+        assert_eq!(
+            visible_avatar_targets(&state, layout(2))[0].url,
+            "https://cdn.discordapp.com/avatars/1/hash.png"
+        );
+        assert_eq!(
+            avatar_preview_url("https://cdn.discordapp.com/avatars/1/hash.png", 2, 2),
+            "https://cdn.discordapp.com/avatars/1/hash.png?size=64"
+        );
+        assert_eq!(
+            visible_emoji_image_targets(&state),
+            vec![EmojiImageTarget {
+                url: "https://cdn.discordapp.com/emojis/50.png".to_owned(),
+            }]
         );
     }
 
@@ -770,7 +1012,7 @@ mod tests {
             targets[0].url,
             concat!(
                 "https://media.discordapp.net/external/cache-key/https/example.com/photo.png",
-                "?ex=abc&is=def&hm=123&format=webp&quality=lossless&width=160&height=90"
+                "?ex=abc&is=def&hm=123&format=webp&width=160&height=90"
             )
         );
         assert_eq!(targets[0].filename, "embed-thumbnail");
@@ -814,7 +1056,7 @@ mod tests {
             target.url,
             concat!(
                 "https://media.discordapp.net/ephemeral-attachments/691/150/photo.png",
-                "?ex=abc&is=def&hm=123&format=webp&quality=lossless&width=160&height=90"
+                "?ex=abc&is=def&hm=123&format=webp&width=160&height=90"
             )
         );
     }
@@ -889,7 +1131,7 @@ mod tests {
             targets[0].url,
             concat!(
                 "https://images-ext-1.discordapp.net/external/cache-key/https/example.com/photo.png",
-                "?format=webp&quality=lossless&width=160&height=90"
+                "?format=webp&width=160&height=90"
             )
         );
     }
@@ -1963,9 +2205,9 @@ mod tests {
         state.move_message_action_down();
         state.activate_selected_message_action();
         state.open_options_popup();
-        state.move_option_down();
-        state.move_option_down();
-        state.move_option_down();
+        for _ in 0..4 {
+            state.move_option_down();
+        }
         state.toggle_selected_display_option();
 
         let targets = visible_emoji_image_targets(&state);
@@ -2207,9 +2449,21 @@ mod tests {
     }
 
     fn state_with_image_messages(count: u64, image_message_ids: &[u64]) -> DashboardState {
+        state_with_image_messages_and_display_options(
+            count,
+            image_message_ids,
+            DisplayOptions::default(),
+        )
+    }
+
+    fn state_with_image_messages_and_display_options(
+        count: u64,
+        image_message_ids: &[u64],
+        display_options: DisplayOptions,
+    ) -> DashboardState {
         let guild_id = Id::new(1);
         let channel_id = Id::new(2);
-        let mut state = DashboardState::new();
+        let mut state = DashboardState::new_with_display_options(display_options);
 
         state.push_event(AppEvent::GuildCreate {
             guild_id,

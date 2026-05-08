@@ -23,10 +23,10 @@ use super::{
     message_item_lines, message_starts_new_day, message_viewport_lines, new_messages_notice_line,
     options_popup_lines, poll_vote_picker_lines, primary_activity_summary,
     reaction_users_popup_lines, reaction_users_visible_line_count, render_channels, render_guilds,
-    selected_avatar_x_offset,
-    selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
-    user_profile_display_name_style, user_profile_popup_has_avatar, user_profile_popup_lines,
-    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
+    selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
+    sync_view_heights, user_profile_display_name_style, user_profile_popup_has_avatar,
+    user_profile_popup_lines, user_profile_popup_lines_with_activities,
+    user_profile_popup_text_geometry,
 };
 use crate::{
     config::DisplayOptions,
@@ -60,14 +60,23 @@ fn options_popup_lines_show_selected_toggle_state() {
         DisplayOptionItem {
             label: "Disable all image previews",
             enabled: false,
+            value: None,
             effective: false,
             description: "Master switch.",
         },
         DisplayOptionItem {
             label: "Show avatars",
             enabled: true,
+            value: None,
             effective: true,
             description: "Message and profile avatars.",
+        },
+        DisplayOptionItem {
+            label: "Image preview quality",
+            enabled: true,
+            value: Some("balanced"),
+            effective: true,
+            description: "Attachment and embed previews.",
         },
     ];
 
@@ -76,6 +85,7 @@ fn options_popup_lines_show_selected_toggle_state() {
     assert_eq!(lines[0].spans[1].content, "[ ] ");
     assert_eq!(lines[1].spans[0].content, "› ");
     assert_eq!(lines[1].spans[1].content, "[x] ");
+    assert_eq!(lines[2].spans[1].content, "[balanced] ");
     assert!(
         lines.last().expect("hint line").spans[0]
             .content

@@ -76,20 +76,20 @@ Concord has a four-pane layout like Discord.
 
 With vim-style navigation:
 
-| Key                       | Action                                 |
-| ------------------------- | -------------------------------------- |
-| `1` `2` `3` `4`           | Focus pane                             |
-| `Tab`                     | Cycle focus                            |
-| `j` / `k`, arrows         | Move down / up                         |
-| `J`, `K` / `H`, `L`       | Scroll viewport                        |
-| `Ctrl+d` / `Ctrl+u`       | Half-page scroll                       |
-| `g` / `G`, `Home` / `End` | Jump or scroll to top / bottom         |
-| `Enter` / `Space`         | Open or activate the selected item     |
-| `i`                       | Text insert mode                       |
-| `a`                       | Action menu for the focused item       |
-| `o`                       | Options menu                           |
-| `Esc`                     | Close popup, cancel mode, or go back   |
-| `q` / `Ctrl+c`            | Quit                                   |
+| Key                       | Action                               |
+| ------------------------- | ------------------------------------ |
+| `1` `2` `3` `4`           | Focus pane                           |
+| `Tab`                     | Cycle focus                          |
+| `j` / `k`, arrows         | Move down / up                       |
+| `J`, `K` / `H`, `L`       | Scroll viewport                      |
+| `Ctrl+d` / `Ctrl+u`       | Half-page scroll                     |
+| `g` / `G`, `Home` / `End` | Jump or scroll to top / bottom       |
+| `Enter` / `Space`         | Open or activate the selected item   |
+| `i`                       | Text insert mode                     |
+| `a`                       | Action menu for the focused item     |
+| `o`                       | Options menu                         |
+| `Esc`                     | Close popup, cancel mode, or go back |
+| `q` / `Ctrl+c`            | Quit                                 |
 
 Action menus show local shortcuts next to each item. For example, message
 actions use keys such as `e` for edit and `d` for delete. List-style dialogs,
@@ -108,11 +108,33 @@ Display options are stored in `~/.concord/config.toml`:
 
 - Disable all image previews with one master switch
 - Toggle inline image previews
+- Set image preview quality for attachments, embeds, and the image viewer
 - Toggle avatar display
 - Toggle custom emoji rendering
 
 You can change these from the in-app Options menu, and Concord saves them back
 to the config file.
+
+Example:
+
+```toml
+[display]
+disable_image_preview = false
+show_avatars = true
+show_images = true
+image_preview_quality = "balanced"
+show_custom_emoji = true
+```
+
+`image_preview_quality` supports these values:
+
+- `efficient`: smaller preview requests to reduce bandwidth and memory use.
+- `balanced`: default quality with bounded resource use.
+- `high`: sharper resized previews using lossless quality.
+- `original`: request the original source image for previews when possible.
+
+This setting only applies to attachment, embed, and image viewer previews.
+Avatars and custom emoji keep their separate small-image behavior.
 
 ## Performance
 
@@ -133,6 +155,8 @@ To keep resource usage bounded, Concord limits media work in several places:
 - Inline image previews, avatars, and custom emoji use small LRU caches.
 - Image preview requests prefer resized Discord proxy URLs sized for the
   terminal instead of original full-size media when possible.
+- The preview quality preset can lower preview source dimensions or opt into
+  original source images. It does not change avatar or custom emoji sizing.
 
 Message history is also cached with a per-channel limit, so long-running
 sessions do not keep every message in memory forever.

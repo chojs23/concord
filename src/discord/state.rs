@@ -1248,11 +1248,7 @@ impl DiscordState {
         }
     }
 
-    fn update_user_activities(
-        &mut self,
-        user_id: Id<UserMarker>,
-        activities: &[ActivityInfo],
-    ) {
+    fn update_user_activities(&mut self, user_id: Id<UserMarker>, activities: &[ActivityInfo]) {
         if activities.is_empty() {
             self.user_activities.remove(&user_id);
         } else {
@@ -2591,7 +2587,10 @@ mod tests {
             activities: vec![activity.clone()],
         });
 
-        assert_eq!(state.user_activities(user_id), std::slice::from_ref(&activity));
+        assert_eq!(
+            state.user_activities(user_id),
+            std::slice::from_ref(&activity)
+        );
 
         // Empty activities array clears the cached entry.
         state.apply_event(&AppEvent::PresenceUpdate {

@@ -656,15 +656,13 @@ fn format_activity_summary(activity: &ActivityInfo) -> String {
         }
         ActivityKind::Playing => format!("Playing {}", activity.name),
         ActivityKind::Streaming => format!("Streaming {}", activity.name),
-        ActivityKind::Listening => {
-            match (activity.details.as_deref(), activity.state.as_deref()) {
-                (Some(track), Some(artist)) => {
-                    format!("Listening to {} — {} by {}", activity.name, track, artist)
-                }
-                (Some(track), None) => format!("Listening to {} — {}", activity.name, track),
-                _ => format!("Listening to {}", activity.name),
+        ActivityKind::Listening => match (activity.details.as_deref(), activity.state.as_deref()) {
+            (Some(track), Some(artist)) => {
+                format!("Listening to {} — {} by {}", activity.name, track, artist)
             }
-        }
+            (Some(track), None) => format!("Listening to {} — {}", activity.name, track),
+            _ => format!("Listening to {}", activity.name),
+        },
         ActivityKind::Watching => format!("Watching {}", activity.name),
         ActivityKind::Competing => format!("Competing in {}", activity.name),
         ActivityKind::Unknown => activity.name.clone(),

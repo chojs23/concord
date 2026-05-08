@@ -118,7 +118,16 @@ pub(super) fn options_popup_lines(
         .enumerate()
         .map(|(index, item)| {
             let marker = if index == selected { "› " } else { "  " };
-            let check = if item.enabled { "[x]" } else { "[ ]" };
+            let control = item.value.map_or_else(
+                || {
+                    if item.enabled {
+                        "[x]".to_owned()
+                    } else {
+                        "[ ]".to_owned()
+                    }
+                },
+                |value| format!("[{value}]"),
+            );
             let mut style = if item.effective || index == 0 {
                 Style::default()
             } else {
@@ -131,7 +140,7 @@ pub(super) fn options_popup_lines(
             }
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(format!("{check} "), style),
+                Span::styled(format!("{control} "), style),
                 Span::styled(item.label, style),
                 Span::styled(" — ", Style::default().fg(DIM)),
                 Span::styled(item.description, Style::default().fg(DIM)),
@@ -139,7 +148,7 @@ pub(super) fn options_popup_lines(
         })
         .collect();
     lines.push(Line::from(Span::styled(
-        "Enter/Space toggle · j/k move · Esc close · saved to ~/.concord/config.toml",
+        "Enter/Space toggle or cycle · j/k move · Esc close · saved to ~/.concord/config.toml",
         Style::default().fg(DIM),
     )));
     lines
@@ -675,11 +684,7 @@ fn push_section_header(lines: &mut Vec<Line<'static>>, label: &str) {
     )));
 }
 
-fn push_activity_lines(
-    lines: &mut Vec<Line<'static>>,
-    activity: &ActivityInfo,
-    width: usize,
-) {
+fn push_activity_lines(lines: &mut Vec<Line<'static>>, activity: &ActivityInfo, width: usize) {
     let primary = activity_primary_line(activity);
     if !primary.is_empty() {
         lines.push(Line::from(Span::raw(truncate_display_width(

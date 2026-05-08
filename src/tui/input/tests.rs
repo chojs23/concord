@@ -4,6 +4,7 @@ use ratatui::layout::Rect;
 
 use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event};
 use crate::{
+    config::ImagePreviewQualityPreset,
     discord::{
         AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, GuildFolder,
         MemberInfo, MessageReferenceInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji,
@@ -720,6 +721,26 @@ fn options_popup_toggles_selected_setting() {
 
     assert!(state.is_options_popup_open());
     assert!(!state.display_options().show_avatars);
+    assert_eq!(
+        state.take_display_options_save_request(),
+        Some(state.display_options())
+    );
+}
+
+#[test]
+fn options_popup_cycles_image_preview_quality() {
+    let mut state = state_with_messages(1);
+
+    handle_key(&mut state, char_key('o'));
+    for _ in 0..3 {
+        handle_key(&mut state, key(KeyCode::Down));
+    }
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        state.display_options().image_preview_quality,
+        ImagePreviewQualityPreset::High
+    );
     assert_eq!(
         state.take_display_options_save_request(),
         Some(state.display_options())
@@ -2058,7 +2079,8 @@ fn state_with_image_message() -> DashboardState {
                 id: Id::new(3),
                 filename: "cat.png".to_owned(),
                 url: "https://cdn.discordapp.com/cat.png".to_owned(),
-                proxy_url: "https://media.discordapp.net/cat.png".to_owned(),
+                proxy_url: "https://media.discordapp.net/cat.png?format=webp&width=160&height=90"
+                    .to_owned(),
                 content_type: Some("image/png".to_owned()),
                 size: 2048,
                 width: Some(640),

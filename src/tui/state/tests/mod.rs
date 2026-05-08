@@ -2,9 +2,12 @@ mod fixtures;
 
 use fixtures::*;
 
-use crate::discord::ids::{
-    Id,
-    marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+use crate::{
+    config::ImagePreviewQualityPreset,
+    discord::ids::{
+        Id,
+        marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+    },
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -1898,6 +1901,33 @@ fn disabled_image_previews_hide_view_image_action() {
 }
 
 #[test]
+fn image_preview_quality_option_cycles_presets() {
+    let mut state = DashboardState::new();
+    state.open_options_popup();
+    for _ in 0..3 {
+        state.move_option_down();
+    }
+
+    state.toggle_selected_display_option();
+    assert_eq!(
+        state.image_preview_quality(),
+        ImagePreviewQualityPreset::High
+    );
+
+    state.toggle_selected_display_option();
+    assert_eq!(
+        state.image_preview_quality(),
+        ImagePreviewQualityPreset::Original
+    );
+
+    state.toggle_selected_display_option();
+    assert_eq!(
+        state.image_preview_quality(),
+        ImagePreviewQualityPreset::Efficient
+    );
+}
+
+#[test]
 fn image_message_action_opens_image_viewer() {
     let mut state = state_with_messages(1);
     state.push_event(AppEvent::MessageHistoryLoaded {
@@ -1971,6 +2001,42 @@ fn image_viewer_navigation_clamps_and_downloads_current_image() {
     );
     assert!(state.is_image_viewer_open());
     assert!(!state.is_image_viewer_action_menu_open());
+}
+
+#[test]
+fn image_viewer_download_uses_original_url_not_preview_proxy() {
+    let mut state = state_with_messages(1);
+    let mut attachment = image_attachment(10);
+    attachment.url = "https://cdn.discordapp.com/original/photo.png".to_owned();
+    attachment.proxy_url = concat!(
+        "https://media.discordapp.net/attachments/1/10/photo.png",
+        "?format=webp&width=160&height=90"
+    )
+    .to_owned();
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            content: Some(String::new()),
+            attachments: vec![attachment],
+            ..message_info(Id::new(2), 1)
+        }],
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+    state.move_message_action_down();
+    state.activate_selected_message_action();
+    state.open_image_viewer_action_menu();
+
+    let command = state.activate_selected_image_viewer_action();
+
+    assert_eq!(
+        command,
+        Some(AppCommand::DownloadAttachment {
+            url: "https://cdn.discordapp.com/original/photo.png".to_owned(),
+            filename: "image-10.png".to_owned(),
+        })
+    );
 }
 
 #[test]
@@ -2498,9 +2564,9 @@ fn custom_emoji_action_label_uses_id_when_images_are_disabled() {
         }],
     });
     state.open_options_popup();
-    state.move_option_down();
-    state.move_option_down();
-    state.move_option_down();
+    for _ in 0..4 {
+        state.move_option_down();
+    }
     state.toggle_selected_display_option();
     state.close_options_popup();
     state.focus_pane(FocusPane::Messages);
