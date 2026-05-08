@@ -60,9 +60,30 @@ pub fn truncate_display_width_from(value: &str, offset: usize, limit: usize) -> 
     truncate_display_width(&value[start..], limit)
 }
 
-/// Identifies what kind of mention markup refers to. `<@id>` and `<@!id>` are
-/// users, `<@&id>` is a role, `<#id>` is a channel. Used by the renderer to
-/// dispatch to the right name resolver and highlight class.
+pub fn sanitize_for_display_width(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for grapheme in value.graphemes(true) {
+        if grapheme.width() == 1 && grapheme_is_likely_wide_emoji(grapheme) {
+            out.push('?');
+        } else {
+            out.push_str(grapheme);
+        }
+    }
+    out
+}
+
+fn grapheme_is_likely_wide_emoji(grapheme: &str) -> bool {
+    grapheme.chars().any(|c| {
+        let cp = c as u32;
+        matches!(
+            cp,
+            0x2300..=0x27FF       // Misc Tech / Misc Symbols / Dingbats
+            | 0x2900..=0x2BFF     // Supp Arrows-A/B, Misc Symbols & Arrows
+            | 0x1F000..=0x1FFFF   // Most modern emoji blocks
+        )
+    })
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MentionTarget {
     User(u64),
@@ -545,7 +566,8 @@ mod tests {
     use super::{
         InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, render_user_mentions,
         replace_custom_emoji_markup, replace_custom_emoji_markup_in_rendered,
-        replace_custom_emoji_markup_in_rendered_with_images, truncate_display_width, truncate_text,
+        replace_custom_emoji_markup_in_rendered_with_images, sanitize_for_display_width,
+        truncate_display_width, truncate_text,
     };
 
     #[test]
@@ -679,6 +701,31 @@ mod tests {
 
         assert_eq!(text, "漢字...");
         assert!(text.width() <= 8);
+    }
+
+    #[test]
+    fn sanitize_replaces_misc_symbol_emoji_with_placeholder() {
+        let sanitized = sanitize_for_display_width("⚜ ok");
+        assert_eq!(sanitized, "? ok");
+    }
+
+    #[test]
+    fn sanitize_keeps_ascii_and_cjk_unchanged() {
+        assert_eq!(sanitize_for_display_width("hello world"), "hello world");
+        assert_eq!(sanitize_for_display_width("漢字テスト"), "漢字テスト");
+    }
+
+    #[test]
+    fn sanitize_keeps_modern_emoji_blocks_unchanged() {
+        // 🦀 (U+1F980) is correctly reported as width 2 by `unicode-width`
+        // and rendered as 2 columns by terminals.
+        assert_eq!(sanitize_for_display_width("🦀 ferris"), "🦀 ferris");
+    }
+
+    #[test]
+    fn sanitize_replaces_lone_regional_indicator() {
+        let sanitized = sanitize_for_display_width("hi \u{1F1F6}!");
+        assert_eq!(sanitized, "hi ?!");
     }
 
     #[test]

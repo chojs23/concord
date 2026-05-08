@@ -12,7 +12,10 @@ use crate::discord::{
 };
 
 use super::super::{
-    format::{truncate_display_width, truncate_display_width_from, truncate_text},
+    format::{
+        sanitize_for_display_width, truncate_display_width, truncate_display_width_from,
+        truncate_text,
+    },
     message_format::format_attachment_summary,
     state::{
         ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MAX_MENTION_PICKER_VISIBLE,
@@ -507,6 +510,7 @@ pub(super) fn render_members(frame: &mut Frame, area: Rect, state: &DashboardSta
             ) {
                 let activities = state.user_activities(member.user_id());
                 if let Some(summary) = primary_activity_summary(activities) {
+                    let summary = sanitize_for_display_width(&summary);
                     let summary = truncate_display_width_from(
                         &summary,
                         state.member_horizontal_scroll(),
