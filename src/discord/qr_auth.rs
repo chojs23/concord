@@ -22,6 +22,7 @@ use super::auth_http::{
 
 const REMOTE_AUTH_URL: &str = "wss://remote-auth-gateway.discord.gg/?v=2";
 const TICKET_EXCHANGE_URL: &str = "https://discord.com/api/v10/users/@me/remote-auth/login";
+const QR_QUIET_ZONE_MODULES: usize = 4;
 
 #[derive(Clone, Debug)]
 pub enum QrEvent {
@@ -239,16 +240,16 @@ where
 fn build_qr_bitmap(content: &str) -> Result<Vec<Vec<bool>>, String> {
     use qrcode::{Color, EcLevel, QrCode};
 
-    let code = QrCode::with_error_correction_level(content, EcLevel::L).map_err(err)?;
+    let code = QrCode::with_error_correction_level(content, EcLevel::M).map_err(err)?;
     let width = code.width();
+    let output_width = width + QR_QUIET_ZONE_MODULES * 2;
     let colors = code.to_colors();
-    let mut rows = Vec::with_capacity(width);
+    let mut rows = vec![vec![false; output_width]; output_width];
     for y in 0..width {
-        let mut row = Vec::with_capacity(width);
         for x in 0..width {
-            row.push(colors[y * width + x] == Color::Dark);
+            rows[y + QR_QUIET_ZONE_MODULES][x + QR_QUIET_ZONE_MODULES] =
+                colors[y * width + x] == Color::Dark;
         }
-        rows.push(row);
     }
     Ok(rows)
 }
@@ -414,7 +415,45 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_ticket_exchange_error, parse_captcha_challenge, sanitize_response_body};
+    use super::{
+        QR_QUIET_ZONE_MODULES, build_qr_bitmap, format_ticket_exchange_error,
+        parse_captcha_challenge, sanitize_response_body,
+    };
+
+    #[test]
+    fn qr_bitmap_includes_four_module_quiet_zone() {
+        let bitmap = build_qr_bitmap("https://discord.com/ra/test-fingerprint")
+            .expect("QR bitmap should build");
+        let width = bitmap.len();
+
+        assert!(width > QR_QUIET_ZONE_MODULES * 2);
+        assert!(bitmap.iter().all(|row| row.len() == width));
+        assert!(
+            bitmap[..QR_QUIET_ZONE_MODULES]
+                .iter()
+                .all(|row| row.iter().all(|module| !module))
+        );
+        assert!(
+            bitmap[width - QR_QUIET_ZONE_MODULES..]
+                .iter()
+                .all(|row| row.iter().all(|module| !module))
+        );
+        assert!(bitmap.iter().all(|row| {
+            row[..QR_QUIET_ZONE_MODULES]
+                .iter()
+                .chain(&row[width - QR_QUIET_ZONE_MODULES..])
+                .all(|module| !module)
+        }));
+        assert!(
+            bitmap[QR_QUIET_ZONE_MODULES..width - QR_QUIET_ZONE_MODULES]
+                .iter()
+                .any(
+                    |row| row[QR_QUIET_ZONE_MODULES..width - QR_QUIET_ZONE_MODULES]
+                        .iter()
+                        .any(|module| *module)
+                )
+        );
+    }
 
     #[test]
     fn sanitize_response_body_preserves_useful_error_fields() {

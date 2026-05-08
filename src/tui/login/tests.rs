@@ -13,6 +13,10 @@ fn press(code: KeyCode) -> TerminalEvent {
     TerminalEvent::Key(KeyEvent::new(code, KeyModifiers::NONE))
 }
 
+fn paste(text: &str) -> TerminalEvent {
+    TerminalEvent::Paste(text.to_owned())
+}
+
 fn mfa_challenge(methods: Vec<MfaMethod>) -> MfaChallenge {
     MfaChallenge {
         ticket: "ticket".to_string(),
@@ -56,6 +60,30 @@ fn password_submit_starts_login_and_clears_password_field() {
             if login == "user@example.com" && password == "password"
     ));
     assert!(state.password.password.is_empty());
+}
+
+#[test]
+fn password_input_accepts_bracketed_paste_text() {
+    let mut state = LoginState::new(None);
+    state.screen = LoginScreen::PasswordInput;
+    state.password.active_field = super::state::PasswordField::Password;
+    state.error = Some("old error".to_string());
+
+    let action = handle_terminal(&mut state, paste("ab[]{};\\cd\n"));
+
+    assert!(action.is_none());
+    assert_eq!(state.password.password, "ab[]{};\\cd");
+    assert!(state.error.is_none());
+}
+
+#[test]
+fn token_input_accepts_bracketed_paste_text() {
+    let mut state = LoginState::new(None);
+    state.screen = LoginScreen::TokenInput;
+
+    handle_terminal(&mut state, paste("token-part-1\ntoken-part-2"));
+
+    assert_eq!(state.token_input, "token-part-1token-part-2");
 }
 
 #[test]
