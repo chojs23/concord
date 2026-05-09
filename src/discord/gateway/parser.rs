@@ -7,9 +7,10 @@ use serde_json::Value;
 
 use crate::{
     discord::{
-        ActivityEmoji, ActivityInfo, ActivityKind, ChannelInfo, ChannelRecipientInfo,
-        CustomEmojiInfo, FriendStatus, GuildFolder, MemberInfo, PresenceStatus, ReadStateInfo,
-        RoleInfo,
+        ActivityEmoji, ActivityInfo, ActivityKind, ChannelInfo, ChannelNotificationOverrideInfo,
+        ChannelRecipientInfo, CustomEmojiInfo, FriendStatus, GuildFolder,
+        GuildNotificationSettingsInfo, MemberInfo, NotificationLevel, PresenceStatus,
+        ReadStateInfo, RoleInfo,
         events::default_avatar_url,
         events::{AppEvent, AttachmentUpdate},
         ids::{
@@ -77,6 +78,9 @@ pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
             .into_iter()
             .collect(),
         "MESSAGE_ACK" => parse_message_ack(data).into_iter().collect(),
+        "USER_GUILD_SETTINGS_UPDATE" => {
+            parse_user_guild_settings_update(data).into_iter().collect()
+        }
         "GUILD_MEMBER_ADD" => parse_member_add(data).into_iter().collect(),
         "GUILD_MEMBER_UPDATE" => parse_member_upsert(data).into_iter().collect(),
         "GUILD_MEMBER_LIST_UPDATE" => parse_member_list_update(data),
@@ -230,6 +234,10 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
         if !parsed.is_empty() {
             events.push(AppEvent::ReadStateInit { entries: parsed });
         }
+    }
+
+    if let Some(settings) = parse_user_guild_settings_entries(data.get("user_guild_settings")) {
+        events.push(AppEvent::UserGuildNotificationSettingsInit { settings });
     }
 
     // Guild folder ordering and grouping live in the legacy `user_settings`
@@ -858,6 +866,110 @@ fn parse_read_state_entry(value: &Value) -> Option<ReadStateInfo> {
     })
 }
 
+fn parse_user_guild_settings_update(data: &Value) -> Option<AppEvent> {
+    parse_user_guild_notification_settings(data)
+        .map(|settings| AppEvent::UserGuildNotificationSettingsUpdate { settings })
+}
+
+fn parse_user_guild_settings_entries(
+    value: Option<&Value>,
+) -> Option<Vec<GuildNotificationSettingsInfo>> {
+    let entries = value
+        .and_then(|node| node.get("entries").or(Some(node)))
+        .and_then(Value::as_array)?;
+    let settings: Vec<GuildNotificationSettingsInfo> = entries
+        .iter()
+        .filter_map(parse_user_guild_notification_settings)
+        .collect();
+    (!settings.is_empty()).then_some(settings)
+}
+
+fn parse_user_guild_notification_settings(value: &Value) -> Option<GuildNotificationSettingsInfo> {
+    let guild_id = parse_user_guild_settings_guild_id(value.get("guild_id"))?;
+    let channel_overrides = parse_channel_notification_overrides(value.get("channel_overrides"));
+
+    Some(GuildNotificationSettingsInfo {
+        guild_id,
+        message_notifications: parse_notification_level(value.get("message_notifications")),
+        muted: value.get("muted").and_then(Value::as_bool).unwrap_or(false),
+        mute_end_time: parse_mute_end_time(value),
+        suppress_everyone: value
+            .get("suppress_everyone")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        suppress_roles: value
+            .get("suppress_roles")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        channel_overrides,
+    })
+}
+
+fn parse_user_guild_settings_guild_id(value: Option<&Value>) -> Option<Option<Id<GuildMarker>>> {
+    match value {
+        Some(value) if value.is_null() => Some(None),
+        Some(value) if value.as_str() == Some("@me") => Some(None),
+        Some(value) => parse_id::<GuildMarker>(value).map(Some),
+        None => Some(None),
+    }
+}
+
+fn parse_channel_notification_overrides(
+    value: Option<&Value>,
+) -> Vec<ChannelNotificationOverrideInfo> {
+    match value {
+        Some(Value::Array(overrides)) => overrides
+            .iter()
+            .filter_map(parse_channel_notification_override)
+            .collect(),
+        Some(Value::Object(overrides)) => overrides
+            .iter()
+            .filter_map(|(channel_id, override_value)| {
+                parse_channel_notification_override_with_key(channel_id, override_value)
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn parse_channel_notification_override(value: &Value) -> Option<ChannelNotificationOverrideInfo> {
+    Some(ChannelNotificationOverrideInfo {
+        channel_id: value
+            .get("channel_id")
+            .and_then(parse_id::<ChannelMarker>)?,
+        message_notifications: parse_notification_level(value.get("message_notifications")),
+        muted: value.get("muted").and_then(Value::as_bool).unwrap_or(false),
+        mute_end_time: parse_mute_end_time(value),
+    })
+}
+
+fn parse_channel_notification_override_with_key(
+    channel_id: &str,
+    value: &Value,
+) -> Option<ChannelNotificationOverrideInfo> {
+    Some(ChannelNotificationOverrideInfo {
+        channel_id: channel_id.parse::<u64>().ok().and_then(Id::new_checked)?,
+        message_notifications: parse_notification_level(value.get("message_notifications")),
+        muted: value.get("muted").and_then(Value::as_bool).unwrap_or(false),
+        mute_end_time: parse_mute_end_time(value),
+    })
+}
+
+fn parse_notification_level(value: Option<&Value>) -> Option<NotificationLevel> {
+    value
+        .and_then(Value::as_u64)
+        .and_then(NotificationLevel::from_code)
+}
+
+fn parse_mute_end_time(value: &Value) -> Option<String> {
+    value
+        .get("mute_config")
+        .and_then(|config| config.get("end_time"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
 fn parse_message_ack(data: &Value) -> Option<AppEvent> {
     Some(AppEvent::MessageAck {
         channel_id: parse_id::<ChannelMarker>(data.get("channel_id")?)?,
@@ -1287,8 +1399,8 @@ mod tests {
     };
     use crate::discord::{
         ActivityKind, AppEvent, AttachmentUpdate, ChannelVisibilityStats, DiscordState,
-        FriendStatus, MentionInfo, MessageKind, PollAnswerInfo, PollInfo, PresenceStatus,
-        ReactionEmoji, ReplyInfo,
+        FriendStatus, MentionInfo, MessageKind, NotificationLevel, PollAnswerInfo, PollInfo,
+        PresenceStatus, ReactionEmoji, ReplyInfo,
     };
 
     #[test]
@@ -3724,6 +3836,135 @@ mod tests {
         assert_eq!(entries[1].channel_id, Id::new(12));
         assert_eq!(entries[1].last_acked_message_id, None);
         assert_eq!(entries[1].mention_count, 1);
+    }
+
+    #[test]
+    fn ready_payload_emits_user_guild_notification_settings() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY",
+                "d": {
+                    "user": { "id": "1", "username": "neo" },
+                    "guilds": [],
+                    "user_guild_settings": {
+                        "entries": [{
+                            "guild_id": "10",
+                            "message_notifications": 1,
+                            "muted": false,
+                            "suppress_everyone": true,
+                            "suppress_roles": true,
+                            "channel_overrides": [{
+                                "channel_id": "20",
+                                "message_notifications": 0,
+                                "muted": true,
+                                "mute_config": { "end_time": "2099-01-01T00:00:00.000Z" }
+                            }]
+                        }]
+                    }
+                }
+            })
+            .to_string(),
+        );
+
+        let settings = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::UserGuildNotificationSettingsInit { settings } => Some(settings),
+                _ => None,
+            })
+            .expect("READY should emit user guild notification settings");
+        assert_eq!(settings.len(), 1);
+        assert_eq!(settings[0].guild_id, Some(Id::new(10)));
+        assert_eq!(
+            settings[0].message_notifications,
+            Some(NotificationLevel::OnlyMentions)
+        );
+        assert!(settings[0].suppress_everyone);
+        assert!(settings[0].suppress_roles);
+        assert_eq!(settings[0].channel_overrides.len(), 1);
+        assert_eq!(settings[0].channel_overrides[0].channel_id, Id::new(20));
+        assert_eq!(
+            settings[0].channel_overrides[0].message_notifications,
+            Some(NotificationLevel::AllMessages)
+        );
+        assert!(settings[0].channel_overrides[0].muted);
+    }
+
+    #[test]
+    fn user_guild_settings_update_emits_single_update_event() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "USER_GUILD_SETTINGS_UPDATE",
+                "d": {
+                    "guild_id": "10",
+                    "message_notifications": 2,
+                    "muted": true,
+                    "mute_config": { "end_time": "2099-01-01T00:00:00.000Z" },
+                    "channel_overrides": []
+                }
+            })
+            .to_string(),
+        );
+
+        match events.as_slice() {
+            [AppEvent::UserGuildNotificationSettingsUpdate { settings }] => {
+                assert_eq!(settings.guild_id, Some(Id::new(10)));
+                assert_eq!(
+                    settings.message_notifications,
+                    Some(NotificationLevel::NoMessages)
+                );
+                assert!(settings.muted);
+            }
+            other => panic!("expected one UserGuildNotificationSettingsUpdate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ready_payload_parses_private_channel_notification_settings() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY",
+                "d": {
+                    "user": { "id": "1", "username": "neo" },
+                    "guilds": [],
+                    "user_guild_settings": {
+                        "entries": [{
+                            "guild_id": null,
+                            "message_notifications": 1,
+                            "channel_overrides": {
+                                "20": {
+                                    "message_notifications": 2,
+                                    "muted": true,
+                                    "mute_config": null
+                                }
+                            }
+                        }]
+                    }
+                }
+            })
+            .to_string(),
+        );
+
+        let settings = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::UserGuildNotificationSettingsInit { settings } => Some(settings),
+                _ => None,
+            })
+            .expect("READY should emit private channel notification settings");
+        assert_eq!(settings.len(), 1);
+        assert_eq!(settings[0].guild_id, None);
+        assert_eq!(
+            settings[0].message_notifications,
+            Some(NotificationLevel::OnlyMentions)
+        );
+        assert_eq!(settings[0].channel_overrides.len(), 1);
+        assert_eq!(settings[0].channel_overrides[0].channel_id, Id::new(20));
+        assert_eq!(
+            settings[0].channel_overrides[0].message_notifications,
+            Some(NotificationLevel::NoMessages)
+        );
+        assert!(settings[0].channel_overrides[0].muted);
     }
 
     #[test]

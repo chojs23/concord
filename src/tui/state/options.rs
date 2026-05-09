@@ -2,7 +2,7 @@ use crate::config::{DisplayOptions, ImagePreviewQualityPreset};
 
 use super::{DashboardState, popups::OptionsPopupState};
 
-const OPTION_COUNT: usize = 5;
+const OPTION_COUNT: usize = 6;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisplayOptionItem {
@@ -39,6 +39,10 @@ impl DashboardState {
 
     pub fn show_custom_emoji(&self) -> bool {
         self.display_options.custom_emoji_visible()
+    }
+
+    pub fn desktop_notifications_enabled(&self) -> bool {
+        self.display_options.desktop_notifications
     }
 
     pub fn is_options_popup_open(&self) -> bool {
@@ -109,6 +113,13 @@ impl DashboardState {
                 effective: options.custom_emoji_visible(),
                 description: "When off, custom emoji are shown as their emoji id.",
             },
+            DisplayOptionItem {
+                label: "Desktop notifications",
+                enabled: options.desktop_notifications,
+                value: None,
+                effective: options.desktop_notifications,
+                description: "Show OS notifications for Discord messages that pass notification settings.",
+            },
         ]
     }
 
@@ -129,6 +140,10 @@ impl DashboardState {
                     self.display_options.image_preview_quality.next()
             }
             4 => self.display_options.show_custom_emoji = !self.display_options.show_custom_emoji,
+            5 => {
+                self.display_options.desktop_notifications =
+                    !self.display_options.desktop_notifications
+            }
             _ => return,
         }
         if !self.show_images() {

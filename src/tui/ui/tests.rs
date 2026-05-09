@@ -242,6 +242,19 @@ fn channel_unread_decoration_mentioned_uses_orange_with_count_badge() {
 }
 
 #[test]
+fn channel_unread_decoration_notified_uses_bright_count_badge() {
+    let base = Style::default().fg(Color::White);
+    let (badge, style) = channel_unread_decoration(ChannelUnreadState::Notified(3), base, false);
+
+    let badge = badge.expect("notification should include a count badge");
+    assert_eq!(badge.content.as_ref(), "(3) ");
+    assert_eq!(badge.style.fg, Some(UNREAD_BRIGHT));
+    assert!(badge.style.add_modifier.contains(Modifier::BOLD));
+    assert_eq!(style.fg, Some(UNREAD_BRIGHT));
+    assert!(style.add_modifier.contains(Modifier::BOLD));
+}
+
+#[test]
 fn channel_unread_decoration_active_skips_decoration() {
     let base = Style::default()
         .fg(Color::Green)

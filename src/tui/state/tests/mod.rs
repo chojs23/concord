@@ -3,7 +3,7 @@ mod fixtures;
 use fixtures::*;
 
 use crate::{
-    config::ImagePreviewQualityPreset,
+    config::{DisplayOptions, ImagePreviewQualityPreset},
     discord::ids::{
         Id,
         marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
@@ -16,12 +16,12 @@ use super::{
     GuildBranch, GuildPaneEntry, MessageActionKind, MessageState, message_rendered_height,
 };
 use crate::discord::{
-    ActivityInfo, ActivityKind, AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo,
-    ChannelVisibilityStats, CustomEmojiInfo, DiscordState, ForumPostArchiveState, FriendStatus,
-    MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    MutualGuildInfo, PermissionOverwriteInfo, PermissionOverwriteKind, PresenceStatus,
-    ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo,
-    RoleInfo, UserProfileInfo,
+    ActivityInfo, ActivityKind, AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo,
+    ChannelRecipientInfo, ChannelVisibilityStats, CustomEmojiInfo, DiscordState,
+    ForumPostArchiveState, FriendStatus, GuildNotificationSettingsInfo, MemberInfo, MessageInfo,
+    MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo, NotificationLevel,
+    PermissionOverwriteInfo, PermissionOverwriteKind, PresenceStatus, ReactionEmoji, ReactionInfo,
+    ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
 };
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -38,6 +38,28 @@ fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
         mutual_friends_count: 0,
         friend_status: FriendStatus::None,
         note: None,
+    }
+}
+
+fn notification_message_event(channel_id: Id<ChannelMarker>, content: &str) -> AppEvent {
+    AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id,
+        message_id: Id::new(50),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some(content.to_owned()),
+        sticker_names: Vec::new(),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
     }
 }
 
@@ -60,6 +82,131 @@ fn gateway_error_stays_out_of_footer_state() {
     });
 
     assert_eq!(state.last_status(), None);
+}
+
+#[test]
+fn desktop_notification_for_event_formats_eligible_guild_message() {
+    let mut state = state_with_hidden_and_visible_channels();
+    let channel_id = Id::new(3);
+    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
+        settings: vec![GuildNotificationSettingsInfo {
+            guild_id: Some(Id::new(1)),
+            message_notifications: Some(NotificationLevel::AllMessages),
+            muted: false,
+            mute_end_time: None,
+            suppress_everyone: false,
+            suppress_roles: false,
+            channel_overrides: Vec::new(),
+        }],
+    });
+    let event = notification_message_event(channel_id, "hello from concord");
+
+    let notification = state
+        .desktop_notification_for_event(&event)
+        .expect("eligible message should produce notification");
+
+    assert_eq!(notification.title, "neo in guild #general");
+    assert_eq!(notification.body, "hello from concord");
+}
+
+#[test]
+fn desktop_notification_for_event_suppresses_muted_channel() {
+    let mut state = state_with_hidden_and_visible_channels();
+    let channel_id = Id::new(3);
+    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
+        settings: vec![GuildNotificationSettingsInfo {
+            guild_id: Some(Id::new(1)),
+            message_notifications: Some(NotificationLevel::AllMessages),
+            muted: false,
+            mute_end_time: None,
+            suppress_everyone: false,
+            suppress_roles: false,
+            channel_overrides: vec![ChannelNotificationOverrideInfo {
+                channel_id,
+                message_notifications: Some(NotificationLevel::AllMessages),
+                muted: true,
+                mute_end_time: None,
+            }],
+        }],
+    });
+    let event = notification_message_event(channel_id, "hello");
+
+    assert!(state.desktop_notification_for_event(&event).is_none());
+}
+
+#[test]
+fn desktop_notification_for_event_suppresses_active_channel() {
+    let mut state = state_with_writable_channel();
+    let channel_id = Id::new(2);
+    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
+        settings: vec![GuildNotificationSettingsInfo {
+            guild_id: Some(Id::new(1)),
+            message_notifications: Some(NotificationLevel::AllMessages),
+            muted: false,
+            mute_end_time: None,
+            suppress_everyone: false,
+            suppress_roles: false,
+            channel_overrides: Vec::new(),
+        }],
+    });
+    let event = notification_message_event(channel_id, "hello");
+
+    assert!(state.desktop_notification_for_event(&event).is_none());
+}
+
+#[test]
+fn desktop_notification_for_event_respects_display_opt_out() {
+    let mut state = DashboardState::new_with_display_options(DisplayOptions {
+        desktop_notifications: false,
+        ..DisplayOptions::default()
+    });
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(2);
+
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: Some(1),
+        owner_id: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id,
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+    });
+    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
+        settings: vec![GuildNotificationSettingsInfo {
+            guild_id: Some(guild_id),
+            message_notifications: Some(NotificationLevel::AllMessages),
+            muted: false,
+            mute_end_time: None,
+            suppress_everyone: false,
+            suppress_roles: false,
+            channel_overrides: Vec::new(),
+        }],
+    });
+    let event = notification_message_event(channel_id, "hello");
+
+    assert!(state.desktop_notification_for_event(&event).is_none());
 }
 
 #[test]
