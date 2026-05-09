@@ -91,6 +91,8 @@ target/release/concord
 - **Email / Password** : login with credentials. MFA (TOTP, SMS) is fully supported.
 - **QR Code** : scan the code from the Discord mobile app.
 
+Email and QR code logins may trigger a CAPTCHA challenge on Discord's side. We cannot solve that, so I strongly recommend using token authentication.
+
 Tokens are saved to `~/.concord/credential` in plain text. See the Security section below for details.
 
 ### Guilds & Channels
@@ -244,10 +246,12 @@ sessions do not keep every message in memory forever.
 
 ### Can my account be blocked?
 
-In day-to-day use, I have not seen an account block after several months of using Concord.
-There was one path that did trigger a temporary block: trying to create new DM channel and send a message to an unknown user immediately blocked my account for 30 minutes. That feature has been removed. Other supported features have not caused blocks in my testing.
+Honestly, no.
 
-That said, Concord is not an official Discord client. Using unofficial clients, automated user accounts, or self-bots can violate Discord's Terms of Service, so there is always some risk. Use it at your own discretion.
+In day-to-day use, I have not seen an account block after several months of using Concord.
+There was one path that did trigger a temporary block: trying to **create a new DM channel and send a message to an unknown user**(meaning there was no pre-existing DM created through the Discord client) immediately blocked my account for 30 minutes. That feature has been removed. Other supported features have not caused blocks in my testing.
+
+That said, Concord is not an official Discord client. Using unofficial clients, automated user accounts, or self-bots can violate Discord's TOS, so there is always some risk. Use it at your own discretion.
 
 ### Does Concord support CAPTCHA?
 
