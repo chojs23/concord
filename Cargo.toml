@@ -65,4 +65,6 @@ uuid = { version = "1.23.1", features = ["v4"] }
 
 [profile.dist]
 inherits = "release"
-lto = "thin"
+lto = true
+codegen-units = 1
+strip = true
