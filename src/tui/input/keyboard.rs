@@ -163,12 +163,12 @@ pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
         }
     }
 
-    let mut pasted = false;
-    for value in text.chars().filter(|value| *value != '\r') {
-        state.push_composer_char(value);
-        pasted = true;
+    let pasted: String = text.chars().filter(|value| *value != '\r').collect();
+    if pasted.is_empty() {
+        return false;
     }
-    pasted
+    state.insert_composer_text_at_cursor(&pasted);
+    true
 }
 
 fn pasted_file_attachments(text: &str) -> Option<Vec<MessageAttachmentUpload>> {
@@ -510,6 +510,26 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
         }
         KeyCode::Backspace => {
             state.pop_composer_char();
+            None
+        }
+        KeyCode::Delete => {
+            state.delete_composer_char();
+            None
+        }
+        KeyCode::Left => {
+            state.move_composer_cursor_left();
+            None
+        }
+        KeyCode::Right => {
+            state.move_composer_cursor_right();
+            None
+        }
+        KeyCode::Home => {
+            state.move_composer_cursor_home();
+            None
+        }
+        KeyCode::End => {
+            state.move_composer_cursor_end();
             None
         }
         KeyCode::Char(value) => {

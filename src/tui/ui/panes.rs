@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    layout::{Alignment, Rect},
+    layout::{Alignment, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
@@ -16,7 +16,7 @@ use super::super::{
         sanitize_for_display_width, truncate_display_width, truncate_display_width_from,
         truncate_text,
     },
-    message_format::format_attachment_summary,
+    message_format::{format_attachment_summary, wrap_text_lines},
     state::{
         ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MAX_MENTION_PICKER_VISIBLE,
         MemberEntry, MemberGroup, MentionPickerEntry, discord_color, folder_color, presence_color,
@@ -286,6 +286,48 @@ pub(super) fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardSt
             .wrap(Wrap { trim: false }),
         area,
     );
+    if let Some(position) = composer_cursor_position(area, state) {
+        frame.set_cursor_position(position);
+    }
+}
+
+pub(super) fn composer_cursor_position(area: Rect, state: &DashboardState) -> Option<Position> {
+    if !state.is_composing() || area.width < 3 || area.height < 3 {
+        return None;
+    }
+
+    let inner_width = composer_inner_width(area.width) as usize;
+    let cursor = state.composer_cursor_byte_index();
+    let prompt_prefix = format!("> {}", &state.composer_input()[..cursor]);
+    let wrapped = wrap_text_lines(&prompt_prefix, inner_width);
+    let mut prompt_row = wrapped.len().saturating_sub(1);
+    let mut prompt_column = wrapped.last().map(|line| line.width()).unwrap_or_default();
+    if prompt_column >= inner_width {
+        prompt_row = prompt_row.saturating_add(1);
+        prompt_column = 0;
+    }
+
+    let mut content_row = state.pending_composer_attachments().len();
+    if state.reply_target_message_state().is_some() {
+        content_row = content_row.saturating_add(1);
+    }
+    content_row = content_row.saturating_add(prompt_row);
+
+    let x = area
+        .x
+        .saturating_add(1)
+        .saturating_add(u16::try_from(prompt_column).unwrap_or(u16::MAX));
+    let y = area
+        .y
+        .saturating_add(1)
+        .saturating_add(u16::try_from(content_row).unwrap_or(u16::MAX));
+    let inner_right = area.x.saturating_add(area.width.saturating_sub(1));
+    let inner_bottom = area.y.saturating_add(area.height.saturating_sub(1));
+    if x >= inner_right || y >= inner_bottom {
+        return None;
+    }
+
+    Some(Position { x, y })
 }
 
 pub(super) fn render_composer_mention_picker(

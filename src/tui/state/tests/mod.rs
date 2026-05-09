@@ -3391,6 +3391,33 @@ fn confirm_inserts_display_name_and_submit_expands_to_wire_format() {
 }
 
 #[test]
+fn confirm_mention_in_middle_keeps_trailing_text() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    for value in "hello @sworld".chars() {
+        state.push_composer_char(value);
+    }
+    for _ in 0.."world".len() {
+        state.move_composer_cursor_left();
+    }
+
+    assert_eq!(state.composer_mention_query(), Some("s"));
+    assert!(state.confirm_composer_mention());
+
+    assert_eq!(state.composer_input(), "hello @Sally world");
+    assert_eq!(state.composer_cursor_byte_index(), "hello @Sally ".len());
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(2),
+            content: "hello <@20> world".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+    );
+}
+
+#[test]
 fn cancel_composer_clears_pending_attachments() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);

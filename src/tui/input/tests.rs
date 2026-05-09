@@ -521,20 +521,62 @@ fn mouse_click_outside_dashboard_panes_does_not_change_focus() {
 }
 
 #[test]
-fn mouse_click_is_ignored_while_composing() {
+fn mouse_click_outside_composer_blurs_and_focuses_clicked_pane() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
     handle_key(&mut state, key(KeyCode::Down));
     handle_key(&mut state, key(KeyCode::Enter));
     handle_key(&mut state, char_key('i'));
+    handle_key(&mut state, char_key('d'));
 
-    assert!(!handle_mouse(
+    assert!(handle_mouse(
         &mut state,
         mouse(MouseEventKind::Down(MouseButton::Left), 100, 1),
         dashboard_area(),
     ));
-    assert_eq!(state.focus(), FocusPane::Messages);
+    assert_eq!(state.focus(), FocusPane::Members);
+    assert!(!state.is_composing());
+    assert_eq!(state.composer_input(), "");
+}
+
+#[test]
+fn mouse_click_outside_composer_blurs_and_selects_clicked_row() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, key(KeyCode::Up));
+    state.start_composer();
+    let (column, row) = channel_row_point(1);
+
+    assert!(handle_mouse(
+        &mut state,
+        mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+        dashboard_area(),
+    ));
+
+    assert!(!state.is_composing());
+    assert_eq!(state.focus(), FocusPane::Channels);
+    assert_eq!(state.selected_channel(), 1);
+}
+
+#[test]
+fn mouse_scroll_outside_composer_does_not_clear_draft() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+    handle_key(&mut state, char_key('d'));
+
+    assert!(!handle_mouse(
+        &mut state,
+        mouse(MouseEventKind::ScrollDown, 100, 1),
+        dashboard_area(),
+    ));
+
     assert!(state.is_composing());
+    assert_eq!(state.composer_input(), "d");
 }
 
 #[test]
@@ -707,6 +749,43 @@ fn shift_enter_inserts_newline_while_composing() {
 }
 
 #[test]
+fn composer_cursor_edits_in_middle() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+    for value in "abcd".chars() {
+        handle_key(&mut state, char_key(value));
+    }
+
+    handle_key(&mut state, key(KeyCode::Left));
+    handle_key(&mut state, key(KeyCode::Left));
+    handle_key(&mut state, char_key('X'));
+    assert_eq!(state.composer_input(), "abXcd");
+    assert_eq!(state.composer_cursor_byte_index(), 3);
+
+    handle_key(&mut state, key(KeyCode::Backspace));
+    assert_eq!(state.composer_input(), "abcd");
+    assert_eq!(state.composer_cursor_byte_index(), 2);
+
+    handle_key(&mut state, key(KeyCode::Delete));
+    assert_eq!(state.composer_input(), "abd");
+    assert_eq!(state.composer_cursor_byte_index(), 2);
+
+    handle_key(&mut state, key(KeyCode::Home));
+    handle_key(&mut state, char_key('>'));
+    handle_key(&mut state, key(KeyCode::End));
+    handle_key(&mut state, char_key('!'));
+
+    assert_eq!(state.composer_input(), ">abd!");
+    assert_eq!(
+        state.composer_cursor_byte_index(),
+        state.composer_input().len()
+    );
+}
+
+#[test]
 fn paste_inserts_text_while_composing() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
@@ -717,6 +796,26 @@ fn paste_inserts_text_while_composing() {
     assert!(handle_paste(&mut state, "hello\r\nworld"));
 
     assert_eq!(state.composer_input(), "hello\nworld");
+}
+
+#[test]
+fn paste_inserts_text_at_composer_cursor() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+    for value in "helloworld".chars() {
+        handle_key(&mut state, char_key(value));
+    }
+    for _ in 0..5 {
+        handle_key(&mut state, key(KeyCode::Left));
+    }
+
+    assert!(handle_paste(&mut state, " "));
+
+    assert_eq!(state.composer_input(), "hello world");
+    assert_eq!(state.composer_cursor_byte_index(), "hello ".len());
 }
 
 #[test]

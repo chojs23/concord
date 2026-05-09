@@ -23,9 +23,11 @@ impl DashboardState {
             return;
         }
         self.composer_input.clear();
+        self.composer_cursor_byte_index = 0;
         self.pending_composer_attachments.clear();
         self.reply_target_message_id = Some(message_id);
         self.edit_target_message = None;
+        self.reset_mention_picker_state();
         self.composer_active = true;
         self.focus = FocusPane::Messages;
     }
@@ -43,15 +45,21 @@ impl DashboardState {
         let channel_id = message.channel_id;
         let message_id = message.id;
         self.composer_input = content;
+        self.composer_cursor_byte_index = self.composer_input.len();
         self.pending_composer_attachments.clear();
         self.reply_target_message_id = None;
         self.edit_target_message = Some((channel_id, message_id));
+        self.reset_mention_picker_state();
         self.composer_active = true;
         self.focus = FocusPane::Messages;
     }
 
     pub fn composer_input(&self) -> &str {
         &self.composer_input
+    }
+
+    pub fn composer_cursor_byte_index(&self) -> usize {
+        clamp_cursor_index(&self.composer_input, self.composer_cursor_byte_index)
     }
 
     pub fn pending_composer_attachments(&self) -> &[MessageAttachmentUpload] {
@@ -112,12 +120,14 @@ impl DashboardState {
         self.reply_target_message_id = None;
         self.edit_target_message = None;
         self.composer_active = true;
+        self.move_composer_cursor_end();
         self.focus = FocusPane::Messages;
     }
 
     pub fn cancel_composer(&mut self) {
         self.composer_active = false;
         self.composer_input.clear();
+        self.composer_cursor_byte_index = 0;
         self.pending_composer_attachments.clear();
         self.reply_target_message_id = None;
         self.edit_target_message = None;
@@ -125,54 +135,57 @@ impl DashboardState {
     }
 
     pub fn push_composer_char(&mut self, value: char) {
-        // The `@` key triggers the picker only at the start of a word so that
-        // typing inside an email or another @mention doesn't reopen the popup
-        // unexpectedly.
-        if value == '@' {
-            let triggers_picker = should_start_mention_query(&self.composer_input);
-            self.composer_input.push('@');
-            if triggers_picker {
-                self.composer_mention_query = Some(String::new());
-            } else {
-                self.composer_mention_query = None;
-            }
-            self.composer_mention_selected = 0;
+        let mut text = String::new();
+        text.push(value);
+        self.insert_composer_text_at_cursor(&text);
+    }
+
+    pub fn insert_composer_text_at_cursor(&mut self, value: &str) {
+        if value.is_empty() {
             return;
         }
-
-        if let Some(query) = self.composer_mention_query.as_mut() {
-            // Discord-style mention queries accept letters, digits, and the
-            // characters that show up in usernames or display names. Any other
-            // character commits the user to a literal `@text` and closes the
-            // picker.
-            if is_mention_query_char(value) {
-                query.push(value);
-                self.composer_input.push(value);
-                self.composer_mention_selected = 0;
-                return;
-            }
-            self.composer_mention_query = None;
-            self.composer_mention_selected = 0;
-        }
-        self.composer_input.push(value);
+        let cursor = self.composer_cursor_byte_index();
+        self.replace_composer_range(cursor..cursor, value);
     }
 
     pub fn pop_composer_char(&mut self) {
-        if let Some(query) = self.composer_mention_query.as_mut() {
-            if query.pop().is_some() {
-                self.composer_input.pop();
-                self.composer_mention_selected = 0;
-                return;
-            }
-            // Query was empty so the popped character is the `@` that opened
-            // the picker. Drop it and close.
-            self.composer_input.pop();
-            self.composer_mention_query = None;
-            self.composer_mention_selected = 0;
+        let end = self.composer_cursor_byte_index();
+        if end == 0 {
             return;
         }
-        self.composer_input.pop();
-        self.invalidate_dropped_mention_completions();
+        let start = previous_char_boundary(&self.composer_input, end);
+        self.replace_composer_range(start..end, "");
+    }
+
+    pub fn delete_composer_char(&mut self) {
+        let start = self.composer_cursor_byte_index();
+        if start >= self.composer_input.len() {
+            return;
+        }
+        let end = next_char_boundary(&self.composer_input, start);
+        self.replace_composer_range(start..end, "");
+    }
+
+    pub fn move_composer_cursor_left(&mut self) {
+        let cursor = self.composer_cursor_byte_index();
+        self.composer_cursor_byte_index = previous_char_boundary(&self.composer_input, cursor);
+        self.refresh_active_mention_query();
+    }
+
+    pub fn move_composer_cursor_right(&mut self) {
+        let cursor = self.composer_cursor_byte_index();
+        self.composer_cursor_byte_index = next_char_boundary(&self.composer_input, cursor);
+        self.refresh_active_mention_query();
+    }
+
+    pub fn move_composer_cursor_home(&mut self) {
+        self.composer_cursor_byte_index = 0;
+        self.refresh_active_mention_query();
+    }
+
+    pub fn move_composer_cursor_end(&mut self) {
+        self.composer_cursor_byte_index = self.composer_input.len();
+        self.refresh_active_mention_query();
     }
 
     pub fn submit_composer(&mut self) -> Option<AppCommand> {
@@ -189,6 +202,7 @@ impl DashboardState {
                 return None;
             }
             self.composer_input.clear();
+            self.composer_cursor_byte_index = 0;
             self.pending_composer_attachments.clear();
             self.composer_active = false;
             self.reply_target_message_id = None;
@@ -205,6 +219,7 @@ impl DashboardState {
         // the message rather than fire a request that would 403.
         if !self.can_send_in_selected_channel() {
             self.composer_input.clear();
+            self.composer_cursor_byte_index = 0;
             self.pending_composer_attachments.clear();
             self.composer_active = false;
             self.reply_target_message_id = None;
@@ -214,6 +229,7 @@ impl DashboardState {
         }
         if has_attachments && !self.can_attach_in_selected_channel() {
             self.composer_input.clear();
+            self.composer_cursor_byte_index = 0;
             self.pending_composer_attachments.clear();
             self.composer_active = false;
             self.reply_target_message_id = None;
@@ -223,6 +239,7 @@ impl DashboardState {
         }
 
         self.composer_input.clear();
+        self.composer_cursor_byte_index = 0;
         self.reset_mention_picker_state();
         let reply_to = self.reply_target_message_id.take();
         let attachments = std::mem::take(&mut self.pending_composer_attachments);
@@ -274,7 +291,10 @@ impl DashboardState {
     /// `<@USER_ID>` later. Returns `false` when the picker has no candidate
     /// to apply.
     pub fn confirm_composer_mention(&mut self) -> bool {
-        let Some(query) = self.composer_mention_query.clone() else {
+        let Some(_query) = self.composer_mention_query.clone() else {
+            return false;
+        };
+        let Some(mention_start) = self.composer_mention_start else {
             return false;
         };
         let candidates = self.composer_mention_candidates();
@@ -283,44 +303,149 @@ impl DashboardState {
         };
         let entry = entry.clone();
 
-        // Drop the trailing `@<query>` exactly: `@` is one ASCII byte and the
-        // query was built from user characters that may be multi-byte.
-        let suffix_byte_count = '@'.len_utf8() + query.len();
-        let new_len = self.composer_input.len().saturating_sub(suffix_byte_count);
-        self.composer_input.truncate(new_len);
+        let cursor = self.composer_cursor_byte_index();
+        if mention_start > cursor {
+            return false;
+        }
 
-        let start = self.composer_input.len();
-        self.composer_input.push('@');
-        self.composer_input.push_str(&entry.display_name);
-        let end = self.composer_input.len();
-        self.composer_input.push(' ');
+        let replacement = format!("@{} ", entry.display_name);
+        self.replace_composer_range(mention_start..cursor, &replacement);
+        let end = mention_start + '@'.len_utf8() + entry.display_name.len();
 
         self.composer_mention_completions.push(MentionCompletion {
-            byte_start: start,
+            byte_start: mention_start,
             byte_end: end,
             user_id: entry.user_id,
         });
-        self.composer_mention_query = None;
-        self.composer_mention_selected = 0;
+        self.close_composer_mention_query();
         true
     }
 
     /// Closes the picker without inserting anything. The literal `@query`
     /// stays in the composer.
     pub fn cancel_composer_mention(&mut self) {
-        self.composer_mention_query = None;
-        self.composer_mention_selected = 0;
+        self.close_composer_mention_query();
     }
 
     fn reset_mention_picker_state(&mut self) {
-        self.composer_mention_query = None;
-        self.composer_mention_selected = 0;
+        self.close_composer_mention_query();
         self.composer_mention_completions.clear();
     }
 
-    fn invalidate_dropped_mention_completions(&mut self) {
-        let len = self.composer_input.len();
-        self.composer_mention_completions
-            .retain(|completion| completion.byte_end <= len);
+    fn close_composer_mention_query(&mut self) {
+        self.composer_mention_query = None;
+        self.composer_mention_start = None;
+        self.composer_mention_selected = 0;
+    }
+
+    fn replace_composer_range(&mut self, range: Range<usize>, replacement: &str) {
+        if range.start > range.end
+            || range.end > self.composer_input.len()
+            || !self.composer_input.is_char_boundary(range.start)
+            || !self.composer_input.is_char_boundary(range.end)
+        {
+            return;
+        }
+        self.adjust_mention_completions_for_replace(range.clone(), replacement.len());
+        self.composer_input
+            .replace_range(range.clone(), replacement);
+        self.composer_cursor_byte_index = range.start + replacement.len();
+        self.refresh_active_mention_query();
+    }
+
+    fn refresh_active_mention_query(&mut self) {
+        let cursor = self.composer_cursor_byte_index();
+        let mut query_start = cursor;
+
+        while query_start > 0 {
+            let previous = previous_char_boundary(&self.composer_input, query_start);
+            let value = self.composer_input[previous..query_start]
+                .chars()
+                .next()
+                .expect("character boundary slice contains one character");
+            if !is_mention_query_char(value) {
+                break;
+            }
+            query_start = previous;
+        }
+
+        if query_start > 0 {
+            let mention_start = previous_char_boundary(&self.composer_input, query_start);
+            if &self.composer_input[mention_start..query_start] == "@"
+                && should_start_mention_query(&self.composer_input[..mention_start])
+            {
+                self.composer_mention_query =
+                    Some(self.composer_input[query_start..cursor].to_owned());
+                self.composer_mention_start = Some(mention_start);
+                self.composer_mention_selected = 0;
+                return;
+            }
+        }
+
+        self.close_composer_mention_query();
+    }
+
+    fn adjust_mention_completions_for_replace(
+        &mut self,
+        replaced: Range<usize>,
+        replacement_len: usize,
+    ) {
+        let replaced_len = replaced.end - replaced.start;
+        let delta = replacement_len as isize - replaced_len as isize;
+        let mut completions = Vec::with_capacity(self.composer_mention_completions.len());
+
+        for mut completion in self.composer_mention_completions.drain(..) {
+            if completion.byte_end <= replaced.start {
+                completions.push(completion);
+            } else if completion.byte_start >= replaced.end {
+                completion.byte_start = shift_byte_index(completion.byte_start, delta);
+                completion.byte_end = shift_byte_index(completion.byte_end, delta);
+                completions.push(completion);
+            } else if replaced.is_empty() && replaced.start <= completion.byte_start {
+                completion.byte_start = shift_byte_index(completion.byte_start, delta);
+                completion.byte_end = shift_byte_index(completion.byte_end, delta);
+                completions.push(completion);
+            } else if replaced.is_empty() && replaced.start >= completion.byte_end {
+                completions.push(completion);
+            }
+        }
+
+        self.composer_mention_completions = completions;
+    }
+}
+
+fn clamp_cursor_index(input: &str, index: usize) -> usize {
+    let mut index = index.min(input.len());
+    while index > 0 && !input.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn previous_char_boundary(input: &str, index: usize) -> usize {
+    let index = clamp_cursor_index(input, index);
+    if index == 0 {
+        return 0;
+    }
+    let mut previous = index - 1;
+    while previous > 0 && !input.is_char_boundary(previous) {
+        previous -= 1;
+    }
+    previous
+}
+
+fn next_char_boundary(input: &str, index: usize) -> usize {
+    let mut next = clamp_cursor_index(input, index).saturating_add(1);
+    while next < input.len() && !input.is_char_boundary(next) {
+        next += 1;
+    }
+    next.min(input.len())
+}
+
+fn shift_byte_index(index: usize, delta: isize) -> usize {
+    if delta < 0 {
+        index.saturating_sub(delta.unsigned_abs())
+    } else {
+        index.saturating_add(delta as usize)
     }
 }
