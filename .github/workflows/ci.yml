@@ -3,8 +3,6 @@ name: CI
 on:
   push:
     branches: [main]
-    tags:
-      - "**[0-9]+.[0-9]+.[0-9]+*"
   pull_request:
     branches: [main]
 
@@ -39,3 +37,73 @@ jobs:
 
       - name: dist config check
         run: cargo dist plan
+
+  release-cache-check:
+    name: check release cache inputs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    outputs:
+      should-warm: ${{ steps.changed.outputs.should-warm }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: changed
+        name: check changed release inputs
+        shell: bash
+        run: |
+          before="${{ github.event.before }}"
+
+          if [[ "$before" == "0000000000000000000000000000000000000000" ]]; then
+            echo "should-warm=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed_files="$(git diff --name-only "$before" "${{ github.sha }}" -- \
+            Cargo.toml \
+            Cargo.lock \
+            dist-workspace.toml \
+            .github/workflows/release.yml)"
+
+          if [[ -n "$changed_files" ]]; then
+            echo "should-warm=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should-warm=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Keep this job id aligned with cargo-dist's release job. Swatinem/rust-cache
+  # includes the job id in its cache key by default, so renaming it can break
+  # default-branch cache reuse for tag releases.
+  build-local-artifacts:
+    name: warm release cache (${{ matrix.target }})
+    needs: release-cache-check
+    if: needs.release-cache-check.outputs.should-warm == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Keep this matrix in sync with cargo-dist's local artifact matrix in
+          # .github/workflows/release.yml and dist-workspace.toml.
+          - runner: macos-14
+            target: aarch64-apple-darwin
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: warm dist-profile cache
+        run: cargo build --profile dist --locked --target ${{ matrix.target }}
