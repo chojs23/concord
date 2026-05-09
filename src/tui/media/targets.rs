@@ -27,6 +27,7 @@ const DISCORD_IMAGES_EXTERNAL_PREFIX: &str = "https://images-ext-";
 const DISCORD_IMAGES_EXTERNAL_HOST_SUFFIX: &str = ".discordapp.net";
 const DISCORD_EXTERNAL_PROXY_PATH: &str = "/external/";
 const DISCORD_MEDIA_PROXY_PREVIEW_FORMAT: &str = "webp";
+const DISCORD_MEDIA_PROXY_LOW_QUALITY: &str = "low";
 const DISCORD_MEDIA_PROXY_PREVIEW_QUALITY: &str = "lossless";
 const DISCORD_MEDIA_PROXY_MAX_PREVIEW_DIMENSION: u64 = 1000;
 const YOUTUBE_THUMBNAIL_PREFIXES: [&str; 4] = [
@@ -220,7 +221,14 @@ fn preview_request_url(
     if let Some(proxy_url) = preview.proxy_url
         && discord_media_proxy_supports_preview_resize(proxy_url)
     {
-        return discord_media_proxy_preview_url(proxy_url, width_columns, height_rows, quality);
+        return discord_media_proxy_preview_url(
+            proxy_url,
+            width_columns,
+            height_rows,
+            preview.width,
+            preview.height,
+            quality,
+        );
     }
 
     youtube_thumbnail_preview_url(preview.url, width_columns, height_rows, quality)
@@ -286,11 +294,17 @@ fn discord_media_proxy_preview_url(
     proxy_url: &str,
     width_columns: u16,
     height_rows: u16,
+    source_width: Option<u64>,
+    source_height: Option<u64>,
     quality: ImagePreviewQualityPreset,
 ) -> String {
-    let (pixels_per_column, pixels_per_row) = preview_source_pixels_per_cell(quality);
-    let width = preview_dimension_pixels(u64::from(width_columns), pixels_per_column);
-    let height = preview_dimension_pixels(u64::from(height_rows), pixels_per_row);
+    let (width, height) = discord_media_proxy_preview_dimensions(
+        width_columns,
+        height_rows,
+        source_width,
+        source_height,
+        quality,
+    );
     let (base, query) = proxy_url.split_once('?').unwrap_or((proxy_url, ""));
     let mut params = query
         .split('&')
@@ -302,13 +316,96 @@ fn discord_media_proxy_preview_url(
         .map(str::to_owned)
         .collect::<Vec<_>>();
     params.push(format!("format={DISCORD_MEDIA_PROXY_PREVIEW_FORMAT}"));
-    if quality == ImagePreviewQualityPreset::High {
-        params.push(format!("quality={DISCORD_MEDIA_PROXY_PREVIEW_QUALITY}"));
+    match quality {
+        ImagePreviewQualityPreset::Efficient => {
+            params.push(format!("quality={DISCORD_MEDIA_PROXY_LOW_QUALITY}"));
+        }
+        ImagePreviewQualityPreset::High => {
+            params.push(format!("quality={DISCORD_MEDIA_PROXY_PREVIEW_QUALITY}"));
+        }
+        ImagePreviewQualityPreset::Balanced | ImagePreviewQualityPreset::Original => {}
     }
     params.push(format!("width={width}"));
     params.push(format!("height={height}"));
 
     format!("{base}?{}", params.join("&"))
+}
+
+fn discord_media_proxy_preview_dimensions(
+    width_columns: u16,
+    height_rows: u16,
+    source_width: Option<u64>,
+    source_height: Option<u64>,
+    quality: ImagePreviewQualityPreset,
+) -> (u64, u64) {
+    if let (Some(source_width), Some(source_height)) = (source_width, source_height)
+        && source_width > 0
+        && source_height > 0
+    {
+        let (scale_numerator, scale_denominator) = preview_source_scale(quality);
+        return scaled_preview_dimensions(
+            source_width,
+            source_height,
+            scale_numerator,
+            scale_denominator,
+        );
+    }
+
+    let (pixels_per_column, pixels_per_row) = preview_source_pixels_per_cell(quality);
+    (
+        preview_dimension_pixels(u64::from(width_columns), pixels_per_column),
+        preview_dimension_pixels(u64::from(height_rows), pixels_per_row),
+    )
+}
+
+fn preview_source_scale(quality: ImagePreviewQualityPreset) -> (u64, u64) {
+    match quality {
+        ImagePreviewQualityPreset::Efficient => (3, 10),
+        ImagePreviewQualityPreset::Balanced => (1, 2),
+        ImagePreviewQualityPreset::High | ImagePreviewQualityPreset::Original => (1, 1),
+    }
+}
+
+fn scaled_preview_dimensions(
+    source_width: u64,
+    source_height: u64,
+    scale_numerator: u64,
+    scale_denominator: u64,
+) -> (u64, u64) {
+    let scaled_width = scaled_dimension(source_width, scale_numerator, scale_denominator);
+    let scaled_height = scaled_dimension(source_height, scale_numerator, scale_denominator);
+    cap_preview_dimensions_preserving_aspect(scaled_width, scaled_height)
+}
+
+fn scaled_dimension(value: u64, numerator: u64, denominator: u64) -> u64 {
+    if denominator == 0 {
+        return 1;
+    }
+
+    let scaled = (u128::from(value) * u128::from(numerator)).div_ceil(u128::from(denominator));
+    u64::try_from(scaled).unwrap_or(u64::MAX).max(1)
+}
+
+fn cap_preview_dimensions_preserving_aspect(width: u64, height: u64) -> (u64, u64) {
+    let max_dimension = width.max(height);
+    if max_dimension <= DISCORD_MEDIA_PROXY_MAX_PREVIEW_DIMENSION {
+        return (width.max(1), height.max(1));
+    }
+
+    let capped_width = (u128::from(width) * u128::from(DISCORD_MEDIA_PROXY_MAX_PREVIEW_DIMENSION))
+        .div_ceil(u128::from(max_dimension));
+    let capped_height = (u128::from(height)
+        * u128::from(DISCORD_MEDIA_PROXY_MAX_PREVIEW_DIMENSION))
+    .div_ceil(u128::from(max_dimension));
+
+    (
+        u64::try_from(capped_width)
+            .unwrap_or(DISCORD_MEDIA_PROXY_MAX_PREVIEW_DIMENSION)
+            .max(1),
+        u64::try_from(capped_height)
+            .unwrap_or(DISCORD_MEDIA_PROXY_MAX_PREVIEW_DIMENSION)
+            .max(1),
+    )
 }
 
 fn preview_source_pixels_per_cell(quality: ImagePreviewQualityPreset) -> (u64, u64) {
