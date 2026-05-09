@@ -19,6 +19,12 @@ pub enum AppError {
     EmptyMessageContent,
     #[error("message content exceeds Discord's 2000 character limit: {len}")]
     MessageTooLong { len: usize },
+    #[error("attachment exceeds Discord's 10 MiB default upload limit: {filename} ({size} bytes)")]
+    AttachmentTooLarge { filename: String, size: u64 },
+    #[error("attachments exceed Discord's 25 MiB request limit: {size} bytes")]
+    AttachmentsTooLarge { size: u64 },
+    #[error("message has too many attachments: {count}")]
+    TooManyAttachments { count: usize },
     #[error("Discord request failed: {0}")]
     DiscordRequest(String),
     #[error("terminal I/O failed")]

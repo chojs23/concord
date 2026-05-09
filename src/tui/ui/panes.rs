@@ -383,29 +383,65 @@ fn mention_picker_lines(
 
 pub(super) fn composer_lines(state: &DashboardState, width: u16) -> Vec<Line<'static>> {
     if state.is_composing() {
+        let mut lines = pending_upload_lines(state, width);
         let input = Line::from(format!("> {}", state.composer_input()));
         if let Some(message) = state.reply_target_message_state() {
-            return vec![
-                Line::from(Span::styled(
-                    reply_target_hint(message, state, width),
-                    Style::default().fg(DIM),
-                )),
-                input,
-            ];
+            lines.push(Line::from(Span::styled(
+                reply_target_hint(message, state, width),
+                Style::default().fg(DIM),
+            )));
         }
-        return vec![input];
+        lines.push(input);
+        return lines;
     }
 
     vec![Line::from(composer_text(state, width))]
 }
 
+fn pending_upload_lines(state: &DashboardState, width: u16) -> Vec<Line<'static>> {
+    pending_upload_texts(state, width)
+        .into_iter()
+        .map(|label| Line::from(Span::styled(label, Style::default().fg(ACCENT))))
+        .collect()
+}
+
+fn pending_upload_texts(state: &DashboardState, width: u16) -> Vec<String> {
+    let max_width = usize::from(width).max(1);
+    state
+        .pending_composer_attachments()
+        .iter()
+        .map(|attachment| {
+            let label = format!(
+                "upload: {} ({})",
+                attachment.filename,
+                format_byte_size(attachment.size_bytes)
+            );
+            truncate_display_width(&label, max_width)
+        })
+        .collect()
+}
+
+fn format_byte_size(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    if bytes >= MIB {
+        format!("{:.1} MiB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes as f64 / KIB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 pub(super) fn composer_text(state: &DashboardState, width: u16) -> String {
     if state.is_composing() {
+        let mut lines = pending_upload_texts(state, width);
         let input = format!("> {}", state.composer_input());
         if let Some(message) = state.reply_target_message_state() {
-            return format!("{}\n{input}", reply_target_hint(message, state, width));
+            lines.push(reply_target_hint(message, state, width));
         }
-        return input;
+        lines.push(input);
+        return lines.join("\n");
     }
 
     if let Some(channel) = state.selected_channel_state() {

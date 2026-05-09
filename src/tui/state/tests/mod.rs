@@ -19,10 +19,10 @@ use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo,
     ChannelRecipientInfo, ChannelUnreadState, ChannelVisibilityStats, CustomEmojiInfo,
     DiscordState, ForumPostArchiveState, FriendStatus, GuildNotificationSettingsInfo, MemberInfo,
-    MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo,
-    NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind, PresenceStatus,
-    ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo,
-    RoleInfo, UserProfileInfo,
+    MessageAttachmentUpload, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+    MutualGuildInfo, NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind,
+    PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
+    ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
 };
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -3385,7 +3385,47 @@ fn confirm_inserts_display_name_and_submit_expands_to_wire_format() {
             channel_id: Id::new(2),
             content: "<@20> hi".to_owned(),
             reply_to: None,
+            attachments: Vec::new(),
         })
+    );
+}
+
+#[test]
+fn cancel_composer_clears_pending_attachments() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    state.confirm_selected_channel();
+    state.start_composer();
+    state.add_pending_composer_attachments(vec![MessageAttachmentUpload {
+        path: "/tmp/cat.png".into(),
+        filename: "cat.png".to_owned(),
+        size_bytes: 2_048,
+    }]);
+
+    state.cancel_composer();
+
+    assert_eq!(state.pending_composer_attachments(), &[]);
+}
+
+#[test]
+fn pending_attachments_are_capped_at_upload_limit() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    state.confirm_selected_channel();
+    state.start_composer();
+    let attachments = (0..crate::discord::MAX_UPLOAD_ATTACHMENT_COUNT + 2)
+        .map(|index| MessageAttachmentUpload {
+            path: format!("/tmp/{index}.txt").into(),
+            filename: format!("{index}.txt"),
+            size_bytes: 1,
+        })
+        .collect();
+
+    state.add_pending_composer_attachments(attachments);
+
+    assert_eq!(
+        state.pending_composer_attachments().len(),
+        crate::discord::MAX_UPLOAD_ATTACHMENT_COUNT
     );
 }
 
@@ -3558,6 +3598,7 @@ fn composer_sends_to_opened_thread_channel() {
             channel_id: Id::new(10),
             content: "hi".to_owned(),
             reply_to: None,
+            attachments: Vec::new(),
         })
     );
 }

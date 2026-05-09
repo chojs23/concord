@@ -1,3 +1,9 @@
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use crate::discord::ids::Id;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -56,6 +62,26 @@ fn message_action_row_point(row: u16) -> (u16, u16) {
 
 fn dashboard_area() -> Rect {
     Rect::new(0, 0, 120, 20)
+}
+
+fn temp_upload_file(name: &str, contents: &[u8]) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!("concord-{unique}"));
+    fs::create_dir_all(&directory).expect("temp upload directory can be created");
+    let path = directory.join(name);
+    fs::write(&path, contents).expect("temp upload file can be written");
+    path
+}
+
+fn remove_temp_upload_file(path: &PathBuf) {
+    let directory = path.parent().map(std::path::Path::to_path_buf);
+    let _ = fs::remove_file(path);
+    if let Some(directory) = directory {
+        let _ = fs::remove_dir(directory);
+    }
 }
 
 #[test]
@@ -694,6 +720,162 @@ fn paste_inserts_text_while_composing() {
 }
 
 #[test]
+fn paste_file_path_adds_pending_attachment() {
+    let path = temp_upload_file("paste path.txt", b"hello");
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+
+    assert!(handle_paste(
+        &mut state,
+        path.to_str().expect("temp path is valid unicode")
+    ));
+
+    assert_eq!(state.composer_input(), "");
+    assert_eq!(state.pending_composer_attachments().len(), 1);
+    assert_eq!(state.pending_composer_attachments()[0].path, path);
+    assert_eq!(
+        state.pending_composer_attachments()[0].filename,
+        "paste path.txt"
+    );
+    assert_eq!(state.pending_composer_attachments()[0].size_bytes, 5);
+    remove_temp_upload_file(&path);
+}
+
+#[test]
+fn paste_single_quoted_file_path_adds_pending_attachment() {
+    let path = temp_upload_file("quoted path.txt", b"quoted");
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+    let pasted = format!("'{}'", path.to_str().expect("temp path is valid unicode"));
+
+    assert!(handle_paste(&mut state, &pasted));
+
+    assert_eq!(state.composer_input(), "");
+    assert_eq!(state.pending_composer_attachments().len(), 1);
+    assert_eq!(state.pending_composer_attachments()[0].path, path);
+    assert_eq!(
+        state.pending_composer_attachments()[0].filename,
+        "quoted path.txt"
+    );
+    remove_temp_upload_file(&path);
+}
+
+#[test]
+fn paste_backslash_escaped_file_path_adds_pending_attachment() {
+    let path = temp_upload_file("escaped path.txt", b"escaped");
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+    let pasted = path
+        .to_str()
+        .expect("temp path is valid unicode")
+        .replace(' ', "\\ ");
+
+    assert!(handle_paste(&mut state, &pasted));
+
+    assert_eq!(state.composer_input(), "");
+    assert_eq!(state.pending_composer_attachments().len(), 1);
+    assert_eq!(state.pending_composer_attachments()[0].path, path);
+    assert_eq!(
+        state.pending_composer_attachments()[0].filename,
+        "escaped path.txt"
+    );
+    remove_temp_upload_file(&path);
+}
+
+#[test]
+fn paste_file_uri_list_can_submit_attachment_only_message() {
+    let path = temp_upload_file("uri path.txt", b"upload");
+    let uri = format!(
+        "x-special/gnome-copied-files\ncopy\nfile://{}",
+        path.to_string_lossy().replace(' ', "%20")
+    );
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+
+    assert!(handle_paste(&mut state, &uri));
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(state.pending_composer_attachments(), &[]);
+    assert_eq!(
+        command,
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(11),
+            content: String::new(),
+            reply_to: None,
+            attachments: vec![crate::discord::MessageAttachmentUpload {
+                path: path.clone(),
+                filename: "uri path.txt".to_owned(),
+                size_bytes: 6,
+            }],
+        })
+    );
+    remove_temp_upload_file(&path);
+}
+
+#[test]
+fn ctrl_backspace_removes_last_pending_attachment() {
+    let first = temp_upload_file("first.txt", b"first");
+    let second = temp_upload_file("second.txt", b"second");
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+    handle_key(&mut state, char_key('x'));
+    let pasted = format!(
+        "{}\n{}",
+        first.to_str().expect("temp path is valid unicode"),
+        second.to_str().expect("temp path is valid unicode")
+    );
+
+    assert!(handle_paste(&mut state, &pasted));
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL),
+    );
+
+    assert_eq!(state.composer_input(), "x");
+    assert_eq!(state.pending_composer_attachments().len(), 1);
+    assert_eq!(state.pending_composer_attachments()[0].path, first);
+    remove_temp_upload_file(&first);
+    remove_temp_upload_file(&second);
+}
+
+#[test]
+fn paste_file_path_while_editing_inserts_text_instead_of_attachment() {
+    let path = temp_upload_file("edit paste.txt", b"no attach");
+    let mut state = state_with_own_message();
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('e'));
+
+    assert!(handle_paste(
+        &mut state,
+        path.to_str().expect("temp path is valid unicode")
+    ));
+
+    assert!(state.pending_composer_attachments().is_empty());
+    assert!(
+        state
+            .composer_input()
+            .contains(path.to_str().expect("temp path is valid unicode"))
+    );
+    remove_temp_upload_file(&path);
+}
+
+#[test]
 fn paste_is_ignored_when_not_composing() {
     let mut state = state_with_channel_tree();
 
@@ -725,6 +907,7 @@ fn enter_submits_multiline_composer() {
             channel_id: Id::new(11),
             content: "h\ni".to_owned(),
             reply_to: None,
+            attachments: Vec::new(),
         })
     );
 }
@@ -1092,6 +1275,7 @@ fn message_action_menu_reply_opens_composer() {
             channel_id: Id::new(2),
             content: "hi".to_owned(),
             reply_to: Some(Id::new(1)),
+            attachments: Vec::new(),
         })
     );
 }
@@ -1155,6 +1339,7 @@ fn canceling_reply_composer_clears_reply_target() {
             channel_id: Id::new(2),
             content: "n".to_owned(),
             reply_to: None,
+            attachments: Vec::new(),
         })
     );
 }

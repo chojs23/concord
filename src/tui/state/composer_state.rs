@@ -1,4 +1,6 @@
-use crate::discord::AppCommand;
+use std::ops::Range;
+
+use crate::discord::{AppCommand, MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload};
 
 use super::composer::{
     MentionCompletion, build_mention_candidates, expand_mention_completions, is_mention_query_char,
@@ -21,6 +23,7 @@ impl DashboardState {
             return;
         }
         self.composer_input.clear();
+        self.pending_composer_attachments.clear();
         self.reply_target_message_id = Some(message_id);
         self.edit_target_message = None;
         self.composer_active = true;
@@ -40,6 +43,7 @@ impl DashboardState {
         let channel_id = message.channel_id;
         let message_id = message.id;
         self.composer_input = content;
+        self.pending_composer_attachments.clear();
         self.reply_target_message_id = None;
         self.edit_target_message = Some((channel_id, message_id));
         self.composer_active = true;
@@ -48,6 +52,28 @@ impl DashboardState {
 
     pub fn composer_input(&self) -> &str {
         &self.composer_input
+    }
+
+    pub fn pending_composer_attachments(&self) -> &[MessageAttachmentUpload] {
+        &self.pending_composer_attachments
+    }
+
+    pub fn add_pending_composer_attachments(&mut self, attachments: Vec<MessageAttachmentUpload>) {
+        if attachments.is_empty() || !self.composer_accepts_attachments() {
+            return;
+        }
+        let available =
+            MAX_UPLOAD_ATTACHMENT_COUNT.saturating_sub(self.pending_composer_attachments.len());
+        self.pending_composer_attachments
+            .extend(attachments.into_iter().take(available));
+    }
+
+    pub fn pop_pending_composer_attachment(&mut self) {
+        self.pending_composer_attachments.pop();
+    }
+
+    pub fn composer_accepts_attachments(&self) -> bool {
+        self.edit_target_message.is_none() && self.can_attach_in_selected_channel()
     }
 
     /// Whether the user can post messages in the currently selected channel.
@@ -62,8 +88,8 @@ impl DashboardState {
     }
 
     /// Whether the user can attach files in the currently selected channel.
-    /// Wired up so a future attachment picker can disable itself; the
-    /// composer doesn't expose attachment input today.
+    /// Paste-based attachment input uses this to decide whether file paths
+    /// become pending uploads or plain composer text.
     pub fn can_attach_in_selected_channel(&self) -> bool {
         match self.selected_channel_state() {
             Some(channel) if channel.is_forum() => false,
@@ -92,6 +118,7 @@ impl DashboardState {
     pub fn cancel_composer(&mut self) {
         self.composer_active = false;
         self.composer_input.clear();
+        self.pending_composer_attachments.clear();
         self.reply_target_message_id = None;
         self.edit_target_message = None;
         self.reset_mention_picker_state();
@@ -152,11 +179,17 @@ impl DashboardState {
         let expanded =
             expand_mention_completions(&self.composer_input, &self.composer_mention_completions);
         let content = expanded.trim().to_owned();
-        if content.is_empty() {
+        let has_attachments = !self.pending_composer_attachments.is_empty();
+        if content.is_empty() && !has_attachments {
             return None;
         }
         if let Some((channel_id, message_id)) = self.edit_target_message.take() {
+            if content.is_empty() {
+                self.edit_target_message = Some((channel_id, message_id));
+                return None;
+            }
             self.composer_input.clear();
+            self.pending_composer_attachments.clear();
             self.composer_active = false;
             self.reply_target_message_id = None;
             self.reset_mention_picker_state();
@@ -172,6 +205,16 @@ impl DashboardState {
         // the message rather than fire a request that would 403.
         if !self.can_send_in_selected_channel() {
             self.composer_input.clear();
+            self.pending_composer_attachments.clear();
+            self.composer_active = false;
+            self.reply_target_message_id = None;
+            self.edit_target_message = None;
+            self.reset_mention_picker_state();
+            return None;
+        }
+        if has_attachments && !self.can_attach_in_selected_channel() {
+            self.composer_input.clear();
+            self.pending_composer_attachments.clear();
             self.composer_active = false;
             self.reply_target_message_id = None;
             self.edit_target_message = None;
@@ -182,6 +225,7 @@ impl DashboardState {
         self.composer_input.clear();
         self.reset_mention_picker_state();
         let reply_to = self.reply_target_message_id.take();
+        let attachments = std::mem::take(&mut self.pending_composer_attachments);
         // Stay in insert mode so the user can send several messages in a
         // row without re-pressing `i`. The composer closes only when the
         // user explicitly bails with Esc or the channel revokes
@@ -190,6 +234,7 @@ impl DashboardState {
             channel_id,
             content,
             reply_to,
+            attachments,
         })
     }
 

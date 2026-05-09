@@ -5,14 +5,19 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
-use reqwest::{StatusCode, header::AUTHORIZATION};
+use reqwest::{
+    StatusCode,
+    header::AUTHORIZATION,
+    multipart::{Form, Part},
+};
 use serde_json::{Value, json};
 
 use crate::{
     AppError, Result,
     discord::{
-        ChannelInfo, ForumPostArchiveState, FriendStatus, MessageInfo, MutualGuildInfo,
-        ReactionEmoji, ReactionUserInfo, UserProfileInfo,
+        ChannelInfo, ForumPostArchiveState, FriendStatus, MAX_UPLOAD_ATTACHMENT_COUNT,
+        MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES, MessageAttachmentUpload, MessageInfo,
+        MutualGuildInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
         gateway::{parse_channel_info, parse_message_info},
     },
 };
@@ -75,21 +80,26 @@ impl DiscordRest {
         channel_id: Id<ChannelMarker>,
         content: &str,
         reply_to: Option<Id<MessageMarker>>,
+        attachments: &[MessageAttachmentUpload],
     ) -> Result<MessageInfo> {
-        validate_message_content(content)?;
-        let mut body = json!({ "content": content });
-        if let Some(message_id) = reply_to {
-            body["message_reference"] = json!({ "message_id": message_id.to_string() });
-        }
+        validate_message_payload(content, attachments)?;
+        let body = message_request_body(content, reply_to, attachments);
 
-        let raw = self
+        let request = self
             .raw_http
             .post(format!(
                 "https://discord.com/api/v9/channels/{}/messages",
                 channel_id.get()
             ))
-            .header(AUTHORIZATION, &self.token)
-            .json(&body)
+            .header(AUTHORIZATION, &self.token);
+
+        let request = if attachments.is_empty() {
+            request.json(&body)
+        } else {
+            request.multipart(message_multipart_form(body, attachments).await?)
+        };
+
+        let raw = request
             .send()
             .await
             .map_err(|error| {
@@ -934,8 +944,99 @@ fn next_reaction_users_after(
         .flatten()
 }
 
-pub fn validate_message_content(content: &str) -> Result<()> {
-    if content.trim().is_empty() {
+fn message_request_body(
+    content: &str,
+    reply_to: Option<Id<MessageMarker>>,
+    attachments: &[MessageAttachmentUpload],
+) -> Value {
+    let mut body = json!({ "content": content });
+    if let Some(message_id) = reply_to {
+        body["message_reference"] = json!({ "message_id": message_id.to_string() });
+    }
+    if !attachments.is_empty() {
+        body["attachments"] = Value::Array(
+            attachments
+                .iter()
+                .enumerate()
+                .map(|(index, attachment)| {
+                    json!({
+                        "id": index,
+                        "filename": attachment.filename,
+                    })
+                })
+                .collect(),
+        );
+    }
+    body
+}
+
+async fn message_multipart_form(
+    body: Value,
+    attachments: &[MessageAttachmentUpload],
+) -> Result<Form> {
+    let actual_sizes = attachment_file_sizes(attachments).await?;
+    validate_attachment_sizes(&actual_sizes)?;
+
+    let mut form = Form::new().part(
+        "payload_json",
+        Part::text(body.to_string())
+            .mime_str("application/json")
+            .map_err(|error| AppError::DiscordRequest(format!("upload payload failed: {error}")))?,
+    );
+
+    for (index, attachment) in attachments.iter().enumerate() {
+        let bytes = tokio::fs::read(&attachment.path).await.map_err(|error| {
+            AppError::DiscordRequest(format!(
+                "read attachment {} failed: {error}",
+                attachment.filename
+            ))
+        })?;
+        validate_attachment_sizes(&[(attachment.filename.clone(), bytes.len() as u64)])?;
+        let content_type = upload_content_type(&attachment.filename);
+        let part = Part::bytes(bytes)
+            .file_name(attachment.filename.clone())
+            .mime_str(&content_type)
+            .map_err(|error| {
+                AppError::DiscordRequest(format!(
+                    "attachment {} content type failed: {error}",
+                    attachment.filename
+                ))
+            })?;
+        form = form.part(format!("files[{index}]"), part);
+    }
+    Ok(form)
+}
+
+async fn attachment_file_sizes(
+    attachments: &[MessageAttachmentUpload],
+) -> Result<Vec<(String, u64)>> {
+    let mut sizes = Vec::with_capacity(attachments.len());
+    for attachment in attachments {
+        let metadata = tokio::fs::metadata(&attachment.path)
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!(
+                    "stat attachment {} failed: {error}",
+                    attachment.filename
+                ))
+            })?;
+        sizes.push((attachment.filename.clone(), metadata.len()));
+    }
+    Ok(sizes)
+}
+
+fn upload_content_type(filename: &str) -> String {
+    mime_guess::from_path(filename)
+        .first_or_octet_stream()
+        .essence_str()
+        .to_owned()
+}
+
+pub fn validate_message_payload(
+    content: &str,
+    attachments: &[MessageAttachmentUpload],
+) -> Result<()> {
+    if content.trim().is_empty() && attachments.is_empty() {
         return Err(AppError::EmptyMessageContent);
     }
 
@@ -944,11 +1045,45 @@ pub fn validate_message_content(content: &str) -> Result<()> {
         return Err(AppError::MessageTooLong { len });
     }
 
+    let sizes = attachments
+        .iter()
+        .map(|attachment| (attachment.filename.clone(), attachment.size_bytes))
+        .collect::<Vec<_>>();
+    validate_attachment_sizes(&sizes)
+}
+
+fn validate_attachment_sizes(attachments: &[(String, u64)]) -> Result<()> {
+    if attachments.len() > MAX_UPLOAD_ATTACHMENT_COUNT {
+        return Err(AppError::TooManyAttachments {
+            count: attachments.len(),
+        });
+    }
+
+    let mut total_size = 0_u64;
+    for (filename, size) in attachments {
+        if *size > MAX_UPLOAD_FILE_BYTES {
+            return Err(AppError::AttachmentTooLarge {
+                filename: filename.clone(),
+                size: *size,
+            });
+        }
+        total_size = total_size.saturating_add(*size);
+    }
+    if total_size > MAX_UPLOAD_TOTAL_BYTES {
+        return Err(AppError::AttachmentsTooLarge { size: total_size });
+    }
+
     Ok(())
+}
+
+pub fn validate_message_content(content: &str) -> Result<()> {
+    validate_message_payload(content, &[])
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use crate::discord::ids::{
         Id,
         marker::{ChannelMarker, EmojiMarker, GuildMarker},
@@ -957,12 +1092,13 @@ mod tests {
     use crate::{
         AppError,
         discord::{
-            ChannelInfo, ReactionEmoji,
+            ChannelInfo, MAX_UPLOAD_FILE_BYTES, MessageAttachmentUpload, ReactionEmoji,
             rest::{
                 ForumPostPage, ForumSearchSort, is_search_index_warming, merge_forum_pages,
-                next_reaction_users_after, parse_forum_preview_messages, parse_forum_thread_page,
-                parse_user_profile_response, poll_vote_request_body, reaction_route_component,
-                validate_message_content,
+                message_multipart_form, message_request_body, next_reaction_users_after,
+                parse_forum_preview_messages, parse_forum_thread_page, parse_user_profile_response,
+                poll_vote_request_body, reaction_route_component, upload_content_type,
+                validate_message_content, validate_message_payload,
             },
         },
     };
@@ -975,6 +1111,102 @@ mod tests {
         let content = "x".repeat(2_001);
         let error = validate_message_content(&content).expect_err("oversized message must fail");
         assert!(matches!(error, AppError::MessageTooLong { len: 2_001 }));
+    }
+
+    #[test]
+    fn validates_attachment_only_message_payload() {
+        let attachments = vec![MessageAttachmentUpload {
+            path: "/tmp/cat.png".into(),
+            filename: "cat.png".to_owned(),
+            size_bytes: 2_048,
+        }];
+
+        validate_message_payload("   ", &attachments).expect("file-only messages should be valid");
+
+        let body = message_request_body("", Some(Id::new(44)), &attachments);
+        assert_eq!(body["content"], "");
+        assert_eq!(body["message_reference"]["message_id"], "44");
+        assert_eq!(body["attachments"][0]["id"], 0);
+        assert_eq!(body["attachments"][0]["filename"], "cat.png");
+    }
+
+    #[test]
+    fn rejects_attachment_upload_limits() {
+        let too_large_file = vec![MessageAttachmentUpload {
+            path: "/tmp/large.bin".into(),
+            filename: "large.bin".to_owned(),
+            size_bytes: MAX_UPLOAD_FILE_BYTES + 1,
+        }];
+        let error = validate_message_payload("", &too_large_file)
+            .expect_err("oversized attachment must fail");
+        assert!(matches!(error, AppError::AttachmentTooLarge { .. }));
+
+        let too_large_total = vec![
+            MessageAttachmentUpload {
+                path: "/tmp/a.bin".into(),
+                filename: "a.bin".to_owned(),
+                size_bytes: MAX_UPLOAD_FILE_BYTES - 1,
+            },
+            MessageAttachmentUpload {
+                path: "/tmp/b.bin".into(),
+                filename: "b.bin".to_owned(),
+                size_bytes: MAX_UPLOAD_FILE_BYTES - 1,
+            },
+            MessageAttachmentUpload {
+                path: "/tmp/c.bin".into(),
+                filename: "c.bin".to_owned(),
+                size_bytes: MAX_UPLOAD_FILE_BYTES - 1,
+            },
+        ];
+        let error = validate_message_payload("", &too_large_total)
+            .expect_err("oversized attachment total must fail");
+        assert!(matches!(error, AppError::AttachmentsTooLarge { .. }));
+    }
+
+    #[tokio::test]
+    async fn multipart_form_rechecks_current_file_size() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is after unix epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("concord-rest-{unique}"));
+        std::fs::create_dir_all(&directory).expect("temp upload directory can be created");
+        let path = directory.join("changed.bin");
+        std::fs::write(&path, [0_u8]).expect("small temp file can be written");
+        let attachment = MessageAttachmentUpload {
+            path: path.clone(),
+            filename: "changed.bin".to_owned(),
+            size_bytes: 1,
+        };
+        std::fs::write(&path, vec![0_u8; (MAX_UPLOAD_FILE_BYTES + 1) as usize])
+            .expect("oversized temp file can be written");
+
+        let result = message_multipart_form(
+            message_request_body("", None, &[attachment.clone()]),
+            &[attachment],
+        )
+        .await;
+        let Err(error) = result else {
+            panic!("multipart form must re-check actual file size");
+        };
+
+        assert!(matches!(error, AppError::AttachmentTooLarge { .. }));
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_dir(directory);
+    }
+
+    #[test]
+    fn upload_content_type_uses_common_media_types() {
+        assert_eq!(upload_content_type("clip.MP4"), "video/mp4");
+        assert_eq!(upload_content_type("song.mp3"), "audio/mpeg");
+        assert_eq!(
+            upload_content_type("sheet.xlsx"),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        assert_eq!(
+            upload_content_type("unknown.concord"),
+            "application/octet-stream"
+        );
     }
 
     #[test]
