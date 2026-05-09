@@ -1306,7 +1306,7 @@ fn enter_submits_multiline_composer() {
 fn options_popup_toggles_selected_setting() {
     let mut state = state_with_messages(1);
 
-    handle_key(&mut state, char_key('o'));
+    state.open_options_popup();
     handle_key(&mut state, key(KeyCode::Down));
     handle_key(&mut state, key(KeyCode::Enter));
 
@@ -1322,7 +1322,7 @@ fn options_popup_toggles_selected_setting() {
 fn options_popup_cycles_image_preview_quality() {
     let mut state = state_with_messages(1);
 
-    handle_key(&mut state, char_key('o'));
+    state.open_options_popup();
     for _ in 0..3 {
         handle_key(&mut state, key(KeyCode::Down));
     }
@@ -1342,7 +1342,7 @@ fn options_popup_cycles_image_preview_quality() {
 fn options_popup_esc_closes_popup() {
     let mut state = state_with_messages(1);
 
-    handle_key(&mut state, char_key('o'));
+    state.open_options_popup();
     handle_key(&mut state, key(KeyCode::Esc));
 
     assert!(!state.is_options_popup_open());

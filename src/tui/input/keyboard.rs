@@ -83,7 +83,6 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         }
         KeyCode::Char('q') => state.quit(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
-        KeyCode::Char('o') => state.open_options_popup(),
         KeyCode::Char('i') => state.start_composer(),
         KeyCode::Char(' ') if is_shortcut_key(key) => state.open_leader(),
         KeyCode::Char('1') => state.show_and_focus_pane(FocusPane::Guilds),
@@ -177,6 +176,10 @@ fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCom
         }
         KeyCode::Char('a') if is_shortcut_key(key) => {
             state.open_leader_actions_for_focused_target()
+        }
+        KeyCode::Char('o') if is_shortcut_key(key) => {
+            state.open_options_popup();
+            state.close_leader();
         }
         KeyCode::Char(' ') if is_shortcut_key(key) => state.open_channel_switcher(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -559,6 +562,12 @@ fn handle_debug_log_popup_key(state: &mut DashboardState, key: KeyEvent) -> Opti
 fn handle_options_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('o') => state.close_options_popup(),
+        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_option_down()
+        }
+        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_option_up()
+        }
         code if is_down_key(code) => state.move_option_down(),
         code if is_up_key(code) => state.move_option_up(),
         code if is_confirm_key(code) => state.toggle_selected_display_option(),

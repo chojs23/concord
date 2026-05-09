@@ -177,26 +177,27 @@ With vim-style navigation:
 | `g` / `G`, `Home` / `End` | Jump or scroll to top / bottom       |
 | `Enter`                   | Open or activate the selected item   |
 | `Space`                   | Open leader shortcut window          |
-| `Space`, `Space`          | Fuzzy search and switch channels     |
 | `i`                       | Text insert mode                     |
-| `o`                       | Options menu                         |
 | `Esc`                     | Close popup, cancel mode, or go back |
 | `q` / `Ctrl+c`            | Quit                                 |
 
-Leader shortcuts currently support pane visibility toggles in a small bottom
-shortcut window: `Space` then `1` toggles Servers, `Space` then `2` toggles
-Channels, and `Space` then `4` toggles Members. Hidden side panes give their
-width back to Messages, and pressing a hidden pane's number key directly shows
-and focuses it again. `Space` then `a` opens actions for the focused pane in the
-same leader window. For example, focus Channels and press `Space`, `a`, `p` to
-show pinned messages. Action shortcuts such as message edit `e` and delete `d`
-are shown inside that leader action window.
+#### Leader key
 
-Press `Space` twice to open the channel switcher. It shows your direct messages
-and server channels in a grouped popup, lets you fuzzy search by channel name,
-and opens the selected channel immediately with `Enter`. Inside the switcher,
-type normally to search, use `Ctrl+n` / `Ctrl+p` to move the selected channel,
-and use `Left` / `Right` to move the search cursor.
+Press `Space` to open the leader shortcut window.
+
+| Key sequence     | Action                            |
+| ---------------- | --------------------------------- |
+| `Space`, `1`     | Toggle the Servers pane           |
+| `Space`, `2`     | Toggle the Channels pane          |
+| `Space`, `4`     | Toggle the Members pane           |
+| `Space`, `a`     | Open actions for the focused pane |
+| `Space`, `o`     | Open concord options              |
+| `Space`, `Space` | Open the fuzzy channel switcher   |
+
+Hidden side panes give their width back to Messages. Pressing a hidden pane's
+number key directly shows and focuses it again.
+
+#### Composer
 
 In the composer, `Enter` sends, `Shift+Enter` inserts a newline, and `Esc`
 cancels.
@@ -205,8 +206,12 @@ Paste copied files into the composer to attach them. Pending uploads
 are shown above the input before sending, and `Ctrl+Backspace` removes the last
 pending attachment.
 
+#### Mention picker
+
 When the @mention picker is open, use `Up` / `Down`,
 `Ctrl+p` / `Ctrl+n`, `Tab`, or `Enter` to choose a mention.
+
+#### Mouse support
 
 Mouse support is also available: click to focus or select rows, double-click to
 open or activate items, and use the wheel to scroll panes and popups.

@@ -3,6 +3,8 @@ use super::*;
 use ratatui::layout::Position;
 
 const LEADER_POPUP_WIDTH: u16 = 74;
+const LEADER_POPUP_ROWS: usize = 4;
+const LEADER_POPUP_COLUMN_GAP: usize = 4;
 const CHANNEL_SWITCHER_POPUP_WIDTH: u16 = 74;
 
 pub(super) fn render_leader_popup(frame: &mut Frame, area: Rect, state: &DashboardState) {
@@ -52,6 +54,7 @@ fn leader_popup_lines(state: &DashboardState, max_lines: usize) -> Vec<Line<'sta
             leader_shortcut_line('2', "toggle Channels", true),
             leader_shortcut_line('4', "toggle Members", true),
             leader_shortcut_line('a', "Actions", true),
+            leader_shortcut_line('o', "Options", true),
             leader_shortcut_text_line("Space", "Switch channels", true),
         ]
     };
@@ -59,8 +62,47 @@ fn leader_popup_lines(state: &DashboardState, max_lines: usize) -> Vec<Line<'sta
         "Esc cancel",
         Style::default().fg(DIM),
     )));
-    lines.truncate(max_lines.max(1));
-    lines
+    leader_shortcut_grid_lines(lines, max_lines)
+}
+
+fn leader_shortcut_grid_lines(lines: Vec<Line<'static>>, max_lines: usize) -> Vec<Line<'static>> {
+    if lines.is_empty() {
+        return lines;
+    }
+    let row_count = lines.len().min(LEADER_POPUP_ROWS).min(max_lines.max(1));
+    let column_count = lines.len().div_ceil(row_count);
+    let column_widths: Vec<usize> = (0..column_count)
+        .map(|column| {
+            (0..row_count)
+                .filter_map(|row| lines.get(column * row_count + row))
+                .map(leader_line_width)
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
+
+    (0..row_count)
+        .map(|row| {
+            let mut spans = Vec::new();
+            for (column, width) in column_widths.iter().enumerate() {
+                let Some(line) = lines.get(column * row_count + row) else {
+                    continue;
+                };
+                let line_width = leader_line_width(line);
+                spans.extend(line.spans.iter().cloned());
+                if column + 1 < column_count {
+                    spans.push(Span::raw(" ".repeat(
+                        width.saturating_sub(line_width) + LEADER_POPUP_COLUMN_GAP,
+                    )));
+                }
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
+fn leader_line_width(line: &Line<'_>) -> usize {
+    line.spans.iter().map(|span| span.content.width()).sum()
 }
 
 fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
