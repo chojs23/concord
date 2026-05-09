@@ -199,10 +199,7 @@ number key directly shows and focuses it again.
 
 #### Composer
 
-In the composer, `Enter` sends, `Shift+Enter` inserts a newline, and `Esc`
-cancels.
-
-Paste copied files into the composer to attach them. Pending uploads
+You can paste copied files into the composer to attach them. Pending uploads
 are shown above the input before sending, and `Ctrl+Backspace` removes the last
 pending attachment.
 
