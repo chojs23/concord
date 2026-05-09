@@ -108,6 +108,7 @@ Tokens are saved to `~/.concord/credential` in plain text. See the Security sect
 
 - Send, edit, and delete messages
 - Reply to specific messages
+- Upload files by copying them from your file manager and pasting them into the composer
 - Use @mention autocomplete while composing messages
 - View full message history with pagination
 - Rich content display (embeds, attachments, stickers, and mentions)
@@ -186,8 +187,14 @@ actions use keys such as `e` for edit and `d` for delete. List-style dialogs,
 such as emoji and poll pickers, use numbered shortcuts when that is clearer.
 
 In the composer, `Enter` sends, `Shift+Enter` inserts a newline, and `Esc`
-cancels. When the @mention picker is open, use `Up` / `Down`, `Ctrl+p` /
-`Ctrl+n`, `Tab`, or `Enter` to choose a mention.
+cancels.
+
+Paste copied files into the composer to attach them. Pending uploads
+are shown above the input before sending, and `Ctrl+Backspace` removes the last
+pending attachment.
+
+When the @mention picker is open, use `Up` / `Down`,
+`Ctrl+p` / `Ctrl+n`, `Tab`, or `Enter` to choose a mention.
 
 Mouse support is also available: click to focus or select rows, double-click to
 open or activate items, and use the wheel to scroll panes and popups.
