@@ -1829,11 +1829,33 @@ impl DashboardState {
         if self.focus != FocusPane::Messages || self.message_content_width == usize::MAX {
             return;
         }
+
         if self.selected_channel_is_forum() {
             let len = self.selected_forum_post_items().len();
             move_index_down(&mut self.message_scroll, len);
             self.message_auto_follow = false;
             self.message_keep_selection_visible = false;
+            return;
+        }
+
+        let viewport_height = self.message_content_height();
+        let current_height = self.messages().get(self.message_scroll).map(|_| {
+            self.message_rendered_height_at(
+                self.message_scroll,
+                self.message_content_width,
+                self.message_preview_width,
+                self.message_max_preview_height,
+            )
+            .max(1)
+        });
+        let (new_top, new_offset) = match current_height {
+            None => return,
+            Some(h) if self.message_line_scroll + 1 < h => {
+                (self.message_scroll, self.message_line_scroll + 1)
+            }
+            _ => (self.message_scroll.saturating_add(1), 0),
+        };
+        if !self.message_viewport_has_rows_below(new_top, new_offset, viewport_height) {
             return;
         }
         // Viewport scrolling intentionally drops auto-follow so that the
