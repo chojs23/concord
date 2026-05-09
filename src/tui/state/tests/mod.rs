@@ -17,11 +17,12 @@ use super::{
 };
 use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo,
-    ChannelRecipientInfo, ChannelVisibilityStats, CustomEmojiInfo, DiscordState,
-    ForumPostArchiveState, FriendStatus, GuildNotificationSettingsInfo, MemberInfo, MessageInfo,
-    MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo, NotificationLevel,
-    PermissionOverwriteInfo, PermissionOverwriteKind, PresenceStatus, ReactionEmoji, ReactionInfo,
-    ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+    ChannelRecipientInfo, ChannelUnreadState, ChannelVisibilityStats, CustomEmojiInfo,
+    DiscordState, ForumPostArchiveState, FriendStatus, GuildNotificationSettingsInfo, MemberInfo,
+    MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo,
+    NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind, PresenceStatus,
+    ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo,
+    RoleInfo, UserProfileInfo,
 };
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -55,6 +56,28 @@ fn notification_message_event(channel_id: Id<ChannelMarker>, content: &str) -> A
         reply: None,
         poll: None,
         content: Some(content.to_owned()),
+        sticker_names: Vec::new(),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    }
+}
+
+fn direct_message_create_event(channel_id: Id<ChannelMarker>, message_id: u64) -> AppEvent {
+    AppEvent::MessageCreate {
+        guild_id: None,
+        channel_id,
+        message_id: Id::new(message_id),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("hello from dm".to_owned()),
         sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
@@ -5512,6 +5535,115 @@ fn direct_message_unread_count_counts_unread_channels() {
     });
 
     assert_eq!(state.direct_message_unread_count(), 1);
+}
+
+#[test]
+fn active_channel_read_state_updates_when_new_message_arrives_at_latest() {
+    {
+        let mut state = state_with_direct_messages();
+        state.push_event(AppEvent::ReadStateInit {
+            entries: vec![
+                ReadStateInfo {
+                    channel_id: Id::new(10),
+                    last_acked_message_id: Some(Id::new(100)),
+                    mention_count: 0,
+                },
+                ReadStateInfo {
+                    channel_id: Id::new(20),
+                    last_acked_message_id: Some(Id::new(200)),
+                    mention_count: 0,
+                },
+            ],
+        });
+        state.push_effect(AppEvent::ActivateChannel {
+            channel_id: Id::new(20),
+        });
+        assert!(state.drain_pending_commands().is_empty());
+
+        state.push_event(direct_message_create_event(Id::new(20), 201));
+
+        assert_eq!(state.direct_message_unread_count(), 0);
+        assert_eq!(state.channel_unread(Id::new(20)), ChannelUnreadState::Seen);
+        assert_eq!(
+            state.drain_pending_commands(),
+            vec![AppCommand::AckChannel {
+                channel_id: Id::new(20),
+                message_id: Id::new(201),
+            }]
+        );
+    }
+
+    {
+        let mut state = state_with_writable_channel();
+        state.push_event(AppEvent::UserGuildNotificationSettingsInit {
+            settings: vec![GuildNotificationSettingsInfo {
+                guild_id: Some(Id::new(1)),
+                message_notifications: Some(NotificationLevel::AllMessages),
+                muted: false,
+                mute_end_time: None,
+                suppress_everyone: false,
+                suppress_roles: false,
+                channel_overrides: Vec::new(),
+            }],
+        });
+
+        state.push_event(notification_message_event(Id::new(2), "hello"));
+
+        assert_eq!(state.channel_unread(Id::new(2)), ChannelUnreadState::Seen);
+        assert_eq!(
+            state.drain_pending_commands(),
+            vec![AppCommand::AckChannel {
+                channel_id: Id::new(2),
+                message_id: Id::new(50),
+            }]
+        );
+    }
+
+    {
+        let mut state = state_with_message_ids([1, 2, 3]);
+        state.push_event(AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(Id::new(10)),
+        });
+        state.push_event(AppEvent::ReadStateInit {
+            entries: vec![ReadStateInfo {
+                channel_id: Id::new(2),
+                last_acked_message_id: Some(Id::new(1)),
+                mention_count: 0,
+            }],
+        });
+        state.activate_channel(Id::new(2));
+        state.set_message_view_height(10);
+        assert_eq!(state.unread_divider_message_index(), Some(1));
+        assert!(state.unread_banner().is_some());
+        state.drain_pending_commands();
+
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(4),
+            author_id: Id::new(10),
+            author: "me".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("sent while reading latest".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        assert_eq!(state.channel_unread(Id::new(2)), ChannelUnreadState::Seen);
+        assert_eq!(state.unread_divider_message_index(), None);
+        assert_eq!(state.unread_banner(), None);
+        assert_eq!(state.unread_divider_last_acked_id(), None);
+        assert!(state.drain_pending_commands().is_empty());
+    }
 }
 
 #[test]

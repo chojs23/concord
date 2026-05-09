@@ -361,7 +361,7 @@ impl DashboardState {
         let was_cursor_on_last = self.cursor_on_last_message();
         let was_following_cursor = was_at_latest && was_cursor_on_last;
         let user_just_sent = self.event_is_self_message_in_active_channel(&event);
-        let active_new_message_id = self.active_channel_message_create_id(&event);
+        let active_new_message = self.active_channel_message_create(&event);
         let preserve_selection = !was_following_cursor;
         let preserve_scroll = !(was_at_latest || was_following_cursor);
         let selected_message_id = preserve_selection
@@ -480,12 +480,21 @@ impl DashboardState {
             // moves.
             self.message_auto_follow = true;
             self.clear_new_messages_marker();
+            if let Some((channel_id, _)) = active_new_message {
+                if user_just_sent {
+                    self.unread_divider_last_acked_id = None;
+                    self.pending_unread_anchor_scroll = false;
+                } else {
+                    self.mark_channel_as_read(channel_id);
+                }
+            }
         } else if in_message_view
             && !was_at_latest
             && !user_just_sent
             && self.new_messages_marker_message_id.is_none()
         {
-            self.new_messages_marker_message_id = active_new_message_id;
+            self.new_messages_marker_message_id =
+                active_new_message.map(|(_, message_id)| message_id);
         }
         self.clamp_list_viewports();
         self.clamp_message_viewport();
@@ -2243,7 +2252,10 @@ impl DashboardState {
         }
     }
 
-    fn active_channel_message_create_id(&self, event: &AppEvent) -> Option<Id<MessageMarker>> {
+    fn active_channel_message_create(
+        &self,
+        event: &AppEvent,
+    ) -> Option<(Id<ChannelMarker>, Id<MessageMarker>)> {
         let AppEvent::MessageCreate {
             channel_id,
             message_id,
@@ -2252,7 +2264,7 @@ impl DashboardState {
         else {
             return None;
         };
-        (Some(*channel_id) == self.active_channel_id).then_some(*message_id)
+        (Some(*channel_id) == self.active_channel_id).then_some((*channel_id, *message_id))
     }
 
     fn event_is_self_message_in_active_channel(&self, event: &AppEvent) -> bool {

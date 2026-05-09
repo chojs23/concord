@@ -933,7 +933,7 @@ impl DashboardState {
 
     /// Optimistic local ack + queued REST POST so the unread badge clears
     /// immediately on activation.
-    fn queue_channel_ack(&mut self, channel_id: Id<ChannelMarker>) {
+    pub(super) fn queue_channel_ack(&mut self, channel_id: Id<ChannelMarker>) {
         let Some(message_id) = self.discord.channel_ack_target(channel_id) else {
             return;
         };
