@@ -733,199 +733,83 @@ mod tests {
     }
 
     #[test]
-    fn efficient_image_preview_quality_uses_smaller_proxy_dimensions() {
-        let mut state = state_with_image_messages_and_display_options(
-            0,
-            &[],
-            DisplayOptions {
-                image_preview_quality: ImagePreviewQualityPreset::Efficient,
-                ..DisplayOptions::default()
-            },
-        );
-        let mut attachment = image_attachment(1);
-        attachment.proxy_url = concat!(
-            "https://media.discordapp.net/attachments/691/150/photo.png",
-            "?ex=abc&is=def&hm=123&format=png&quality=lossless&width=4000&height=3000"
-        )
-        .to_owned();
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            author_role_ids: Vec::new(),
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("photo".to_owned()),
-            sticker_names: Vec::new(),
-            mentions: Vec::new(),
-            attachments: vec![attachment],
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
+    fn image_preview_quality_rewrites_attachment_preview_urls() {
+        let cases = [
+            (
+                ImagePreviewQualityPreset::Efficient,
+                None,
+                None,
+                concat!(
+                    "https://media.discordapp.net/attachments/691/150/photo.png",
+                    "?ex=abc&is=def&hm=123&format=png&quality=lossless&width=4000&height=3000"
+                ),
+                concat!(
+                    "https://media.discordapp.net/attachments/691/150/photo.png",
+                    "?ex=abc&is=def&hm=123&format=webp&quality=low&width=192&height=144"
+                ),
+            ),
+            (
+                ImagePreviewQualityPreset::Efficient,
+                Some(1000),
+                Some(2000),
+                concat!(
+                    "https://media.discordapp.net/attachments/691/150/photo.png",
+                    "?ex=abc&is=def&hm=123&format=png&width=1000&height=2000"
+                ),
+                concat!(
+                    "https://media.discordapp.net/attachments/691/150/photo.png",
+                    "?ex=abc&is=def&hm=123&format=webp&quality=low&width=300&height=600"
+                ),
+            ),
+            (
+                ImagePreviewQualityPreset::High,
+                None,
+                None,
+                concat!(
+                    "https://media.discordapp.net/attachments/691/150/photo.png",
+                    "?ex=abc&is=def&hm=123&format=png&width=4000&height=3000"
+                ),
+                concat!(
+                    "https://media.discordapp.net/attachments/691/150/photo.png",
+                    "?ex=abc&is=def&hm=123&format=webp&quality=lossless&width=640&height=480"
+                ),
+            ),
+            (
+                ImagePreviewQualityPreset::Original,
+                None,
+                None,
+                concat!(
+                    "https://media.discordapp.net/attachments/691/150/photo.png",
+                    "?ex=abc&is=def&hm=123&format=png&width=4000&height=3000"
+                ),
+                "https://cdn.discordapp.com/image-1.png",
+            ),
+        ];
 
-        let target = visible_image_preview_targets(&state, layout(12))
-            .into_iter()
-            .next()
-            .expect("image attachment should produce preview target");
+        for (quality, width, height, proxy_url, expected_url) in cases {
+            let mut state = state_with_image_messages_and_display_options(
+                0,
+                &[],
+                DisplayOptions {
+                    image_preview_quality: quality,
+                    ..DisplayOptions::default()
+                },
+            );
+            let mut attachment = image_attachment(1);
+            if width.is_some() || height.is_some() {
+                attachment.width = width;
+                attachment.height = height;
+            }
+            attachment.proxy_url = proxy_url.to_owned();
+            push_attachment_message(&mut state, attachment);
 
-        assert_eq!(
-            target.url,
-            concat!(
-                "https://media.discordapp.net/attachments/691/150/photo.png",
-                "?ex=abc&is=def&hm=123&format=webp&quality=low&width=192&height=144"
-            )
-        );
-    }
+            let target = visible_image_preview_targets(&state, layout(12))
+                .into_iter()
+                .next()
+                .expect("image attachment should produce preview target");
 
-    #[test]
-    fn efficient_image_preview_quality_preserves_source_aspect_ratio() {
-        let mut state = state_with_image_messages_and_display_options(
-            0,
-            &[],
-            DisplayOptions {
-                image_preview_quality: ImagePreviewQualityPreset::Efficient,
-                ..DisplayOptions::default()
-            },
-        );
-        let mut attachment = image_attachment(1);
-        attachment.width = Some(1000);
-        attachment.height = Some(2000);
-        attachment.proxy_url = concat!(
-            "https://media.discordapp.net/attachments/691/150/photo.png",
-            "?ex=abc&is=def&hm=123&format=png&width=1000&height=2000"
-        )
-        .to_owned();
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            author_role_ids: Vec::new(),
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("photo".to_owned()),
-            sticker_names: Vec::new(),
-            mentions: Vec::new(),
-            attachments: vec![attachment],
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-
-        let target = visible_image_preview_targets(&state, layout(12))
-            .into_iter()
-            .next()
-            .expect("image attachment should produce preview target");
-
-        assert_eq!(
-            target.url,
-            concat!(
-                "https://media.discordapp.net/attachments/691/150/photo.png",
-                "?ex=abc&is=def&hm=123&format=webp&quality=low&width=300&height=600"
-            )
-        );
-    }
-
-    #[test]
-    fn high_image_preview_quality_preserves_lossless_proxy_quality() {
-        let mut state = state_with_image_messages_and_display_options(
-            0,
-            &[],
-            DisplayOptions {
-                image_preview_quality: ImagePreviewQualityPreset::High,
-                ..DisplayOptions::default()
-            },
-        );
-        let mut attachment = image_attachment(1);
-        attachment.proxy_url = concat!(
-            "https://media.discordapp.net/attachments/691/150/photo.png",
-            "?ex=abc&is=def&hm=123&format=png&width=4000&height=3000"
-        )
-        .to_owned();
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            author_role_ids: Vec::new(),
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("photo".to_owned()),
-            sticker_names: Vec::new(),
-            mentions: Vec::new(),
-            attachments: vec![attachment],
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-
-        let target = visible_image_preview_targets(&state, layout(12))
-            .into_iter()
-            .next()
-            .expect("image attachment should produce preview target");
-
-        assert_eq!(
-            target.url,
-            concat!(
-                "https://media.discordapp.net/attachments/691/150/photo.png",
-                "?ex=abc&is=def&hm=123&format=webp&quality=lossless&width=640&height=480"
-            )
-        );
-    }
-
-    #[test]
-    fn original_image_preview_quality_uses_source_url_without_proxy_resize() {
-        let mut state = state_with_image_messages_and_display_options(
-            0,
-            &[],
-            DisplayOptions {
-                image_preview_quality: ImagePreviewQualityPreset::Original,
-                ..DisplayOptions::default()
-            },
-        );
-        let mut attachment = image_attachment(1);
-        attachment.proxy_url = concat!(
-            "https://media.discordapp.net/attachments/691/150/photo.png",
-            "?ex=abc&is=def&hm=123&format=png&width=4000&height=3000"
-        )
-        .to_owned();
-        state.push_event(AppEvent::MessageCreate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            author_role_ids: Vec::new(),
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("photo".to_owned()),
-            sticker_names: Vec::new(),
-            mentions: Vec::new(),
-            attachments: vec![attachment],
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-
-        let target = visible_image_preview_targets(&state, layout(12))
-            .into_iter()
-            .next()
-            .expect("image attachment should produce preview target");
-
-        assert_eq!(target.url, "https://cdn.discordapp.com/image-1.png");
+            assert_eq!(target.url, expected_url);
+        }
     }
 
     #[test]
@@ -1189,83 +1073,62 @@ mod tests {
     }
 
     #[test]
-    fn image_preview_targets_layout_three_images_as_large_left_tile() {
-        let mut state = state_with_image_messages(0, &[]);
-        push_album_message(&mut state, 1, 3);
+    fn image_preview_targets_layout_album_grids() {
+        let cases = [
+            (
+                3,
+                vec![(0, 0, 0, 8, 3), (1, 8, 0, 8, 2), (2, 8, 2, 8, 1)],
+                vec![0, 0, 0],
+            ),
+            (
+                4,
+                vec![
+                    (0, 0, 0, 8, 2),
+                    (1, 8, 0, 8, 2),
+                    (2, 0, 2, 8, 1),
+                    (3, 8, 2, 8, 1),
+                ],
+                vec![0, 0, 0, 0],
+            ),
+            (
+                5,
+                vec![
+                    (0, 0, 0, 8, 2),
+                    (1, 8, 0, 8, 2),
+                    (2, 0, 2, 8, 1),
+                    (3, 8, 2, 8, 1),
+                ],
+                vec![0, 0, 0, 1],
+            ),
+        ];
 
-        let targets = visible_image_preview_targets(&state, layout(12));
+        for (attachment_count, expected_geometry, expected_overflow) in cases {
+            let mut state = state_with_image_messages(0, &[]);
+            push_album_message(&mut state, 1, attachment_count);
 
-        assert_eq!(targets.len(), 3);
-        assert_eq!(
-            targets
-                .iter()
-                .map(|target| (
-                    target.preview_index,
-                    target.preview_x_offset_columns,
-                    target.preview_y_offset_rows,
-                    target.preview_width,
-                    target.preview_height,
-                ))
-                .collect::<Vec<_>>(),
-            vec![(0, 0, 0, 8, 3), (1, 8, 0, 8, 2), (2, 8, 2, 8, 1)]
-        );
-    }
+            let targets = visible_image_preview_targets(&state, layout(12));
 
-    #[test]
-    fn image_preview_targets_layout_four_images_as_bounded_two_by_two_grid() {
-        let mut state = state_with_image_messages(0, &[]);
-        push_album_message(&mut state, 1, 4);
-
-        let targets = visible_image_preview_targets(&state, layout(12));
-
-        assert_eq!(targets.len(), 4);
-        assert_eq!(
-            targets
-                .iter()
-                .map(|target| (
-                    target.preview_index,
-                    target.preview_x_offset_columns,
-                    target.preview_y_offset_rows,
-                    target.preview_width,
-                    target.preview_height,
-                ))
-                .collect::<Vec<_>>(),
-            vec![
-                (0, 0, 0, 8, 2),
-                (1, 8, 0, 8, 2),
-                (2, 0, 2, 8, 1),
-                (3, 8, 2, 8, 1)
-            ]
-        );
-    }
-
-    #[test]
-    fn image_preview_targets_layout_five_images_with_overflow_marker_on_fourth_tile() {
-        let mut state = state_with_image_messages(0, &[]);
-        push_album_message(&mut state, 1, 5);
-
-        let targets = visible_image_preview_targets(&state, layout(12));
-
-        assert_eq!(targets.len(), 4);
-        assert_eq!(
-            targets
-                .iter()
-                .map(|target| target.preview_index)
-                .collect::<Vec<_>>(),
-            vec![0, 1, 2, 3]
-        );
-        assert!(
-            targets
-                .iter()
-                .all(|target| target.preview_y_offset_rows < 3)
-        );
-        assert_eq!(
-            targets
-                .iter()
-                .map(|target| target.preview_overflow_count)
-                .collect::<Vec<_>>(),
-            vec![0, 0, 0, 1]
-        );
+            assert_eq!(
+                targets
+                    .iter()
+                    .map(|target| (
+                        target.preview_index,
+                        target.preview_x_offset_columns,
+                        target.preview_y_offset_rows,
+                        target.preview_width,
+                        target.preview_height,
+                    ))
+                    .collect::<Vec<_>>(),
+                expected_geometry
+            );
+            assert_eq!(
+                targets
+                    .iter()
+                    .map(|target| target.preview_overflow_count)
+                    .collect::<Vec<_>>(),
+                expected_overflow
+            );
+        }
     }
 
     #[test]
@@ -2438,65 +2301,28 @@ mod tests {
     }
 
     #[test]
-    fn wide_image_preview_height_is_shorter_than_square_image() {
-        let wide = image_preview_height_for_dimensions(60, 10, Some(2400), Some(600));
-        let square = image_preview_height_for_dimensions(60, 10, Some(800), Some(800));
+    fn image_preview_height_respects_dimensions_and_fallbacks() {
+        let cases = [
+            (60, 10, Some(2400), Some(600), 5),
+            (60, 10, Some(800), Some(800), 10),
+            (72, 10, Some(481), Some(160), 6),
+            (72, 10, Some(100), Some(100), 4),
+            (72, 10, Some(32), Some(32), 3),
+            (72, 10, Some(100), Some(40), 3),
+            (72, 10, Some(128), Some(128), 5),
+            (60, 10, None, None, 10),
+            (60, 10, Some(0), Some(100), 10),
+        ];
 
-        assert!(wide < square);
-        assert_eq!(wide, 5);
-        assert_eq!(square, 10);
-    }
-
-    #[test]
-    fn screenshot_like_wide_image_uses_compact_preview_height() {
-        assert_eq!(
-            image_preview_height_for_dimensions(72, 10, Some(481), Some(160)),
-            6
-        );
-    }
-
-    #[test]
-    fn small_image_preview_height_does_not_upscale_to_full_width() {
-        assert_eq!(
-            image_preview_height_for_dimensions(72, 10, Some(100), Some(100)),
-            4
-        );
-    }
-
-    #[test]
-    fn tiny_image_preview_height_stays_compact_but_visible() {
-        assert_eq!(
-            image_preview_height_for_dimensions(72, 10, Some(32), Some(32)),
-            3
-        );
-    }
-
-    #[test]
-    fn small_wide_image_preview_height_stays_compact() {
-        assert_eq!(
-            image_preview_height_for_dimensions(72, 10, Some(100), Some(40)),
-            3
-        );
-    }
-
-    #[test]
-    fn medium_small_square_image_preview_height_stays_below_max() {
-        assert_eq!(
-            image_preview_height_for_dimensions(72, 10, Some(128), Some(128)),
-            5
-        );
-    }
-
-    #[test]
-    fn image_preview_height_falls_back_to_max_without_dimensions() {
-        assert_eq!(image_preview_height_for_dimensions(60, 10, None, None), 10);
-    }
-
-    #[test]
-    fn image_preview_height_falls_back_to_max_with_zero_dimensions() {
-        assert_eq!(
-            image_preview_height_for_dimensions(60, 10, Some(0), Some(100)),
-            10
+        for (width, max_height, image_width, image_height, expected) in cases {
+            assert_eq!(
+                image_preview_height_for_dimensions(width, max_height, image_width, image_height),
+                expected
+            );
+        }
+        assert!(
+            image_preview_height_for_dimensions(60, 10, Some(2400), Some(600))
+                < image_preview_height_for_dimensions(60, 10, Some(800), Some(800))
         );
     }
 
@@ -2718,6 +2544,28 @@ mod tests {
             sticker_names: Vec::new(),
             mentions: Vec::new(),
             attachments: (1..=attachment_count).map(image_attachment).collect(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+    }
+
+    fn push_attachment_message(state: &mut DashboardState, attachment: AttachmentInfo) {
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("photo".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: vec![attachment],
             embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });

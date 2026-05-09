@@ -426,51 +426,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn effect_only_events_do_not_publish_snapshots() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-        let mut effects = client.take_effects();
-        let snapshots = client.subscribe_snapshots();
-
-        client
-            .publish_event(AppEvent::GatewayError {
+    async fn effect_only_events_are_delivered_without_snapshots() {
+        for event in [
+            AppEvent::GatewayError {
                 message: "boom".to_owned(),
-            })
-            .await;
-
-        let effect = effects.recv().await.expect("effect is published");
-        assert_eq!(effect.revision, 0);
-        assert!(!snapshots.has_changed().expect("snapshot stream is open"));
-    }
-
-    #[tokio::test]
-    async fn activate_channel_is_delivered_as_effect_only_event() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-        let mut effects = client.take_effects();
-        let snapshots = client.subscribe_snapshots();
-
-        client
-            .publish_event(AppEvent::ActivateChannel {
+            },
+            AppEvent::ActivateChannel {
                 channel_id: Id::new(42),
-            })
-            .await;
+            },
+        ] {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let client =
+                DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+            let mut effects = client.take_effects();
+            let snapshots = client.subscribe_snapshots();
 
-        let effect = effects.recv().await.expect("effect is published");
-        assert_eq!(effect.revision, 0);
-        assert!(
-            matches!(effect.event, AppEvent::ActivateChannel { channel_id } if channel_id == Id::new(42))
-        );
-        assert!(!snapshots.has_changed().expect("snapshot stream is open"));
+            client.publish_event(event.clone()).await;
+
+            let effect = effects.recv().await.expect("effect is published");
+            assert_eq!(effect.revision, 0);
+            assert_eq!(format!("{:?}", effect.event), format!("{event:?}"));
+            assert!(!snapshots.has_changed().expect("snapshot stream is open"));
+        }
     }
 
-    #[tokio::test]
-    async fn accepts_raw_user_token_header() {
+    #[test]
+    fn validates_token_header_values() {
         validate_token_header("raw-user-token").expect("raw user token must be accepted");
-    }
-
-    #[tokio::test]
-    async fn rejects_tokens_that_are_invalid_http_header_values() {
         validate_token_header("invalid\nuser-token")
             .expect_err("newlines are not valid authorization header values");
     }

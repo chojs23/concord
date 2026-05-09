@@ -115,34 +115,21 @@ fn movement_waits_for_enter_to_activate_channel() {
 }
 
 #[test]
-fn enter_on_direct_message_subscribes_channel() {
-    let mut state = state_with_direct_message("dm");
-    state.focus_pane(FocusPane::Channels);
+fn enter_on_direct_message_kinds_subscribes_channel() {
+    for kind in ["dm", "group-dm"] {
+        let mut state = state_with_direct_message(kind);
+        state.focus_pane(FocusPane::Channels);
 
-    let command = handle_key(&mut state, key(KeyCode::Enter));
+        let command = handle_key(&mut state, key(KeyCode::Enter));
 
-    assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
-    assert_eq!(
-        command,
-        Some(AppCommand::SubscribeDirectMessage {
-            channel_id: Id::new(20),
-        })
-    );
-}
-
-#[test]
-fn enter_on_group_direct_message_subscribes_channel() {
-    let mut state = state_with_direct_message("group-dm");
-    state.focus_pane(FocusPane::Channels);
-
-    let command = handle_key(&mut state, key(KeyCode::Enter));
-
-    assert_eq!(
-        command,
-        Some(AppCommand::SubscribeDirectMessage {
-            channel_id: Id::new(20),
-        })
-    );
+        assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
+        assert_eq!(
+            command,
+            Some(AppCommand::SubscribeDirectMessage {
+                channel_id: Id::new(20),
+            })
+        );
+    }
 }
 
 #[test]

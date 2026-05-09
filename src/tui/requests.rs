@@ -406,7 +406,7 @@ mod tests {
     };
 
     #[test]
-    fn history_request_is_sent_once_per_channel() {
+    fn history_request_is_sent_once_and_retries_failed_channel_after_reselect() {
         let mut requests = HistoryRequests::default();
         let first = Id::new(1);
         let second = Id::new(2);
@@ -414,16 +414,6 @@ mod tests {
         assert_eq!(requests.next(None), None);
         assert_eq!(requests.next(Some(first)), Some(first));
         assert_eq!(requests.next(Some(first)), None);
-        assert_eq!(requests.next(Some(second)), Some(second));
-    }
-
-    #[test]
-    fn history_request_retries_failed_channel_after_reselect() {
-        let mut requests = HistoryRequests::default();
-        let first = Id::new(1);
-        let second = Id::new(2);
-
-        assert_eq!(requests.next(Some(first)), Some(first));
         requests.record_event(&AppEvent::MessageHistoryLoadFailed {
             channel_id: first,
             message: "temporary failure".to_owned(),
@@ -481,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn forum_post_request_loads_next_page_when_visible() {
+    fn forum_post_request_tracks_active_archived_and_server_offsets() {
         let mut requests = ForumPostRequests::default();
         let guild = Id::new(100);
         let channel = Id::new(1);
@@ -520,31 +510,6 @@ mod tests {
             requests.next(Some(target(guild, channel, true))),
             Some((guild, channel, ForumPostArchiveState::Archived, 0))
         );
-    }
-
-    #[test]
-    fn forum_post_request_tracks_archived_pages_separately() {
-        let mut requests = ForumPostRequests::default();
-        let guild = Id::new(100);
-        let channel = Id::new(1);
-
-        assert_eq!(
-            requests.next(Some(target(guild, channel, false))),
-            Some((guild, channel, ForumPostArchiveState::Active, 0))
-        );
-        requests.record_event(&AppEvent::ForumPostsLoaded {
-            channel_id: channel,
-            archive_state: ForumPostArchiveState::Active,
-            offset: 0,
-            next_offset: 1,
-            posts: vec![forum_post(channel, 10)],
-            preview_messages: Vec::new(),
-            has_more: false,
-        });
-        assert_eq!(
-            requests.next(Some(target(guild, channel, true))),
-            Some((guild, channel, ForumPostArchiveState::Archived, 0))
-        );
         requests.record_event(&AppEvent::ForumPostsLoaded {
             channel_id: channel,
             archive_state: ForumPostArchiveState::Archived,
@@ -559,13 +524,9 @@ mod tests {
             requests.next(Some(target(guild, channel, true))),
             Some((guild, channel, ForumPostArchiveState::Archived, 2))
         );
-    }
 
-    #[test]
-    fn forum_post_request_uses_server_next_offset() {
         let mut requests = ForumPostRequests::default();
-        let guild = Id::new(100);
-        let channel = Id::new(1);
+        let channel = Id::new(2);
 
         assert_eq!(
             requests.next(Some(target(guild, channel, false))),

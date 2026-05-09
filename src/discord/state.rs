@@ -3599,132 +3599,66 @@ mod tests {
     }
 
     #[test]
-    fn message_update_refreshes_mentions_when_present() {
+    fn message_update_handles_mentions_tristate() {
         let channel_id: Id<ChannelMarker> = Id::new(10);
         let message_id = Id::new(20);
-        let author_id = Id::new(99);
-        let mut state = DiscordState::default();
+        let cases = [
+            (
+                Vec::new(),
+                Some(vec![mention_info(10, "alice")]),
+                vec![mention_info(10, "alice")],
+            ),
+            (
+                vec![mention_info(10, "alice")],
+                None,
+                vec![mention_info(10, "alice")],
+            ),
+            (
+                vec![mention_info(10, "alice")],
+                Some(Vec::new()),
+                Vec::new(),
+            ),
+        ];
 
-        state.apply_event(&AppEvent::MessageCreate {
-            guild_id: None,
-            channel_id,
-            message_id,
-            author_id,
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            author_role_ids: Vec::new(),
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("hello <@10>".to_owned()),
-            sticker_names: Vec::new(),
-            mentions: Vec::new(),
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        state.apply_event(&AppEvent::MessageUpdate {
-            guild_id: None,
-            channel_id,
-            message_id,
-            poll: None,
-            content: Some("hello <@10>".to_owned()),
-            sticker_names: None,
-            mentions: Some(vec![mention_info(10, "alice")]),
-            attachments: AttachmentUpdate::Unchanged,
-            embeds: None,
-            edited_timestamp: None,
-        });
+        for (initial_mentions, update_mentions, expected_mentions) in cases {
+            let mut state = DiscordState::default();
+            state.apply_event(&AppEvent::MessageCreate {
+                guild_id: None,
+                channel_id,
+                message_id,
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                author_avatar_url: None,
+                author_role_ids: Vec::new(),
+                message_kind: MessageKind::regular(),
+                reference: None,
+                reply: None,
+                poll: None,
+                content: Some("hello <@10>".to_owned()),
+                sticker_names: Vec::new(),
+                mentions: initial_mentions,
+                attachments: Vec::new(),
+                embeds: Vec::new(),
+                forwarded_snapshots: Vec::new(),
+            });
+            state.apply_event(&AppEvent::MessageUpdate {
+                guild_id: None,
+                channel_id,
+                message_id,
+                poll: None,
+                content: Some("hello".to_owned()),
+                sticker_names: None,
+                mentions: update_mentions,
+                attachments: AttachmentUpdate::Unchanged,
+                embeds: None,
+                edited_timestamp: None,
+            });
 
-        let messages = state.messages_for_channel(channel_id);
-        assert_eq!(messages[0].mentions, vec![mention_info(10, "alice")]);
-    }
-
-    #[test]
-    fn message_update_preserves_mentions_when_absent() {
-        let channel_id: Id<ChannelMarker> = Id::new(10);
-        let message_id = Id::new(20);
-        let author_id = Id::new(99);
-        let mut state = DiscordState::default();
-
-        state.apply_event(&AppEvent::MessageCreate {
-            guild_id: None,
-            channel_id,
-            message_id,
-            author_id,
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            author_role_ids: Vec::new(),
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("hello <@10>".to_owned()),
-            sticker_names: Vec::new(),
-            mentions: vec![mention_info(10, "alice")],
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        state.apply_event(&AppEvent::MessageUpdate {
-            guild_id: None,
-            channel_id,
-            message_id,
-            poll: Some(poll_info()),
-            content: None,
-            sticker_names: None,
-            mentions: None,
-            attachments: AttachmentUpdate::Unchanged,
-            embeds: None,
-            edited_timestamp: None,
-        });
-
-        let messages = state.messages_for_channel(channel_id);
-        assert_eq!(messages[0].mentions, vec![mention_info(10, "alice")]);
-    }
-
-    #[test]
-    fn message_update_clears_mentions_when_present_and_empty() {
-        let channel_id: Id<ChannelMarker> = Id::new(10);
-        let message_id = Id::new(20);
-        let author_id = Id::new(99);
-        let mut state = DiscordState::default();
-
-        state.apply_event(&AppEvent::MessageCreate {
-            guild_id: None,
-            channel_id,
-            message_id,
-            author_id,
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            author_role_ids: Vec::new(),
-            message_kind: MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some("hello <@10>".to_owned()),
-            sticker_names: Vec::new(),
-            mentions: vec![mention_info(10, "alice")],
-            attachments: Vec::new(),
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        state.apply_event(&AppEvent::MessageUpdate {
-            guild_id: None,
-            channel_id,
-            message_id,
-            poll: None,
-            content: Some("hello".to_owned()),
-            sticker_names: None,
-            mentions: Some(Vec::new()),
-            attachments: AttachmentUpdate::Unchanged,
-            embeds: None,
-            edited_timestamp: None,
-        });
-
-        let messages = state.messages_for_channel(channel_id);
-        assert!(messages[0].mentions.is_empty());
+            assert_eq!(
+                state.messages_for_channel(channel_id)[0].mentions,
+                expected_mentions
+            );
+        }
     }
 
     #[test]
@@ -4333,86 +4267,53 @@ mod tests {
     }
 
     #[test]
-    fn message_update_without_attachments_payload_keeps_cached_attachments() {
+    fn message_update_handles_attachment_update_tristate() {
         let channel_id: Id<ChannelMarker> = Id::new(10);
-        let mut state = DiscordState::default();
+        let cases = [
+            (AttachmentUpdate::Unchanged, 1),
+            (AttachmentUpdate::Replace(Vec::new()), 0),
+        ];
 
-        state.apply_event(&AppEvent::MessageCreate {
-            guild_id: None,
-            channel_id,
-            message_id: Id::new(20),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            author_role_ids: Vec::new(),
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some(String::new()),
-            sticker_names: Vec::new(),
-            mentions: Vec::new(),
-            attachments: vec![attachment_info(1, "cat.png", "image/png")],
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        state.apply_event(&AppEvent::MessageUpdate {
-            guild_id: None,
-            channel_id,
-            message_id: Id::new(20),
-            poll: None,
-            content: None,
-            sticker_names: None,
-            mentions: None,
-            attachments: AttachmentUpdate::Unchanged,
-            embeds: None,
-            edited_timestamp: None,
-        });
+        for (attachments, expected_len) in cases {
+            let mut state = DiscordState::default();
+            state.apply_event(&AppEvent::MessageCreate {
+                guild_id: None,
+                channel_id,
+                message_id: Id::new(20),
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                author_avatar_url: None,
+                author_role_ids: Vec::new(),
+                message_kind: crate::discord::MessageKind::regular(),
+                reference: None,
+                reply: None,
+                poll: None,
+                content: Some(String::new()),
+                sticker_names: Vec::new(),
+                mentions: Vec::new(),
+                attachments: vec![attachment_info(1, "cat.png", "image/png")],
+                embeds: Vec::new(),
+                forwarded_snapshots: Vec::new(),
+            });
+            state.apply_event(&AppEvent::MessageUpdate {
+                guild_id: None,
+                channel_id,
+                message_id: Id::new(20),
+                poll: None,
+                content: None,
+                sticker_names: None,
+                mentions: None,
+                attachments,
+                embeds: None,
+                edited_timestamp: None,
+            });
 
-        let messages = state.messages_for_channel(channel_id);
-        assert_eq!(messages[0].attachments.len(), 1);
-        assert_eq!(messages[0].attachments[0].filename, "cat.png");
-    }
-
-    #[test]
-    fn message_update_can_clear_attachments_when_payload_includes_them() {
-        let channel_id: Id<ChannelMarker> = Id::new(10);
-        let mut state = DiscordState::default();
-
-        state.apply_event(&AppEvent::MessageCreate {
-            guild_id: None,
-            channel_id,
-            message_id: Id::new(20),
-            author_id: Id::new(99),
-            author: "neo".to_owned(),
-            author_avatar_url: None,
-            author_role_ids: Vec::new(),
-            message_kind: crate::discord::MessageKind::regular(),
-            reference: None,
-            reply: None,
-            poll: None,
-            content: Some(String::new()),
-            sticker_names: Vec::new(),
-            mentions: Vec::new(),
-            attachments: vec![attachment_info(1, "cat.png", "image/png")],
-            embeds: Vec::new(),
-            forwarded_snapshots: Vec::new(),
-        });
-        state.apply_event(&AppEvent::MessageUpdate {
-            guild_id: None,
-            channel_id,
-            message_id: Id::new(20),
-            poll: None,
-            content: None,
-            sticker_names: None,
-            mentions: None,
-            attachments: AttachmentUpdate::Replace(Vec::new()),
-            embeds: None,
-            edited_timestamp: None,
-        });
-
-        let messages = state.messages_for_channel(channel_id);
-        assert!(messages[0].attachments.is_empty());
+            let messages = state.messages_for_channel(channel_id);
+            assert_eq!(messages[0].attachments.len(), expected_len);
+            if expected_len == 1 {
+                assert_eq!(messages[0].attachments[0].filename, "cat.png");
+            }
+        }
     }
 
     #[test]
@@ -6543,52 +6444,32 @@ mod tests {
     }
 
     #[test]
-    fn channel_with_no_ack_pointer_is_unread_when_messages_exist() {
-        let channel_id = Id::new(7);
-        let mut state = DiscordState::default();
-        state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
-            channel_id, 100,
-        )));
+    fn channel_unread_state_follows_ack_pointer() {
+        let cases = [
+            (100, None, ChannelUnreadState::Unread),
+            (200, Some(150), ChannelUnreadState::Unread),
+            (200, Some(200), ChannelUnreadState::Seen),
+        ];
 
-        // No ReadStateInit at all — Discord never told us about this channel,
-        // so any non-empty channel should light up as unread.
-        assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Unread);
-    }
-
-    #[test]
-    fn channel_with_ack_pointer_below_latest_is_unread() {
-        let channel_id = Id::new(7);
-        let mut state = DiscordState::default();
-        state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
-            channel_id, 200,
-        )));
-        state.apply_event(&AppEvent::ReadStateInit {
-            entries: vec![ReadStateInfo {
+        for (latest_message_id, last_acked_message_id, expected) in cases {
+            let channel_id = Id::new(7);
+            let mut state = DiscordState::default();
+            state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
                 channel_id,
-                last_acked_message_id: Some(Id::new(150)),
-                mention_count: 0,
-            }],
-        });
+                latest_message_id,
+            )));
+            if let Some(last_acked_message_id) = last_acked_message_id {
+                state.apply_event(&AppEvent::ReadStateInit {
+                    entries: vec![ReadStateInfo {
+                        channel_id,
+                        last_acked_message_id: Some(Id::new(last_acked_message_id)),
+                        mention_count: 0,
+                    }],
+                });
+            }
 
-        assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Unread);
-    }
-
-    #[test]
-    fn channel_with_ack_at_latest_is_seen() {
-        let channel_id = Id::new(7);
-        let mut state = DiscordState::default();
-        state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
-            channel_id, 200,
-        )));
-        state.apply_event(&AppEvent::ReadStateInit {
-            entries: vec![ReadStateInfo {
-                channel_id,
-                last_acked_message_id: Some(Id::new(200)),
-                mention_count: 0,
-            }],
-        });
-
-        assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Seen);
+            assert_eq!(state.channel_unread(channel_id), expected);
+        }
     }
 
     #[test]

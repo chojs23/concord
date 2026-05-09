@@ -456,21 +456,16 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_response_body_preserves_useful_error_fields() {
-        let body = r#"{"message":"captcha required","captcha_service":"hcaptcha"}"#;
-
-        let sanitized = sanitize_response_body(body);
-
+    fn sanitize_response_body_preserves_useful_fields_and_redacts_secrets() {
+        let sanitized = sanitize_response_body(
+            r#"{"message":"captcha required","captcha_service":"hcaptcha"}"#,
+        );
         assert!(sanitized.contains("captcha required"));
         assert!(sanitized.contains("hcaptcha"));
-    }
 
-    #[test]
-    fn sanitize_response_body_redacts_sensitive_fields() {
-        let body = r#"{"ticket":"abc","captcha_rqtoken":"secret","nested":{"encrypted_token":"token"},"captcha_rqdata":"blob","captcha_session_id":"session"}"#;
-
-        let sanitized = sanitize_response_body(body);
-
+        let sanitized = sanitize_response_body(
+            r#"{"ticket":"abc","captcha_rqtoken":"secret","nested":{"encrypted_token":"token"},"captcha_rqdata":"blob","captcha_session_id":"session"}"#,
+        );
         assert!(!sanitized.contains("abc"));
         assert!(!sanitized.contains("secret"));
         assert!(!sanitized.contains("\":\"token\""));

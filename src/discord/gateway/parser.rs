@@ -2235,34 +2235,40 @@ mod tests {
     }
 
     #[test]
-    fn message_update_parser_without_attachments_does_not_clear_cached_attachments() {
-        let event = parse_message_update(&json!({
-            "id": "20",
-            "channel_id": "10",
-            "content": "edited"
-        }))
-        .expect("message update should parse");
+    fn message_update_parser_distinguishes_absent_and_empty_attachments() {
+        let cases = [
+            (
+                json!({
+                    "id": "20",
+                    "channel_id": "10",
+                    "content": "edited"
+                }),
+                false,
+            ),
+            (
+                json!({
+                    "id": "20",
+                    "channel_id": "10",
+                    "content": "edited",
+                    "attachments": []
+                }),
+                true,
+            ),
+        ];
 
-        let AppEvent::MessageUpdate { attachments, .. } = event else {
-            panic!("expected message update event");
-        };
-        assert!(matches!(attachments, AttachmentUpdate::Unchanged));
-    }
-
-    #[test]
-    fn message_update_parser_empty_attachments_clears_cached_attachments() {
-        let event = parse_message_update(&json!({
-            "id": "20",
-            "channel_id": "10",
-            "content": "edited",
-            "attachments": []
-        }))
-        .expect("message update should parse");
-
-        let AppEvent::MessageUpdate { attachments, .. } = event else {
-            panic!("expected message update event");
-        };
-        assert!(matches!(attachments, AttachmentUpdate::Replace(values) if values.is_empty()));
+        for (payload, clears_attachments) in cases {
+            let event = parse_message_update(&payload).expect("message update should parse");
+            let AppEvent::MessageUpdate { attachments, .. } = event else {
+                panic!("expected message update event");
+            };
+            if clears_attachments {
+                assert!(
+                    matches!(attachments, AttachmentUpdate::Replace(values) if values.is_empty())
+                );
+            } else {
+                assert!(matches!(attachments, AttachmentUpdate::Unchanged));
+            }
+        }
     }
 
     #[test]
@@ -3372,56 +3378,53 @@ mod tests {
     }
 
     #[test]
-    fn message_create_parser_preserves_empty_content_and_sticker_names() {
-        let event = parse_message_create(&json!({
-            "id": "20",
-            "channel_id": "10",
-            "author": { "id": "30", "username": "neo" },
-            "content": "",
-            "sticker_items": [
-                { "id": "11", "name": "Wave", "format_type": 1 }
-            ]
-        }))
-        .expect("message create should parse");
-        let AppEvent::MessageCreate {
-            content,
-            sticker_names,
-            ..
-        } = event
-        else {
-            panic!("expected message create event");
-        };
-        assert_eq!(content.as_deref(), Some(""));
-        assert_eq!(sticker_names, vec!["Wave".to_owned()]);
-    }
-
-    #[test]
     fn message_create_parser_preserves_content_and_sticker_names() {
-        let event = parse_message_create(&json!({
-            "id": "20",
-            "channel_id": "10",
-            "author": { "id": "30", "username": "neo" },
-            "content": "hello",
-            "sticker_items": [
-                { "id": "11", "name": "Wave", "format_type": 1 },
-                { "id": "12", "name": "Heart", "format_type": 1 }
-            ]
-        }))
-        .expect("message create should parse");
-        let AppEvent::MessageCreate {
-            content,
-            sticker_names,
-            ..
-        } = event
-        else {
-            panic!("expected message create event");
-        };
-        assert_eq!(content.as_deref(), Some("hello"));
-        assert_eq!(sticker_names, vec!["Wave".to_owned(), "Heart".to_owned()]);
+        let cases = [
+            (
+                "",
+                vec![json!({ "id": "11", "name": "Wave", "format_type": 1 })],
+                vec!["Wave"],
+            ),
+            (
+                "hello",
+                vec![
+                    json!({ "id": "11", "name": "Wave", "format_type": 1 }),
+                    json!({ "id": "12", "name": "Heart", "format_type": 1 }),
+                ],
+                vec!["Wave", "Heart"],
+            ),
+        ];
+
+        for (raw_content, sticker_items, expected_stickers) in cases {
+            let event = parse_message_create(&json!({
+                "id": "20",
+                "channel_id": "10",
+                "author": { "id": "30", "username": "neo" },
+                "content": raw_content,
+                "sticker_items": sticker_items
+            }))
+            .expect("message create should parse");
+            let AppEvent::MessageCreate {
+                content,
+                sticker_names,
+                ..
+            } = event
+            else {
+                panic!("expected message create event");
+            };
+            assert_eq!(content.as_deref(), Some(raw_content));
+            assert_eq!(
+                sticker_names,
+                expected_stickers
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
-    fn message_create_parser_keeps_forwarded_snapshot_content() {
+    fn message_create_parser_keeps_forwarded_snapshot_fields() {
         let event = parse_message_create(&json!({
             "id": "20",
             "channel_id": "10",
@@ -3431,113 +3434,11 @@ mod tests {
             "message_reference": { "channel_id": "11" },
             "message_snapshots": [{
                 "message": {
-                    "content": "forwarded text",
-                    "timestamp": "2026-04-30T12:34:56.000000+00:00",
-                    "attachments": []
-                }
-            }]
-        }))
-        .expect("message create should parse");
-
-        let AppEvent::MessageCreate {
-            forwarded_snapshots,
-            ..
-        } = event
-        else {
-            panic!("expected message create event");
-        };
-        assert_eq!(forwarded_snapshots.len(), 1);
-        assert_eq!(
-            forwarded_snapshots[0].content.as_deref(),
-            Some("forwarded text")
-        );
-        assert_eq!(forwarded_snapshots[0].source_channel_id, Some(Id::new(11)));
-        assert_eq!(
-            forwarded_snapshots[0].timestamp.as_deref(),
-            Some("2026-04-30T12:34:56.000000+00:00")
-        );
-    }
-
-    #[test]
-    fn message_create_parser_keeps_forwarded_snapshot_mentions() {
-        let event = parse_message_create(&json!({
-            "id": "20",
-            "channel_id": "10",
-            "author": { "id": "30", "username": "neo" },
-            "content": "",
-            "attachments": [],
-            "message_snapshots": [{
-                "message": {
                     "content": "hello <@40>",
+                    "timestamp": "2026-04-30T12:34:56.000000+00:00",
                     "mentions": [{ "id": "40", "username": "alice" }],
-                    "attachments": []
-                }
-            }]
-        }))
-        .expect("message create should parse");
-
-        let AppEvent::MessageCreate {
-            forwarded_snapshots,
-            ..
-        } = event
-        else {
-            panic!("expected message create event");
-        };
-        assert_eq!(forwarded_snapshots.len(), 1);
-        assert_eq!(
-            forwarded_snapshots[0].mentions,
-            vec![mention_info(40, "alice")]
-        );
-    }
-
-    #[test]
-    fn message_create_parser_keeps_forwarded_snapshot_stickers() {
-        let event = parse_message_create(&json!({
-            "id": "20",
-            "channel_id": "10",
-            "author": { "id": "30", "username": "neo" },
-            "content": "",
-            "attachments": [],
-            "message_snapshots": [{
-                "message": {
-                    "content": "",
-                    "attachments": [],
-                    "sticker_items": [
-                        { "id": "40", "name": "Wave", "format_type": 1 }
-                    ]
-                }
-            }]
-        }))
-        .expect("message create should parse");
-
-        let AppEvent::MessageCreate {
-            forwarded_snapshots,
-            ..
-        } = event
-        else {
-            panic!("expected message create event");
-        };
-        assert_eq!(forwarded_snapshots.len(), 1);
-        assert_eq!(forwarded_snapshots[0].content.as_deref(), Some(""));
-        assert_eq!(
-            forwarded_snapshots[0].sticker_names,
-            vec!["Wave".to_owned()]
-        );
-    }
-
-    #[test]
-    fn message_create_parser_keeps_forwarded_snapshot_attachments() {
-        let event = parse_message_create(&json!({
-            "id": "20",
-            "channel_id": "10",
-            "author": { "id": "30", "username": "neo" },
-            "content": "",
-            "attachments": [],
-            "message_snapshots": [{
-                "message": {
-                    "content": "",
                     "attachments": [{
-                        "id": "40",
+                        "id": "41",
                         "filename": "cat.png",
                         "url": "https://cdn.discordapp.com/cat.png",
                         "proxy_url": "https://media.discordapp.net/cat.png",
@@ -3545,7 +3446,14 @@ mod tests {
                         "size": 2048,
                         "width": 640,
                         "height": 480
-                    }]
+                    }],
+                    "sticker_items": [
+                        { "id": "42", "name": "Wave", "format_type": 1 }
+                    ]
+                }
+            }, {
+                "message": {
+                    "content": ""
                 }
             }]
         }))
@@ -3558,9 +3466,27 @@ mod tests {
         else {
             panic!("expected message create event");
         };
-        assert_eq!(forwarded_snapshots.len(), 1);
+        assert_eq!(forwarded_snapshots.len(), 2);
+        assert_eq!(
+            forwarded_snapshots[0].content.as_deref(),
+            Some("hello <@40>")
+        );
+        assert_eq!(forwarded_snapshots[0].source_channel_id, Some(Id::new(11)));
+        assert_eq!(
+            forwarded_snapshots[0].timestamp.as_deref(),
+            Some("2026-04-30T12:34:56.000000+00:00")
+        );
+        assert_eq!(
+            forwarded_snapshots[0].mentions,
+            vec![mention_info(40, "alice")]
+        );
+        assert_eq!(
+            forwarded_snapshots[0].sticker_names,
+            vec!["Wave".to_owned()]
+        );
         assert_eq!(forwarded_snapshots[0].attachments.len(), 1);
         assert_eq!(forwarded_snapshots[0].attachments[0].filename, "cat.png");
+        assert_eq!(forwarded_snapshots[1].content.as_deref(), Some(""));
     }
 
     fn mention_info(user_id: u64, display_name: &str) -> MentionInfo {

@@ -968,34 +968,30 @@ mod tests {
     };
 
     #[test]
-    fn rejects_empty_messages() {
+    fn rejects_invalid_message_content() {
         let error = validate_message_content("   ").expect_err("blank messages must fail");
         assert!(matches!(error, AppError::EmptyMessageContent));
-    }
 
-    #[test]
-    fn rejects_messages_over_discord_limit() {
         let content = "x".repeat(2_001);
         let error = validate_message_content(&content).expect_err("oversized message must fail");
         assert!(matches!(error, AppError::MessageTooLong { len: 2_001 }));
     }
 
     #[test]
-    fn unicode_reaction_route_component_is_percent_encoded() {
-        let reaction = ReactionEmoji::Unicode("🎉".to_owned());
-
-        assert_eq!(reaction_route_component(&reaction), "%F0%9F%8E%89");
-    }
-
-    #[test]
-    fn custom_reaction_route_component_uses_name_and_id() {
-        let reaction = ReactionEmoji::Custom {
+    fn reaction_route_component_formats_unicode_and_custom_reactions() {
+        let custom = ReactionEmoji::Custom {
             id: Id::<EmojiMarker>::new(42),
             name: Some("party".to_owned()),
             animated: true,
         };
+        let cases = [
+            (ReactionEmoji::Unicode("🎉".to_owned()), "%F0%9F%8E%89"),
+            (custom, "party%3A42"),
+        ];
 
-        assert_eq!(reaction_route_component(&reaction), "party%3A42");
+        for (reaction, expected) in cases {
+            assert_eq!(reaction_route_component(&reaction), expected);
+        }
     }
 
     #[test]
@@ -1011,7 +1007,7 @@ mod tests {
     }
 
     #[test]
-    fn forum_thread_page_filters_parent_and_supplies_guild() {
+    fn forum_thread_page_filters_or_fills_parent_and_supplies_guild() {
         let guild_id = Id::<GuildMarker>::new(1);
         let forum_id = Id::<ChannelMarker>::new(20);
         let raw = serde_json::json!({
@@ -1040,12 +1036,7 @@ mod tests {
         assert_eq!(posts[0].channel_id, Id::new(30));
         assert_eq!(posts[0].parent_id, Some(forum_id));
         assert_eq!(posts[0].name, "welcome");
-    }
 
-    #[test]
-    fn forum_thread_page_can_fill_missing_parent_for_channel_scoped_responses() {
-        let guild_id = Id::<GuildMarker>::new(1);
-        let forum_id = Id::<ChannelMarker>::new(20);
         let raw = serde_json::json!({
             "threads": [
                 {

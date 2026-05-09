@@ -107,57 +107,49 @@ fn custom_emoji_markup_uses_id_fallback_when_disabled() {
 }
 
 #[test]
-fn focus_pane_at_maps_dashboard_regions() {
+fn focus_pane_at_maps_dashboard_regions_and_ignores_non_panes() {
     let area = Rect::new(0, 0, 120, 20);
+    let cases = [
+        (1, 1, Some(FocusPane::Guilds)),
+        (21, 1, Some(FocusPane::Channels)),
+        (50, 1, Some(FocusPane::Messages)),
+        (100, 1, Some(FocusPane::Members)),
+        (1, 19, None),
+        (120, 1, None),
+        (1, 20, None),
+    ];
 
-    assert_eq!(focus_pane_at(area, 1, 1), Some(FocusPane::Guilds));
-    assert_eq!(focus_pane_at(area, 21, 1), Some(FocusPane::Channels));
-    assert_eq!(focus_pane_at(area, 50, 1), Some(FocusPane::Messages));
-    assert_eq!(focus_pane_at(area, 100, 1), Some(FocusPane::Members));
+    for (x, y, expected) in cases {
+        assert_eq!(focus_pane_at(area, x, y), expected);
+    }
 }
 
 #[test]
-fn focus_pane_at_ignores_footer_and_outside_area() {
-    let area = Rect::new(0, 0, 120, 20);
-
-    assert_eq!(focus_pane_at(area, 1, 19), None);
-    assert_eq!(focus_pane_at(area, 120, 1), None);
-    assert_eq!(focus_pane_at(area, 1, 20), None);
-}
-
-#[test]
-fn sync_view_heights_reserves_message_input_inside_messages_pane() {
-    let mut state = DashboardState::new();
-
-    sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
-
-    assert_eq!(state.message_view_height(), 13);
-}
-
-#[test]
-fn sync_view_heights_reserves_multiline_message_input_inside_messages_pane() {
-    let mut state = DashboardState::new();
-    state.push_composer_char('a');
-    state.push_composer_char('\n');
-    state.push_composer_char('b');
-    state.push_composer_char('\n');
-    state.push_composer_char('c');
-
-    sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
-
-    assert_eq!(state.message_view_height(), 11);
-}
-
-#[test]
-fn composer_height_accounts_for_soft_wrapping() {
-    let mut state = DashboardState::new();
-    for _ in 0..100 {
-        state.push_composer_char('x');
+fn sync_view_heights_reserves_space_for_composer_height() {
+    enum ExpectedHeight {
+        Exact(usize),
+        LessThan(usize),
     }
 
-    sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
+    let cases = [
+        (String::new(), ExpectedHeight::Exact(13)),
+        ("a\nb\nc".to_owned(), ExpectedHeight::Exact(11)),
+        ("x".repeat(100), ExpectedHeight::LessThan(14)),
+    ];
 
-    assert!(state.message_view_height() < 14);
+    for (input, expected) in cases {
+        let mut state = DashboardState::new();
+        for ch in input.chars() {
+            state.push_composer_char(ch);
+        }
+
+        sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
+
+        match expected {
+            ExpectedHeight::Exact(height) => assert_eq!(state.message_view_height(), height),
+            ExpectedHeight::LessThan(height) => assert!(state.message_view_height() < height),
+        }
+    }
 }
 
 #[test]
@@ -208,61 +200,50 @@ fn one_to_one_dm_carries_presence_in_dot() {
 }
 
 #[test]
-fn channel_unread_decoration_seen_dims_inactive_label() {
+fn channel_unread_decoration_matches_unread_state() {
     let base = Style::default().fg(Color::White);
-    let (badge, style) = channel_unread_decoration(ChannelUnreadState::Seen, base, false);
+    let cases = [
+        (ChannelUnreadState::Seen, None, Some(READ_DIM), false),
+        (ChannelUnreadState::Unread, None, Some(UNREAD_BRIGHT), true),
+        (
+            ChannelUnreadState::Mentioned(3),
+            Some(("(3) ", MENTION_ORANGE)),
+            Some(MENTION_ORANGE),
+            true,
+        ),
+        (
+            ChannelUnreadState::Notified(3),
+            Some(("(3) ", UNREAD_BRIGHT)),
+            Some(UNREAD_BRIGHT),
+            true,
+        ),
+    ];
 
-    assert!(badge.is_none());
-    assert!(!style.add_modifier.contains(Modifier::BOLD));
-    assert!(!style.add_modifier.contains(Modifier::DIM));
-    assert_eq!(style.fg, Some(READ_DIM));
-}
+    for (unread, expected_badge, expected_fg, expect_bold) in cases {
+        let (badge, style) = channel_unread_decoration(unread, base, false);
+        match expected_badge {
+            Some((content, color)) => {
+                let badge = badge.expect("unread state should include a count badge");
+                assert_eq!(badge.content.as_ref(), content);
+                assert_eq!(badge.style.fg, Some(color));
+                assert!(badge.style.add_modifier.contains(Modifier::BOLD));
+            }
+            None => assert!(badge.is_none()),
+        }
+        assert_eq!(style.fg, expected_fg);
+        assert_eq!(style.add_modifier.contains(Modifier::BOLD), expect_bold);
+        if unread == ChannelUnreadState::Seen {
+            assert!(!style.add_modifier.contains(Modifier::DIM));
+        }
+    }
 
-#[test]
-fn channel_unread_decoration_unread_brightens_and_bolds() {
-    let base = Style::default().fg(Color::White);
-    let (badge, style) = channel_unread_decoration(ChannelUnreadState::Unread, base, false);
-
-    assert!(badge.is_none());
-    assert!(style.add_modifier.contains(Modifier::BOLD));
-    assert_eq!(style.fg, Some(UNREAD_BRIGHT));
-}
-
-#[test]
-fn channel_unread_decoration_mentioned_uses_orange_with_count_badge() {
-    let base = Style::default().fg(Color::White);
-    let (badge, style) = channel_unread_decoration(ChannelUnreadState::Mentioned(3), base, false);
-
-    let badge = badge.expect("mention should include a count badge");
-    assert_eq!(badge.content.as_ref(), "(3) ");
-    assert_eq!(badge.style.fg, Some(MENTION_ORANGE));
-    assert!(badge.style.add_modifier.contains(Modifier::BOLD));
-    assert_eq!(style.fg, Some(MENTION_ORANGE));
-    assert!(style.add_modifier.contains(Modifier::BOLD));
-}
-
-#[test]
-fn channel_unread_decoration_notified_uses_bright_count_badge() {
-    let base = Style::default().fg(Color::White);
-    let (badge, style) = channel_unread_decoration(ChannelUnreadState::Notified(3), base, false);
-
-    let badge = badge.expect("notification should include a count badge");
-    assert_eq!(badge.content.as_ref(), "(3) ");
-    assert_eq!(badge.style.fg, Some(UNREAD_BRIGHT));
-    assert!(badge.style.add_modifier.contains(Modifier::BOLD));
-    assert_eq!(style.fg, Some(UNREAD_BRIGHT));
-    assert!(style.add_modifier.contains(Modifier::BOLD));
-}
-
-#[test]
-fn channel_unread_decoration_active_skips_decoration() {
-    let base = Style::default()
+    let active_base = Style::default()
         .fg(Color::Green)
         .add_modifier(Modifier::BOLD);
-    let (badge, style) = channel_unread_decoration(ChannelUnreadState::Mentioned(2), base, true);
-
+    let (badge, style) =
+        channel_unread_decoration(ChannelUnreadState::Mentioned(2), active_base, true);
     assert!(badge.is_none());
-    assert_eq!(style, base);
+    assert_eq!(style, active_base);
 }
 
 #[test]
@@ -840,35 +821,21 @@ fn user_profile_popup_styles_name_by_status() {
 }
 
 #[test]
-fn user_profile_popup_does_not_show_dm_hint_for_current_user() {
-    let profile = user_profile_info(10, "neo");
-    let mut state = DashboardState::new();
-    state.push_event(AppEvent::Ready {
-        user: "neo".to_owned(),
-        user_id: Some(Id::new(10)),
-    });
+fn user_profile_popup_does_not_show_dm_hint_without_dm_context() {
+    for (profile_name, current_user_id) in [("neo", 10), ("alice", 99)] {
+        let profile = user_profile_info(10, profile_name);
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(Id::new(current_user_id)),
+        });
 
-    let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Online);
-    let texts = line_texts_from_ratatui(&lines);
+        let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Online);
+        let texts = line_texts_from_ratatui(&lines);
 
-    assert!(texts.iter().any(|line| line == "j/k scroll · Esc close"));
-    assert!(!texts.iter().any(|line| line.contains("m send DM")));
-}
-
-#[test]
-fn user_profile_popup_does_not_show_dm_hint_for_other_users() {
-    let profile = user_profile_info(10, "alice");
-    let mut state = DashboardState::new();
-    state.push_event(AppEvent::Ready {
-        user: "neo".to_owned(),
-        user_id: Some(Id::new(99)),
-    });
-
-    let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Online);
-    let texts = line_texts_from_ratatui(&lines);
-
-    assert!(texts.iter().any(|line| line == "j/k scroll · Esc close"));
-    assert!(!texts.iter().any(|line| line.contains("m send DM")));
+        assert!(texts.iter().any(|line| line == "j/k scroll · Esc close"));
+        assert!(!texts.iter().any(|line| line.contains("m send DM")));
+    }
 }
 
 #[test]
@@ -2567,37 +2534,35 @@ fn footer_hint_does_not_advertise_horizontal_scroll_for_messages() {
 }
 
 #[test]
-fn footer_hint_switches_for_emoji_picker() {
-    let mut state = state_with_message();
-    state.open_selected_message_actions();
-    state.move_message_action_down();
-    state.activate_selected_message_action();
+fn footer_hint_switches_for_modal_states() {
+    let mut emoji_state = state_with_message();
+    emoji_state.open_selected_message_actions();
+    emoji_state.move_message_action_down();
+    emoji_state.activate_selected_message_action();
 
-    assert_eq!(
-        footer_hint(&state),
-        "j/k choose emoji | enter/space react | esc close"
-    );
-}
+    let mut image_state = state_with_image_message();
+    image_state.open_selected_message_actions();
+    image_state.move_message_action_down();
+    image_state.activate_selected_message_action();
 
-#[test]
-fn footer_hint_switches_for_image_viewer() {
-    let mut state = state_with_image_message();
-    state.open_selected_message_actions();
-    state.move_message_action_down();
-    state.activate_selected_message_action();
+    let mut debug_state = DashboardState::new();
+    debug_state.toggle_debug_log_popup();
 
-    assert_eq!(
-        footer_hint(&state),
-        "h/← previous image | l/→ next image | enter/space actions | esc close"
-    );
-}
+    let cases = [
+        (
+            emoji_state,
+            "j/k choose emoji | enter/space react | esc close",
+        ),
+        (
+            image_state,
+            "h/← previous image | l/→ next image | enter/space actions | esc close",
+        ),
+        (debug_state, "`/esc close debug logs"),
+    ];
 
-#[test]
-fn footer_hint_switches_for_debug_log_popup() {
-    let mut state = DashboardState::new();
-    state.toggle_debug_log_popup();
-
-    assert_eq!(footer_hint(&state), "`/esc close debug logs");
+    for (state, expected) in cases {
+        assert_eq!(footer_hint(&state), expected);
+    }
 }
 
 #[test]
@@ -2907,55 +2872,29 @@ fn message_viewport_lines_put_reactions_below_image_preview_rows() {
 }
 
 #[test]
-fn message_viewport_lines_reserve_rows_for_three_image_album() {
-    let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
-    message.attachments = image_attachments(3);
-    let messages = [&message];
+fn message_viewport_lines_reserve_bounded_rows_for_image_albums() {
+    for (attachment_count, expected_lines, overflow_text) in [
+        (3, 9, None),
+        (4, 10, None),
+        (5, 12, Some("   +1 more images")),
+    ] {
+        let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
+        message.attachments = image_attachments(attachment_count);
+        let messages = [&message];
 
-    let lines = message_viewport_lines(
-        &messages,
-        None,
-        &DashboardState::new(),
-        super::message_viewport_layout(200, 80, 80, 16, 3),
-        &[],
-    );
+        let lines = message_viewport_lines(
+            &messages,
+            None,
+            &DashboardState::new(),
+            super::message_viewport_layout(200, 80, 80, 16, 3),
+            &[],
+        );
 
-    assert_eq!(lines.len(), 9);
-}
-
-#[test]
-fn message_viewport_lines_keep_four_image_album_bounded() {
-    let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
-    message.attachments = image_attachments(4);
-    let messages = [&message];
-
-    let lines = message_viewport_lines(
-        &messages,
-        None,
-        &DashboardState::new(),
-        super::message_viewport_layout(200, 80, 80, 16, 3),
-        &[],
-    );
-
-    assert_eq!(lines.len(), 10);
-}
-
-#[test]
-fn message_viewport_lines_keep_five_image_album_bounded_to_four_tiles() {
-    let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
-    message.attachments = image_attachments(5);
-    let messages = [&message];
-
-    let lines = message_viewport_lines(
-        &messages,
-        None,
-        &DashboardState::new(),
-        super::message_viewport_layout(200, 80, 80, 16, 3),
-        &[],
-    );
-
-    assert_eq!(lines.len(), 12);
-    assert!(line_texts_from_ratatui(&lines).contains(&"   +1 more images".to_owned()));
+        assert_eq!(lines.len(), expected_lines);
+        if let Some(overflow_text) = overflow_text {
+            assert!(line_texts_from_ratatui(&lines).contains(&overflow_text.to_owned()));
+        }
+    }
 }
 
 #[test]

@@ -98,13 +98,12 @@ mod tests {
     use crate::{AppError, token_store::normalize_token};
 
     #[test]
-    fn trims_token_before_saving() {
-        let token = normalize_token("  token  ").expect("token should normalize");
-        assert_eq!(token, "token");
-    }
+    fn normalize_token_trims_and_rejects_empty_values() {
+        assert_eq!(
+            normalize_token("  token  ").expect("token should normalize"),
+            "token"
+        );
 
-    #[test]
-    fn rejects_empty_token() {
         let error = normalize_token("   ").expect_err("blank token must fail");
         assert!(matches!(error, AppError::EmptyDiscordToken));
     }

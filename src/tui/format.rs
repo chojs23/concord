@@ -753,46 +753,24 @@ mod tests {
     }
 
     #[test]
-    fn renders_role_mentions_with_role_name() {
-        let text = render_user_mentions(
-            "hello <@&10>",
-            |_| None,
-            |role_id| (role_id == 10).then(|| "Mods".to_owned()),
-            |_| None,
-        );
+    fn renders_or_keeps_role_and_channel_mentions() {
+        let cases = [
+            ("hello <@&10>", "hello @Mods"),
+            ("hello <@&11>", "hello <@&11>"),
+            ("see <#42> for details", "see #general for details"),
+            ("see <#43>", "see <#43>"),
+            ("see <#0>", "see <#0>"),
+        ];
 
-        assert_eq!(text, "hello @Mods");
-    }
-
-    #[test]
-    fn keeps_unknown_role_mentions_raw() {
-        let text = render_user_mentions("hello <@&10>", |_| None, |_| None, |_| None);
-        assert_eq!(text, "hello <@&10>");
-    }
-
-    #[test]
-    fn renders_channel_mentions_with_channel_name() {
-        let text = render_user_mentions(
-            "see <#42> for details",
-            |_| None,
-            |_| None,
-            |channel_id| (channel_id == 42).then(|| "general".to_owned()),
-        );
-
-        assert_eq!(text, "see #general for details");
-    }
-
-    #[test]
-    fn keeps_unknown_channel_mentions_raw() {
-        let text = render_user_mentions("see <#42>", |_| None, |_| None, |_| None);
-        assert_eq!(text, "see <#42>");
-    }
-
-    #[test]
-    fn keeps_zero_channel_mentions_raw() {
-        let text =
-            render_user_mentions("see <#0>", |_| None, |_| None, |_| Some("never".to_owned()));
-        assert_eq!(text, "see <#0>");
+        for (input, expected) in cases {
+            let text = render_user_mentions(
+                input,
+                |_| None,
+                |role_id| (role_id == 10).then(|| "Mods".to_owned()),
+                |channel_id| (channel_id == 42).then(|| "general".to_owned()),
+            );
+            assert_eq!(text, expected);
+        }
     }
 
     #[test]

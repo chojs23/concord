@@ -729,46 +729,53 @@ mod tests {
     }
 
     #[test]
-    fn guild_channel_subscribe_payload_matches_expected_shape() {
-        let payload: serde_json::Value = serde_json::from_str(&guild_channel_subscribe_payload(
-            Id::<GuildMarker>::new(10),
-            Id::<ChannelMarker>::new(20),
-            &[(0, 99)],
-        ))
-        .expect("payload should be valid json");
+    fn guild_channel_subscribe_payload_matches_shape_and_member_ranges() {
+        for (ranges, expected_ranges) in [
+            (&[(0, 99)][..], json!([[0, 99]])),
+            (
+                &[(0, 99), (100, 199), (200, 299)][..],
+                json!([[0, 99], [100, 199], [200, 299]]),
+            ),
+        ] {
+            let payload: serde_json::Value =
+                serde_json::from_str(&guild_channel_subscribe_payload(
+                    Id::<GuildMarker>::new(10),
+                    Id::<ChannelMarker>::new(20),
+                    ranges,
+                ))
+                .expect("payload should be valid json");
 
-        assert_eq!(
-            payload,
-            json!({
-                "op": 37,
-                "d": {
-                    "subscriptions": {
-                        "10": {
-                            "typing": true,
-                            "activities": true,
-                            "threads": true,
-                            "channels": {
-                                "20": [[0, 99]]
+            assert_eq!(payload["op"].as_u64(), Some(37));
+            assert_eq!(payload["d"]["subscriptions"]["10"]["typing"], json!(true));
+            assert_eq!(
+                payload["d"]["subscriptions"]["10"]["activities"],
+                json!(true)
+            );
+            assert_eq!(payload["d"]["subscriptions"]["10"]["threads"], json!(true));
+            assert_eq!(
+                payload["d"]["subscriptions"]["10"]["channels"]["20"],
+                expected_ranges
+            );
+            if ranges == &[(0, 99)][..] {
+                assert_eq!(
+                    payload,
+                    json!({
+                        "op": 37,
+                        "d": {
+                            "subscriptions": {
+                                "10": {
+                                    "typing": true,
+                                    "activities": true,
+                                    "threads": true,
+                                    "channels": {
+                                        "20": [[0, 99]]
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-            })
-        );
-    }
-
-    #[test]
-    fn guild_channel_subscribe_payload_emits_extended_member_ranges() {
-        let payload: serde_json::Value = serde_json::from_str(&guild_channel_subscribe_payload(
-            Id::<GuildMarker>::new(10),
-            Id::<ChannelMarker>::new(20),
-            &[(0, 99), (100, 199), (200, 299)],
-        ))
-        .expect("payload should be valid json");
-
-        assert_eq!(
-            payload["d"]["subscriptions"]["10"]["channels"]["20"],
-            json!([[0, 99], [100, 199], [200, 299]])
-        );
+                    })
+                );
+            }
+        }
     }
 }

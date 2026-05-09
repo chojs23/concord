@@ -1047,23 +1047,25 @@ mod tests {
     }
 
     #[test]
-    fn login_notice_reports_invalid_saved_token() {
-        let warnings = vec!["saved Discord token is invalid: bad; enter a new token".to_owned()];
+    fn login_notice_for_token_warnings_reports_user_action() {
+        let cases = [
+            (
+                "saved Discord token is invalid: bad; enter a new token",
+                "Saved Discord token is invalid; enter a new token.",
+            ),
+            (
+                "credential store unavailable: permission denied",
+                "Credential storage is unavailable; token may not be saved.",
+            ),
+        ];
 
-        assert_eq!(
-            login_notice_for_token_warnings(&warnings).as_deref(),
-            Some("Saved Discord token is invalid; enter a new token.")
-        );
-    }
-
-    #[test]
-    fn login_notice_keeps_storage_warning_for_other_token_warnings() {
-        let warnings = vec!["credential store unavailable: permission denied".to_owned()];
-
-        assert_eq!(
-            login_notice_for_token_warnings(&warnings).as_deref(),
-            Some("Credential storage is unavailable; token may not be saved.")
-        );
+        for (warning, expected) in cases {
+            let warnings = vec![warning.to_owned()];
+            assert_eq!(
+                login_notice_for_token_warnings(&warnings).as_deref(),
+                Some(expected)
+            );
+        }
     }
 
     #[test]

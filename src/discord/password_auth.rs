@@ -332,29 +332,33 @@ mod tests {
     }
 
     #[test]
-    fn captcha_error_is_clear_and_does_not_include_raw_body() {
-        let message = format_login_error(
-            StatusCode::BAD_REQUEST,
-            r#"{"captcha_key":["captcha-required"],"captcha_rqtoken":"secret"}"#,
-        );
-
-        assert!(message.contains("captcha"));
-        assert!(!message.contains("secret"));
-    }
-
-    #[test]
     fn phone_login_identifier_removes_common_separators() {
         assert_eq!(normalize_login_identifier("+1 234-567"), "+1234567");
     }
 
     #[test]
-    fn generic_error_keeps_status_without_raw_body() {
-        let message = format_login_error(StatusCode::TOO_MANY_REQUESTS, "not json secret");
+    fn login_errors_are_clear_without_raw_sensitive_body() {
+        let cases = [
+            (
+                StatusCode::BAD_REQUEST,
+                r#"{"captcha_key":["captcha-required"],"captcha_rqtoken":"secret"}"#,
+                "captcha",
+            ),
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                "not json secret",
+                "Discord login failed with HTTP 429 Too Many Requests",
+            ),
+        ];
 
+        for (status, body, expected) in cases {
+            let message = format_login_error(status, body);
+            assert!(message.contains(expected));
+            assert!(!message.contains("secret"));
+        }
         assert_eq!(
-            message,
+            format_login_error(StatusCode::TOO_MANY_REQUESTS, "not json secret"),
             "Discord login failed with HTTP 429 Too Many Requests"
         );
-        assert!(!message.contains("secret"));
     }
 }

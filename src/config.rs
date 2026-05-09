@@ -207,30 +207,29 @@ mod tests {
     }
 
     #[test]
-    fn missing_toml_fields_use_defaults() {
-        let config: AppConfig = toml::from_str("[display]\ndisable_image_preview = true\n")
-            .expect("partial config should parse");
+    fn display_config_parses_partial_toml_with_defaults() {
+        let cases = [
+            (
+                "[display]\ndisable_image_preview = true\n",
+                true,
+                ImagePreviewQualityPreset::Balanced,
+            ),
+            (
+                "[display]\nimage_preview_quality = \"original\"\n",
+                false,
+                ImagePreviewQualityPreset::Original,
+            ),
+        ];
 
-        assert!(config.display.disable_image_preview);
-        assert!(config.display.show_avatars);
-        assert!(config.display.show_images);
-        assert_eq!(
-            config.display.image_preview_quality,
-            ImagePreviewQualityPreset::Balanced
-        );
-        assert!(config.display.show_custom_emoji);
-        assert!(config.display.desktop_notifications);
-    }
-
-    #[test]
-    fn parses_image_preview_quality_preset() {
-        let config: AppConfig = toml::from_str("[display]\nimage_preview_quality = \"original\"\n")
-            .expect("quality preset config should parse");
-
-        assert_eq!(
-            config.display.image_preview_quality,
-            ImagePreviewQualityPreset::Original
-        );
+        for (toml, disable_image_preview, image_preview_quality) in cases {
+            let config: AppConfig = toml::from_str(toml).expect("partial config should parse");
+            assert_eq!(config.display.disable_image_preview, disable_image_preview);
+            assert!(config.display.show_avatars);
+            assert!(config.display.show_images);
+            assert_eq!(config.display.image_preview_quality, image_preview_quality);
+            assert!(config.display.show_custom_emoji);
+            assert!(config.display.desktop_notifications);
+        }
     }
 
     #[test]

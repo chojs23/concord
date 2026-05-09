@@ -2783,49 +2783,40 @@ fn viewport_scroll_away_from_latest_sets_new_messages_marker_even_when_cursor_is
 }
 
 #[test]
-fn new_messages_marker_clears_when_user_returns_to_latest() {
-    let mut state = state_with_messages(5);
-    state.focus_pane(FocusPane::Messages);
-    state.set_message_view_height(3);
-    state.jump_top();
-    push_text_message(&mut state, 6, "new while reading older messages");
-
-    state.jump_bottom();
-
-    assert_eq!(state.new_messages_marker_message_id(), None);
-}
-
-#[test]
-fn new_messages_marker_clears_when_viewport_jumps_to_latest() {
-    let mut state = state_with_messages(5);
-    state.focus_pane(FocusPane::Messages);
-    state.set_message_view_height(3);
-    state.clamp_message_viewport_for_image_previews(80, 16, 3);
-    state.jump_top();
-    push_text_message(&mut state, 6, "new while reading older messages");
-
-    state.scroll_message_viewport_bottom();
-
-    assert_eq!(state.new_messages_marker_message_id(), None);
-}
-
-#[test]
-fn new_messages_marker_clears_when_viewport_scrolls_to_latest() {
-    let mut state = state_with_messages(5);
-    state.focus_pane(FocusPane::Messages);
-    state.set_message_view_height(3);
-    state.clamp_message_viewport_for_image_previews(80, 16, 3);
-    state.jump_top();
-    push_text_message(&mut state, 6, "new while reading older messages");
-
-    for _ in 0..50 {
-        if state.new_messages_marker_message_id().is_none() {
-            break;
-        }
-        state.scroll_message_viewport_down();
+fn new_messages_marker_clears_when_user_reaches_latest() {
+    enum LatestAction {
+        JumpBottom,
+        ScrollViewportBottom,
+        ScrollViewportDown,
     }
 
-    assert_eq!(state.new_messages_marker_message_id(), None);
+    for action in [
+        LatestAction::JumpBottom,
+        LatestAction::ScrollViewportBottom,
+        LatestAction::ScrollViewportDown,
+    ] {
+        let mut state = state_with_messages(5);
+        state.focus_pane(FocusPane::Messages);
+        state.set_message_view_height(3);
+        state.clamp_message_viewport_for_image_previews(80, 16, 3);
+        state.jump_top();
+        push_text_message(&mut state, 6, "new while reading older messages");
+
+        match action {
+            LatestAction::JumpBottom => state.jump_bottom(),
+            LatestAction::ScrollViewportBottom => state.scroll_message_viewport_bottom(),
+            LatestAction::ScrollViewportDown => {
+                for _ in 0..50 {
+                    if state.new_messages_marker_message_id().is_none() {
+                        break;
+                    }
+                    state.scroll_message_viewport_down();
+                }
+            }
+        }
+
+        assert_eq!(state.new_messages_marker_message_id(), None);
+    }
 }
 
 #[test]

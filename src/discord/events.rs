@@ -962,34 +962,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn video_attachment_with_dimensions_is_not_an_image_preview() {
-        let attachment = attachment_info("clip.mp4", Some("video/mp4"));
+    fn attachment_media_classification_controls_inline_preview() {
+        let video = attachment_info("clip.mp4", Some("video/mp4"));
+        assert!(!video.is_image());
+        assert!(video.is_video());
+        assert_eq!(video.inline_preview_url(), None);
 
-        assert!(!attachment.is_image());
-        assert!(attachment.is_video());
-        assert_eq!(attachment.inline_preview_url(), None);
-    }
-
-    #[test]
-    fn image_attachment_uses_preferred_inline_preview_url() {
-        let attachment = attachment_info("cat.png", Some("image/png"));
-
-        assert!(attachment.is_image());
-        assert!(!attachment.is_video());
+        let image = attachment_info("cat.png", Some("image/png"));
+        assert!(image.is_image());
+        assert!(!image.is_video());
         assert_eq!(
-            attachment.inline_preview_url(),
+            image.inline_preview_url(),
             Some("https://cdn.discordapp.com/cat.png")
         );
         assert_eq!(
-            attachment
-                .inline_preview_info()
-                .and_then(|info| info.proxy_url),
+            image.inline_preview_info().and_then(|info| info.proxy_url),
             Some("https://media.discordapp.net/cat.png")
         );
-    }
 
-    #[test]
-    fn filename_extension_classifies_unknown_media_type() {
         assert!(attachment_info("CAT.PNG", None).is_image());
         assert!(attachment_info("CLIP.MP4", None).is_video());
     }
