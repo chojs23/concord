@@ -51,7 +51,7 @@ pub(super) struct VisibleDashboardSignature {
     status_message: Option<String>,
     popups: VisiblePopupSignature,
     visible_guilds: Vec<String>,
-    visible_channels: Vec<String>,
+    pub(super) visible_channels: Vec<String>,
     pub(super) visible_messages: Vec<MessageState>,
     visible_forum_posts: Vec<state::ChannelThreadItem>,
     visible_members: Vec<MemberEntrySignature>,
@@ -129,12 +129,27 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
         visible_guilds: state
             .visible_guild_pane_entries()
             .into_iter()
-            .map(|entry| format!("{entry:?}"))
+            .map(|entry| match entry {
+                state::GuildPaneEntry::DirectMessages => {
+                    format!("{entry:?} unread={}", state.direct_message_unread_count())
+                }
+                state::GuildPaneEntry::Guild { state: guild, .. } => {
+                    format!("{entry:?} unread={:?}", state.guild_unread(guild.id))
+                }
+                state::GuildPaneEntry::FolderHeader { .. } => format!("{entry:?}"),
+            })
             .collect(),
         visible_channels: state
             .visible_channel_pane_entries()
             .into_iter()
-            .map(|entry| format!("{entry:?}"))
+            .map(|entry| match entry {
+                state::ChannelPaneEntry::Channel { state: channel, .. } => format!(
+                    "{entry:?} unread={:?} unread_messages={}",
+                    state.channel_unread(channel.id),
+                    state.channel_unread_message_count(channel.id)
+                ),
+                state::ChannelPaneEntry::CategoryHeader { .. } => format!("{entry:?}"),
+            })
             .collect(),
         visible_messages: state.visible_messages().into_iter().cloned().collect(),
         visible_forum_posts: state.visible_forum_post_items(),
@@ -233,7 +248,7 @@ fn only_visible_member_signature_changed(
             || before.visible_members != after.visible_members)
 }
 
-fn only_background_message_activity_changed(
+fn only_new_message_notice_changed(
     before: &VisibleDashboardSignature,
     after: &VisibleDashboardSignature,
 ) -> bool {
@@ -254,11 +269,11 @@ fn only_background_message_activity_changed(
         && before.status_message == after.status_message
         && before.popups == after.popups
         && before.visible_guilds == after.visible_guilds
+        && before.visible_channels == after.visible_channels
         && before.visible_messages == after.visible_messages
         && before.visible_forum_posts == after.visible_forum_posts
         && before.visible_members == after.visible_members
-        && (before.new_messages_count != after.new_messages_count
-            || before.visible_channels != after.visible_channels)
+        && before.new_messages_count != after.new_messages_count
 }
 
 pub(super) fn should_suppress_image_redraw_for_signature_change(
@@ -270,7 +285,7 @@ pub(super) fn should_suppress_image_redraw_for_signature_change(
         && ((after.focus != state::FocusPane::Members
             && only_visible_member_signature_changed(before, after))
             || (after.focus != state::FocusPane::Channels
-                && only_background_message_activity_changed(before, after)))
+                && only_new_message_notice_changed(before, after)))
 }
 
 pub(super) fn should_redraw_after_visible_signature_change(

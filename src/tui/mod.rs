@@ -1036,9 +1036,9 @@ mod tests {
 
     use crate::discord::ids::{
         Id,
-        marker::{ChannelMarker, GuildMarker},
+        marker::{ChannelMarker, GuildMarker, MessageMarker},
     };
-    use crate::discord::{AppEvent, ChannelInfo, MessageKind, SequencedAppEvent};
+    use crate::discord::{AppEvent, ChannelInfo, MessageKind, ReadStateInfo, SequencedAppEvent};
 
     use super::{
         AvatarImageCache, EffectContext, EmojiImageCache, ForumPostRequests, HistoryRequests,
@@ -1165,7 +1165,7 @@ mod tests {
     }
 
     #[test]
-    fn real_background_message_activity_is_suppressed_while_images_are_visible() {
+    fn visible_channel_activity_redraws_while_images_are_visible() {
         let mut state = state_with_messages(10);
         state.focus_pane(FocusPane::Messages);
         state.set_message_view_height(5);
@@ -1178,11 +1178,45 @@ mod tests {
 
         assert_ne!(before, after);
         assert_eq!(before.visible_messages, after.visible_messages);
-        assert!(!should_redraw_after_visible_signature_change(
+        assert!(should_redraw_after_visible_signature_change(
             &before, &after, true, false,
         ));
         assert!(should_redraw_after_visible_signature_change(
             &before, &after, false, false,
+        ));
+    }
+
+    #[test]
+    fn visible_sidebar_unread_state_redraws_while_images_are_visible() {
+        let mut state = state_with_messages(10);
+        state.focus_pane(FocusPane::Messages);
+        state.push_event(AppEvent::ReadStateInit {
+            entries: vec![read_state(2, Some(10), 0)],
+        });
+        let before = visible_dashboard_signature(&state);
+
+        state.push_event(AppEvent::ReadStateInit {
+            entries: vec![read_state(2, Some(10), 1)],
+        });
+        let after = visible_dashboard_signature(&state);
+
+        assert_eq!(before.visible_messages, after.visible_messages);
+        assert_ne!(before.visible_channels, after.visible_channels);
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, true, false,
+        ));
+
+        let mut state = state_with_active_dm_and_guild();
+        state.focus_pane(FocusPane::Messages);
+        let before = visible_dashboard_signature(&state);
+
+        push_message(&mut state, 1);
+        let after = visible_dashboard_signature(&state);
+
+        assert_ne!(before, after);
+        assert_eq!(before.visible_messages, after.visible_messages);
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, true, false,
         ));
     }
 
@@ -1282,6 +1316,59 @@ mod tests {
         state
     }
 
+    fn state_with_active_dm_and_guild() -> DashboardState {
+        let guild_id: Id<GuildMarker> = Id::new(1);
+        let guild_channel_id: Id<ChannelMarker> = Id::new(2);
+        let dm_channel_id: Id<ChannelMarker> = Id::new(3);
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: guild_channel_id,
+                parent_id: None,
+                position: None,
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id: dm_channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "dm".to_owned(),
+            kind: "DM".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }));
+        state.push_event(AppEvent::ActivateChannel {
+            channel_id: dm_channel_id,
+        });
+        state
+    }
+
     fn push_message(state: &mut DashboardState, message_id: u64) {
         state.push_event(AppEvent::MessageCreate {
             guild_id: Some(Id::new(1)),
@@ -1302,5 +1389,17 @@ mod tests {
             embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });
+    }
+
+    fn read_state(
+        channel_id: u64,
+        last_acked_message_id: Option<u64>,
+        mention_count: u32,
+    ) -> ReadStateInfo {
+        ReadStateInfo {
+            channel_id: Id::new(channel_id),
+            last_acked_message_id: last_acked_message_id.map(Id::<MessageMarker>::new),
+            mention_count,
+        }
     }
 }
