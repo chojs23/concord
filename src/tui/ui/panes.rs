@@ -54,8 +54,11 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                                 .add_modifier(Modifier::BOLD),
                         );
                         let unread_count = state.direct_message_unread_count();
-                        let badge =
-                            (unread_count > 0).then(|| notification_count_badge(unread_count));
+                        let badge = (unread_count > 0).then(|| {
+                            notification_count_badge(ChannelUnreadState::Notified(
+                                u32::try_from(unread_count).unwrap_or(u32::MAX),
+                            ))
+                        });
                         let badge_width =
                             badge.as_ref().map(|span| span.content.width()).unwrap_or(0);
                         let label_width = max_width.saturating_sub(badge_width);
@@ -150,14 +153,9 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
     );
 }
 
-fn notification_count_badge(count: usize) -> Span<'static> {
-    let count = u32::try_from(count).unwrap_or(u32::MAX);
-    let (badge, _) = channel_unread_decoration(
-        ChannelUnreadState::Mentioned(count),
-        Style::default(),
-        false,
-    );
-    badge.expect("mentioned unread state always renders a badge")
+fn notification_count_badge(unread: ChannelUnreadState) -> Span<'static> {
+    let (badge, _) = channel_unread_decoration(unread, Style::default(), false);
+    badge.expect("numeric unread state always renders a badge")
 }
 
 pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
@@ -206,9 +204,12 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                         {
                             let message_count = dashboard.channel_unread_message_count(state.id);
                             if message_count > 0 {
-                                Some(notification_count_badge(message_count))
+                                let count = u32::try_from(message_count).unwrap_or(u32::MAX);
+                                Some(notification_count_badge(ChannelUnreadState::Notified(
+                                    count,
+                                )))
                             } else if unread == ChannelUnreadState::Unread {
-                                Some(notification_count_badge(1))
+                                Some(notification_count_badge(ChannelUnreadState::Notified(1)))
                             } else {
                                 badge
                             }

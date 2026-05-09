@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
+mod notifications;
 mod permissions;
 
 /// Typing indicators stay visible for this long after the latest TYPING_START
@@ -12,6 +13,8 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
+pub use notifications::ChannelUnreadState;
+use notifications::{GuildNotificationSettingsState, MessageNotificationKind};
 
 use super::{
     ActivityInfo, AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo,
@@ -25,13 +28,7 @@ use super::{
 struct ChannelReadState {
     last_acked_message_id: Option<Id<MessageMarker>>,
     mention_count: u32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ChannelUnreadState {
-    Seen,
-    Unread,
-    Mentioned(u32),
+    notification_count: u32,
 }
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -329,6 +326,8 @@ pub struct DiscordState {
     /// `typing_users` so the map stays small.
     typing: BTreeMap<Id<ChannelMarker>, BTreeMap<Id<UserMarker>, Instant>>,
     read_states: BTreeMap<Id<ChannelMarker>, ChannelReadState>,
+    notification_settings: BTreeMap<Id<GuildMarker>, GuildNotificationSettingsState>,
+    private_notification_settings: Option<GuildNotificationSettingsState>,
     max_messages_per_channel: usize,
 }
 
@@ -382,6 +381,8 @@ impl DiscordState {
             current_user: None,
             typing: BTreeMap::new(),
             read_states: BTreeMap::new(),
+            notification_settings: BTreeMap::new(),
+            private_notification_settings: None,
             max_messages_per_channel,
         }
     }
@@ -515,13 +516,23 @@ impl DiscordState {
                 let guild_id = guild_id.or_else(|| self.channel_guild_id(*channel_id));
                 let is_current_user_message = self.current_user_id == Some(*author_id);
                 self.record_author_role_ids(*channel_id, *message_id, author_role_ids);
-                // Self-authored mentions never bump our own sidebar.
-                if let Some(self_id) = self.current_user_id
-                    && *author_id != self_id
-                    && mentions.iter().any(|mention| mention.user_id == self_id)
-                {
-                    let entry = self.read_states.entry(*channel_id).or_default();
-                    entry.mention_count = entry.mention_count.saturating_add(1);
+                match self.message_create_notification_kind(
+                    guild_id,
+                    *channel_id,
+                    *message_id,
+                    *author_id,
+                    content.as_deref(),
+                    mentions,
+                ) {
+                    MessageNotificationKind::Mention => {
+                        let entry = self.read_states.entry(*channel_id).or_default();
+                        entry.mention_count = entry.mention_count.saturating_add(1);
+                    }
+                    MessageNotificationKind::Notify => {
+                        let entry = self.read_states.entry(*channel_id).or_default();
+                        entry.notification_count = entry.notification_count.saturating_add(1);
+                    }
+                    MessageNotificationKind::None => {}
                 }
                 self.upsert_message(MessageState {
                     id: *message_id,
@@ -782,6 +793,7 @@ impl DiscordState {
                         ChannelReadState {
                             last_acked_message_id: entry.last_acked_message_id,
                             mention_count: entry.mention_count,
+                            notification_count: 0,
                         },
                     );
                 }
@@ -794,6 +806,17 @@ impl DiscordState {
                 let entry = self.read_states.entry(*channel_id).or_default();
                 entry.last_acked_message_id = Some(*message_id);
                 entry.mention_count = *mention_count;
+                entry.notification_count = 0;
+            }
+            AppEvent::UserGuildNotificationSettingsInit { settings } => {
+                self.notification_settings.clear();
+                self.private_notification_settings = None;
+                for setting in settings {
+                    self.upsert_notification_settings(setting);
+                }
+            }
+            AppEvent::UserGuildNotificationSettingsUpdate { settings } => {
+                self.upsert_notification_settings(settings);
             }
             AppEvent::GatewayError { .. }
             | AppEvent::StatusMessage { .. }
@@ -806,72 +829,6 @@ impl DiscordState {
             | AppEvent::ActivateChannel { .. }
             | AppEvent::GatewayClosed => {}
         }
-    }
-
-    pub fn channel_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
-        let Some(channel) = self.channels.get(&channel_id) else {
-            return ChannelUnreadState::Seen;
-        };
-        let Some(latest) = channel.last_message_id else {
-            return ChannelUnreadState::Seen;
-        };
-        let read = self
-            .read_states
-            .get(&channel_id)
-            .copied()
-            .unwrap_or_default();
-        if read.mention_count > 0 {
-            return ChannelUnreadState::Mentioned(read.mention_count);
-        }
-        let acked = read.last_acked_message_id;
-        if acked.is_none_or(|acked| acked < latest) {
-            ChannelUnreadState::Unread
-        } else {
-            ChannelUnreadState::Seen
-        }
-    }
-
-    pub fn guild_unread(&self, guild_id: Id<GuildMarker>) -> ChannelUnreadState {
-        let mut mention_count = 0u32;
-        let mut has_unread = false;
-        for channel in self.viewable_channels_for_guild(Some(guild_id)) {
-            match self.channel_unread(channel.id) {
-                ChannelUnreadState::Mentioned(count) => {
-                    mention_count = mention_count.saturating_add(count);
-                }
-                ChannelUnreadState::Unread => has_unread = true,
-                ChannelUnreadState::Seen => {}
-            }
-        }
-
-        if mention_count > 0 {
-            ChannelUnreadState::Mentioned(mention_count)
-        } else if has_unread {
-            ChannelUnreadState::Unread
-        } else {
-            ChannelUnreadState::Seen
-        }
-    }
-
-    pub fn direct_message_unread_count(&self) -> usize {
-        self.channels_for_guild(None)
-            .into_iter()
-            .filter(|channel| self.channel_unread(channel.id) != ChannelUnreadState::Seen)
-            .count()
-    }
-
-    pub fn channel_unread_message_count(&self, channel_id: Id<ChannelMarker>) -> usize {
-        let Some(messages) = self.messages.get(&channel_id) else {
-            return 0;
-        };
-        let last_acked = self
-            .read_states
-            .get(&channel_id)
-            .and_then(|state| state.last_acked_message_id);
-        messages
-            .iter()
-            .filter(|message| last_acked.is_none_or(|last_acked| message.id > last_acked))
-            .count()
     }
 
     /// `None` when the channel is already fully read or has no messages.
@@ -997,6 +954,8 @@ impl DiscordState {
         self.current_user_id = snapshot.current_user_id;
         self.current_user = snapshot.current_user.clone();
         self.typing = snapshot.typing.clone();
+        self.notification_settings = snapshot.notification_settings.clone();
+        self.private_notification_settings = snapshot.private_notification_settings.clone();
     }
 
     pub fn user_presence(&self, user_id: Id<UserMarker>) -> Option<PresenceStatus> {
@@ -2034,16 +1993,18 @@ pub struct ChannelVisibilityStats {
 mod tests {
     use crate::discord::ids::{
         Id,
-        marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker},
+        marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
     };
 
     use crate::discord::{
-        ActivityInfo, ActivityKind, AppEvent, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo,
-        ChannelUnreadState, ChannelVisibilityStats, CustomEmojiInfo, DiscordState, FriendStatus,
-        MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
-        MessageSnapshotInfo, MessageState, MutualGuildInfo, PermissionOverwriteInfo,
-        PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji,
-        ReactionInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+        ActivityInfo, ActivityKind, AppEvent, AttachmentUpdate, ChannelInfo,
+        ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
+        ChannelVisibilityStats, CustomEmojiInfo, DiscordState, FriendStatus,
+        GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, MessageKind,
+        MessageReferenceInfo, MessageSnapshotInfo, MessageState, MutualGuildInfo,
+        NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo,
+        PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo, ReplyInfo, RoleInfo,
+        UserProfileInfo,
     };
 
     fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -2061,6 +2022,470 @@ mod tests {
             friend_status: FriendStatus::None,
             note: None,
         }
+    }
+
+    fn guild_text_channel(guild_id: Id<GuildMarker>, channel_id: Id<ChannelMarker>) -> ChannelInfo {
+        ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }
+    }
+
+    fn private_channel(channel_id: Id<ChannelMarker>) -> ChannelInfo {
+        ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "dm".to_owned(),
+            kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }
+    }
+
+    fn notification_settings(
+        guild_id: Id<GuildMarker>,
+        level: NotificationLevel,
+    ) -> GuildNotificationSettingsInfo {
+        GuildNotificationSettingsInfo {
+            guild_id: Some(guild_id),
+            message_notifications: Some(level),
+            muted: false,
+            mute_end_time: None,
+            suppress_everyone: false,
+            suppress_roles: false,
+            channel_overrides: Vec::new(),
+        }
+    }
+
+    fn private_notification_settings(level: NotificationLevel) -> GuildNotificationSettingsInfo {
+        GuildNotificationSettingsInfo {
+            guild_id: None,
+            message_notifications: Some(level),
+            muted: false,
+            mute_end_time: None,
+            suppress_everyone: false,
+            suppress_roles: false,
+            channel_overrides: Vec::new(),
+        }
+    }
+
+    fn message_create(
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        author_id: Id<UserMarker>,
+        content: &str,
+        mentions: Vec<MentionInfo>,
+    ) -> AppEvent {
+        AppEvent::MessageCreate {
+            guild_id,
+            channel_id,
+            message_id,
+            author_id,
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some(content.to_owned()),
+            sticker_names: Vec::new(),
+            mentions,
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn all_message_notification_settings_show_numeric_badge() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let current_user_id = Id::new(10);
+        let author_id = Id::new(20);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(current_user_id),
+        });
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            owner_id: None,
+            channels: vec![guild_text_channel(guild_id, channel_id)],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+        });
+        state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
+            settings: vec![notification_settings(
+                guild_id,
+                NotificationLevel::AllMessages,
+            )],
+        });
+
+        state.apply_event(&message_create(
+            Some(guild_id),
+            channel_id,
+            Id::new(30),
+            author_id,
+            "hello",
+            Vec::new(),
+        ));
+
+        assert_eq!(
+            state.channel_unread(channel_id),
+            ChannelUnreadState::Notified(1)
+        );
+        assert_eq!(
+            state.guild_unread(guild_id),
+            ChannelUnreadState::Notified(1)
+        );
+    }
+
+    #[test]
+    fn loaded_guild_messages_use_notification_numeric_badge() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let current_user_id = Id::new(10);
+        let author_id = Id::new(20);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(current_user_id),
+        });
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            owner_id: None,
+            channels: vec![guild_text_channel(guild_id, channel_id)],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+        });
+        state.apply_event(&AppEvent::ReadStateInit {
+            entries: vec![ReadStateInfo {
+                channel_id,
+                last_acked_message_id: Some(Id::new(29)),
+                mention_count: 0,
+            }],
+        });
+        state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
+            settings: vec![notification_settings(
+                guild_id,
+                NotificationLevel::AllMessages,
+            )],
+        });
+        state.apply_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![MessageInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                message_id: Id::new(30),
+                author_id,
+                author: "neo".to_owned(),
+                content: Some("loaded".to_owned()),
+                ..MessageInfo::default()
+            }],
+        });
+
+        assert_eq!(
+            state.channel_unread(channel_id),
+            ChannelUnreadState::Notified(1)
+        );
+        assert_eq!(
+            state.guild_unread(guild_id),
+            ChannelUnreadState::Notified(1)
+        );
+    }
+
+    #[test]
+    fn muted_channel_does_not_add_numeric_notification_badge() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let current_user_id = Id::new(10);
+        let author_id = Id::new(20);
+        let mut state = DiscordState::default();
+        let mut settings = notification_settings(guild_id, NotificationLevel::AllMessages);
+        settings
+            .channel_overrides
+            .push(ChannelNotificationOverrideInfo {
+                channel_id,
+                message_notifications: Some(NotificationLevel::AllMessages),
+                muted: true,
+                mute_end_time: None,
+            });
+
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(current_user_id),
+        });
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            owner_id: None,
+            channels: vec![guild_text_channel(guild_id, channel_id)],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+        });
+        state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
+            settings: vec![settings],
+        });
+
+        state.apply_event(&message_create(
+            Some(guild_id),
+            channel_id,
+            Id::new(30),
+            author_id,
+            "hello",
+            Vec::new(),
+        ));
+
+        assert_eq!(state.channel_unread_message_count(channel_id), 0);
+        assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Unread);
+    }
+
+    #[test]
+    fn only_mentions_settings_count_direct_mentions() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let current_user_id = Id::new(10);
+        let author_id = Id::new(20);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(current_user_id),
+        });
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            owner_id: None,
+            channels: vec![guild_text_channel(guild_id, channel_id)],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+        });
+        state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
+            settings: vec![notification_settings(
+                guild_id,
+                NotificationLevel::OnlyMentions,
+            )],
+        });
+
+        state.apply_event(&message_create(
+            Some(guild_id),
+            channel_id,
+            Id::new(30),
+            author_id,
+            "hello @me",
+            vec![mention_info(current_user_id.get(), "me")],
+        ));
+
+        assert_eq!(
+            state.channel_unread(channel_id),
+            ChannelUnreadState::Mentioned(1)
+        );
+    }
+
+    #[test]
+    fn private_all_messages_settings_show_numeric_badge() {
+        let channel_id = Id::new(2);
+        let current_user_id = Id::new(10);
+        let author_id = Id::new(20);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(current_user_id),
+        });
+        state.apply_event(&AppEvent::ChannelUpsert(private_channel(channel_id)));
+        state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
+            settings: vec![private_notification_settings(
+                NotificationLevel::AllMessages,
+            )],
+        });
+
+        state.apply_event(&message_create(
+            None,
+            channel_id,
+            Id::new(30),
+            author_id,
+            "hello",
+            Vec::new(),
+        ));
+
+        assert_eq!(
+            state.channel_unread(channel_id),
+            ChannelUnreadState::Notified(1)
+        );
+        assert_eq!(state.channel_unread_message_count(channel_id), 1);
+    }
+
+    #[test]
+    fn private_channel_override_no_messages_suppresses_numeric_badge() {
+        let channel_id = Id::new(2);
+        let current_user_id = Id::new(10);
+        let author_id = Id::new(20);
+        let mut state = DiscordState::default();
+        let mut settings = private_notification_settings(NotificationLevel::AllMessages);
+        settings
+            .channel_overrides
+            .push(ChannelNotificationOverrideInfo {
+                channel_id,
+                message_notifications: Some(NotificationLevel::NoMessages),
+                muted: false,
+                mute_end_time: None,
+            });
+
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(current_user_id),
+        });
+        state.apply_event(&AppEvent::ChannelUpsert(private_channel(channel_id)));
+        state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
+            settings: vec![settings],
+        });
+
+        state.apply_event(&message_create(
+            None,
+            channel_id,
+            Id::new(30),
+            author_id,
+            "hello",
+            Vec::new(),
+        ));
+
+        assert_eq!(state.channel_unread_message_count(channel_id), 0);
+        assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Unread);
+    }
+
+    #[test]
+    fn muted_private_channel_override_suppresses_numeric_badge() {
+        let channel_id = Id::new(2);
+        let current_user_id = Id::new(10);
+        let author_id = Id::new(20);
+        let mut state = DiscordState::default();
+        let mut settings = private_notification_settings(NotificationLevel::AllMessages);
+        settings
+            .channel_overrides
+            .push(ChannelNotificationOverrideInfo {
+                channel_id,
+                message_notifications: Some(NotificationLevel::AllMessages),
+                muted: true,
+                mute_end_time: None,
+            });
+
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(current_user_id),
+        });
+        state.apply_event(&AppEvent::ChannelUpsert(private_channel(channel_id)));
+        state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
+            settings: vec![settings],
+        });
+
+        state.apply_event(&message_create(
+            None,
+            channel_id,
+            Id::new(30),
+            author_id,
+            "hello",
+            Vec::new(),
+        ));
+
+        assert_eq!(state.channel_unread_message_count(channel_id), 0);
+        assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Unread);
+    }
+
+    #[test]
+    fn notification_settings_init_replaces_private_settings() {
+        let guild_id = Id::new(1);
+        let guild_channel_id = Id::new(2);
+        let private_channel_id = Id::new(3);
+        let current_user_id = Id::new(10);
+        let author_id = Id::new(20);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(current_user_id),
+        });
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id,
+            name: "guild".to_owned(),
+            member_count: None,
+            owner_id: None,
+            channels: vec![guild_text_channel(guild_id, guild_channel_id)],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+        });
+        state.apply_event(&AppEvent::ChannelUpsert(private_channel(
+            private_channel_id,
+        )));
+        state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
+            settings: vec![private_notification_settings(NotificationLevel::NoMessages)],
+        });
+
+        state.apply_event(&message_create(
+            None,
+            private_channel_id,
+            Id::new(30),
+            author_id,
+            "hello",
+            Vec::new(),
+        ));
+        assert_eq!(
+            state.channel_unread(private_channel_id),
+            ChannelUnreadState::Unread
+        );
+
+        state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
+            settings: vec![notification_settings(
+                guild_id,
+                NotificationLevel::OnlyMentions,
+            )],
+        });
+
+        assert_eq!(
+            state.channel_unread(private_channel_id),
+            ChannelUnreadState::Notified(1)
+        );
     }
 
     #[test]

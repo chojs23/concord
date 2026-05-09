@@ -16,9 +16,10 @@ pub use commands::ReactionEmoji;
 pub use commands::{AppCommand, ForumPostArchiveState};
 pub use events::{
     ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, AttachmentInfo, AttachmentUpdate,
-    ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, EmbedFieldInfo, EmbedInfo, FriendStatus,
-    GuildFolder, InlinePreviewInfo, MemberInfo, MentionInfo, MessageInfo, MessageKind,
-    MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo, PermissionOverwriteInfo,
+    ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo, CustomEmojiInfo,
+    EmbedFieldInfo, EmbedInfo, FriendStatus, GuildFolder, GuildNotificationSettingsInfo,
+    InlinePreviewInfo, MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
+    MessageSnapshotInfo, MutualGuildInfo, NotificationLevel, PermissionOverwriteInfo,
     PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus, ReactionInfo,
     ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, SequencedAppEvent,
     UserProfileInfo,

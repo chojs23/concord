@@ -150,6 +150,15 @@ You can toggle image viewing on or off in the configuration file. When image vie
 - Unread message tracking with mention counts
 - Mark channels as read
 
+### Notifications
+
+- Desktop notifications for Discord messages that pass your Discord
+  notification settings
+- Active channel notifications are suppressed so Concord does not notify for
+  the conversation you are already viewing
+- On macOS, Concord plays one explicit notification sound so focused terminal
+  windows do not silently swallow audible alerts
+
 ### Navigation & Keybindings
 
 Concord has a four-pane layout like Discord.
@@ -192,6 +201,7 @@ Display options are stored in `~/.concord/config.toml`:
 - Set image preview quality for attachments, embeds, and the image viewer
 - Toggle avatar display
 - Toggle custom emoji rendering
+- Toggle desktop notifications
 
 You can change these from the in-app Options menu, and Concord saves them back
 to the config file.
@@ -205,6 +215,7 @@ show_avatars = true
 show_images = true
 image_preview_quality = "balanced"
 show_custom_emoji = true
+desktop_notifications = true
 ```
 
 `image_preview_quality` supports these values:
@@ -216,6 +227,11 @@ show_custom_emoji = true
 
 This setting only applies to attachment, embed, and image viewer previews.
 Avatars and custom emoji keep their separate small-image behavior.
+
+`desktop_notifications` controls OS notifications for Discord messages that
+pass Discord notification settings. On macOS, Concord keeps the visual
+notification and audible alert separate to avoid duplicate sounds while still
+playing a sound when the terminal app is focused.
 
 ## Performance
 

@@ -80,6 +80,12 @@ pub struct UnreadBanner {
     pub unread_count: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DesktopNotification {
+    pub title: String,
+    pub body: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ActiveGuildScope {
     Unset,
@@ -211,6 +217,39 @@ pub struct DashboardState {
 enum FolderKey {
     Id(u64),
     Guilds(Vec<Id<GuildMarker>>),
+}
+
+fn message_notification_body(
+    content: Option<&str>,
+    sticker_count: usize,
+    attachment_count: usize,
+    embed_count: usize,
+) -> String {
+    let content = content.unwrap_or_default().trim();
+    if !content.is_empty() {
+        let single_line = content.split_whitespace().collect::<Vec<_>>().join(" ");
+        return truncate_notification_text(&single_line, 200);
+    }
+    if attachment_count > 0 {
+        return format!("sent {attachment_count} attachment(s)");
+    }
+    if sticker_count > 0 {
+        return format!("sent {sticker_count} sticker(s)");
+    }
+    if embed_count > 0 {
+        return format!("sent {embed_count} embed(s)");
+    }
+    "sent a message".to_owned()
+}
+
+fn truncate_notification_text(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 impl DashboardState {
@@ -569,6 +608,50 @@ impl DashboardState {
 
     pub fn channel_unread_message_count(&self, channel_id: Id<ChannelMarker>) -> usize {
         self.discord.channel_unread_message_count(channel_id)
+    }
+
+    pub(crate) fn desktop_notification_for_event(
+        &self,
+        event: &AppEvent,
+    ) -> Option<DesktopNotification> {
+        let AppEvent::MessageCreate {
+            guild_id,
+            channel_id,
+            author,
+            content,
+            sticker_names,
+            attachments,
+            embeds,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        if !self.desktop_notifications_enabled() || self.active_channel_id == Some(*channel_id) {
+            return None;
+        }
+        if !self.discord.message_event_triggers_notification(event) {
+            return None;
+        }
+
+        let channel = self.discord.channel(*channel_id);
+        let guild_id = guild_id.or_else(|| channel.and_then(|channel| channel.guild_id));
+        let title = match guild_id.and_then(|guild_id| self.discord.guild(guild_id)) {
+            Some(guild) => {
+                let channel_name = channel
+                    .map(|channel| channel.name.as_str())
+                    .unwrap_or("unknown-channel");
+                format!("{author} in {} #{channel_name}", guild.name)
+            }
+            None => author.clone(),
+        };
+        let body = message_notification_body(
+            content.as_deref(),
+            sticker_names.len(),
+            attachments.len(),
+            embeds.len(),
+        );
+        Some(DesktopNotification { title, body })
     }
 
     pub fn current_user(&self) -> Option<&str> {

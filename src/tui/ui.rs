@@ -305,6 +305,12 @@ fn channel_unread_decoration(
                 .add_modifier(Modifier::BOLD);
             (Some(Span::styled(format!("({count}) "), style)), style)
         }
+        ChannelUnreadState::Notified(count) => {
+            let style = Style::default()
+                .fg(UNREAD_BRIGHT)
+                .add_modifier(Modifier::BOLD);
+            (Some(Span::styled(format!("({count}) "), style)), style)
+        }
         ChannelUnreadState::Unread => (None, base.fg(UNREAD_BRIGHT).add_modifier(Modifier::BOLD)),
         ChannelUnreadState::Seen => (None, base.fg(READ_DIM)),
     }

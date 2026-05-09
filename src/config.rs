@@ -18,6 +18,7 @@ pub struct DisplayOptions {
     pub show_images: bool,
     pub image_preview_quality: ImagePreviewQualityPreset,
     pub show_custom_emoji: bool,
+    pub desktop_notifications: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -58,6 +59,7 @@ impl Default for DisplayOptions {
             show_images: true,
             image_preview_quality: ImagePreviewQualityPreset::default(),
             show_custom_emoji: true,
+            desktop_notifications: true,
         }
     }
 }
@@ -196,6 +198,7 @@ mod tests {
             show_images: true,
             image_preview_quality: ImagePreviewQualityPreset::Balanced,
             show_custom_emoji: true,
+            desktop_notifications: true,
         };
 
         assert!(!options.avatars_visible());
@@ -216,6 +219,7 @@ mod tests {
             ImagePreviewQualityPreset::Balanced
         );
         assert!(config.display.show_custom_emoji);
+        assert!(config.display.desktop_notifications);
     }
 
     #[test]
@@ -238,6 +242,7 @@ mod tests {
             show_images: false,
             image_preview_quality: ImagePreviewQualityPreset::Original,
             show_custom_emoji: false,
+            desktop_notifications: false,
         };
 
         save_display_options_to_path(&path, &options).expect("config should save");
