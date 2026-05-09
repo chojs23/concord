@@ -263,6 +263,10 @@ No. If Discord requires a CAPTCHA during login, use token login instead.
 - On Unix, the config directory is created with `0700` and the credential file with `0600` permissions.
 - No system keychain integration yet.
 
+## Contributing
+
+Any issues, pull requests, and feedback are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+
 ## License
 
 Concord is licensed under GPL-3.0-only.
