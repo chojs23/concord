@@ -2,6 +2,7 @@
 
 Concord is a terminal user interface client for Discord. Full Discord experience, right in your terminal.
 
+
 <img width="1613" height="848" alt="concord" src="./docs/example.png" />
 
 ## Installation
@@ -84,6 +85,9 @@ target/release/concord
 ```
 
 ## Features
+
+Concord does not currently support voice calls, but will be added.
+For now it is focusing ui/ux and conveniency features.
 
 ### Authentication
 
