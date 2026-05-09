@@ -13,6 +13,7 @@ categories = ["command-line-utilities"]
 exclude = ["docs/", ".github/", "dist-workspace.toml"]
 
 [dependencies]
+arboard = { version = "3.6.1", features = ["wl-clipboard-rs", "wayland-data-control"] }
 base64 = "0.22"
 chrono = { version = "0.4.44", default-features = false, features = ["clock"] }
 crossterm = { version = "0.29.0", features = ["event-stream"] }
@@ -21,6 +22,7 @@ futures = "0.3.32"
 image = "0.25.10"
 mime_guess = "2.0"
 notify-rust = "4"
+png = "0.18.1"
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 ratatui = "0.30.0"
