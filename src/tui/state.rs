@@ -94,6 +94,12 @@ enum ActiveGuildScope {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LeaderMode {
+    Root,
+    Actions,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ThreadReturnTarget {
     thread_channel_id: Id<ChannelMarker>,
     channel_id: Id<ChannelMarker>,
@@ -201,6 +207,10 @@ pub struct DashboardState {
     poll_vote_picker: Option<PollVotePickerState>,
     reaction_users_popup: Option<ReactionUsersPopupState>,
     debug_log_popup_open: bool,
+    leader_mode: Option<LeaderMode>,
+    guild_pane_visible: bool,
+    channel_pane_visible: bool,
+    member_pane_visible: bool,
     display_options: DisplayOptions,
     display_options_save_pending: bool,
     current_user: Option<String>,
@@ -317,6 +327,10 @@ impl DashboardState {
             poll_vote_picker: None,
             reaction_users_popup: None,
             debug_log_popup_open: false,
+            leader_mode: None,
+            guild_pane_visible: true,
+            channel_pane_visible: true,
+            member_pane_visible: true,
             display_options: DisplayOptions::default(),
             display_options_save_pending: false,
             current_user: None,
@@ -609,6 +623,145 @@ impl DashboardState {
         self.focus
     }
 
+    pub fn is_leader_active(&self) -> bool {
+        self.leader_mode.is_some()
+    }
+
+    pub fn is_leader_action_mode(&self) -> bool {
+        self.leader_mode == Some(LeaderMode::Actions)
+    }
+
+    pub fn open_leader(&mut self) {
+        self.leader_mode = Some(LeaderMode::Root);
+    }
+
+    pub fn close_leader(&mut self) {
+        self.leader_mode = None;
+    }
+
+    pub fn open_leader_actions_for_focused_target(&mut self) {
+        self.close_all_action_menus();
+        match self.focus {
+            FocusPane::Guilds => self.open_selected_guild_actions(),
+            FocusPane::Channels => self.open_selected_channel_actions(),
+            FocusPane::Messages => self.open_selected_message_actions(),
+            FocusPane::Members => self.open_selected_member_actions(),
+        }
+        if self.is_any_action_menu_open() {
+            self.leader_mode = Some(LeaderMode::Actions);
+        } else {
+            self.leader_mode = Some(LeaderMode::Root);
+        }
+    }
+
+    pub fn close_all_action_menus(&mut self) {
+        self.message_action_menu = None;
+        self.guild_action_menu = None;
+        self.channel_action_menu = None;
+        self.member_action_menu = None;
+    }
+
+    pub fn is_any_action_menu_open(&self) -> bool {
+        self.message_action_menu.is_some()
+            || self.guild_action_menu.is_some()
+            || self.channel_action_menu.is_some()
+            || self.member_action_menu.is_some()
+    }
+
+    pub fn activate_leader_action_shortcut(
+        &mut self,
+        shortcut: char,
+    ) -> (bool, Option<AppCommand>) {
+        let shortcut = shortcut.to_ascii_lowercase();
+        if self.message_action_menu.is_some() {
+            let actions = self.selected_message_action_items();
+            let matched = actions.iter().enumerate().any(|(index, action)| {
+                action.enabled
+                    && message_action_shortcut(&actions, index)
+                        .is_some_and(|candidate| candidate == shortcut)
+            });
+            return (
+                matched,
+                matched
+                    .then(|| self.activate_message_action_shortcut(shortcut))
+                    .flatten(),
+            );
+        }
+        if self.guild_action_menu.is_some() {
+            let actions = self.selected_guild_action_items();
+            let matched = actions.iter().enumerate().any(|(index, action)| {
+                action.enabled
+                    && guild_action_shortcut(&actions, index)
+                        .is_some_and(|candidate| candidate == shortcut)
+            });
+            return (
+                matched,
+                matched
+                    .then(|| self.activate_guild_action_shortcut(shortcut))
+                    .flatten(),
+            );
+        }
+        if let Some(menu) = self.channel_action_menu.as_ref() {
+            let matched = match menu {
+                ChannelActionMenuState::Actions { .. } => {
+                    let actions = self.selected_channel_action_items();
+                    actions.iter().enumerate().any(|(index, action)| {
+                        action.enabled
+                            && channel_action_shortcut(&actions, index)
+                                .is_some_and(|candidate| candidate == shortcut)
+                    })
+                }
+                ChannelActionMenuState::Threads { .. } => self
+                    .channel_action_thread_items()
+                    .iter()
+                    .enumerate()
+                    .any(|(index, _)| indexed_shortcut(index) == Some(shortcut)),
+            };
+            return (
+                matched,
+                matched
+                    .then(|| self.activate_channel_action_shortcut(shortcut))
+                    .flatten(),
+            );
+        }
+        if self.member_action_menu.is_some() {
+            let actions = self.selected_member_action_items();
+            let matched = actions.iter().enumerate().any(|(index, action)| {
+                action.enabled
+                    && member_action_shortcut(&actions, index)
+                        .is_some_and(|candidate| candidate == shortcut)
+            });
+            return (
+                matched,
+                matched
+                    .then(|| self.activate_member_action_shortcut(shortcut))
+                    .flatten(),
+            );
+        }
+        (false, None)
+    }
+
+    pub fn is_pane_visible(&self, pane: FocusPane) -> bool {
+        match pane {
+            FocusPane::Guilds => self.guild_pane_visible,
+            FocusPane::Channels => self.channel_pane_visible,
+            FocusPane::Messages => true,
+            FocusPane::Members => self.member_pane_visible,
+        }
+    }
+
+    pub fn toggle_pane_visibility(&mut self, pane: FocusPane) {
+        match pane {
+            FocusPane::Guilds => self.guild_pane_visible = !self.guild_pane_visible,
+            FocusPane::Channels => self.channel_pane_visible = !self.channel_pane_visible,
+            FocusPane::Members => self.member_pane_visible = !self.member_pane_visible,
+            FocusPane::Messages => return,
+        }
+        if !self.is_pane_visible(self.focus) {
+            self.focus = FocusPane::Messages;
+        }
+    }
+
     pub fn channel_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
         self.discord.channel_unread(channel_id)
     }
@@ -679,15 +832,6 @@ impl DashboardState {
 
     pub fn is_guild_action_menu_open(&self) -> bool {
         self.guild_action_menu.is_some()
-    }
-
-    pub fn open_actions_for_focused_target(&mut self) {
-        match self.focus {
-            FocusPane::Guilds => self.open_selected_guild_actions(),
-            FocusPane::Channels => self.open_selected_channel_actions(),
-            FocusPane::Messages => self.open_active_channel_actions(),
-            FocusPane::Members => self.open_selected_member_actions(),
-        }
     }
 
     pub fn is_channel_action_threads_phase(&self) -> bool {
@@ -1858,25 +2002,51 @@ impl DashboardState {
     }
 
     pub fn cycle_focus(&mut self) {
-        self.focus = match self.focus {
-            FocusPane::Guilds => FocusPane::Channels,
-            FocusPane::Channels => FocusPane::Messages,
-            FocusPane::Messages => FocusPane::Members,
-            FocusPane::Members => FocusPane::Guilds,
-        };
+        self.focus = self.next_visible_focus(false);
     }
 
     pub fn cycle_focus_backward(&mut self) {
-        self.focus = match self.focus {
-            FocusPane::Guilds => FocusPane::Members,
-            FocusPane::Channels => FocusPane::Guilds,
-            FocusPane::Messages => FocusPane::Channels,
-            FocusPane::Members => FocusPane::Messages,
-        };
+        self.focus = self.next_visible_focus(true);
     }
 
     pub fn focus_pane(&mut self, pane: FocusPane) {
+        if self.is_pane_visible(pane) {
+            self.focus = pane;
+        }
+    }
+
+    pub fn show_and_focus_pane(&mut self, pane: FocusPane) {
+        match pane {
+            FocusPane::Guilds => self.guild_pane_visible = true,
+            FocusPane::Channels => self.channel_pane_visible = true,
+            FocusPane::Members => self.member_pane_visible = true,
+            FocusPane::Messages => {}
+        }
         self.focus = pane;
+    }
+
+    fn next_visible_focus(&self, backward: bool) -> FocusPane {
+        let panes = [
+            FocusPane::Guilds,
+            FocusPane::Channels,
+            FocusPane::Messages,
+            FocusPane::Members,
+        ];
+        let current = panes
+            .iter()
+            .position(|pane| *pane == self.focus)
+            .unwrap_or(2);
+        for step in 1..=panes.len() {
+            let index = if backward {
+                (current + panes.len() - step) % panes.len()
+            } else {
+                (current + step) % panes.len()
+            };
+            if self.is_pane_visible(panes[index]) {
+                return panes[index];
+            }
+        }
+        FocusPane::Messages
     }
 
     pub fn select_visible_pane_row(&mut self, pane: FocusPane, row: usize) -> bool {

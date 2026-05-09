@@ -34,6 +34,11 @@ pub(super) struct RedrawDiagnostics {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct VisibleDashboardSignature {
     focus: state::FocusPane,
+    leader_active: bool,
+    leader_action_mode: bool,
+    guild_pane_visible: bool,
+    channel_pane_visible: bool,
+    member_pane_visible: bool,
     current_user: Option<String>,
     selected_guild_id: Option<Id<GuildMarker>>,
     selected_channel_id: Option<Id<ChannelMarker>>,
@@ -46,6 +51,7 @@ pub(super) struct VisibleDashboardSignature {
     selected_member: usize,
     member_scroll: usize,
     member_horizontal_scroll: usize,
+    channel_action_threads_phase: bool,
     message_pane_title: String,
     typing_footer: Option<String>,
     status_message: Option<String>,
@@ -92,6 +98,11 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
     let member_end = member_start.saturating_add(state.member_content_height());
     VisibleDashboardSignature {
         focus: state.focus(),
+        leader_active: state.is_leader_active(),
+        leader_action_mode: state.is_leader_action_mode(),
+        guild_pane_visible: state.is_pane_visible(state::FocusPane::Guilds),
+        channel_pane_visible: state.is_pane_visible(state::FocusPane::Channels),
+        member_pane_visible: state.is_pane_visible(state::FocusPane::Members),
         current_user: state.current_user().map(str::to_owned),
         selected_guild_id: state.selected_guild_id(),
         selected_channel_id: state.selected_channel_id(),
@@ -104,6 +115,7 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
         selected_member: state.selected_member(),
         member_scroll: state.member_scroll(),
         member_horizontal_scroll: state.member_horizontal_scroll(),
+        channel_action_threads_phase: state.is_channel_action_threads_phase(),
         message_pane_title: state.message_pane_title(),
         typing_footer: state.typing_footer_for_selected_channel(),
         status_message: state.last_status().map(str::to_owned),
@@ -212,9 +224,15 @@ pub(super) fn record_visible_signature_change(
     }
 
     if before.focus != after.focus
+        || before.leader_active != after.leader_active
+        || before.leader_action_mode != after.leader_action_mode
+        || before.guild_pane_visible != after.guild_pane_visible
+        || before.channel_pane_visible != after.channel_pane_visible
+        || before.member_pane_visible != after.member_pane_visible
         || before.current_user != after.current_user
         || before.status_message != after.status_message
         || before.popups != after.popups
+        || before.channel_action_threads_phase != after.channel_action_threads_phase
     {
         diagnostics.snapshot_popup_changes = diagnostics.snapshot_popup_changes.saturating_add(1);
     }
@@ -225,6 +243,11 @@ fn only_visible_member_signature_changed(
     after: &VisibleDashboardSignature,
 ) -> bool {
     before.focus == after.focus
+        && before.leader_active == after.leader_active
+        && before.leader_action_mode == after.leader_action_mode
+        && before.guild_pane_visible == after.guild_pane_visible
+        && before.channel_pane_visible == after.channel_pane_visible
+        && before.member_pane_visible == after.member_pane_visible
         && before.current_user == after.current_user
         && before.selected_guild_id == after.selected_guild_id
         && before.selected_channel_id == after.selected_channel_id
@@ -238,6 +261,7 @@ fn only_visible_member_signature_changed(
         && before.typing_footer == after.typing_footer
         && before.status_message == after.status_message
         && before.popups == after.popups
+        && before.channel_action_threads_phase == after.channel_action_threads_phase
         && before.visible_guilds == after.visible_guilds
         && before.visible_channels == after.visible_channels
         && before.visible_messages == after.visible_messages
@@ -253,6 +277,11 @@ fn only_new_message_notice_changed(
     after: &VisibleDashboardSignature,
 ) -> bool {
     before.focus == after.focus
+        && before.leader_active == after.leader_active
+        && before.leader_action_mode == after.leader_action_mode
+        && before.guild_pane_visible == after.guild_pane_visible
+        && before.channel_pane_visible == after.channel_pane_visible
+        && before.member_pane_visible == after.member_pane_visible
         && before.current_user == after.current_user
         && before.selected_guild_id == after.selected_guild_id
         && before.selected_channel_id == after.selected_channel_id
@@ -268,6 +297,7 @@ fn only_new_message_notice_changed(
         && before.typing_footer == after.typing_footer
         && before.status_message == after.status_message
         && before.popups == after.popups
+        && before.channel_action_threads_phase == after.channel_action_threads_phase
         && before.visible_guilds == after.visible_guilds
         && before.visible_channels == after.visible_channels
         && before.visible_messages == after.visible_messages

@@ -4,14 +4,17 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use super::super::{message_format::wrap_text_lines, state::DashboardState};
+use super::super::{
+    message_format::wrap_text_lines,
+    state::{DashboardState, FocusPane},
+};
 use super::types::{
     DashboardAreas, EMBED_PREVIEW_GUTTER_PREFIX, IMAGE_PREVIEW_HEIGHT, IMAGE_PREVIEW_WIDTH,
     IMAGE_VIEWER_POPUP_HEIGHT, IMAGE_VIEWER_POPUP_WIDTH, MAX_REACTION_USERS_VISIBLE_LINES,
     MESSAGE_AVATAR_OFFSET, MIN_MESSAGE_INPUT_HEIGHT, MessageAreas,
 };
 
-pub(super) fn dashboard_areas(area: Rect) -> DashboardAreas {
+pub(super) fn dashboard_areas(area: Rect, state: &DashboardState) -> DashboardAreas {
     let [header, main, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(0),
@@ -20,10 +23,10 @@ pub(super) fn dashboard_areas(area: Rect) -> DashboardAreas {
     .areas(area);
 
     let [guilds, channels, center, members] = Layout::horizontal([
-        Constraint::Length(20),
-        Constraint::Length(24),
+        pane_width(state.is_pane_visible(FocusPane::Guilds), 20),
+        pane_width(state.is_pane_visible(FocusPane::Channels), 24),
         Constraint::Min(40),
-        Constraint::Length(26),
+        pane_width(state.is_pane_visible(FocusPane::Members), 26),
     ])
     .areas(main);
 
@@ -35,6 +38,10 @@ pub(super) fn dashboard_areas(area: Rect) -> DashboardAreas {
         members,
         footer,
     }
+}
+
+fn pane_width(visible: bool, width: u16) -> Constraint {
+    Constraint::Length(if visible { width } else { 0 })
 }
 
 pub(super) fn image_viewer_popup(area: Rect) -> Rect {

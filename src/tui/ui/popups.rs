@@ -1,6 +1,158 @@
 use super::message_list::render_image_preview;
 use super::*;
 
+const LEADER_POPUP_WIDTH: u16 = 74;
+
+pub(super) fn render_leader_popup(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    if !state.is_leader_active() {
+        return;
+    }
+
+    let lines = leader_popup_lines(state, area.height.saturating_sub(2) as usize);
+    let popup = leader_popup_area(area, lines.len() as u16);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(truncate_leader_lines(
+            lines,
+            popup.width.saturating_sub(2) as usize,
+        ))
+        .block(panel_block_owned(leader_popup_title(state), true))
+        .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+fn leader_popup_area(area: Rect, line_count: u16) -> Rect {
+    let width = LEADER_POPUP_WIDTH.min(area.width).max(1);
+    let height = line_count.saturating_add(2).min(area.height).max(1);
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height),
+        width,
+        height,
+    }
+}
+
+fn leader_popup_title(state: &DashboardState) -> String {
+    if state.is_leader_action_mode() {
+        "Leader Actions".to_owned()
+    } else {
+        "Leader".to_owned()
+    }
+}
+
+fn leader_popup_lines(state: &DashboardState, max_lines: usize) -> Vec<Line<'static>> {
+    let mut lines = if state.is_leader_action_mode() {
+        leader_action_lines(state)
+    } else {
+        vec![
+            leader_shortcut_line('1', "toggle Servers", true),
+            leader_shortcut_line('2', "toggle Channels", true),
+            leader_shortcut_line('4', "toggle Members", true),
+            leader_shortcut_line('a', "Actions", true),
+        ]
+    };
+    lines.push(Line::from(Span::styled(
+        "Esc cancel",
+        Style::default().fg(DIM),
+    )));
+    lines.truncate(max_lines.max(1));
+    lines
+}
+
+fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
+    if state.is_message_action_menu_open() {
+        let actions = state.selected_message_action_items();
+        return actions
+            .iter()
+            .enumerate()
+            .map(|(index, action)| {
+                leader_shortcut_line(
+                    message_action_shortcut(&actions, index).unwrap_or(' '),
+                    &action.label,
+                    action.enabled,
+                )
+            })
+            .collect();
+    }
+    if state.is_guild_action_menu_open() {
+        let actions = state.selected_guild_action_items();
+        return actions
+            .iter()
+            .enumerate()
+            .map(|(index, action)| {
+                leader_shortcut_line(
+                    guild_action_shortcut(&actions, index).unwrap_or(' '),
+                    &action.label,
+                    action.enabled,
+                )
+            })
+            .collect();
+    }
+    if state.is_channel_action_threads_phase() {
+        return state
+            .channel_action_thread_items()
+            .into_iter()
+            .enumerate()
+            .map(|(index, thread)| {
+                leader_shortcut_line(indexed_shortcut(index).unwrap_or(' '), &thread.label, true)
+            })
+            .collect();
+    }
+    if state.is_channel_action_menu_open() {
+        let actions = state.selected_channel_action_items();
+        return actions
+            .iter()
+            .enumerate()
+            .map(|(index, action)| {
+                leader_shortcut_line(
+                    channel_action_shortcut(&actions, index).unwrap_or(' '),
+                    &action.label,
+                    action.enabled,
+                )
+            })
+            .collect();
+    }
+    if state.is_member_action_menu_open() {
+        let actions = state.selected_member_action_items();
+        return actions
+            .iter()
+            .enumerate()
+            .map(|(index, action)| {
+                leader_shortcut_line(
+                    member_action_shortcut(&actions, index).unwrap_or(' '),
+                    &action.label,
+                    action.enabled,
+                )
+            })
+            .collect();
+    }
+    vec![Line::from(Span::styled(
+        "No actions available",
+        Style::default().fg(DIM),
+    ))]
+}
+
+fn leader_shortcut_line(key: char, label: &str, enabled: bool) -> Line<'static> {
+    let style = if enabled {
+        Style::default()
+    } else {
+        Style::default().fg(DIM)
+    };
+    Line::from(vec![
+        Span::styled(format!("[{key}] "), Style::default().fg(DIM)),
+        Span::raw(" "),
+        Span::styled(label.to_owned(), style),
+    ])
+}
+
+fn truncate_leader_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .map(|line| truncate_line_to_display_width(line, width.max(1)))
+        .collect()
+}
+
 pub(super) fn render_image_viewer(
     frame: &mut Frame,
     area: Rect,

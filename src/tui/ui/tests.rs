@@ -109,6 +109,7 @@ fn custom_emoji_markup_uses_id_fallback_when_disabled() {
 #[test]
 fn focus_pane_at_maps_dashboard_regions_and_ignores_non_panes() {
     let area = Rect::new(0, 0, 120, 20);
+    let state = DashboardState::new();
     let cases = [
         (1, 1, Some(FocusPane::Guilds)),
         (21, 1, Some(FocusPane::Channels)),
@@ -120,8 +121,29 @@ fn focus_pane_at_maps_dashboard_regions_and_ignores_non_panes() {
     ];
 
     for (x, y, expected) in cases {
-        assert_eq!(focus_pane_at(area, x, y), expected);
+        assert_eq!(focus_pane_at(area, &state, x, y), expected);
     }
+}
+
+#[test]
+fn focus_pane_at_expands_messages_over_hidden_panes() {
+    let area = Rect::new(0, 0, 120, 20);
+    let mut state = DashboardState::new();
+
+    state.toggle_pane_visibility(FocusPane::Channels);
+    assert_eq!(
+        focus_pane_at(area, &state, 21, 1),
+        Some(FocusPane::Messages)
+    );
+    assert_eq!(focus_pane_at(area, &state, 95, 1), Some(FocusPane::Members));
+
+    state.toggle_pane_visibility(FocusPane::Guilds);
+    state.toggle_pane_visibility(FocusPane::Members);
+    assert_eq!(focus_pane_at(area, &state, 1, 1), Some(FocusPane::Messages));
+    assert_eq!(
+        focus_pane_at(area, &state, 119, 1),
+        Some(FocusPane::Messages)
+    );
 }
 
 #[test]
@@ -2619,6 +2641,43 @@ fn footer_hint_switches_for_modal_states() {
     for (state, expected) in cases {
         assert_eq!(footer_hint(&state), expected);
     }
+}
+
+#[test]
+fn leader_popup_renders_as_bottom_window() {
+    let mut state = DashboardState::new();
+    state.open_leader();
+
+    let dump = render_dashboard_dump(120, 20, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(rendered.contains("Leader"), "{rendered}");
+    assert!(rendered.contains("[1]"), "{rendered}");
+    assert!(rendered.contains("[2]"), "{rendered}");
+    assert!(rendered.contains("[4]"), "{rendered}");
+    assert!(rendered.contains("[a]"), "{rendered}");
+    assert!(rendered.contains("toggle Servers"), "{rendered}");
+    assert!(rendered.contains("toggle Channels"), "{rendered}");
+    assert!(rendered.contains("toggle Members"), "{rendered}");
+    assert!(rendered.contains("Actions"), "{rendered}");
+    assert!(rendered.contains("Esc cancel"), "{rendered}");
+}
+
+#[test]
+fn leader_action_popup_renders_focused_pane_actions() {
+    let mut state = state_with_message();
+    state.focus_pane(FocusPane::Channels);
+    state.open_leader();
+    state.open_leader_actions_for_focused_target();
+
+    let dump = render_dashboard_dump(120, 20, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(rendered.contains("Leader Actions"), "{rendered}");
+    assert!(rendered.contains("[p]"), "{rendered}");
+    assert!(rendered.contains("Show pinned messages"), "{rendered}");
+    assert!(rendered.contains("Show threads"), "{rendered}");
+    assert!(rendered.contains("Mark as read"), "{rendered}");
 }
 
 #[test]

@@ -40,6 +40,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_emoji_reaction_picker_key(state, key);
     }
 
+    if state.is_leader_active() {
+        return handle_leader_key(state, key);
+    }
+
     if state.is_message_action_menu_open() {
         return handle_message_action_menu_key(state, key);
     }
@@ -76,12 +80,12 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('q') => state.quit(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
         KeyCode::Char('o') => state.open_options_popup(),
-        KeyCode::Char('a') => state.open_actions_for_focused_target(),
         KeyCode::Char('i') => state.start_composer(),
-        KeyCode::Char('1') => state.focus_pane(FocusPane::Guilds),
-        KeyCode::Char('2') => state.focus_pane(FocusPane::Channels),
-        KeyCode::Char('3') => state.focus_pane(FocusPane::Messages),
-        KeyCode::Char('4') => state.focus_pane(FocusPane::Members),
+        KeyCode::Char(' ') if is_shortcut_key(key) => state.open_leader(),
+        KeyCode::Char('1') => state.show_and_focus_pane(FocusPane::Guilds),
+        KeyCode::Char('2') => state.show_and_focus_pane(FocusPane::Channels),
+        KeyCode::Char('3') => state.show_and_focus_pane(FocusPane::Messages),
+        KeyCode::Char('4') => state.show_and_focus_pane(FocusPane::Members),
         KeyCode::Char('j') | KeyCode::Down => state.move_down(),
         KeyCode::Char('J') if focus == FocusPane::Messages => state.scroll_message_viewport_down(),
         KeyCode::Char('L') => state.scroll_focused_pane_horizontal_right(),
@@ -123,18 +127,16 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         }
         KeyCode::BackTab => state.cycle_focus_backward(),
         KeyCode::Tab => state.cycle_focus(),
-        // Tree headers act like a small tree: Enter/Space toggles, Right
+        // Tree headers act like a small tree: Enter toggles, Right
         // opens, and Left closes. Anywhere else these keys are no-ops.
-        KeyCode::Enter | KeyCode::Char(' ') if focus == FocusPane::Guilds => {
-            state.confirm_selected_guild()
-        }
-        KeyCode::Enter | KeyCode::Char(' ') if focus == FocusPane::Channels => {
+        KeyCode::Enter if focus == FocusPane::Guilds => state.confirm_selected_guild(),
+        KeyCode::Enter if focus == FocusPane::Channels => {
             return state.confirm_selected_channel_command();
         }
-        KeyCode::Enter | KeyCode::Char(' ') if focus == FocusPane::Members => {
+        KeyCode::Enter if focus == FocusPane::Members => {
             return state.show_selected_member_profile();
         }
-        KeyCode::Enter | KeyCode::Char(' ') if focus == FocusPane::Messages => {
+        KeyCode::Enter if focus == FocusPane::Messages => {
             return state.activate_selected_message_pane_item();
         }
         code if is_right_key(code) && focus == FocusPane::Guilds => state.open_selected_folder(),
@@ -149,6 +151,67 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     }
 
     None
+}
+
+fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    if state.is_leader_action_mode() {
+        return handle_leader_action_key(state, key);
+    }
+
+    match key.code {
+        KeyCode::Char('1') if is_shortcut_key(key) => {
+            state.toggle_pane_visibility(FocusPane::Guilds);
+            state.close_leader();
+        }
+        KeyCode::Char('2') if is_shortcut_key(key) => {
+            state.toggle_pane_visibility(FocusPane::Channels);
+            state.close_leader();
+        }
+        KeyCode::Char('4') if is_shortcut_key(key) => {
+            state.toggle_pane_visibility(FocusPane::Members);
+            state.close_leader();
+        }
+        KeyCode::Char('a') if is_shortcut_key(key) => {
+            state.open_leader_actions_for_focused_target()
+        }
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.close_leader();
+            state.quit();
+        }
+        KeyCode::Esc => state.close_leader(),
+        _ => state.close_leader(),
+    }
+
+    None
+}
+
+fn handle_leader_action_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc => {
+            state.close_all_action_menus();
+            state.close_leader();
+            None
+        }
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.close_all_action_menus();
+            state.close_leader();
+            state.quit();
+            None
+        }
+        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
+            let (matched, command) = state.activate_leader_action_shortcut(shortcut);
+            if !matched || !state.is_channel_action_threads_phase() {
+                state.close_all_action_menus();
+                state.close_leader();
+            }
+            command
+        }
+        _ => {
+            state.close_all_action_menus();
+            state.close_leader();
+            None
+        }
+    }
 }
 
 pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {

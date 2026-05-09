@@ -1182,7 +1182,7 @@ mod tests {
             .expect("oversized temp file can be written");
 
         let result = message_multipart_form(
-            message_request_body("", None, &[attachment.clone()]),
+            message_request_body("", None, std::slice::from_ref(&attachment)),
             &[attachment],
         )
         .await;

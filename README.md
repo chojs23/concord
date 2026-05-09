@@ -175,16 +175,21 @@ With vim-style navigation:
 | `J`, `K` / `H`, `L`       | Scroll viewport                      |
 | `Ctrl+d` / `Ctrl+u`       | Half-page scroll                     |
 | `g` / `G`, `Home` / `End` | Jump or scroll to top / bottom       |
-| `Enter` / `Space`         | Open or activate the selected item   |
+| `Enter`                   | Open or activate the selected item   |
+| `Space`                   | Open leader shortcut window          |
 | `i`                       | Text insert mode                     |
-| `a`                       | Action menu for the focused item     |
 | `o`                       | Options menu                         |
 | `Esc`                     | Close popup, cancel mode, or go back |
 | `q` / `Ctrl+c`            | Quit                                 |
 
-Action menus show local shortcuts next to each item. For example, message
-actions use keys such as `e` for edit and `d` for delete. List-style dialogs,
-such as emoji and poll pickers, use numbered shortcuts when that is clearer.
+Leader shortcuts currently support pane visibility toggles in a small bottom
+shortcut window: `Space` then `1` toggles Servers, `Space` then `2` toggles
+Channels, and `Space` then `4` toggles Members. Hidden side panes give their
+width back to Messages, and pressing a hidden pane's number key directly shows
+and focuses it again. `Space` then `a` opens actions for the focused pane in the
+same leader window. For example, focus Channels and press `Space`, `a`, `p` to
+show pinned messages. Action shortcuts such as message edit `e` and delete `d`
+are shown inside that leader action window.
 
 In the composer, `Enter` sends, `Shift+Enter` inserts a newline, and `Esc`
 cancels.

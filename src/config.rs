@@ -109,7 +109,7 @@ fn save_display_options_to_path(path: &Path, options: &DisplayOptions) -> Result
     }
 
     let config = AppConfig { display: *options };
-    write_private_file(&path, &toml::to_string_pretty(&config)?)
+    write_private_file(path, &toml::to_string_pretty(&config)?)
 }
 
 fn config_path() -> Result<PathBuf> {

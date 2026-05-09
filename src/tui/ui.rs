@@ -74,9 +74,9 @@ use self::panes::{render_channels, render_footer, render_guilds, render_header, 
 use self::popups::{
     render_channel_action_menu, render_debug_log_popup, render_emoji_reaction_picker,
     render_guild_action_menu, render_image_viewer, render_image_viewer_action_menu,
-    render_member_action_menu, render_message_action_menu, render_options_popup,
-    render_poll_vote_picker, render_reaction_users_popup, render_user_profile_popup,
-    user_profile_popup_has_avatar, user_profile_popup_text_geometry,
+    render_leader_popup, render_member_action_menu, render_message_action_menu,
+    render_options_popup, render_poll_vote_picker, render_reaction_users_popup,
+    render_user_profile_popup, user_profile_popup_has_avatar, user_profile_popup_text_geometry,
     user_profile_popup_total_lines,
 };
 use self::types::{
@@ -109,11 +109,23 @@ use self::{
 };
 
 pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
-    let areas = dashboard_areas(area);
-    state.set_guild_view_height(panel_content_height(areas.guilds, "Servers"));
-    state.set_channel_view_height(panel_content_height(areas.channels, "Channels"));
+    let areas = dashboard_areas(area, state);
+    state.set_guild_view_height(visible_panel_content_height(
+        areas.guilds,
+        "Servers",
+        state.is_pane_visible(FocusPane::Guilds),
+    ));
+    state.set_channel_view_height(visible_panel_content_height(
+        areas.channels,
+        "Channels",
+        state.is_pane_visible(FocusPane::Channels),
+    ));
     state.set_message_view_height(message_list_area(areas.messages, state).height as usize);
-    state.set_member_view_height(panel_content_height(areas.members, "Members"));
+    state.set_member_view_height(visible_panel_content_height(
+        areas.members,
+        "Members",
+        state.is_pane_visible(FocusPane::Members),
+    ));
     state.set_reaction_users_popup_view_height(reaction_users_visible_line_count(areas.messages));
     if state.is_user_profile_popup_open() {
         // The popup body shrinks when the avatar slot is in use, so use
@@ -132,7 +144,7 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
 }
 
 pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewLayout {
-    let areas = dashboard_areas(area);
+    let areas = dashboard_areas(area, state);
     let list = message_list_area(areas.messages, state);
     let viewer_image_area = image_viewer_image_area(areas.messages);
     ImagePreviewLayout {
@@ -153,7 +165,7 @@ pub fn render(
     emoji_images: Vec<EmojiReactionImage<'_>>,
     profile_avatar: Option<AvatarImage>,
 ) {
-    let areas = dashboard_areas(frame.area());
+    let areas = dashboard_areas(frame.area(), state);
     let mut inline_image_previews = Vec::new();
     let mut viewer_image_preview = None;
     for image_preview in image_previews {
@@ -165,8 +177,12 @@ pub fn render(
     }
 
     render_header(frame, areas.header);
-    render_guilds(frame, areas.guilds, state);
-    render_channels(frame, areas.channels, state);
+    if state.is_pane_visible(FocusPane::Guilds) {
+        render_guilds(frame, areas.guilds, state);
+    }
+    if state.is_pane_visible(FocusPane::Channels) {
+        render_channels(frame, areas.channels, state);
+    }
     render_messages(
         frame,
         areas.messages,
@@ -175,12 +191,17 @@ pub fn render(
         avatar_images,
         &emoji_images,
     );
-    render_members(frame, areas.members, state);
+    if state.is_pane_visible(FocusPane::Members) {
+        render_members(frame, areas.members, state);
+    }
     render_footer(frame, areas.footer, state);
-    render_message_action_menu(frame, areas.messages, state);
-    render_guild_action_menu(frame, areas.messages, state);
-    render_channel_action_menu(frame, areas.messages, state);
-    render_member_action_menu(frame, areas.messages, state);
+    render_leader_popup(frame, areas.messages, state);
+    if !state.is_leader_action_mode() {
+        render_message_action_menu(frame, areas.messages, state);
+        render_guild_action_menu(frame, areas.messages, state);
+        render_channel_action_menu(frame, areas.messages, state);
+        render_member_action_menu(frame, areas.messages, state);
+    }
     render_options_popup(frame, areas.messages, state);
     render_poll_vote_picker(frame, areas.messages, state);
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
@@ -228,6 +249,14 @@ fn active_text_style(active: bool, style: Style) -> Style {
 
 fn panel_content_height(area: Rect, title: &'static str) -> usize {
     panel_block(title, false).inner(area).height.max(1) as usize
+}
+
+fn visible_panel_content_height(area: Rect, title: &'static str, visible: bool) -> usize {
+    if visible {
+        panel_content_height(area, title)
+    } else {
+        0
+    }
 }
 
 fn render_vertical_scrollbar(

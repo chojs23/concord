@@ -8,8 +8,13 @@ use super::{
     types::{ActionMenuTarget, MouseTarget},
 };
 
-pub(crate) fn focus_pane_at(area: Rect, column: u16, row: u16) -> Option<FocusPane> {
-    let areas = dashboard_areas(area);
+pub(crate) fn focus_pane_at(
+    area: Rect,
+    state: &DashboardState,
+    column: u16,
+    row: u16,
+) -> Option<FocusPane> {
+    let areas = dashboard_areas(area, state);
     [
         (areas.guilds, FocusPane::Guilds),
         (areas.channels, FocusPane::Channels),
@@ -17,6 +22,7 @@ pub(crate) fn focus_pane_at(area: Rect, column: u16, row: u16) -> Option<FocusPa
         (areas.members, FocusPane::Members),
     ]
     .into_iter()
+    .filter(|(_, pane)| state.is_pane_visible(*pane))
     .find_map(|(area, pane)| rect_contains(area, column, row).then_some(pane))
 }
 
@@ -26,27 +32,39 @@ pub(crate) fn mouse_target_at(
     column: u16,
     row: u16,
 ) -> Option<MouseTarget> {
-    let areas = dashboard_areas(area);
+    let areas = dashboard_areas(area, state);
     if let Some(target) = action_menu_mouse_target(areas.messages, state, column, row) {
         return Some(target);
     }
-    if let Some(target) = pane_row_mouse_target(areas.guilds, FocusPane::Guilds, column, row) {
+    if state.is_pane_visible(FocusPane::Guilds)
+        && let Some(target) = pane_row_mouse_target(areas.guilds, FocusPane::Guilds, column, row)
+    {
         return Some(target);
     }
-    if let Some(target) = pane_row_mouse_target(areas.channels, FocusPane::Channels, column, row) {
+    if state.is_pane_visible(FocusPane::Channels)
+        && let Some(target) =
+            pane_row_mouse_target(areas.channels, FocusPane::Channels, column, row)
+    {
         return Some(target);
     }
     if let Some(target) = message_mouse_target(areas.messages, state, column, row) {
         return Some(target);
     }
-    if let Some(target) = pane_row_mouse_target(areas.members, FocusPane::Members, column, row) {
+    if state.is_pane_visible(FocusPane::Members)
+        && let Some(target) = pane_row_mouse_target(areas.members, FocusPane::Members, column, row)
+    {
         return Some(target);
     }
     None
 }
 
-pub(crate) fn user_profile_popup_contains(area: Rect, column: u16, row: u16) -> bool {
-    let areas = dashboard_areas(area);
+pub(crate) fn user_profile_popup_contains(
+    area: Rect,
+    state: &DashboardState,
+    column: u16,
+    row: u16,
+) -> bool {
+    let areas = dashboard_areas(area, state);
     rect_contains(user_profile_popup_area(areas.messages), column, row)
 }
 

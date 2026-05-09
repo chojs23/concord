@@ -55,6 +55,12 @@ pub fn handle_mouse_event(
     area: Rect,
     clicks: &mut MouseClickTracker,
 ) -> MouseOutcome {
+    if state.is_leader_active() {
+        state.close_all_action_menus();
+        state.close_leader();
+        clicks.clear();
+    }
+
     let target = ui::mouse_target_at(area, state, mouse.column, mouse.row);
     let action_menu_mouse = matches!(
         target,
@@ -80,7 +86,7 @@ pub fn handle_mouse_event(
             // rectangle. Clicks outside the popup should still reach the
             // dashboard instead of making the whole screen inert.
             if state.is_user_profile_popup_open()
-                && ui::user_profile_popup_contains(area, mouse.column, mouse.row)
+                && ui::user_profile_popup_contains(area, state, mouse.column, mouse.row)
             {
                 clicks.clear();
                 return MouseOutcome::handled(None);
@@ -109,7 +115,7 @@ pub fn handle_mouse_event(
                 state.scroll_user_profile_popup_down();
                 return MouseOutcome::handled(None);
             }
-            let pane = ui::focus_pane_at(area, mouse.column, mouse.row);
+            let pane = ui::focus_pane_at(area, state, mouse.column, mouse.row);
             if let Some(pane) = pane {
                 state.focus_pane(pane);
             }
@@ -126,7 +132,7 @@ pub fn handle_mouse_event(
                 state.scroll_user_profile_popup_up();
                 return MouseOutcome::handled(None);
             }
-            let pane = ui::focus_pane_at(area, mouse.column, mouse.row);
+            let pane = ui::focus_pane_at(area, state, mouse.column, mouse.row);
             if let Some(pane) = pane {
                 state.focus_pane(pane);
             }

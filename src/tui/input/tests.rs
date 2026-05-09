@@ -85,7 +85,7 @@ fn remove_temp_upload_file(path: &PathBuf) {
 }
 
 #[test]
-fn enter_and_space_toggle_selected_folder() {
+fn enter_toggles_selected_folder_and_space_opens_leader() {
     let mut state = state_with_folder();
     state.focus_pane(FocusPane::Guilds);
 
@@ -93,11 +93,12 @@ fn enter_and_space_toggle_selected_folder() {
     assert_selected_folder_collapsed(&state, true);
 
     handle_key(&mut state, char_key(' '));
-    assert_selected_folder_collapsed(&state, false);
+    assert!(state.is_leader_active());
+    assert_selected_folder_collapsed(&state, true);
 }
 
 #[test]
-fn enter_and_space_toggle_selected_channel_category() {
+fn enter_toggles_selected_channel_category_and_space_opens_leader() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
 
@@ -105,7 +106,8 @@ fn enter_and_space_toggle_selected_channel_category() {
     assert_selected_channel_category_collapsed(&state, true);
 
     handle_key(&mut state, char_key(' '));
-    assert_selected_channel_category_collapsed(&state, false);
+    assert!(state.is_leader_active());
+    assert_selected_channel_category_collapsed(&state, true);
 }
 
 #[test]
@@ -282,6 +284,95 @@ fn number_keys_focus_top_level_panes() {
     assert_eq!(state.focus(), FocusPane::Members);
 
     handle_key(&mut state, char_key('1'));
+    assert_eq!(state.focus(), FocusPane::Guilds);
+}
+
+#[test]
+fn number_keys_show_hidden_panes_before_focusing() {
+    let mut state = DashboardState::new();
+    state.toggle_pane_visibility(FocusPane::Guilds);
+    state.toggle_pane_visibility(FocusPane::Channels);
+    state.toggle_pane_visibility(FocusPane::Members);
+
+    handle_key(&mut state, char_key('1'));
+    assert!(state.is_pane_visible(FocusPane::Guilds));
+    assert_eq!(state.focus(), FocusPane::Guilds);
+
+    handle_key(&mut state, char_key('2'));
+    assert!(state.is_pane_visible(FocusPane::Channels));
+    assert_eq!(state.focus(), FocusPane::Channels);
+
+    handle_key(&mut state, char_key('4'));
+    assert!(state.is_pane_visible(FocusPane::Members));
+    assert_eq!(state.focus(), FocusPane::Members);
+}
+
+#[test]
+fn leader_number_keys_toggle_side_panes() {
+    let mut state = DashboardState::new();
+    state.focus_pane(FocusPane::Guilds);
+
+    handle_key(&mut state, char_key(' '));
+    assert!(state.is_leader_active());
+
+    handle_key(&mut state, char_key('1'));
+    assert!(!state.is_leader_active());
+    assert!(!state.is_pane_visible(FocusPane::Guilds));
+    assert_eq!(state.focus(), FocusPane::Messages);
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('2'));
+    assert!(!state.is_pane_visible(FocusPane::Channels));
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('4'));
+    assert!(!state.is_pane_visible(FocusPane::Members));
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('1'));
+    assert!(state.is_pane_visible(FocusPane::Guilds));
+}
+
+#[test]
+fn leader_esc_and_unknown_key_cancel_without_toggling_panes() {
+    let mut state = DashboardState::new();
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, key(KeyCode::Esc));
+    assert!(!state.is_leader_active());
+    assert!(state.is_pane_visible(FocusPane::Guilds));
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('x'));
+    assert!(!state.is_leader_active());
+    assert!(state.is_pane_visible(FocusPane::Channels));
+}
+
+#[test]
+fn mouse_input_closes_leader_hint() {
+    let mut state = DashboardState::new();
+    handle_key(&mut state, char_key(' '));
+    assert!(state.is_leader_active());
+
+    handle_mouse(
+        &mut state,
+        mouse(MouseEventKind::Down(MouseButton::Left), 50, 1),
+        dashboard_area(),
+    );
+
+    assert!(!state.is_leader_active());
+}
+
+#[test]
+fn tab_cycles_skip_hidden_panes() {
+    let mut state = DashboardState::new();
+    state.toggle_pane_visibility(FocusPane::Channels);
+
+    handle_key(&mut state, key(KeyCode::Tab));
+    assert_eq!(state.focus(), FocusPane::Messages);
+
+    state.toggle_pane_visibility(FocusPane::Members);
+    handle_key(&mut state, key(KeyCode::Tab));
     assert_eq!(state.focus(), FocusPane::Guilds);
 }
 
@@ -1083,7 +1174,7 @@ fn uppercase_h_l_scroll_focused_side_panes_horizontally() {
 }
 
 #[test]
-fn enter_and_space_open_message_action_menu() {
+fn enter_opens_message_action_menu_and_space_opens_leader() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
 
@@ -1094,7 +1185,8 @@ fn enter_and_space_open_message_action_menu() {
 
     handle_key(&mut state, char_key(' '));
 
-    assert!(state.is_message_action_menu_open());
+    assert!(state.is_leader_active());
+    assert!(!state.is_message_action_menu_open());
 }
 
 #[test]
@@ -1168,28 +1260,21 @@ fn mouse_wheel_moves_message_action_selection() {
 }
 
 #[test]
-fn a_key_opens_current_channel_actions_from_message_pane() {
+fn a_key_no_longer_opens_actions_directly() {
     let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Messages);
+    state.focus_pane(FocusPane::Channels);
 
     handle_key(&mut state, char_key('a'));
 
-    assert!(state.is_channel_action_menu_open());
     assert!(!state.is_message_action_menu_open());
-    let command = handle_key(&mut state, key(KeyCode::Enter));
-    assert_eq!(
-        command,
-        Some(AppCommand::LoadPinnedMessages {
-            channel_id: Id::new(2),
-        })
-    );
-    assert!(state.is_pinned_message_view());
+    assert!(!state.is_channel_action_menu_open());
 }
 
 #[test]
-fn channel_action_shortcut_loads_pinned_messages() {
+fn leader_a_p_loads_pinned_messages_from_channel_pane() {
     let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Messages);
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('a'));
 
     let command = handle_key(&mut state, char_key('p'));
@@ -1201,37 +1286,55 @@ fn channel_action_shortcut_loads_pinned_messages() {
         })
     );
     assert!(state.is_pinned_message_view());
+    assert!(!state.is_leader_active());
 }
 
 #[test]
-fn a_key_opens_selected_channel_actions_from_channel_pane() {
+fn leader_a_opens_selected_channel_actions_from_channel_pane() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Channels);
 
+    handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('a'));
 
+    assert!(state.is_leader_action_mode());
     assert!(state.is_channel_action_menu_open());
 }
 
 #[test]
-fn a_key_opens_server_actions_from_guild_pane() {
+fn leader_a_opens_message_actions_from_message_pane() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+
+    assert!(state.is_leader_action_mode());
+    assert!(state.is_message_action_menu_open());
+    assert!(!state.is_channel_action_menu_open());
+}
+
+#[test]
+fn leader_a_opens_server_actions_from_guild_pane() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Guilds);
 
+    handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('a'));
 
-    assert!(state.is_guild_action_menu_open());
-    assert_eq!(handle_key(&mut state, key(KeyCode::Enter)), None);
+    assert!(state.is_leader_action_mode());
     assert!(state.is_guild_action_menu_open());
 }
 
 #[test]
-fn a_key_opens_member_actions_from_member_pane() {
+fn leader_a_opens_member_actions_from_member_pane() {
     let mut state = state_with_members(1);
     state.focus_pane(FocusPane::Members);
 
+    handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('a'));
 
+    assert!(state.is_leader_action_mode());
     assert!(state.is_member_action_menu_open());
     let actions = state.selected_member_action_items();
     assert_eq!(actions.len(), 1);
@@ -1240,9 +1343,10 @@ fn a_key_opens_member_actions_from_member_pane() {
 }
 
 #[test]
-fn member_action_shortcut_opens_profile() {
+fn leader_a_p_opens_member_profile() {
     let mut state = state_with_members(1);
     state.focus_pane(FocusPane::Members);
+    handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('a'));
 
     let command = handle_key(&mut state, char_key('p'));
@@ -1255,6 +1359,7 @@ fn member_action_shortcut_opens_profile() {
         })
     );
     assert!(state.is_user_profile_popup_open());
+    assert!(!state.is_leader_active());
 }
 
 #[test]

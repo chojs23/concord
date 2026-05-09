@@ -40,13 +40,6 @@ impl DashboardState {
         self.open_channel_actions(channel_id);
     }
 
-    pub fn open_active_channel_actions(&mut self) {
-        let Some(channel_id) = self.selected_channel_id() else {
-            return;
-        };
-        self.open_channel_actions(channel_id);
-    }
-
     fn open_channel_actions(&mut self, channel_id: Id<ChannelMarker>) {
         let Some(channel) = self.discord.channel(channel_id) else {
             return;

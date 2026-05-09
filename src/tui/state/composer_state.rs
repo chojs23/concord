@@ -401,12 +401,6 @@ impl DashboardState {
                 completion.byte_start = shift_byte_index(completion.byte_start, delta);
                 completion.byte_end = shift_byte_index(completion.byte_end, delta);
                 completions.push(completion);
-            } else if replaced.is_empty() && replaced.start <= completion.byte_start {
-                completion.byte_start = shift_byte_index(completion.byte_start, delta);
-                completion.byte_end = shift_byte_index(completion.byte_end, delta);
-                completions.push(completion);
-            } else if replaced.is_empty() && replaced.start >= completion.byte_end {
-                completions.push(completion);
             }
         }
 

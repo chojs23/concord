@@ -213,10 +213,12 @@ impl DiscordState {
             )
         };
         let Some(settings) = self.notification_settings.get(&guild_id) else {
-            return self
-                .message_mentions_current_user(guild_id, content, mentions, false, false)
-                .then_some(MessageNotificationKind::Mention)
-                .unwrap_or(MessageNotificationKind::None);
+            return if self.message_mentions_current_user(guild_id, content, mentions, false, false)
+            {
+                MessageNotificationKind::Mention
+            } else {
+                MessageNotificationKind::None
+            };
         };
         if notification_setting_muted(settings.muted, settings.mute_end_time.as_deref())
             || self.channel_notification_muted(settings, channel_id)
@@ -230,9 +232,11 @@ impl DiscordState {
             }
             NotificationLevel::AllMessages => MessageNotificationKind::Notify,
             NotificationLevel::OnlyMentions | NotificationLevel::ParentDefault => {
-                mentions_current_user(settings)
-                    .then_some(MessageNotificationKind::Mention)
-                    .unwrap_or(MessageNotificationKind::None)
+                if mentions_current_user(settings) {
+                    MessageNotificationKind::Mention
+                } else {
+                    MessageNotificationKind::None
+                }
             }
             NotificationLevel::NoMessages => MessageNotificationKind::None,
         }
