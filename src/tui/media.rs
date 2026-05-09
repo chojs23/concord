@@ -727,7 +727,7 @@ mod tests {
             target.url,
             concat!(
                 "https://media.discordapp.net/attachments/691/150/photo.png",
-                "?ex=abc&is=def&hm=123&format=webp&width=160&height=90"
+                "?ex=abc&is=def&hm=123&format=webp&width=320&height=240"
             )
         );
     }
@@ -777,7 +777,59 @@ mod tests {
             target.url,
             concat!(
                 "https://media.discordapp.net/attachments/691/150/photo.png",
-                "?ex=abc&is=def&hm=123&format=webp&width=96&height=54"
+                "?ex=abc&is=def&hm=123&format=webp&quality=low&width=192&height=144"
+            )
+        );
+    }
+
+    #[test]
+    fn efficient_image_preview_quality_preserves_source_aspect_ratio() {
+        let mut state = state_with_image_messages_and_display_options(
+            0,
+            &[],
+            DisplayOptions {
+                image_preview_quality: ImagePreviewQualityPreset::Efficient,
+                ..DisplayOptions::default()
+            },
+        );
+        let mut attachment = image_attachment(1);
+        attachment.width = Some(1000);
+        attachment.height = Some(2000);
+        attachment.proxy_url = concat!(
+            "https://media.discordapp.net/attachments/691/150/photo.png",
+            "?ex=abc&is=def&hm=123&format=png&width=1000&height=2000"
+        )
+        .to_owned();
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("photo".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: vec![attachment],
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let target = visible_image_preview_targets(&state, layout(12))
+            .into_iter()
+            .next()
+            .expect("image attachment should produce preview target");
+
+        assert_eq!(
+            target.url,
+            concat!(
+                "https://media.discordapp.net/attachments/691/150/photo.png",
+                "?ex=abc&is=def&hm=123&format=webp&quality=low&width=300&height=600"
             )
         );
     }
@@ -827,7 +879,7 @@ mod tests {
             target.url,
             concat!(
                 "https://media.discordapp.net/attachments/691/150/photo.png",
-                "?ex=abc&is=def&hm=123&format=webp&quality=lossless&width=160&height=90"
+                "?ex=abc&is=def&hm=123&format=webp&quality=lossless&width=640&height=480"
             )
         );
     }
@@ -1012,7 +1064,7 @@ mod tests {
             targets[0].url,
             concat!(
                 "https://media.discordapp.net/external/cache-key/https/example.com/photo.png",
-                "?ex=abc&is=def&hm=123&format=webp&width=160&height=90"
+                "?ex=abc&is=def&hm=123&format=webp&width=240&height=180"
             )
         );
         assert_eq!(targets[0].filename, "embed-thumbnail");
@@ -1056,7 +1108,7 @@ mod tests {
             target.url,
             concat!(
                 "https://media.discordapp.net/ephemeral-attachments/691/150/photo.png",
-                "?ex=abc&is=def&hm=123&format=webp&width=160&height=90"
+                "?ex=abc&is=def&hm=123&format=webp&width=320&height=240"
             )
         );
     }
@@ -1131,7 +1183,7 @@ mod tests {
             targets[0].url,
             concat!(
                 "https://images-ext-1.discordapp.net/external/cache-key/https/example.com/photo.png",
-                "?format=webp&width=160&height=90"
+                "?format=webp&width=240&height=180"
             )
         );
     }
