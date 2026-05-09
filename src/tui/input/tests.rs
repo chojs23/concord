@@ -349,6 +349,129 @@ fn leader_esc_and_unknown_key_cancel_without_toggling_panes() {
 }
 
 #[test]
+fn leader_leader_switcher_filters_and_opens_selected_channel() {
+    let mut state = state_with_channel_tree();
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key(' '));
+    assert!(!state.is_leader_active());
+    assert!(state.is_channel_switcher_open());
+
+    for ch in "rand".chars() {
+        handle_key(&mut state, char_key(ch));
+    }
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert!(!state.is_channel_switcher_open());
+    assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
+    assert_eq!(
+        command,
+        Some(AppCommand::SubscribeGuildChannel {
+            guild_id: Id::new(1),
+            channel_id: Id::new(12),
+        })
+    );
+}
+
+#[test]
+fn leader_leader_switcher_expands_collapsed_parent_category() {
+    let mut state = state_with_channel_tree();
+    state.toggle_selected_channel_category();
+    assert_selected_channel_category_collapsed(&state, true);
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key(' '));
+    for ch in "rand".chars() {
+        handle_key(&mut state, char_key(ch));
+    }
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_selected_channel_category_collapsed(&state, false);
+    assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
+    assert!(matches!(
+        state.channel_pane_entries().get(state.selected_channel()),
+        Some(ChannelPaneEntry::Channel { state, .. }) if state.id == Id::new(12)
+    ));
+    assert_eq!(
+        command,
+        Some(AppCommand::SubscribeGuildChannel {
+            guild_id: Id::new(1),
+            channel_id: Id::new(12),
+        })
+    );
+}
+
+#[test]
+fn leader_leader_switcher_opens_direct_message() {
+    let mut state = state_with_direct_message("dm");
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key(' '));
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
+    assert_eq!(
+        command,
+        Some(AppCommand::SubscribeDirectMessage {
+            channel_id: Id::new(20),
+        })
+    );
+}
+
+#[test]
+fn leader_leader_switcher_j_and_k_type_into_search() {
+    let mut state = state_with_channel_tree();
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, char_key('k'));
+
+    assert_eq!(state.channel_switcher_query(), Some("jk"));
+    assert_eq!(state.selected_channel_switcher_index(), Some(0));
+}
+
+#[test]
+fn leader_leader_switcher_ctrl_n_and_ctrl_p_move_selection() {
+    let mut state = state_with_channel_tree();
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, ctrl_key('n'));
+    assert_eq!(state.selected_channel_switcher_index(), Some(1));
+
+    handle_key(&mut state, ctrl_key('p'));
+    assert_eq!(state.selected_channel_switcher_index(), Some(0));
+}
+
+#[test]
+fn leader_leader_switcher_left_right_move_search_cursor() {
+    let mut state = state_with_channel_tree();
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key(' '));
+    for ch in "raXndom".chars() {
+        handle_key(&mut state, char_key(ch));
+    }
+    for _ in 0..5 {
+        handle_key(&mut state, key(KeyCode::Left));
+    }
+    handle_key(&mut state, key(KeyCode::Right));
+    handle_key(&mut state, key(KeyCode::Backspace));
+
+    assert_eq!(state.channel_switcher_query(), Some("random"));
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+    assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
+    assert_eq!(
+        command,
+        Some(AppCommand::SubscribeGuildChannel {
+            guild_id: Id::new(1),
+            channel_id: Id::new(12),
+        })
+    );
+}
+
+#[test]
 fn mouse_input_closes_leader_hint() {
     let mut state = DashboardState::new();
     handle_key(&mut state, char_key(' '));
@@ -462,6 +585,83 @@ fn double_click_activates_selected_channel_like_enter() {
             channel_id: Id::new(11),
         })
     );
+}
+
+#[test]
+fn left_click_selects_channel_switcher_row() {
+    let mut state = state_with_channel_tree();
+    state.open_channel_switcher();
+
+    assert!(handle_mouse(
+        &mut state,
+        mouse(MouseEventKind::Down(MouseButton::Left), 50, 7),
+        dashboard_area(),
+    ));
+
+    assert!(state.is_channel_switcher_open());
+    assert_eq!(state.selected_channel_switcher_index(), Some(1));
+    assert_eq!(state.selected_channel_id(), None);
+}
+
+#[test]
+fn double_click_activates_channel_switcher_row() {
+    let mut state = state_with_channel_tree();
+    state.open_channel_switcher();
+    let mut clicks = MouseClickTracker::default();
+    let event = mouse(MouseEventKind::Down(MouseButton::Left), 50, 7);
+
+    let first = handle_mouse_event(&mut state, event, dashboard_area(), &mut clicks);
+    let second = handle_mouse_event(&mut state, event, dashboard_area(), &mut clicks);
+
+    assert!(first.handled);
+    assert_eq!(first.command, None);
+    assert!(second.handled);
+    assert!(!state.is_channel_switcher_open());
+    assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
+    assert_eq!(
+        second.command,
+        Some(AppCommand::SubscribeGuildChannel {
+            guild_id: Id::new(1),
+            channel_id: Id::new(12),
+        })
+    );
+}
+
+#[test]
+fn channel_switcher_absorbs_backdrop_clicks() {
+    let mut state = state_with_channel_tree();
+    state.open_channel_switcher();
+    state.focus_pane(FocusPane::Messages);
+
+    assert!(handle_mouse(
+        &mut state,
+        mouse(MouseEventKind::Down(MouseButton::Left), 21, 2),
+        dashboard_area(),
+    ));
+
+    assert!(state.is_channel_switcher_open());
+    assert_eq!(state.focus(), FocusPane::Messages);
+    assert_eq!(state.selected_channel(), 0);
+}
+
+#[test]
+fn wheel_moves_channel_switcher_selection() {
+    let mut state = state_with_channel_tree();
+    state.open_channel_switcher();
+
+    assert!(handle_mouse(
+        &mut state,
+        mouse(MouseEventKind::ScrollDown, 50, 7),
+        dashboard_area(),
+    ));
+    assert_eq!(state.selected_channel_switcher_index(), Some(1));
+
+    assert!(handle_mouse(
+        &mut state,
+        mouse(MouseEventKind::ScrollUp, 50, 7),
+        dashboard_area(),
+    ));
+    assert_eq!(state.selected_channel_switcher_index(), Some(0));
 }
 
 #[test]

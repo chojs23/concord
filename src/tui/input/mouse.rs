@@ -62,11 +62,15 @@ pub fn handle_mouse_event(
     }
 
     let target = ui::mouse_target_at(area, state, mouse.column, mouse.row);
-    let action_menu_mouse = matches!(
+    let modal_mouse = matches!(
         target,
-        Some(ui::MouseTarget::ActionRow { .. } | ui::MouseTarget::ModalBackdrop)
+        Some(
+            ui::MouseTarget::ActionRow { .. }
+                | ui::MouseTarget::ChannelSwitcherRow { .. }
+                | ui::MouseTarget::ModalBackdrop
+        )
     );
-    if ignores_dashboard_mouse(state) && !action_menu_mouse {
+    if ignores_dashboard_mouse(state) && !modal_mouse {
         return MouseOutcome::ignored();
     }
     let blurred_composer = state.is_composing()
@@ -103,8 +107,8 @@ pub fn handle_mouse_event(
         }
         MouseEventKind::ScrollDown => {
             clicks.clear();
-            if action_menu_mouse {
-                move_action_menu_down(state);
+            if modal_mouse {
+                move_modal_down(state);
                 return MouseOutcome::handled(None);
             }
             // Wheel events while the user-profile popup is open scroll the
@@ -124,8 +128,8 @@ pub fn handle_mouse_event(
         }
         MouseEventKind::ScrollUp => {
             clicks.clear();
-            if action_menu_mouse {
-                move_action_menu_up(state);
+            if modal_mouse {
+                move_modal_up(state);
                 return MouseOutcome::handled(None);
             }
             if state.is_user_profile_popup_open() {
@@ -194,6 +198,19 @@ fn handle_left_click(
             };
             MouseOutcome::handled(command)
         }
+        ui::MouseTarget::ChannelSwitcherRow { row } => {
+            let selected = state.select_channel_switcher_item(row);
+            if !selected {
+                clicks.clear();
+                return MouseOutcome::handled(None);
+            }
+            let command = if clicks.record_left_click(target) {
+                state.activate_selected_channel_switcher_item()
+            } else {
+                None
+            };
+            MouseOutcome::handled(command)
+        }
         ui::MouseTarget::Pane(pane) => {
             clicks.clear();
             state.focus_pane(pane);
@@ -213,6 +230,22 @@ fn handle_left_click(
             };
             MouseOutcome::handled(command)
         }
+    }
+}
+
+fn move_modal_down(state: &mut DashboardState) {
+    if state.is_channel_switcher_open() {
+        state.move_channel_switcher_down();
+    } else {
+        move_action_menu_down(state);
+    }
+}
+
+fn move_modal_up(state: &mut DashboardState) {
+    if state.is_channel_switcher_open() {
+        state.move_channel_switcher_up();
+    } else {
+        move_action_menu_up(state);
     }
 }
 
@@ -287,6 +320,7 @@ fn ignores_dashboard_mouse(state: &DashboardState) -> bool {
         || state.is_guild_action_menu_open()
         || state.is_channel_action_menu_open()
         || state.is_member_action_menu_open()
+        || state.is_channel_switcher_open()
 }
 
 fn scroll_focused_pane_down(state: &mut DashboardState) {

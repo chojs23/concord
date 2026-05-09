@@ -1,9 +1,26 @@
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, MessageMarker, UserMarker},
+    marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
-use crate::discord::{ChannelState, GuildFolder, GuildState, ReactionEmoji, ReactionInfo};
+use crate::discord::{
+    ChannelState, ChannelUnreadState, GuildFolder, GuildState, ReactionEmoji, ReactionInfo,
+};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChannelSwitcherItem {
+    pub channel_id: Id<ChannelMarker>,
+    pub guild_id: Option<Id<GuildMarker>>,
+    pub group_label: String,
+    pub parent_label: Option<String>,
+    pub channel_label: String,
+    pub unread: ChannelUnreadState,
+    pub unread_message_count: usize,
+    pub search_name: String,
+    pub depth: usize,
+    pub group_order: usize,
+    pub original_index: usize,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FocusPane {

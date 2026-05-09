@@ -177,6 +177,7 @@ With vim-style navigation:
 | `g` / `G`, `Home` / `End` | Jump or scroll to top / bottom       |
 | `Enter`                   | Open or activate the selected item   |
 | `Space`                   | Open leader shortcut window          |
+| `Space`, `Space`          | Fuzzy search and switch channels     |
 | `i`                       | Text insert mode                     |
 | `o`                       | Options menu                         |
 | `Esc`                     | Close popup, cancel mode, or go back |
@@ -190,6 +191,12 @@ and focuses it again. `Space` then `a` opens actions for the focused pane in the
 same leader window. For example, focus Channels and press `Space`, `a`, `p` to
 show pinned messages. Action shortcuts such as message edit `e` and delete `d`
 are shown inside that leader action window.
+
+Press `Space` twice to open the channel switcher. It shows your direct messages
+and server channels in a grouped popup, lets you fuzzy search by channel name,
+and opens the selected channel immediately with `Enter`. Inside the switcher,
+type normally to search, use `Ctrl+n` / `Ctrl+p` to move the selected channel,
+and use `Left` / `Right` to move the search cursor.
 
 In the composer, `Enter` sends, `Shift+Enter` inserts a newline, and `Esc`
 cancels.

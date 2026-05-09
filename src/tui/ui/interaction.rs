@@ -4,7 +4,9 @@ use super::super::state::{DashboardState, FocusPane};
 use super::{
     layout::{centered_rect, dashboard_areas, message_areas},
     panel_block, panel_block_owned,
-    popups::user_profile_popup_area,
+    popups::{
+        channel_switcher_item_index_at, channel_switcher_popup_area, user_profile_popup_area,
+    },
     types::{ActionMenuTarget, MouseTarget},
 };
 
@@ -33,6 +35,9 @@ pub(crate) fn mouse_target_at(
     row: u16,
 ) -> Option<MouseTarget> {
     let areas = dashboard_areas(area, state);
+    if let Some(target) = channel_switcher_mouse_target(areas.messages, state, column, row) {
+        return Some(target);
+    }
     if let Some(target) = action_menu_mouse_target(areas.messages, state, column, row) {
         return Some(target);
     }
@@ -56,6 +61,24 @@ pub(crate) fn mouse_target_at(
         return Some(target);
     }
     None
+}
+
+fn channel_switcher_mouse_target(
+    area: Rect,
+    state: &DashboardState,
+    column: u16,
+    row: u16,
+) -> Option<MouseTarget> {
+    if !state.is_channel_switcher_open() {
+        return None;
+    }
+    let popup = channel_switcher_popup_area(area);
+    if !rect_contains(popup, column, row) {
+        return Some(MouseTarget::ModalBackdrop);
+    }
+    channel_switcher_item_index_at(area, state, column, row)
+        .map(|row| MouseTarget::ChannelSwitcherRow { row })
+        .or(Some(MouseTarget::ModalBackdrop))
 }
 
 pub(crate) fn user_profile_popup_contains(

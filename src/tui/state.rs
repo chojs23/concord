@@ -18,6 +18,7 @@ use super::format::{
 };
 use super::{media, message_format, ui};
 
+mod channel_switcher;
 mod channels;
 mod composer;
 mod composer_state;
@@ -38,6 +39,7 @@ mod scroll;
 mod subscriptions;
 mod user;
 
+use channel_switcher::ChannelSwitcherState;
 use composer::MentionCompletion;
 use message_render::{add_literal_mention_highlights, normalize_text_highlights};
 use popups::{
@@ -54,7 +56,7 @@ use scroll::{
 pub use composer::{MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry};
 pub use member_grouping::{MemberEntry, MemberGroup};
 pub use model::{
-    ChannelActionItem, ChannelPaneEntry, ChannelThreadItem, EmojiReactionItem,
+    ChannelActionItem, ChannelPaneEntry, ChannelSwitcherItem, ChannelThreadItem, EmojiReactionItem,
     FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, ImageViewerItem,
     MemberActionItem, MessageActionItem, MessageActionKind, PollVotePickerItem,
     ThreadMessagePreview, ThreadSummary, channel_action_shortcut, guild_action_shortcut,
@@ -208,6 +210,7 @@ pub struct DashboardState {
     reaction_users_popup: Option<ReactionUsersPopupState>,
     debug_log_popup_open: bool,
     leader_mode: Option<LeaderMode>,
+    channel_switcher: Option<ChannelSwitcherState>,
     guild_pane_visible: bool,
     channel_pane_visible: bool,
     member_pane_visible: bool,
@@ -328,6 +331,7 @@ impl DashboardState {
             reaction_users_popup: None,
             debug_log_popup_open: false,
             leader_mode: None,
+            channel_switcher: None,
             guild_pane_visible: true,
             channel_pane_visible: true,
             member_pane_visible: true,

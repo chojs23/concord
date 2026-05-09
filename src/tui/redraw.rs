@@ -36,6 +36,12 @@ pub(super) struct VisibleDashboardSignature {
     focus: state::FocusPane,
     leader_active: bool,
     leader_action_mode: bool,
+    channel_switcher_open: bool,
+    channel_switcher_query: Option<String>,
+    channel_switcher_query_cursor: Option<usize>,
+    channel_switcher_selected: Option<usize>,
+    channel_switcher_result_count: usize,
+    channel_switcher_items: Vec<String>,
     guild_pane_visible: bool,
     channel_pane_visible: bool,
     member_pane_visible: bool,
@@ -100,6 +106,12 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
         focus: state.focus(),
         leader_active: state.is_leader_active(),
         leader_action_mode: state.is_leader_action_mode(),
+        channel_switcher_open: state.is_channel_switcher_open(),
+        channel_switcher_query: state.channel_switcher_query().map(str::to_owned),
+        channel_switcher_query_cursor: state.channel_switcher_query_cursor_byte_index(),
+        channel_switcher_selected: state.selected_channel_switcher_index(),
+        channel_switcher_items: channel_switcher_item_signature(state),
+        channel_switcher_result_count: state.channel_switcher_items().len(),
         guild_pane_visible: state.is_pane_visible(state::FocusPane::Guilds),
         channel_pane_visible: state.is_pane_visible(state::FocusPane::Channels),
         member_pane_visible: state.is_pane_visible(state::FocusPane::Members),
@@ -226,6 +238,12 @@ pub(super) fn record_visible_signature_change(
     if before.focus != after.focus
         || before.leader_active != after.leader_active
         || before.leader_action_mode != after.leader_action_mode
+        || before.channel_switcher_open != after.channel_switcher_open
+        || before.channel_switcher_query != after.channel_switcher_query
+        || before.channel_switcher_query_cursor != after.channel_switcher_query_cursor
+        || before.channel_switcher_selected != after.channel_switcher_selected
+        || before.channel_switcher_result_count != after.channel_switcher_result_count
+        || before.channel_switcher_items != after.channel_switcher_items
         || before.guild_pane_visible != after.guild_pane_visible
         || before.channel_pane_visible != after.channel_pane_visible
         || before.member_pane_visible != after.member_pane_visible
@@ -245,6 +263,12 @@ fn only_visible_member_signature_changed(
     before.focus == after.focus
         && before.leader_active == after.leader_active
         && before.leader_action_mode == after.leader_action_mode
+        && before.channel_switcher_open == after.channel_switcher_open
+        && before.channel_switcher_query == after.channel_switcher_query
+        && before.channel_switcher_query_cursor == after.channel_switcher_query_cursor
+        && before.channel_switcher_selected == after.channel_switcher_selected
+        && before.channel_switcher_result_count == after.channel_switcher_result_count
+        && before.channel_switcher_items == after.channel_switcher_items
         && before.guild_pane_visible == after.guild_pane_visible
         && before.channel_pane_visible == after.channel_pane_visible
         && before.member_pane_visible == after.member_pane_visible
@@ -279,6 +303,12 @@ fn only_new_message_notice_changed(
     before.focus == after.focus
         && before.leader_active == after.leader_active
         && before.leader_action_mode == after.leader_action_mode
+        && before.channel_switcher_open == after.channel_switcher_open
+        && before.channel_switcher_query == after.channel_switcher_query
+        && before.channel_switcher_query_cursor == after.channel_switcher_query_cursor
+        && before.channel_switcher_selected == after.channel_switcher_selected
+        && before.channel_switcher_result_count == after.channel_switcher_result_count
+        && before.channel_switcher_items == after.channel_switcher_items
         && before.guild_pane_visible == after.guild_pane_visible
         && before.channel_pane_visible == after.channel_pane_visible
         && before.member_pane_visible == after.member_pane_visible
@@ -304,6 +334,28 @@ fn only_new_message_notice_changed(
         && before.visible_forum_posts == after.visible_forum_posts
         && before.visible_members == after.visible_members
         && before.new_messages_count != after.new_messages_count
+}
+
+fn channel_switcher_item_signature(state: &DashboardState) -> Vec<String> {
+    if !state.is_channel_switcher_open() {
+        return Vec::new();
+    }
+    state
+        .channel_switcher_items()
+        .into_iter()
+        .map(|item| {
+            format!(
+                "{}:{}:{:?}:{}:{}:{:?}:{}",
+                item.channel_id.get(),
+                item.group_label,
+                item.parent_label,
+                item.channel_label,
+                item.depth,
+                item.unread,
+                item.unread_message_count,
+            )
+        })
+        .collect()
 }
 
 pub(super) fn should_suppress_image_redraw_for_signature_change(

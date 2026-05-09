@@ -40,6 +40,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_emoji_reaction_picker_key(state, key);
     }
 
+    if state.is_channel_switcher_open() {
+        return handle_channel_switcher_key(state, key);
+    }
+
     if state.is_leader_active() {
         return handle_leader_key(state, key);
     }
@@ -174,6 +178,7 @@ fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCom
         KeyCode::Char('a') if is_shortcut_key(key) => {
             state.open_leader_actions_for_focused_target()
         }
+        KeyCode::Char(' ') if is_shortcut_key(key) => state.open_channel_switcher(),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.close_leader();
             state.quit();
@@ -183,6 +188,46 @@ fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCom
     }
 
     None
+}
+
+fn handle_channel_switcher_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc => {
+            state.close_channel_switcher();
+            None
+        }
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.close_channel_switcher();
+            state.quit();
+            None
+        }
+        KeyCode::Enter => state.activate_selected_channel_switcher_item(),
+        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_channel_switcher_down();
+            None
+        }
+        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_channel_switcher_up();
+            None
+        }
+        KeyCode::Left => {
+            state.move_channel_switcher_query_cursor_left();
+            None
+        }
+        KeyCode::Right => {
+            state.move_channel_switcher_query_cursor_right();
+            None
+        }
+        KeyCode::Backspace => {
+            state.pop_channel_switcher_char();
+            None
+        }
+        KeyCode::Char(value) if is_shortcut_key(key) => {
+            state.push_channel_switcher_char(value);
+            None
+        }
+        _ => None,
+    }
 }
 
 fn handle_leader_action_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {

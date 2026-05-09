@@ -99,6 +99,7 @@ pub(crate) enum MouseTarget {
     PaneRow { pane: FocusPane, row: usize },
     Composer,
     ActionRow { menu: ActionMenuTarget, row: usize },
+    ChannelSwitcherRow { row: usize },
     ModalBackdrop,
 }
 
