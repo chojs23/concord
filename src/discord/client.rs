@@ -303,7 +303,9 @@ impl DiscordClient {
         guild_id: Option<Id<GuildMarker>>,
         is_self: bool,
     ) -> Result<UserProfileInfo> {
-        self.rest.load_user_profile(user_id, guild_id, is_self).await
+        self.rest
+            .load_user_profile(user_id, guild_id, is_self)
+            .await
     }
 }
 

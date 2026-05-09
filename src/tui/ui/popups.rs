@@ -1097,7 +1097,7 @@ pub(super) fn user_profile_popup_text(
                 .add_modifier(Modifier::BOLD),
         )));
     }
-    
+
     if !activities.is_empty() {
         lines.push(Line::from(Span::raw(String::new())));
         push_section_header(&mut lines, "ACTIVITY");
