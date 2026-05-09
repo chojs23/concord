@@ -16,7 +16,7 @@ use tokio::{
 use crate::{AppError, Result};
 
 use super::{
-    MessageInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
+    MessageAttachmentUpload, MessageInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
     commands::ForumPostArchiveState,
     events::{AppEvent, SequencedAppEvent},
     gateway::{GatewayCommand, run_gateway},
@@ -180,8 +180,11 @@ impl DiscordClient {
         channel_id: Id<ChannelMarker>,
         content: &str,
         reply_to: Option<Id<MessageMarker>>,
+        attachments: &[MessageAttachmentUpload],
     ) -> Result<MessageInfo> {
-        self.rest.send_message(channel_id, content, reply_to).await
+        self.rest
+            .send_message(channel_id, content, reply_to, attachments)
+            .await
     }
 
     pub async fn edit_message(

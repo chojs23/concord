@@ -8,7 +8,7 @@ use crate::discord::ids::{
 use crate::config::DisplayOptions;
 use crate::discord::{
     AppCommand, AppEvent, ChannelUnreadState, DiscordState, ForumPostArchiveState, MentionInfo,
-    MessageInfo, MessageSnapshotInfo, MessageState, PresenceStatus,
+    MessageAttachmentUpload, MessageInfo, MessageSnapshotInfo, MessageState, PresenceStatus,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -175,6 +175,7 @@ pub struct DashboardState {
     member_keep_selection_visible: bool,
     member_view_height: usize,
     composer_input: String,
+    pending_composer_attachments: Vec<MessageAttachmentUpload>,
     composer_active: bool,
     reply_target_message_id: Option<Id<MessageMarker>>,
     edit_target_message: Option<(Id<ChannelMarker>, Id<MessageMarker>)>,
@@ -294,6 +295,7 @@ impl DashboardState {
             member_keep_selection_visible: true,
             member_view_height: 1,
             composer_input: String::new(),
+            pending_composer_attachments: Vec::new(),
             composer_active: false,
             reply_target_message_id: None,
             edit_target_message: None,

@@ -1,7 +1,20 @@
+use std::path::PathBuf;
+
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, UserMarker},
 };
+
+pub const MAX_UPLOAD_FILE_BYTES: u64 = 10 * 1024 * 1024;
+pub const MAX_UPLOAD_TOTAL_BYTES: u64 = 25 * 1024 * 1024;
+pub const MAX_UPLOAD_ATTACHMENT_COUNT: usize = 10;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageAttachmentUpload {
+    pub path: PathBuf,
+    pub filename: String,
+    pub size_bytes: u64,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReactionEmoji {
@@ -100,6 +113,7 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         content: String,
         reply_to: Option<Id<MessageMarker>>,
+        attachments: Vec<MessageAttachmentUpload>,
     },
     EditMessage {
         channel_id: Id<ChannelMarker>,

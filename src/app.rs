@@ -400,7 +400,11 @@ fn start_command_loop(
                         channel_id,
                         content,
                         reply_to,
-                    } => match client.send_message(channel_id, &content, reply_to).await {
+                        attachments,
+                    } => match client
+                        .send_message(channel_id, &content, reply_to, &attachments)
+                        .await
+                    {
                         Ok(message) => client.publish_event(message_create_event(message)).await,
                         Err(error) => {
                             log_app_error("send message failed", &error);

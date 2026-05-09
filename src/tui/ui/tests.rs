@@ -32,10 +32,10 @@ use crate::{
     discord::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, AttachmentInfo, ChannelInfo,
         ChannelRecipientState, ChannelState, ChannelUnreadState, ChannelVisibilityStats, EmbedInfo,
-        FriendStatus, GuildMemberState, MemberInfo, MentionInfo, MessageInfo, MessageKind,
-        MessageSnapshotInfo, MessageState, MutualGuildInfo, PollAnswerInfo, PollInfo,
-        PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
-        ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+        FriendStatus, GuildMemberState, MemberInfo, MentionInfo, MessageAttachmentUpload,
+        MessageInfo, MessageKind, MessageSnapshotInfo, MessageState, MutualGuildInfo,
+        PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo,
+        ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
     },
     tui::{
         format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
@@ -188,6 +188,26 @@ fn reply_composer_hint_line_is_dim() {
     );
     assert_eq!(lines[0].spans[0].style.fg, Some(DIM));
     assert_eq!(lines[1].spans[0].style.fg, None);
+}
+
+#[test]
+fn composer_lines_show_pending_upload_above_input() {
+    let mut state = state_with_message();
+    state.start_composer();
+    state.add_pending_composer_attachments(vec![MessageAttachmentUpload {
+        path: "/tmp/cat.png".into(),
+        filename: "cat.png".to_owned(),
+        size_bytes: 2_048,
+    }]);
+
+    let lines = composer_lines(&state, 80);
+
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec!["upload: cat.png (2.0 KiB)", "> "]
+    );
+    assert_eq!(lines[0].spans[0].style.fg, Some(ACCENT));
+    assert_eq!(composer_content_line_count(&state, 80), 2);
 }
 
 #[test]
