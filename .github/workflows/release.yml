@@ -157,6 +157,9 @@ jobs:
           fi
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
+      # Keep the release build toolchain aligned with the CI cache warmer.
+      # Swatinem/rust-cache includes the Rust version in its cache key.
+      - uses: dtolnay/rust-toolchain@stable
       # Get the dist-manifest
       - name: Fetch local artifacts
         uses: actions/download-artifact@v7
