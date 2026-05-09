@@ -4,7 +4,7 @@ use crate::discord::ids::{Id, marker::MessageMarker};
 use ratatui::{
     Terminal,
     backend::TestBackend,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Color, Modifier, Style},
 };
 use unicode_width::UnicodeWidthStr;
@@ -13,19 +13,19 @@ use super::{
     ACCENT, DIM, DISCORD_EPOCH_MILLIS, ImagePreview, ImagePreviewState, MENTION_ORANGE,
     MemberEntry, READ_DIM, SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER,
     SNOWFLAKE_TIMESTAMP_SHIFT, UNREAD_BRIGHT, channel_action_menu_lines, channel_unread_decoration,
-    composer_content_line_count, composer_lines, composer_prompt_line_count, composer_text,
-    date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_reaction_picker_lines,
-    focus_pane_at, footer_hint, format_message_sent_time, format_unix_millis_with_offset,
-    forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
-    guild_action_menu_lines, inline_image_preview_area, inline_image_preview_row,
-    member_action_menu_lines, member_display_label, member_name_style, message_action_menu_lines,
-    message_author_style, message_item_lines, message_starts_new_day, message_viewport_lines,
-    new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
-    primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
-    render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
-    selected_message_content_x_offset, sync_view_heights, user_profile_popup_has_avatar,
-    user_profile_popup_lines, user_profile_popup_lines_with_activities,
-    user_profile_popup_text_geometry,
+    composer_content_line_count, composer_cursor_position, composer_lines,
+    composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
+    dm_presence_dot_span, emoji_reaction_picker_lines, focus_pane_at, footer_hint,
+    format_message_sent_time, format_unix_millis_with_offset, forum_post_reaction_summary,
+    forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
+    inline_image_preview_area, inline_image_preview_row, member_action_menu_lines,
+    member_display_label, member_name_style, message_action_menu_lines, message_author_style,
+    message_item_lines, message_starts_new_day, message_viewport_lines, new_messages_notice_line,
+    options_popup_lines, poll_vote_picker_lines, primary_activity_summary,
+    reaction_users_popup_lines, reaction_users_visible_line_count, render_channels, render_guilds,
+    selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
+    sync_view_heights, user_profile_popup_has_avatar, user_profile_popup_lines,
+    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
 };
 use crate::{
     config::DisplayOptions,
@@ -208,6 +208,42 @@ fn composer_lines_show_pending_upload_above_input() {
     );
     assert_eq!(lines[0].spans[0].style.fg, Some(ACCENT));
     assert_eq!(composer_content_line_count(&state, 80), 2);
+}
+
+#[test]
+fn composer_cursor_position_tracks_input_cursor() {
+    let mut state = state_with_message();
+    state.start_composer();
+    for value in "hello".chars() {
+        state.push_composer_char(value);
+    }
+    state.move_composer_cursor_left();
+    state.move_composer_cursor_left();
+
+    assert_eq!(
+        composer_cursor_position(Rect::new(10, 20, 20, 5), &state),
+        Some(Position { x: 16, y: 21 })
+    );
+}
+
+#[test]
+fn composer_cursor_position_accounts_for_upload_and_reply_rows() {
+    let mut state = state_with_message();
+    state.open_selected_message_actions();
+    state.activate_selected_message_action();
+    state.add_pending_composer_attachments(vec![MessageAttachmentUpload {
+        path: "/tmp/cat.png".into(),
+        filename: "cat.png".to_owned(),
+        size_bytes: 2_048,
+    }]);
+    for value in "hi".chars() {
+        state.push_composer_char(value);
+    }
+
+    assert_eq!(
+        composer_cursor_position(Rect::new(10, 20, 20, 6), &state),
+        Some(Position { x: 15, y: 23 })
+    );
 }
 
 #[test]

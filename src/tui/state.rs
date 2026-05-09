@@ -175,6 +175,7 @@ pub struct DashboardState {
     member_keep_selection_visible: bool,
     member_view_height: usize,
     composer_input: String,
+    composer_cursor_byte_index: usize,
     pending_composer_attachments: Vec<MessageAttachmentUpload>,
     composer_active: bool,
     reply_target_message_id: Option<Id<MessageMarker>>,
@@ -183,6 +184,7 @@ pub struct DashboardState {
     /// stored string is the characters typed *after* the `@` and is used to
     /// filter the candidate list. `None` means the picker is closed.
     composer_mention_query: Option<String>,
+    composer_mention_start: Option<usize>,
     composer_mention_selected: usize,
     /// Records `@displayname` substrings that the picker inserted, so the
     /// composer can rewrite them to Discord's `<@USER_ID>` wire format on
@@ -295,11 +297,13 @@ impl DashboardState {
             member_keep_selection_visible: true,
             member_view_height: 1,
             composer_input: String::new(),
+            composer_cursor_byte_index: 0,
             pending_composer_attachments: Vec::new(),
             composer_active: false,
             reply_target_message_id: None,
             edit_target_message: None,
             composer_mention_query: None,
+            composer_mention_start: None,
             composer_mention_selected: 0,
             composer_mention_completions: Vec::new(),
             message_action_menu: None,

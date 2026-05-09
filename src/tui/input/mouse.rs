@@ -60,10 +60,18 @@ pub fn handle_mouse_event(
         target,
         Some(ui::MouseTarget::ActionRow { .. } | ui::MouseTarget::ModalBackdrop)
     );
-    if (ignores_dashboard_mouse(state) && !action_menu_mouse)
-        || state.is_composing() && target != Some(ui::MouseTarget::Composer)
-    {
+    if ignores_dashboard_mouse(state) && !action_menu_mouse {
         return MouseOutcome::ignored();
+    }
+    let blurred_composer = state.is_composing()
+        && target != Some(ui::MouseTarget::Composer)
+        && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left));
+    if state.is_composing() && target != Some(ui::MouseTarget::Composer) && !blurred_composer {
+        return MouseOutcome::ignored();
+    }
+    if blurred_composer {
+        clicks.clear();
+        state.cancel_composer();
     }
 
     match mouse.kind {
@@ -79,7 +87,11 @@ pub fn handle_mouse_event(
             }
             let Some(target) = target else {
                 clicks.clear();
-                return MouseOutcome::ignored();
+                return if blurred_composer {
+                    MouseOutcome::handled(None)
+                } else {
+                    MouseOutcome::ignored()
+                };
             };
             handle_left_click(state, target, clicks)
         }
