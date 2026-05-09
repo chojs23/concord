@@ -17,6 +17,7 @@ hosting = "github"
 install-updater = false
 tap = "chojs23/homebrew-tap"
 publish-jobs = ["homebrew"]
-# Skip the "CI file is up-to-date" check (local toml/yaml formatter
-# rewrites quote styles in release.yml, which cargo-dist would otherwise reject).
+# Skip the "CI file is up-to-date" check. The generated release workflow has
+# an intentional patch that enables GitHub generated release notes while keeping
+# cargo-dist's install and download sections.
 allow-dirty = ["ci"]
