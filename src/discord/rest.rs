@@ -582,10 +582,13 @@ impl DiscordRest {
         &self,
         user_id: Id<UserMarker>,
         guild_id: Option<Id<GuildMarker>>,
+        is_self: bool,
     ) -> Result<UserProfileInfo> {
         let mut url = format!(
-            "https://discord.com/api/v9/users/{}/profile?with_mutual_guilds=true&with_mutual_friends_count=true",
-            user_id.get()
+            "https://discord.com/api/v9/users/{}/profile?with_mutual_guilds={}&with_mutual_friends_count={}",
+            user_id.get(),
+            !is_self,
+            !is_self
         );
         if let Some(guild_id) = guild_id {
             url.push_str(&format!("&guild_id={}", guild_id.get()));
