@@ -8,6 +8,10 @@ impl DashboardState {
         self.last_status.as_deref()
     }
 
+    pub fn update_available_version(&self) -> Option<&str> {
+        self.update_available_version.as_deref()
+    }
+
     pub fn is_debug_log_popup_open(&self) -> bool {
         self.debug_log_popup_open
     }

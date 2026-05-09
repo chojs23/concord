@@ -177,7 +177,7 @@ pub fn render(
         }
     }
 
-    render_header(frame, areas.header);
+    render_header(frame, areas.header, state);
     if state.is_pane_visible(FocusPane::Guilds) {
         render_guilds(frame, areas.guilds, state);
     }

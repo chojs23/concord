@@ -21,7 +21,7 @@ use crate::{
         validate_token_header,
     },
     error::AppError,
-    logging, token_store, tui,
+    logging, token_store, tui, version_check,
 };
 
 const MESSAGE_HISTORY_LIMIT: u16 = 50;
@@ -68,6 +68,21 @@ impl App {
                     ),
                 ),
                 Err(error) => logging::error("app", format!("rest pool warmup failed: {error}")),
+            }
+        });
+
+        let version_client = client.clone();
+        tokio::spawn(async move {
+            match version_check::check_latest_version().await {
+                Ok(Some(latest_version)) => {
+                    version_client
+                        .publish_event(AppEvent::UpdateAvailable { latest_version })
+                        .await;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    logging::debug("version", format!("latest version check failed: {error}"))
+                }
             }
         });
 

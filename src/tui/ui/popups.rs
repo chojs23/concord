@@ -589,11 +589,19 @@ pub(super) fn render_options_popup(frame: &mut Frame, area: Rect, state: &Dashbo
     let items = state.display_option_items();
     let selected = state.selected_option_index().unwrap_or(0);
     let popup = centered_rect(area, 66, (items.len() as u16).saturating_add(5));
+    let block = panel_block("Options", true);
+    let inner = block.inner(popup);
+    let visible_items = usize::from(inner.height.saturating_sub(1)).max(1);
+    let inner_width = usize::from(inner.width).max(1);
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(options_popup_lines(&items, selected))
-            .block(panel_block("Options", true))
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(options_popup_lines(
+            &items,
+            selected,
+            visible_items,
+            inner_width,
+        ))
+        .block(block),
         popup,
     );
 }
@@ -601,10 +609,18 @@ pub(super) fn render_options_popup(frame: &mut Frame, area: Rect, state: &Dashbo
 pub(super) fn options_popup_lines(
     items: &[DisplayOptionItem],
     selected: usize,
+    visible_items: usize,
+    width: usize,
 ) -> Vec<Line<'static>> {
+    let visible_items = visible_items.max(1);
+    let width = width.max(1);
+    let selected = selected.min(items.len().saturating_sub(1));
+    let start = selected.saturating_add(1).saturating_sub(visible_items);
     let mut lines: Vec<Line<'static>> = items
         .iter()
         .enumerate()
+        .skip(start)
+        .take(visible_items)
         .map(|(index, item)| {
             let marker = if index == selected { "› " } else { "  " };
             let control = item.value.map_or_else(
@@ -635,11 +651,15 @@ pub(super) fn options_popup_lines(
                 Span::styled(item.description, Style::default().fg(DIM)),
             ])
         })
+        .map(|line| truncate_line_to_display_width(line, width))
         .collect();
-    lines.push(Line::from(Span::styled(
-        "Enter/Space toggle or cycle · j/k move · Esc close · saved to ~/.concord/config.toml",
-        Style::default().fg(DIM),
-    )));
+    lines.push(truncate_line_to_display_width(
+        Line::from(Span::styled(
+            "Enter/Space toggle or cycle · j/k move · Esc close · saved to ~/.concord/config.toml",
+            Style::default().fg(DIM),
+        )),
+        width,
+    ));
     lines
 }
 

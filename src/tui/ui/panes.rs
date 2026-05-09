@@ -752,14 +752,17 @@ fn format_activity_summary(activity: &ActivityInfo) -> String {
     }
 }
 
-pub(super) fn render_header(frame: &mut Frame, area: Rect) {
+pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let title = format!(" Concord - v{} ", env!("CARGO_PKG_VERSION"));
+    let mut spans = vec![Span::styled(title, Style::default().fg(Color::Cyan).bold())];
+    if let Some(version) = state.update_available_version() {
+        spans.push(Span::styled(
+            format!(" New version available: v{version} "),
+            Style::default().fg(Color::Yellow).bold(),
+        ));
+    }
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            title,
-            Style::default().fg(Color::Cyan).bold(),
-        )))
-        .alignment(Alignment::Left),
+        Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
         area,
     );
 }

@@ -820,6 +820,7 @@ impl DiscordState {
             }
             AppEvent::GatewayError { .. }
             | AppEvent::StatusMessage { .. }
+            | AppEvent::UpdateAvailable { .. }
             | AppEvent::ReactionUsersLoaded { .. }
             | AppEvent::AttachmentPreviewLoaded { .. }
             | AppEvent::AttachmentPreviewLoadFailed { .. }

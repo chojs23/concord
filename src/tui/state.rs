@@ -219,6 +219,7 @@ pub struct DashboardState {
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
     last_status: Option<String>,
+    update_available_version: Option<String>,
     should_quit: bool,
     older_history_requests: HashMap<Id<ChannelMarker>, OlderHistoryRequestState>,
     forum_post_lists: HashMap<Id<ChannelMarker>, ForumPostListState>,
@@ -340,6 +341,7 @@ impl DashboardState {
             current_user: None,
             current_user_id: None,
             last_status: None,
+            update_available_version: None,
             should_quit: false,
             older_history_requests: HashMap::new(),
             forum_post_lists: HashMap::new(),
@@ -411,6 +413,9 @@ impl DashboardState {
             }
             AppEvent::StatusMessage { message } => {
                 self.last_status = Some(message.clone());
+            }
+            AppEvent::UpdateAvailable { latest_version } => {
+                self.update_available_version = Some(latest_version.clone());
             }
             AppEvent::ReactionUsersLoaded {
                 channel_id,

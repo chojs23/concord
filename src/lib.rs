@@ -5,6 +5,7 @@ pub mod error;
 pub mod logging;
 pub mod token_store;
 pub mod tui;
+pub mod version_check;
 
 pub use app::App;
 pub use discord::{AppEvent, DiscordClient};

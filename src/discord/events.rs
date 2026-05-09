@@ -694,6 +694,9 @@ pub enum AppEvent {
     StatusMessage {
         message: String,
     },
+    UpdateAvailable {
+        latest_version: String,
+    },
     AttachmentPreviewLoaded {
         url: String,
         bytes: Vec<u8>,
@@ -753,6 +756,7 @@ impl AppEvent {
             self,
             AppEvent::GatewayError { .. }
                 | AppEvent::StatusMessage { .. }
+                | AppEvent::UpdateAvailable { .. }
                 | AppEvent::ReactionUsersLoaded { .. }
                 | AppEvent::AttachmentPreviewLoaded { .. }
                 | AppEvent::AttachmentPreviewLoadFailed { .. }
@@ -781,6 +785,7 @@ impl AppEvent {
                 | AppEvent::ReactionUsersLoaded { .. }
                 | AppEvent::GatewayError { .. }
                 | AppEvent::StatusMessage { .. }
+                | AppEvent::UpdateAvailable { .. }
                 | AppEvent::ActivateChannel { .. }
                 | AppEvent::AttachmentPreviewLoaded { .. }
                 | AppEvent::AttachmentPreviewLoadFailed { .. }

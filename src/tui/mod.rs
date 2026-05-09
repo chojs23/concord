@@ -1136,6 +1136,19 @@ mod tests {
     }
 
     #[test]
+    fn visible_signature_changes_when_update_notice_arrives() {
+        let mut state = DashboardState::new();
+        let before = visible_dashboard_signature(&state);
+
+        state.push_event(AppEvent::UpdateAvailable {
+            latest_version: "9.9.9".to_owned(),
+        });
+        let after = visible_dashboard_signature(&state);
+
+        assert_ne!(before, after);
+    }
+
+    #[test]
     fn new_message_count_only_change_is_suppressed_while_images_are_visible() {
         let mut state = state_with_messages(5);
         state.focus_pane(FocusPane::Messages);

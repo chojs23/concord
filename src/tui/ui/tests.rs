@@ -80,7 +80,7 @@ fn options_popup_lines_show_selected_toggle_state() {
         },
     ];
 
-    let lines = options_popup_lines(&items, 1);
+    let lines = options_popup_lines(&items, 1, items.len(), 120);
 
     assert_eq!(lines[0].spans[1].content, "[ ] ");
     assert_eq!(lines[1].spans[0].content, "› ");
@@ -91,6 +91,79 @@ fn options_popup_lines_show_selected_toggle_state() {
             .content
             .contains("config.toml")
     );
+}
+
+#[test]
+fn options_popup_lines_keep_selected_item_visible_when_clipped() {
+    let items = vec![
+        DisplayOptionItem {
+            label: "Option 1",
+            enabled: true,
+            value: None,
+            effective: true,
+            description: "First.",
+        },
+        DisplayOptionItem {
+            label: "Option 2",
+            enabled: true,
+            value: None,
+            effective: true,
+            description: "Second.",
+        },
+        DisplayOptionItem {
+            label: "Option 3",
+            enabled: true,
+            value: None,
+            effective: true,
+            description: "Third.",
+        },
+        DisplayOptionItem {
+            label: "Option 4",
+            enabled: true,
+            value: None,
+            effective: true,
+            description: "Fourth.",
+        },
+    ];
+
+    let lines = options_popup_lines(&items, 3, 2, 120);
+    let rendered = line_texts_from_ratatui(&lines).join("\n");
+
+    assert!(!rendered.contains("Option 1"), "{rendered}");
+    assert!(rendered.contains("Option 3"), "{rendered}");
+    assert!(rendered.contains("› [x] Option 4"), "{rendered}");
+}
+
+#[test]
+fn options_popup_render_keeps_selected_row_visible_when_short() {
+    let mut state = DashboardState::new();
+    state.open_options_popup();
+    for _ in 0..5 {
+        state.move_option_down();
+    }
+
+    let dump = render_dashboard_dump(100, 9, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(
+        dump.iter()
+            .any(|row| row.contains("›") && row.contains("Desktop notifications")),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn header_shows_available_update_version() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::UpdateAvailable {
+        latest_version: "9.9.9".to_owned(),
+    });
+
+    let dump = render_dashboard_dump(100, 10, &mut state);
+    let header = dump.first().expect("dashboard render includes header");
+
+    assert!(header.contains("Concord - v"), "{header}");
+    assert!(header.contains("New version available: v9.9.9"), "{header}");
 }
 
 #[test]
