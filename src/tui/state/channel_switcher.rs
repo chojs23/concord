@@ -208,7 +208,7 @@ impl DashboardState {
                     channel,
                     branch: ChannelBranch::None,
                     group_order,
-                    unread: self.channel_unread(channel.id),
+                    unread: self.sidebar_channel_unread(channel.id),
                     unread_message_count: self.channel_unread_message_count(channel.id),
                 },
             );
@@ -252,7 +252,7 @@ impl DashboardState {
                         channel: root,
                         branch: ChannelBranch::None,
                         group_order,
-                        unread: self.channel_unread(root.id),
+                        unread: self.sidebar_channel_unread(root.id),
                         unread_message_count: self.channel_unread_message_count(root.id),
                     },
                 );
@@ -281,7 +281,7 @@ impl DashboardState {
                         channel: child,
                         branch,
                         group_order,
-                        unread: self.channel_unread(child.id),
+                        unread: self.sidebar_channel_unread(child.id),
                         unread_message_count: self.channel_unread_message_count(child.id),
                     },
                 );
