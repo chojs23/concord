@@ -66,7 +66,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      # Best-effort cache restore for release checks. Tag workflow cache scope can
+      # limit reuse, so this must never become a release prerequisite.
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-check
       - name: rustfmt
         run: cargo fmt --all --check
       - name: test
@@ -157,9 +161,12 @@ jobs:
           fi
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
-      # Keep the release build toolchain aligned with the CI cache warmer.
-      # Swatinem/rust-cache includes the Rust version in its cache key.
       - uses: dtolnay/rust-toolchain@stable
+      # Best-effort cache restore for release builds. Target-specific keys avoid
+      # mixing artifacts from different cargo-dist matrix cells.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ join(matrix.targets, '-') }}
       # Get the dist-manifest
       - name: Fetch local artifacts
         uses: actions/download-artifact@v7
@@ -170,10 +177,6 @@ jobs:
       - name: Install dependencies
         run: |
           ${{ matrix.packages_install }}
-      - name: Cache cargo deps
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ join(matrix.targets, '-') || 'global' }}
       - name: Build artifacts
         run: |
           # Actually do builds and make zips and whatnot
