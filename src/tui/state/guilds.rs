@@ -166,6 +166,15 @@ impl DashboardState {
         }
     }
 
+    pub fn selected_guild_cursor_id(&self) -> Option<Id<GuildMarker>> {
+        match self.guild_pane_entries().get(self.selected_guild()) {
+            Some(GuildPaneEntry::Guild { state, .. }) => Some(state.id),
+            Some(GuildPaneEntry::DirectMessages | GuildPaneEntry::FolderHeader { .. }) | None => {
+                None
+            }
+        }
+    }
+
     pub fn is_active_guild_entry(&self, entry: &GuildPaneEntry<'_>) -> bool {
         match (self.active_guild, entry) {
             (ActiveGuildScope::DirectMessages, GuildPaneEntry::DirectMessages) => true,

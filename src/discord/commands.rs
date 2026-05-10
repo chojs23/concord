@@ -167,4 +167,17 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
     },
+    SetGuildMuted {
+        guild_id: Id<GuildMarker>,
+        muted: bool,
+        hours: Option<u64>,
+        label: String,
+    },
+    SetChannelMuted {
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Id<ChannelMarker>,
+        muted: bool,
+        hours: Option<u64>,
+        label: String,
+    },
 }

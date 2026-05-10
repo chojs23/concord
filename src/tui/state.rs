@@ -89,6 +89,17 @@ pub(crate) struct DesktopNotification {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PendingNumericPrefixAction {
+    FocusPane(FocusPane),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PendingNumericPrefix {
+    pub count: u64,
+    pub action: Option<PendingNumericPrefixAction>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ActiveGuildScope {
     Unset,
     DirectMessages,
@@ -227,6 +238,7 @@ pub struct DashboardState {
     /// "folders" (id = None) are never collapsible since they have no header.
     collapsed_folders: HashSet<FolderKey>,
     collapsed_channel_categories: HashSet<Id<ChannelMarker>>,
+    pending_numeric_prefix: Option<PendingNumericPrefix>,
     pending_commands: VecDeque<AppCommand>,
 }
 
@@ -347,6 +359,7 @@ impl DashboardState {
             forum_post_lists: HashMap::new(),
             collapsed_folders: HashSet::new(),
             collapsed_channel_categories: HashSet::new(),
+            pending_numeric_prefix: None,
             pending_commands: VecDeque::new(),
         }
     }
@@ -630,6 +643,76 @@ impl DashboardState {
 
     pub fn focus(&self) -> FocusPane {
         self.focus
+    }
+
+    pub fn pending_numeric_prefix(&self) -> Option<PendingNumericPrefix> {
+        self.pending_numeric_prefix
+    }
+
+    pub fn set_pending_numeric_prefix(&mut self, prefix: Option<PendingNumericPrefix>) {
+        self.pending_numeric_prefix = prefix;
+    }
+
+    pub fn take_pending_numeric_prefix(&mut self) -> Option<PendingNumericPrefix> {
+        self.pending_numeric_prefix.take()
+    }
+
+    pub fn execute_pending_numeric_prefix(&mut self) {
+        let Some(prefix) = self.take_pending_numeric_prefix() else {
+            return;
+        };
+        if let Some(PendingNumericPrefixAction::FocusPane(pane)) = prefix.action {
+            self.show_and_focus_pane(pane);
+        }
+    }
+
+    pub fn clear_pending_numeric_prefix(&mut self) {
+        self.pending_numeric_prefix = None;
+    }
+
+    pub fn sidebar_channel_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
+        self.discord.channel_sidebar_unread(channel_id)
+    }
+
+    pub fn sidebar_guild_unread(&self, guild_id: Id<GuildMarker>) -> ChannelUnreadState {
+        self.discord.guild_sidebar_unread(guild_id)
+    }
+
+    pub fn toggle_selected_guild_mute(&mut self, hours: Option<u64>) -> Option<AppCommand> {
+        let guild_id = self.selected_guild_cursor_id()?;
+        let label = self
+            .discord
+            .guild(guild_id)
+            .map(|guild| guild.name.clone())
+            .unwrap_or_else(|| format!("server-{}", guild_id.get()));
+        let muted = !self.discord.guild_notification_muted(guild_id);
+        Some(AppCommand::SetGuildMuted {
+            guild_id,
+            muted,
+            hours,
+            label,
+        })
+    }
+
+    pub fn toggle_selected_channel_mute(&mut self, hours: Option<u64>) -> Option<AppCommand> {
+        let channel_id = self.selected_channel_cursor_id()?;
+        let channel = self.discord.channel(channel_id)?;
+        let muted = !self.discord.channel_notification_muted(channel_id);
+        Some(AppCommand::SetChannelMuted {
+            guild_id: channel.guild_id,
+            channel_id,
+            muted,
+            hours,
+            label: self.channel_label(channel_id),
+        })
+    }
+
+    pub fn mute_focused_target(&mut self, hours: Option<u64>) -> Option<AppCommand> {
+        match self.focus {
+            FocusPane::Guilds => self.toggle_selected_guild_mute(hours),
+            FocusPane::Channels => self.toggle_selected_channel_mute(hours),
+            FocusPane::Messages | FocusPane::Members => None,
+        }
     }
 
     pub fn is_leader_active(&self) -> bool {

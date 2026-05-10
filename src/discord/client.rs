@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
+use chrono::{DateTime, Utc};
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
@@ -212,6 +213,29 @@ impl DiscordClient {
         message_id: Id<MessageMarker>,
     ) -> Result<()> {
         self.rest.ack_channel(channel_id, message_id).await
+    }
+
+    pub async fn set_guild_muted(
+        &self,
+        guild_id: Id<GuildMarker>,
+        muted: bool,
+        mute_end_time: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        self.rest
+            .set_guild_muted(guild_id, muted, mute_end_time)
+            .await
+    }
+
+    pub async fn set_channel_muted(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Id<ChannelMarker>,
+        muted: bool,
+        mute_end_time: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        self.rest
+            .set_channel_muted(guild_id, channel_id, muted, mute_end_time)
+            .await
     }
 
     pub async fn load_message_history(

@@ -4,7 +4,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::discord::{AppCommand, MessageAttachmentUpload};
 
-use super::super::state::{DashboardState, FocusPane};
+use super::super::state::{
+    DashboardState, FocusPane, PendingNumericPrefix, PendingNumericPrefixAction,
+};
 
 pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     if key.kind != KeyEventKind::Press {
@@ -76,6 +78,11 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_user_profile_popup_key(state, key);
     }
 
+    match handle_pending_numeric_prefix(state, key) {
+        PendingNumericPrefixOutcome::NotHandled => {}
+        PendingNumericPrefixOutcome::Handled(command) => return command,
+    }
+
     let focus = state.focus();
     match key.code {
         KeyCode::Esc if !state.return_from_pinned_message_view() => {
@@ -85,10 +92,37 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
         KeyCode::Char('i') => state.start_composer(),
         KeyCode::Char(' ') if is_shortcut_key(key) => state.open_leader(),
-        KeyCode::Char('1') => state.show_and_focus_pane(FocusPane::Guilds),
-        KeyCode::Char('2') => state.show_and_focus_pane(FocusPane::Channels),
-        KeyCode::Char('3') => state.show_and_focus_pane(FocusPane::Messages),
-        KeyCode::Char('4') => state.show_and_focus_pane(FocusPane::Members),
+        KeyCode::Char('1') => {
+            state.set_pending_numeric_prefix(Some(PendingNumericPrefix {
+                count: 1,
+                action: Some(PendingNumericPrefixAction::FocusPane(FocusPane::Guilds)),
+            }));
+        }
+        KeyCode::Char('2') => {
+            state.set_pending_numeric_prefix(Some(PendingNumericPrefix {
+                count: 2,
+                action: Some(PendingNumericPrefixAction::FocusPane(FocusPane::Channels)),
+            }));
+        }
+        KeyCode::Char('3') => {
+            state.set_pending_numeric_prefix(Some(PendingNumericPrefix {
+                count: 3,
+                action: Some(PendingNumericPrefixAction::FocusPane(FocusPane::Messages)),
+            }));
+        }
+        KeyCode::Char('4') => {
+            state.set_pending_numeric_prefix(Some(PendingNumericPrefix {
+                count: 4,
+                action: Some(PendingNumericPrefixAction::FocusPane(FocusPane::Members)),
+            }));
+        }
+        KeyCode::Char(value) if value.is_ascii_digit() && is_shortcut_key(key) => {
+            state.set_pending_numeric_prefix(Some(PendingNumericPrefix {
+                count: value.to_digit(10).map(u64::from).unwrap_or_default(),
+                action: None,
+            }));
+        }
+        KeyCode::Char('m') if is_shortcut_key(key) => return state.mute_focused_target(None),
         KeyCode::Char('j') | KeyCode::Down => state.move_down(),
         KeyCode::Char('J') if focus == FocusPane::Messages => state.scroll_message_viewport_down(),
         KeyCode::Char('L') => state.scroll_focused_pane_horizontal_right(),
@@ -154,6 +188,41 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     }
 
     None
+}
+
+enum PendingNumericPrefixOutcome {
+    NotHandled,
+    Handled(Option<AppCommand>),
+}
+
+fn handle_pending_numeric_prefix(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> PendingNumericPrefixOutcome {
+    let Some(prefix) = state.pending_numeric_prefix() else {
+        return PendingNumericPrefixOutcome::NotHandled;
+    };
+
+    match key.code {
+        KeyCode::Char(value) if value.is_ascii_digit() && is_shortcut_key(key) => {
+            state.set_pending_numeric_prefix(Some(PendingNumericPrefix {
+                count: prefix
+                    .count
+                    .saturating_mul(10)
+                    .saturating_add(u64::from(value.to_digit(10).unwrap_or_default())),
+                action: None,
+            }));
+            PendingNumericPrefixOutcome::Handled(None)
+        }
+        KeyCode::Char('m') if is_shortcut_key(key) => {
+            state.clear_pending_numeric_prefix();
+            PendingNumericPrefixOutcome::Handled(state.mute_focused_target(Some(prefix.count)))
+        }
+        _ => {
+            state.execute_pending_numeric_prefix();
+            PendingNumericPrefixOutcome::NotHandled
+        }
+    }
 }
 
 fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {

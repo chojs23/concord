@@ -12,9 +12,10 @@ use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event, han
 use crate::{
     config::ImagePreviewQualityPreset,
     discord::{
-        AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, GuildFolder,
-        MemberInfo, MessageReferenceInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji,
-        ReactionUserInfo, ReactionUsersInfo,
+        AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo,
+        ChannelRecipientInfo, CustomEmojiInfo, GuildFolder, GuildNotificationSettingsInfo,
+        MemberInfo, MessageReferenceInfo, NotificationLevel, PollAnswerInfo, PollInfo,
+        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReactionUsersInfo,
     },
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };
@@ -29,6 +30,10 @@ fn char_key(value: char) -> KeyEvent {
 
 fn ctrl_key(value: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(value), KeyModifiers::CONTROL)
+}
+
+fn flush_pending_prefix(state: &mut DashboardState) {
+    state.execute_pending_numeric_prefix();
 }
 
 fn shift_enter() -> KeyEvent {
@@ -275,15 +280,19 @@ fn number_keys_focus_top_level_panes() {
     let mut state = DashboardState::new();
 
     handle_key(&mut state, char_key('2'));
+    flush_pending_prefix(&mut state);
     assert_eq!(state.focus(), FocusPane::Channels);
 
     handle_key(&mut state, char_key('3'));
+    flush_pending_prefix(&mut state);
     assert_eq!(state.focus(), FocusPane::Messages);
 
     handle_key(&mut state, char_key('4'));
+    flush_pending_prefix(&mut state);
     assert_eq!(state.focus(), FocusPane::Members);
 
     handle_key(&mut state, char_key('1'));
+    flush_pending_prefix(&mut state);
     assert_eq!(state.focus(), FocusPane::Guilds);
 }
 
@@ -295,16 +304,126 @@ fn number_keys_show_hidden_panes_before_focusing() {
     state.toggle_pane_visibility(FocusPane::Members);
 
     handle_key(&mut state, char_key('1'));
+    flush_pending_prefix(&mut state);
     assert!(state.is_pane_visible(FocusPane::Guilds));
     assert_eq!(state.focus(), FocusPane::Guilds);
 
     handle_key(&mut state, char_key('2'));
+    flush_pending_prefix(&mut state);
     assert!(state.is_pane_visible(FocusPane::Channels));
     assert_eq!(state.focus(), FocusPane::Channels);
 
     handle_key(&mut state, char_key('4'));
+    flush_pending_prefix(&mut state);
     assert!(state.is_pane_visible(FocusPane::Members));
     assert_eq!(state.focus(), FocusPane::Members);
+}
+
+#[test]
+fn number_then_m_mutes_for_hours_instead_of_switching_panes() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+
+    handle_key(&mut state, char_key('2'));
+    let command = handle_key(&mut state, char_key('m'));
+
+    assert_eq!(state.focus(), FocusPane::Channels);
+    assert_eq!(
+        command,
+        Some(AppCommand::SetChannelMuted {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            muted: true,
+            hours: Some(2),
+            label: "#general".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn bare_m_mutes_focused_channel_permanently() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+
+    let command = handle_key(&mut state, char_key('m'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SetChannelMuted {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            muted: true,
+            hours: None,
+            label: "#general".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn bare_m_unmutes_focused_channel_when_already_muted() {
+    let mut state = state_with_channel_tree();
+    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
+        settings: vec![GuildNotificationSettingsInfo {
+            guild_id: Some(Id::new(1)),
+            message_notifications: Some(NotificationLevel::OnlyMentions),
+            muted: false,
+            mute_end_time: None,
+            suppress_everyone: false,
+            suppress_roles: false,
+            channel_overrides: vec![ChannelNotificationOverrideInfo {
+                channel_id: Id::new(11),
+                message_notifications: None,
+                muted: true,
+                mute_end_time: None,
+            }],
+        }],
+    });
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+
+    let command = handle_key(&mut state, char_key('m'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SetChannelMuted {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            muted: false,
+            hours: None,
+            label: "#general".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn bare_m_unmutes_highlighted_server_when_already_muted() {
+    let mut state = state_with_channel_tree();
+    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
+        settings: vec![GuildNotificationSettingsInfo {
+            guild_id: Some(Id::new(1)),
+            message_notifications: Some(NotificationLevel::OnlyMentions),
+            muted: true,
+            mute_end_time: None,
+            suppress_everyone: false,
+            suppress_roles: false,
+            channel_overrides: Vec::new(),
+        }],
+    });
+    state.focus_pane(FocusPane::Guilds);
+
+    let command = handle_key(&mut state, char_key('m'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SetGuildMuted {
+            guild_id: Id::new(1),
+            muted: false,
+            hours: None,
+            label: "guild".to_owned(),
+        })
+    );
 }
 
 #[test]

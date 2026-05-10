@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use chrono::{DateTime, SecondsFormat, Utc};
 use crate::discord::fingerprint::discord_rest_client;
 use crate::discord::ids::{
     Id,
@@ -194,6 +195,63 @@ impl DiscordRest {
             })?
             .error_for_status()
             .map_err(|error| AppError::DiscordRequest(format!("ack channel failed: {error}")))?;
+        Ok(())
+    }
+
+    pub async fn set_guild_muted(
+        &self,
+        guild_id: Id<GuildMarker>,
+        muted: bool,
+        mute_end_time: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        self.raw_http
+            .patch(format!(
+                "https://discord.com/api/v9/users/@me/guilds/{}/settings",
+                guild_id.get()
+            ))
+            .header(AUTHORIZATION, &self.token)
+            .json(&mute_request_body(muted, mute_end_time))
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("set guild mute request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| AppError::DiscordRequest(format!("set guild mute failed: {error}")))?;
+        Ok(())
+    }
+
+    pub async fn set_channel_muted(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Id<ChannelMarker>,
+        muted: bool,
+        mute_end_time: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        let endpoint = match guild_id {
+            Some(guild_id) => format!(
+                "https://discord.com/api/v9/users/@me/guilds/{}/settings",
+                guild_id.get()
+            ),
+            None => "https://discord.com/api/v9/users/@me/guilds/@me/settings".to_owned(),
+        };
+        self.raw_http
+            .patch(endpoint)
+            .header(AUTHORIZATION, &self.token)
+            .json(&json!({
+                "channel_overrides": {
+                    channel_id.to_string(): mute_request_body(muted, mute_end_time),
+                }
+            }))
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("set channel mute request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("set channel mute failed: {error}"))
+            })?;
         Ok(())
     }
 
@@ -666,6 +724,15 @@ impl DiscordRest {
             .map_err(|error| AppError::DiscordRequest(format!("poll vote failed: {error}")))?;
         Ok(())
     }
+}
+
+fn mute_request_body(muted: bool, mute_end_time: Option<DateTime<Utc>>) -> Value {
+    json!({
+        "muted": muted,
+        "mute_config": mute_end_time.map(|end_time| json!({
+            "end_time": end_time.to_rfc3339_opts(SecondsFormat::Millis, true),
+        })),
+    })
 }
 
 fn poll_vote_request_body(answer_ids: &[u8]) -> Value {

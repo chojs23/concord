@@ -56,7 +56,7 @@ use requests::{
     ForumPostRequestTarget, ForumPostRequests, HistoryRequests, MemberRequests,
     PinnedMessageRequests, ThreadPreviewRequests,
 };
-use state::{DashboardState, DesktopNotification};
+use state::{DashboardState, DesktopNotification, PendingNumericPrefixAction};
 
 const MAX_DRAINED_EFFECT_EVENTS: usize = 1024;
 static NOTIFICATION_FAILURE_LOGGED: AtomicBool = AtomicBool::new(false);
@@ -468,7 +468,9 @@ async fn run_dashboard(
     // every visible image. Key/mouse/image-decode arms still mark `dirty`
     // immediately to keep input responsiveness intact.
     const BACKGROUND_REDRAW_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
+    const NUMERIC_PREFIX_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(250);
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
+    let mut pending_numeric_prefix_deadline: Option<tokio::time::Instant> = None;
 
     while !state.should_quit() {
         if redraw_window_start.elapsed() >= std::time::Duration::from_secs(1) {
@@ -646,6 +648,14 @@ async fn run_dashboard(
                             });
                         }
                         if key.kind == KeyEventKind::Press {
+                            pending_numeric_prefix_deadline = state
+                                .pending_numeric_prefix()
+                                .and_then(|prefix| match prefix.action {
+                                    Some(PendingNumericPrefixAction::FocusPane(_)) => {
+                                        Some(tokio::time::Instant::now() + NUMERIC_PREFIX_DEBOUNCE)
+                                    }
+                                    None => None,
+                                });
                             save_display_options_if_needed(&mut state);
                             redraw_diagnostics.key_presses =
                                 redraw_diagnostics.key_presses.saturating_add(1);
@@ -831,14 +841,22 @@ async fn run_dashboard(
                 }
             }
             _ = async {
-                match pending_redraw_deadline {
-                    Some(deadline) => tokio::time::sleep_until(deadline).await,
-                    None => std::future::pending::<()>().await,
+                match (pending_redraw_deadline, pending_numeric_prefix_deadline) {
+                    (Some(redraw), Some(prefix)) => tokio::time::sleep_until(redraw.min(prefix)).await,
+                    (Some(deadline), None) | (None, Some(deadline)) => tokio::time::sleep_until(deadline).await,
+                    (None, None) => std::future::pending::<()>().await,
                 }
             } => {
-                pending_redraw_deadline = None;
-                redraw_diagnostics.redraw_timer_fires =
-                    redraw_diagnostics.redraw_timer_fires.saturating_add(1);
+                let now = tokio::time::Instant::now();
+                if pending_numeric_prefix_deadline.is_some_and(|deadline| deadline <= now) {
+                    state.execute_pending_numeric_prefix();
+                    pending_numeric_prefix_deadline = None;
+                }
+                if pending_redraw_deadline.is_some_and(|deadline| deadline <= now) {
+                    pending_redraw_deadline = None;
+                    redraw_diagnostics.redraw_timer_fires =
+                        redraw_diagnostics.redraw_timer_fires.saturating_add(1);
+                }
                 dirty = true;
             }
         }
