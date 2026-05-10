@@ -2,6 +2,7 @@ use crate::discord::AppCommand;
 use crate::discord::ids::{Id, marker::GuildMarker};
 
 use super::emoji::{custom_emoji_reaction_item, unicode_emoji_reaction_items};
+use super::fuzzy::fuzzy_text_score;
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
 use super::{
     DashboardState, EmojiReactionItem, EmojiReactionPickerState, ReactionUsersPopupState,
@@ -242,15 +243,6 @@ impl DashboardState {
     }
 }
 
-fn emoji_reaction_matches_filter(item: &EmojiReactionItem, filter: &str) -> bool {
-    if filter.is_empty() {
-        return true;
-    }
-
-    item.label.to_lowercase().contains(filter)
-        || item.emoji.status_label().to_lowercase().contains(filter)
-}
-
 fn filter_emoji_reaction_items(
     items: Vec<EmojiReactionItem>,
     filter: &str,
@@ -262,11 +254,30 @@ fn filter_emoji_reaction_items_from_slice(
     items: &[EmojiReactionItem],
     filter: &str,
 ) -> Vec<EmojiReactionItem> {
-    let filter = filter.to_lowercase();
+    let filter = filter.trim();
+    if filter.is_empty() {
+        return items.to_vec();
+    }
 
-    items
+    let mut scored: Vec<(usize, usize, EmojiReactionItem)> = items
         .iter()
-        .filter(|item| emoji_reaction_matches_filter(item, &filter))
-        .cloned()
-        .collect()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            emoji_reaction_filter_score(item, filter).map(|score| (score, index, item.clone()))
+        })
+        .collect();
+
+    scored.sort_by_key(|(score, index, _)| (*score, *index));
+    scored.into_iter().map(|(_, _, item)| item).collect()
+}
+
+fn emoji_reaction_filter_score(item: &EmojiReactionItem, filter: &str) -> Option<usize> {
+    let label_score = fuzzy_text_score(&item.label, filter);
+    let status_score = fuzzy_text_score(&item.emoji.status_label(), filter);
+    match (label_score, status_score) {
+        (Some(label), Some(status)) => Some(label.min(status)),
+        (Some(label), None) => Some(label),
+        (None, Some(status)) => Some(status),
+        (None, None) => None,
+    }
 }
