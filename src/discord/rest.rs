@@ -255,6 +255,39 @@ impl DiscordRest {
         Ok(())
     }
 
+    pub async fn ack_channels(
+        &self,
+        targets: &[(Id<ChannelMarker>, Id<MessageMarker>)],
+    ) -> Result<()> {
+        if targets.is_empty() {
+            return Ok(());
+        }
+
+        let read_states: Vec<_> = targets
+            .iter()
+            .map(|(channel_id, message_id)| {
+                json!({
+                    "read_state_type": 0,
+                    "channel_id": channel_id.get().to_string(),
+                    "message_id": message_id.get().to_string(),
+                })
+            })
+            .collect();
+
+        self.raw_http
+            .post("https://discord.com/api/v9/read-states/ack-bulk")
+            .header(AUTHORIZATION, &self.token)
+            .json(&json!({ "read_states": read_states }))
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("ack channels request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| AppError::DiscordRequest(format!("ack channels failed: {error}")))?;
+        Ok(())
+    }
+
     pub async fn load_message_history(
         &self,
         channel_id: Id<ChannelMarker>,
@@ -640,13 +673,17 @@ impl DiscordRest {
         &self,
         user_id: Id<UserMarker>,
         guild_id: Option<Id<GuildMarker>>,
+        is_self: bool,
     ) -> Result<UserProfileInfo> {
         let mut url = format!(
-            "https://discord.com/api/v9/users/{}/profile?with_mutual_guilds=true&with_mutual_friends_count=true",
-            user_id.get()
+            "https://discord.com/api/v9/users/{}/profile?",
+            user_id.get(),
         );
+        if !is_self {
+            url.push_str("with_mutual_guilds=true&with_mutual_friends_count=true&");
+        }
         if let Some(guild_id) = guild_id {
-            url.push_str(&format!("&guild_id={}", guild_id.get()));
+            url.push_str(&format!("guild_id={}", guild_id.get()));
         }
         let response = self
             .raw_http

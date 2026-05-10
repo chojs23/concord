@@ -1,5 +1,6 @@
 use super::message_list::render_image_preview;
 use super::*;
+use crate::tui::state::MuteActionDurationItem;
 use ratatui::layout::Position;
 
 const LEADER_POPUP_WIDTH: u16 = 74;
@@ -121,6 +122,16 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .collect();
     }
     if state.is_guild_action_menu_open() {
+        if state.is_guild_action_mute_duration_phase() {
+            return state
+                .selected_guild_mute_duration_items()
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    leader_shortcut_line(indexed_shortcut(index).unwrap_or(' '), item.label, true)
+                })
+                .collect();
+        }
         let actions = state.selected_guild_action_items();
         return actions
             .iter()
@@ -145,6 +156,16 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .collect();
     }
     if state.is_channel_action_menu_open() {
+        if state.is_channel_action_mute_duration_phase() {
+            return state
+                .selected_channel_mute_duration_items()
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    leader_shortcut_line(indexed_shortcut(index).unwrap_or(' '), item.label, true)
+                })
+                .collect();
+        }
         let actions = state.selected_channel_action_items();
         return actions
             .iter()
@@ -653,11 +674,12 @@ pub(super) fn options_popup_lines(
         })
         .map(|line| truncate_line_to_display_width(line, width))
         .collect();
+    let footer = format!(
+        "Enter/Space toggle or cycle · j/k move · Esc close · saved to {}",
+        crate::config::config_path_display()
+    );
     lines.push(truncate_line_to_display_width(
-        Line::from(Span::styled(
-            "Enter/Space toggle or cycle · j/k move · Esc close · saved to ~/.concord/config.toml",
-            Style::default().fg(DIM),
-        )),
+        Line::from(Span::styled(footer, Style::default().fg(DIM))),
         width,
     ));
     lines
@@ -672,15 +694,31 @@ pub(super) fn render_guild_action_menu(frame: &mut Frame, area: Rect, state: &Da
         return;
     }
     let selected = state.selected_guild_action_index().unwrap_or(0);
-    let title = state
-        .guild_action_menu_title()
-        .map(|name| format!("Server actions — {name}"))
-        .unwrap_or_else(|| "Server actions".to_owned());
-    let popup = centered_rect(area, 48, (actions.len() as u16).saturating_add(4));
+    let is_duration_phase = state.is_guild_action_mute_duration_phase();
+    let title = state.guild_action_menu_title();
+    let row_count = if is_duration_phase {
+        state.selected_guild_mute_duration_items().len()
+    } else {
+        actions.len()
+    };
+    let popup = centered_rect(area, 48, (row_count as u16).saturating_add(4));
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(guild_action_menu_lines(&actions, selected))
-            .block(panel_block_owned(title, true))
+        Paragraph::new(if is_duration_phase {
+            mute_duration_menu_lines(state.selected_guild_mute_duration_items(), selected)
+        } else {
+            guild_action_menu_lines(&actions, selected)
+        })
+            .block(panel_block_owned(
+                if is_duration_phase {
+                    format!("Mute server for… — {}", title.unwrap_or_default())
+                } else {
+                    title
+                        .map(|name| format!("Server actions — {name}"))
+                        .unwrap_or_else(|| "Server actions".to_owned())
+                },
+                true,
+            ))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -711,17 +749,31 @@ pub(super) fn render_channel_action_menu(frame: &mut Frame, area: Rect, state: &
         return;
     }
 
+    let is_duration_phase = state.is_channel_action_mute_duration_phase();
     let actions = state.selected_channel_action_items();
-    if actions.is_empty() {
+    if actions.is_empty() && !is_duration_phase {
         return;
     }
     let selected = state.selected_channel_action_index().unwrap_or(0);
-    let popup = centered_rect(area, 54, (actions.len() as u16).saturating_add(4));
+    let row_count = if is_duration_phase {
+        state.selected_channel_mute_duration_items().len()
+    } else {
+        actions.len()
+    };
+    let popup = centered_rect(area, 54, (row_count as u16).saturating_add(4));
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(channel_action_menu_lines(&actions, selected))
+        Paragraph::new(if is_duration_phase {
+            mute_duration_menu_lines(state.selected_channel_mute_duration_items(), selected)
+        } else {
+            channel_action_menu_lines(&actions, selected)
+        })
             .block(panel_block_owned(
-                format!("Channel actions{title_suffix}"),
+                if is_duration_phase {
+                    format!("Mute channel for…{title_suffix}")
+                } else {
+                    format!("Channel actions{title_suffix}")
+                },
                 true,
             ))
             .wrap(Wrap { trim: false }),
@@ -739,33 +791,39 @@ pub(super) fn render_emoji_reaction_picker(
         return;
     }
 
-    let reactions = state.emoji_reaction_items();
-    if reactions.is_empty() {
+    let reactions = state.filtered_emoji_reaction_items_slice().unwrap_or(&[]);
+    if reactions.is_empty() && !state.is_filtering_emoji_reactions() {
         return;
     }
+    let filter = state.emoji_reaction_filter();
 
-    let selected = state.selected_emoji_reaction_index().unwrap_or(0);
+    let selected = state
+        .selected_emoji_reaction_index_for_len(reactions.len())
+        .unwrap_or(0);
     let desired_visible_items = reactions
         .len()
         .clamp(1, super::super::selection::MAX_EMOJI_REACTION_VISIBLE_ITEMS);
-    let popup = centered_rect(area, 42, (desired_visible_items as u16).saturating_add(4));
+    let popup = centered_rect(area, 42, (desired_visible_items as u16).saturating_add(5));
     let ready_urls = emoji_images
         .iter()
         .map(|image| image.url.clone())
         .collect::<Vec<_>>();
     let block = panel_block("Choose reaction", true);
     let content = block.inner(popup);
-    let visible_items = usize::from(content.height.saturating_sub(1)).min(desired_visible_items);
+    let footer_lines = if filter.is_some() { 2 } else { 1 };
+    let visible_items =
+        usize::from(content.height.saturating_sub(footer_lines)).min(desired_visible_items);
     let visible_range =
         super::super::selection::visible_item_range(reactions.len(), selected, visible_items);
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(emoji_reaction_picker_lines_with_custom_emoji_images(
-            &reactions,
+            reactions,
             selected,
             visible_items,
             &ready_urls,
             state.show_custom_emoji(),
+            filter,
         ))
         .block(block)
         .wrap(Wrap { trim: false }),
@@ -775,7 +833,7 @@ pub(super) fn render_emoji_reaction_picker(
         render_emoji_reaction_images(
             frame,
             content,
-            &reactions,
+            reactions,
             selected,
             visible_items,
             emoji_images,
@@ -864,6 +922,36 @@ pub(super) fn guild_action_menu_lines(
         .collect();
     lines.push(Line::from(Span::styled(
         "Shortcut/Enter select · Esc close",
+        Style::default().fg(DIM),
+    )));
+    lines
+}
+
+fn mute_duration_menu_lines(
+    actions: &[MuteActionDurationItem],
+    selected: usize,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| {
+            let marker = if index == selected { "› " } else { "  " };
+            let shortcut = shortcut_prefix(indexed_shortcut(index));
+            let mut style = Style::default();
+            if index == selected {
+                style = style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            Line::from(vec![
+                Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(shortcut, Style::default().fg(DIM)),
+                Span::styled(action.label, style),
+            ])
+        })
+        .collect();
+    lines.push(Line::from(Span::styled(
+        "Shortcut/Enter select · Esc back",
         Style::default().fg(DIM),
     )));
     lines
@@ -1066,6 +1154,8 @@ pub(super) fn user_profile_popup_text(
     status: PresenceStatus,
     activities: &[ActivityInfo],
 ) -> UserProfilePopupText {
+    let is_self = state.current_user_id() == Some(profile.user_id);
+
     let inner_width = usize::from(width.max(8));
     let mut lines: Vec<Line<'static>> = Vec::new();
 
@@ -1086,13 +1176,15 @@ pub(super) fn user_profile_popup_text(
         )));
     }
 
-    let (badge_label, badge_color) = friend_status_badge(profile.friend_status);
-    lines.push(Line::from(Span::styled(
-        badge_label,
-        Style::default()
-            .fg(badge_color)
-            .add_modifier(Modifier::BOLD),
-    )));
+    if !is_self {
+        let (badge_label, badge_color) = friend_status_badge(profile.friend_status);
+        lines.push(Line::from(Span::styled(
+            badge_label,
+            Style::default()
+                .fg(badge_color)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
 
     if !activities.is_empty() {
         lines.push(Line::from(Span::raw(String::new())));
@@ -1126,47 +1218,52 @@ pub(super) fn user_profile_popup_text(
         inner_width,
     );
 
-    lines.push(Line::from(Span::raw(String::new())));
-    push_section_header(
-        &mut lines,
-        &format!("MUTUAL SERVERS ({})", profile.mutual_guilds.len()),
-    );
-    if profile.mutual_guilds.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "  (none)".to_owned(),
-            Style::default().fg(DIM),
-        )));
-    } else {
-        for entry in &profile.mutual_guilds {
-            let name = state
-                .guild_name(entry.guild_id)
-                .map(str::to_owned)
-                .unwrap_or_else(|| format!("guild-{}", entry.guild_id.get()));
-            let body = match entry.nick.as_deref() {
-                Some(nick) => format!("• {name} — {nick}"),
-                None => format!("• {name}"),
-            };
-            lines.push(Line::from(vec![
-                Span::styled("  ".to_owned(), Style::default().fg(ACCENT)),
-                Span::styled(
-                    truncate_display_width(&body, inner_width.saturating_sub(2)),
-                    Style::default(),
-                ),
-            ]));
+    if !is_self {
+        lines.push(Line::from(Span::raw(String::new())));
+        push_section_header(
+            &mut lines,
+            &format!("MUTUAL SERVERS ({})", profile.mutual_guilds.len()),
+        );
+        if profile.mutual_guilds.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  (none)".to_owned(),
+                Style::default().fg(DIM),
+            )));
+        } else {
+            for entry in &profile.mutual_guilds {
+                let name = state
+                    .guild_name(entry.guild_id)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("guild-{}", entry.guild_id.get()));
+                let body = match entry.nick.as_deref() {
+                    Some(nick) => format!("• {name} — {nick}"),
+                    None => format!("• {name}"),
+                };
+                lines.push(Line::from(vec![
+                    Span::styled("  ".to_owned(), Style::default().fg(ACCENT)),
+                    Span::styled(
+                        truncate_display_width(&body, inner_width.saturating_sub(2)),
+                        Style::default(),
+                    ),
+                ]));
+            }
         }
     }
 
-    lines.push(Line::from(Span::raw(String::new())));
-    push_section_header(
-        &mut lines,
-        &format!("MUTUAL FRIENDS ({})", profile.mutual_friends_count),
-    );
+    if !is_self {
+        lines.push(Line::from(Span::raw(String::new())));
+        push_section_header(
+            &mut lines,
+            &format!("MUTUAL FRIENDS ({})", profile.mutual_friends_count),
+        );
+    }
 
     lines.push(Line::from(Span::raw(String::new())));
     lines.push(Line::from(Span::styled(
         "j/k scroll · Esc close",
         Style::default().fg(DIM),
     )));
+
     UserProfilePopupText { lines }
 }
 
@@ -1679,6 +1776,25 @@ pub(super) fn emoji_reaction_picker_lines(
         max_visible_items,
         thumbnail_urls,
         true,
+        None,
+    )
+}
+
+#[cfg(test)]
+pub(super) fn filtered_emoji_reaction_picker_lines(
+    reactions: &[EmojiReactionItem],
+    selected: usize,
+    max_visible_items: usize,
+    thumbnail_urls: &[String],
+    filter: &str,
+) -> Vec<Line<'static>> {
+    emoji_reaction_picker_lines_with_custom_emoji_images(
+        reactions,
+        selected,
+        max_visible_items,
+        thumbnail_urls,
+        true,
+        Some(filter),
     )
 }
 
@@ -1688,6 +1804,7 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
     max_visible_items: usize,
     thumbnail_urls: &[String],
     show_custom_emoji: bool,
+    filter: Option<&str>,
 ) -> Vec<Line<'static>> {
     let selected = selected.min(reactions.len().saturating_sub(1));
     let visible_items = max_visible_items.max(1).min(reactions.len().max(1));
@@ -1721,10 +1838,27 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
             ])
         })
         .collect();
+
+    if reactions.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  no matching reactions",
+            Style::default().fg(DIM),
+        )));
+    }
+
     lines.push(Line::from(Span::styled(
-        "Shortcut/Enter/Space react · Esc close",
+        "Shortcut/Enter/Space react · / filter · Esc close",
         Style::default().fg(DIM),
     )));
+    if let Some(filter) = filter {
+        lines.push(Line::from(vec![
+            Span::styled("Filter ", Style::default().fg(DIM)),
+            Span::styled(
+                format!("/{filter}"),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
     lines
 }
 

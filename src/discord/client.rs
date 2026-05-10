@@ -238,6 +238,13 @@ impl DiscordClient {
             .await
     }
 
+    pub async fn ack_channels(
+        &self,
+        targets: &[(Id<ChannelMarker>, Id<MessageMarker>)],
+    ) -> Result<()> {
+        self.rest.ack_channels(targets).await
+    }
+
     pub async fn load_message_history(
         &self,
         channel_id: Id<ChannelMarker>,
@@ -325,8 +332,11 @@ impl DiscordClient {
         &self,
         user_id: Id<UserMarker>,
         guild_id: Option<Id<GuildMarker>>,
+        is_self: bool,
     ) -> Result<UserProfileInfo> {
-        self.rest.load_user_profile(user_id, guild_id).await
+        self.rest
+            .load_user_profile(user_id, guild_id, is_self)
+            .await
     }
 }
 

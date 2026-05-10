@@ -85,9 +85,12 @@ fn render_token_input(frame: &mut Frame, state: &LoginState) {
     let masked = mask_chars(&state.token_input);
 
     let persistence_text = if state.notice.is_some() {
-        "Paste your token below. It will be used for this session."
+        "Paste your token below. It will be used for this session.".to_owned()
     } else {
-        "Paste your token below. It will be saved to ~/.concord/credential."
+        format!(
+            "Paste your token below. It will be saved to {}.",
+            crate::token_store::credential_path_display()
+        )
     };
 
     let mut lines = vec![

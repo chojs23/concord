@@ -178,6 +178,18 @@ impl DashboardState {
         self.refresh_active_mention_query();
     }
 
+    pub fn move_composer_cursor_word_left(&mut self) {
+        let cursor = self.composer_cursor_byte_index();
+        self.composer_cursor_byte_index = previous_word_boundary(&self.composer_input, cursor);
+        self.refresh_active_mention_query();
+    }
+
+    pub fn move_composer_cursor_word_right(&mut self) {
+        let cursor = self.composer_cursor_byte_index();
+        self.composer_cursor_byte_index = next_word_boundary(&self.composer_input, cursor);
+        self.refresh_active_mention_query();
+    }
+
     pub fn move_composer_cursor_home(&mut self) {
         self.composer_cursor_byte_index = 0;
         self.refresh_active_mention_query();
@@ -436,10 +448,108 @@ fn next_char_boundary(input: &str, index: usize) -> usize {
     next.min(input.len())
 }
 
+fn previous_word_boundary(input: &str, index: usize) -> usize {
+    let index = clamp_cursor_index(input, index);
+    let mut prefix = input[..index].char_indices().rev().peekable();
+    while matches!(prefix.peek(), Some((_, c)) if c.is_whitespace()) {
+        prefix.next();
+    }
+    let mut word_start = None;
+    while let Some(&(byte_idx, c)) = prefix.peek() {
+        if c.is_whitespace() {
+            break;
+        }
+        word_start = Some(byte_idx);
+        prefix.next();
+    }
+    word_start.unwrap_or(0)
+}
+
+fn next_word_boundary(input: &str, index: usize) -> usize {
+    let index = clamp_cursor_index(input, index);
+    let mut suffix = input[index..].char_indices().peekable();
+    while matches!(suffix.peek(), Some((_, c)) if !c.is_whitespace()) {
+        suffix.next();
+    }
+    while matches!(suffix.peek(), Some((_, c)) if c.is_whitespace()) {
+        suffix.next();
+    }
+    match suffix.peek() {
+        Some(&(rel, _)) => index + rel,
+        None => input.len(),
+    }
+}
+
 fn shift_byte_index(index: usize, delta: isize) -> usize {
     if delta < 0 {
         index.saturating_sub(delta.unsigned_abs())
     } else {
         index.saturating_add(delta as usize)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{next_word_boundary, previous_word_boundary};
+
+    #[derive(Clone, Copy)]
+    enum Dir {
+        Left,
+        Right,
+    }
+
+    fn step(dir: Dir, before: &str) -> String {
+        let idx = before
+            .find('|')
+            .expect("fixture must mark the cursor with `|`");
+        let mut input = String::with_capacity(before.len() - 1);
+        input.push_str(&before[..idx]);
+        input.push_str(&before[idx + 1..]);
+        let next = match dir {
+            Dir::Left => previous_word_boundary(&input, idx),
+            Dir::Right => next_word_boundary(&input, idx),
+        };
+        let mut out = input.clone();
+        out.insert(next, '|');
+        out
+    }
+
+    #[test]
+    fn word_skip_lands_on_word_starts() {
+        let cases: &[(Dir, &str, &str)] = &[
+            (Dir::Left, "hello world|", "hello |world"),
+            (Dir::Left, "hello |world", "|hello world"),
+            (Dir::Right, "|hello world", "hello |world"),
+            (Dir::Right, "hello |world", "hello world|"),
+            (Dir::Left, "   foo|", "   |foo"),
+            (Dir::Left, "|hello", "|hello"),
+            (Dir::Left, "   |", "|   "),
+            (Dir::Right, "hello|", "hello|"),
+            (Dir::Right, "|   ", "   |"),
+            (Dir::Right, "hello|   world", "hello   |world"),
+            (Dir::Right, "hello   |world", "hello   world|"),
+            (Dir::Left, "안녕 하세요|", "안녕 |하세요"),
+            (Dir::Left, "안녕 |하세요", "|안녕 하세요"),
+            (Dir::Right, "|안녕 하세요", "안녕 |하세요"),
+            (Dir::Right, "안녕 |하세요", "안녕 하세요|"),
+            (Dir::Right, "|a 🦀 b", "a |🦀 b"),
+            (Dir::Right, "a |🦀 b", "a 🦀 |b"),
+            (Dir::Left, "a 🦀 b|", "a 🦀 |b"),
+            (Dir::Left, "a 🦀 |b", "a |🦀 b"),
+            (Dir::Left, "|", "|"),
+            (Dir::Right, "|", "|"),
+        ];
+
+        for (dir, before, expected) in cases {
+            let arrow = match dir {
+                Dir::Left => "Ctrl+Left",
+                Dir::Right => "Ctrl+Right",
+            };
+            assert_eq!(
+                step(*dir, before),
+                *expected,
+                "{arrow} on {before:?} should land at {expected:?}",
+            );
+        }
     }
 }

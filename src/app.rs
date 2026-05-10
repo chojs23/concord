@@ -1,5 +1,5 @@
 use std::{
-    env, fs,
+    fs,
     io::{self, Write},
     path::{Path, PathBuf},
     process::Command,
@@ -19,7 +19,8 @@ use crate::{
     DiscordClient, Result,
     discord::{
         AppCommand, AppEvent, AttachmentUpdate, ChannelNotificationOverrideInfo,
-        GuildNotificationSettingsInfo, MessageInfo, ReactionUsersInfo, validate_token_header,
+        GuildNotificationSettingsInfo, MessageInfo, MuteDuration, ReactionUsersInfo,
+        validate_token_header,
     },
     error::AppError,
     logging, token_store, tui, version_check,
@@ -703,7 +704,9 @@ fn start_command_loop(
                         }
                     },
                     AppCommand::LoadUserProfile { user_id, guild_id } => {
-                        match client.load_user_profile(user_id, guild_id).await {
+                        let is_self = client.current_discord_snapshot().state.current_user_id()
+                            == Some(user_id);
+                        match client.load_user_profile(user_id, guild_id, is_self).await {
                             Ok(profile) => {
                                 client
                                     .publish_event(AppEvent::UserProfileLoaded {
@@ -738,10 +741,10 @@ fn start_command_loop(
                     AppCommand::SetGuildMuted {
                         guild_id,
                         muted,
-                        hours,
+                        duration,
                         label,
                     } => {
-                        let mute_end_time = mute_end_time_from_hours(hours, muted);
+                        let mute_end_time = mute_end_time_from_duration(duration, muted);
                         match client.set_guild_muted(guild_id, muted, mute_end_time).await {
                             Ok(()) => {
                                 client
@@ -760,7 +763,7 @@ fn start_command_loop(
                                         message: if muted {
                                             format!(
                                                 "muted server {label}{}",
-                                                mute_status_suffix(hours)
+                                                mute_status_suffix(duration)
                                             )
                                         } else {
                                             format!("unmuted server {label}")
@@ -782,10 +785,10 @@ fn start_command_loop(
                         guild_id,
                         channel_id,
                         muted,
-                        hours,
+                        duration,
                         label,
                     } => {
-                        let mute_end_time = mute_end_time_from_hours(hours, muted);
+                        let mute_end_time = mute_end_time_from_duration(duration, muted);
                         match client
                             .set_channel_muted(guild_id, channel_id, muted, mute_end_time)
                             .await
@@ -807,7 +810,7 @@ fn start_command_loop(
                                         message: if muted {
                                             format!(
                                                 "muted channel {label}{}",
-                                                mute_status_suffix(hours)
+                                                mute_status_suffix(duration)
                                             )
                                         } else {
                                             format!("unmuted channel {label}")
@@ -825,6 +828,14 @@ fn start_command_loop(
                             }
                         }
                     }
+                    AppCommand::AckChannels { targets } => {
+                        // Fire-and-forget: the TUI already cleared its local
+                        // unread state, a failure here only loses the cross-
+                        // client sync.
+                        if let Err(error) = client.ack_channels(&targets).await {
+                            log_app_error("ack channels failed", &error);
+                        }
+                    }
                 }
             });
         }
@@ -838,20 +849,29 @@ fn log_app_error(context: &str, error: &AppError) {
     );
 }
 
-fn mute_end_time_from_hours(hours: Option<u64>, muted: bool) -> Option<chrono::DateTime<Utc>> {
+fn mute_end_time_from_duration(
+    duration: Option<MuteDuration>,
+    muted: bool,
+) -> Option<chrono::DateTime<Utc>> {
     if !muted {
         return None;
     }
-    hours
-        .filter(|hours| *hours > 0)
-        .and_then(|hours| i64::try_from(hours).ok())
-        .map(|hours| Utc::now() + ChronoDuration::hours(hours))
+    duration
+        .and_then(MuteDuration::minutes)
+        .filter(|minutes| *minutes > 0)
+        .and_then(|minutes| i64::try_from(minutes).ok())
+        .map(|minutes| Utc::now() + ChronoDuration::minutes(minutes))
 }
 
-fn mute_status_suffix(hours: Option<u64>) -> String {
-    match hours.filter(|hours| *hours > 0) {
-        Some(hours) => format!(" for {hours}h"),
-        None => String::new(),
+fn mute_status_suffix(duration: Option<MuteDuration>) -> String {
+    match duration {
+        Some(MuteDuration::Minutes(15)) => " for 15m".to_owned(),
+        Some(MuteDuration::Minutes(60)) => " for 1h".to_owned(),
+        Some(MuteDuration::Minutes(minutes)) if minutes % 60 == 0 => {
+            format!(" for {}h", minutes / 60)
+        }
+        Some(MuteDuration::Minutes(minutes)) => format!(" for {minutes}m"),
+        Some(MuteDuration::Permanent) | None => String::new(),
     }
 }
 
@@ -1020,8 +1040,8 @@ async fn fetch_limited_bytes(
 }
 
 fn downloads_directory() -> std::result::Result<PathBuf, String> {
-    let home = env::var_os("HOME").ok_or_else(|| "HOME is not set".to_owned())?;
-    Ok(PathBuf::from(home).join("Downloads"))
+    crate::paths::download_dir()
+        .ok_or_else(|| "could not resolve user download directory".to_owned())
 }
 
 fn sanitize_filename(filename: &str) -> String {

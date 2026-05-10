@@ -324,34 +324,26 @@ fn number_keys_show_hidden_panes_before_focusing() {
 }
 
 #[test]
-fn number_then_m_mutes_for_hours_instead_of_switching_panes() {
+fn bare_m_no_longer_mutes_focused_channel() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
     handle_key(&mut state, key(KeyCode::Down));
 
-    handle_key(&mut state, char_key('2'));
     let command = handle_key(&mut state, char_key('m'));
 
-    assert_eq!(state.focus(), FocusPane::Channels);
-    assert_eq!(
-        command,
-        Some(AppCommand::SetChannelMuted {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(11),
-            muted: true,
-            hours: Some(2),
-            label: "#general".to_owned(),
-        })
-    );
+    assert_eq!(command, None);
 }
 
 #[test]
-fn bare_m_mutes_focused_channel_permanently() {
+fn leader_channel_actions_offer_mute_duration_and_submit_command() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
     handle_key(&mut state, key(KeyCode::Down));
 
-    let command = handle_key(&mut state, char_key('m'));
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+    handle_key(&mut state, char_key('u'));
+    let command = handle_key(&mut state, char_key('1'));
 
     assert_eq!(
         command,
@@ -359,14 +351,14 @@ fn bare_m_mutes_focused_channel_permanently() {
             guild_id: Some(Id::new(1)),
             channel_id: Id::new(11),
             muted: true,
-            hours: None,
+            duration: Some(crate::discord::MuteDuration::Minutes(15)),
             label: "#general".to_owned(),
         })
     );
 }
 
 #[test]
-fn bare_m_unmutes_focused_channel_when_already_muted() {
+fn leader_channel_actions_unmute_when_already_muted() {
     let mut state = state_with_channel_tree();
     state.push_event(AppEvent::UserGuildNotificationSettingsInit {
         settings: vec![GuildNotificationSettingsInfo {
@@ -387,7 +379,9 @@ fn bare_m_unmutes_focused_channel_when_already_muted() {
     state.focus_pane(FocusPane::Channels);
     handle_key(&mut state, key(KeyCode::Down));
 
-    let command = handle_key(&mut state, char_key('m'));
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+    let command = handle_key(&mut state, char_key('u'));
 
     assert_eq!(
         command,
@@ -395,14 +389,14 @@ fn bare_m_unmutes_focused_channel_when_already_muted() {
             guild_id: Some(Id::new(1)),
             channel_id: Id::new(11),
             muted: false,
-            hours: None,
+            duration: None,
             label: "#general".to_owned(),
         })
     );
 }
 
 #[test]
-fn bare_m_unmutes_highlighted_server_when_already_muted() {
+fn leader_server_actions_unmute_when_already_muted() {
     let mut state = state_with_channel_tree();
     state.push_event(AppEvent::UserGuildNotificationSettingsInit {
         settings: vec![GuildNotificationSettingsInfo {
@@ -417,14 +411,16 @@ fn bare_m_unmutes_highlighted_server_when_already_muted() {
     });
     state.focus_pane(FocusPane::Guilds);
 
-    let command = handle_key(&mut state, char_key('m'));
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+    let command = handle_key(&mut state, char_key('u'));
 
     assert_eq!(
         command,
         Some(AppCommand::SetGuildMuted {
             guild_id: Id::new(1),
             muted: false,
-            hours: None,
+            duration: None,
             label: "guild".to_owned(),
         })
     );
@@ -2029,6 +2025,30 @@ fn emoji_picker_selection_returns_reaction_command() {
 }
 
 #[test]
+fn emoji_picker_selection_removes_existing_own_reaction() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    state.push_event(AppEvent::CurrentUserReactionAdd {
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        emoji: ReactionEmoji::Unicode("👍".to_owned()),
+    });
+    open_emoji_picker(&mut state);
+
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::RemoveReaction {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        })
+    );
+    assert!(!state.is_emoji_reaction_picker_open());
+}
+
+#[test]
 fn emoji_picker_number_shortcut_selects_reaction() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
@@ -2045,6 +2065,55 @@ fn emoji_picker_number_shortcut_selects_reaction() {
         })
     );
     assert!(!state.is_emoji_reaction_picker_open());
+}
+
+#[test]
+fn emoji_picker_slash_filter_matches_name_and_implementation_case_insensitively() {
+    let mut state = state_with_custom_emoji_message();
+    state.focus_pane(FocusPane::Messages);
+    open_emoji_picker(&mut state);
+
+    handle_key(&mut state, char_key('/'));
+    handle_key(&mut state, char_key('T'));
+    handle_key(&mut state, char_key('s'));
+
+    assert_eq!(state.emoji_reaction_filter(), Some("Ts"));
+    assert_eq!(
+        state.selected_emoji_reaction().map(|item| item.emoji),
+        Some(ReactionEmoji::Custom {
+            id: Id::new(51),
+            name: Some("this".to_owned()),
+            animated: false,
+        })
+    );
+
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::AddReaction {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: ReactionEmoji::Custom {
+                id: Id::new(51),
+                name: Some("this".to_owned()),
+                animated: false,
+            },
+        })
+    );
+}
+
+#[test]
+fn emoji_picker_filter_treats_vim_keys_as_text() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    open_emoji_picker(&mut state);
+
+    handle_key(&mut state, char_key('/'));
+    handle_key(&mut state, char_key('j'));
+
+    assert_eq!(state.emoji_reaction_filter(), Some("j"));
+    assert_eq!(state.selected_emoji_reaction(), None);
 }
 
 #[test]
@@ -2097,6 +2166,18 @@ fn emoji_picker_vim_and_arrow_keys_move_selection() {
     );
 
     handle_key(&mut state, key(KeyCode::Up));
+    assert_eq!(
+        state.selected_emoji_reaction().map(|item| item.emoji),
+        Some(ReactionEmoji::Unicode("👍".to_owned()))
+    );
+
+    handle_key(&mut state, ctrl_key('n'));
+    assert_eq!(
+        state.selected_emoji_reaction().map(|item| item.emoji),
+        Some(ReactionEmoji::Unicode("❤️".to_owned()))
+    );
+
+    handle_key(&mut state, ctrl_key('p'));
     assert_eq!(
         state.selected_emoji_reaction().map(|item| item.emoji),
         Some(ReactionEmoji::Unicode("👍".to_owned()))
@@ -2638,12 +2719,20 @@ fn state_with_custom_emoji_message() -> DashboardState {
         members: Vec::new(),
         presences: Vec::new(),
         roles: Vec::new(),
-        emojis: vec![CustomEmojiInfo {
-            id: Id::new(50),
-            name: "party".to_owned(),
-            animated: false,
-            available: true,
-        }],
+        emojis: vec![
+            CustomEmojiInfo {
+                id: Id::new(50),
+                name: "party".to_owned(),
+                animated: false,
+                available: true,
+            },
+            CustomEmojiInfo {
+                id: Id::new(51),
+                name: "this".to_owned(),
+                animated: false,
+                available: true,
+            },
+        ],
         owner_id: None,
     });
     state.confirm_selected_guild();

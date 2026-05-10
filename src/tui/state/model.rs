@@ -4,7 +4,8 @@ use crate::discord::ids::{
 };
 
 use crate::discord::{
-    ChannelState, ChannelUnreadState, GuildFolder, GuildState, ReactionEmoji, ReactionInfo,
+    ChannelState, ChannelUnreadState, GuildFolder, GuildState, MuteDuration, ReactionEmoji,
+    ReactionInfo,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,6 +99,7 @@ pub enum ChannelActionKind {
     LoadPinnedMessages,
     ShowThreads,
     MarkAsRead,
+    ToggleMute,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -113,6 +115,7 @@ impl ChannelActionKind {
             ChannelActionKind::LoadPinnedMessages => 'p',
             ChannelActionKind::ShowThreads => 't',
             ChannelActionKind::MarkAsRead => 'm',
+            ChannelActionKind::ToggleMute => 'u',
         }
     }
 }
@@ -131,6 +134,8 @@ pub fn channel_action_shortcut(actions: &[ChannelActionItem], index: usize) -> O
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GuildActionKind {
     NoActionsYet,
+    MarkAsRead,
+    ToggleMute,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,10 +146,55 @@ pub struct GuildActionItem {
 }
 
 pub fn guild_action_shortcut(actions: &[GuildActionItem], index: usize) -> Option<char> {
-    actions
-        .get(index)
-        .and_then(|action| action.enabled.then_some('s'))
+    let action = actions.get(index)?;
+    let preferred = match action.kind {
+        GuildActionKind::MarkAsRead => Some('m'),
+        GuildActionKind::ToggleMute => Some('u'),
+        GuildActionKind::NoActionsYet => None,
+    }?;
+    unique_preferred_shortcut(
+        Some(preferred),
+        actions.iter().map(|item| match item.kind {
+            GuildActionKind::MarkAsRead => Some('m'),
+            GuildActionKind::ToggleMute => Some('u'),
+            GuildActionKind::NoActionsYet => None,
+        }),
+    )
+    .or_else(|| indexed_shortcut(index))
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MuteActionDurationItem {
+    pub label: &'static str,
+    pub duration: MuteDuration,
+}
+
+pub const MUTE_ACTION_DURATIONS: [MuteActionDurationItem; 6] = [
+    MuteActionDurationItem {
+        label: "15 minutes",
+        duration: MuteDuration::Minutes(15),
+    },
+    MuteActionDurationItem {
+        label: "1 hour",
+        duration: MuteDuration::Minutes(60),
+    },
+    MuteActionDurationItem {
+        label: "3 hours",
+        duration: MuteDuration::Minutes(180),
+    },
+    MuteActionDurationItem {
+        label: "8 hours",
+        duration: MuteDuration::Minutes(480),
+    },
+    MuteActionDurationItem {
+        label: "24 hours",
+        duration: MuteDuration::Minutes(1_440),
+    },
+    MuteActionDurationItem {
+        label: "Permanently",
+        duration: MuteDuration::Permanent,
+    },
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MemberActionKind {

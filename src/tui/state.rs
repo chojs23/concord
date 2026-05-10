@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    time::{Duration, Instant},
+};
 
 use crate::discord::ids::{
     Id,
@@ -8,7 +11,8 @@ use crate::discord::ids::{
 use crate::config::DisplayOptions;
 use crate::discord::{
     AppCommand, AppEvent, ChannelUnreadState, DiscordState, ForumPostArchiveState, MentionInfo,
-    MessageAttachmentUpload, MessageInfo, MessageSnapshotInfo, MessageState, PresenceStatus,
+    MessageAttachmentUpload, MessageInfo, MessageSnapshotInfo, MessageState, MuteDuration,
+    PresenceStatus,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -58,7 +62,8 @@ pub use member_grouping::{MemberEntry, MemberGroup};
 pub use model::{
     ChannelActionItem, ChannelPaneEntry, ChannelSwitcherItem, ChannelThreadItem, EmojiReactionItem,
     FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, ImageViewerItem,
-    MemberActionItem, MessageActionItem, MessageActionKind, PollVotePickerItem,
+    MemberActionItem, MessageActionItem, MessageActionKind,
+    MuteActionDurationItem, PollVotePickerItem,
     ThreadMessagePreview, ThreadSummary, channel_action_shortcut, guild_action_shortcut,
     indexed_shortcut, member_action_shortcut, message_action_shortcut,
 };
@@ -80,6 +85,14 @@ enum OlderHistoryRequestState {
 pub struct UnreadBanner {
     pub since_message_id: Id<MessageMarker>,
     pub unread_count: usize,
+}
+
+const READ_ACK_DEBOUNCE: Duration = Duration::from_millis(1000);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingReadAck {
+    message_id: Id<MessageMarker>,
+    deadline: Instant,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -239,6 +252,7 @@ pub struct DashboardState {
     collapsed_folders: HashSet<FolderKey>,
     collapsed_channel_categories: HashSet<Id<ChannelMarker>>,
     pending_numeric_prefix: Option<PendingNumericPrefix>,
+    pending_read_acks: HashMap<Id<ChannelMarker>, PendingReadAck>,
     pending_commands: VecDeque<AppCommand>,
 }
 
@@ -360,7 +374,34 @@ impl DashboardState {
             collapsed_folders: HashSet::new(),
             collapsed_channel_categories: HashSet::new(),
             pending_numeric_prefix: None,
+            pending_read_acks: HashMap::new(),
             pending_commands: VecDeque::new(),
+        }
+    }
+
+    pub fn next_read_ack_deadline(&self) -> Option<Instant> {
+        self.pending_read_acks
+            .values()
+            .map(|pending| pending.deadline)
+            .min()
+    }
+
+    pub fn flush_due_read_acks(&mut self, now: Instant) {
+        let mut due = Vec::new();
+        self.pending_read_acks.retain(|channel_id, pending| {
+            if pending.deadline <= now {
+                due.push((*channel_id, pending.message_id));
+                false
+            } else {
+                true
+            }
+        });
+
+        for (channel_id, message_id) in due {
+            self.pending_commands.push_back(AppCommand::AckChannel {
+                channel_id,
+                message_id,
+            });
         }
     }
 
@@ -527,7 +568,7 @@ impl DashboardState {
                     self.unread_divider_last_acked_id = None;
                     self.pending_unread_anchor_scroll = false;
                 } else {
-                    self.mark_channel_as_read(channel_id);
+                    self.schedule_channel_ack(channel_id);
                 }
             }
         } else if in_message_view
@@ -666,10 +707,6 @@ impl DashboardState {
         }
     }
 
-    pub fn clear_pending_numeric_prefix(&mut self) {
-        self.pending_numeric_prefix = None;
-    }
-
     pub fn sidebar_channel_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
         self.discord.channel_sidebar_unread(channel_id)
     }
@@ -678,7 +715,10 @@ impl DashboardState {
         self.discord.guild_sidebar_unread(guild_id)
     }
 
-    pub fn toggle_selected_guild_mute(&mut self, hours: Option<u64>) -> Option<AppCommand> {
+    pub fn toggle_selected_guild_mute(
+        &mut self,
+        duration: Option<MuteDuration>,
+    ) -> Option<AppCommand> {
         let guild_id = self.selected_guild_cursor_id()?;
         let label = self
             .discord
@@ -689,12 +729,15 @@ impl DashboardState {
         Some(AppCommand::SetGuildMuted {
             guild_id,
             muted,
-            hours,
+            duration,
             label,
         })
     }
 
-    pub fn toggle_selected_channel_mute(&mut self, hours: Option<u64>) -> Option<AppCommand> {
+    pub fn toggle_selected_channel_mute(
+        &mut self,
+        duration: Option<MuteDuration>,
+    ) -> Option<AppCommand> {
         let channel_id = self.selected_channel_cursor_id()?;
         let channel = self.discord.channel(channel_id)?;
         let muted = !self.discord.channel_notification_muted(channel_id);
@@ -702,17 +745,9 @@ impl DashboardState {
             guild_id: channel.guild_id,
             channel_id,
             muted,
-            hours,
+            duration,
             label: self.channel_label(channel_id),
         })
-    }
-
-    pub fn mute_focused_target(&mut self, hours: Option<u64>) -> Option<AppCommand> {
-        match self.focus {
-            FocusPane::Guilds => self.toggle_selected_guild_mute(hours),
-            FocusPane::Channels => self.toggle_selected_channel_mute(hours),
-            FocusPane::Messages | FocusPane::Members => None,
-        }
     }
 
     pub fn is_leader_active(&self) -> bool {
@@ -780,12 +815,19 @@ impl DashboardState {
             );
         }
         if self.guild_action_menu.is_some() {
-            let actions = self.selected_guild_action_items();
-            let matched = actions.iter().enumerate().any(|(index, action)| {
-                action.enabled
-                    && guild_action_shortcut(&actions, index)
-                        .is_some_and(|candidate| candidate == shortcut)
-            });
+            let matched = if self.is_guild_action_mute_duration_phase() {
+                self.selected_guild_mute_duration_items()
+                    .iter()
+                    .enumerate()
+                    .any(|(index, _)| indexed_shortcut(index) == Some(shortcut))
+            } else {
+                let actions = self.selected_guild_action_items();
+                actions.iter().enumerate().any(|(index, action)| {
+                    action.enabled
+                        && guild_action_shortcut(&actions, index)
+                            .is_some_and(|candidate| candidate == shortcut)
+                })
+            };
             return (
                 matched,
                 matched
@@ -803,6 +845,11 @@ impl DashboardState {
                                 .is_some_and(|candidate| candidate == shortcut)
                     })
                 }
+                ChannelActionMenuState::MuteDuration { .. } => self
+                    .selected_channel_mute_duration_items()
+                    .iter()
+                    .enumerate()
+                    .any(|(index, _)| indexed_shortcut(index) == Some(shortcut)),
                 ChannelActionMenuState::Threads { .. } => self
                     .channel_action_thread_items()
                     .iter()
@@ -918,6 +965,10 @@ impl DashboardState {
         self.current_user.as_deref()
     }
 
+    pub fn current_user_id(&self) -> Option<Id<UserMarker>> {
+        self.current_user_id
+    }
+
     pub fn is_channel_action_menu_open(&self) -> bool {
         self.channel_action_menu.is_some()
     }
@@ -930,6 +981,20 @@ impl DashboardState {
         matches!(
             self.channel_action_menu,
             Some(ChannelActionMenuState::Threads { .. })
+        )
+    }
+
+    pub fn is_channel_action_mute_duration_phase(&self) -> bool {
+        matches!(
+            self.channel_action_menu,
+            Some(ChannelActionMenuState::MuteDuration { .. })
+        )
+    }
+
+    pub fn is_guild_action_mute_duration_phase(&self) -> bool {
+        matches!(
+            self.guild_action_menu,
+            Some(GuildActionMenuState::MuteDuration { .. })
         )
     }
 

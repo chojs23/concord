@@ -7,6 +7,7 @@ use crate::discord::ids::{
 use crate::discord::{AppCommand, ChannelState};
 use unicode_segmentation::UnicodeSegmentation;
 
+use super::super::fuzzy::fuzzy_text_score;
 use super::{ActiveGuildScope, DashboardState};
 use super::{
     model::{ChannelBranch, ChannelSwitcherItem, GuildPaneEntry},
@@ -76,7 +77,7 @@ impl DashboardState {
         let mut scored: Vec<(usize, ChannelSwitcherItem)> = items
             .into_iter()
             .filter_map(|item| {
-                fuzzy_channel_score(&item.search_name, query).map(|score| (score, item))
+                fuzzy_text_score(&item.search_name, query).map(|score| (score, item))
             })
             .collect();
         scored.sort_by_key(|(score, item)| (item.group_order, *score, item.original_index));
@@ -346,51 +347,6 @@ fn channel_switcher_channel_label(channel: &ChannelState) -> String {
     }
 }
 
-fn fuzzy_channel_score(name: &str, query: &str) -> Option<usize> {
-    let needle = query.trim().to_lowercase();
-    if needle.is_empty() {
-        return Some(0);
-    }
-    let haystack = name.to_lowercase();
-    if haystack == needle {
-        return Some(0);
-    }
-    if haystack.starts_with(&needle) {
-        return Some(
-            10 + haystack
-                .chars()
-                .count()
-                .saturating_sub(needle.chars().count()),
-        );
-    }
-    if let Some(byte_index) = haystack.find(&needle) {
-        return Some(100 + byte_index);
-    }
-
-    let haystack_chars: Vec<char> = haystack.chars().collect();
-    let needle_chars: Vec<char> = needle.chars().collect();
-    let mut positions = Vec::with_capacity(needle_chars.len());
-    let mut needle_index = 0usize;
-    for (haystack_index, haystack_char) in haystack_chars.iter().enumerate() {
-        if needle_chars.get(needle_index) == Some(haystack_char) {
-            positions.push(haystack_index);
-            needle_index += 1;
-            if needle_index == needle_chars.len() {
-                break;
-            }
-        }
-    }
-    if positions.len() != needle_chars.len() {
-        return None;
-    }
-
-    let start = positions.first().copied().unwrap_or(0);
-    let end = positions.last().copied().unwrap_or(start);
-    let span = end.saturating_sub(start).saturating_add(1);
-    let gaps = span.saturating_sub(needle_chars.len());
-    Some(1000 + span * 10 + gaps + start)
-}
-
 fn clamp_cursor_index(value: &str, index: usize) -> usize {
     let mut index = index.min(value.len());
     while index > 0 && !value.is_char_boundary(index) {
@@ -415,27 +371,4 @@ fn next_char_boundary(value: &str, index: usize) -> usize {
         .nth(1)
         .map(|(offset, _)| index + offset)
         .unwrap_or(value.len())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::fuzzy_channel_score;
-
-    #[test]
-    fn fuzzy_channel_score_matches_subsequences() {
-        assert!(fuzzy_channel_score("general", "gnrl").is_some());
-        assert_eq!(fuzzy_channel_score("general", "xyz"), None);
-    }
-
-    #[test]
-    fn fuzzy_channel_score_prefers_exact_prefix_and_contiguous_matches() {
-        let exact = fuzzy_channel_score("general", "general").expect("exact match");
-        let prefix = fuzzy_channel_score("general", "gen").expect("prefix match");
-        let contiguous = fuzzy_channel_score("neo-general", "gen").expect("contiguous match");
-        let spread = fuzzy_channel_score("g-e-n", "gen").expect("spread match");
-
-        assert!(exact < prefix);
-        assert!(prefix < contiguous);
-        assert!(contiguous < spread);
-    }
 }

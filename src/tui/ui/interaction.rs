@@ -170,13 +170,20 @@ fn message_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> 
 }
 
 fn guild_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
-    let actions = state.selected_guild_action_items();
-    (!actions.is_empty()).then(|| centered_rect(area, 48, (actions.len() as u16).saturating_add(4)))
+    let row_count = if state.is_guild_action_mute_duration_phase() {
+        state.selected_guild_mute_duration_items().len()
+    } else {
+        state.selected_guild_action_items().len()
+    };
+    (row_count > 0).then(|| centered_rect(area, 48, (row_count as u16).saturating_add(4)))
 }
 
 fn channel_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
     if state.is_channel_action_threads_phase() {
         let row_count = state.channel_action_thread_items().len().max(1) as u16;
+        Some(centered_rect(area, 54, row_count.saturating_add(4)))
+    } else if state.is_channel_action_mute_duration_phase() {
+        let row_count = state.selected_channel_mute_duration_items().len() as u16;
         Some(centered_rect(area, 54, row_count.saturating_add(4)))
     } else {
         let actions = state.selected_channel_action_items();

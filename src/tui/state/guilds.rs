@@ -1,13 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::discord::ids::{Id, marker::GuildMarker};
-use crate::discord::{GuildFolder, GuildState};
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, GuildMarker, MessageMarker},
+};
+use crate::discord::{AppCommand, AppEvent, GuildFolder, GuildState};
 
 use super::{ActiveGuildScope, DashboardState, FolderKey};
 use super::{
     model::{
         FocusPane, GuildActionItem, GuildActionKind, GuildBranch, GuildPaneEntry,
-        guild_action_shortcut,
+        MUTE_ACTION_DURATIONS, guild_action_shortcut, indexed_shortcut,
     },
     popups::GuildActionMenuState,
     scroll::{
@@ -193,7 +196,7 @@ impl DashboardState {
         }
         match self.guild_pane_entries().get(self.selected_guild()) {
             Some(GuildPaneEntry::DirectMessages | GuildPaneEntry::Guild { .. }) => {
-                self.guild_action_menu = Some(GuildActionMenuState { selected: 0 });
+                self.guild_action_menu = Some(GuildActionMenuState::Actions { selected: 0 });
             }
             Some(GuildPaneEntry::FolderHeader { .. }) | None => {}
         }
@@ -215,70 +218,207 @@ impl DashboardState {
         if self.guild_action_menu.is_none() {
             return Vec::new();
         }
-        vec![GuildActionItem {
-            kind: GuildActionKind::NoActionsYet,
-            label: "No server actions yet".to_owned(),
-            enabled: false,
-        }]
+        match self.guild_pane_entries().get(self.selected_guild()) {
+            Some(GuildPaneEntry::Guild { state, .. }) => vec![
+                GuildActionItem {
+                    kind: GuildActionKind::MarkAsRead,
+                    label: "Mark server as read".to_owned(),
+                    enabled: self.guild_ack_targets(state.id).next().is_some(),
+                },
+                GuildActionItem {
+                    kind: GuildActionKind::ToggleMute,
+                    label: if self.discord.guild_notification_muted(state.id) {
+                        "Unmute server".to_owned()
+                    } else {
+                        "Mute server".to_owned()
+                    },
+                    enabled: true,
+                },
+            ],
+            Some(GuildPaneEntry::DirectMessages) => vec![GuildActionItem {
+                kind: GuildActionKind::NoActionsYet,
+                label: "No server actions yet".to_owned(),
+                enabled: false,
+            }],
+            Some(GuildPaneEntry::FolderHeader { .. }) | None => Vec::new(),
+        }
+    }
+
+    pub fn selected_guild_mute_duration_items(&self) -> &'static [super::MuteActionDurationItem] {
+        &MUTE_ACTION_DURATIONS
     }
 
     pub fn selected_guild_action_index(&self) -> Option<usize> {
-        let menu = self.guild_action_menu.as_ref()?;
-        Some(clamp_selected_index(
-            menu.selected,
-            self.selected_guild_action_items().len(),
-        ))
+        match self.guild_action_menu.as_ref()? {
+            GuildActionMenuState::Actions { selected } => Some(clamp_selected_index(
+                *selected,
+                self.selected_guild_action_items().len(),
+            )),
+            GuildActionMenuState::MuteDuration { selected } => Some(clamp_selected_index(
+                *selected,
+                self.selected_guild_mute_duration_items().len(),
+            )),
+        }
     }
 
     pub fn move_guild_action_down(&mut self) {
-        let len = self.selected_guild_action_items().len();
+        let len = match self.guild_action_menu.as_ref() {
+            Some(GuildActionMenuState::Actions { .. }) => self.selected_guild_action_items().len(),
+            Some(GuildActionMenuState::MuteDuration { .. }) => {
+                self.selected_guild_mute_duration_items().len()
+            }
+            None => return,
+        };
         if let Some(menu) = self.guild_action_menu.as_mut() {
-            move_index_down(&mut menu.selected, len);
+            match menu {
+                GuildActionMenuState::Actions { selected }
+                | GuildActionMenuState::MuteDuration { selected } => move_index_down(selected, len),
+            }
         }
     }
 
     pub fn move_guild_action_up(&mut self) {
         if let Some(menu) = self.guild_action_menu.as_mut() {
-            move_index_up(&mut menu.selected);
+            match menu {
+                GuildActionMenuState::Actions { selected }
+                | GuildActionMenuState::MuteDuration { selected } => move_index_up(selected),
+            }
         }
     }
 
     pub fn select_guild_action_row(&mut self, row: usize) -> bool {
-        if row >= self.selected_guild_action_items().len() {
+        let len = match self.guild_action_menu.as_ref() {
+            Some(GuildActionMenuState::Actions { .. }) => self.selected_guild_action_items().len(),
+            Some(GuildActionMenuState::MuteDuration { .. }) => {
+                self.selected_guild_mute_duration_items().len()
+            }
+            None => return false,
+        };
+        if row >= len {
             return false;
         }
         if let Some(menu) = self.guild_action_menu.as_mut() {
-            menu.selected = row;
+            match menu {
+                GuildActionMenuState::Actions { selected }
+                | GuildActionMenuState::MuteDuration { selected } => *selected = row,
+            }
             return true;
         }
         false
     }
 
-    pub fn activate_selected_guild_action(&mut self) -> Option<crate::discord::AppCommand> {
+    pub fn activate_selected_guild_action(&mut self) -> Option<AppCommand> {
         let menu = self.guild_action_menu.clone()?;
-        let items = self.selected_guild_action_items();
-        let item = items.get(clamp_selected_index(menu.selected, items.len()))?;
-        if !item.enabled {
-            return None;
-        }
-        match item.kind {
-            GuildActionKind::NoActionsYet => None,
+        match menu {
+            GuildActionMenuState::Actions { selected } => {
+                let items = self.selected_guild_action_items();
+                let item = items.get(clamp_selected_index(selected, items.len()))?;
+                if !item.enabled {
+                    return None;
+                }
+                match item.kind {
+                    GuildActionKind::MarkAsRead => self.mark_selected_guild_as_read(),
+                    GuildActionKind::ToggleMute => {
+                        let guild_id = self.selected_guild_cursor_id()?;
+                        if self.discord.guild_notification_muted(guild_id) {
+                            self.close_guild_action_menu();
+                            self.toggle_selected_guild_mute(None)
+                        } else {
+                            self.guild_action_menu = Some(GuildActionMenuState::MuteDuration {
+                                selected: 0,
+                            });
+                            None
+                        }
+                    }
+                    GuildActionKind::NoActionsYet => None,
+                }
+            }
+            GuildActionMenuState::MuteDuration { selected } => {
+                let item = self.selected_guild_mute_duration_items().get(clamp_selected_index(
+                    selected,
+                    self.selected_guild_mute_duration_items().len(),
+                ))?;
+                self.close_guild_action_menu();
+                self.toggle_selected_guild_mute(Some(item.duration))
+            }
         }
     }
 
-    pub fn activate_guild_action_shortcut(
-        &mut self,
-        shortcut: char,
-    ) -> Option<crate::discord::AppCommand> {
+    pub fn activate_guild_action_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
         let shortcut = shortcut.to_ascii_lowercase();
-        let actions = self.selected_guild_action_items();
-        let index = actions.iter().enumerate().position(|(index, action)| {
-            action.enabled
-                && guild_action_shortcut(&actions, index)
-                    .is_some_and(|candidate| candidate == shortcut)
-        })?;
-        self.select_guild_action_row(index);
-        self.activate_selected_guild_action()
+        match self.guild_action_menu.as_ref()? {
+            GuildActionMenuState::Actions { .. } => {
+                let actions = self.selected_guild_action_items();
+                let index = actions.iter().enumerate().position(|(index, action)| {
+                    action.enabled
+                        && guild_action_shortcut(&actions, index)
+                            .is_some_and(|candidate| candidate == shortcut)
+                })?;
+                self.select_guild_action_row(index);
+                self.activate_selected_guild_action()
+            }
+            GuildActionMenuState::MuteDuration { .. } => {
+                let index = self
+                    .selected_guild_mute_duration_items()
+                    .iter()
+                    .enumerate()
+                    .position(|(index, _)| indexed_shortcut(index) == Some(shortcut))?;
+                self.select_guild_action_row(index);
+                self.activate_selected_guild_action()
+            }
+        }
+    }
+
+    pub fn back_guild_action_menu(&mut self) {
+        if matches!(
+            self.guild_action_menu,
+            Some(GuildActionMenuState::MuteDuration { .. })
+        ) {
+            self.guild_action_menu = Some(GuildActionMenuState::Actions { selected: 0 });
+        } else {
+            self.guild_action_menu = None;
+        }
+    }
+
+    fn mark_selected_guild_as_read(&mut self) -> Option<AppCommand> {
+        let guild_id = match self.guild_pane_entries().get(self.selected_guild())? {
+            GuildPaneEntry::Guild { state, .. } => state.id,
+            GuildPaneEntry::DirectMessages | GuildPaneEntry::FolderHeader { .. } => return None,
+        };
+        let targets: Vec<_> = self.guild_ack_targets(guild_id).collect();
+        if targets.is_empty() {
+            return None;
+        }
+
+        for (channel_id, message_id) in targets.iter().copied() {
+            self.pending_read_acks.remove(&channel_id);
+            self.discord.apply_event(&AppEvent::MessageAck {
+                channel_id,
+                message_id,
+                mention_count: 0,
+            });
+            if self.active_channel_id == Some(channel_id) {
+                self.unread_divider_last_acked_id = None;
+                self.pending_unread_anchor_scroll = false;
+                self.clear_new_messages_marker();
+            }
+        }
+        self.close_guild_action_menu();
+        Some(AppCommand::AckChannels { targets })
+    }
+
+    fn guild_ack_targets(
+        &self,
+        guild_id: Id<GuildMarker>,
+    ) -> impl Iterator<Item = (Id<ChannelMarker>, Id<MessageMarker>)> + '_ {
+        self.discord
+            .viewable_channels_for_guild(Some(guild_id))
+            .into_iter()
+            .filter_map(|channel| {
+                self.discord
+                    .channel_ack_target(channel.id)
+                    .map(|message_id| (channel.id, message_id))
+            })
     }
 
     /// Toggles the collapse state of the folder under the selection. Does
