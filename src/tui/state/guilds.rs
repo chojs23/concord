@@ -373,6 +373,8 @@ impl DashboardState {
         self.selected_member = 0;
         self.member_scroll = 0;
         self.member_keep_selection_visible = true;
+
+        self.cache.set_last_guild(scope.into());
     }
 
     fn selected_folder_key(&self) -> Option<FolderKey> {
