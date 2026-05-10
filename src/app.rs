@@ -702,7 +702,9 @@ fn start_command_loop(
                         }
                     },
                     AppCommand::LoadUserProfile { user_id, guild_id } => {
-                        match client.load_user_profile(user_id, guild_id).await {
+                        let is_self = client.current_discord_snapshot().state.current_user_id()
+                            == Some(user_id);
+                        match client.load_user_profile(user_id, guild_id, is_self).await {
                             Ok(profile) => {
                                 client
                                     .publish_event(AppEvent::UserProfileLoaded {

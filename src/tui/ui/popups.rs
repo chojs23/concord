@@ -1072,6 +1072,8 @@ pub(super) fn user_profile_popup_text(
     status: PresenceStatus,
     activities: &[ActivityInfo],
 ) -> UserProfilePopupText {
+    let is_self = state.current_user_id() == Some(profile.user_id);
+
     let inner_width = usize::from(width.max(8));
     let mut lines: Vec<Line<'static>> = Vec::new();
 
@@ -1092,13 +1094,15 @@ pub(super) fn user_profile_popup_text(
         )));
     }
 
-    let (badge_label, badge_color) = friend_status_badge(profile.friend_status);
-    lines.push(Line::from(Span::styled(
-        badge_label,
-        Style::default()
-            .fg(badge_color)
-            .add_modifier(Modifier::BOLD),
-    )));
+    if !is_self {
+        let (badge_label, badge_color) = friend_status_badge(profile.friend_status);
+        lines.push(Line::from(Span::styled(
+            badge_label,
+            Style::default()
+                .fg(badge_color)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
 
     if !activities.is_empty() {
         lines.push(Line::from(Span::raw(String::new())));
@@ -1132,47 +1136,52 @@ pub(super) fn user_profile_popup_text(
         inner_width,
     );
 
-    lines.push(Line::from(Span::raw(String::new())));
-    push_section_header(
-        &mut lines,
-        &format!("MUTUAL SERVERS ({})", profile.mutual_guilds.len()),
-    );
-    if profile.mutual_guilds.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "  (none)".to_owned(),
-            Style::default().fg(DIM),
-        )));
-    } else {
-        for entry in &profile.mutual_guilds {
-            let name = state
-                .guild_name(entry.guild_id)
-                .map(str::to_owned)
-                .unwrap_or_else(|| format!("guild-{}", entry.guild_id.get()));
-            let body = match entry.nick.as_deref() {
-                Some(nick) => format!("• {name} — {nick}"),
-                None => format!("• {name}"),
-            };
-            lines.push(Line::from(vec![
-                Span::styled("  ".to_owned(), Style::default().fg(ACCENT)),
-                Span::styled(
-                    truncate_display_width(&body, inner_width.saturating_sub(2)),
-                    Style::default(),
-                ),
-            ]));
+    if !is_self {
+        lines.push(Line::from(Span::raw(String::new())));
+        push_section_header(
+            &mut lines,
+            &format!("MUTUAL SERVERS ({})", profile.mutual_guilds.len()),
+        );
+        if profile.mutual_guilds.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  (none)".to_owned(),
+                Style::default().fg(DIM),
+            )));
+        } else {
+            for entry in &profile.mutual_guilds {
+                let name = state
+                    .guild_name(entry.guild_id)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("guild-{}", entry.guild_id.get()));
+                let body = match entry.nick.as_deref() {
+                    Some(nick) => format!("• {name} — {nick}"),
+                    None => format!("• {name}"),
+                };
+                lines.push(Line::from(vec![
+                    Span::styled("  ".to_owned(), Style::default().fg(ACCENT)),
+                    Span::styled(
+                        truncate_display_width(&body, inner_width.saturating_sub(2)),
+                        Style::default(),
+                    ),
+                ]));
+            }
         }
     }
 
-    lines.push(Line::from(Span::raw(String::new())));
-    push_section_header(
-        &mut lines,
-        &format!("MUTUAL FRIENDS ({})", profile.mutual_friends_count),
-    );
+    if !is_self {
+        lines.push(Line::from(Span::raw(String::new())));
+        push_section_header(
+            &mut lines,
+            &format!("MUTUAL FRIENDS ({})", profile.mutual_friends_count),
+        );
+    }
 
     lines.push(Line::from(Span::raw(String::new())));
     lines.push(Line::from(Span::styled(
         "j/k scroll · Esc close",
         Style::default().fg(DIM),
     )));
+
     UserProfilePopupText { lines }
 }
 
