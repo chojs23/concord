@@ -589,7 +589,7 @@ impl DiscordRest {
             user_id.get(),
         );
         if !is_self {
-            url.push_str("?with_mutual_guilds=true&with_mutual_friends_count=true");
+            url.push_str("with_mutual_guilds=true&with_mutual_friends_count=true");
         }
         if let Some(guild_id) = guild_id {
             url.push_str(&format!("&guild_id={}", guild_id.get()));
