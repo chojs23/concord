@@ -1,12 +1,9 @@
 use std::{
-    env, fs,
+    fs,
     path::{Path, PathBuf},
 };
 
-use crate::{AppError, Result};
-
-const CONFIG_DIR: &str = ".concord";
-const CREDENTIAL_FILE: &str = "credential";
+use crate::{AppError, Result, paths};
 
 pub fn load_token() -> Result<Option<String>> {
     let path = credential_path()?;
@@ -32,14 +29,20 @@ pub fn save_token(token: &str) -> Result<()> {
 }
 
 fn credential_path() -> Result<PathBuf> {
-    let home = env::var_os("HOME").ok_or_else(|| {
+    paths::credential_file().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            "HOME environment variable is not set",
+            "could not resolve user data directory",
         )
-    })?;
+        .into()
+    })
+}
 
-    Ok(PathBuf::from(home).join(CONFIG_DIR).join(CREDENTIAL_FILE))
+/// User-facing description of where the token will be saved.
+pub fn credential_path_display() -> String {
+    paths::credential_file()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "~/.config/concord/credential".to_owned())
 }
 
 fn normalize_token(token: &str) -> std::result::Result<String, AppError> {

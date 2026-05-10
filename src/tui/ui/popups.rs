@@ -653,11 +653,12 @@ pub(super) fn options_popup_lines(
         })
         .map(|line| truncate_line_to_display_width(line, width))
         .collect();
+    let footer = format!(
+        "Enter/Space toggle or cycle · j/k move · Esc close · saved to {}",
+        crate::config::config_path_display()
+    );
     lines.push(truncate_line_to_display_width(
-        Line::from(Span::styled(
-            "Enter/Space toggle or cycle · j/k move · Esc close · saved to ~/.concord/config.toml",
-            Style::default().fg(DIM),
-        )),
+        Line::from(Span::styled(footer, Style::default().fg(DIM))),
         width,
     ));
     lines

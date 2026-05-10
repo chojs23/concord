@@ -1,5 +1,5 @@
 use std::{
-    env, fs,
+    fs,
     io::{self, Write},
     path::{Path, PathBuf},
     process::Command,
@@ -872,8 +872,8 @@ async fn fetch_limited_bytes(
 }
 
 fn downloads_directory() -> std::result::Result<PathBuf, String> {
-    let home = env::var_os("HOME").ok_or_else(|| "HOME is not set".to_owned())?;
-    Ok(PathBuf::from(home).join("Downloads"))
+    crate::paths::download_dir()
+        .ok_or_else(|| "could not resolve user download directory".to_owned())
 }
 
 fn sanitize_filename(filename: &str) -> String {
