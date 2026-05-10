@@ -798,7 +798,7 @@ fn member_groups_show_selected_group_dm_recipients() {
 }
 
 #[test]
-fn member_panel_title_separates_loaded_and_total_members() {
+fn member_panel_title_shows_online_and_total_when_counts_available() {
     let guild_id = Id::new(1);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
@@ -821,7 +821,15 @@ fn member_panel_title_separates_loaded_and_total_members() {
     });
     state.confirm_selected_guild();
 
-    assert_eq!(state.member_panel_title(), Line::from(" Members "));
+    state.push_event(AppEvent::GuildMemberListCounts {
+        guild_id,
+        online: 25,
+    });
+    state.confirm_selected_guild();
+
+    let title = state.member_panel_title();
+    let rendered: String = title.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(rendered, "● 25  ○ 100");
     assert_eq!(state.flattened_members().len(), 1);
 }
 
