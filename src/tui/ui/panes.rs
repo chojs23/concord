@@ -1088,13 +1088,6 @@ pub(super) fn render_members(
         }
     }
 
-<<<<<<< HEAD
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block_line(state.member_panel_title(), focused))
-            .wrap(Wrap { trim: false }),
-        area,
-    );
     render_vertical_scrollbar(
         frame,
         panel_scrollbar_area(area),

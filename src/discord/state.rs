@@ -418,7 +418,6 @@ impl DiscordState {
                         member_count: *member_count,
                         online_count: None,
                         owner_id: *owner_id,
-                        online_count: None,
                     },
                 );
 
