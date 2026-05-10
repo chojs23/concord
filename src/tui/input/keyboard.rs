@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    ops::BitXor,
+    path::{Path, PathBuf},
+};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -639,8 +642,77 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
             state.delete_composer_char();
             None
         }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_composer_cursor_left();
+            let mut idx = state.composer_cursor_byte_index().saturating_sub(1);
+
+            let mut began_word = !state
+                .composer_input()
+                .chars()
+                .nth(idx)
+                .unwrap_or(' ')
+                .is_whitespace();
+
+            while let Some(c) = state.composer_input().chars().nth(idx)
+                && (c.is_whitespace().bitxor(began_word))
+                && idx != 0
+            {
+                idx = idx.saturating_sub(1);
+                state.move_composer_cursor_left();
+
+                if !c.is_whitespace() && !began_word {
+                    began_word = true;
+                }
+            }
+
+            if idx <= 1
+                && !state
+                    .composer_input()
+                    .chars()
+                    .next()
+                    .unwrap_or(' ')
+                    .is_whitespace()
+            {
+                state.move_composer_cursor_left();
+            }
+            None
+        }
         KeyCode::Left => {
             state.move_composer_cursor_left();
+            None
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_composer_cursor_right();
+            let mut idx = state.composer_cursor_byte_index();
+
+            let mut began_word = !state
+                .composer_input()
+                .chars()
+                .nth(idx)
+                .unwrap_or(' ')
+                .is_whitespace();
+
+            while let Some(c) = state.composer_input().chars().nth(idx)
+                && (c.is_whitespace().bitxor(began_word))
+                && idx != 0
+            {
+                idx = idx.saturating_add(1);
+                state.move_composer_cursor_right();
+
+                if state
+                    .composer_input()
+                    .chars()
+                    .nth(idx.saturating_add(1))
+                    .is_none()
+                {
+                    state.move_composer_cursor_right();
+                    break;
+                }
+
+                if !c.is_whitespace() && !began_word {
+                    began_word = true;
+                }
+            }
             None
         }
         KeyCode::Right => {
