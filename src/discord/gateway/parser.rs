@@ -1069,11 +1069,22 @@ fn parse_member_list_update(data: &Value) -> Vec<AppEvent> {
         return Vec::new();
     };
 
+    let mut events = Vec::new();
+
+    if let Some(groups) = data.get("groups").and_then(Value::as_array) {
+        let online = groups
+            .iter()
+            .filter(|g| g.get("id").and_then(Value::as_str) != Some("offline"))
+            .filter_map(|g| g.get("count").and_then(Value::as_u64))
+            .map(|c| c as u32)
+            .sum();
+        events.push(AppEvent::GuildMemberListCounts { guild_id, online });
+    }
+
     // A single GUILD_MEMBER_LIST_UPDATE event can carry SYNC ops for several
     // ranges (e.g. `[0,99]` plus `[100,199]`). We previously dropped every
     // SYNC whose range did not start at zero, which left members past the
     // first chunk invisible in larger guilds.
-    let mut events = Vec::new();
     for op in ops {
         match op.get("op").and_then(Value::as_str) {
             Some("SYNC") => {

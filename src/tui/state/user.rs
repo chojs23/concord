@@ -1,5 +1,11 @@
 use std::collections::HashSet;
 
+use ratatui::{
+    layout::Alignment,
+    style::{Color, Style},
+    text::{Line, Span},
+};
+
 use crate::discord::ids::{
     Id,
     marker::{GuildMarker, UserMarker},
@@ -370,20 +376,24 @@ impl DashboardState {
         self.discord.member_role_color(guild_id, member.user_id())
     }
 
-    pub fn member_panel_title(&self) -> String {
+    pub fn member_panel_title(&self) -> Line<'static> {
         let Some(guild_id) = self.selected_guild_id() else {
-            return "Members".to_owned();
+            return Line::from(" Members ");
         };
-        let Some(member_count) = self
-            .discord
-            .guild(guild_id)
-            .and_then(|guild| guild.member_count)
-        else {
-            return "Members".to_owned();
+        let guild = self.discord.guild(guild_id);
+        let Some(online) = guild.and_then(|g| g.online_count) else {
+            return Line::from(" Members ");
         };
-
-        let loaded = self.discord.members_for_guild(guild_id).len();
-        format!("Members {loaded}/{member_count} loaded")
+        let total = guild.and_then(|g| g.member_count).unwrap_or(0);
+        Line::from(vec![
+            Span::styled("●", Style::default().fg(Color::Green)),
+            Span::raw(format!(
+                " {}  ○ {}",
+                fmt_with_separators(online as u64),
+                fmt_with_separators(total)
+            )),
+        ])
+        .alignment(Alignment::Center)
     }
 
     fn selected_channel_recipient_group(&self) -> Vec<MemberGroup<'_>> {
@@ -396,4 +406,16 @@ impl DashboardState {
     pub fn flattened_members(&self) -> Vec<MemberEntry<'_>> {
         flatten_member_groups(self.members_grouped())
     }
+}
+
+fn fmt_with_separators(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result.chars().rev().collect()
 }

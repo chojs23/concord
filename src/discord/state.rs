@@ -39,6 +39,7 @@ pub struct GuildState {
     pub id: Id<GuildMarker>,
     pub name: String,
     pub member_count: Option<u64>,
+    pub online_count: Option<u32>,
     /// Snowflake of the guild owner. Owners short-circuit permission checks
     /// (they always see every channel). `None` until the GUILD_CREATE /
     /// GUILD_UPDATE payload supplies it.
@@ -407,6 +408,7 @@ impl DiscordState {
                         name: name.clone(),
                         member_count: *member_count,
                         owner_id: *owner_id,
+                        online_count: None,
                     },
                 );
 
@@ -663,6 +665,11 @@ impl DiscordState {
                     self.increment_guild_member_count(*guild_id);
                 }
                 self.refresh_message_author_display_name(*guild_id, member);
+            }
+            AppEvent::GuildMemberListCounts { guild_id, online } => {
+                if let Some(guild) = self.guilds.get_mut(guild_id) {
+                    guild.online_count = Some(*online);
+                }
             }
             AppEvent::GuildMemberUpsert { guild_id, member } => {
                 let entry = self.members.entry(*guild_id).or_default();

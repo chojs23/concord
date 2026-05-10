@@ -591,6 +591,10 @@ pub enum AppEvent {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
     },
+    GuildMemberListCounts {
+        guild_id: Id<GuildMarker>,
+        online: u32,
+    },
     GuildMemberUpsert {
         guild_id: Id<GuildMarker>,
         member: MemberInfo,
