@@ -680,11 +680,6 @@ impl DiscordState {
                 }
                 self.refresh_message_author_display_name(*guild_id, member);
             }
-            AppEvent::GuildMemberListCounts { guild_id, online } => {
-                if let Some(guild) = self.guilds.get_mut(guild_id) {
-                    guild.online_count = Some(*online);
-                }
-            }
             AppEvent::GuildMemberUpsert { guild_id, member } => {
                 let entry = self.members.entry(*guild_id).or_default();
                 let previous_status = entry.get(&member.user_id).map(|m| m.status);
