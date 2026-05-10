@@ -369,6 +369,28 @@ fn focus_pane_at_expands_messages_over_hidden_panes() {
 }
 
 #[test]
+fn focus_pane_at_uses_configured_pane_widths() {
+    let state = DashboardState::new_with_display_options(DisplayOptions {
+        server_width: 10,
+        channel_list_width: 20,
+        member_list_width: 15,
+        ..DisplayOptions::default()
+    });
+    let area = Rect::new(0, 0, 100, 20);
+
+    assert_eq!(focus_pane_at(area, &state, 9, 1), Some(FocusPane::Guilds));
+    assert_eq!(
+        focus_pane_at(area, &state, 10, 1),
+        Some(FocusPane::Channels)
+    );
+    assert_eq!(
+        focus_pane_at(area, &state, 30, 1),
+        Some(FocusPane::Messages)
+    );
+    assert_eq!(focus_pane_at(area, &state, 85, 1), Some(FocusPane::Members));
+}
+
+#[test]
 fn sync_view_heights_reserves_space_for_composer_height() {
     enum ExpectedHeight {
         Exact(usize),

@@ -1,8 +1,10 @@
 use crate::config::{DisplayOptions, ImagePreviewQualityPreset};
 
-use super::{DashboardState, popups::OptionsPopupState};
+use super::{DashboardState, FocusPane, popups::OptionsPopupState};
 
 const OPTION_COUNT: usize = 6;
+const MIN_PANE_WIDTH: u16 = 8;
+const MAX_PANE_WIDTH: u16 = 80;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisplayOptionItem {
@@ -43,6 +45,35 @@ impl DashboardState {
 
     pub fn desktop_notifications_enabled(&self) -> bool {
         self.display_options.desktop_notifications
+    }
+
+    pub fn pane_width(&self, pane: FocusPane) -> u16 {
+        match pane {
+            FocusPane::Guilds => self.display_options.server_width,
+            FocusPane::Channels => self.display_options.channel_list_width,
+            FocusPane::Members => self.display_options.member_list_width,
+            FocusPane::Messages => 0,
+        }
+    }
+
+    pub fn adjust_focused_pane_width(&mut self, delta: i16) {
+        let width = match self.focus {
+            FocusPane::Guilds => &mut self.display_options.server_width,
+            FocusPane::Channels => &mut self.display_options.channel_list_width,
+            FocusPane::Members => &mut self.display_options.member_list_width,
+            FocusPane::Messages => return,
+        };
+
+        let adjusted = if delta.is_negative() {
+            width.saturating_sub(delta.unsigned_abs())
+        } else {
+            width.saturating_add(delta as u16)
+        };
+        let adjusted = adjusted.clamp(MIN_PANE_WIDTH, MAX_PANE_WIDTH);
+        if adjusted != *width {
+            *width = adjusted;
+            self.display_options_save_pending = true;
+        }
     }
 
     pub fn is_options_popup_open(&self) -> bool {
