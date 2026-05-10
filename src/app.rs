@@ -11,13 +11,15 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, MessageMarker},
 };
+use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use tokio::sync::{Semaphore, mpsc};
 use tokio::time::{Duration, timeout};
 
 use crate::{
     DiscordClient, Result,
     discord::{
-        AppCommand, AppEvent, AttachmentUpdate, MessageInfo, ReactionUsersInfo,
+        AppCommand, AppEvent, AttachmentUpdate, ChannelNotificationOverrideInfo,
+        GuildNotificationSettingsInfo, MessageInfo, MuteDuration, ReactionUsersInfo,
         validate_token_header,
     },
     error::AppError,
@@ -736,6 +738,94 @@ fn start_command_loop(
                             log_app_error("ack channel failed", &error);
                         }
                     }
+                    AppCommand::SetGuildMuted {
+                        guild_id,
+                        muted,
+                        duration,
+                        label,
+                    } => {
+                        let mute_end_time = mute_end_time_from_duration(duration, muted);
+                        match client.set_guild_muted(guild_id, muted, mute_end_time).await {
+                            Ok(()) => {
+                                client
+                                    .publish_event(AppEvent::UserGuildNotificationSettingsUpdate {
+                                        settings: guild_notification_settings_update(
+                                            &client,
+                                            Some(guild_id),
+                                            Some((muted, mute_end_time)),
+                                            None,
+                                        ),
+                                    })
+                                    .await;
+                                client
+                                    .publish_event(AppEvent::StatusMessage {
+                                        message: if muted {
+                                            format!(
+                                                "muted server {label}{}",
+                                                mute_status_suffix(duration)
+                                            )
+                                        } else {
+                                            format!("unmuted server {label}")
+                                        },
+                                    })
+                                    .await;
+                            }
+                            Err(error) => {
+                                log_app_error("set guild mute failed", &error);
+                                client
+                                    .publish_event(AppEvent::GatewayError {
+                                        message: format!("set guild mute failed: {error}"),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
+                    AppCommand::SetChannelMuted {
+                        guild_id,
+                        channel_id,
+                        muted,
+                        duration,
+                        label,
+                    } => {
+                        let mute_end_time = mute_end_time_from_duration(duration, muted);
+                        match client
+                            .set_channel_muted(guild_id, channel_id, muted, mute_end_time)
+                            .await
+                        {
+                            Ok(()) => {
+                                client
+                                    .publish_event(AppEvent::UserGuildNotificationSettingsUpdate {
+                                        settings: guild_notification_settings_update(
+                                            &client,
+                                            guild_id,
+                                            None,
+                                            Some((channel_id, muted, mute_end_time)),
+                                        ),
+                                    })
+                                    .await;
+                                client
+                                    .publish_event(AppEvent::StatusMessage {
+                                        message: if muted {
+                                            format!(
+                                                "muted channel {label}{}",
+                                                mute_status_suffix(duration)
+                                            )
+                                        } else {
+                                            format!("unmuted channel {label}")
+                                        },
+                                    })
+                                    .await;
+                            }
+                            Err(error) => {
+                                log_app_error("set channel mute failed", &error);
+                                client
+                                    .publish_event(AppEvent::GatewayError {
+                                        message: format!("set channel mute failed: {error}"),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
                     AppCommand::AckChannels { targets } => {
                         // Fire-and-forget: the TUI already cleared its local
                         // unread state, a failure here only loses the cross-
@@ -755,6 +845,73 @@ fn log_app_error(context: &str, error: &AppError) {
         "app",
         format!("{context}: {}; detail={}", error, error.log_detail()),
     );
+}
+
+fn mute_end_time_from_duration(
+    duration: Option<MuteDuration>,
+    muted: bool,
+) -> Option<chrono::DateTime<Utc>> {
+    if !muted {
+        return None;
+    }
+    duration
+        .and_then(MuteDuration::minutes)
+        .filter(|minutes| *minutes > 0)
+        .and_then(|minutes| i64::try_from(minutes).ok())
+        .map(|minutes| Utc::now() + ChronoDuration::minutes(minutes))
+}
+
+fn mute_status_suffix(duration: Option<MuteDuration>) -> String {
+    match duration {
+        Some(MuteDuration::Minutes(15)) => " for 15m".to_owned(),
+        Some(MuteDuration::Minutes(60)) => " for 1h".to_owned(),
+        Some(MuteDuration::Minutes(minutes)) if minutes % 60 == 0 => {
+            format!(" for {}h", minutes / 60)
+        }
+        Some(MuteDuration::Minutes(minutes)) => format!(" for {minutes}m"),
+        Some(MuteDuration::Permanent) | None => String::new(),
+    }
+}
+
+fn guild_notification_settings_update(
+    client: &DiscordClient,
+    guild_id: Option<Id<crate::discord::ids::marker::GuildMarker>>,
+    guild_update: Option<(bool, Option<chrono::DateTime<Utc>>)>,
+    channel_override: Option<(
+        Id<crate::discord::ids::marker::ChannelMarker>,
+        bool,
+        Option<chrono::DateTime<Utc>>,
+    )>,
+) -> GuildNotificationSettingsInfo {
+    let snapshot = client.current_discord_snapshot();
+    let mut settings = snapshot.state.guild_notification_settings_info(guild_id);
+    if let Some((muted, mute_end_time)) = guild_update {
+        settings.muted = muted;
+        settings.mute_end_time =
+            mute_end_time.map(|value| value.to_rfc3339_opts(SecondsFormat::Millis, true));
+    }
+    if let Some((channel_id, muted, mute_end_time)) = channel_override {
+        if let Some(override_info) = settings
+            .channel_overrides
+            .iter_mut()
+            .find(|override_info| override_info.channel_id == channel_id)
+        {
+            override_info.muted = muted;
+            override_info.mute_end_time =
+                mute_end_time.map(|value| value.to_rfc3339_opts(SecondsFormat::Millis, true));
+        } else {
+            settings
+                .channel_overrides
+                .push(ChannelNotificationOverrideInfo {
+                    channel_id,
+                    message_notifications: None,
+                    muted,
+                    mute_end_time: mute_end_time
+                        .map(|value| value.to_rfc3339_opts(SecondsFormat::Millis, true)),
+                });
+        }
+    }
+    settings
 }
 
 /// Builds the Discord REST endpoint string for a message-history request so

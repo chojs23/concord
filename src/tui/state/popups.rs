@@ -25,8 +25,9 @@ pub(super) struct ImageViewerState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct GuildActionMenuState {
-    pub(super) selected: usize,
+pub(super) enum GuildActionMenuState {
+    Actions { selected: usize },
+    MuteDuration { selected: usize },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -55,6 +56,10 @@ pub(super) struct MemberActionMenuState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum ChannelActionMenuState {
     Actions {
+        channel_id: Id<ChannelMarker>,
+        selected: usize,
+    },
+    MuteDuration {
         channel_id: Id<ChannelMarker>,
         selected: usize,
     },

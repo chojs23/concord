@@ -12,7 +12,7 @@ mod state;
 
 pub use client::DiscordClient;
 pub(crate) use client::validate_token_header;
-pub use commands::{AppCommand, ForumPostArchiveState};
+pub use commands::{AppCommand, ForumPostArchiveState, MuteDuration};
 pub use commands::{
     MAX_UPLOAD_ATTACHMENT_COUNT, MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
     MessageAttachmentUpload, ReactionEmoji,

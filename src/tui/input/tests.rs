@@ -12,9 +12,10 @@ use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event, han
 use crate::{
     config::ImagePreviewQualityPreset,
     discord::{
-        AppCommand, AppEvent, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, GuildFolder,
-        MemberInfo, MessageReferenceInfo, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji,
-        ReactionUserInfo, ReactionUsersInfo,
+        AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
+        CustomEmojiInfo, GuildFolder, GuildNotificationSettingsInfo, MemberInfo,
+        MessageReferenceInfo, NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus,
+        ReactionEmoji, ReactionUserInfo, ReactionUsersInfo,
     },
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };
@@ -309,6 +310,109 @@ fn number_keys_show_hidden_panes_before_focusing() {
     handle_key(&mut state, char_key('4'));
     assert!(state.is_pane_visible(FocusPane::Members));
     assert_eq!(state.focus(), FocusPane::Members);
+}
+
+#[test]
+fn bare_m_no_longer_mutes_focused_channel() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+
+    let command = handle_key(&mut state, char_key('m'));
+
+    assert_eq!(command, None);
+}
+
+#[test]
+fn leader_channel_actions_offer_mute_duration_and_submit_command() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+    handle_key(&mut state, char_key('u'));
+    let command = handle_key(&mut state, char_key('1'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SetChannelMuted {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            muted: true,
+            duration: Some(crate::discord::MuteDuration::Minutes(15)),
+            label: "#general".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn leader_channel_actions_unmute_when_already_muted() {
+    let mut state = state_with_channel_tree();
+    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
+        settings: vec![GuildNotificationSettingsInfo {
+            guild_id: Some(Id::new(1)),
+            message_notifications: Some(NotificationLevel::OnlyMentions),
+            muted: false,
+            mute_end_time: None,
+            suppress_everyone: false,
+            suppress_roles: false,
+            channel_overrides: vec![ChannelNotificationOverrideInfo {
+                channel_id: Id::new(11),
+                message_notifications: None,
+                muted: true,
+                mute_end_time: None,
+            }],
+        }],
+    });
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+    let command = handle_key(&mut state, char_key('u'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SetChannelMuted {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            muted: false,
+            duration: None,
+            label: "#general".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn leader_server_actions_unmute_when_already_muted() {
+    let mut state = state_with_channel_tree();
+    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
+        settings: vec![GuildNotificationSettingsInfo {
+            guild_id: Some(Id::new(1)),
+            message_notifications: Some(NotificationLevel::OnlyMentions),
+            muted: true,
+            mute_end_time: None,
+            suppress_everyone: false,
+            suppress_roles: false,
+            channel_overrides: Vec::new(),
+        }],
+    });
+    state.focus_pane(FocusPane::Guilds);
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+    let command = handle_key(&mut state, char_key('u'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SetGuildMuted {
+            guild_id: Id::new(1),
+            muted: false,
+            duration: None,
+            label: "guild".to_owned(),
+        })
+    );
 }
 
 #[test]

@@ -12,7 +12,7 @@ use super::{
 use super::{
     model::{
         ChannelActionItem, ChannelActionKind, ChannelBranch, ChannelPaneEntry, ChannelThreadItem,
-        FocusPane, channel_action_shortcut, indexed_shortcut,
+        FocusPane, MUTE_ACTION_DURATIONS, channel_action_shortcut, indexed_shortcut,
     },
     popups::ChannelActionMenuState,
     presentation::{is_direct_message_channel, sort_channels, sort_direct_message_channels},
@@ -26,6 +26,7 @@ impl DashboardState {
     pub fn channel_action_menu_title(&self) -> Option<String> {
         let channel_id = match self.channel_action_menu.as_ref()? {
             ChannelActionMenuState::Actions { channel_id, .. }
+            | ChannelActionMenuState::MuteDuration { channel_id, .. }
             | ChannelActionMenuState::Threads { channel_id, .. } => *channel_id,
         };
         let channel = self.discord.channel(channel_id)?;
@@ -60,16 +61,16 @@ impl DashboardState {
     }
 
     pub fn back_channel_action_menu(&mut self) {
-        if let Some(ChannelActionMenuState::Threads { channel_id, .. }) =
-            self.channel_action_menu.as_ref()
-        {
-            let channel_id = *channel_id;
-            self.channel_action_menu = Some(ChannelActionMenuState::Actions {
-                channel_id,
-                selected: 0,
-            });
-        } else {
-            self.channel_action_menu = None;
+        match self.channel_action_menu.as_ref() {
+            Some(ChannelActionMenuState::Threads { channel_id, .. })
+            | Some(ChannelActionMenuState::MuteDuration { channel_id, .. }) => {
+                let channel_id = *channel_id;
+                self.channel_action_menu = Some(ChannelActionMenuState::Actions {
+                    channel_id,
+                    selected: 0,
+                });
+            }
+            _ => self.channel_action_menu = None,
         }
     }
 
@@ -112,7 +113,20 @@ impl DashboardState {
                 label: "Mark as read".to_owned(),
                 enabled: mark_as_read_enabled,
             },
+            ChannelActionItem {
+                kind: ChannelActionKind::ToggleMute,
+                label: if self.discord.channel_notification_muted(channel_id) {
+                    "Unmute channel".to_owned()
+                } else {
+                    "Mute channel".to_owned()
+                },
+                enabled: true,
+            },
         ]
+    }
+
+    pub fn selected_channel_mute_duration_items(&self) -> &'static [super::MuteActionDurationItem] {
+        &MUTE_ACTION_DURATIONS
     }
 
     pub fn channel_action_thread_items(&self) -> Vec<ChannelThreadItem> {
@@ -357,6 +371,10 @@ impl DashboardState {
                 *selected,
                 self.selected_channel_action_items().len(),
             )),
+            ChannelActionMenuState::MuteDuration { selected, .. } => Some(clamp_selected_index(
+                *selected,
+                self.selected_channel_mute_duration_items().len(),
+            )),
             ChannelActionMenuState::Threads { selected, .. } => Some(clamp_selected_index(
                 *selected,
                 self.channel_action_thread_items().len(),
@@ -369,6 +387,9 @@ impl DashboardState {
             Some(ChannelActionMenuState::Actions { .. }) => {
                 self.selected_channel_action_items().len()
             }
+            Some(ChannelActionMenuState::MuteDuration { .. }) => {
+                self.selected_channel_mute_duration_items().len()
+            }
             Some(ChannelActionMenuState::Threads { .. }) => {
                 self.channel_action_thread_items().len()
             }
@@ -377,6 +398,7 @@ impl DashboardState {
         if let Some(menu) = self.channel_action_menu.as_mut() {
             let selected = match menu {
                 ChannelActionMenuState::Actions { selected, .. }
+                | ChannelActionMenuState::MuteDuration { selected, .. }
                 | ChannelActionMenuState::Threads { selected, .. } => selected,
             };
             move_index_down(selected, len);
@@ -387,6 +409,7 @@ impl DashboardState {
         if let Some(menu) = self.channel_action_menu.as_mut() {
             let selected = match menu {
                 ChannelActionMenuState::Actions { selected, .. }
+                | ChannelActionMenuState::MuteDuration { selected, .. }
                 | ChannelActionMenuState::Threads { selected, .. } => selected,
             };
             move_index_up(selected);
@@ -397,6 +420,9 @@ impl DashboardState {
         let len = match self.channel_action_menu.as_ref() {
             Some(ChannelActionMenuState::Actions { .. }) => {
                 self.selected_channel_action_items().len()
+            }
+            Some(ChannelActionMenuState::MuteDuration { .. }) => {
+                self.selected_channel_mute_duration_items().len()
             }
             Some(ChannelActionMenuState::Threads { .. }) => {
                 self.channel_action_thread_items().len()
@@ -409,6 +435,7 @@ impl DashboardState {
         if let Some(menu) = self.channel_action_menu.as_mut() {
             let selected = match menu {
                 ChannelActionMenuState::Actions { selected, .. }
+                | ChannelActionMenuState::MuteDuration { selected, .. }
                 | ChannelActionMenuState::Threads { selected, .. } => selected,
             };
             *selected = row;
@@ -452,7 +479,29 @@ impl DashboardState {
                         // there's nothing extra for the dispatch loop here.
                         None
                     }
+                    ChannelActionKind::ToggleMute => {
+                        if self.discord.channel_notification_muted(channel_id) {
+                            self.close_channel_action_menu();
+                            self.toggle_selected_channel_mute(None)
+                        } else {
+                            self.channel_action_menu = Some(ChannelActionMenuState::MuteDuration {
+                                channel_id,
+                                selected: 0,
+                            });
+                            None
+                        }
+                    }
                 }
+            }
+            ChannelActionMenuState::MuteDuration { selected, .. } => {
+                let item =
+                    self.selected_channel_mute_duration_items()
+                        .get(clamp_selected_index(
+                            selected,
+                            self.selected_channel_mute_duration_items().len(),
+                        ))?;
+                self.close_channel_action_menu();
+                self.toggle_selected_channel_mute(Some(item.duration))
             }
             ChannelActionMenuState::Threads { .. } => {
                 let items = self.channel_action_thread_items();
@@ -482,6 +531,15 @@ impl DashboardState {
                         && channel_action_shortcut(&actions, index)
                             .is_some_and(|candidate| candidate == shortcut)
                 })?;
+                self.select_channel_action_row(index);
+                self.activate_selected_channel_action()
+            }
+            ChannelActionMenuState::MuteDuration { .. } => {
+                let index = self
+                    .selected_channel_mute_duration_items()
+                    .iter()
+                    .enumerate()
+                    .position(|(index, _)| indexed_shortcut(index) == Some(shortcut))?;
                 self.select_channel_action_row(index);
                 self.activate_selected_channel_action()
             }

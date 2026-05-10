@@ -1,5 +1,6 @@
 use super::message_list::render_image_preview;
 use super::*;
+use crate::tui::state::MuteActionDurationItem;
 use ratatui::layout::Position;
 
 const LEADER_POPUP_WIDTH: u16 = 74;
@@ -121,6 +122,16 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .collect();
     }
     if state.is_guild_action_menu_open() {
+        if state.is_guild_action_mute_duration_phase() {
+            return state
+                .selected_guild_mute_duration_items()
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    leader_shortcut_line(indexed_shortcut(index).unwrap_or(' '), item.label, true)
+                })
+                .collect();
+        }
         let actions = state.selected_guild_action_items();
         return actions
             .iter()
@@ -145,6 +156,16 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .collect();
     }
     if state.is_channel_action_menu_open() {
+        if state.is_channel_action_mute_duration_phase() {
+            return state
+                .selected_channel_mute_duration_items()
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    leader_shortcut_line(indexed_shortcut(index).unwrap_or(' '), item.label, true)
+                })
+                .collect();
+        }
         let actions = state.selected_channel_action_items();
         return actions
             .iter()
@@ -673,16 +694,32 @@ pub(super) fn render_guild_action_menu(frame: &mut Frame, area: Rect, state: &Da
         return;
     }
     let selected = state.selected_guild_action_index().unwrap_or(0);
-    let title = state
-        .guild_action_menu_title()
-        .map(|name| format!("Server actions — {name}"))
-        .unwrap_or_else(|| "Server actions".to_owned());
-    let popup = centered_rect(area, 48, (actions.len() as u16).saturating_add(4));
+    let is_duration_phase = state.is_guild_action_mute_duration_phase();
+    let title = state.guild_action_menu_title();
+    let row_count = if is_duration_phase {
+        state.selected_guild_mute_duration_items().len()
+    } else {
+        actions.len()
+    };
+    let popup = centered_rect(area, 48, (row_count as u16).saturating_add(4));
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(guild_action_menu_lines(&actions, selected))
-            .block(panel_block_owned(title, true))
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(if is_duration_phase {
+            mute_duration_menu_lines(state.selected_guild_mute_duration_items(), selected)
+        } else {
+            guild_action_menu_lines(&actions, selected)
+        })
+        .block(panel_block_owned(
+            if is_duration_phase {
+                format!("Mute server for... — {}", title.unwrap_or_default())
+            } else {
+                title
+                    .map(|name| format!("Server actions — {name}"))
+                    .unwrap_or_else(|| "Server actions".to_owned())
+            },
+            true,
+        ))
+        .wrap(Wrap { trim: false }),
         popup,
     );
 }
@@ -712,20 +749,34 @@ pub(super) fn render_channel_action_menu(frame: &mut Frame, area: Rect, state: &
         return;
     }
 
+    let is_duration_phase = state.is_channel_action_mute_duration_phase();
     let actions = state.selected_channel_action_items();
-    if actions.is_empty() {
+    if actions.is_empty() && !is_duration_phase {
         return;
     }
     let selected = state.selected_channel_action_index().unwrap_or(0);
-    let popup = centered_rect(area, 54, (actions.len() as u16).saturating_add(4));
+    let row_count = if is_duration_phase {
+        state.selected_channel_mute_duration_items().len()
+    } else {
+        actions.len()
+    };
+    let popup = centered_rect(area, 54, (row_count as u16).saturating_add(4));
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(channel_action_menu_lines(&actions, selected))
-            .block(panel_block_owned(
-                format!("Channel actions{title_suffix}"),
-                true,
-            ))
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(if is_duration_phase {
+            mute_duration_menu_lines(state.selected_channel_mute_duration_items(), selected)
+        } else {
+            channel_action_menu_lines(&actions, selected)
+        })
+        .block(panel_block_owned(
+            if is_duration_phase {
+                format!("Mute channel for...{title_suffix}")
+            } else {
+                format!("Channel actions{title_suffix}")
+            },
+            true,
+        ))
+        .wrap(Wrap { trim: false }),
         popup,
     );
 }
@@ -871,6 +922,36 @@ pub(super) fn guild_action_menu_lines(
         .collect();
     lines.push(Line::from(Span::styled(
         "Shortcut/Enter select · Esc close",
+        Style::default().fg(DIM),
+    )));
+    lines
+}
+
+fn mute_duration_menu_lines(
+    actions: &[MuteActionDurationItem],
+    selected: usize,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| {
+            let marker = if index == selected { "› " } else { "  " };
+            let shortcut = shortcut_prefix(indexed_shortcut(index));
+            let mut style = Style::default();
+            if index == selected {
+                style = style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            Line::from(vec![
+                Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(shortcut, Style::default().fg(DIM)),
+                Span::styled(action.label, style),
+            ])
+        })
+        .collect();
+    lines.push(Line::from(Span::styled(
+        "Shortcut/Enter select · Esc back",
         Style::default().fg(DIM),
     )));
     lines

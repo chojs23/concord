@@ -254,7 +254,7 @@ fn handle_leader_action_key(state: &mut DashboardState, key: KeyEvent) -> Option
         }
         KeyCode::Char(shortcut) if is_shortcut_key(key) => {
             let (matched, command) = state.activate_leader_action_shortcut(shortcut);
-            if !matched || !state.is_channel_action_threads_phase() {
+            if !matched || !state.is_any_action_menu_open() {
                 state.close_all_action_menus();
                 state.close_leader();
             }
@@ -474,7 +474,7 @@ fn handle_member_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> O
 
 fn handle_guild_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match key.code {
-        KeyCode::Esc => state.close_guild_action_menu(),
+        KeyCode::Esc => state.back_guild_action_menu(),
         code if is_down_key(code) => state.move_guild_action_down(),
         code if is_up_key(code) => state.move_guild_action_up(),
         code if is_confirm_key(code) => return state.activate_selected_guild_action(),
@@ -491,7 +491,10 @@ fn handle_channel_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
         // Esc steps back to the action list when viewing threads, otherwise
         // closes the menu entirely.
         KeyCode::Esc => state.back_channel_action_menu(),
-        code if is_left_key(code) && state.is_channel_action_threads_phase() => {
+        code if is_left_key(code)
+            && (state.is_channel_action_threads_phase()
+                || state.is_channel_action_mute_duration_phase()) =>
+        {
             state.back_channel_action_menu()
         }
         code if is_down_key(code) => state.move_channel_action_down(),

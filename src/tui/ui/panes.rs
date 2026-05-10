@@ -102,7 +102,7 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                     } => {
                         let prefix = branch.prefix();
                         let base_style = active_text_style(is_active, Style::default());
-                        let unread = dashboard.guild_unread(guild.id);
+                        let unread = dashboard.sidebar_guild_unread(guild.id);
                         let (badge, name_style) = if is_active {
                             let (badge, _) = channel_unread_decoration(unread, base_style, false);
                             (badge, base_style)
@@ -195,7 +195,7 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                         });
                         let prefix_width = prefix_span.content.width();
                         let base_style = active_text_style(is_active, Style::default());
-                        let unread = dashboard.channel_unread(state.id);
+                        let unread = dashboard.sidebar_channel_unread(state.id);
                         let (badge, name_style) =
                             channel_unread_decoration(unread, base_style, is_active);
                         let badge = if state.guild_id.is_none()
@@ -813,10 +813,16 @@ pub(super) fn footer_hint(state: &DashboardState) -> String {
         || state.is_guild_action_menu_open()
         || state.is_member_action_menu_open()
     {
-        "j/k choose action | enter select | esc close | q quit".to_owned()
+        if state.is_guild_action_mute_duration_phase() {
+            "j/k choose duration | enter select | esc back | q quit".to_owned()
+        } else {
+            "j/k choose action | enter select | esc close | q quit".to_owned()
+        }
     } else if state.is_channel_action_menu_open() {
         if state.is_channel_action_threads_phase() {
             "j/k choose thread | enter open | esc/← back | q quit".to_owned()
+        } else if state.is_channel_action_mute_duration_phase() {
+            "j/k choose duration | enter select | esc/← back | q quit".to_owned()
         } else {
             "j/k choose action | enter select | esc close | q quit".to_owned()
         }

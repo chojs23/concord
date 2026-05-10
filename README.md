@@ -106,6 +106,7 @@ Tokens are saved to `$XDG_CONFIG_HOME/concord/credential` (default `~/.config/co
 - Load pinned messages per channel
 - Open channel actions for pinned messages, thread lists, and mark-as-read
 - Track unread messages and mention counts per channel
+- Mute and unmute channels and servers
 
 ### Messaging
 

@@ -87,11 +87,9 @@ fn options_popup_lines_show_selected_toggle_state() {
     assert_eq!(lines[1].spans[0].content, "› ");
     assert_eq!(lines[1].spans[1].content, "[x] ");
     assert_eq!(lines[2].spans[1].content, "[balanced] ");
-    assert!(
-        lines.last().expect("hint line").spans[0]
-            .content
-            .contains("config.toml")
-    );
+    let footer = &lines.last().expect("hint line").spans[0].content;
+    assert!(footer.contains("saved to "));
+    assert!(footer.contains("Esc close"));
 }
 
 #[test]
@@ -2442,6 +2440,11 @@ fn channel_action_menu_renders_pinned_and_thread_actions() {
             label: "Show threads (none)".to_owned(),
             enabled: false,
         },
+        ChannelActionItem {
+            kind: ChannelActionKind::ToggleMute,
+            label: "Mute channel".to_owned(),
+            enabled: true,
+        },
     ];
 
     let lines = channel_action_menu_lines(&actions, 0);
@@ -2451,6 +2454,7 @@ fn channel_action_menu_renders_pinned_and_thread_actions() {
         vec![
             "› [p] Show pinned messages",
             "  [t] Show threads (none)",
+            "  [u] Mute channel",
             "Shortcut/Enter select · Esc close",
         ]
     );
@@ -2476,12 +2480,19 @@ fn guild_action_menu_renders_placeholder_action() {
 }
 
 #[test]
-fn guild_action_menu_renders_mark_server_read_shortcut() {
-    let actions = vec![GuildActionItem {
-        kind: GuildActionKind::MarkAsRead,
-        label: "Mark server as read".to_owned(),
-        enabled: true,
-    }];
+fn guild_action_menu_renders_mark_server_read_and_mute_shortcuts() {
+    let actions = vec![
+        GuildActionItem {
+            kind: GuildActionKind::MarkAsRead,
+            label: "Mark server as read".to_owned(),
+            enabled: true,
+        },
+        GuildActionItem {
+            kind: GuildActionKind::ToggleMute,
+            label: "Mute server".to_owned(),
+            enabled: true,
+        },
+    ];
 
     let lines = guild_action_menu_lines(&actions, 0);
 
@@ -2489,6 +2500,7 @@ fn guild_action_menu_renders_mark_server_read_shortcut() {
         line_texts_from_ratatui(&lines),
         vec![
             "› [m] Mark server as read",
+            "  [u] Mute server",
             "Shortcut/Enter select · Esc close"
         ]
     );
