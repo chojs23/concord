@@ -209,9 +209,9 @@ pub fn render(
     }
     render_options_popup(frame, areas.messages, state);
     render_poll_vote_picker(frame, areas.messages, state);
+    render_user_profile_popup(frame, areas.messages, state, profile_avatar, &emoji_images);
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
     render_reaction_users_popup(frame, areas.messages, state);
-    render_user_profile_popup(frame, areas.messages, state, profile_avatar);
     render_image_viewer(frame, areas.messages, state, viewer_image_preview);
     render_image_viewer_action_menu(frame, areas.messages, state);
     render_debug_log_popup(frame, areas.messages, state);

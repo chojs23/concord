@@ -114,4 +114,5 @@ pub(crate) enum ActionMenuTarget {
 
 pub(super) struct UserProfilePopupText {
     pub(super) lines: Vec<Line<'static>>,
+    pub(super) emoji_overlays: Vec<(usize, String)>,
 }

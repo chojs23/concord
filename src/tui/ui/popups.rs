@@ -1,5 +1,6 @@
 use super::message_list::render_image_preview;
 use super::*;
+use crate::discord::ActivityEmoji;
 use crate::tui::state::MuteActionDurationItem;
 use ratatui::layout::Position;
 
@@ -997,6 +998,7 @@ pub(super) fn render_user_profile_popup(
     area: Rect,
     state: &DashboardState,
     avatar: Option<AvatarImage>,
+    emoji_images: &[EmojiReactionImage<'_>],
 ) {
     if !state.is_user_profile_popup_open() {
         return;
@@ -1018,7 +1020,7 @@ pub(super) fn render_user_profile_popup(
     );
     let text_area = user_profile_popup_text_area_inside(inner, has_avatar);
 
-    let popup_text = user_profile_popup_text_for_render(state, text_area.width);
+    let popup_text = user_profile_popup_text_for_render(state, text_area.width, emoji_images);
     let total_lines = popup_text.lines.len();
     let viewport = text_area.height as usize;
     let scroll_position = state
@@ -1032,6 +1034,25 @@ pub(super) fn render_user_profile_popup(
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), text_area);
     render_vertical_scrollbar(frame, text_area, scroll_position, viewport, total_lines);
+
+    if state.show_custom_emoji() {
+        for (line_idx, url) in &popup_text.emoji_overlays {
+            let Some(image) = emoji_images.iter().find(|img| img.url == *url) else {
+                continue;
+            };
+            let Some(visible_offset) = line_idx.checked_sub(scroll_position) else {
+                continue;
+            };
+            if visible_offset >= viewport {
+                continue;
+            }
+            let y = text_area.y.saturating_add(visible_offset as u16);
+            frame.render_widget(
+                ratatui_image::Image::new(image.protocol),
+                Rect::new(text_area.x, y, 2, 1),
+            );
+        }
+    }
 
     if let Some(avatar) = avatar.filter(|_| has_avatar) {
         let avatar_area = Rect {
@@ -1094,7 +1115,11 @@ pub(super) fn user_profile_popup_text_geometry(area: Rect, has_avatar: bool) -> 
     (text_area.width, text_area.height)
 }
 
-fn user_profile_popup_text_for_render(state: &DashboardState, width: u16) -> UserProfilePopupText {
+fn user_profile_popup_text_for_render(
+    state: &DashboardState,
+    width: u16,
+    emoji_images: &[EmojiReactionImage<'_>],
+) -> UserProfilePopupText {
     if let Some(profile) = state.user_profile_popup_data() {
         user_profile_popup_text(
             profile,
@@ -1102,6 +1127,7 @@ fn user_profile_popup_text_for_render(state: &DashboardState, width: u16) -> Use
             width,
             state.user_profile_popup_status(),
             state.user_profile_popup_activities(),
+            emoji_images,
         )
     } else if let Some(message) = state.user_profile_popup_load_error() {
         UserProfilePopupText {
@@ -1109,6 +1135,7 @@ fn user_profile_popup_text_for_render(state: &DashboardState, width: u16) -> Use
                 truncate_display_width(&format!("Failed to load profile: {message}"), width.into()),
                 Style::default().fg(Color::Red),
             ))],
+            emoji_overlays: Vec::new(),
         }
     } else {
         UserProfilePopupText {
@@ -1116,6 +1143,7 @@ fn user_profile_popup_text_for_render(state: &DashboardState, width: u16) -> Use
                 "Loading profile...",
                 Style::default().fg(DIM),
             ))],
+            emoji_overlays: Vec::new(),
         }
     }
 }
@@ -1124,7 +1152,7 @@ fn user_profile_popup_text_for_render(state: &DashboardState, width: u16) -> Use
 /// `user_profile_popup_text_for_render` so the scroll-clamping pass in
 /// `sync_view_heights` matches the eventual render exactly.
 pub(super) fn user_profile_popup_total_lines(state: &DashboardState, width: u16) -> usize {
-    user_profile_popup_text_for_render(state, width).lines.len()
+    user_profile_popup_text_for_render(state, width, &[]).lines.len()
 }
 
 #[cfg(test)]
@@ -1134,7 +1162,7 @@ pub(super) fn user_profile_popup_lines(
     width: u16,
     status: PresenceStatus,
 ) -> Vec<Line<'static>> {
-    user_profile_popup_text(profile, state, width, status, &[]).lines
+    user_profile_popup_text(profile, state, width, status, &[], &[]).lines
 }
 
 #[cfg(test)]
@@ -1145,7 +1173,7 @@ pub(super) fn user_profile_popup_lines_with_activities(
     status: PresenceStatus,
     activities: &[ActivityInfo],
 ) -> Vec<Line<'static>> {
-    user_profile_popup_text(profile, state, width, status, activities).lines
+    user_profile_popup_text(profile, state, width, status, activities, &[]).lines
 }
 
 pub(super) fn user_profile_popup_text(
@@ -1154,6 +1182,7 @@ pub(super) fn user_profile_popup_text(
     width: u16,
     status: PresenceStatus,
     activities: &[ActivityInfo],
+    emoji_images: &[EmojiReactionImage<'_>],
 ) -> UserProfilePopupText {
     let is_self = state.current_user_id() == Some(profile.user_id);
 
@@ -1187,11 +1216,12 @@ pub(super) fn user_profile_popup_text(
         )));
     }
 
+    let mut emoji_overlays: Vec<(usize, String)> = Vec::new();
     if !activities.is_empty() {
         lines.push(Line::from(Span::raw(String::new())));
         push_section_header(&mut lines, "ACTIVITY");
         for activity in activities {
-            push_activity_lines(&mut lines, activity, inner_width);
+            push_activity_lines(&mut lines, &mut emoji_overlays, activity, inner_width, emoji_images);
         }
     }
 
@@ -1265,7 +1295,7 @@ pub(super) fn user_profile_popup_text(
         Style::default().fg(DIM),
     )));
 
-    UserProfilePopupText { lines }
+    UserProfilePopupText { lines, emoji_overlays }
 }
 
 pub(super) fn user_profile_display_name_style(status: PresenceStatus) -> Style {
@@ -1291,12 +1321,33 @@ fn push_section_header(lines: &mut Vec<Line<'static>>, label: &str) {
     )));
 }
 
-fn push_activity_lines(lines: &mut Vec<Line<'static>>, activity: &ActivityInfo, width: usize) {
-    let primary = activity_primary_line(activity);
-    if !primary.is_empty() {
-        lines.push(Line::from(Span::raw(truncate_display_width(
-            &primary, width,
-        ))));
+fn push_activity_lines(
+    lines: &mut Vec<Line<'static>>,
+    emoji_overlays: &mut Vec<(usize, String)>,
+    activity: &ActivityInfo,
+    width: usize,
+    emoji_images: &[EmojiReactionImage<'_>],
+) {
+    let (primary, image_url) = activity_primary_line(activity, emoji_images);
+    if !primary.is_empty() || image_url.is_some() {
+        let line_index = lines.len();
+        let line = if image_url.is_some() {
+            let body = primary.get(3..).unwrap_or("");
+            let body = truncate_display_width(body, width.saturating_sub(2));
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(body, Style::default().fg(DIM)),
+            ])
+        } else {
+            Line::from(Span::styled(
+                truncate_display_width(&primary, width),
+                Style::default().fg(DIM),
+            ))
+        };
+        lines.push(line);
+        if let Some(url) = image_url {
+            emoji_overlays.push((line_index, url));
+        }
     }
     if let Some(secondary) = activity_secondary_line(activity) {
         lines.push(Line::from(Span::styled(
@@ -1312,34 +1363,48 @@ fn push_activity_lines(lines: &mut Vec<Line<'static>>, activity: &ActivityInfo, 
     }
 }
 
-fn activity_primary_line(activity: &ActivityInfo) -> String {
+fn activity_emoji_image_url(emoji: &ActivityEmoji) -> Option<String> {
+    let id = emoji.id?;
+    let ext = if emoji.animated { "gif" } else { "png" };
+    Some(format!("https://cdn.discordapp.com/emojis/{}.{}", id.get(), ext))
+}
+
+fn activity_primary_line(activity: &ActivityInfo, emoji_images: &[EmojiReactionImage<'_>]) -> (String, Option<String>) {
     match activity.kind {
         ActivityKind::Custom => {
+            let image_url = activity
+                .emoji
+                .as_ref()
+                .and_then(|e| activity_emoji_image_url(e))
+                .filter(|url| emoji_images.iter().any(|img| img.url == *url));
             let emoji = activity
                 .emoji
                 .as_ref()
                 .map(|emoji| {
-                    if emoji.id.is_some() {
-                        format!(":{}:", emoji.name)
+                    if image_url.is_some() {
+                        "  ".to_owned()
+                    } else if emoji.id.is_some() {
+                        String::new()
                     } else {
                         emoji.name.clone()
                     }
                 })
                 .unwrap_or_default();
             let body = activity.state.clone().unwrap_or_default();
-            match (emoji.is_empty(), body.is_empty()) {
+            let text = match (emoji.is_empty(), body.is_empty()) {
                 (true, true) => String::new(),
                 (false, true) => emoji,
                 (true, false) => body,
                 (false, false) => format!("{emoji} {body}"),
-            }
+            };
+            (text, image_url)
         }
-        ActivityKind::Playing => format!("Playing {}", activity.name),
-        ActivityKind::Streaming => format!("Streaming {}", activity.name),
-        ActivityKind::Listening => format!("Listening to {}", activity.name),
-        ActivityKind::Watching => format!("Watching {}", activity.name),
-        ActivityKind::Competing => format!("Competing in {}", activity.name),
-        ActivityKind::Unknown => activity.name.clone(),
+        ActivityKind::Playing => (format!("Playing {}", activity.name), None),
+        ActivityKind::Streaming => (format!("Streaming {}", activity.name), None),
+        ActivityKind::Listening => (format!("Listening to {}", activity.name), None),
+        ActivityKind::Watching => (format!("Watching {}", activity.name), None),
+        ActivityKind::Competing => (format!("Competing in {}", activity.name), None),
+        ActivityKind::Unknown => (activity.name.clone(), None),
     }
 }
 
