@@ -27,7 +27,7 @@ use super::{
     active_text_style, channel_prefix, channel_unread_decoration, dm_presence_dot_span,
     highlight_style,
     layout::{composer_inner_width, panel_scrollbar_area},
-    panel_block, panel_block_owned, panel_content_height, render_vertical_scrollbar,
+    panel_block, panel_block_line, panel_content_height, render_vertical_scrollbar,
     selection_marker, styled_list_item,
     types::{ACCENT, DIM, MessageAreas},
 };
@@ -613,7 +613,7 @@ pub(super) fn render_members(frame: &mut Frame, area: Rect, state: &DashboardSta
 
     frame.render_widget(
         Paragraph::new(lines)
-            .block(panel_block_owned(state.member_panel_title(), focused))
+            .block(panel_block_line(state.member_panel_title(), focused))
             .wrap(Wrap { trim: false }),
         area,
     );

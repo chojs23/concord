@@ -373,5 +373,16 @@ fn panel_block_owned(title: String, focused: bool) -> Block<'static> {
         .title_style(Style::default().fg(Color::White).bold())
 }
 
+pub(super) fn panel_block_line(title: Line<'static>, focused: bool) -> Block<'static> {
+    let border = if focused { ACCENT } else { Color::DarkGray };
+
+    Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(border))
+        .title_style(Style::default().fg(Color::White).bold())
+}
+
 #[cfg(test)]
 mod tests;
