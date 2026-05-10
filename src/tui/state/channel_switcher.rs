@@ -7,9 +7,9 @@ use crate::discord::ids::{
 use crate::discord::{AppCommand, ChannelState};
 use unicode_segmentation::UnicodeSegmentation;
 
+use super::super::fuzzy::fuzzy_text_score;
 use super::{ActiveGuildScope, DashboardState};
 use super::{
-    fuzzy::fuzzy_text_score,
     model::{ChannelBranch, ChannelSwitcherItem, GuildPaneEntry},
     presentation::{is_direct_message_channel, sort_channels, sort_direct_message_channels},
     scroll::{clamp_selected_index, move_index_down, move_index_up},

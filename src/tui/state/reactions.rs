@@ -1,8 +1,8 @@
 use crate::discord::AppCommand;
 use crate::discord::ids::{Id, marker::GuildMarker};
 
+use super::super::fuzzy::fuzzy_text_score;
 use super::emoji::{custom_emoji_reaction_item, unicode_emoji_reaction_items};
-use super::fuzzy::fuzzy_text_score;
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
 use super::{
     DashboardState, EmojiReactionItem, EmojiReactionPickerState, ReactionUsersPopupState,

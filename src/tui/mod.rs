@@ -1,4 +1,5 @@
 mod format;
+mod fuzzy;
 mod input;
 mod login;
 mod media;

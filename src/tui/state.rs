@@ -24,7 +24,6 @@ mod composer;
 mod composer_state;
 mod diagnostics;
 mod emoji;
-mod fuzzy;
 mod guilds;
 mod image_viewer;
 mod member_grouping;

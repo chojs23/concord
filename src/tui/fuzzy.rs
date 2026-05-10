@@ -20,8 +20,21 @@ pub(super) fn fuzzy_text_score(value: &str, query: &str) -> Option<usize> {
         return Some(100 + byte_index);
     }
 
-    let haystack_chars: Vec<char> = haystack.chars().collect();
     let needle_chars: Vec<char> = needle.chars().collect();
+    let haystack_chars: Vec<char> = haystack.chars().collect();
+
+    if let Some(score) = subsequence_score(&haystack_chars, &needle_chars, 1000) {
+        return Some(score);
+    }
+
+    typo_tolerant_subsequence_score(&haystack_chars, &needle_chars)
+}
+
+fn subsequence_score(
+    haystack_chars: &[char],
+    needle_chars: &[char],
+    score_base: usize,
+) -> Option<usize> {
     let mut positions = Vec::with_capacity(needle_chars.len());
     let mut needle_index = 0usize;
     for (haystack_index, haystack_char) in haystack_chars.iter().enumerate() {
@@ -41,7 +54,43 @@ pub(super) fn fuzzy_text_score(value: &str, query: &str) -> Option<usize> {
     let end = positions.last().copied().unwrap_or(start);
     let span = end.saturating_sub(start).saturating_add(1);
     let gaps = span.saturating_sub(needle_chars.len());
-    Some(1000 + span * 10 + gaps + start)
+    Some(score_base + span * 10 + gaps + start)
+}
+
+fn typo_tolerant_subsequence_score(
+    haystack_chars: &[char],
+    needle_chars: &[char],
+) -> Option<usize> {
+    if needle_chars.len() < 3 {
+        return None;
+    }
+
+    let mut best = None;
+    for removed_index in 0..needle_chars.len() {
+        let candidate = needle_chars
+            .iter()
+            .enumerate()
+            .filter_map(|(index, value)| (index != removed_index).then_some(*value))
+            .collect::<Vec<_>>();
+        best = better_score(best, subsequence_score(haystack_chars, &candidate, 2100));
+    }
+
+    for swapped_index in 0..needle_chars.len().saturating_sub(1) {
+        let mut candidate = needle_chars.to_vec();
+        candidate.swap(swapped_index, swapped_index + 1);
+        best = better_score(best, subsequence_score(haystack_chars, &candidate, 2200));
+    }
+
+    best
+}
+
+fn better_score(current: Option<usize>, candidate: Option<usize>) -> Option<usize> {
+    match (current, candidate) {
+        (Some(current), Some(candidate)) => Some(current.min(candidate)),
+        (Some(current), None) => Some(current),
+        (None, Some(candidate)) => Some(candidate),
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]
@@ -60,9 +109,23 @@ mod tests {
         let prefix = fuzzy_text_score("general", "gen").expect("prefix match");
         let contiguous = fuzzy_text_score("neo-general", "gen").expect("contiguous match");
         let spread = fuzzy_text_score("g-e-n", "gen").expect("spread match");
+        let typo = fuzzy_text_score("party", "praty").expect("typo match");
 
         assert!(exact < prefix);
         assert!(prefix < contiguous);
         assert!(contiguous < spread);
+        assert!(spread < typo);
+    }
+
+    #[test]
+    fn fuzzy_text_score_tolerates_one_query_typo() {
+        assert!(fuzzy_text_score("general", "gereral").is_some());
+        assert!(fuzzy_text_score("general", "gexneral").is_some());
+        assert!(fuzzy_text_score("party", "praty").is_some());
+    }
+
+    #[test]
+    fn fuzzy_text_score_rejects_multiple_unmatched_typos() {
+        assert_eq!(fuzzy_text_score("general", "zzgeneral"), None);
     }
 }
