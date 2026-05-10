@@ -241,6 +241,7 @@ fn deliver_desktop_notification(title: &str, body: &str) -> std::result::Result<
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn deliver_notify_rust_notification(title: &str, body: &str) -> std::result::Result<(), String> {
     notify_rust::Notification::new()
         .summary(title)
