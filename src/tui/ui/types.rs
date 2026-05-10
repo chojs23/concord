@@ -40,7 +40,7 @@ pub struct AvatarImage {
     pub protocol: Protocol,
 }
 
-pub struct EmojiReactionImage<'a> {
+pub struct EmojiImage<'a> {
     pub url: String,
     pub protocol: &'a Protocol,
 }

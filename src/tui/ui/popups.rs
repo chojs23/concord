@@ -786,7 +786,7 @@ pub(super) fn render_emoji_reaction_picker(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
-    emoji_images: Vec<EmojiReactionImage<'_>>,
+    emoji_images: Vec<EmojiImage<'_>>,
 ) {
     if !state.is_emoji_reaction_picker_open() {
         return;
@@ -998,7 +998,7 @@ pub(super) fn render_user_profile_popup(
     area: Rect,
     state: &DashboardState,
     avatar: Option<AvatarImage>,
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) {
     if !state.is_user_profile_popup_open() {
         return;
@@ -1118,7 +1118,7 @@ pub(super) fn user_profile_popup_text_geometry(area: Rect, has_avatar: bool) -> 
 fn user_profile_popup_text_for_render(
     state: &DashboardState,
     width: u16,
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) -> UserProfilePopupText {
     if let Some(profile) = state.user_profile_popup_data() {
         user_profile_popup_text(
@@ -1182,7 +1182,7 @@ pub(super) fn user_profile_popup_text(
     width: u16,
     status: PresenceStatus,
     activities: &[ActivityInfo],
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) -> UserProfilePopupText {
     let is_self = state.current_user_id() == Some(profile.user_id);
 
@@ -1326,7 +1326,7 @@ fn push_activity_lines(
     emoji_overlays: &mut Vec<(usize, String)>,
     activity: &ActivityInfo,
     width: usize,
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) {
     let (primary, image_url) = activity_primary_line(activity, emoji_images);
     if !primary.is_empty() || image_url.is_some() {
@@ -1369,7 +1369,7 @@ fn activity_emoji_image_url(emoji: &ActivityEmoji) -> Option<String> {
     Some(format!("https://cdn.discordapp.com/emojis/{}.{}", id.get(), ext))
 }
 
-fn activity_primary_line(activity: &ActivityInfo, emoji_images: &[EmojiReactionImage<'_>]) -> (String, Option<String>) {
+fn activity_primary_line(activity: &ActivityInfo, emoji_images: &[EmojiImage<'_>]) -> (String, Option<String>) {
     match activity.kind {
         ActivityKind::Custom => {
             let image_url = activity
@@ -1969,7 +1969,7 @@ fn render_emoji_reaction_images(
     reactions: &[EmojiReactionItem],
     selected: usize,
     visible_items: usize,
-    emoji_images: Vec<EmojiReactionImage<'_>>,
+    emoji_images: Vec<EmojiImage<'_>>,
 ) {
     if area.width <= EMOJI_REACTION_IMAGE_WIDTH || area.height == 0 {
         return;

@@ -30,7 +30,7 @@ use super::{
     layout::{composer_inner_width, panel_scrollbar_area},
     panel_block, panel_block_line, panel_content_height, render_vertical_scrollbar,
     selection_marker, styled_list_item,
-    types::{ACCENT, DIM, EmojiReactionImage, MessageAreas},
+    types::{ACCENT, DIM, EmojiImage, MessageAreas},
 };
 
 pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
@@ -976,7 +976,7 @@ pub(super) fn render_members(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) {
     let groups = state.members_grouped();
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -1175,7 +1175,7 @@ pub(super) fn member_display_label(
 /// text contains a 2-space placeholder at the start for the image overlay.
 pub(super) fn primary_activity_summary(
     activities: &[ActivityInfo],
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) -> Option<(String, Option<String>)> {
     let activity = activities
         .iter()
@@ -1197,7 +1197,7 @@ fn activity_priority(kind: ActivityKind) -> u8 {
 
 fn format_activity_summary(
     activity: &ActivityInfo,
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) -> (String, Option<String>) {
     match activity.kind {
         ActivityKind::Custom => {

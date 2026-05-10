@@ -353,7 +353,7 @@ pub(super) fn render_forum_post_reaction_emojis(
     list: Rect,
     posts: &[ChannelThreadItem],
     width: usize,
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) {
     if emoji_images.is_empty() || list.height == 0 || list.width == 0 {
         return;

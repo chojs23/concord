@@ -23,7 +23,7 @@ use crate::{
     logging,
 };
 
-use super::ui::{AvatarImage, EmojiReactionImage};
+use super::ui::{AvatarImage, EmojiImage};
 
 const AVATAR_PREVIEW_WIDTH: u16 = 2;
 const AVATAR_PREVIEW_HEIGHT: u16 = 2;
@@ -360,7 +360,7 @@ impl EmojiImageCache {
     pub(super) fn render_state(
         &mut self,
         targets: &[EmojiImageTarget],
-    ) -> Vec<EmojiReactionImage<'_>> {
+    ) -> Vec<EmojiImage<'_>> {
         let touch_tick = self.next_tick();
         for target in targets {
             if let Some(entry) = self.entries.get_mut(&target.url) {
@@ -373,7 +373,7 @@ impl EmojiImageCache {
                 let EmojiImageEntry::Ready { protocol, .. } = self.entries.get(&target.url)? else {
                     return None;
                 };
-                Some(EmojiReactionImage {
+                Some(EmojiImage {
                     url: target.url.clone(),
                     protocol,
                 })

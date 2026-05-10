@@ -32,7 +32,7 @@ pub(super) fn render_messages(
     state: &DashboardState,
     image_previews: Vec<ImagePreview<'_>>,
     avatar_images: Vec<AvatarImage>,
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) {
     let block = panel_block_owned(
         state.message_pane_title(),
@@ -325,7 +325,7 @@ fn render_inline_reaction_emojis(
     state: &DashboardState,
     content_width: usize,
     selected: Option<usize>,
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) {
     if emoji_images.is_empty() || list.height == 0 || list.width <= MESSAGE_AVATAR_OFFSET {
         return;
@@ -428,7 +428,7 @@ fn render_inline_message_body_emojis(
     state: &DashboardState,
     content_width: usize,
     selected: Option<usize>,
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) {
     if emoji_images.is_empty() || list.height == 0 || list.width <= MESSAGE_AVATAR_OFFSET {
         return;
@@ -574,7 +574,7 @@ pub(super) fn message_viewport_lines(
     selected: Option<usize>,
     state: &DashboardState,
     layout: MessageViewportLayout,
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for (index, message) in messages.iter().enumerate() {

@@ -89,7 +89,7 @@ use self::types::{
 };
 pub(crate) use self::types::{ActionMenuTarget, MESSAGE_ROW_GAP, MouseTarget};
 pub use self::types::{
-    AvatarImage, EmojiReactionImage, ImagePreview, ImagePreviewLayout, ImagePreviewState,
+    AvatarImage, EmojiImage, ImagePreview, ImagePreviewLayout, ImagePreviewState,
 };
 #[cfg(test)]
 use self::{
@@ -166,7 +166,7 @@ pub fn render(
     state: &DashboardState,
     image_previews: Vec<ImagePreview<'_>>,
     avatar_images: Vec<AvatarImage>,
-    emoji_images: Vec<EmojiReactionImage<'_>>,
+    emoji_images: Vec<EmojiImage<'_>>,
     profile_avatar: Option<AvatarImage>,
 ) {
     let areas = dashboard_areas(frame.area(), state);
