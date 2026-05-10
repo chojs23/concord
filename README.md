@@ -152,7 +152,7 @@ You can toggle image viewing on or off in the configuration file. When image vie
 
 - Live "user is typing..." indicators
 - Unread message tracking with mention counts
-- Mark channels as read
+- Mark server, channel as read
 
 ### Notifications
 
@@ -197,6 +197,25 @@ Press `Space` to open the leader shortcut window.
 | `Space`, `a`     | Open actions for the focused pane |
 | `Space`, `o`     | Open concord options              |
 | `Space`, `Space` | Open the fuzzy channel switcher   |
+
+#### Action menus
+
+Focus a pane, then press `Space`, `a` to open actions for that pane. Action
+shortcuts are shown inside the popup and only run when the action is enabled.
+
+Server actions:
+
+| Shortcut | Action              | Description                                           |
+| -------- | ------------------- | ----------------------------------------------------- |
+| `m`      | Mark server as read | Mark all unread viewable channels in this server read |
+
+Channel actions:
+
+| Shortcut | Action               | Description                                 |
+| -------- | -------------------- | ------------------------------------------- |
+| `p`      | Show pinned messages | Open the selected channel's pinned messages |
+| `t`      | Show threads         | List threads for the selected channel       |
+| `m`      | Mark as read         | Mark the selected channel read              |
 
 Hidden side panes give their width back to Messages. Pressing a hidden pane's
 number key directly shows and focuses it again.

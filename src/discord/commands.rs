@@ -167,4 +167,7 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
     },
+    AckChannels {
+        targets: Vec<(Id<ChannelMarker>, Id<MessageMarker>)>,
+    },
 }

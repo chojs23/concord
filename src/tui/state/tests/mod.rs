@@ -86,6 +86,21 @@ fn direct_message_create_event(channel_id: Id<ChannelMarker>, message_id: u64) -
     }
 }
 
+fn drain_debounced_read_ack(state: &mut DashboardState) -> Vec<AppCommand> {
+    let deadline = state
+        .next_read_ack_deadline()
+        .expect("read ack should be scheduled");
+    state.flush_due_read_acks(deadline);
+    state.drain_pending_commands()
+}
+
+fn clear_scheduled_read_ack(state: &mut DashboardState) {
+    if let Some(deadline) = state.next_read_ack_deadline() {
+        state.flush_due_read_acks(deadline);
+        state.drain_pending_commands();
+    }
+}
+
 #[test]
 fn tracks_current_user_from_ready() {
     let mut state = DashboardState::new();
@@ -2760,6 +2775,7 @@ fn first_loaded_message_has_date_separator() {
 #[test]
 fn incoming_message_while_scrolled_away_sets_new_messages_marker() {
     let mut state = state_with_messages(5);
+    clear_scheduled_read_ack(&mut state);
     state.focus_pane(FocusPane::Messages);
     state.set_message_view_height(3);
     state.jump_top();
@@ -2769,6 +2785,9 @@ fn incoming_message_while_scrolled_away_sets_new_messages_marker() {
     assert_eq!(state.new_messages_marker_message_id(), Some(Id::new(6)));
     assert_eq!(state.new_messages_count(), 1);
     assert_eq!(state.message_extra_top_lines(5), 0);
+    assert_eq!(state.channel_unread(Id::new(2)), ChannelUnreadState::Unread);
+    assert!(state.next_read_ack_deadline().is_none());
+    assert!(state.drain_pending_commands().is_empty());
 }
 
 #[test]
@@ -4025,7 +4044,7 @@ fn channel_action_menu_loads_pinned_messages_for_selected_channel() {
 }
 
 #[test]
-fn guild_action_menu_opens_without_concrete_actions_yet() {
+fn guild_action_menu_lists_disabled_mark_server_read_when_guild_is_read() {
     let mut state = state_with_many_guilds(1);
     state.focus_pane(FocusPane::Guilds);
     state.open_selected_guild_actions();
@@ -4034,10 +4053,162 @@ fn guild_action_menu_opens_without_concrete_actions_yet() {
     assert_eq!(state.guild_action_menu_title(), Some("guild 1".to_owned()));
     let actions = state.selected_guild_action_items();
     assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].kind, GuildActionKind::MarkAsRead);
+    assert_eq!(actions[0].label, "Mark server as read");
+    assert!(!actions[0].enabled);
+    assert_eq!(state.activate_selected_guild_action(), None);
+}
+
+#[test]
+fn guild_action_menu_marks_unread_server_channels_as_read() {
+    let guild_id: Id<GuildMarker> = Id::new(1);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: Id::new(2),
+                parent_id: None,
+                position: Some(0),
+                last_message_id: Some(Id::new(20)),
+                name: "unread-a".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: Id::new(3),
+                parent_id: None,
+                position: Some(1),
+                last_message_id: Some(Id::new(30)),
+                name: "read".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: Id::new(4),
+                parent_id: None,
+                position: Some(2),
+                last_message_id: Some(Id::new(40)),
+                name: "unread-b".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+        ],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![
+            ReadStateInfo {
+                channel_id: Id::new(2),
+                last_acked_message_id: Some(Id::new(10)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: Id::new(3),
+                last_acked_message_id: Some(Id::new(30)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: Id::new(4),
+                last_acked_message_id: Some(Id::new(35)),
+                mention_count: 0,
+            },
+        ],
+    });
+    state.focus_pane(FocusPane::Guilds);
+    state.open_selected_guild_actions();
+
+    let actions = state.selected_guild_action_items();
+    assert_eq!(actions[0].kind, GuildActionKind::MarkAsRead);
+    assert!(actions[0].enabled);
+
+    let command = state.activate_selected_guild_action();
+
+    assert_eq!(state.guild_unread(guild_id), ChannelUnreadState::Seen);
+    assert!(!state.is_guild_action_menu_open());
+    let Some(AppCommand::AckChannels { mut targets }) = command else {
+        panic!("expected bulk channel ack command");
+    };
+    targets.sort_by_key(|(channel_id, _)| channel_id.get());
+    assert_eq!(
+        targets,
+        vec![(Id::new(2), Id::new(20)), (Id::new(4), Id::new(40))]
+    );
+}
+
+#[test]
+fn guild_action_menu_skips_hidden_channels_when_marking_server_read() {
+    let mut state = state_with_hidden_and_visible_channels();
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![
+            ReadStateInfo {
+                channel_id: Id::new(2),
+                last_acked_message_id: Some(Id::new(10)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: Id::new(3),
+                last_acked_message_id: Some(Id::new(10)),
+                mention_count: 0,
+            },
+        ],
+    });
+    state.push_event(notification_message_event(Id::new(2), "hidden"));
+    state.push_event(notification_message_event(Id::new(3), "visible"));
+    state.focus_pane(FocusPane::Guilds);
+    state.move_down();
+    state.open_selected_guild_actions();
+    assert_eq!(state.guild_action_menu_title(), Some("guild".to_owned()));
+
+    let command = state.activate_selected_guild_action();
+
+    let Some(AppCommand::AckChannels { targets }) = command else {
+        panic!("expected bulk channel ack command");
+    };
+    assert_eq!(targets, vec![(Id::new(3), Id::new(50))]);
+    assert_ne!(state.channel_unread(Id::new(2)), ChannelUnreadState::Seen);
+    assert_eq!(state.channel_unread(Id::new(3)), ChannelUnreadState::Seen);
+}
+
+#[test]
+fn direct_messages_keep_placeholder_guild_action() {
+    let mut state = DashboardState::new();
+    state.focus_pane(FocusPane::Guilds);
+    state.move_up();
+    state.open_selected_guild_actions();
+
+    let actions = state.selected_guild_action_items();
+    assert_eq!(actions.len(), 1);
     assert_eq!(actions[0].kind, GuildActionKind::NoActionsYet);
     assert_eq!(actions[0].label, "No server actions yet");
     assert!(!actions[0].enabled);
-    assert_eq!(state.activate_selected_guild_action(), None);
 }
 
 #[test]
@@ -5784,7 +5955,37 @@ fn direct_message_unread_count_counts_unread_channels() {
 }
 
 #[test]
-fn active_channel_read_state_updates_when_new_message_arrives_at_latest() {
+fn background_channel_message_updates_unread_without_scheduling_ack() {
+    let mut state = state_with_direct_messages();
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![
+            ReadStateInfo {
+                channel_id: Id::new(10),
+                last_acked_message_id: Some(Id::new(100)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: Id::new(20),
+                last_acked_message_id: Some(Id::new(200)),
+                mention_count: 0,
+            },
+        ],
+    });
+    state.push_effect(AppEvent::ActivateChannel {
+        channel_id: Id::new(20),
+    });
+    assert!(state.drain_pending_commands().is_empty());
+
+    state.push_event(direct_message_create_event(Id::new(10), 101));
+
+    assert_eq!(state.direct_message_unread_count(), 1);
+    assert_ne!(state.channel_unread(Id::new(10)), ChannelUnreadState::Seen);
+    assert!(state.next_read_ack_deadline().is_none());
+    assert!(state.drain_pending_commands().is_empty());
+}
+
+#[test]
+fn active_channel_read_state_coalesces_when_new_messages_arrive_at_latest() {
     {
         let mut state = state_with_direct_messages();
         state.push_event(AppEvent::ReadStateInit {
@@ -5807,14 +6008,21 @@ fn active_channel_read_state_updates_when_new_message_arrives_at_latest() {
         assert!(state.drain_pending_commands().is_empty());
 
         state.push_event(direct_message_create_event(Id::new(20), 201));
+        let first_deadline = state
+            .next_read_ack_deadline()
+            .expect("active message should schedule read ack");
+        state.push_event(direct_message_create_event(Id::new(20), 202));
 
         assert_eq!(state.direct_message_unread_count(), 0);
         assert_eq!(state.channel_unread(Id::new(20)), ChannelUnreadState::Seen);
+        assert_eq!(state.next_read_ack_deadline(), Some(first_deadline));
+        assert!(state.drain_pending_commands().is_empty());
+        state.flush_due_read_acks(first_deadline);
         assert_eq!(
             state.drain_pending_commands(),
             vec![AppCommand::AckChannel {
                 channel_id: Id::new(20),
-                message_id: Id::new(201),
+                message_id: Id::new(202),
             }]
         );
     }
@@ -5836,8 +6044,9 @@ fn active_channel_read_state_updates_when_new_message_arrives_at_latest() {
         state.push_event(notification_message_event(Id::new(2), "hello"));
 
         assert_eq!(state.channel_unread(Id::new(2)), ChannelUnreadState::Seen);
+        assert!(state.drain_pending_commands().is_empty());
         assert_eq!(
-            state.drain_pending_commands(),
+            drain_debounced_read_ack(&mut state),
             vec![AppCommand::AckChannel {
                 channel_id: Id::new(2),
                 message_id: Id::new(50),

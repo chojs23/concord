@@ -6,7 +6,9 @@ use crate::discord::ids::{
 };
 use crate::discord::{AppCommand, AppEvent, ChannelState};
 
-use super::{ActiveGuildScope, DashboardState, ThreadReturnTarget};
+use super::{
+    ActiveGuildScope, DashboardState, PendingReadAck, READ_ACK_DEBOUNCE, ThreadReturnTarget,
+};
 use super::{
     model::{
         ChannelActionItem, ChannelActionKind, ChannelBranch, ChannelPaneEntry, ChannelThreadItem,
@@ -930,6 +932,7 @@ impl DashboardState {
         let Some(message_id) = self.discord.channel_ack_target(channel_id) else {
             return;
         };
+        self.pending_read_acks.remove(&channel_id);
         self.discord.apply_event(&AppEvent::MessageAck {
             channel_id,
             message_id,
@@ -939,6 +942,27 @@ impl DashboardState {
             channel_id,
             message_id,
         });
+    }
+
+    pub(super) fn schedule_channel_ack(&mut self, channel_id: Id<ChannelMarker>) {
+        let Some(message_id) = self.discord.channel_ack_target(channel_id) else {
+            return;
+        };
+        self.discord.apply_event(&AppEvent::MessageAck {
+            channel_id,
+            message_id,
+            mention_count: 0,
+        });
+        let deadline = std::time::Instant::now() + READ_ACK_DEBOUNCE;
+        self.pending_read_acks
+            .entry(channel_id)
+            .and_modify(|pending| {
+                pending.message_id = pending.message_id.max(message_id);
+            })
+            .or_insert(PendingReadAck {
+                message_id,
+                deadline,
+            });
     }
 
     fn selected_channel_category_id(&self) -> Option<Id<ChannelMarker>> {

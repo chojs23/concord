@@ -214,6 +214,13 @@ impl DiscordClient {
         self.rest.ack_channel(channel_id, message_id).await
     }
 
+    pub async fn ack_channels(
+        &self,
+        targets: &[(Id<ChannelMarker>, Id<MessageMarker>)],
+    ) -> Result<()> {
+        self.rest.ack_channels(targets).await
+    }
+
     pub async fn load_message_history(
         &self,
         channel_id: Id<ChannelMarker>,

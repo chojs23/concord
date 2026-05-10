@@ -131,6 +131,7 @@ pub fn channel_action_shortcut(actions: &[ChannelActionItem], index: usize) -> O
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GuildActionKind {
     NoActionsYet,
+    MarkAsRead,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,9 +142,19 @@ pub struct GuildActionItem {
 }
 
 pub fn guild_action_shortcut(actions: &[GuildActionItem], index: usize) -> Option<char> {
-    actions
-        .get(index)
-        .and_then(|action| action.enabled.then_some('s'))
+    let action = actions.get(index)?;
+    let preferred = match action.kind {
+        GuildActionKind::MarkAsRead => Some('m'),
+        GuildActionKind::NoActionsYet => None,
+    }?;
+    unique_preferred_shortcut(
+        Some(preferred),
+        actions.iter().map(|item| match item.kind {
+            GuildActionKind::MarkAsRead => Some('m'),
+            GuildActionKind::NoActionsYet => None,
+        }),
+    )
+    .or_else(|| indexed_shortcut(index))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

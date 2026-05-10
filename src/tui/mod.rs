@@ -635,6 +635,8 @@ async fn run_dashboard(
             }
         }
 
+        let pending_read_ack_deadline = state.next_read_ack_deadline();
+
         tokio::select! {
             maybe_event = terminal_events.next() => {
                 match maybe_event {
@@ -841,6 +843,18 @@ async fn run_dashboard(
                 pending_redraw_deadline = None;
                 redraw_diagnostics.redraw_timer_fires =
                     redraw_diagnostics.redraw_timer_fires.saturating_add(1);
+                dirty = true;
+            }
+            _ = async {
+                match pending_read_ack_deadline {
+                    Some(deadline) => tokio::time::sleep_until(
+                        tokio::time::Instant::from_std(deadline),
+                    )
+                    .await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                state.flush_due_read_acks(std::time::Instant::now());
                 dirty = true;
             }
         }

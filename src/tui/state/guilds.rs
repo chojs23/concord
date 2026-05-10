@@ -1,7 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::discord::ids::{Id, marker::GuildMarker};
-use crate::discord::{GuildFolder, GuildState};
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, GuildMarker, MessageMarker},
+};
+use crate::discord::{AppCommand, AppEvent, GuildFolder, GuildState};
 
 use super::{ActiveGuildScope, DashboardState, FolderKey};
 use super::{
@@ -206,11 +209,19 @@ impl DashboardState {
         if self.guild_action_menu.is_none() {
             return Vec::new();
         }
-        vec![GuildActionItem {
-            kind: GuildActionKind::NoActionsYet,
-            label: "No server actions yet".to_owned(),
-            enabled: false,
-        }]
+        match self.guild_pane_entries().get(self.selected_guild()) {
+            Some(GuildPaneEntry::Guild { state, .. }) => vec![GuildActionItem {
+                kind: GuildActionKind::MarkAsRead,
+                label: "Mark server as read".to_owned(),
+                enabled: self.guild_ack_targets(state.id).next().is_some(),
+            }],
+            Some(GuildPaneEntry::DirectMessages) => vec![GuildActionItem {
+                kind: GuildActionKind::NoActionsYet,
+                label: "No server actions yet".to_owned(),
+                enabled: false,
+            }],
+            Some(GuildPaneEntry::FolderHeader { .. }) | None => Vec::new(),
+        }
     }
 
     pub fn selected_guild_action_index(&self) -> Option<usize> {
@@ -245,7 +256,7 @@ impl DashboardState {
         false
     }
 
-    pub fn activate_selected_guild_action(&mut self) -> Option<crate::discord::AppCommand> {
+    pub fn activate_selected_guild_action(&mut self) -> Option<AppCommand> {
         let menu = self.guild_action_menu.clone()?;
         let items = self.selected_guild_action_items();
         let item = items.get(clamp_selected_index(menu.selected, items.len()))?;
@@ -253,14 +264,12 @@ impl DashboardState {
             return None;
         }
         match item.kind {
+            GuildActionKind::MarkAsRead => self.mark_selected_guild_as_read(),
             GuildActionKind::NoActionsYet => None,
         }
     }
 
-    pub fn activate_guild_action_shortcut(
-        &mut self,
-        shortcut: char,
-    ) -> Option<crate::discord::AppCommand> {
+    pub fn activate_guild_action_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
         let shortcut = shortcut.to_ascii_lowercase();
         let actions = self.selected_guild_action_items();
         let index = actions.iter().enumerate().position(|(index, action)| {
@@ -270,6 +279,47 @@ impl DashboardState {
         })?;
         self.select_guild_action_row(index);
         self.activate_selected_guild_action()
+    }
+
+    fn mark_selected_guild_as_read(&mut self) -> Option<AppCommand> {
+        let guild_id = match self.guild_pane_entries().get(self.selected_guild())? {
+            GuildPaneEntry::Guild { state, .. } => state.id,
+            GuildPaneEntry::DirectMessages | GuildPaneEntry::FolderHeader { .. } => return None,
+        };
+        let targets: Vec<_> = self.guild_ack_targets(guild_id).collect();
+        if targets.is_empty() {
+            return None;
+        }
+
+        for (channel_id, message_id) in targets.iter().copied() {
+            self.pending_read_acks.remove(&channel_id);
+            self.discord.apply_event(&AppEvent::MessageAck {
+                channel_id,
+                message_id,
+                mention_count: 0,
+            });
+            if self.active_channel_id == Some(channel_id) {
+                self.unread_divider_last_acked_id = None;
+                self.pending_unread_anchor_scroll = false;
+                self.clear_new_messages_marker();
+            }
+        }
+        self.close_guild_action_menu();
+        Some(AppCommand::AckChannels { targets })
+    }
+
+    fn guild_ack_targets(
+        &self,
+        guild_id: Id<GuildMarker>,
+    ) -> impl Iterator<Item = (Id<ChannelMarker>, Id<MessageMarker>)> + '_ {
+        self.discord
+            .viewable_channels_for_guild(Some(guild_id))
+            .into_iter()
+            .filter_map(|channel| {
+                self.discord
+                    .channel_ack_target(channel.id)
+                    .map(|message_id| (channel.id, message_id))
+            })
     }
 
     /// Toggles the collapse state of the folder under the selection. Does

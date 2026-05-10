@@ -2476,6 +2476,25 @@ fn guild_action_menu_renders_placeholder_action() {
 }
 
 #[test]
+fn guild_action_menu_renders_mark_server_read_shortcut() {
+    let actions = vec![GuildActionItem {
+        kind: GuildActionKind::MarkAsRead,
+        label: "Mark server as read".to_owned(),
+        enabled: true,
+    }];
+
+    let lines = guild_action_menu_lines(&actions, 0);
+
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec![
+            "› [m] Mark server as read",
+            "Shortcut/Enter select · Esc close"
+        ]
+    );
+}
+
+#[test]
 fn member_action_menu_renders_profile_shortcut() {
     let actions = vec![MemberActionItem {
         kind: MemberActionKind::ShowProfile,

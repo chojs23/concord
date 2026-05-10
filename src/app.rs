@@ -736,6 +736,14 @@ fn start_command_loop(
                             log_app_error("ack channel failed", &error);
                         }
                     }
+                    AppCommand::AckChannels { targets } => {
+                        // Fire-and-forget: the TUI already cleared its local
+                        // unread state, a failure here only loses the cross-
+                        // client sync.
+                        if let Err(error) = client.ack_channels(&targets).await {
+                            log_app_error("ack channels failed", &error);
+                        }
+                    }
                 }
             });
         }

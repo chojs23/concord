@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    time::{Duration, Instant},
+};
 
 use crate::discord::ids::{
     Id,
@@ -80,6 +83,14 @@ enum OlderHistoryRequestState {
 pub struct UnreadBanner {
     pub since_message_id: Id<MessageMarker>,
     pub unread_count: usize,
+}
+
+const READ_ACK_DEBOUNCE: Duration = Duration::from_millis(1000);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingReadAck {
+    message_id: Id<MessageMarker>,
+    deadline: Instant,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -227,6 +238,7 @@ pub struct DashboardState {
     /// "folders" (id = None) are never collapsible since they have no header.
     collapsed_folders: HashSet<FolderKey>,
     collapsed_channel_categories: HashSet<Id<ChannelMarker>>,
+    pending_read_acks: HashMap<Id<ChannelMarker>, PendingReadAck>,
     pending_commands: VecDeque<AppCommand>,
 }
 
@@ -347,7 +359,34 @@ impl DashboardState {
             forum_post_lists: HashMap::new(),
             collapsed_folders: HashSet::new(),
             collapsed_channel_categories: HashSet::new(),
+            pending_read_acks: HashMap::new(),
             pending_commands: VecDeque::new(),
+        }
+    }
+
+    pub fn next_read_ack_deadline(&self) -> Option<Instant> {
+        self.pending_read_acks
+            .values()
+            .map(|pending| pending.deadline)
+            .min()
+    }
+
+    pub fn flush_due_read_acks(&mut self, now: Instant) {
+        let mut due = Vec::new();
+        self.pending_read_acks.retain(|channel_id, pending| {
+            if pending.deadline <= now {
+                due.push((*channel_id, pending.message_id));
+                false
+            } else {
+                true
+            }
+        });
+
+        for (channel_id, message_id) in due {
+            self.pending_commands.push_back(AppCommand::AckChannel {
+                channel_id,
+                message_id,
+            });
         }
     }
 
@@ -514,7 +553,7 @@ impl DashboardState {
                     self.unread_divider_last_acked_id = None;
                     self.pending_unread_anchor_scroll = false;
                 } else {
-                    self.mark_channel_as_read(channel_id);
+                    self.schedule_channel_ack(channel_id);
                 }
             }
         } else if in_message_view
