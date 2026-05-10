@@ -1152,7 +1152,9 @@ fn user_profile_popup_text_for_render(
 /// `user_profile_popup_text_for_render` so the scroll-clamping pass in
 /// `sync_view_heights` matches the eventual render exactly.
 pub(super) fn user_profile_popup_total_lines(state: &DashboardState, width: u16) -> usize {
-    user_profile_popup_text_for_render(state, width, &[]).lines.len()
+    user_profile_popup_text_for_render(state, width, &[])
+        .lines
+        .len()
 }
 
 #[cfg(test)]
@@ -1221,7 +1223,13 @@ pub(super) fn user_profile_popup_text(
         lines.push(Line::from(Span::raw(String::new())));
         push_section_header(&mut lines, "ACTIVITY");
         for activity in activities {
-            push_activity_lines(&mut lines, &mut emoji_overlays, activity, inner_width, emoji_images);
+            push_activity_lines(
+                &mut lines,
+                &mut emoji_overlays,
+                activity,
+                inner_width,
+                emoji_images,
+            );
         }
     }
 
@@ -1295,7 +1303,10 @@ pub(super) fn user_profile_popup_text(
         Style::default().fg(DIM),
     )));
 
-    UserProfilePopupText { lines, emoji_overlays }
+    UserProfilePopupText {
+        lines,
+        emoji_overlays,
+    }
 }
 
 pub(super) fn user_profile_display_name_style(status: PresenceStatus) -> Style {
@@ -1366,10 +1377,17 @@ fn push_activity_lines(
 fn activity_emoji_image_url(emoji: &ActivityEmoji) -> Option<String> {
     let id = emoji.id?;
     let ext = if emoji.animated { "gif" } else { "png" };
-    Some(format!("https://cdn.discordapp.com/emojis/{}.{}", id.get(), ext))
+    Some(format!(
+        "https://cdn.discordapp.com/emojis/{}.{}",
+        id.get(),
+        ext
+    ))
 }
 
-fn activity_primary_line(activity: &ActivityInfo, emoji_images: &[EmojiImage<'_>]) -> (String, Option<String>) {
+fn activity_primary_line(
+    activity: &ActivityInfo,
+    emoji_images: &[EmojiImage<'_>],
+) -> (String, Option<String>) {
     match activity.kind {
         ActivityKind::Custom => {
             let image_url = activity

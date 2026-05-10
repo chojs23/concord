@@ -357,10 +357,7 @@ impl EmojiImageCache {
 
     /// Returns decoded protocols for visible targets and refreshes their
     /// LRU timestamps so they survive the next pruning pass.
-    pub(super) fn render_state(
-        &mut self,
-        targets: &[EmojiImageTarget],
-    ) -> Vec<EmojiImage<'_>> {
+    pub(super) fn render_state(&mut self, targets: &[EmojiImageTarget]) -> Vec<EmojiImage<'_>> {
         let touch_tick = self.next_tick();
         for target in targets {
             if let Some(entry) = self.entries.get_mut(&target.url) {
@@ -460,31 +457,36 @@ impl EmojiImageCache {
         match image::load_from_memory(bytes) {
             Ok(img) => {
                 let (font_width, font_height) = picker.font_size();
-                let canvas_w =
-                    u32::from(EMOJI_REACTION_THUMB_WIDTH) * u32::from(font_width);
+                let canvas_w = u32::from(EMOJI_REACTION_THUMB_WIDTH) * u32::from(font_width);
                 let canvas_h = u32::from(font_height);
 
                 let max_h = (canvas_h * 3 / 4).max(1);
                 let scaled = img.resize(canvas_w, max_h, FilterType::Lanczos3);
                 let scaled_rgba = scaled.to_rgba8();
 
-                let x_off =
-                    ((canvas_w.saturating_sub(scaled_rgba.width())) / 2) as i64;
-                let y_off =
-                    ((canvas_h.saturating_sub(scaled_rgba.height())) / 2) as i64;
+                let x_off = ((canvas_w.saturating_sub(scaled_rgba.width())) / 2) as i64;
+                let y_off = ((canvas_h.saturating_sub(scaled_rgba.height())) / 2) as i64;
 
                 let mut canvas = image::RgbaImage::new(canvas_w, canvas_h);
                 image::imageops::overlay(&mut canvas, &scaled_rgba, x_off, y_off);
 
                 match picker.new_protocol(
                     DynamicImage::ImageRgba8(canvas),
-                    Rect::new(0, 0, EMOJI_REACTION_THUMB_WIDTH, EMOJI_REACTION_THUMB_HEIGHT),
+                    Rect::new(
+                        0,
+                        0,
+                        EMOJI_REACTION_THUMB_WIDTH,
+                        EMOJI_REACTION_THUMB_HEIGHT,
+                    ),
                     Resize::Fit(None),
                 ) {
                     Ok(protocol) => {
                         self.entries.insert(
                             url.to_owned(),
-                            EmojiImageEntry::Ready { protocol, last_used },
+                            EmojiImageEntry::Ready {
+                                protocol,
+                                last_used,
+                            },
                         );
                     }
                     Err(_) => {

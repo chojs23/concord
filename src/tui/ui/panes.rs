@@ -1027,8 +1027,7 @@ pub(super) fn render_members(
                 PresenceStatus::Offline | PresenceStatus::Unknown
             ) {
                 let activities = state.user_activities(member.user_id());
-                if let Some((text, image_url)) =
-                    primary_activity_summary(activities, emoji_images)
+                if let Some((text, image_url)) = primary_activity_summary(activities, emoji_images)
                 {
                     let text = sanitize_for_display_width(&text);
                     let h_scroll = state.member_horizontal_scroll();
@@ -1059,7 +1058,11 @@ pub(super) fn render_members(
 
     let scroll = state.member_scroll();
     let content_height = state.member_content_height();
-    let lines: Vec<_> = lines.into_iter().skip(scroll).take(content_height).collect();
+    let lines: Vec<_> = lines
+        .into_iter()
+        .skip(scroll)
+        .take(content_height)
+        .collect();
 
     let block = panel_block_line(state.member_panel_title(), focused);
     let content_area = block.inner(area);
@@ -1249,7 +1252,11 @@ fn format_activity_summary(
 fn activity_emoji_image_url(emoji: &ActivityEmoji) -> Option<String> {
     let id = emoji.id?;
     let ext = if emoji.animated { "gif" } else { "png" };
-    Some(format!("https://cdn.discordapp.com/emojis/{}.{}", id.get(), ext))
+    Some(format!(
+        "https://cdn.discordapp.com/emojis/{}.{}",
+        id.get(),
+        ext
+    ))
 }
 
 pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardState) {
