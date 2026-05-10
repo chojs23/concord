@@ -19,6 +19,9 @@ pub struct DisplayOptions {
     pub image_preview_quality: ImagePreviewQualityPreset,
     pub show_custom_emoji: bool,
     pub desktop_notifications: bool,
+    pub server_width: u16,
+    pub channel_list_width: u16,
+    pub member_list_width: u16,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -60,6 +63,9 @@ impl Default for DisplayOptions {
             image_preview_quality: ImagePreviewQualityPreset::default(),
             show_custom_emoji: true,
             desktop_notifications: true,
+            server_width: 20,
+            channel_list_width: 24,
+            member_list_width: 26,
         }
     }
 }
@@ -199,6 +205,9 @@ mod tests {
             image_preview_quality: ImagePreviewQualityPreset::Balanced,
             show_custom_emoji: true,
             desktop_notifications: true,
+            server_width: 20,
+            channel_list_width: 24,
+            member_list_width: 26,
         };
 
         assert!(!options.avatars_visible());
@@ -229,6 +238,9 @@ mod tests {
             assert_eq!(config.display.image_preview_quality, image_preview_quality);
             assert!(config.display.show_custom_emoji);
             assert!(config.display.desktop_notifications);
+            assert_eq!(config.display.server_width, 20);
+            assert_eq!(config.display.channel_list_width, 24);
+            assert_eq!(config.display.member_list_width, 26);
         }
     }
 
@@ -242,6 +254,9 @@ mod tests {
             image_preview_quality: ImagePreviewQualityPreset::Original,
             show_custom_emoji: false,
             desktop_notifications: false,
+            server_width: 12,
+            channel_list_width: 30,
+            member_list_width: 18,
         };
 
         save_display_options_to_path(&path, &options).expect("config should save");

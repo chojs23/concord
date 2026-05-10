@@ -89,6 +89,12 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         KeyCode::Char('2') => state.show_and_focus_pane(FocusPane::Channels),
         KeyCode::Char('3') => state.show_and_focus_pane(FocusPane::Messages),
         KeyCode::Char('4') => state.show_and_focus_pane(FocusPane::Members),
+        KeyCode::Char('h') | KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
+            state.adjust_focused_pane_width(-1)
+        }
+        KeyCode::Char('l') | KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
+            state.adjust_focused_pane_width(1)
+        }
         KeyCode::Char('j') | KeyCode::Down => state.move_down(),
         KeyCode::Char('J') if focus == FocusPane::Messages => state.scroll_message_viewport_down(),
         KeyCode::Char('L') => state.scroll_focused_pane_horizontal_right(),
