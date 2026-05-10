@@ -75,11 +75,15 @@ impl DiscordState {
             Some(guild_id) => self
                 .notification_settings
                 .get(&guild_id)
-                .is_some_and(|settings| self.channel_notification_muted_in_settings(settings, channel_id)),
+                .is_some_and(|settings| {
+                    self.channel_notification_muted_in_settings(settings, channel_id)
+                }),
             None => self
                 .private_notification_settings
                 .as_ref()
-                .is_some_and(|settings| self.channel_notification_muted_in_settings(settings, channel_id)),
+                .is_some_and(|settings| {
+                    self.channel_notification_muted_in_settings(settings, channel_id)
+                }),
         }
     }
 
@@ -98,9 +102,7 @@ impl DiscordState {
             mute_end_time: settings.and_then(|settings| settings.mute_end_time.clone()),
             suppress_everyone: settings.is_some_and(|settings| settings.suppress_everyone),
             suppress_roles: settings.is_some_and(|settings| settings.suppress_roles),
-            channel_overrides: settings
-                .map(channel_override_infos)
-                .unwrap_or_default(),
+            channel_overrides: settings.map(channel_override_infos).unwrap_or_default(),
         }
     }
 

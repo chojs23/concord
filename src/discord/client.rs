@@ -3,11 +3,11 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use chrono::{DateTime, Utc};
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
+use chrono::{DateTime, Utc};
 use reqwest::header::HeaderValue;
 use tokio::{
     sync::{Mutex as AsyncMutex, mpsc, watch},

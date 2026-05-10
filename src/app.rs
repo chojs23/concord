@@ -7,11 +7,11 @@ use std::{
     time::Instant,
 };
 
-use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, MessageMarker},
 };
+use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use tokio::sync::{Semaphore, mpsc};
 use tokio::time::{Duration, timeout};
 
@@ -19,8 +19,7 @@ use crate::{
     DiscordClient, Result,
     discord::{
         AppCommand, AppEvent, AttachmentUpdate, ChannelNotificationOverrideInfo,
-        GuildNotificationSettingsInfo, MessageInfo, ReactionUsersInfo,
-        validate_token_header,
+        GuildNotificationSettingsInfo, MessageInfo, ReactionUsersInfo, validate_token_header,
     },
     error::AppError,
     logging, token_store, tui, version_check,
@@ -759,7 +758,10 @@ fn start_command_loop(
                                 client
                                     .publish_event(AppEvent::StatusMessage {
                                         message: if muted {
-                                            format!("muted server {label}{}", mute_status_suffix(hours))
+                                            format!(
+                                                "muted server {label}{}",
+                                                mute_status_suffix(hours)
+                                            )
                                         } else {
                                             format!("unmuted server {label}")
                                         },
@@ -803,7 +805,10 @@ fn start_command_loop(
                                 client
                                     .publish_event(AppEvent::StatusMessage {
                                         message: if muted {
-                                            format!("muted channel {label}{}", mute_status_suffix(hours))
+                                            format!(
+                                                "muted channel {label}{}",
+                                                mute_status_suffix(hours)
+                                            )
                                         } else {
                                             format!("unmuted channel {label}")
                                         },
@@ -833,10 +838,7 @@ fn log_app_error(context: &str, error: &AppError) {
     );
 }
 
-fn mute_end_time_from_hours(
-    hours: Option<u64>,
-    muted: bool,
-) -> Option<chrono::DateTime<Utc>> {
+fn mute_end_time_from_hours(hours: Option<u64>, muted: bool) -> Option<chrono::DateTime<Utc>> {
     if !muted {
         return None;
     }
@@ -868,8 +870,8 @@ fn guild_notification_settings_update(
     let mut settings = snapshot.state.guild_notification_settings_info(guild_id);
     if guild_id.is_some() {
         settings.muted = guild_muted;
-        settings.mute_end_time = guild_mute_end_time
-            .map(|value| value.to_rfc3339_opts(SecondsFormat::Millis, true));
+        settings.mute_end_time =
+            guild_mute_end_time.map(|value| value.to_rfc3339_opts(SecondsFormat::Millis, true));
     }
     if let Some((channel_id, muted, mute_end_time)) = channel_override {
         if let Some(override_info) = settings
@@ -881,13 +883,15 @@ fn guild_notification_settings_update(
             override_info.mute_end_time =
                 mute_end_time.map(|value| value.to_rfc3339_opts(SecondsFormat::Millis, true));
         } else {
-            settings.channel_overrides.push(ChannelNotificationOverrideInfo {
-                channel_id,
-                message_notifications: None,
-                muted,
-                mute_end_time: mute_end_time
-                    .map(|value| value.to_rfc3339_opts(SecondsFormat::Millis, true)),
-            });
+            settings
+                .channel_overrides
+                .push(ChannelNotificationOverrideInfo {
+                    channel_id,
+                    message_notifications: None,
+                    muted,
+                    mute_end_time: mute_end_time
+                        .map(|value| value.to_rfc3339_opts(SecondsFormat::Millis, true)),
+                });
         }
     }
     settings

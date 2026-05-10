@@ -12,10 +12,10 @@ use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event, han
 use crate::{
     config::ImagePreviewQualityPreset,
     discord::{
-        AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo,
-        ChannelRecipientInfo, CustomEmojiInfo, GuildFolder, GuildNotificationSettingsInfo,
-        MemberInfo, MessageReferenceInfo, NotificationLevel, PollAnswerInfo, PollInfo,
-        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReactionUsersInfo,
+        AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
+        CustomEmojiInfo, GuildFolder, GuildNotificationSettingsInfo, MemberInfo,
+        MessageReferenceInfo, NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus,
+        ReactionEmoji, ReactionUserInfo, ReactionUsersInfo,
     },
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };

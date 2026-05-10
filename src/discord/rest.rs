@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use chrono::{DateTime, SecondsFormat, Utc};
 use crate::discord::fingerprint::discord_rest_client;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
+use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::{
     StatusCode,
     header::AUTHORIZATION,
