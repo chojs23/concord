@@ -2,7 +2,6 @@
 
 Concord is a terminal user interface client for Discord. Full Discord experience, right in your terminal.
 
-
 <img width="1613" height="848" alt="concord" src="./docs/example.png" />
 
 ## Installation
@@ -207,6 +206,8 @@ number key directly shows and focuses it again.
 You can paste copied files into the composer to attach them. Pending uploads
 are shown above the input before sending, and `Ctrl+Backspace` removes the last
 pending attachment.
+
+Use `Ctrl+Left` / `Ctrl+Right` to jump the cursor by word.
 
 #### Mention picker
 
