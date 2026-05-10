@@ -1873,6 +1873,30 @@ fn emoji_picker_selection_returns_reaction_command() {
 }
 
 #[test]
+fn emoji_picker_selection_removes_existing_own_reaction() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    state.push_event(AppEvent::CurrentUserReactionAdd {
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        emoji: ReactionEmoji::Unicode("👍".to_owned()),
+    });
+    open_emoji_picker(&mut state);
+
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::RemoveReaction {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        })
+    );
+    assert!(!state.is_emoji_reaction_picker_open());
+}
+
+#[test]
 fn emoji_picker_number_shortcut_selects_reaction() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);

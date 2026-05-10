@@ -146,10 +146,26 @@ impl DashboardState {
     pub fn activate_selected_emoji_reaction(&mut self) -> Option<AppCommand> {
         let picker = self.emoji_reaction_picker.clone()?;
         let reaction = self.selected_emoji_reaction()?;
-        let command = AppCommand::AddReaction {
-            channel_id: picker.channel_id,
-            message_id: picker.message_id,
-            emoji: reaction.emoji,
+        let already_reacted = self.selected_message_state().is_some_and(|message| {
+            message.channel_id == picker.channel_id
+                && message.id == picker.message_id
+                && message
+                    .reactions
+                    .iter()
+                    .any(|existing| existing.me && existing.emoji == reaction.emoji)
+        });
+        let command = if already_reacted {
+            AppCommand::RemoveReaction {
+                channel_id: picker.channel_id,
+                message_id: picker.message_id,
+                emoji: reaction.emoji,
+            }
+        } else {
+            AppCommand::AddReaction {
+                channel_id: picker.channel_id,
+                message_id: picker.message_id,
+                emoji: reaction.emoji,
+            }
         };
         self.close_emoji_reaction_picker();
         Some(command)
