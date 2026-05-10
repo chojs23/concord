@@ -416,6 +416,7 @@ impl DiscordState {
                         id: *guild_id,
                         name: name.clone(),
                         member_count: *member_count,
+                        online_count: None,
                         owner_id: *owner_id,
                         online_count: None,
                     },
@@ -665,6 +666,11 @@ impl DiscordState {
                 message_id,
                 ..
             } => self.delete_message(*channel_id, *message_id),
+            AppEvent::GuildMemberListCounts { guild_id, online } => {
+                if let Some(guild) = self.guilds.get_mut(guild_id) {
+                    guild.online_count = Some(*online);
+                }
+            }
             AppEvent::GuildMemberAdd { guild_id, member } => {
                 let entry = self.members.entry(*guild_id).or_default();
                 let was_known = entry.contains_key(&member.user_id);

@@ -1661,7 +1661,7 @@ fn primary_activity_summary_picks_custom_status_first() {
     ];
 
     assert_eq!(
-        primary_activity_summary(&activities),
+        primary_activity_summary(&activities, &[]).map(|(t, _)| t),
         Some("🦀 Coding hard".to_owned())
     );
 }
@@ -1678,7 +1678,7 @@ fn primary_activity_summary_listening_includes_track_and_artist() {
         emoji: None,
     }];
     assert_eq!(
-        primary_activity_summary(&activities),
+        primary_activity_summary(&activities, &[]).map(|(t, _)| t),
         Some("Listening to Spotify — Bohemian Rhapsody by Queen".to_owned())
     );
 }

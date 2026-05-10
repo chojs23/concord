@@ -196,7 +196,7 @@ pub fn render(
         &emoji_images,
     );
     if state.is_pane_visible(FocusPane::Members) {
-        render_members(frame, areas.members, state);
+        render_members(frame, areas.members, state, &emoji_images);
     }
     render_footer(frame, areas.footer, state);
     render_leader_popup(frame, areas.messages, state);
