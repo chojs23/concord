@@ -241,6 +241,7 @@ fn deliver_desktop_notification(title: &str, body: &str) -> std::result::Result<
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn deliver_notify_rust_notification(title: &str, body: &str) -> std::result::Result<(), String> {
     notify_rust::Notification::new()
         .summary(title)
@@ -650,11 +651,10 @@ async fn run_dashboard(
                         if key.kind == KeyEventKind::Press {
                             pending_numeric_prefix_deadline = state
                                 .pending_numeric_prefix()
-                                .and_then(|prefix| match prefix.action {
-                                    Some(PendingNumericPrefixAction::FocusPane(_)) => {
-                                        Some(tokio::time::Instant::now() + NUMERIC_PREFIX_DEBOUNCE)
-                                    }
-                                    None => None,
+                                .and_then(|prefix| {
+                                    prefix.action.map(|PendingNumericPrefixAction::FocusPane(_)| {
+                                        tokio::time::Instant::now() + NUMERIC_PREFIX_DEBOUNCE
+                                    })
                                 });
                             save_display_options_if_needed(&mut state);
                             redraw_diagnostics.key_presses =
