@@ -1061,13 +1061,7 @@ fn save_display_options_if_needed(state: &mut DashboardState) {
 }
 
 fn write_image_to_tmp(img: arboard::ImageData<'_>) -> std::io::Result<std::path::PathBuf> {
-    let path = std::env::temp_dir().join(format!(
-        "concord-paste-{}.png",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-    ));
+    let path = std::env::temp_dir().join(format!("concord-paste-{}.png", uuid::Uuid::new_v4()));
 
     let Ok(width) = u32::try_from(img.width) else {
         return Err(std::io::Error::new(
