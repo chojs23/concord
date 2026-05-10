@@ -1393,7 +1393,7 @@ fn activity_primary_line(
             let image_url = activity
                 .emoji
                 .as_ref()
-                .and_then(|e| activity_emoji_image_url(e))
+                .and_then(activity_emoji_image_url)
                 .filter(|url| emoji_images.iter().any(|img| img.url == *url));
             let emoji = activity
                 .emoji
