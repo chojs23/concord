@@ -555,10 +555,9 @@ fn handle_channel_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
         // Esc steps back to the action list when viewing threads, otherwise
         // closes the menu entirely.
         KeyCode::Esc => state.back_channel_action_menu(),
-        code
-            if is_left_key(code)
-                && (state.is_channel_action_threads_phase()
-                    || state.is_channel_action_mute_duration_phase()) =>
+        code if is_left_key(code)
+            && (state.is_channel_action_threads_phase()
+                || state.is_channel_action_mute_duration_phase()) =>
         {
             state.back_channel_action_menu()
         }

@@ -324,9 +324,8 @@ impl DashboardState {
                             self.close_guild_action_menu();
                             self.toggle_selected_guild_mute(None)
                         } else {
-                            self.guild_action_menu = Some(GuildActionMenuState::MuteDuration {
-                                selected: 0,
-                            });
+                            self.guild_action_menu =
+                                Some(GuildActionMenuState::MuteDuration { selected: 0 });
                             None
                         }
                     }
@@ -334,10 +333,12 @@ impl DashboardState {
                 }
             }
             GuildActionMenuState::MuteDuration { selected } => {
-                let item = self.selected_guild_mute_duration_items().get(clamp_selected_index(
-                    selected,
-                    self.selected_guild_mute_duration_items().len(),
-                ))?;
+                let item = self
+                    .selected_guild_mute_duration_items()
+                    .get(clamp_selected_index(
+                        selected,
+                        self.selected_guild_mute_duration_items().len(),
+                    ))?;
                 self.close_guild_action_menu();
                 self.toggle_selected_guild_mute(Some(item.duration))
             }

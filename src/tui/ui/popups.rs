@@ -709,17 +709,17 @@ pub(super) fn render_guild_action_menu(frame: &mut Frame, area: Rect, state: &Da
         } else {
             guild_action_menu_lines(&actions, selected)
         })
-            .block(panel_block_owned(
-                if is_duration_phase {
-                    format!("Mute server for… — {}", title.unwrap_or_default())
-                } else {
-                    title
-                        .map(|name| format!("Server actions — {name}"))
-                        .unwrap_or_else(|| "Server actions".to_owned())
-                },
-                true,
-            ))
-            .wrap(Wrap { trim: false }),
+        .block(panel_block_owned(
+            if is_duration_phase {
+                format!("Mute server for… — {}", title.unwrap_or_default())
+            } else {
+                title
+                    .map(|name| format!("Server actions — {name}"))
+                    .unwrap_or_else(|| "Server actions".to_owned())
+            },
+            true,
+        ))
+        .wrap(Wrap { trim: false }),
         popup,
     );
 }
@@ -768,15 +768,15 @@ pub(super) fn render_channel_action_menu(frame: &mut Frame, area: Rect, state: &
         } else {
             channel_action_menu_lines(&actions, selected)
         })
-            .block(panel_block_owned(
-                if is_duration_phase {
-                    format!("Mute channel for…{title_suffix}")
-                } else {
-                    format!("Channel actions{title_suffix}")
-                },
-                true,
-            ))
-            .wrap(Wrap { trim: false }),
+        .block(panel_block_owned(
+            if is_duration_phase {
+                format!("Mute channel for…{title_suffix}")
+            } else {
+                format!("Channel actions{title_suffix}")
+            },
+            true,
+        ))
+        .wrap(Wrap { trim: false }),
         popup,
     );
 }

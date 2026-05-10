@@ -26,12 +26,8 @@ pub(super) struct ImageViewerState {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum GuildActionMenuState {
-    Actions {
-        selected: usize,
-    },
-    MuteDuration {
-        selected: usize,
-    },
+    Actions { selected: usize },
+    MuteDuration { selected: usize },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

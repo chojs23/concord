@@ -494,10 +494,12 @@ impl DashboardState {
                 }
             }
             ChannelActionMenuState::MuteDuration { selected, .. } => {
-                let item = self.selected_channel_mute_duration_items().get(clamp_selected_index(
-                    selected,
-                    self.selected_channel_mute_duration_items().len(),
-                ))?;
+                let item =
+                    self.selected_channel_mute_duration_items()
+                        .get(clamp_selected_index(
+                            selected,
+                            self.selected_channel_mute_duration_items().len(),
+                        ))?;
                 self.close_channel_action_menu();
                 self.toggle_selected_channel_mute(Some(item.duration))
             }
