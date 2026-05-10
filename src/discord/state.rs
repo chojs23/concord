@@ -2275,8 +2275,14 @@ mod tests {
 
         assert_eq!(state.channel_unread_message_count(channel_id), 0);
         assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Unread);
-        assert_eq!(state.channel_sidebar_unread(channel_id), ChannelUnreadState::Seen);
-        assert_eq!(state.guild_sidebar_unread(guild_id), ChannelUnreadState::Unread);
+        assert_eq!(
+            state.channel_sidebar_unread(channel_id),
+            ChannelUnreadState::Seen
+        );
+        assert_eq!(
+            state.guild_sidebar_unread(guild_id),
+            ChannelUnreadState::Unread
+        );
     }
 
     #[test]
@@ -2432,7 +2438,10 @@ mod tests {
 
         assert_eq!(state.channel_unread_message_count(channel_id), 0);
         assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Unread);
-        assert_eq!(state.channel_sidebar_unread(channel_id), ChannelUnreadState::Seen);
+        assert_eq!(
+            state.channel_sidebar_unread(channel_id),
+            ChannelUnreadState::Seen
+        );
     }
 
     #[test]
