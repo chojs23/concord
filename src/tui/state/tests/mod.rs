@@ -825,7 +825,6 @@ fn member_panel_title_shows_online_and_total_when_counts_available() {
         guild_id,
         online: 25,
     });
-    state.confirm_selected_guild();
 
     let title = state.member_panel_title();
     let rendered: String = title.spans.iter().map(|s| s.content.as_ref()).collect();
