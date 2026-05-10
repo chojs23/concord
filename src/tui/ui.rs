@@ -102,10 +102,10 @@ use self::{
     },
     popups::{
         channel_action_menu_lines, channel_switcher_cursor_position, channel_switcher_lines,
-        debug_log_popup_lines, emoji_reaction_picker_lines, guild_action_menu_lines,
-        member_action_menu_lines, message_action_menu_lines, options_popup_lines,
-        poll_vote_picker_lines, reaction_users_popup_lines, user_profile_popup_lines,
-        user_profile_popup_lines_with_activities,
+        debug_log_popup_lines, emoji_reaction_picker_lines, filtered_emoji_reaction_picker_lines,
+        guild_action_menu_lines, member_action_menu_lines, message_action_menu_lines,
+        options_popup_lines, poll_vote_picker_lines, reaction_users_popup_lines,
+        user_profile_popup_lines, user_profile_popup_lines_with_activities,
     },
 };
 

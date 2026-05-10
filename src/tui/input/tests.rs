@@ -1910,6 +1910,30 @@ fn emoji_picker_selection_returns_reaction_command() {
 }
 
 #[test]
+fn emoji_picker_selection_removes_existing_own_reaction() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    state.push_event(AppEvent::CurrentUserReactionAdd {
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        emoji: ReactionEmoji::Unicode("👍".to_owned()),
+    });
+    open_emoji_picker(&mut state);
+
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::RemoveReaction {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        })
+    );
+    assert!(!state.is_emoji_reaction_picker_open());
+}
+
+#[test]
 fn emoji_picker_number_shortcut_selects_reaction() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
@@ -1926,6 +1950,56 @@ fn emoji_picker_number_shortcut_selects_reaction() {
         })
     );
     assert!(!state.is_emoji_reaction_picker_open());
+}
+
+#[test]
+fn emoji_picker_slash_filter_matches_name_and_implementation_case_insensitively() {
+    let mut state = state_with_custom_emoji_message();
+    state.focus_pane(FocusPane::Messages);
+    open_emoji_picker(&mut state);
+
+    handle_key(&mut state, char_key('/'));
+    handle_key(&mut state, char_key('T'));
+    handle_key(&mut state, char_key('h'));
+    handle_key(&mut state, char_key('i'));
+
+    assert_eq!(state.emoji_reaction_filter(), Some("Thi"));
+    assert_eq!(
+        state.selected_emoji_reaction().map(|item| item.emoji),
+        Some(ReactionEmoji::Custom {
+            id: Id::new(51),
+            name: Some("this".to_owned()),
+            animated: false,
+        })
+    );
+
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::AddReaction {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: ReactionEmoji::Custom {
+                id: Id::new(51),
+                name: Some("this".to_owned()),
+                animated: false,
+            },
+        })
+    );
+}
+
+#[test]
+fn emoji_picker_filter_treats_vim_keys_as_text() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    open_emoji_picker(&mut state);
+
+    handle_key(&mut state, char_key('/'));
+    handle_key(&mut state, char_key('j'));
+
+    assert_eq!(state.emoji_reaction_filter(), Some("j"));
+    assert_eq!(state.selected_emoji_reaction(), None);
 }
 
 #[test]
@@ -2519,12 +2593,20 @@ fn state_with_custom_emoji_message() -> DashboardState {
         members: Vec::new(),
         presences: Vec::new(),
         roles: Vec::new(),
-        emojis: vec![CustomEmojiInfo {
-            id: Id::new(50),
-            name: "party".to_owned(),
-            animated: false,
-            available: true,
-        }],
+        emojis: vec![
+            CustomEmojiInfo {
+                id: Id::new(50),
+                name: "party".to_owned(),
+                animated: false,
+                available: true,
+            },
+            CustomEmojiInfo {
+                id: Id::new(51),
+                name: "this".to_owned(),
+                animated: false,
+                available: true,
+            },
+        ],
         owner_id: None,
     });
     state.confirm_selected_guild();
