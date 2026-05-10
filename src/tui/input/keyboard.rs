@@ -506,6 +506,15 @@ fn handle_emoji_reaction_picker_key(
 ) -> Option<AppCommand> {
     match key.code {
         KeyCode::Esc => state.close_emoji_reaction_picker(),
+        KeyCode::Backspace if state.is_filtering_emoji_reactions() => {
+            state.pop_emoji_reaction_filter_char();
+        }
+        KeyCode::Char('/') if is_shortcut_key(key) && !state.is_filtering_emoji_reactions() => {
+            state.start_emoji_reaction_filter();
+        }
+        KeyCode::Char(value) if is_shortcut_key(key) && state.is_filtering_emoji_reactions() => {
+            state.push_emoji_reaction_filter_char(value);
+        }
         code if is_down_key(code) => state.move_emoji_reaction_down(),
         code if is_up_key(code) => state.move_emoji_reaction_up(),
         code if is_confirm_key(code) => return state.activate_selected_emoji_reaction(),

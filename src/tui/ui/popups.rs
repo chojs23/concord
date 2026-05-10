@@ -739,33 +739,39 @@ pub(super) fn render_emoji_reaction_picker(
         return;
     }
 
-    let reactions = state.emoji_reaction_items();
-    if reactions.is_empty() {
+    let reactions = state.filtered_emoji_reaction_items_slice().unwrap_or(&[]);
+    if reactions.is_empty() && !state.is_filtering_emoji_reactions() {
         return;
     }
+    let filter = state.emoji_reaction_filter();
 
-    let selected = state.selected_emoji_reaction_index().unwrap_or(0);
+    let selected = state
+        .selected_emoji_reaction_index_for_len(reactions.len())
+        .unwrap_or(0);
     let desired_visible_items = reactions
         .len()
         .clamp(1, super::super::selection::MAX_EMOJI_REACTION_VISIBLE_ITEMS);
-    let popup = centered_rect(area, 42, (desired_visible_items as u16).saturating_add(4));
+    let popup = centered_rect(area, 42, (desired_visible_items as u16).saturating_add(5));
     let ready_urls = emoji_images
         .iter()
         .map(|image| image.url.clone())
         .collect::<Vec<_>>();
     let block = panel_block("Choose reaction", true);
     let content = block.inner(popup);
-    let visible_items = usize::from(content.height.saturating_sub(1)).min(desired_visible_items);
+    let footer_lines = if filter.is_some() { 2 } else { 1 };
+    let visible_items =
+        usize::from(content.height.saturating_sub(footer_lines)).min(desired_visible_items);
     let visible_range =
         super::super::selection::visible_item_range(reactions.len(), selected, visible_items);
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(emoji_reaction_picker_lines_with_custom_emoji_images(
-            &reactions,
+            reactions,
             selected,
             visible_items,
             &ready_urls,
             state.show_custom_emoji(),
+            filter,
         ))
         .block(block)
         .wrap(Wrap { trim: false }),
@@ -775,7 +781,7 @@ pub(super) fn render_emoji_reaction_picker(
         render_emoji_reaction_images(
             frame,
             content,
-            &reactions,
+            reactions,
             selected,
             visible_items,
             emoji_images,
@@ -1679,6 +1685,25 @@ pub(super) fn emoji_reaction_picker_lines(
         max_visible_items,
         thumbnail_urls,
         true,
+        None,
+    )
+}
+
+#[cfg(test)]
+pub(super) fn filtered_emoji_reaction_picker_lines(
+    reactions: &[EmojiReactionItem],
+    selected: usize,
+    max_visible_items: usize,
+    thumbnail_urls: &[String],
+    filter: &str,
+) -> Vec<Line<'static>> {
+    emoji_reaction_picker_lines_with_custom_emoji_images(
+        reactions,
+        selected,
+        max_visible_items,
+        thumbnail_urls,
+        true,
+        Some(filter),
     )
 }
 
@@ -1688,6 +1713,7 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
     max_visible_items: usize,
     thumbnail_urls: &[String],
     show_custom_emoji: bool,
+    filter: Option<&str>,
 ) -> Vec<Line<'static>> {
     let selected = selected.min(reactions.len().saturating_sub(1));
     let visible_items = max_visible_items.max(1).min(reactions.len().max(1));
@@ -1721,10 +1747,27 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
             ])
         })
         .collect();
+
+    if reactions.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  no matching reactions",
+            Style::default().fg(DIM),
+        )));
+    }
+
     lines.push(Line::from(Span::styled(
-        "Shortcut/Enter/Space react · Esc close",
+        "Shortcut/Enter/Space react · / filter · Esc close",
         Style::default().fg(DIM),
     )));
+    if let Some(filter) = filter {
+        lines.push(Line::from(vec![
+            Span::styled("Filter ", Style::default().fg(DIM)),
+            Span::styled(
+                format!("/{filter}"),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
     lines
 }
 

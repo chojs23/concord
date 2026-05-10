@@ -5,7 +5,7 @@ use crate::discord::ids::{
 
 use crate::discord::ReactionUsersInfo;
 
-use super::PollVotePickerItem;
+use super::{EmojiReactionItem, PollVotePickerItem};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageActionMenuState {
@@ -67,6 +67,9 @@ pub(super) enum ChannelActionMenuState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmojiReactionPickerState {
     pub(super) selected: usize,
+    pub(super) filter: Option<String>,
+    pub(super) items: Vec<EmojiReactionItem>,
+    pub(super) filtered_items: Vec<EmojiReactionItem>,
     pub(super) guild_id: Option<Id<GuildMarker>>,
     pub(super) channel_id: Id<ChannelMarker>,
     pub(super) message_id: Id<MessageMarker>,

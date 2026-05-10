@@ -506,10 +506,10 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
 
     // Picker emojis (existing behaviour).
     if state.is_emoji_reaction_picker_open() {
-        let reactions = state.emoji_reaction_items();
+        let reactions = state.filtered_emoji_reaction_items_slice().unwrap_or(&[]);
         if !reactions.is_empty() {
             let selected = state
-                .selected_emoji_reaction_index()
+                .selected_emoji_reaction_index_for_len(reactions.len())
                 .unwrap_or(0)
                 .min(reactions.len().saturating_sub(1));
             let visible_items = reactions
