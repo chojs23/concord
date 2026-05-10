@@ -4210,6 +4210,159 @@ fn direct_messages_keep_placeholder_guild_action() {
 
     let actions = state.selected_guild_action_items();
     assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].kind, GuildActionKind::MarkAsRead);
+    assert_eq!(actions[0].label, "Mark server as read");
+    assert!(!actions[0].enabled);
+    assert_eq!(state.activate_selected_guild_action(), None);
+}
+
+#[test]
+fn guild_action_menu_marks_unread_server_channels_as_read() {
+    let guild_id: Id<GuildMarker> = Id::new(1);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: Id::new(2),
+                parent_id: None,
+                position: Some(0),
+                last_message_id: Some(Id::new(20)),
+                name: "unread-a".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: Id::new(3),
+                parent_id: None,
+                position: Some(1),
+                last_message_id: Some(Id::new(30)),
+                name: "read".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: Id::new(4),
+                parent_id: None,
+                position: Some(2),
+                last_message_id: Some(Id::new(40)),
+                name: "unread-b".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+        ],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![
+            ReadStateInfo {
+                channel_id: Id::new(2),
+                last_acked_message_id: Some(Id::new(10)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: Id::new(3),
+                last_acked_message_id: Some(Id::new(30)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: Id::new(4),
+                last_acked_message_id: Some(Id::new(35)),
+                mention_count: 0,
+            },
+        ],
+    });
+    state.focus_pane(FocusPane::Guilds);
+    state.open_selected_guild_actions();
+
+    let actions = state.selected_guild_action_items();
+    assert_eq!(actions[0].kind, GuildActionKind::MarkAsRead);
+    assert!(actions[0].enabled);
+
+    let command = state.activate_selected_guild_action();
+
+    assert_eq!(state.guild_unread(guild_id), ChannelUnreadState::Seen);
+    assert!(!state.is_guild_action_menu_open());
+    let Some(AppCommand::AckChannels { mut targets }) = command else {
+        panic!("expected bulk channel ack command");
+    };
+    targets.sort_by_key(|(channel_id, _)| channel_id.get());
+    assert_eq!(
+        targets,
+        vec![(Id::new(2), Id::new(20)), (Id::new(4), Id::new(40))]
+    );
+}
+
+#[test]
+fn guild_action_menu_skips_hidden_channels_when_marking_server_read() {
+    let mut state = state_with_hidden_and_visible_channels();
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![
+            ReadStateInfo {
+                channel_id: Id::new(2),
+                last_acked_message_id: Some(Id::new(10)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: Id::new(3),
+                last_acked_message_id: Some(Id::new(10)),
+                mention_count: 0,
+            },
+        ],
+    });
+    state.push_event(notification_message_event(Id::new(2), "hidden"));
+    state.push_event(notification_message_event(Id::new(3), "visible"));
+    state.focus_pane(FocusPane::Guilds);
+    state.move_down();
+    state.open_selected_guild_actions();
+    assert_eq!(state.guild_action_menu_title(), Some("guild".to_owned()));
+
+    let command = state.activate_selected_guild_action();
+
+    let Some(AppCommand::AckChannels { targets }) = command else {
+        panic!("expected bulk channel ack command");
+    };
+    assert_eq!(targets, vec![(Id::new(3), Id::new(50))]);
+    assert_ne!(state.channel_unread(Id::new(2)), ChannelUnreadState::Seen);
+    assert_eq!(state.channel_unread(Id::new(3)), ChannelUnreadState::Seen);
+}
+
+#[test]
+fn direct_messages_keep_placeholder_guild_action() {
+    let mut state = DashboardState::new();
+    state.focus_pane(FocusPane::Guilds);
+    state.move_up();
+    state.open_selected_guild_actions();
+
+    let actions = state.selected_guild_action_items();
+    assert_eq!(actions.len(), 1);
     assert_eq!(actions[0].kind, GuildActionKind::NoActionsYet);
     assert_eq!(actions[0].label, "No server actions yet");
     assert!(!actions[0].enabled);

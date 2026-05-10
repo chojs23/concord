@@ -404,6 +404,62 @@ impl DashboardState {
                 self.clear_new_messages_marker();
             }
         }
+        match item.kind {
+            GuildActionKind::MarkAsRead => self.mark_selected_guild_as_read(),
+            GuildActionKind::NoActionsYet => None,
+        }
+        self.close_guild_action_menu();
+        Some(AppCommand::AckChannels { targets })
+    }
+
+    fn guild_ack_targets(
+        &self,
+        guild_id: Id<GuildMarker>,
+    ) -> impl Iterator<Item = (Id<ChannelMarker>, Id<MessageMarker>)> + '_ {
+        self.discord
+            .viewable_channels_for_guild(Some(guild_id))
+            .into_iter()
+            .filter_map(|channel| {
+                self.discord
+                    .channel_ack_target(channel.id)
+                    .map(|message_id| (channel.id, message_id))
+            })
+    }
+    pub fn activate_guild_action_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
+        let shortcut = shortcut.to_ascii_lowercase();
+        let actions = self.selected_guild_action_items();
+        let index = actions.iter().enumerate().position(|(index, action)| {
+            action.enabled
+                && guild_action_shortcut(&actions, index)
+                    .is_some_and(|candidate| candidate == shortcut)
+        })?;
+        self.select_guild_action_row(index);
+        self.activate_selected_guild_action()
+    }
+
+    fn mark_selected_guild_as_read(&mut self) -> Option<AppCommand> {
+        let guild_id = match self.guild_pane_entries().get(self.selected_guild())? {
+            GuildPaneEntry::Guild { state, .. } => state.id,
+            GuildPaneEntry::DirectMessages | GuildPaneEntry::FolderHeader { .. } => return None,
+        };
+        let targets: Vec<_> = self.guild_ack_targets(guild_id).collect();
+        if targets.is_empty() {
+            return None;
+        }
+
+        for (channel_id, message_id) in targets.iter().copied() {
+            self.pending_read_acks.remove(&channel_id);
+            self.discord.apply_event(&AppEvent::MessageAck {
+                channel_id,
+                message_id,
+                mention_count: 0,
+            });
+            if self.active_channel_id == Some(channel_id) {
+                self.unread_divider_last_acked_id = None;
+                self.pending_unread_anchor_scroll = false;
+                self.clear_new_messages_marker();
+            }
+        }
         self.close_guild_action_menu();
         Some(AppCommand::AckChannels { targets })
     }

@@ -874,6 +874,18 @@ async fn run_dashboard(
                 state.flush_due_read_acks(std::time::Instant::now());
                 dirty = true;
             }
+            _ = async {
+                match pending_read_ack_deadline {
+                    Some(deadline) => tokio::time::sleep_until(
+                        tokio::time::Instant::from_std(deadline),
+                    )
+                    .await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                state.flush_due_read_acks(std::time::Instant::now());
+                dirty = true;
+            }
         }
 
         if let Some(channel_id) = history_requests.next(state.selected_message_history_channel_id())

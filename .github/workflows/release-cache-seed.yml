@@ -1,0 +1,61 @@
+name: Seed CI cache
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+
+jobs:
+  check:
+    name: seed CI cache
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-22.04
+    concurrency:
+      group: ci-cache-seed
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify triggering ref is a version tag
+        shell: bash
+        env:
+          TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ [0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::Triggering ref ($TAG) is not a version tag."
+            exit 1
+          fi
+
+      - name: Ensure commit is reachable from main
+        shell: bash
+        env:
+          TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          git fetch origin main --no-tags
+          SHA="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::Tag ${TAG} ($SHA) is not on main. Refusing to seed release cache."
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-check
+
+      - name: rustfmt
+        run: cargo fmt --all --check
+
+      - name: seed test cache
+        run: cargo test --all-features
