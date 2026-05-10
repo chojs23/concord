@@ -515,6 +515,12 @@ fn handle_emoji_reaction_picker_key(
         KeyCode::Backspace if state.is_filtering_emoji_reactions() => {
             state.pop_emoji_reaction_filter_char();
         }
+        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_emoji_reaction_down();
+        }
+        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_emoji_reaction_up();
+        }
         KeyCode::Char('/') if is_shortcut_key(key) && !state.is_filtering_emoji_reactions() => {
             state.start_emoji_reaction_filter();
         }

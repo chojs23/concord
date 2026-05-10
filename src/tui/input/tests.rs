@@ -1960,10 +1960,9 @@ fn emoji_picker_slash_filter_matches_name_and_implementation_case_insensitively(
 
     handle_key(&mut state, char_key('/'));
     handle_key(&mut state, char_key('T'));
-    handle_key(&mut state, char_key('h'));
-    handle_key(&mut state, char_key('i'));
+    handle_key(&mut state, char_key('s'));
 
-    assert_eq!(state.emoji_reaction_filter(), Some("Thi"));
+    assert_eq!(state.emoji_reaction_filter(), Some("Ts"));
     assert_eq!(
         state.selected_emoji_reaction().map(|item| item.emoji),
         Some(ReactionEmoji::Custom {
@@ -2052,6 +2051,18 @@ fn emoji_picker_vim_and_arrow_keys_move_selection() {
     );
 
     handle_key(&mut state, key(KeyCode::Up));
+    assert_eq!(
+        state.selected_emoji_reaction().map(|item| item.emoji),
+        Some(ReactionEmoji::Unicode("👍".to_owned()))
+    );
+
+    handle_key(&mut state, ctrl_key('n'));
+    assert_eq!(
+        state.selected_emoji_reaction().map(|item| item.emoji),
+        Some(ReactionEmoji::Unicode("❤️".to_owned()))
+    );
+
+    handle_key(&mut state, ctrl_key('p'));
     assert_eq!(
         state.selected_emoji_reaction().map(|item| item.emoji),
         Some(ReactionEmoji::Unicode("👍".to_owned()))
