@@ -3,8 +3,6 @@ mod fixtures;
 use fixtures::*;
 use ratatui::text::Line;
 
-use ratatui::text::Line;
-
 use crate::{
     config::{DisplayOptions, ImagePreviewQualityPreset},
     discord::ids::{
