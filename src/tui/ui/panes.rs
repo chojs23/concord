@@ -1033,15 +1033,13 @@ pub(super) fn render_members(
                     let text = sanitize_for_display_width(&text);
                     let h_scroll = state.member_horizontal_scroll();
                     let (prefix, text) = if image_url.is_some() {
-                        // 3-space indent + 2-cell image placeholder + 1-space
-                        // gap; skip 3 chars (placeholder + separator) from body.
                         let body = text.get(3..).unwrap_or("");
                         let body = truncate_display_width_from(
                             body,
                             h_scroll,
                             max_name_width.saturating_sub(3),
                         );
-                        ("      ", body.to_owned())
+                        ("     ", body.to_owned())
                     } else {
                         let t = truncate_display_width_from(&text, h_scroll, max_name_width);
                         ("   ", t)
