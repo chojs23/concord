@@ -96,7 +96,7 @@ For now it is focusing ui/ux and conveniency features.
 
 Email and QR code logins may trigger a CAPTCHA challenge on Discord's side. We cannot solve that, so I strongly recommend using token authentication.
 
-Tokens are saved to `~/.concord/credential` in plain text. See the Security section below for details.
+Tokens are saved to `$XDG_CONFIG_HOME/concord/credential` (default `~/.config/concord/credential` on Linux) in plain text. See the Security section below for details.
 
 ### Guilds & Channels
 
@@ -128,7 +128,7 @@ Tokens are saved to `~/.concord/credential` in plain text. See the Security sect
 
 - Inline image previews directly in the terminal
 - Avatar and custom emoji rendering
-- Download attachments to `~/Downloads`
+- Download attachments to your platform Downloads directory (`XDG_DOWNLOAD_DIR` on Linux)
 - Full-screen image viewer with navigation
 
 Image rendering is powered by [ratatui-image](https://github.com/benjajaja/ratatui-image). On startup, Concord queries the terminal to detect the best available graphics protocol. Supported protocols:
@@ -221,7 +221,7 @@ open or activate items, and use the wheel to scroll panes and popups.
 
 ### Configuration
 
-Display options are stored in `~/.concord/config.toml`:
+Display options are stored in `$XDG_CONFIG_HOME/concord/config.toml` (default `~/.config/concord/config.toml` on Linux):
 
 - Disable all image previews with one master switch
 - Toggle inline image previews
@@ -302,8 +302,9 @@ No. If Discord requires a CAPTCHA during login, use token login instead.
 
 ## Security
 
-- Tokens are stored as **plain text** in `~/.concord/credential`. So keep that file secure and do not share it. You can use the token from that file to log in to the official Discord client, so treat it like a password.
-- On Unix, the config directory is created with `0700` and the credential file with `0600` permissions.
+- Tokens are stored as **plain text** in `$XDG_CONFIG_HOME/concord/credential` (default `~/.config/concord/credential` on Linux). So keep that file secure and do not share it. You can use the token from that file to log in to the official Discord client, so treat it like a password.
+- On Unix, the credential's parent directory is created with `0700` and the credential file with `0600` permissions.
+- All concord state (config, credential, log) lives under a single `$XDG_CONFIG_HOME/concord/` directory.
 - No system keychain integration yet.
 
 ## Contributing

@@ -10,6 +10,8 @@ use std::{fs::OpenOptions, io::Write};
 
 use chrono::{DateTime, Utc};
 
+use crate::paths;
+
 static LOGGER: OnceLock<FileLogger> = OnceLock::new();
 static ERROR_LOG: OnceLock<Mutex<VecDeque<ErrorLogEntry>>> = OnceLock::new();
 
@@ -88,8 +90,8 @@ impl FileLogger {
     /// During `cargo test` we never want to touch the real log file because
     /// the unit tests below intentionally call `error(...)` with synthetic
     /// targets ("test", "history") to exercise the in-memory queue. Without
-    /// this guard those entries would be appended to `$HOME/.concord/concord.log`
-    /// and pollute the user's debug-log popup on the next run.
+    /// this guard those entries would be appended to the user's log file
+    /// and pollute the debug-log popup on the next run.
     #[cfg(test)]
     fn write(&self, _level: Level, _target: &str, _message: &str) {}
 
@@ -157,8 +159,7 @@ fn log_path() -> Option<PathBuf> {
     if let Some(path) = env::var_os("CONCORD_LOG_FILE") {
         return Some(PathBuf::from(path));
     }
-    let home = env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".concord").join("concord.log"))
+    paths::log_file()
 }
 
 fn debug_enabled() -> bool {

@@ -1,14 +1,11 @@
 use std::{
-    env, fs,
+    fs,
     path::{Path, PathBuf},
 };
 
 use serde::{Deserialize, Serialize};
 
-use crate::Result;
-
-const CONFIG_DIR: &str = ".concord";
-const CONFIG_FILE: &str = "config.toml";
+use crate::{Result, paths};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
@@ -95,6 +92,16 @@ pub fn load_display_options() -> Result<DisplayOptions> {
     load_display_options_from_path(&path)
 }
 
+/// User-facing description of where config lives, e.g. for help text. Falls
+/// back to the legacy path string when XDG resolution fails so the message
+/// stays readable.
+pub fn config_path_display() -> String {
+    config_path()
+        .ok()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "~/.config/concord/config.toml".to_owned())
+}
+
 fn load_display_options_from_path(path: &Path) -> Result<DisplayOptions> {
     match fs::read_to_string(path) {
         Ok(content) => Ok(toml::from_str::<AppConfig>(&content)?.display),
@@ -119,14 +126,13 @@ fn save_display_options_to_path(path: &Path, options: &DisplayOptions) -> Result
 }
 
 fn config_path() -> Result<PathBuf> {
-    let home = env::var_os("HOME").ok_or_else(|| {
+    paths::config_file().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            "HOME environment variable is not set",
+            "could not resolve user config directory",
         )
-    })?;
-
-    Ok(PathBuf::from(home).join(CONFIG_DIR).join(CONFIG_FILE))
+        .into()
+    })
 }
 
 #[cfg(unix)]
