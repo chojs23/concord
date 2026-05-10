@@ -164,6 +164,12 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         }
         KeyCode::BackTab => state.cycle_focus_backward(),
         KeyCode::Tab => state.cycle_focus(),
+        KeyCode::Char('h') | KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
+            state.adjust_focused_pane_width(-1)
+        }
+        KeyCode::Char('l') | KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
+            state.adjust_focused_pane_width(1)
+        }
         // Tree headers act like a small tree: Enter toggles, Right
         // opens, and Left closes. Anywhere else these keys are no-ops.
         KeyCode::Enter if focus == FocusPane::Guilds => state.confirm_selected_guild(),
