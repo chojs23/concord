@@ -4993,20 +4993,34 @@ fn message_viewport_scrolls_by_rendered_line() {
     let mut state = state_with_single_message_content("abcdefghijkl");
     state.focus_pane(FocusPane::Messages);
     state.set_message_view_height(3);
+
+    state.scroll_message_viewport_top();
     state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
     state.scroll_message_viewport_down();
     state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
     assert_eq!(state.message_scroll(), 0);
-    assert_eq!(state.message_line_scroll(), 4);
+    assert_eq!(state.message_line_scroll(), 1);
     assert_eq!(state.selected_message(), 0);
 
     state.scroll_message_viewport_down();
     state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
     assert_eq!(state.message_scroll(), 0);
-    assert_eq!(state.message_line_scroll(), 5);
+    assert_eq!(state.message_line_scroll(), 2);
+
+    state.scroll_message_viewport_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    assert_eq!(state.message_scroll(), 0);
+    assert_eq!(state.message_line_scroll(), 3);
+
+    state.scroll_message_viewport_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    assert_eq!(state.message_scroll(), 0);
+    assert_eq!(state.message_line_scroll(), 3);
 }
 
 #[test]

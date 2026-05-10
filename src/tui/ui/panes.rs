@@ -821,11 +821,11 @@ pub(super) fn footer_hint(state: &DashboardState) -> String {
             "j/k choose action | enter select | esc close | q quit".to_owned()
         }
     } else if state.focus() == FocusPane::Members {
-        "tab/shift+tab/1-4 focus | j/k move | H/L scroll name | enter profile | space leader | i write | q quit".to_owned()
+        "tab/shift+tab/1-4 focus | alt+h/l/←/→ width | j/k move | H/L scroll name | enter profile | space leader | i write | q quit".to_owned()
     } else if state.focus() == FocusPane::Channels {
-        "tab/shift+tab/1-4 focus | j/k move | H/L scroll name | enter open | space leader | h/← close | l/→ open | ` logs | i write | q quit".to_owned()
+        "tab/shift+tab/1-4 focus | alt+h/l/←/→ width | j/k move | H/L scroll name | enter open | space leader | h/← close | l/→ open | ` logs | i write | q quit".to_owned()
     } else if state.focus() == FocusPane::Guilds {
-        "tab/shift+tab/1-4 focus | j/k move | J/K scroll | H/L scroll name | enter action/tree | space leader | h/← close | l/→ open | ` logs | i write | esc cancel | q quit".to_owned()
+        "tab/shift+tab/1-4 focus | alt+h/l/←/→ width | j/k move | J/K scroll | H/L scroll name | enter action/tree | space leader | h/← close | l/→ open | ` logs | i write | esc cancel | q quit".to_owned()
     } else {
         "tab/shift+tab/1-4 focus | j/k move | J/K scroll | enter actions | space leader | ` logs | i write | esc cancel | q quit".to_owned()
     }

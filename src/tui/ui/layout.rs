@@ -23,10 +23,19 @@ pub(super) fn dashboard_areas(area: Rect, state: &DashboardState) -> DashboardAr
     .areas(area);
 
     let [guilds, channels, center, members] = Layout::horizontal([
-        pane_width(state.is_pane_visible(FocusPane::Guilds), 20),
-        pane_width(state.is_pane_visible(FocusPane::Channels), 24),
+        pane_width(
+            state.is_pane_visible(FocusPane::Guilds),
+            state.pane_width(FocusPane::Guilds),
+        ),
+        pane_width(
+            state.is_pane_visible(FocusPane::Channels),
+            state.pane_width(FocusPane::Channels),
+        ),
         Constraint::Min(40),
-        pane_width(state.is_pane_visible(FocusPane::Members), 26),
+        pane_width(
+            state.is_pane_visible(FocusPane::Members),
+            state.pane_width(FocusPane::Members),
+        ),
     ])
     .areas(main);
 

@@ -178,6 +178,7 @@ With vim-style navigation:
 | `j` / `k`, arrows         | Move down / up                       |
 | `J`, `K` / `H`, `L`       | Scroll viewport                      |
 | `Ctrl+d` / `Ctrl+u`       | Half-page scroll                     |
+| `Alt+h/l/←/→`             | Resize focused pane width            |
 | `g` / `G`, `Home` / `End` | Jump or scroll to top / bottom       |
 | `Enter`                   | Open or activate the selected item   |
 | `Space`                   | Open leader shortcut window          |
