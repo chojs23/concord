@@ -35,8 +35,8 @@ fn shift_enter() -> KeyEvent {
     KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)
 }
 
-fn shift_key(code: KeyCode) -> KeyEvent {
-    KeyEvent::new(code, KeyModifiers::SHIFT)
+fn alt_key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::ALT)
 }
 
 fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
@@ -338,14 +338,14 @@ fn leader_number_keys_toggle_side_panes() {
 }
 
 #[test]
-fn shift_arrows_adjust_focused_side_pane_width() {
+fn alt_arrows_adjust_focused_side_pane_width() {
     let mut state = DashboardState::new();
 
     state.focus_pane(FocusPane::Channels);
-    handle_key(&mut state, shift_key(KeyCode::Right));
+    handle_key(&mut state, alt_key(KeyCode::Right));
     assert_eq!(state.pane_width(FocusPane::Channels), 25);
 
-    handle_key(&mut state, shift_key(KeyCode::Left));
+    handle_key(&mut state, alt_key(KeyCode::Left));
     assert_eq!(state.pane_width(FocusPane::Channels), 24);
     assert_eq!(
         state.take_display_options_save_request(),
@@ -353,9 +353,21 @@ fn shift_arrows_adjust_focused_side_pane_width() {
     );
 
     state.focus_pane(FocusPane::Messages);
-    handle_key(&mut state, shift_key(KeyCode::Right));
+    handle_key(&mut state, alt_key(KeyCode::Right));
     assert_eq!(state.pane_width(FocusPane::Channels), 24);
     assert_eq!(state.take_display_options_save_request(), None);
+}
+
+#[test]
+fn alt_h_l_adjust_focused_side_pane_width() {
+    let mut state = DashboardState::new();
+
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, alt_key(KeyCode::Char('l')));
+    assert_eq!(state.pane_width(FocusPane::Channels), 25);
+
+    handle_key(&mut state, alt_key(KeyCode::Char('h')));
+    assert_eq!(state.pane_width(FocusPane::Channels), 24);
 }
 
 #[test]
