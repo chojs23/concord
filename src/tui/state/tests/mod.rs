@@ -2,6 +2,8 @@ mod fixtures;
 
 use fixtures::*;
 
+use ratatui::text::Line;
+
 use crate::{
     config::{DisplayOptions, ImagePreviewQualityPreset},
     discord::ids::{
@@ -819,7 +821,7 @@ fn member_panel_title_separates_loaded_and_total_members() {
     });
     state.confirm_selected_guild();
 
-    assert_eq!(state.member_panel_title(), "Members 1/100 loaded".into());
+    assert_eq!(state.member_panel_title(), Line::from(" Members "));
     assert_eq!(state.flattened_members().len(), 1);
 }
 
@@ -838,7 +840,7 @@ fn member_panel_title_stays_plain_without_guild_total_or_in_direct_messages() {
         owner_id: None,
     });
     guild_state.confirm_selected_guild();
-    assert_eq!(guild_state.member_panel_title(), "Members".into());
+    assert_eq!(guild_state.member_panel_title(), Line::from(" Members "));
 
     let mut dm_state = DashboardState::new();
     dm_state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
@@ -858,7 +860,7 @@ fn member_panel_title_stays_plain_without_guild_total_or_in_direct_messages() {
         permission_overwrites: Vec::new(),
     }));
     dm_state.confirm_selected_guild();
-    assert_eq!(dm_state.member_panel_title(), "Members".into());
+    assert_eq!(dm_state.member_panel_title(), Line::from(" Members "));
 }
 
 #[test]
