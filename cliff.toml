@@ -1,0 +1,67 @@
+# git-cliff configuration with GitHub integration.
+# Requires GITHUB_TOKEN when generating: `git cliff --github-token "$GITHUB_TOKEN" -o CHANGELOG.md`.
+
+[remote.github]
+owner = "chojs23"
+repo = "concord"
+
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+"""
+body = """
+{% if version %}\
+    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+    ## [unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+    ### {{ group | striptags | trim | upper_first }}
+    {% for commit in commits %}
+        - {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
+            {% if commit.breaking %}[**breaking**] {% endif %}\
+            {{ commit.message | upper_first }}\
+            {% if commit.remote.pr_number %} in [#{{ commit.remote.pr_number }}](https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}/pull/{{ commit.remote.pr_number }}){% endif %}\
+            {% if commit.remote.username %} by @{{ commit.remote.username }}{% endif %}\
+    {% endfor %}
+{% endfor %}
+{%- if github.contributors | filter(attribute="is_first_time", value=true) | length != 0 %}
+
+### New Contributors
+{% endif %}\
+{% for contributor in github.contributors | filter(attribute="is_first_time", value=true) %}
+- @{{ contributor.username }} made their first contribution\
+    {% if contributor.pr_number %} in [#{{ contributor.pr_number }}](https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}/pull/{{ contributor.pr_number }}){% endif %}
+{%- endfor %}\n
+"""
+trim = true
+footer = ""
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+commit_parsers = [
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Bug Fixes" },
+  { message = "^refactor", group = "Refactor" },
+  { message = "^perf", group = "Performance" },
+  { message = "^doc", group = "Documentation" },
+  { message = "^test", group = "Tests" },
+  { message = "^style", group = "Style" },
+  { message = "^chore\\(release\\):", skip = true },
+  { message = "^chore", group = "Miscellaneous Tasks" },
+  { message = "^ci", group = "Miscellaneous Tasks" },
+  { body = ".*security", group = "Security" },
+  { message = "^revert", group = "Revert" },
+]
+protect_breaking_commits = false
+filter_commits = false
+tag_pattern = "v[0-9].*"
+skip_tags = ""
+ignore_tags = ""
+topo_order = false
+sort_commits = "oldest"

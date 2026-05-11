@@ -18,6 +18,8 @@ install-updater = false
 tap = "chojs23/homebrew-tap"
 publish-jobs = ["homebrew"]
 # Skip the "CI file is up-to-date" check. The generated release workflow has
-# an intentional patch that enables GitHub generated release notes while keeping
-# cargo-dist's install and download sections.
+# intentional patches: the "Create GitHub Release" step strips cargo-dist's
+# auto-appended "## Install" and "## Download" sections so only the CHANGELOG
+# body (produced by git-cliff with GitHub PR/contributor enrichment) appears
+# in the release notes. Re-apply these edits after any `dist init`.
 allow-dirty = ["ci"]

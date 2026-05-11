@@ -312,10 +312,16 @@ jobs:
           RELEASE_COMMIT: "${{ github.sha }}"
           RELEASE_TAG: "${{ needs.plan.outputs.tag }}"
         run: |
-          # Write and read notes from a file to avoid quoting breaking things
-          printf '%s\n' "$ANNOUNCEMENT_BODY" > "$RUNNER_TEMP/notes.txt"
+          # cargo-dist's body = [CHANGELOG.md section] + auto-appended
+          # "## Install ..." and "## Download ..." sections. Strip everything
+          # from the first "## Install " header onward so only the CHANGELOG
+          # body (with git-cliff's GitHub-enriched links and contributors)
+          # remains. --generate-notes is intentionally omitted because the
+          # CHANGELOG already lists PRs and first-time contributors.
+          printf '%s\n' "$ANNOUNCEMENT_BODY" \
+            | sed -n '/^## Install /q;p' > "$RUNNER_TEMP/notes.txt"
 
-          gh release create "$RELEASE_TAG" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" --generate-notes artifacts/*
+          gh release create "$RELEASE_TAG" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
   publish-homebrew-formula:
     needs:
