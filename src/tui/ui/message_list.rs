@@ -872,7 +872,7 @@ pub(super) fn selected_message_content_x_offset(selected: bool) -> u16 {
     }
 }
 
-fn loaded_custom_emoji_urls(emoji_images: &[EmojiReactionImage<'_>]) -> Vec<String> {
+fn loaded_custom_emoji_urls(emoji_images: &[EmojiImage<'_>]) -> Vec<String> {
     emoji_images.iter().map(|image| image.url.clone()).collect()
 }
 

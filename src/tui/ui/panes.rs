@@ -281,7 +281,7 @@ pub(super) fn render_composer(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) {
     let inner_width = composer_inner_width(area.width);
     let ready_urls = ready_custom_emoji_urls(emoji_images);
@@ -316,7 +316,7 @@ pub(super) fn render_composer(
     }
 }
 
-fn ready_custom_emoji_urls(emoji_images: &[EmojiReactionImage<'_>]) -> Vec<String> {
+fn ready_custom_emoji_urls(emoji_images: &[EmojiImage<'_>]) -> Vec<String> {
     emoji_images.iter().map(|image| image.url.clone()).collect()
 }
 
@@ -419,7 +419,7 @@ pub(super) fn render_composer_emoji_picker(
     frame: &mut Frame,
     message_areas: MessageAreas,
     state: &DashboardState,
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) {
     if state.composer_emoji_query().is_none() {
         return;
@@ -633,7 +633,7 @@ fn render_composer_emoji_picker_images(
     frame: &mut Frame,
     area: Rect,
     candidates: &[EmojiPickerEntry],
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) {
     let content = area.inner(ratatui::layout::Margin {
         horizontal: 1,
@@ -793,7 +793,7 @@ fn render_composer_custom_emoji_images(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
-    emoji_images: &[EmojiReactionImage<'_>],
+    emoji_images: &[EmojiImage<'_>],
 ) {
     if !state.is_composing() || area.width < 3 || area.height < 3 {
         return;
