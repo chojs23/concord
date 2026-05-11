@@ -11,7 +11,7 @@ use crate::{
 use super::super::{
     message_format::format_message_content_lines,
     selection,
-    state::DashboardState,
+    state::{DashboardState, MAX_MENTION_PICKER_VISIBLE},
     ui::{self, ImagePreviewLayout},
 };
 
@@ -503,6 +503,35 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
 
     let mut seen: HashSet<String> = HashSet::new();
     let mut targets: Vec<EmojiImageTarget> = Vec::new();
+
+    if state.is_composing() {
+        for completion in state.composer_emoji_image_completions() {
+            if seen.insert(completion.url.clone()) {
+                targets.push(EmojiImageTarget {
+                    url: completion.url,
+                });
+            }
+        }
+    }
+
+    if state.composer_emoji_query().is_some() {
+        let candidates = state.composer_emoji_candidates();
+        if !candidates.is_empty() {
+            let selected = state
+                .composer_emoji_selected()
+                .min(candidates.len().saturating_sub(1));
+            let visible_items = candidates.len().clamp(1, MAX_MENTION_PICKER_VISIBLE);
+            let visible_range =
+                selection::visible_item_range(candidates.len(), selected, visible_items);
+            for candidate in &candidates[visible_range] {
+                if let Some(url) = candidate.custom_image_url.clone()
+                    && seen.insert(url.clone())
+                {
+                    targets.push(EmojiImageTarget { url });
+                }
+            }
+        }
+    }
 
     // Picker emojis (existing behaviour).
     if state.is_emoji_reaction_picker_open() {

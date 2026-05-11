@@ -3,10 +3,12 @@ use std::ops::Range;
 use crate::discord::{AppCommand, MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload};
 
 use super::composer::{
-    MentionCompletion, build_mention_candidates, expand_mention_completions, is_mention_query_char,
-    move_mention_selection, should_start_mention_query,
+    ComposerEmojiImageCompletion, EmojiCompletion, MentionCompletion, build_emoji_candidates,
+    build_mention_candidates, expand_composer_completions, expand_emoji_shortcodes,
+    is_emoji_query_char, is_mention_query_char, move_picker_selection,
+    should_start_completion_query,
 };
-use super::{DashboardState, FocusPane, MentionPickerEntry};
+use super::{DashboardState, EmojiPickerEntry, FocusPane, MentionPickerEntry};
 
 impl DashboardState {
     pub fn is_composing(&self) -> bool {
@@ -201,8 +203,12 @@ impl DashboardState {
     }
 
     pub fn submit_composer(&mut self) -> Option<AppCommand> {
-        let expanded =
-            expand_mention_completions(&self.composer_input, &self.composer_mention_completions);
+        let expanded = expand_composer_completions(
+            &self.composer_input,
+            &self.composer_mention_completions,
+            &self.composer_emoji_completions,
+        );
+        let expanded = expand_emoji_shortcodes(&expanded);
         let content = expanded.trim().to_owned();
         let has_attachments = !self.pending_composer_attachments.is_empty();
         if content.is_empty() && !has_attachments {
@@ -276,11 +282,10 @@ impl DashboardState {
         self.composer_mention_selected
     }
 
-    /// Builds the visible list of suggestions for the picker. Returns at most
-    /// `MAX_MENTION_PICKER_VISIBLE` entries, ordered by best match across the
-    /// member's display name AND username: prefix matches beat substring
-    /// matches, alias matches beat username matches at the same rank, and
-    /// ties are broken alphabetically by display name.
+    /// Builds the full suggestion list for the picker, ordered by best match
+    /// across the member's display name AND username: prefix matches beat
+    /// substring matches, alias matches beat username matches at the same rank,
+    /// and ties are broken alphabetically by display name.
     pub fn composer_mention_candidates(&self) -> Vec<MentionPickerEntry> {
         let Some(query) = self.composer_mention_query.as_deref() else {
             return Vec::new();
@@ -294,7 +299,28 @@ impl DashboardState {
         }
         let len = self.composer_mention_candidates().len();
         self.composer_mention_selected =
-            move_mention_selection(self.composer_mention_selected, len, delta);
+            move_picker_selection(self.composer_mention_selected, len, delta);
+    }
+
+    pub fn composer_emoji_query(&self) -> Option<&str> {
+        self.composer_emoji_query.as_deref()
+    }
+
+    pub fn composer_emoji_selected(&self) -> usize {
+        self.composer_emoji_selected
+    }
+
+    pub fn composer_emoji_candidates(&self) -> Vec<EmojiPickerEntry> {
+        self.composer_emoji_candidates.clone()
+    }
+
+    pub fn move_composer_emoji_selection(&mut self, delta: isize) {
+        if self.composer_emoji_query.is_none() {
+            return;
+        }
+        let len = self.composer_emoji_candidates.len();
+        self.composer_emoji_selected =
+            move_picker_selection(self.composer_emoji_selected, len, delta);
     }
 
     /// Confirms the currently highlighted mention. Replaces the trailing
@@ -333,21 +359,115 @@ impl DashboardState {
         true
     }
 
+    /// Confirms the highlighted emoji. Unicode emoji are inserted directly;
+    /// available custom emoji keep their readable `:name:` form and record a
+    /// byte range so submit can send Discord's wire markup. Unavailable custom
+    /// emoji stay visible in the picker as a hint, but cannot be confirmed.
+    pub fn confirm_composer_emoji(&mut self) -> bool {
+        let Some(_query) = self.composer_emoji_query.clone() else {
+            return false;
+        };
+        let Some(emoji_start) = self.composer_emoji_start else {
+            return false;
+        };
+        let Some(entry) = self
+            .composer_emoji_candidates
+            .get(self.composer_emoji_selected)
+        else {
+            return false;
+        };
+        let entry = entry.clone();
+        if !entry.available {
+            return false;
+        }
+
+        let cursor = self.composer_cursor_byte_index();
+        if emoji_start > cursor {
+            return false;
+        }
+
+        let replacement = if entry.wire_format.is_some() {
+            format!(":{}: ", entry.shortcode)
+        } else {
+            format!("{} ", entry.emoji)
+        };
+        self.replace_composer_range(emoji_start..cursor, &replacement);
+        if let Some(wire_format) = entry.wire_format {
+            let end = emoji_start + ':'.len_utf8() + entry.shortcode.len() + ':'.len_utf8();
+            self.composer_emoji_completions.push(EmojiCompletion {
+                byte_start: emoji_start,
+                byte_end: end,
+                replacement: wire_format,
+                custom_image_url: entry.custom_image_url,
+            });
+        }
+        self.close_composer_emoji_query();
+        true
+    }
+
+    pub(in crate::tui) fn composer_emoji_image_completions(
+        &self,
+    ) -> Vec<ComposerEmojiImageCompletion> {
+        self.composer_emoji_completions
+            .iter()
+            .filter(|completion| completion.byte_end <= self.composer_input.len())
+            .filter_map(|completion| {
+                completion
+                    .custom_image_url
+                    .as_ref()
+                    .map(|url| ComposerEmojiImageCompletion {
+                        byte_start: completion.byte_start,
+                        byte_end: completion.byte_end,
+                        url: url.clone(),
+                    })
+            })
+            .collect()
+    }
+
     /// Closes the picker without inserting anything. The literal `@query`
     /// stays in the composer.
     pub fn cancel_composer_mention(&mut self) {
         self.close_composer_mention_query();
     }
 
+    pub fn cancel_composer_emoji(&mut self) {
+        self.close_composer_emoji_query();
+    }
+
     fn reset_mention_picker_state(&mut self) {
         self.close_composer_mention_query();
+        self.close_composer_emoji_query();
         self.composer_mention_completions.clear();
+        self.composer_emoji_completions.clear();
     }
 
     fn close_composer_mention_query(&mut self) {
         self.composer_mention_query = None;
         self.composer_mention_start = None;
         self.composer_mention_selected = 0;
+    }
+
+    fn close_composer_emoji_query(&mut self) {
+        self.composer_emoji_query = None;
+        self.composer_emoji_start = None;
+        self.composer_emoji_selected = 0;
+        self.composer_emoji_candidates.clear();
+    }
+
+    pub(super) fn refresh_composer_emoji_candidates_for_current_query(&mut self) {
+        let Some(query) = self.composer_emoji_query.clone() else {
+            self.composer_emoji_candidates.clear();
+            return;
+        };
+
+        let candidates = self.emoji_candidates_for_query(&query);
+        if candidates.is_empty() {
+            self.close_composer_emoji_query();
+            return;
+        }
+
+        self.composer_emoji_selected = self.composer_emoji_selected.min(candidates.len() - 1);
+        self.composer_emoji_candidates = candidates;
     }
 
     fn replace_composer_range(&mut self, range: Range<usize>, replacement: &str) {
@@ -359,6 +479,7 @@ impl DashboardState {
             return;
         }
         self.adjust_mention_completions_for_replace(range.clone(), replacement.len());
+        self.adjust_emoji_completions_for_replace(range.clone(), replacement.len());
         self.composer_input
             .replace_range(range.clone(), replacement);
         self.composer_cursor_byte_index = range.start + replacement.len();
@@ -384,17 +505,55 @@ impl DashboardState {
         if query_start > 0 {
             let mention_start = previous_char_boundary(&self.composer_input, query_start);
             if &self.composer_input[mention_start..query_start] == "@"
-                && should_start_mention_query(&self.composer_input[..mention_start])
+                && should_start_completion_query(&self.composer_input[..mention_start])
             {
                 self.composer_mention_query =
                     Some(self.composer_input[query_start..cursor].to_owned());
                 self.composer_mention_start = Some(mention_start);
                 self.composer_mention_selected = 0;
+                self.close_composer_emoji_query();
+                return;
+            }
+        }
+
+        let mut query_start = cursor;
+
+        while query_start > 0 {
+            let previous = previous_char_boundary(&self.composer_input, query_start);
+            let value = self.composer_input[previous..query_start]
+                .chars()
+                .next()
+                .expect("character boundary slice contains one character");
+            if !is_emoji_query_char(value) {
+                break;
+            }
+            query_start = previous;
+        }
+
+        if query_start > 0 {
+            let emoji_start = previous_char_boundary(&self.composer_input, query_start);
+            let query = &self.composer_input[query_start..cursor];
+            if &self.composer_input[emoji_start..query_start] == ":"
+                && query.chars().count() >= 2
+                && should_start_completion_query(&self.composer_input[..emoji_start])
+            {
+                let candidates = self.emoji_candidates_for_query(query);
+                if candidates.is_empty() {
+                    self.close_composer_mention_query();
+                    self.close_composer_emoji_query();
+                    return;
+                }
+                self.composer_emoji_query = Some(query.to_owned());
+                self.composer_emoji_start = Some(emoji_start);
+                self.composer_emoji_selected = 0;
+                self.composer_emoji_candidates = candidates;
+                self.close_composer_mention_query();
                 return;
             }
         }
 
         self.close_composer_mention_query();
+        self.close_composer_emoji_query();
     }
 
     fn adjust_mention_completions_for_replace(
@@ -417,6 +576,41 @@ impl DashboardState {
         }
 
         self.composer_mention_completions = completions;
+    }
+
+    fn adjust_emoji_completions_for_replace(
+        &mut self,
+        replaced: Range<usize>,
+        replacement_len: usize,
+    ) {
+        let replaced_len = replaced.end - replaced.start;
+        let delta = replacement_len as isize - replaced_len as isize;
+        let mut completions = Vec::with_capacity(self.composer_emoji_completions.len());
+
+        for mut completion in self.composer_emoji_completions.drain(..) {
+            if completion.byte_end <= replaced.start {
+                completions.push(completion);
+            } else if completion.byte_start >= replaced.end {
+                completion.byte_start = shift_byte_index(completion.byte_start, delta);
+                completion.byte_end = shift_byte_index(completion.byte_end, delta);
+                completions.push(completion);
+            }
+        }
+
+        self.composer_emoji_completions = completions;
+    }
+
+    fn emoji_candidates_for_query(&self, query: &str) -> Vec<EmojiPickerEntry> {
+        let custom_emojis = self
+            .selected_channel_guild_id()
+            .map(|guild_id| self.discord.custom_emojis_for_guild(guild_id))
+            .unwrap_or_default();
+        build_emoji_candidates(
+            query,
+            custom_emojis,
+            self.current_user_can_use_animated_custom_emojis
+                .unwrap_or(false),
+        )
     }
 }
 

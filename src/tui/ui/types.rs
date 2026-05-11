@@ -80,6 +80,7 @@ pub(super) struct DashboardAreas {
     pub(super) footer: Rect,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct MessageAreas {
     /// One-row strip pinned above the message list while the active channel
     /// has unread messages. Height is zero (and the list reclaims the row)

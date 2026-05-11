@@ -631,6 +631,11 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
     {
         return command;
     }
+    if state.composer_emoji_query().is_some()
+        && let Some(command) = handle_emoji_picker_key(state, key)
+    {
+        return command;
+    }
     match key.code {
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
             state.push_composer_char('\n');
@@ -696,36 +701,63 @@ fn handle_mention_picker_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<Option<AppCommand>> {
+    handle_composer_completion_picker_key(
+        state,
+        key,
+        DashboardState::move_composer_mention_selection,
+        DashboardState::confirm_composer_mention,
+        DashboardState::cancel_composer_mention,
+    )
+}
+
+fn handle_emoji_picker_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<Option<AppCommand>> {
+    handle_composer_completion_picker_key(
+        state,
+        key,
+        DashboardState::move_composer_emoji_selection,
+        DashboardState::confirm_composer_emoji,
+        DashboardState::cancel_composer_emoji,
+    )
+}
+
+fn handle_composer_completion_picker_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+    mut move_selection: impl FnMut(&mut DashboardState, isize),
+    mut confirm: impl FnMut(&mut DashboardState) -> bool,
+    mut cancel: impl FnMut(&mut DashboardState),
+) -> Option<Option<AppCommand>> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Up => {
-            state.move_composer_mention_selection(-1);
+            move_selection(state, -1);
             Some(None)
         }
         KeyCode::Down => {
-            state.move_composer_mention_selection(1);
+            move_selection(state, 1);
             Some(None)
         }
         KeyCode::Char('p') if ctrl => {
-            state.move_composer_mention_selection(-1);
+            move_selection(state, -1);
             Some(None)
         }
         KeyCode::Char('n') if ctrl => {
-            state.move_composer_mention_selection(1);
+            move_selection(state, 1);
             Some(None)
         }
-        // Both Tab and Enter confirm the highlighted mention. Enter only
-        // submits the message when the picker is closed.
         KeyCode::Tab | KeyCode::Enter => {
-            if state.confirm_composer_mention() {
+            if confirm(state) {
                 Some(None)
             } else {
-                state.cancel_composer_mention();
+                cancel(state);
                 Some(None)
             }
         }
         KeyCode::Esc => {
-            state.cancel_composer_mention();
+            cancel(state);
             Some(None)
         }
         _ => None,

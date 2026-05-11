@@ -1,5 +1,5 @@
 use super::forum;
-use super::panes::{render_composer, render_composer_mention_picker};
+use super::panes::{render_composer, render_composer_emoji_picker, render_composer_mention_picker};
 use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,8 +84,9 @@ pub(super) fn render_messages(
             forum_total_rows,
         );
         render_typing_footer(frame, message_areas.typing, state);
-        render_composer(frame, message_areas.composer, state);
+        render_composer(frame, message_areas.composer, state, emoji_images);
         render_composer_mention_picker(frame, message_areas, state);
+        render_composer_emoji_picker(frame, message_areas, state, emoji_images);
         return;
     }
 
@@ -207,8 +208,9 @@ pub(super) fn render_messages(
     );
     render_new_messages_notice(frame, message_areas.list, state);
     render_typing_footer(frame, message_areas.typing, state);
-    render_composer(frame, message_areas.composer, state);
+    render_composer(frame, message_areas.composer, state, emoji_images);
     render_composer_mention_picker(frame, message_areas, state);
+    render_composer_emoji_picker(frame, message_areas, state, emoji_images);
 }
 
 fn render_new_messages_notice(frame: &mut Frame, list: Rect, state: &DashboardState) {
@@ -451,13 +453,17 @@ fn render_inline_message_body_emojis(
         };
         let global_index = state.message_scroll().saturating_add(index);
         let separator_lines = state.message_extra_top_lines(global_index) as isize;
-        let body_base_rows =
-            state.message_base_line_count_for_width(message, content_width) as isize;
-
         let message_top = rendered_rows - line_offset;
         let body_top = message_top + separator_lines;
 
-        let body_lines = format_message_content_lines(message, state, content_width.max(8));
+        let loaded_custom_emoji_urls = loaded_custom_emoji_urls(emoji_images);
+        let body_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+            message,
+            state,
+            content_width.max(8),
+            &loaded_custom_emoji_urls,
+        );
+        let body_base_rows = 1 + body_lines.len() as isize;
         for (line_idx, line) in body_lines.iter().enumerate() {
             if line.image_slots.is_empty() {
                 continue;
@@ -601,13 +607,13 @@ pub(super) fn message_viewport_lines(
             lines.push(line);
         }
 
-        let (mut content, mut reactions) =
-            format_message_content_sections(message, state, item_content_width.max(8));
-        for line in content.iter_mut().chain(reactions.iter_mut()) {
-            line.blank_loaded_emoji_fallbacks(|url| {
-                emoji_images.iter().any(|image| image.url == url)
-            });
-        }
+        let loaded_custom_emoji_urls = loaded_custom_emoji_urls(emoji_images);
+        let (content, reactions) = format_message_content_sections_with_loaded_custom_emoji_urls(
+            message,
+            state,
+            item_content_width.max(8),
+            &loaded_custom_emoji_urls,
+        );
 
         let item_lines = message_item_lines_with_previews(MessageItemLinesInput {
             author,
@@ -864,6 +870,10 @@ pub(super) fn selected_message_content_x_offset(selected: bool) -> u16 {
     } else {
         0
     }
+}
+
+fn loaded_custom_emoji_urls(emoji_images: &[EmojiReactionImage<'_>]) -> Vec<String> {
+    emoji_images.iter().map(|image| image.url.clone()).collect()
 }
 
 pub(super) fn selected_avatar_x_offset(selected_body_top: Option<isize>, avatar_row: isize) -> u16 {

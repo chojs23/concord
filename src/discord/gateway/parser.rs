@@ -120,6 +120,13 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
             user: name,
             user_id,
         });
+        if let Some(can_use_animated_custom_emojis) =
+            parse_user_can_use_animated_custom_emojis(user)
+        {
+            events.push(AppEvent::CurrentUserCapabilities {
+                can_use_animated_custom_emojis,
+            });
+        }
         current_user_id = user_id;
         current_user = parse_channel_recipient_info(user);
         current_user_status = parse_current_user_session_status(data);
@@ -690,6 +697,14 @@ fn parse_custom_emoji(value: &Value) -> Option<CustomEmojiInfo> {
         animated,
         available,
     })
+}
+
+fn parse_user_can_use_animated_custom_emojis(user: &Value) -> Option<bool> {
+    // Discord exposes `premium_type` on the current user object. Any non-zero
+    // value represents a Nitro tier that can use animated custom emojis.
+    user.get("premium_type")
+        .and_then(Value::as_u64)
+        .map(|premium_type| premium_type != 0)
 }
 
 fn parse_guild_emojis_update(data: &Value) -> Option<AppEvent> {
@@ -1693,6 +1708,31 @@ mod tests {
             event,
             AppEvent::UserPresenceUpdate { user_id, status, .. }
                 if *user_id == Id::new(99) && *status == PresenceStatus::Idle
+        )));
+    }
+
+    #[test]
+    fn raw_ready_parser_exposes_current_user_premium_capability() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "READY",
+                "d": {
+                    "user": {
+                        "id": "99",
+                        "username": "neo",
+                        "premium_type": 0
+                    },
+                    "guilds": []
+                }
+            })
+            .to_string(),
+        );
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::CurrentUserCapabilities {
+                can_use_animated_custom_emojis: false
+            }
         )));
     }
 

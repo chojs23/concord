@@ -15,8 +15,9 @@ use super::{
     SNOWFLAKE_TIMESTAMP_SHIFT, UNREAD_BRIGHT, channel_action_menu_lines,
     channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
     composer_content_line_count, composer_cursor_position, composer_lines,
-    composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
-    dm_presence_dot_span, emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
+    composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count, composer_text,
+    date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_picker_lines,
+    emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
     filtered_emoji_reaction_picker_lines, focus_pane_at, footer_hint, format_message_sent_time,
     format_unix_millis_with_offset, forum_post_reaction_summary,
     forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
@@ -34,7 +35,7 @@ use crate::{
     discord::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, AttachmentInfo, ChannelInfo,
         ChannelNotificationOverrideInfo, ChannelRecipientState, ChannelState, ChannelUnreadState,
-        ChannelVisibilityStats, EmbedInfo, FriendStatus, GuildMemberState,
+        ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, FriendStatus, GuildMemberState,
         GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageAttachmentUpload,
         MessageInfo, MessageKind, MessageSnapshotInfo, MessageState, MutualGuildInfo,
         NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
@@ -44,14 +45,15 @@ use crate::{
         format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
         message_format::{
             MessageContentLine, format_message_content, format_message_content_lines,
-            lay_out_reaction_chips, mention_highlight_style, poll_box_border,
-            poll_card_inner_width, reaction_line_test_spans, wrap_text_lines,
+            format_message_content_lines_with_loaded_custom_emoji_urls, lay_out_reaction_chips,
+            mention_highlight_style, poll_box_border, poll_card_inner_width,
+            reaction_line_test_spans, wrap_text_lines,
         },
         state::{
             ChannelActionItem, ChannelActionKind, ChannelSwitcherItem, ChannelThreadItem,
-            DashboardState, DisplayOptionItem, EmojiReactionItem, FocusPane, GuildActionItem,
-            GuildActionKind, MemberActionItem, MemberActionKind, MessageActionItem,
-            MessageActionKind, PollVotePickerItem,
+            DashboardState, DisplayOptionItem, EmojiPickerEntry, EmojiReactionItem, FocusPane,
+            GuildActionItem, GuildActionKind, MemberActionItem, MemberActionKind,
+            MessageActionItem, MessageActionKind, PollVotePickerItem,
         },
     },
 };
@@ -477,6 +479,41 @@ fn composer_lines_show_pending_upload_above_input() {
 }
 
 #[test]
+fn composer_lines_use_image_width_for_loaded_custom_emoji() {
+    let mut state = state_with_message();
+    state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id: Id::new(1),
+        emojis: vec![CustomEmojiInfo {
+            id: Id::new(60),
+            name: "long_custom".to_owned(),
+            animated: false,
+            available: true,
+        }],
+    });
+    state.start_composer();
+    for ch in ":lo".chars() {
+        state.push_composer_char(ch);
+    }
+    assert!(state.confirm_composer_emoji());
+    for ch in "text".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let loading_lines = composer_lines_with_loaded_custom_emoji_urls(&state, 80, &[]);
+    let loaded_lines = composer_lines_with_loaded_custom_emoji_urls(
+        &state,
+        80,
+        &["https://cdn.discordapp.com/emojis/60.png".to_owned()],
+    );
+
+    assert_eq!(
+        line_texts_from_ratatui(&loading_lines),
+        vec!["> :long_custom: text"]
+    );
+    assert_eq!(line_texts_from_ratatui(&loaded_lines), vec![">    text"]);
+}
+
+#[test]
 fn composer_cursor_position_tracks_input_cursor() {
     let mut state = state_with_message();
     state.start_composer();
@@ -509,6 +546,186 @@ fn composer_cursor_position_accounts_for_upload_and_reply_rows() {
     assert_eq!(
         composer_cursor_position(Rect::new(10, 20, 20, 6), &state),
         Some(Position { x: 15, y: 23 })
+    );
+}
+
+#[test]
+fn dashboard_renders_emoji_picker_above_composer() {
+    let mut state = state_with_message();
+    state.start_composer();
+    for ch in ":heart".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let dump = render_dashboard_dump(100, 24, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(
+        rendered.contains(" emoji "),
+        "emoji picker title should render above composer:\n{rendered}"
+    );
+    assert!(
+        rendered.contains(":heart:"),
+        "emoji picker should show matching shortcode:\n{rendered}"
+    );
+
+    let mut state = state_with_message();
+    state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id: Id::new(1),
+        emojis: vec![CustomEmojiInfo {
+            id: Id::new(50),
+            name: "party_time".to_owned(),
+            animated: true,
+            available: true,
+        }],
+    });
+    state.start_composer();
+    for ch in ":pa".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let dump = render_dashboard_dump(100, 24, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(
+        rendered.contains(":party_time:"),
+        "custom emoji picker should show current guild custom emoji:\n{rendered}"
+    );
+}
+
+#[test]
+fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
+    let lines = emoji_picker_lines(
+        &[
+            EmojiPickerEntry {
+                emoji: "◆".to_owned(),
+                shortcode: "gone".to_owned(),
+                name: "custom emoji".to_owned(),
+                wire_format: Some("<:gone:51>".to_owned()),
+                available: false,
+                custom_image_url: Some("https://cdn.discordapp.com/emojis/51.png".to_owned()),
+            },
+            EmojiPickerEntry {
+                emoji: "❤️".to_owned(),
+                shortcode: "heart".to_owned(),
+                name: "red heart".to_owned(),
+                wire_format: None,
+                available: true,
+                custom_image_url: None,
+            },
+            EmojiPickerEntry {
+                emoji: "◆".to_owned(),
+                shortcode: "party_time".to_owned(),
+                name: "custom emoji".to_owned(),
+                wire_format: Some("<:party_time:50>".to_owned()),
+                available: true,
+                custom_image_url: Some("https://cdn.discordapp.com/emojis/50.png".to_owned()),
+            },
+        ],
+        0,
+        40,
+        &[
+            "https://cdn.discordapp.com/emojis/51.png".to_owned(),
+            "https://cdn.discordapp.com/emojis/50.png".to_owned(),
+        ],
+        true,
+    );
+
+    assert!(
+        lines[0].spans[1]
+            .style
+            .add_modifier
+            .contains(Modifier::CROSSED_OUT)
+    );
+    assert_eq!(lines[0].spans[1].content.as_ref(), "   ");
+    assert!(
+        !lines[1].spans[3]
+            .style
+            .add_modifier
+            .contains(Modifier::CROSSED_OUT)
+    );
+    assert!(
+        !lines[2]
+            .spans
+            .last()
+            .expect("custom emoji row should have a label span")
+            .style
+            .add_modifier
+            .contains(Modifier::CROSSED_OUT)
+    );
+    assert_eq!(lines[2].spans[1].content.as_ref(), "   ");
+}
+
+#[test]
+fn dashboard_renders_scrollbar_for_overflowing_composer_pickers() {
+    let mut state = state_with_message();
+    for index in 0..10 {
+        state.push_event(AppEvent::GuildMemberUpsert {
+            guild_id: Id::new(1),
+            member: MemberInfo {
+                user_id: Id::new(100 + index),
+                display_name: format!("Scroll {index:02}"),
+                username: Some(format!("scroll{index:02}")),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            },
+        });
+    }
+    state.start_composer();
+    for ch in "@sc".chars() {
+        state.push_composer_char(ch);
+    }
+    state.move_composer_mention_selection(9);
+
+    let dump = render_dashboard_dump(100, 24, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(
+        rendered.contains("Scroll 09"),
+        "selected overflow mention candidate should stay visible:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("@scroll00"),
+        "picker should scroll away from the first row after selecting the bottom overflow candidate:\n{rendered}"
+    );
+    assert!(
+        rendered.contains('┃'),
+        "overflowing mention picker should render a scrollbar thumb:\n{rendered}"
+    );
+
+    let mut state = state_with_message();
+    state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id: Id::new(1),
+        emojis: (0..10)
+            .map(|index| CustomEmojiInfo {
+                id: Id::new(100 + index),
+                name: format!("overflow_{index:02}"),
+                animated: false,
+                available: true,
+            })
+            .collect(),
+    });
+    state.start_composer();
+    for ch in ":ov".chars() {
+        state.push_composer_char(ch);
+    }
+    state.move_composer_emoji_selection(9);
+
+    let dump = render_dashboard_dump(100, 24, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(
+        rendered.contains(":overflow_09:"),
+        "selected overflow emoji candidate should stay visible:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains(":overflow_00:"),
+        "picker should scroll away from the first row after selecting the bottom overflow candidate:\n{rendered}"
+    );
+    assert!(
+        rendered.contains('┃'),
+        "overflowing emoji picker should render a scrollbar thumb:\n{rendered}"
     );
 }
 
@@ -1706,6 +1923,25 @@ fn embed_text_emits_inline_emoji_slot_for_image_overlay() {
             .iter()
             .any(|slot| slot.url == "https://cdn.discordapp.com/emojis/99.png")
     );
+}
+
+#[test]
+fn loaded_custom_emoji_message_uses_image_width() {
+    let message = message_with_content(Some("<:long_custom:42>text".to_owned()));
+    let loaded_urls = vec!["https://cdn.discordapp.com/emojis/42.png".to_owned()];
+
+    for width in [200, 6] {
+        let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+            &message,
+            &DashboardState::new(),
+            width,
+            &loaded_urls,
+        );
+
+        assert_eq!(line_texts(&lines), vec!["  text"]);
+        assert_eq!(lines[0].image_slots[0].col, 0);
+        assert_eq!(lines[0].image_slots[0].display_width, 2);
+    }
 }
 
 #[test]

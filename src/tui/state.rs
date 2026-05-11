@@ -49,7 +49,7 @@ mod subscriptions;
 mod user;
 
 use channel_switcher::ChannelSwitcherState;
-use composer::MentionCompletion;
+use composer::{EmojiCompletion, MentionCompletion};
 use message_render::{add_literal_mention_highlights, normalize_text_highlights};
 use popups::{
     ChannelActionMenuState, GuildActionMenuState, ImageViewerState, MemberActionMenuState,
@@ -62,7 +62,7 @@ use scroll::{
     scroll_message_row_down, scroll_message_row_up,
 };
 
-pub use composer::{MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry};
+pub use composer::{EmojiPickerEntry, MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry};
 pub use member_grouping::{MemberEntry, MemberGroup};
 pub use model::{
     ChannelActionItem, ChannelPaneEntry, ChannelSwitcherItem, ChannelThreadItem, EmojiReactionItem,
@@ -221,10 +221,21 @@ pub struct DashboardState {
     composer_mention_query: Option<String>,
     composer_mention_start: Option<usize>,
     composer_mention_selected: usize,
+    /// Set when the user is typing a Unicode emoji shortcode after `:`. The
+    /// picker opens after two shortcode characters, mirroring Discord's
+    /// threshold while avoiding noisy popups for ordinary punctuation.
+    composer_emoji_query: Option<String>,
+    composer_emoji_start: Option<usize>,
+    composer_emoji_selected: usize,
+    composer_emoji_candidates: Vec<EmojiPickerEntry>,
     /// Records `@displayname` substrings that the picker inserted, so the
     /// composer can rewrite them to Discord's `<@USER_ID>` wire format on
     /// submit even though the visible text is still the friendly form.
     composer_mention_completions: Vec<MentionCompletion>,
+    /// Recorded custom emoji ranges inserted by the picker. The editor keeps
+    /// the readable `:name:` text while submit rewrites these ranges to
+    /// Discord's `<:name:id>` or `<a:name:id>` wire format.
+    composer_emoji_completions: Vec<EmojiCompletion>,
     message_action_menu: Option<MessageActionMenuState>,
     options_popup: Option<popups::OptionsPopupState>,
     image_viewer: Option<ImageViewerState>,
@@ -245,6 +256,7 @@ pub struct DashboardState {
     display_options_save_pending: bool,
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
+    current_user_can_use_animated_custom_emojis: Option<bool>,
     last_status: Option<String>,
     update_available_version: Option<String>,
     should_quit: bool,
@@ -349,7 +361,12 @@ impl DashboardState {
             composer_mention_query: None,
             composer_mention_start: None,
             composer_mention_selected: 0,
+            composer_emoji_query: None,
+            composer_emoji_start: None,
+            composer_emoji_selected: 0,
+            composer_emoji_candidates: Vec::new(),
             composer_mention_completions: Vec::new(),
+            composer_emoji_completions: Vec::new(),
             message_action_menu: None,
             options_popup: None,
             image_viewer: None,
@@ -370,6 +387,7 @@ impl DashboardState {
             display_options_save_pending: false,
             current_user: None,
             current_user_id: None,
+            current_user_can_use_animated_custom_emojis: None,
             last_status: None,
             update_available_version: None,
             should_quit: false,
@@ -484,6 +502,12 @@ impl DashboardState {
                 self.current_user = Some(user.clone());
                 self.current_user_id = *user_id;
             }
+            AppEvent::CurrentUserCapabilities {
+                can_use_animated_custom_emojis,
+            } => {
+                self.current_user_can_use_animated_custom_emojis =
+                    Some(*can_use_animated_custom_emojis);
+            }
             AppEvent::StatusMessage { message } => {
                 self.last_status = Some(message.clone());
             }
@@ -561,6 +585,12 @@ impl DashboardState {
         if apply_discord {
             let discord_event = self.discord_event_for_apply(&event);
             self.discord.apply_event(&discord_event);
+        }
+        if matches!(
+            &event,
+            AppEvent::CurrentUserCapabilities { .. } | AppEvent::GuildEmojisUpdate { .. }
+        ) {
+            self.refresh_composer_emoji_candidates_for_current_query();
         }
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);
@@ -679,6 +709,7 @@ impl DashboardState {
             None if self.cache.last_channel_id.is_some() => ActiveGuildScope::DirectMessages,
             _ => ActiveGuildScope::Unset,
         };
+        self.refresh_composer_emoji_candidates_for_current_query();
 
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);

@@ -1,12 +1,14 @@
-use crate::discord::ids::{Id, marker::UserMarker};
+use crate::discord::ids::{
+    Id,
+    marker::{EmojiMarker, UserMarker},
+};
 
-use crate::discord::PresenceStatus;
+use crate::discord::{CustomEmojiInfo, PresenceStatus};
 
 use super::MemberEntry;
 
-/// Maximum number of suggestions the @-mention picker shows at once. Mirrors
-/// the upper bound used by other composer popups so the layout math stays
-/// predictable.
+/// Maximum number of suggestions composer pickers show at once. Candidate
+/// builders still return every match; rendering scrolls this many rows.
 pub const MAX_MENTION_PICKER_VISIBLE: usize = 8;
 
 /// One entry in the rendered @-mention picker list.
@@ -20,6 +22,17 @@ pub struct MentionPickerEntry {
     pub username: Option<String>,
     pub status: PresenceStatus,
     pub is_bot: bool,
+}
+
+/// One entry in the rendered emoji shortcode picker list.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct EmojiPickerEntry {
+    pub emoji: String,
+    pub shortcode: String,
+    pub name: String,
+    pub wire_format: Option<String>,
+    pub available: bool,
+    pub custom_image_url: Option<String>,
 }
 
 pub(super) fn build_mention_candidates(
@@ -71,11 +84,10 @@ pub(super) fn build_mention_candidates(
         })
         .collect();
     scored.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-    scored.truncate(MAX_MENTION_PICKER_VISIBLE);
     scored.into_iter().map(|(_, _, entry)| entry).collect()
 }
 
-pub(super) fn move_mention_selection(selected: usize, len: usize, delta: isize) -> usize {
+pub(super) fn move_picker_selection(selected: usize, len: usize, delta: isize) -> usize {
     if len == 0 {
         return 0;
     }
@@ -83,12 +95,158 @@ pub(super) fn move_mention_selection(selected: usize, len: usize, delta: isize) 
     (current + delta).clamp(0, len as isize - 1) as usize
 }
 
-pub(super) fn should_start_mention_query(input: &str) -> bool {
+pub(super) fn build_emoji_candidates(
+    query: &str,
+    custom_emojis: &[CustomEmojiInfo],
+    can_use_animated_custom_emojis: bool,
+) -> Vec<EmojiPickerEntry> {
+    let needle = query.to_ascii_lowercase();
+    if needle.chars().count() < 2 {
+        return Vec::new();
+    }
+
+    let mut scored: Vec<(u8, String, EmojiPickerEntry)> = custom_emojis
+        .iter()
+        .filter(|emoji| emoji.name.to_ascii_lowercase().starts_with(&needle))
+        .map(|emoji| {
+            let shortcode = emoji.name.clone();
+            let marker = if emoji.animated { "◇" } else { "◆" };
+            let label = if emoji.animated {
+                "animated custom emoji"
+            } else {
+                "custom emoji"
+            };
+            (
+                0,
+                shortcode.to_ascii_lowercase(),
+                EmojiPickerEntry {
+                    emoji: marker.to_owned(),
+                    shortcode: shortcode.clone(),
+                    name: label.to_owned(),
+                    wire_format: Some(custom_emoji_markup(&shortcode, emoji.id, emoji.animated)),
+                    available: emoji.available
+                        && (!emoji.animated || can_use_animated_custom_emojis),
+                    custom_image_url: Some(custom_emoji_image_url(emoji.id, emoji.animated)),
+                },
+            )
+        })
+        .collect();
+
+    scored.extend(emojis::iter().flat_map(|emoji| {
+        emoji
+            .shortcodes()
+            .filter(|shortcode| shortcode.starts_with(&needle))
+            .map(|shortcode| {
+                (
+                    1,
+                    shortcode.to_owned(),
+                    EmojiPickerEntry {
+                        emoji: emoji.as_str().to_owned(),
+                        shortcode: shortcode.to_owned(),
+                        name: emoji.name().to_owned(),
+                        wire_format: None,
+                        available: true,
+                        custom_image_url: None,
+                    },
+                )
+            })
+    }));
+    scored.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    scored.into_iter().map(|(_, _, entry)| entry).collect()
+}
+
+fn custom_emoji_markup(name: &str, id: Id<EmojiMarker>, animated: bool) -> String {
+    if animated {
+        format!("<a:{name}:{}>", id.get())
+    } else {
+        format!("<:{name}:{}>", id.get())
+    }
+}
+
+fn custom_emoji_image_url(id: Id<EmojiMarker>, animated: bool) -> String {
+    let extension = if animated { "gif" } else { "png" };
+    format!("https://cdn.discordapp.com/emojis/{}.{extension}", id.get())
+}
+
+pub(super) fn should_start_completion_query(input: &str) -> bool {
     input.chars().last().is_none_or(char::is_whitespace)
 }
 
 pub(super) fn is_mention_query_char(value: char) -> bool {
     value.is_alphanumeric() || matches!(value, '_' | '.' | '-')
+}
+
+pub(super) fn is_emoji_query_char(value: char) -> bool {
+    value.is_ascii_alphanumeric() || matches!(value, '_' | '-' | '+')
+}
+
+pub(super) fn expand_emoji_shortcodes(input: &str) -> String {
+    let mut rest = input;
+    let mut output = String::with_capacity(input.len());
+
+    while let Some((start, name_start, name_end, end)) = rest.find(':').and_then(|start| {
+        let name_start = start + ':'.len_utf8();
+        rest[name_start..].find(':').map(|relative_end| {
+            (
+                start,
+                name_start,
+                name_start + relative_end,
+                name_start + relative_end + ':'.len_utf8(),
+            )
+        })
+    }) {
+        if starts_custom_emoji_markup(rest, start) {
+            output.push_str(&rest[..name_start]);
+            rest = &rest[name_start..];
+            continue;
+        }
+
+        let shortcode = &rest[name_start..name_end];
+        if shortcode.is_empty() {
+            let colon_run_end = rest[start..]
+                .char_indices()
+                .find_map(|(offset, value)| (value != ':').then_some(start + offset))
+                .unwrap_or(rest.len());
+            let keep_to = if colon_run_end < rest.len() {
+                colon_run_end - ':'.len_utf8()
+            } else {
+                colon_run_end
+            };
+            output.push_str(&rest[..keep_to]);
+            rest = &rest[keep_to..];
+            continue;
+        }
+        if let Some(emoji) = emojis::get_by_shortcode(shortcode) {
+            output.push_str(&rest[..start]);
+            output.push_str(emoji.as_str());
+            rest = &rest[end..];
+        } else {
+            output.push_str(&rest[..name_end]);
+            rest = &rest[name_end..];
+        }
+    }
+
+    output.push_str(rest);
+    output
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct EmojiCompletion {
+    pub(super) byte_start: usize,
+    pub(super) byte_end: usize,
+    pub(super) replacement: String,
+    pub(super) custom_image_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(in crate::tui) struct ComposerEmojiImageCompletion {
+    pub(in crate::tui) byte_start: usize,
+    pub(in crate::tui) byte_end: usize,
+    pub(in crate::tui) url: String,
+}
+
+fn starts_custom_emoji_markup(input: &str, colon_start: usize) -> bool {
+    input[..colon_start].ends_with('<') || input[..colon_start].ends_with("<a")
 }
 
 /// A previously confirmed mention recorded by byte range inside the composer
@@ -102,23 +260,58 @@ pub(super) struct MentionCompletion {
     pub(super) user_id: Id<UserMarker>,
 }
 
-/// Rewrites every recorded mention range in `input` to Discord's wire format
-/// `<@USER_ID>`. Walks ranges back-to-front so earlier byte positions remain
-/// valid as later ones grow or shrink.
-pub(super) fn expand_mention_completions(input: &str, completions: &[MentionCompletion]) -> String {
-    if completions.is_empty() {
+/// Rewrites recorded mention and custom emoji ranges in one back-to-front pass.
+/// Both completion kinds store byte ranges against the visible composer text, so
+/// applying them together prevents earlier replacements from shifting later
+/// ranges before they are used.
+pub(super) fn expand_composer_completions(
+    input: &str,
+    mention_completions: &[MentionCompletion],
+    emoji_completions: &[EmojiCompletion],
+) -> String {
+    if mention_completions.is_empty() && emoji_completions.is_empty() {
         return input.to_owned();
     }
-    let mut ordered: Vec<MentionCompletion> = completions
+
+    let mut replacements: Vec<CompletionReplacement> = mention_completions
         .iter()
         .filter(|completion| completion.byte_end <= input.len())
-        .copied()
+        .map(|completion| CompletionReplacement {
+            byte_start: completion.byte_start,
+            byte_end: completion.byte_end,
+            replacement: format!("<@{}>", completion.user_id.get()),
+        })
         .collect();
-    ordered.sort_by_key(|completion| std::cmp::Reverse(completion.byte_start));
+
+    replacements.extend(
+        emoji_completions
+            .iter()
+            .filter(|completion| completion.byte_end <= input.len())
+            .map(|completion| CompletionReplacement {
+                byte_start: completion.byte_start,
+                byte_end: completion.byte_end,
+                replacement: completion.replacement.clone(),
+            }),
+    );
+
+    replacements.sort_by_key(|replacement| std::cmp::Reverse(replacement.byte_start));
     let mut buffer = input.to_owned();
-    for completion in ordered {
-        let replacement = format!("<@{}>", completion.user_id.get());
-        buffer.replace_range(completion.byte_start..completion.byte_end, &replacement);
+    for replacement in replacements {
+        if !buffer.is_char_boundary(replacement.byte_start)
+            || !buffer.is_char_boundary(replacement.byte_end)
+        {
+            continue;
+        }
+        buffer.replace_range(
+            replacement.byte_start..replacement.byte_end,
+            &replacement.replacement,
+        );
     }
     buffer
+}
+
+struct CompletionReplacement {
+    byte_start: usize,
+    byte_end: usize,
+    replacement: String,
 }

@@ -5,6 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
+use ratatui_image::Image as RatatuiImage;
 use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{
@@ -16,11 +17,11 @@ use super::super::{
         sanitize_for_display_width, truncate_display_width, truncate_display_width_from,
         truncate_text,
     },
-    message_format::{format_attachment_summary, wrap_text_lines},
+    message_format::{EMOJI_REACTION_IMAGE_WIDTH, format_attachment_summary, wrap_text_lines},
     state::{
-        ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MAX_MENTION_PICKER_VISIBLE,
-        MemberEntry, MemberGroup, MentionPickerEntry, discord_color, folder_color, presence_color,
-        presence_marker,
+        ChannelPaneEntry, DashboardState, EmojiPickerEntry, FocusPane, GuildPaneEntry,
+        MAX_MENTION_PICKER_VISIBLE, MemberEntry, MemberGroup, MentionPickerEntry, discord_color,
+        folder_color, presence_color, presence_marker,
     },
 };
 use super::{
@@ -29,7 +30,7 @@ use super::{
     layout::{composer_inner_width, panel_scrollbar_area},
     panel_block, panel_block_line, panel_content_height, render_vertical_scrollbar,
     selection_marker, styled_list_item,
-    types::{ACCENT, DIM, MessageAreas},
+    types::{ACCENT, DIM, EmojiReactionImage, MessageAreas},
 };
 
 pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
@@ -276,9 +277,15 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
     );
 }
 
-pub(super) fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardState) {
+pub(super) fn render_composer(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+    emoji_images: &[EmojiReactionImage<'_>],
+) {
     let inner_width = composer_inner_width(area.width);
-    let prompt = composer_lines(state, inner_width);
+    let ready_urls = ready_custom_emoji_urls(emoji_images);
+    let prompt = composer_lines_with_loaded_custom_emoji_urls(state, inner_width, &ready_urls);
     let border_color = if state.is_composing() { ACCENT } else { DIM };
 
     frame.render_widget(
@@ -299,19 +306,41 @@ pub(super) fn render_composer(frame: &mut Frame, area: Rect, state: &DashboardSt
             .wrap(Wrap { trim: false }),
         area,
     );
-    if let Some(position) = composer_cursor_position(area, state) {
+    if state.show_custom_emoji() {
+        render_composer_custom_emoji_images(frame, area, state, emoji_images);
+    }
+    if let Some(position) =
+        composer_cursor_position_with_loaded_custom_emoji_urls(area, state, &ready_urls)
+    {
         frame.set_cursor_position(position);
     }
 }
 
+fn ready_custom_emoji_urls(emoji_images: &[EmojiReactionImage<'_>]) -> Vec<String> {
+    emoji_images.iter().map(|image| image.url.clone()).collect()
+}
+
+#[cfg(test)]
 pub(super) fn composer_cursor_position(area: Rect, state: &DashboardState) -> Option<Position> {
+    composer_cursor_position_with_loaded_custom_emoji_urls(area, state, &[])
+}
+
+fn composer_cursor_position_with_loaded_custom_emoji_urls(
+    area: Rect,
+    state: &DashboardState,
+    loaded_custom_emoji_urls: &[String],
+) -> Option<Position> {
     if !state.is_composing() || area.width < 3 || area.height < 3 {
         return None;
     }
 
     let inner_width = composer_inner_width(area.width) as usize;
     let cursor = state.composer_cursor_byte_index();
-    let prompt_prefix = format!("> {}", &state.composer_input()[..cursor]);
+    let display_input = composer_display_input(state, loaded_custom_emoji_urls);
+    let display_cursor = display_input
+        .map_byte_index(cursor)
+        .min(display_input.input.len());
+    let prompt_prefix = format!("> {}", &display_input.input[..display_cursor]);
     let wrapped = wrap_text_lines(&prompt_prefix, inner_width);
     let mut prompt_row = wrapped.len().saturating_sub(1);
     let mut prompt_column = wrapped.last().map(|line| line.width()).unwrap_or_default();
@@ -359,8 +388,17 @@ pub(super) fn render_composer_mention_picker(
         return;
     };
     frame.render_widget(Clear, area);
-    let inner_width = area.width.saturating_sub(2) as usize;
-    let lines = mention_picker_lines(&candidates, state.composer_mention_selected(), inner_width);
+    let visible_count = picker_visible_count(area, candidates.len());
+    let selected = state.composer_mention_selected().min(candidates.len() - 1);
+    let window_start = picker_window_start(candidates.len(), selected, visible_count);
+    let visible_candidates = &candidates[window_start..window_start + visible_count];
+    let shows_scrollbar = candidates.len() > visible_count;
+    let inner_width = picker_inner_width(area, shows_scrollbar);
+    let lines = mention_picker_lines(
+        visible_candidates,
+        selected.saturating_sub(window_start),
+        inner_width,
+    );
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
@@ -368,6 +406,66 @@ pub(super) fn render_composer_mention_picker(
         .title(" mention ")
         .title_style(Style::default().fg(Color::White).bold());
     frame.render_widget(Paragraph::new(lines).block(block), area);
+    render_vertical_scrollbar(
+        frame,
+        panel_scrollbar_area(area),
+        window_start,
+        visible_count,
+        candidates.len(),
+    );
+}
+
+pub(super) fn render_composer_emoji_picker(
+    frame: &mut Frame,
+    message_areas: MessageAreas,
+    state: &DashboardState,
+    emoji_images: &[EmojiReactionImage<'_>],
+) {
+    if state.composer_emoji_query().is_none() {
+        return;
+    }
+    let candidates = state.composer_emoji_candidates();
+    if candidates.is_empty() {
+        return;
+    }
+    let Some(area) = mention_picker_area(message_areas, candidates.len()) else {
+        return;
+    };
+    frame.render_widget(Clear, area);
+    let visible_count = picker_visible_count(area, candidates.len());
+    let selected = state.composer_emoji_selected().min(candidates.len() - 1);
+    let window_start = picker_window_start(candidates.len(), selected, visible_count);
+    let visible_candidates = &candidates[window_start..window_start + visible_count];
+    let shows_scrollbar = candidates.len() > visible_count;
+    let inner_width = picker_inner_width(area, shows_scrollbar);
+    let ready_urls = emoji_images
+        .iter()
+        .map(|image| image.url.clone())
+        .collect::<Vec<_>>();
+    let lines = emoji_picker_lines(
+        visible_candidates,
+        selected.saturating_sub(window_start),
+        inner_width,
+        &ready_urls,
+        state.show_custom_emoji(),
+    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(DIM))
+        .title(" emoji ")
+        .title_style(Style::default().fg(Color::White).bold());
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+    if state.show_custom_emoji() {
+        render_composer_emoji_picker_images(frame, area, visible_candidates, emoji_images);
+    }
+    render_vertical_scrollbar(
+        frame,
+        panel_scrollbar_area(area),
+        window_start,
+        visible_count,
+        candidates.len(),
+    );
 }
 
 /// Picks a rectangle directly above the composer for the picker. Returns
@@ -395,6 +493,28 @@ fn mention_picker_area(message_areas: MessageAreas, candidate_count: usize) -> O
         width,
         height,
     })
+}
+
+fn picker_visible_count(area: Rect, candidate_count: usize) -> usize {
+    usize::from(area.height.saturating_sub(2))
+        .min(candidate_count)
+        .max(1)
+}
+
+fn picker_window_start(total: usize, selected: usize, visible_count: usize) -> usize {
+    if total <= visible_count {
+        return 0;
+    }
+    selected
+        .saturating_add(1)
+        .saturating_sub(visible_count)
+        .min(total.saturating_sub(visible_count))
+}
+
+fn picker_inner_width(area: Rect, shows_scrollbar: bool) -> usize {
+    area.width
+        .saturating_sub(2)
+        .saturating_sub(u16::from(shows_scrollbar)) as usize
 }
 
 fn mention_picker_lines(
@@ -436,10 +556,132 @@ fn mention_picker_lines(
         .collect()
 }
 
+pub(super) fn emoji_picker_lines(
+    candidates: &[EmojiPickerEntry],
+    selected: usize,
+    width: usize,
+    ready_custom_emoji_urls: &[String],
+    show_custom_emoji: bool,
+) -> Vec<Line<'static>> {
+    candidates
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let cursor = if index == selected { "› " } else { "  " };
+            let custom_image_ready = show_custom_emoji
+                && entry
+                    .custom_image_url
+                    .as_ref()
+                    .is_some_and(|url| ready_custom_emoji_urls.iter().any(|ready| ready == url));
+            let prefix_width = emoji_picker_entry_prefix_width(entry, custom_image_ready);
+            let max_label_width = width.saturating_sub(2).saturating_sub(prefix_width).max(1);
+            let label = format!(":{}: {}", entry.shortcode, entry.name);
+            let label = truncate_display_width(&label, max_label_width);
+            let mut row_style = if entry.available {
+                Style::default().fg(Color::White)
+            } else {
+                Style::default().fg(DIM).add_modifier(Modifier::CROSSED_OUT)
+            };
+            if index == selected {
+                row_style = row_style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            let mut spans = vec![Span::styled(cursor, Style::default().fg(ACCENT))];
+            spans.extend(emoji_picker_entry_prefix(
+                entry,
+                custom_image_ready,
+                row_style,
+            ));
+            spans.push(Span::styled(label, row_style));
+            Line::from(spans)
+        })
+        .collect()
+}
+
+fn emoji_picker_entry_prefix_width(entry: &EmojiPickerEntry, custom_image_ready: bool) -> usize {
+    if entry.custom_image_url.is_some() {
+        usize::from(custom_image_ready) * usize::from(EMOJI_REACTION_IMAGE_WIDTH.saturating_add(1))
+    } else {
+        entry.emoji.as_str().width().saturating_add(1)
+    }
+}
+
+fn emoji_picker_entry_prefix(
+    entry: &EmojiPickerEntry,
+    custom_image_ready: bool,
+    row_style: Style,
+) -> Vec<Span<'static>> {
+    if entry.custom_image_url.is_some() {
+        if custom_image_ready {
+            vec![Span::styled(
+                " ".repeat(usize::from(EMOJI_REACTION_IMAGE_WIDTH.saturating_add(1))),
+                row_style,
+            )]
+        } else {
+            Vec::new()
+        }
+    } else {
+        vec![
+            Span::styled(entry.emoji.clone(), row_style),
+            Span::styled(" ", row_style),
+        ]
+    }
+}
+
+fn render_composer_emoji_picker_images(
+    frame: &mut Frame,
+    area: Rect,
+    candidates: &[EmojiPickerEntry],
+    emoji_images: &[EmojiReactionImage<'_>],
+) {
+    let content = area.inner(ratatui::layout::Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    if content.width <= EMOJI_REACTION_IMAGE_WIDTH || content.height == 0 {
+        return;
+    }
+
+    for (offset, entry) in candidates.iter().enumerate() {
+        let Some(url) = entry.custom_image_url.as_deref() else {
+            continue;
+        };
+        let Some(image) = emoji_images.iter().find(|image| image.url == url) else {
+            continue;
+        };
+        let y = content
+            .y
+            .saturating_add(u16::try_from(offset).unwrap_or(u16::MAX));
+        if y >= content.y.saturating_add(content.height) {
+            continue;
+        }
+        let image_area = Rect::new(
+            content.x.saturating_add(2),
+            y,
+            EMOJI_REACTION_IMAGE_WIDTH.min(content.width.saturating_sub(2)),
+            1,
+        );
+        if image_area.width > 0 {
+            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+        }
+    }
+}
+
+#[cfg(test)]
 pub(super) fn composer_lines(state: &DashboardState, width: u16) -> Vec<Line<'static>> {
+    composer_lines_with_loaded_custom_emoji_urls(state, width, &[])
+}
+
+pub(super) fn composer_lines_with_loaded_custom_emoji_urls(
+    state: &DashboardState,
+    width: u16,
+    loaded_custom_emoji_urls: &[String],
+) -> Vec<Line<'static>> {
     if state.is_composing() {
         let mut lines = pending_upload_lines(state, width);
-        let input = Line::from(format!("> {}", state.composer_input()));
+        let display_input = composer_display_input(state, loaded_custom_emoji_urls);
+        let input = Line::from(format!("> {}", display_input.input));
         if let Some(message) = state.reply_target_message_state() {
             lines.push(Line::from(Span::styled(
                 reply_target_hint(message, state, width),
@@ -451,6 +693,184 @@ pub(super) fn composer_lines(state: &DashboardState, width: u16) -> Vec<Line<'st
     }
 
     vec![Line::from(composer_text(state, width))]
+}
+
+struct ComposerDisplayInput {
+    input: String,
+    replacements: Vec<ComposerEmojiReplacement>,
+}
+
+struct ComposerEmojiReplacement {
+    start: usize,
+    end: usize,
+    new_start: usize,
+    new_len: usize,
+}
+
+impl ComposerDisplayInput {
+    fn map_byte_index(&self, position: usize) -> usize {
+        let mut delta = 0isize;
+        for replacement in &self.replacements {
+            if position < replacement.start {
+                break;
+            }
+            if position < replacement.end {
+                let inside = position.saturating_sub(replacement.start);
+                return replacement
+                    .new_start
+                    .saturating_add(inside.min(replacement.new_len));
+            }
+            delta += replacement.new_len as isize - (replacement.end - replacement.start) as isize;
+        }
+
+        if delta < 0 {
+            position.saturating_sub(delta.unsigned_abs())
+        } else {
+            position.saturating_add(delta as usize)
+        }
+    }
+}
+
+fn composer_display_input(
+    state: &DashboardState,
+    loaded_custom_emoji_urls: &[String],
+) -> ComposerDisplayInput {
+    let original = state.composer_input();
+    let mut completions = state.composer_emoji_image_completions();
+    completions.sort_by_key(|completion| completion.byte_start);
+    if completions.is_empty() || loaded_custom_emoji_urls.is_empty() {
+        return ComposerDisplayInput {
+            input: original.to_owned(),
+            replacements: Vec::new(),
+        };
+    }
+
+    let mut input = String::with_capacity(original.len());
+    let mut cursor = 0usize;
+    let mut replacements = Vec::new();
+    for completion in completions {
+        if completion.byte_end > original.len()
+            || !original.is_char_boundary(completion.byte_start)
+            || !original.is_char_boundary(completion.byte_end)
+        {
+            continue;
+        }
+
+        let start = completion.byte_start;
+        let end = completion.byte_end;
+        if start < cursor {
+            continue;
+        }
+
+        input.push_str(&original[cursor..start]);
+        let new_start = input.len();
+        if loaded_custom_emoji_urls
+            .iter()
+            .any(|url| url == &completion.url)
+        {
+            let placeholder = " ".repeat(usize::from(EMOJI_REACTION_IMAGE_WIDTH));
+            input.push_str(&placeholder);
+            replacements.push(ComposerEmojiReplacement {
+                start,
+                end,
+                new_start,
+                new_len: placeholder.len(),
+            });
+        } else {
+            input.push_str(&original[start..end]);
+        }
+        cursor = end;
+    }
+    input.push_str(&original[cursor..]);
+
+    ComposerDisplayInput {
+        input,
+        replacements,
+    }
+}
+
+fn render_composer_custom_emoji_images(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+    emoji_images: &[EmojiReactionImage<'_>],
+) {
+    if !state.is_composing() || area.width < 3 || area.height < 3 {
+        return;
+    }
+
+    let ready_urls = ready_custom_emoji_urls(emoji_images);
+    let display_input = composer_display_input(state, &ready_urls);
+    let input = display_input.input.as_str();
+    let inner_width = composer_inner_width(area.width) as usize;
+    let mut content_row = state.pending_composer_attachments().len();
+    if state.reply_target_message_state().is_some() {
+        content_row = content_row.saturating_add(1);
+    }
+
+    for completion in state.composer_emoji_image_completions() {
+        let Some(image) = emoji_images
+            .iter()
+            .find(|image| image.url == completion.url)
+        else {
+            continue;
+        };
+        let Some((row, column)) = composer_custom_emoji_image_position(
+            input,
+            display_input.map_byte_index(completion.byte_start),
+            display_input.map_byte_index(completion.byte_end),
+            inner_width,
+        ) else {
+            continue;
+        };
+        let x = area
+            .x
+            .saturating_add(1)
+            .saturating_add(u16::try_from(column).unwrap_or(u16::MAX));
+        let y = area
+            .y
+            .saturating_add(1)
+            .saturating_add(u16::try_from(content_row.saturating_add(row)).unwrap_or(u16::MAX));
+        let inner_right = area.x.saturating_add(area.width.saturating_sub(1));
+        let inner_bottom = area.y.saturating_add(area.height.saturating_sub(1));
+        if x >= inner_right || y >= inner_bottom {
+            continue;
+        }
+        let image_area = Rect::new(
+            x,
+            y,
+            EMOJI_REACTION_IMAGE_WIDTH.min(inner_right.saturating_sub(x)),
+            1,
+        );
+        if image_area.width > 0 {
+            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+        }
+    }
+}
+
+fn composer_custom_emoji_image_position(
+    input: &str,
+    byte_start: usize,
+    byte_end: usize,
+    inner_width: usize,
+) -> Option<(usize, usize)> {
+    if inner_width == 0 || byte_start > byte_end || byte_end > input.len() {
+        return None;
+    }
+    let before = format!("> {}", &input[..byte_start]);
+    let through = format!("> {}", &input[..byte_end]);
+    let before_wrapped = wrap_text_lines(&before, inner_width);
+    let through_wrapped = wrap_text_lines(&through, inner_width);
+    if before_wrapped.len() != through_wrapped.len() {
+        return None;
+    }
+    Some((
+        before_wrapped.len().saturating_sub(1),
+        before_wrapped
+            .last()
+            .map(|line| line.width())
+            .unwrap_or_default(),
+    ))
 }
 
 fn pending_upload_lines(state: &DashboardState, width: u16) -> Vec<Line<'static>> {
