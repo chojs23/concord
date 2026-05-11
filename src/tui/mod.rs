@@ -432,6 +432,7 @@ async fn run_dashboard(
         }
     };
     let mut state = DashboardState::new_with_display_options(display_options);
+    state.activate_cached_values();
     drop(snapshots.borrow_and_update());
     let initial_snapshot = client.current_discord_snapshot();
     let mut current_snapshot_revision = initial_snapshot.revision;

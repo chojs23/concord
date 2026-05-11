@@ -416,6 +416,18 @@ impl DashboardState {
         DiscordStateCache::default()
     }
 
+    pub fn activate_cached_values(&mut self) {
+        let scope = match self.cache.last_guild_id {
+            Some(id) => ActiveGuildScope::Guild(Id::new(id)),
+            None if self.cache.last_channel_id.is_some() => ActiveGuildScope::DirectMessages,
+            _ => ActiveGuildScope::Unset,
+        };
+        self.activate_guild(scope);
+        if let Some(last_active_channel) = self.cache.last_channel_id {
+            self.activate_channel(Id::new(last_active_channel));
+        }
+    }
+
     pub fn next_read_ack_deadline(&self) -> Option<Instant> {
         self.pending_read_acks
             .values()
@@ -701,14 +713,6 @@ impl DashboardState {
         if let Some(user_id) = self.discord.current_user_id() {
             self.current_user_id = Some(user_id);
         }
-        if let Some(last_active_channel) = self.cache.last_channel_id {
-            self.active_channel_id = Some(Id::new(last_active_channel));
-        }
-        self.active_guild = match self.cache.last_guild_id {
-            Some(id) => ActiveGuildScope::Guild(Id::new(id)),
-            None if self.cache.last_channel_id.is_some() => ActiveGuildScope::DirectMessages,
-            _ => ActiveGuildScope::Unset,
-        };
         self.refresh_composer_emoji_candidates_for_current_query();
 
         self.clamp_active_selection();
