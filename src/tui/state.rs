@@ -839,6 +839,14 @@ impl DashboardState {
         self.discord.guild_sidebar_unread(guild_id)
     }
 
+    pub fn channel_notification_muted(&self, channel_id: Id<ChannelMarker>) -> bool {
+        self.discord.channel_notification_muted(channel_id)
+    }
+
+    pub fn guild_notification_muted(&self, guild_id: Id<GuildMarker>) -> bool {
+        self.discord.guild_notification_muted(guild_id)
+    }
+
     pub fn direct_message_unread_count(&self) -> usize {
         self.discord.direct_message_unread_count()
     }

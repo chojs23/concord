@@ -102,8 +102,9 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                     } => {
                         let prefix = branch.prefix();
                         let base_style = active_text_style(is_active, Style::default());
+                        let is_muted = dashboard.guild_notification_muted(guild.id);
                         let unread = dashboard.sidebar_guild_unread(guild.id);
-                        let (badge, name_style) = if is_active {
+                        let (badge, mut name_style) = if is_active {
                             let (badge, _) = channel_unread_decoration(unread, base_style, false);
                             (badge, base_style)
                         } else if unread == ChannelUnreadState::Seen {
@@ -111,6 +112,9 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                         } else {
                             channel_unread_decoration(unread, base_style, false)
                         };
+                        if is_muted {
+                            name_style = name_style.add_modifier(Modifier::DIM);
+                        }
                         let badge_width =
                             badge.as_ref().map(|span| span.content.width()).unwrap_or(0);
                         let label_width = max_width
@@ -175,6 +179,11 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                     ChannelPaneEntry::CategoryHeader { state, collapsed } => {
                         let arrow = if *collapsed { "▶ " } else { "▼ " };
                         let label_width = max_width.saturating_sub(arrow.width());
+                        let mut label_style =
+                            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD);
+                        if dashboard.channel_notification_muted(state.id) {
+                            label_style = label_style.add_modifier(Modifier::DIM);
+                        }
                         ListItem::new(Line::from(vec![
                             selection_marker(is_selected),
                             Span::styled(arrow, Style::default().fg(ACCENT)),
@@ -184,7 +193,7 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                                     horizontal_scroll,
                                     label_width,
                                 ),
-                                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                                label_style,
                             ),
                         ]))
                     }
@@ -195,9 +204,13 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                         });
                         let prefix_width = prefix_span.content.width();
                         let base_style = active_text_style(is_active, Style::default());
+                        let is_muted = dashboard.channel_notification_muted(state.id);
                         let unread = dashboard.sidebar_channel_unread(state.id);
-                        let (badge, name_style) =
+                        let (badge, mut name_style) =
                             channel_unread_decoration(unread, base_style, is_active);
+                        if is_muted {
+                            name_style = name_style.add_modifier(Modifier::DIM);
+                        }
                         let badge = if state.guild_id.is_none()
                             && !is_active
                             && unread != ChannelUnreadState::Seen
