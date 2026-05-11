@@ -87,7 +87,7 @@ pub(super) fn build_mention_candidates(
     scored.into_iter().map(|(_, _, entry)| entry).collect()
 }
 
-pub(super) fn move_mention_selection(selected: usize, len: usize, delta: isize) -> usize {
+pub(super) fn move_picker_selection(selected: usize, len: usize, delta: isize) -> usize {
     if len == 0 {
         return 0;
     }

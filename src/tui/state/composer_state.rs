@@ -5,7 +5,7 @@ use crate::discord::{AppCommand, MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentU
 use super::composer::{
     ComposerEmojiImageCompletion, EmojiCompletion, MentionCompletion, build_emoji_candidates,
     build_mention_candidates, expand_composer_completions, expand_emoji_shortcodes,
-    is_emoji_query_char, is_mention_query_char, move_mention_selection, should_start_emoji_query,
+    is_emoji_query_char, is_mention_query_char, move_picker_selection, should_start_emoji_query,
     should_start_mention_query,
 };
 use super::{DashboardState, EmojiPickerEntry, FocusPane, MentionPickerEntry};
@@ -299,7 +299,7 @@ impl DashboardState {
         }
         let len = self.composer_mention_candidates().len();
         self.composer_mention_selected =
-            move_mention_selection(self.composer_mention_selected, len, delta);
+            move_picker_selection(self.composer_mention_selected, len, delta);
     }
 
     pub fn composer_emoji_query(&self) -> Option<&str> {
@@ -320,7 +320,7 @@ impl DashboardState {
         }
         let len = self.composer_emoji_candidates.len();
         self.composer_emoji_selected =
-            move_mention_selection(self.composer_emoji_selected, len, delta);
+            move_picker_selection(self.composer_emoji_selected, len, delta);
     }
 
     /// Confirms the currently highlighted mention. Replaces the trailing
