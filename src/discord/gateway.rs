@@ -13,8 +13,11 @@ use serde_json::{Value, json};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio::time::sleep;
 use tokio_tungstenite::{
-    connect_async,
-    tungstenite::{Message as WsMessage, protocol::CloseFrame},
+    connect_async_with_config,
+    tungstenite::{
+        Message as WsMessage,
+        protocol::{CloseFrame, WebSocketConfig},
+    },
 };
 
 use super::{
@@ -80,6 +83,12 @@ const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/53
     (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const BROWSER_VERSION: &str = "120.0.0.0";
 const CLIENT_BUILD_NUMBER: u64 = 250000;
+
+// Some user-account READY payloads exceed tungstenite's default 16 MiB frame
+// cap before Discord has a chance to split the initial state across follow-up
+// dispatches. Keep the limit bounded, but large enough for accounts with many
+// guilds and channels until gateway compression is implemented.
+const GATEWAY_WEBSOCKET_LIMIT: usize = 64 << 20;
 
 const RECONNECT_BASE_DELAY: Duration = Duration::from_millis(500);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
@@ -227,7 +236,7 @@ async fn connect_and_run(
     let url = session.next_url();
     logging::debug("gateway", format!("connecting to {url}"));
 
-    let (ws, _response) = connect_async(&url)
+    let (ws, _response) = connect_async_with_config(&url, Some(gateway_websocket_config()), false)
         .await
         .map_err(|error| format!("websocket connect failed: {error}"))?;
     let (writer, mut reader) = ws.split();
@@ -239,14 +248,8 @@ async fn connect_and_run(
     let hello_frame = match reader.next().await {
         Some(Ok(WsMessage::Text(text))) => text,
         Some(Ok(WsMessage::Close(frame))) => {
-            logging::debug(
-                "gateway",
-                format!(
-                    "closed before HELLO: code={:?} reason={:?}",
-                    frame.as_ref().map(|f| u16::from(f.code)),
-                    frame.as_ref().map(|f| f.reason.as_str())
-                ),
-            );
+            let message = websocket_close_message("websocket closed before HELLO", frame.as_ref());
+            log_and_publish_gateway_error(publish, message).await;
             return Ok(ConnectionOutcome::Reidentify);
         }
         Some(Ok(_)) => return Err("unexpected non-text frame before HELLO".to_owned()),
@@ -297,7 +300,8 @@ async fn connect_and_run(
         loop {
             let seq = *sequence_for_heartbeat.lock().await;
             let payload = json!({"op": 1, "d": seq}).to_string();
-            if send_text(&writer_for_heartbeat, payload).await.is_err() {
+            if let Err(error) = send_text(&writer_for_heartbeat, payload).await {
+                logging::error("gateway", format!("heartbeat send failed: {error}"));
                 break;
             }
             sleep(heartbeat_interval).await;
@@ -314,10 +318,9 @@ async fn connect_and_run(
                 match maybe_command {
                     Some(command) => {
                         if let Err(error) = dispatch_command(&writer, command).await {
-                            logging::debug(
-                                "gateway",
-                                format!("command send failed: {error}"),
-                            );
+                            let message = format!("command send failed: {error}");
+                            log_and_publish_gateway_error(publish, message).await;
+                            break ConnectionOutcome::Resume;
                         }
                     }
                     None => break ConnectionOutcome::Stop,
@@ -360,24 +363,29 @@ async fn connect_and_run(
                     }
                     Some(Ok(WsMessage::Ping(payload))) => {
                         let mut writer = writer.lock().await;
-                        if writer.send(WsMessage::Pong(payload)).await.is_err() {
+                        if let Err(error) = writer.send(WsMessage::Pong(payload)).await {
+                            let message = format!("websocket pong send failed: {error}");
+                            log_and_publish_gateway_error(publish, message).await;
                             break ConnectionOutcome::Resume;
                         }
                     }
                     Some(Ok(WsMessage::Pong(_))) | Some(Ok(WsMessage::Frame(_))) => {}
                     Some(Ok(WsMessage::Close(frame))) => {
                         let outcome = close_outcome(frame.as_ref());
-                        log_close(frame.as_ref());
+                        let message = websocket_close_message("websocket closed", frame.as_ref());
+                        log_and_publish_gateway_error(publish, message).await;
                         break outcome;
                     }
                     Some(Err(error)) => {
-                        logging::debug(
-                            "gateway",
-                            format!("websocket read error: {error}"),
-                        );
+                        let message = format!("websocket read error: {error}");
+                        log_and_publish_gateway_error(publish, message).await;
                         break ConnectionOutcome::Resume;
                     }
-                    None => break ConnectionOutcome::Resume,
+                    None => {
+                        let message = "websocket closed without frame".to_owned();
+                        log_and_publish_gateway_error(publish, message).await;
+                        break ConnectionOutcome::Resume;
+                    }
                 }
             }
         }
@@ -385,6 +393,12 @@ async fn connect_and_run(
 
     heartbeat_task.abort();
     Ok(outcome)
+}
+
+fn gateway_websocket_config() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .max_message_size(Some(GATEWAY_WEBSOCKET_LIMIT))
+        .max_frame_size(Some(GATEWAY_WEBSOCKET_LIMIT))
 }
 
 enum FrameOutcome {
@@ -435,7 +449,10 @@ async fn handle_frame(
         1 => {
             let seq = *context.sequence_cell.lock().await;
             let payload = json!({"op": 1, "d": seq}).to_string();
-            let _ = send_text(context.writer, payload).await;
+            if let Err(error) = send_text(context.writer, payload).await {
+                let message = format!("heartbeat response send failed: {error}");
+                log_and_publish_gateway_error(context.publish, message).await;
+            }
             FrameOutcome::Continue
         }
         // Reconnect — Discord wants us to drop and resume. Saved
@@ -476,6 +493,11 @@ async fn publish_gateway_event(context: GatewayPublishContext<'_>, event: AppEve
     .await;
 }
 
+async fn log_and_publish_gateway_error(context: GatewayPublishContext<'_>, message: String) {
+    logging::error("gateway", &message);
+    publish_gateway_event(context, AppEvent::GatewayError { message }).await;
+}
+
 fn close_outcome(frame: Option<&CloseFrame>) -> ConnectionOutcome {
     let Some(frame) = frame else {
         return ConnectionOutcome::Resume;
@@ -490,18 +512,15 @@ fn close_outcome(frame: Option<&CloseFrame>) -> ConnectionOutcome {
     }
 }
 
-fn log_close(frame: Option<&CloseFrame>) {
+fn websocket_close_message(context: &str, frame: Option<&CloseFrame>) -> String {
     if let Some(frame) = frame {
-        logging::debug(
-            "gateway",
-            format!(
-                "websocket closed: code={} reason={:?}",
-                u16::from(frame.code),
-                frame.reason.as_str()
-            ),
-        );
+        format!(
+            "{context}: code={} reason={:?}",
+            u16::from(frame.code),
+            frame.reason.as_str()
+        )
     } else {
-        logging::debug("gateway", "websocket closed without frame");
+        context.to_owned()
     }
 }
 
@@ -670,9 +689,18 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        SessionState, USER_ACCOUNT_CAPABILITIES, build_identify_payload, build_resume_payload,
-        direct_message_subscribe_payload, guild_channel_subscribe_payload,
+        GATEWAY_WEBSOCKET_LIMIT, SessionState, USER_ACCOUNT_CAPABILITIES, build_identify_payload,
+        build_resume_payload, direct_message_subscribe_payload, gateway_websocket_config,
+        guild_channel_subscribe_payload,
     };
+
+    #[test]
+    fn gateway_websocket_config_allows_large_ready_payloads() {
+        let config = gateway_websocket_config();
+
+        assert_eq!(config.max_message_size, Some(GATEWAY_WEBSOCKET_LIMIT));
+        assert_eq!(config.max_frame_size, Some(GATEWAY_WEBSOCKET_LIMIT));
+    }
 
     #[test]
     fn identify_payload_carries_user_account_capabilities() {
