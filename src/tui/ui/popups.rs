@@ -824,6 +824,7 @@ pub(super) fn render_emoji_reaction_picker(
             &ready_urls,
             state.show_custom_emoji(),
             filter,
+            usize::from(content.width),
         ))
         .block(block)
         .wrap(Wrap { trim: false }),
@@ -1777,6 +1778,26 @@ pub(super) fn emoji_reaction_picker_lines(
         thumbnail_urls,
         true,
         None,
+        usize::MAX,
+    )
+}
+
+#[cfg(test)]
+pub(super) fn emoji_reaction_picker_lines_for_width(
+    reactions: &[EmojiReactionItem],
+    selected: usize,
+    max_visible_items: usize,
+    thumbnail_urls: &[String],
+    width: usize,
+) -> Vec<Line<'static>> {
+    emoji_reaction_picker_lines_with_custom_emoji_images(
+        reactions,
+        selected,
+        max_visible_items,
+        thumbnail_urls,
+        true,
+        None,
+        width,
     )
 }
 
@@ -1795,6 +1816,7 @@ pub(super) fn filtered_emoji_reaction_picker_lines(
         thumbnail_urls,
         true,
         Some(filter),
+        usize::MAX,
     )
 }
 
@@ -1805,6 +1827,7 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
     thumbnail_urls: &[String],
     show_custom_emoji: bool,
     filter: Option<&str>,
+    max_width: usize,
 ) -> Vec<Line<'static>> {
     let selected = selected.min(reactions.len().saturating_sub(1));
     let visible_items = max_visible_items.max(1).min(reactions.len().max(1));
@@ -1859,7 +1882,14 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
             ),
         ]));
     }
-    lines
+    if max_width == usize::MAX {
+        lines
+    } else {
+        lines
+            .into_iter()
+            .map(|line| truncate_line_to_display_width(line, max_width))
+            .collect()
+    }
 }
 
 fn shortcut_prefix(shortcut: Option<char>) -> String {

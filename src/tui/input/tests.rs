@@ -2125,7 +2125,28 @@ fn emoji_picker_filter_treats_vim_keys_as_text() {
     handle_key(&mut state, char_key('j'));
 
     assert_eq!(state.emoji_reaction_filter(), Some("j"));
-    assert_eq!(state.selected_emoji_reaction(), None);
+    assert_ne!(
+        state.selected_emoji_reaction().map(|item| item.emoji),
+        Some(ReactionEmoji::Unicode("❤️".to_owned()))
+    );
+}
+
+#[test]
+fn emoji_picker_filter_matches_remaining_unicode_emojis() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    open_emoji_picker(&mut state);
+
+    handle_key(&mut state, char_key('/'));
+    for value in "rocket".chars() {
+        handle_key(&mut state, char_key(value));
+    }
+
+    assert_eq!(state.emoji_reaction_filter(), Some("rocket"));
+    assert_eq!(
+        state.selected_emoji_reaction().map(|item| item.emoji),
+        Some(ReactionEmoji::Unicode("🚀".to_owned()))
+    );
 }
 
 #[test]
