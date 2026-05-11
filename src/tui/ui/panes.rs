@@ -1173,20 +1173,32 @@ pub(super) fn primary_activity_summary(
     activities: &[ActivityInfo],
     emoji_images: &[EmojiImage<'_>],
 ) -> Option<(String, Option<String>)> {
-    let activity = activities
-        .iter()
-        .min_by_key(|a| activity_priority(a.kind))?;
-    Some(format_activity_summary(activity, emoji_images))
+    let mut sorted: Vec<&ActivityInfo> = activities.iter().collect();
+    sorted.sort_by_key(|a| activity_priority(a.kind));
+    let mut custom_fallback = None;
+    for activity in sorted {
+        if activity.kind == ActivityKind::Custom {
+            if custom_fallback.is_none() {
+                custom_fallback = Some(format_activity_summary(activity, emoji_images));
+            }
+            continue;
+        }
+        let result = format_activity_summary(activity, emoji_images);
+        if !result.0.trim().is_empty() || result.1.is_some() {
+            return Some(result);
+        }
+    }
+    custom_fallback.filter(|(text, url)| !text.trim().is_empty() || url.is_some())
 }
 
 fn activity_priority(kind: ActivityKind) -> u8 {
     match kind {
-        ActivityKind::Custom => 0,
-        ActivityKind::Streaming => 1,
+        ActivityKind::Streaming => 0,
+        ActivityKind::Playing => 1,
         ActivityKind::Listening => 2,
-        ActivityKind::Playing => 3,
-        ActivityKind::Watching => 4,
-        ActivityKind::Competing => 5,
+        ActivityKind::Watching => 3,
+        ActivityKind::Competing => 4,
+        ActivityKind::Custom => 5,
         ActivityKind::Unknown => 6,
     }
 }
