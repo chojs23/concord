@@ -284,11 +284,8 @@ pub(super) fn render_composer(
     emoji_images: &[EmojiReactionImage<'_>],
 ) {
     let inner_width = composer_inner_width(area.width);
-    let prompt = composer_lines_with_loaded_custom_emoji_urls(
-        state,
-        inner_width,
-        &ready_custom_emoji_urls(emoji_images),
-    );
+    let ready_urls = ready_custom_emoji_urls(emoji_images);
+    let prompt = composer_lines_with_loaded_custom_emoji_urls(state, inner_width, &ready_urls);
     let border_color = if state.is_composing() { ACCENT } else { DIM };
 
     frame.render_widget(
@@ -312,7 +309,9 @@ pub(super) fn render_composer(
     if state.show_custom_emoji() {
         render_composer_custom_emoji_images(frame, area, state, emoji_images);
     }
-    if let Some(position) = composer_cursor_position(area, state) {
+    if let Some(position) =
+        composer_cursor_position_with_loaded_custom_emoji_urls(area, state, &ready_urls)
+    {
         frame.set_cursor_position(position);
     }
 }
@@ -321,14 +320,27 @@ fn ready_custom_emoji_urls(emoji_images: &[EmojiReactionImage<'_>]) -> Vec<Strin
     emoji_images.iter().map(|image| image.url.clone()).collect()
 }
 
+#[cfg(test)]
 pub(super) fn composer_cursor_position(area: Rect, state: &DashboardState) -> Option<Position> {
+    composer_cursor_position_with_loaded_custom_emoji_urls(area, state, &[])
+}
+
+fn composer_cursor_position_with_loaded_custom_emoji_urls(
+    area: Rect,
+    state: &DashboardState,
+    loaded_custom_emoji_urls: &[String],
+) -> Option<Position> {
     if !state.is_composing() || area.width < 3 || area.height < 3 {
         return None;
     }
 
     let inner_width = composer_inner_width(area.width) as usize;
     let cursor = state.composer_cursor_byte_index();
-    let prompt_prefix = format!("> {}", &state.composer_input()[..cursor]);
+    let display_input = composer_display_input(state, loaded_custom_emoji_urls);
+    let display_cursor = display_input
+        .map_byte_index(cursor)
+        .min(display_input.input.len());
+    let prompt_prefix = format!("> {}", &display_input.input[..display_cursor]);
     let wrapped = wrap_text_lines(&prompt_prefix, inner_width);
     let mut prompt_row = wrapped.len().saturating_sub(1);
     let mut prompt_column = wrapped.last().map(|line| line.width()).unwrap_or_default();
@@ -672,10 +684,8 @@ pub(super) fn composer_lines_with_loaded_custom_emoji_urls(
 ) -> Vec<Line<'static>> {
     if state.is_composing() {
         let mut lines = pending_upload_lines(state, width);
-        let input = Line::from(format!(
-            "> {}",
-            composer_input_with_loaded_custom_emoji_blanks(state, loaded_custom_emoji_urls)
-        ));
+        let display_input = composer_display_input(state, loaded_custom_emoji_urls);
+        let input = Line::from(format!("> {}", display_input.input));
         if let Some(message) = state.reply_target_message_state() {
             lines.push(Line::from(Span::styled(
                 reply_target_hint(message, state, width),
@@ -689,30 +699,98 @@ pub(super) fn composer_lines_with_loaded_custom_emoji_urls(
     vec![Line::from(composer_text(state, width))]
 }
 
-fn composer_input_with_loaded_custom_emoji_blanks(
+struct ComposerDisplayInput {
+    input: String,
+    replacements: Vec<ComposerEmojiReplacement>,
+}
+
+struct ComposerEmojiReplacement {
+    start: usize,
+    end: usize,
+    new_start: usize,
+    new_len: usize,
+}
+
+impl ComposerDisplayInput {
+    fn map_byte_index(&self, position: usize) -> usize {
+        let mut delta = 0isize;
+        for replacement in &self.replacements {
+            if position < replacement.start {
+                break;
+            }
+            if position < replacement.end {
+                let inside = position.saturating_sub(replacement.start);
+                return replacement
+                    .new_start
+                    .saturating_add(inside.min(replacement.new_len));
+            }
+            delta += replacement.new_len as isize - (replacement.end - replacement.start) as isize;
+        }
+
+        if delta < 0 {
+            position.saturating_sub(delta.unsigned_abs())
+        } else {
+            position.saturating_add(delta as usize)
+        }
+    }
+}
+
+fn composer_display_input(
     state: &DashboardState,
     loaded_custom_emoji_urls: &[String],
-) -> String {
-    let mut input = state.composer_input().to_owned();
+) -> ComposerDisplayInput {
+    let original = state.composer_input();
     let mut completions = state.composer_emoji_image_completions();
     completions.sort_by_key(|completion| completion.byte_start);
-    for completion in completions.into_iter().rev() {
-        if !loaded_custom_emoji_urls
+    if completions.is_empty() || loaded_custom_emoji_urls.is_empty() {
+        return ComposerDisplayInput {
+            input: original.to_owned(),
+            replacements: Vec::new(),
+        };
+    }
+
+    let mut input = String::with_capacity(original.len());
+    let mut cursor = 0usize;
+    let mut replacements = Vec::new();
+    for completion in completions {
+        if completion.byte_end > original.len()
+            || !original.is_char_boundary(completion.byte_start)
+            || !original.is_char_boundary(completion.byte_end)
+        {
+            continue;
+        }
+
+        let start = completion.byte_start;
+        let end = completion.byte_end;
+        if start < cursor {
+            continue;
+        }
+
+        input.push_str(&original[cursor..start]);
+        let new_start = input.len();
+        if loaded_custom_emoji_urls
             .iter()
             .any(|url| url == &completion.url)
         {
-            continue;
+            let placeholder = " ".repeat(usize::from(EMOJI_REACTION_IMAGE_WIDTH));
+            input.push_str(&placeholder);
+            replacements.push(ComposerEmojiReplacement {
+                start,
+                end,
+                new_start,
+                new_len: placeholder.len(),
+            });
+        } else {
+            input.push_str(&original[start..end]);
         }
-        if completion.byte_end > input.len()
-            || !input.is_char_boundary(completion.byte_start)
-            || !input.is_char_boundary(completion.byte_end)
-        {
-            continue;
-        }
-        let spaces = " ".repeat(completion.byte_end - completion.byte_start);
-        input.replace_range(completion.byte_start..completion.byte_end, &spaces);
+        cursor = end;
     }
-    input
+    input.push_str(&original[cursor..]);
+
+    ComposerDisplayInput {
+        input,
+        replacements,
+    }
 }
 
 fn render_composer_custom_emoji_images(
@@ -725,7 +803,9 @@ fn render_composer_custom_emoji_images(
         return;
     }
 
-    let input = state.composer_input();
+    let ready_urls = ready_custom_emoji_urls(emoji_images);
+    let display_input = composer_display_input(state, &ready_urls);
+    let input = display_input.input.as_str();
     let inner_width = composer_inner_width(area.width) as usize;
     let mut content_row = state.pending_composer_attachments().len();
     if state.reply_target_message_state().is_some() {
@@ -733,12 +813,6 @@ fn render_composer_custom_emoji_images(
     }
 
     for completion in state.composer_emoji_image_completions() {
-        if completion.byte_end > input.len()
-            || !input.is_char_boundary(completion.byte_start)
-            || !input.is_char_boundary(completion.byte_end)
-        {
-            continue;
-        }
         let Some(image) = emoji_images
             .iter()
             .find(|image| image.url == completion.url)
@@ -747,8 +821,8 @@ fn render_composer_custom_emoji_images(
         };
         let Some((row, column)) = composer_custom_emoji_image_position(
             input,
-            completion.byte_start,
-            completion.byte_end,
+            display_input.map_byte_index(completion.byte_start),
+            display_input.map_byte_index(completion.byte_end),
             inner_width,
         ) else {
             continue;

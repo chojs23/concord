@@ -212,6 +212,20 @@ pub(super) fn expand_emoji_shortcodes(input: &str) -> String {
         }
 
         let shortcode = &rest[name_start..name_end];
+        if shortcode.is_empty() {
+            let colon_run_end = rest[start..]
+                .char_indices()
+                .find_map(|(offset, value)| (value != ':').then_some(start + offset))
+                .unwrap_or(rest.len());
+            let keep_to = if colon_run_end < rest.len() {
+                colon_run_end - ':'.len_utf8()
+            } else {
+                colon_run_end
+            };
+            output.push_str(&rest[..keep_to]);
+            rest = &rest[keep_to..];
+            continue;
+        }
         if let Some(emoji) = emojis::get_by_shortcode(shortcode) {
             output.push_str(&rest[..start]);
             output.push_str(emoji.as_str());

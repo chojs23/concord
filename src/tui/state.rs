@@ -227,6 +227,7 @@ pub struct DashboardState {
     composer_emoji_query: Option<String>,
     composer_emoji_start: Option<usize>,
     composer_emoji_selected: usize,
+    composer_emoji_candidates: Vec<EmojiPickerEntry>,
     /// Records `@displayname` substrings that the picker inserted, so the
     /// composer can rewrite them to Discord's `<@USER_ID>` wire format on
     /// submit even though the visible text is still the friendly form.
@@ -363,6 +364,7 @@ impl DashboardState {
             composer_emoji_query: None,
             composer_emoji_start: None,
             composer_emoji_selected: 0,
+            composer_emoji_candidates: Vec::new(),
             composer_mention_completions: Vec::new(),
             composer_emoji_completions: Vec::new(),
             message_action_menu: None,
@@ -584,6 +586,12 @@ impl DashboardState {
             let discord_event = self.discord_event_for_apply(&event);
             self.discord.apply_event(&discord_event);
         }
+        if matches!(
+            &event,
+            AppEvent::CurrentUserCapabilities { .. } | AppEvent::GuildEmojisUpdate { .. }
+        ) {
+            self.refresh_composer_emoji_candidates_for_current_query();
+        }
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);
         self.clamp_selection_indices();
@@ -701,6 +709,7 @@ impl DashboardState {
             None if self.cache.last_channel_id.is_some() => ActiveGuildScope::DirectMessages,
             _ => ActiveGuildScope::Unset,
         };
+        self.refresh_composer_emoji_candidates_for_current_query();
 
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);

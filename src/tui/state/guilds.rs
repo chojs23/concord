@@ -475,6 +475,7 @@ impl DashboardState {
         self.member_keep_selection_visible = true;
 
         self.cache.set_last_guild(scope.into());
+        self.refresh_composer_emoji_candidates_for_current_query();
     }
 
     fn selected_folder_key(&self) -> Option<FolderKey> {

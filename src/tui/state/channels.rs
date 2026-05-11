@@ -1003,6 +1003,7 @@ impl DashboardState {
         self.queue_channel_ack(channel_id);
 
         self.cache.set_last_channel(channel_id);
+        self.refresh_composer_emoji_candidates_for_current_query();
     }
 
     /// Ack the channel up to its latest message and retire the unread

@@ -3595,7 +3595,7 @@ fn typing_colon_plus_two_letters_opens_emoji_picker() {
 #[test]
 fn emoji_picker_includes_available_custom_emojis_for_selected_guild() {
     let mut state = state_with_custom_emojis();
-    state.push_event(AppEvent::CurrentUserCapabilities {
+    state.push_effect(AppEvent::CurrentUserCapabilities {
         can_use_animated_custom_emojis: true,
     });
     state.start_composer();
@@ -3684,6 +3684,33 @@ fn animated_custom_emoji_remains_available_with_nitro() {
     assert!(party_time.available);
     assert!(state.confirm_composer_emoji());
     assert_eq!(state.composer_input(), ":party_time: ");
+}
+
+#[test]
+fn active_emoji_candidates_refresh_when_nitro_capability_changes() {
+    let mut state = state_with_custom_emojis();
+    state.start_composer();
+    for ch in ":pa".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let before = state
+        .composer_emoji_candidates()
+        .into_iter()
+        .find(|entry| entry.shortcode == "party_time")
+        .expect("animated custom emoji should stay visible in suggestions");
+    assert!(!before.available);
+
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        can_use_animated_custom_emojis: true,
+    });
+
+    let after = state
+        .composer_emoji_candidates()
+        .into_iter()
+        .find(|entry| entry.shortcode == "party_time")
+        .expect("active emoji suggestions should refresh after capability changes");
+    assert!(after.available);
 }
 
 #[test]
@@ -3871,6 +3898,33 @@ fn submit_expands_known_emoji_shortcodes_and_keeps_unknown_text() {
             attachments: Vec::new(),
         })
     );
+}
+
+#[test]
+fn submit_preserves_empty_shortcode_colon_runs() {
+    for (input, expected) in [
+        ("::", "::"),
+        (":::", ":::"),
+        ("::::heart:", ":::❤️"),
+        ("start :::heart: end", "start ::❤️ end"),
+    ] {
+        let mut state = state_with_writable_channel();
+        state.start_composer();
+        for ch in input.chars() {
+            state.push_composer_char(ch);
+        }
+
+        assert_eq!(
+            state.submit_composer(),
+            Some(AppCommand::SendMessage {
+                channel_id: Id::new(2),
+                content: expected.to_owned(),
+                reply_to: None,
+                attachments: Vec::new(),
+            }),
+            "empty emoji shortcode spans should preserve {input:?}",
+        );
+    }
 }
 
 #[test]

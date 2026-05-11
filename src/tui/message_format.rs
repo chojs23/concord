@@ -49,7 +49,7 @@ struct StyledPrefix {
 }
 
 /// Per-line projection of [`InlineEmojiSlot`]: `col` is where the image
-/// lands and `byte_start..byte_start+byte_len` is the `:name:` fallback the
+/// lands and `byte_start..byte_start+byte_len` is the visible placeholder the
 /// renderer blanks once the image arrives.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct MessageContentImageSlot {
@@ -109,6 +109,7 @@ impl MessageContentLine {
     /// Blanks the `:name:` fallback of slots whose image is loaded, so the
     /// overlay is the only visible thing. Slots without a loaded image keep
     /// the textual fallback as a readable placeholder.
+    #[cfg(test)]
     pub(super) fn blank_loaded_emoji_fallbacks(
         &mut self,
         mut loaded_predicate: impl FnMut(&str) -> bool,
@@ -116,24 +117,89 @@ impl MessageContentLine {
         if self.image_slots.is_empty() {
             return;
         }
-        let slots: Vec<(usize, usize, String)> = self
+        let mut slots: Vec<(usize, bool)> = self
             .image_slots
             .iter()
-            .map(|slot| (slot.byte_start, slot.byte_len, slot.url.clone()))
+            .enumerate()
+            .filter_map(|(index, slot)| {
+                let end = slot.byte_start.saturating_add(slot.byte_len);
+                if end > self.text.len()
+                    || !self.text.is_char_boundary(slot.byte_start)
+                    || !self.text.is_char_boundary(end)
+                {
+                    return None;
+                }
+                Some((index, loaded_predicate(&slot.url)))
+            })
             .collect();
-        for (byte_start, byte_len, url) in slots {
-            if !loaded_predicate(&url) {
+        slots.sort_by_key(|(index, _)| self.image_slots[*index].byte_start);
+
+        let original = self.text.clone();
+        let mut output = String::with_capacity(original.len());
+        let mut cursor = 0usize;
+        let mut replacements = Vec::new();
+        let mut slot_updates = vec![None; self.image_slots.len()];
+
+        for (index, loaded) in slots {
+            let slot = &self.image_slots[index];
+            let start = slot.byte_start;
+            let end = slot.byte_start.saturating_add(slot.byte_len);
+            if start < cursor {
                 continue;
             }
-            let end = byte_start.saturating_add(byte_len);
-            if end > self.text.len()
-                || !self.text.is_char_boundary(byte_start)
-                || !self.text.is_char_boundary(end)
-            {
-                continue;
+            output.push_str(&original[cursor..start]);
+            let new_start = output.len();
+            let new_col = u16::try_from(output.width()).unwrap_or(u16::MAX);
+            if loaded {
+                let placeholder = " ".repeat(usize::from(EMOJI_REACTION_IMAGE_WIDTH));
+                output.push_str(&placeholder);
+                replacements.push(LoadedEmojiReplacement {
+                    start,
+                    end,
+                    new_start,
+                    new_len: placeholder.len(),
+                });
+                slot_updates[index] = Some((
+                    new_start,
+                    placeholder.len(),
+                    EMOJI_REACTION_IMAGE_WIDTH,
+                    new_col,
+                ));
+            } else {
+                output.push_str(&original[start..end]);
+                slot_updates[index] = Some((new_start, slot.byte_len, slot.display_width, new_col));
             }
-            let spaces = " ".repeat(byte_len);
-            self.text.replace_range(byte_start..end, &spaces);
+            cursor = end;
+        }
+
+        if replacements.is_empty() {
+            return;
+        }
+        output.push_str(&original[cursor..]);
+        self.text = output;
+
+        for (index, slot) in self.image_slots.iter_mut().enumerate() {
+            if let Some((byte_start, byte_len, display_width, col)) = slot_updates[index] {
+                slot.byte_start = byte_start;
+                slot.byte_len = byte_len;
+                slot.display_width = display_width;
+                slot.col = col;
+            } else {
+                slot.byte_start = remap_loaded_emoji_offset(&replacements, slot.byte_start);
+            }
+        }
+        for highlight in &mut self.mention_highlights {
+            let start = remap_loaded_emoji_offset(&replacements, highlight.start);
+            let end = remap_loaded_emoji_offset(&replacements, highlight.end);
+            highlight.start = start;
+            highlight.end = end;
+        }
+        for prefix in &mut self.styled_prefixes {
+            let start = remap_loaded_emoji_offset(&replacements, prefix.start);
+            let end =
+                remap_loaded_emoji_offset(&replacements, prefix.start.saturating_add(prefix.len));
+            prefix.start = start;
+            prefix.len = end.saturating_sub(start);
         }
     }
 
@@ -211,6 +277,35 @@ impl MessageContentLine {
     }
 }
 
+struct LoadedEmojiReplacement {
+    start: usize,
+    end: usize,
+    new_start: usize,
+    new_len: usize,
+}
+
+fn remap_loaded_emoji_offset(replacements: &[LoadedEmojiReplacement], position: usize) -> usize {
+    let mut delta = 0isize;
+    for replacement in replacements {
+        if position < replacement.start {
+            break;
+        }
+        if position < replacement.end {
+            let inside = position.saturating_sub(replacement.start);
+            return replacement
+                .new_start
+                .saturating_add(inside.min(replacement.new_len));
+        }
+        delta += replacement.new_len as isize - (replacement.end - replacement.start) as isize;
+    }
+
+    if delta < 0 {
+        position.saturating_sub(delta.unsigned_abs())
+    } else {
+        position.saturating_add(delta as usize)
+    }
+}
+
 impl StyledPrefix {
     fn contains(&self, start: usize, end: usize) -> bool {
         self.start <= start && end <= self.start.saturating_add(self.len)
@@ -245,10 +340,35 @@ pub(super) fn format_message_content_lines(
     lines
 }
 
+pub(super) fn format_message_content_lines_with_loaded_custom_emoji_urls(
+    message: &MessageState,
+    state: &DashboardState,
+    width: usize,
+    loaded_custom_emoji_urls: &[String],
+) -> Vec<MessageContentLine> {
+    let (mut lines, reaction_lines) = format_message_content_sections_with_loaded_custom_emoji_urls(
+        message,
+        state,
+        width,
+        loaded_custom_emoji_urls,
+    );
+    lines.extend(reaction_lines);
+    lines
+}
+
 pub(super) fn format_message_content_sections(
     message: &MessageState,
     state: &DashboardState,
     width: usize,
+) -> (Vec<MessageContentLine>, Vec<MessageContentLine>) {
+    format_message_content_sections_with_loaded_custom_emoji_urls(message, state, width, &[])
+}
+
+pub(super) fn format_message_content_sections_with_loaded_custom_emoji_urls(
+    message: &MessageState,
+    state: &DashboardState,
+    width: usize,
+    loaded_custom_emoji_urls: &[String],
 ) -> (Vec<MessageContentLine>, Vec<MessageContentLine>) {
     let attachment_summary_lines = if message.attachments.is_empty() {
         Vec::new()
@@ -277,7 +397,12 @@ pub(super) fn format_message_content_sections(
         .map(|value| {
             state.render_user_mentions_with_highlights(message.guild_id, &message.mentions, &value)
         });
-        lines.extend(format_poll_lines(poll, content, width));
+        lines.extend(format_poll_lines(
+            poll,
+            content,
+            width,
+            loaded_custom_emoji_urls,
+        ));
     } else if let Some(line) = format_message_kind_line(message.message_kind) {
         lines.push(line);
     }
@@ -286,10 +411,13 @@ pub(super) fn format_message_content_sections(
         .then(|| display_text_with_stickers(message.content.as_deref(), &message.sticker_names))
         .flatten();
     if let Some(value) = standalone_content {
-        lines.extend(wrap_rendered_text_lines(
-            state.render_user_mentions_with_highlights(message.guild_id, &message.mentions, &value),
+        let rendered =
+            state.render_user_mentions_with_highlights(message.guild_id, &message.mentions, &value);
+        lines.extend(wrap_rendered_text_lines_with_loaded_custom_emoji_urls(
+            rendered,
             width,
             Style::default(),
+            loaded_custom_emoji_urls,
         ));
     }
     lines.extend(format_embed_lines(
@@ -297,6 +425,7 @@ pub(super) fn format_message_content_sections(
         message.content.as_deref(),
         state.show_custom_emoji(),
         width,
+        loaded_custom_emoji_urls,
     ));
     for attachment in attachment_summary_lines {
         lines.push(MessageContentLine::accent(truncate_text(
@@ -305,7 +434,12 @@ pub(super) fn format_message_content_sections(
         )));
     }
     if let Some(snapshot) = message.forwarded_snapshots.first() {
-        lines.extend(format_forwarded_snapshot(snapshot, state, width));
+        lines.extend(format_forwarded_snapshot(
+            snapshot,
+            state,
+            width,
+            loaded_custom_emoji_urls,
+        ));
     }
     if lines.is_empty() {
         lines.push(MessageContentLine::plain(if message.content.is_some() {
@@ -345,10 +479,19 @@ fn format_embed_lines(
     message_content: Option<&str>,
     show_custom_emoji: bool,
     width: usize,
+    loaded_custom_emoji_urls: &[String],
 ) -> Vec<MessageContentLine> {
     embeds
         .iter()
-        .flat_map(|embed| format_embed(embed, message_content, show_custom_emoji, width))
+        .flat_map(|embed| {
+            format_embed(
+                embed,
+                message_content,
+                show_custom_emoji,
+                width,
+                loaded_custom_emoji_urls,
+            )
+        })
         .collect()
 }
 
@@ -357,6 +500,7 @@ fn format_embed(
     message_content: Option<&str>,
     show_custom_emoji: bool,
     width: usize,
+    loaded_custom_emoji_urls: &[String],
 ) -> Vec<MessageContentLine> {
     const PREFIX: &str = "  ▎ ";
     let inner_width = width.saturating_sub(PREFIX.width()).max(1);
@@ -368,6 +512,7 @@ fn format_embed(
         show_custom_emoji,
         inner_width,
         embed_provider_style(),
+        loaded_custom_emoji_urls,
     );
     push_embed_text(
         &mut lines,
@@ -375,6 +520,7 @@ fn format_embed(
         show_custom_emoji,
         inner_width,
         embed_author_style(),
+        loaded_custom_emoji_urls,
     );
     push_embed_text(
         &mut lines,
@@ -382,6 +528,7 @@ fn format_embed(
         show_custom_emoji,
         inner_width,
         embed_title_style(),
+        loaded_custom_emoji_urls,
     );
     for field in &embed.fields {
         push_embed_text(
@@ -390,6 +537,7 @@ fn format_embed(
             show_custom_emoji,
             inner_width,
             embed_field_name_style(),
+            loaded_custom_emoji_urls,
         );
         push_embed_text(
             &mut lines,
@@ -397,6 +545,7 @@ fn format_embed(
             show_custom_emoji,
             inner_width,
             Style::default(),
+            loaded_custom_emoji_urls,
         );
     }
     push_embed_text(
@@ -405,6 +554,7 @@ fn format_embed(
         show_custom_emoji,
         inner_width,
         embed_footer_style(),
+        loaded_custom_emoji_urls,
     );
     for url in [&embed.url]
         .into_iter()
@@ -417,6 +567,7 @@ fn format_embed(
             show_custom_emoji,
             inner_width,
             embed_url_style(),
+            loaded_custom_emoji_urls,
         );
     }
 
@@ -432,6 +583,7 @@ fn push_embed_text(
     show_custom_emoji: bool,
     width: usize,
     style: Style,
+    loaded_custom_emoji_urls: &[String],
 ) {
     let Some(value) = value.filter(|value| !value.is_empty()) else {
         return;
@@ -446,7 +598,12 @@ fn push_embed_text(
         },
         show_custom_emoji,
     );
-    lines.extend(wrap_rendered_text_lines(rendered, width, style));
+    lines.extend(wrap_rendered_text_lines_with_loaded_custom_emoji_urls(
+        rendered,
+        width,
+        style,
+        loaded_custom_emoji_urls,
+    ));
 }
 
 fn embed_provider_style() -> Style {
@@ -675,11 +832,14 @@ pub(crate) fn lay_out_reaction_chips_with_custom_emoji_images(
     }
 }
 
-fn wrap_rendered_text_lines(
+fn wrap_rendered_text_lines_with_loaded_custom_emoji_urls(
     rendered: RenderedText,
     width: usize,
     style: Style,
+    loaded_custom_emoji_urls: &[String],
 ) -> Vec<MessageContentLine> {
+    let rendered =
+        rendered_text_with_loaded_custom_emoji_placeholders(rendered, loaded_custom_emoji_urls);
     wrap_text_with_extras(
         &rendered.text,
         &rendered.highlights,
@@ -692,6 +852,107 @@ fn wrap_rendered_text_lines(
             .with_image_slots(image_slots)
     })
     .collect()
+}
+
+fn rendered_text_with_loaded_custom_emoji_placeholders(
+    rendered: RenderedText,
+    loaded_custom_emoji_urls: &[String],
+) -> RenderedText {
+    if loaded_custom_emoji_urls.is_empty() || rendered.emoji_slots.is_empty() {
+        return rendered;
+    }
+
+    let RenderedText {
+        text,
+        highlights,
+        emoji_slots,
+    } = rendered;
+    let mut slots: Vec<usize> = (0..emoji_slots.len()).collect();
+    slots.sort_by_key(|index| emoji_slots[*index].byte_start);
+
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+    let mut replacements = Vec::new();
+    let mut slot_updates = vec![None; emoji_slots.len()];
+
+    for index in slots {
+        let slot = &emoji_slots[index];
+        let start = slot.byte_start;
+        let end = slot.byte_start.saturating_add(slot.byte_len);
+        if start < cursor
+            || end > text.len()
+            || !text.is_char_boundary(start)
+            || !text.is_char_boundary(end)
+        {
+            continue;
+        }
+
+        output.push_str(&text[cursor..start]);
+        let new_start = output.len();
+        if loaded_custom_emoji_urls.iter().any(|url| url == &slot.url) {
+            let placeholder = " ".repeat(usize::from(EMOJI_REACTION_IMAGE_WIDTH));
+            output.push_str(&placeholder);
+            replacements.push(LoadedEmojiReplacement {
+                start,
+                end,
+                new_start,
+                new_len: placeholder.len(),
+            });
+            slot_updates[index] = Some(InlineEmojiSlot {
+                byte_start: new_start,
+                byte_len: placeholder.len(),
+                display_width: EMOJI_REACTION_IMAGE_WIDTH,
+                url: slot.url.clone(),
+            });
+        } else {
+            output.push_str(&text[start..end]);
+            slot_updates[index] = Some(InlineEmojiSlot {
+                byte_start: new_start,
+                byte_len: slot.byte_len,
+                display_width: slot.display_width,
+                url: slot.url.clone(),
+            });
+        }
+        cursor = end;
+    }
+
+    if replacements.is_empty() {
+        return RenderedText {
+            text,
+            highlights,
+            emoji_slots,
+        };
+    }
+
+    output.push_str(&text[cursor..]);
+    let highlights = highlights
+        .into_iter()
+        .map(|highlight| TextHighlight {
+            start: remap_loaded_emoji_offset(&replacements, highlight.start),
+            end: remap_loaded_emoji_offset(&replacements, highlight.end),
+            kind: highlight.kind,
+        })
+        .collect();
+    let emoji_slots = emoji_slots
+        .into_iter()
+        .enumerate()
+        .map(|(index, slot)| {
+            slot_updates[index]
+                .clone()
+                .unwrap_or_else(|| InlineEmojiSlot {
+                    byte_start: remap_loaded_emoji_offset(&replacements, slot.byte_start),
+                    byte_len: slot.byte_len,
+                    display_width: slot.display_width,
+                    url: slot.url,
+                })
+        })
+        .collect();
+
+    RenderedText {
+        text: output,
+        highlights,
+        emoji_slots,
+    }
 }
 
 fn rendered_text_line(rendered: RenderedText, style: Style) -> MessageContentLine {
@@ -943,6 +1204,7 @@ fn format_poll_lines(
     poll: &PollInfo,
     content: Option<RenderedText>,
     width: usize,
+    loaded_custom_emoji_urls: &[String],
 ) -> Vec<MessageContentLine> {
     let inner_width = poll_card_inner_width(width);
     let helper = if poll.allow_multiselect {
@@ -957,9 +1219,14 @@ fn format_poll_lines(
     ));
     if let Some(content) = content {
         lines.extend(
-            wrap_rendered_text_lines(content, inner_width, Style::default())
-                .into_iter()
-                .map(|line| poll_box_line(line, inner_width)),
+            wrap_rendered_text_lines_with_loaded_custom_emoji_urls(
+                content,
+                inner_width,
+                Style::default(),
+                loaded_custom_emoji_urls,
+            )
+            .into_iter()
+            .map(|line| poll_box_line(line, inner_width)),
         );
     }
     lines.push(poll_box_line(
@@ -1436,6 +1703,7 @@ fn format_forwarded_snapshot(
     snapshot: &MessageSnapshotInfo,
     state: &DashboardState,
     width: usize,
+    loaded_custom_emoji_urls: &[String],
 ) -> Vec<MessageContentLine> {
     let attachment_summary_lines = if snapshot.attachments.is_empty() {
         Vec::new()
@@ -1453,9 +1721,14 @@ fn format_forwarded_snapshot(
             &content,
         );
         lines.extend(
-            wrap_rendered_text_lines(content, content_width, Style::default())
-                .into_iter()
-                .map(|line| prefix_message_content_line_without_underline("│ ", line)),
+            wrap_rendered_text_lines_with_loaded_custom_emoji_urls(
+                content,
+                content_width,
+                Style::default(),
+                loaded_custom_emoji_urls,
+            )
+            .into_iter()
+            .map(|line| prefix_message_content_line_without_underline("│ ", line)),
         );
     }
     for attachment in attachment_summary_lines {
@@ -1470,6 +1743,7 @@ fn format_forwarded_snapshot(
             snapshot.content.as_deref(),
             state.show_custom_emoji(),
             width.saturating_sub(2).max(1),
+            loaded_custom_emoji_urls,
         )
         .into_iter()
         .map(|line| prefix_message_content_line_without_underline("│ ", line)),
@@ -1543,6 +1817,7 @@ pub(super) fn mention_highlight_style(kind: TextHighlightKind) -> Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use unicode_width::UnicodeWidthStr;
 
     #[test]
     fn message_content_line_spans_combine_prefix_and_mention_styles() {
@@ -1576,6 +1851,67 @@ mod tests {
             spans[2].style.bg,
             mention_highlight_style(TextHighlightKind::SelfMention).bg
         );
+    }
+
+    #[test]
+    fn loaded_custom_emoji_placeholder_keeps_following_text_close() {
+        let fallback = ":long_custom:";
+        let mut line = MessageContentLine::styled_text(
+            format!("{fallback}text"),
+            Style::default(),
+            Vec::new(),
+        )
+        .with_image_slots(vec![MessageContentImageSlot {
+            col: 0,
+            byte_start: 0,
+            byte_len: fallback.len(),
+            display_width: fallback.len() as u16,
+            url: "emoji-url".to_owned(),
+        }]);
+
+        line.blank_loaded_emoji_fallbacks(|url| url == "emoji-url");
+
+        assert_eq!(line.text, "  text");
+        assert_eq!(line.image_slots[0].byte_start, 0);
+        assert_eq!(
+            line.image_slots[0].byte_len,
+            usize::from(EMOJI_REACTION_IMAGE_WIDTH)
+        );
+        assert_eq!(
+            line.image_slots[0].display_width,
+            EMOJI_REACTION_IMAGE_WIDTH
+        );
+    }
+
+    #[test]
+    fn loaded_custom_emoji_placeholder_remaps_later_slots() {
+        let first = ":first:";
+        let second = ":second:";
+        let text = format!("{first}mid{second}end");
+        let mut line = MessageContentLine::styled_text(text, Style::default(), Vec::new())
+            .with_image_slots(vec![
+                MessageContentImageSlot {
+                    col: 0,
+                    byte_start: 0,
+                    byte_len: first.len(),
+                    display_width: first.len() as u16,
+                    url: "first-url".to_owned(),
+                },
+                MessageContentImageSlot {
+                    col: first.len() as u16 + 3,
+                    byte_start: first.len() + "mid".len(),
+                    byte_len: second.len(),
+                    display_width: second.len() as u16,
+                    url: "second-url".to_owned(),
+                },
+            ]);
+
+        line.blank_loaded_emoji_fallbacks(|url| url.ends_with("-url"));
+
+        assert_eq!(line.text, "  mid  end");
+        assert_eq!(line.image_slots[0].byte_start, 0);
+        assert_eq!(line.image_slots[1].byte_start, "  mid".len());
+        assert_eq!(line.image_slots[1].col, "  mid".width() as u16);
     }
 
     #[test]

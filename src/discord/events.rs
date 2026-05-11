@@ -762,6 +762,7 @@ impl AppEvent {
         !matches!(
             self,
             AppEvent::GatewayError { .. }
+                | AppEvent::CurrentUserCapabilities { .. }
                 | AppEvent::StatusMessage { .. }
                 | AppEvent::UpdateAvailable { .. }
                 | AppEvent::ReactionUsersLoaded { .. }
@@ -791,6 +792,7 @@ impl AppEvent {
                 | AppEvent::PinnedMessagesLoadFailed { .. }
                 | AppEvent::ReactionUsersLoaded { .. }
                 | AppEvent::GatewayError { .. }
+                | AppEvent::CurrentUserCapabilities { .. }
                 | AppEvent::StatusMessage { .. }
                 | AppEvent::UpdateAvailable { .. }
                 | AppEvent::ActivateChannel { .. }
@@ -1012,6 +1014,16 @@ mod tests {
         assert_eq!(poll.results_finalized, Some(true));
         assert_eq!(poll.answers[0].text, "김치찌개");
         assert_eq!(poll.answers[0].vote_count, Some(5));
+    }
+
+    #[test]
+    fn current_user_capabilities_are_delivered_as_ui_effect_only() {
+        let event = AppEvent::CurrentUserCapabilities {
+            can_use_animated_custom_emojis: true,
+        };
+
+        assert!(!event.mutates_discord_state());
+        assert!(event.needs_effect_delivery());
     }
 
     fn attachment_info(filename: &str, content_type: Option<&str>) -> AttachmentInfo {

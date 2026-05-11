@@ -311,26 +311,14 @@ impl DashboardState {
     }
 
     pub fn composer_emoji_candidates(&self) -> Vec<EmojiPickerEntry> {
-        let Some(query) = self.composer_emoji_query.as_deref() else {
-            return Vec::new();
-        };
-        let custom_emojis = self
-            .selected_channel_guild_id()
-            .map(|guild_id| self.discord.custom_emojis_for_guild(guild_id))
-            .unwrap_or_default();
-        build_emoji_candidates(
-            query,
-            custom_emojis,
-            self.current_user_can_use_animated_custom_emojis
-                .unwrap_or(false),
-        )
+        self.composer_emoji_candidates.clone()
     }
 
     pub fn move_composer_emoji_selection(&mut self, delta: isize) {
         if self.composer_emoji_query.is_none() {
             return;
         }
-        let len = self.composer_emoji_candidates().len();
+        let len = self.composer_emoji_candidates.len();
         self.composer_emoji_selected =
             move_mention_selection(self.composer_emoji_selected, len, delta);
     }
@@ -382,8 +370,10 @@ impl DashboardState {
         let Some(emoji_start) = self.composer_emoji_start else {
             return false;
         };
-        let candidates = self.composer_emoji_candidates();
-        let Some(entry) = candidates.get(self.composer_emoji_selected) else {
+        let Some(entry) = self
+            .composer_emoji_candidates
+            .get(self.composer_emoji_selected)
+        else {
             return false;
         };
         let entry = entry.clone();
@@ -461,6 +451,23 @@ impl DashboardState {
         self.composer_emoji_query = None;
         self.composer_emoji_start = None;
         self.composer_emoji_selected = 0;
+        self.composer_emoji_candidates.clear();
+    }
+
+    pub(super) fn refresh_composer_emoji_candidates_for_current_query(&mut self) {
+        let Some(query) = self.composer_emoji_query.clone() else {
+            self.composer_emoji_candidates.clear();
+            return;
+        };
+
+        let candidates = self.emoji_candidates_for_query(&query);
+        if candidates.is_empty() {
+            self.close_composer_emoji_query();
+            return;
+        }
+
+        self.composer_emoji_selected = self.composer_emoji_selected.min(candidates.len() - 1);
+        self.composer_emoji_candidates = candidates;
     }
 
     fn replace_composer_range(&mut self, range: Range<usize>, replacement: &str) {
@@ -529,11 +536,17 @@ impl DashboardState {
             if &self.composer_input[emoji_start..query_start] == ":"
                 && query.chars().count() >= 2
                 && should_start_emoji_query(&self.composer_input[..emoji_start])
-                && !self.emoji_candidates_for_query(query).is_empty()
             {
+                let candidates = self.emoji_candidates_for_query(query);
+                if candidates.is_empty() {
+                    self.close_composer_mention_query();
+                    self.close_composer_emoji_query();
+                    return;
+                }
                 self.composer_emoji_query = Some(query.to_owned());
                 self.composer_emoji_start = Some(emoji_start);
                 self.composer_emoji_selected = 0;
+                self.composer_emoji_candidates = candidates;
                 self.close_composer_mention_query();
                 return;
             }
