@@ -13,8 +13,11 @@ use serde_json::{Value, json};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio::time::sleep;
 use tokio_tungstenite::{
-    connect_async,
-    tungstenite::{Message as WsMessage, protocol::CloseFrame},
+    connect_async_with_config,
+    tungstenite::{
+        Message as WsMessage,
+        protocol::{CloseFrame, WebSocketConfig},
+    },
 };
 
 use super::{
@@ -80,6 +83,12 @@ const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/53
     (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const BROWSER_VERSION: &str = "120.0.0.0";
 const CLIENT_BUILD_NUMBER: u64 = 250000;
+
+// Some user-account READY payloads exceed tungstenite's default 16 MiB frame
+// cap before Discord has a chance to split the initial state across follow-up
+// dispatches. Keep the limit bounded, but large enough for accounts with many
+// guilds and channels until gateway compression is implemented.
+const GATEWAY_WEBSOCKET_LIMIT: usize = 64 << 20;
 
 const RECONNECT_BASE_DELAY: Duration = Duration::from_millis(500);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
@@ -227,7 +236,7 @@ async fn connect_and_run(
     let url = session.next_url();
     logging::debug("gateway", format!("connecting to {url}"));
 
-    let (ws, _response) = connect_async(&url)
+    let (ws, _response) = connect_async_with_config(&url, Some(gateway_websocket_config()), false)
         .await
         .map_err(|error| format!("websocket connect failed: {error}"))?;
     let (writer, mut reader) = ws.split();
@@ -371,10 +380,13 @@ async fn connect_and_run(
                         break outcome;
                     }
                     Some(Err(error)) => {
-                        logging::debug(
-                            "gateway",
-                            format!("websocket read error: {error}"),
-                        );
+                        let message = format!("websocket read error: {error}");
+                        logging::error("gateway", &message);
+                        publish_gateway_event(
+                            publish,
+                            AppEvent::GatewayError { message },
+                        )
+                        .await;
                         break ConnectionOutcome::Resume;
                     }
                     None => break ConnectionOutcome::Resume,
@@ -385,6 +397,12 @@ async fn connect_and_run(
 
     heartbeat_task.abort();
     Ok(outcome)
+}
+
+fn gateway_websocket_config() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .max_message_size(Some(GATEWAY_WEBSOCKET_LIMIT))
+        .max_frame_size(Some(GATEWAY_WEBSOCKET_LIMIT))
 }
 
 enum FrameOutcome {
@@ -670,9 +688,18 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        SessionState, USER_ACCOUNT_CAPABILITIES, build_identify_payload, build_resume_payload,
-        direct_message_subscribe_payload, guild_channel_subscribe_payload,
+        GATEWAY_WEBSOCKET_LIMIT, SessionState, USER_ACCOUNT_CAPABILITIES, build_identify_payload,
+        build_resume_payload, direct_message_subscribe_payload, gateway_websocket_config,
+        guild_channel_subscribe_payload,
     };
+
+    #[test]
+    fn gateway_websocket_config_allows_large_ready_payloads() {
+        let config = gateway_websocket_config();
+
+        assert_eq!(config.max_message_size, Some(GATEWAY_WEBSOCKET_LIMIT));
+        assert_eq!(config.max_frame_size, Some(GATEWAY_WEBSOCKET_LIMIT));
+    }
 
     #[test]
     fn identify_payload_carries_user_account_capabilities() {
