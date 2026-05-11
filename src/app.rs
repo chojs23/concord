@@ -745,7 +745,12 @@ fn start_command_loop(
                         label,
                     } => {
                         let mute_end_time = mute_end_time_from_duration(duration, muted);
-                        match client.set_guild_muted(guild_id, muted, mute_end_time).await {
+                        let selected_time_window =
+                            selected_time_window_from_duration(duration, muted);
+                        match client
+                            .set_guild_muted(guild_id, muted, mute_end_time, selected_time_window)
+                            .await
+                        {
                             Ok(()) => {
                                 client
                                     .publish_event(AppEvent::UserGuildNotificationSettingsUpdate {
@@ -788,8 +793,16 @@ fn start_command_loop(
                         label,
                     } => {
                         let mute_end_time = mute_end_time_from_duration(duration, muted);
+                        let selected_time_window =
+                            selected_time_window_from_duration(duration, muted);
                         match client
-                            .set_channel_muted(guild_id, channel_id, muted, mute_end_time)
+                            .set_channel_muted(
+                                guild_id,
+                                channel_id,
+                                muted,
+                                mute_end_time,
+                                selected_time_window,
+                            )
                             .await
                         {
                             Ok(()) => {
@@ -859,6 +872,14 @@ fn mute_end_time_from_duration(
         .filter(|minutes| *minutes > 0)
         .and_then(|minutes| i64::try_from(minutes).ok())
         .map(|minutes| Utc::now() + ChronoDuration::minutes(minutes))
+}
+
+fn selected_time_window_from_duration(duration: Option<MuteDuration>, muted: bool) -> Option<i64> {
+    muted.then(|| {
+        duration
+            .unwrap_or(MuteDuration::Permanent)
+            .selected_time_window_seconds()
+    })
 }
 
 fn mute_status_suffix(duration: Option<MuteDuration>) -> String {

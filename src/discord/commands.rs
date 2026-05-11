@@ -62,6 +62,13 @@ impl MuteDuration {
             Self::Permanent => None,
         }
     }
+
+    pub fn selected_time_window_seconds(self) -> i64 {
+        match self {
+            Self::Minutes(minutes) => i64::try_from(minutes.saturating_mul(60)).unwrap_or(i64::MAX),
+            Self::Permanent => -1,
+        }
+    }
 }
 
 impl ReactionEmoji {

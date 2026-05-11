@@ -203,6 +203,7 @@ impl DiscordRest {
         guild_id: Id<GuildMarker>,
         muted: bool,
         mute_end_time: Option<DateTime<Utc>>,
+        selected_time_window: Option<i64>,
     ) -> Result<()> {
         self.raw_http
             .patch(format!(
@@ -210,7 +211,11 @@ impl DiscordRest {
                 guild_id.get()
             ))
             .header(AUTHORIZATION, &self.token)
-            .json(&mute_request_body(muted, mute_end_time))
+            .json(&mute_request_body(
+                muted,
+                mute_end_time,
+                selected_time_window,
+            ))
             .send()
             .await
             .map_err(|error| {
@@ -227,6 +232,7 @@ impl DiscordRest {
         channel_id: Id<ChannelMarker>,
         muted: bool,
         mute_end_time: Option<DateTime<Utc>>,
+        selected_time_window: Option<i64>,
     ) -> Result<()> {
         let endpoint = match guild_id {
             Some(guild_id) => format!(
@@ -240,7 +246,11 @@ impl DiscordRest {
             .header(AUTHORIZATION, &self.token)
             .json(&json!({
                 "channel_overrides": {
-                    channel_id.to_string(): mute_request_body(muted, mute_end_time),
+                    channel_id.to_string(): mute_request_body(
+                        muted,
+                        mute_end_time,
+                        selected_time_window,
+                    ),
                 }
             }))
             .send()
@@ -763,11 +773,18 @@ impl DiscordRest {
     }
 }
 
-fn mute_request_body(muted: bool, mute_end_time: Option<DateTime<Utc>>) -> Value {
+fn mute_request_body(
+    muted: bool,
+    mute_end_time: Option<DateTime<Utc>>,
+    selected_time_window: Option<i64>,
+) -> Value {
     json!({
         "muted": muted,
-        "mute_config": mute_end_time.map(|end_time| json!({
-            "end_time": end_time.to_rfc3339_opts(SecondsFormat::Millis, true),
+        "mute_config": selected_time_window.map(|selected_time_window| json!({
+            "end_time": mute_end_time.map(|end_time| {
+                end_time.to_rfc3339_opts(SecondsFormat::Millis, true)
+            }),
+            "selected_time_window": selected_time_window,
         })),
     })
 }
@@ -1188,6 +1205,8 @@ pub fn validate_message_content(content: &str) -> Result<()> {
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use chrono::{TimeZone, Utc};
+
     use crate::discord::ids::{
         Id,
         marker::{ChannelMarker, EmojiMarker, GuildMarker},
@@ -1199,10 +1218,10 @@ mod tests {
             ChannelInfo, MAX_UPLOAD_FILE_BYTES, MessageAttachmentUpload, ReactionEmoji,
             rest::{
                 ForumPostPage, ForumSearchSort, is_search_index_warming, merge_forum_pages,
-                message_multipart_form, message_request_body, next_reaction_users_after,
-                parse_forum_preview_messages, parse_forum_thread_page, parse_user_profile_response,
-                poll_vote_request_body, reaction_route_component, upload_content_type,
-                validate_message_content, validate_message_payload,
+                message_multipart_form, message_request_body, mute_request_body,
+                next_reaction_users_after, parse_forum_preview_messages, parse_forum_thread_page,
+                parse_user_profile_response, poll_vote_request_body, reaction_route_component,
+                upload_content_type, validate_message_content, validate_message_payload,
             },
         },
     };
@@ -1544,6 +1563,42 @@ mod tests {
         assert_eq!(
             poll_vote_request_body(&[]),
             serde_json::json!({ "answer_ids": [] })
+        );
+    }
+
+    #[test]
+    fn mute_request_body_includes_selected_time_window() {
+        let end_time = Utc
+            .with_ymd_and_hms(2026, 5, 10, 12, 30, 45)
+            .single()
+            .expect("valid test timestamp");
+
+        assert_eq!(
+            mute_request_body(true, Some(end_time), Some(900)),
+            serde_json::json!({
+                "muted": true,
+                "mute_config": {
+                    "end_time": "2026-05-10T12:30:45.000Z",
+                    "selected_time_window": 900,
+                },
+            })
+        );
+        assert_eq!(
+            mute_request_body(true, None, Some(-1)),
+            serde_json::json!({
+                "muted": true,
+                "mute_config": {
+                    "end_time": null,
+                    "selected_time_window": -1,
+                },
+            })
+        );
+        assert_eq!(
+            mute_request_body(false, None, None),
+            serde_json::json!({
+                "muted": false,
+                "mute_config": null,
+            })
         );
     }
 

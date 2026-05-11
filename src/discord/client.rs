@@ -220,9 +220,10 @@ impl DiscordClient {
         guild_id: Id<GuildMarker>,
         muted: bool,
         mute_end_time: Option<DateTime<Utc>>,
+        selected_time_window: Option<i64>,
     ) -> Result<()> {
         self.rest
-            .set_guild_muted(guild_id, muted, mute_end_time)
+            .set_guild_muted(guild_id, muted, mute_end_time, selected_time_window)
             .await
     }
 
@@ -232,9 +233,16 @@ impl DiscordClient {
         channel_id: Id<ChannelMarker>,
         muted: bool,
         mute_end_time: Option<DateTime<Utc>>,
+        selected_time_window: Option<i64>,
     ) -> Result<()> {
         self.rest
-            .set_channel_muted(guild_id, channel_id, muted, mute_end_time)
+            .set_channel_muted(
+                guild_id,
+                channel_id,
+                muted,
+                mute_end_time,
+                selected_time_window,
+            )
             .await
     }
 
