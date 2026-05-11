@@ -1156,6 +1156,7 @@ mod tests {
             path: "/tmp/cat.png".into(),
             filename: "cat.png".to_owned(),
             size_bytes: 2_048,
+            requires_cleanup: false,
         }];
 
         validate_message_payload("   ", &attachments).expect("file-only messages should be valid");
@@ -1173,6 +1174,7 @@ mod tests {
             path: "/tmp/large.bin".into(),
             filename: "large.bin".to_owned(),
             size_bytes: MAX_UPLOAD_FILE_BYTES + 1,
+            requires_cleanup: false,
         }];
         let error = validate_message_payload("", &too_large_file)
             .expect_err("oversized attachment must fail");
@@ -1183,16 +1185,19 @@ mod tests {
                 path: "/tmp/a.bin".into(),
                 filename: "a.bin".to_owned(),
                 size_bytes: MAX_UPLOAD_FILE_BYTES - 1,
+                requires_cleanup: false,
             },
             MessageAttachmentUpload {
                 path: "/tmp/b.bin".into(),
                 filename: "b.bin".to_owned(),
                 size_bytes: MAX_UPLOAD_FILE_BYTES - 1,
+                requires_cleanup: false,
             },
             MessageAttachmentUpload {
                 path: "/tmp/c.bin".into(),
                 filename: "c.bin".to_owned(),
                 size_bytes: MAX_UPLOAD_FILE_BYTES - 1,
+                requires_cleanup: false,
             },
         ];
         let error = validate_message_payload("", &too_large_total)
@@ -1214,6 +1219,7 @@ mod tests {
             path: path.clone(),
             filename: "changed.bin".to_owned(),
             size_bytes: 1,
+            requires_cleanup: false,
         };
         std::fs::write(&path, vec![0_u8; (MAX_UPLOAD_FILE_BYTES + 1) as usize])
             .expect("oversized temp file can be written");
