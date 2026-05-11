@@ -3,9 +3,9 @@ use std::ops::Range;
 use crate::discord::{AppCommand, MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload};
 
 use super::composer::{
-    EmojiCompletion, MentionCompletion, build_emoji_candidates, build_mention_candidates,
-    expand_composer_completions, expand_emoji_shortcodes, is_emoji_query_char,
-    is_mention_query_char, move_mention_selection, should_start_emoji_query,
+    ComposerEmojiImageCompletion, EmojiCompletion, MentionCompletion, build_emoji_candidates,
+    build_mention_candidates, expand_composer_completions, expand_emoji_shortcodes,
+    is_emoji_query_char, is_mention_query_char, move_mention_selection, should_start_emoji_query,
     should_start_mention_query,
 };
 use super::{DashboardState, EmojiPickerEntry, FocusPane, MentionPickerEntry};
@@ -408,10 +408,30 @@ impl DashboardState {
                 byte_start: emoji_start,
                 byte_end: end,
                 replacement: wire_format,
+                custom_image_url: entry.custom_image_url,
             });
         }
         self.close_composer_emoji_query();
         true
+    }
+
+    pub(in crate::tui) fn composer_emoji_image_completions(
+        &self,
+    ) -> Vec<ComposerEmojiImageCompletion> {
+        self.composer_emoji_completions
+            .iter()
+            .filter(|completion| completion.byte_end <= self.composer_input.len())
+            .filter_map(|completion| {
+                completion
+                    .custom_image_url
+                    .as_ref()
+                    .map(|url| ComposerEmojiImageCompletion {
+                        byte_start: completion.byte_start,
+                        byte_end: completion.byte_end,
+                        url: url.clone(),
+                    })
+            })
+            .collect()
     }
 
     /// Closes the picker without inserting anything. The literal `@query`

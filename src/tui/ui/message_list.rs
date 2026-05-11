@@ -84,9 +84,9 @@ pub(super) fn render_messages(
             forum_total_rows,
         );
         render_typing_footer(frame, message_areas.typing, state);
-        render_composer(frame, message_areas.composer, state);
+        render_composer(frame, message_areas.composer, state, emoji_images);
         render_composer_mention_picker(frame, message_areas, state);
-        render_composer_emoji_picker(frame, message_areas, state);
+        render_composer_emoji_picker(frame, message_areas, state, emoji_images);
         return;
     }
 
@@ -208,9 +208,9 @@ pub(super) fn render_messages(
     );
     render_new_messages_notice(frame, message_areas.list, state);
     render_typing_footer(frame, message_areas.typing, state);
-    render_composer(frame, message_areas.composer, state);
+    render_composer(frame, message_areas.composer, state, emoji_images);
     render_composer_mention_picker(frame, message_areas, state);
-    render_composer_emoji_picker(frame, message_areas, state);
+    render_composer_emoji_picker(frame, message_areas, state, emoji_images);
 }
 
 fn render_new_messages_notice(frame: &mut Frame, list: Rect, state: &DashboardState) {

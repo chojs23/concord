@@ -32,6 +32,7 @@ pub struct EmojiPickerEntry {
     pub name: String,
     pub wire_format: Option<String>,
     pub available: bool,
+    pub custom_image_url: Option<String>,
 }
 
 pub(super) fn build_mention_candidates(
@@ -119,6 +120,7 @@ pub(super) fn build_emoji_candidates(
                     wire_format: Some(custom_emoji_markup(&shortcode, emoji.id, emoji.animated)),
                     available: emoji.available
                         && (!emoji.animated || can_use_animated_custom_emojis),
+                    custom_image_url: Some(custom_emoji_image_url(emoji.id, emoji.animated)),
                 },
             )
         })
@@ -138,6 +140,7 @@ pub(super) fn build_emoji_candidates(
                         name: emoji.name().to_owned(),
                         wire_format: None,
                         available: true,
+                        custom_image_url: None,
                     },
                 )
             })
@@ -164,6 +167,11 @@ fn custom_emoji_markup(name: &str, id: Id<EmojiMarker>, animated: bool) -> Strin
     } else {
         format!("<:{name}:{}>", id.get())
     }
+}
+
+fn custom_emoji_image_url(id: Id<EmojiMarker>, animated: bool) -> String {
+    let extension = if animated { "gif" } else { "png" };
+    format!("https://cdn.discordapp.com/emojis/{}.{extension}", id.get())
 }
 
 pub(super) fn should_start_mention_query(input: &str) -> bool {
@@ -223,6 +231,14 @@ pub struct EmojiCompletion {
     pub(super) byte_start: usize,
     pub(super) byte_end: usize,
     pub(super) replacement: String,
+    pub(super) custom_image_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(in crate::tui) struct ComposerEmojiImageCompletion {
+    pub(in crate::tui) byte_start: usize,
+    pub(in crate::tui) byte_end: usize,
+    pub(in crate::tui) url: String,
 }
 
 fn starts_custom_emoji_markup(input: &str, colon_start: usize) -> bool {

@@ -15,20 +15,20 @@ use super::{
     SNOWFLAKE_TIMESTAMP_SHIFT, UNREAD_BRIGHT, channel_action_menu_lines,
     channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
     composer_content_line_count, composer_cursor_position, composer_lines,
-    composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
-    dm_presence_dot_span, emoji_picker_lines, emoji_reaction_picker_lines,
-    emoji_reaction_picker_lines_for_width, filtered_emoji_reaction_picker_lines, focus_pane_at,
-    footer_hint, format_message_sent_time, format_unix_millis_with_offset,
-    forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
-    guild_action_menu_lines, inline_image_preview_area, inline_image_preview_row,
-    member_action_menu_lines, member_display_label, member_name_style, message_action_menu_lines,
-    message_author_style, message_item_lines, message_starts_new_day, message_viewport_lines,
-    new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
-    primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
-    render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
-    selected_message_content_x_offset, sync_view_heights, user_profile_popup_has_avatar,
-    user_profile_popup_lines, user_profile_popup_lines_with_activities,
-    user_profile_popup_text_geometry,
+    composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count, composer_text,
+    date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_picker_lines,
+    emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
+    filtered_emoji_reaction_picker_lines, focus_pane_at, footer_hint, format_message_sent_time,
+    format_unix_millis_with_offset, forum_post_reaction_summary,
+    forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
+    inline_image_preview_area, inline_image_preview_row, member_action_menu_lines,
+    member_display_label, member_name_style, message_action_menu_lines, message_author_style,
+    message_item_lines, message_starts_new_day, message_viewport_lines, new_messages_notice_line,
+    options_popup_lines, poll_vote_picker_lines, primary_activity_summary,
+    reaction_users_popup_lines, reaction_users_visible_line_count, render_channels, render_guilds,
+    selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
+    sync_view_heights, user_profile_popup_has_avatar, user_profile_popup_lines,
+    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
 };
 use crate::{
     config::DisplayOptions,
@@ -478,6 +478,42 @@ fn composer_lines_show_pending_upload_above_input() {
 }
 
 #[test]
+fn composer_lines_blank_loaded_custom_emoji_fallback() {
+    let mut state = state_with_message();
+    state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id: Id::new(1),
+        emojis: vec![CustomEmojiInfo {
+            id: Id::new(60),
+            name: "wave".to_owned(),
+            animated: false,
+            available: true,
+        }],
+    });
+    state.start_composer();
+    for ch in ":wa".chars() {
+        state.push_composer_char(ch);
+    }
+    assert!(state.confirm_composer_emoji());
+
+    let loading_lines = composer_lines_with_loaded_custom_emoji_urls(&state, 80, &[]);
+    let loaded_lines = composer_lines_with_loaded_custom_emoji_urls(
+        &state,
+        80,
+        &["https://cdn.discordapp.com/emojis/60.png".to_owned()],
+    );
+
+    assert_eq!(line_texts_from_ratatui(&loading_lines), vec!["> :wave: "]);
+    assert_eq!(
+        line_texts_from_ratatui(&loaded_lines),
+        vec![format!("> {} ", " ".repeat(":wave:".len()))]
+    );
+    assert_eq!(
+        composer_cursor_position(Rect::new(10, 20, 20, 5), &state),
+        Some(Position { x: 20, y: 21 })
+    );
+}
+
+#[test]
 fn composer_cursor_position_tracks_input_cursor() {
     let mut state = state_with_message();
     state.start_composer();
@@ -570,6 +606,7 @@ fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
                 name: "custom emoji".to_owned(),
                 wire_format: Some("<:gone:51>".to_owned()),
                 available: false,
+                custom_image_url: Some("https://cdn.discordapp.com/emojis/51.png".to_owned()),
             },
             EmojiPickerEntry {
                 emoji: "❤️".to_owned(),
@@ -577,6 +614,7 @@ fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
                 name: "red heart".to_owned(),
                 wire_format: None,
                 available: true,
+                custom_image_url: None,
             },
             EmojiPickerEntry {
                 emoji: "◆".to_owned(),
@@ -584,10 +622,16 @@ fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
                 name: "custom emoji".to_owned(),
                 wire_format: Some("<:party_time:50>".to_owned()),
                 available: true,
+                custom_image_url: Some("https://cdn.discordapp.com/emojis/50.png".to_owned()),
             },
         ],
         0,
         40,
+        &[
+            "https://cdn.discordapp.com/emojis/51.png".to_owned(),
+            "https://cdn.discordapp.com/emojis/50.png".to_owned(),
+        ],
+        true,
     );
 
     assert!(
@@ -596,12 +640,7 @@ fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
             .add_modifier
             .contains(Modifier::CROSSED_OUT)
     );
-    assert!(
-        lines[0].spans[3]
-            .style
-            .add_modifier
-            .contains(Modifier::CROSSED_OUT)
-    );
+    assert_eq!(lines[0].spans[1].content.as_ref(), "   ");
     assert!(
         !lines[1].spans[3]
             .style
@@ -609,11 +648,15 @@ fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
             .contains(Modifier::CROSSED_OUT)
     );
     assert!(
-        !lines[2].spans[3]
+        !lines[2]
+            .spans
+            .last()
+            .expect("custom emoji row should have a label span")
             .style
             .add_modifier
             .contains(Modifier::CROSSED_OUT)
     );
+    assert_eq!(lines[2].spans[1].content.as_ref(), "   ");
 }
 
 #[test]

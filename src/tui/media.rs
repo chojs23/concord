@@ -2104,6 +2104,88 @@ mod tests {
     }
 
     #[test]
+    fn emoji_image_targets_include_visible_composer_custom_emoji_picker_candidates() {
+        let mut state = state_with_image_messages(1, &[]);
+        state.push_event(AppEvent::GuildEmojisUpdate {
+            guild_id: Id::new(1),
+            emojis: vec![CustomEmojiInfo {
+                id: Id::new(50),
+                name: "party".to_owned(),
+                animated: false,
+                available: true,
+            }],
+        });
+        state.start_composer();
+        for ch in ":pa".chars() {
+            state.push_composer_char(ch);
+        }
+
+        let targets = visible_emoji_image_targets(&state);
+
+        assert_eq!(
+            targets,
+            vec![EmojiImageTarget {
+                url: "https://cdn.discordapp.com/emojis/50.png".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn emoji_image_targets_include_unavailable_composer_custom_emoji_picker_candidates() {
+        let mut state = state_with_image_messages(1, &[]);
+        state.push_event(AppEvent::GuildEmojisUpdate {
+            guild_id: Id::new(1),
+            emojis: vec![CustomEmojiInfo {
+                id: Id::new(51),
+                name: "gone".to_owned(),
+                animated: false,
+                available: false,
+            }],
+        });
+        state.start_composer();
+        for ch in ":go".chars() {
+            state.push_composer_char(ch);
+        }
+
+        let targets = visible_emoji_image_targets(&state);
+
+        assert_eq!(
+            targets,
+            vec![EmojiImageTarget {
+                url: "https://cdn.discordapp.com/emojis/51.png".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn emoji_image_targets_include_confirmed_composer_custom_emoji() {
+        let mut state = state_with_image_messages(1, &[]);
+        state.push_event(AppEvent::GuildEmojisUpdate {
+            guild_id: Id::new(1),
+            emojis: vec![CustomEmojiInfo {
+                id: Id::new(60),
+                name: "wave".to_owned(),
+                animated: false,
+                available: true,
+            }],
+        });
+        state.start_composer();
+        for ch in ":wa".chars() {
+            state.push_composer_char(ch);
+        }
+        assert!(state.confirm_composer_emoji());
+
+        let targets = visible_emoji_image_targets(&state);
+
+        assert_eq!(
+            targets,
+            vec![EmojiImageTarget {
+                url: "https://cdn.discordapp.com/emojis/60.png".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
     fn disabled_custom_emoji_images_create_no_targets_or_requests() {
         let mut state = state_with_image_messages(1, &[]);
         state.push_event(AppEvent::GuildEmojisUpdate {
