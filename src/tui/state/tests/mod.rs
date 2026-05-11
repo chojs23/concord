@@ -1139,6 +1139,7 @@ fn emoji_picker_items_include_available_custom_emojis_for_selected_message_guild
             ReactionEmoji::Unicode("👀".to_owned()),
         ]
     );
+    assert_eq!(items[0].label, "Thumbs Up");
     assert_eq!(items[8].label, "Party Time");
     assert_eq!(
         items[8].emoji,
