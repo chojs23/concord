@@ -385,6 +385,29 @@ fn leader_channel_actions_unmute_when_already_muted() {
 }
 
 #[test]
+fn leader_category_actions_offer_mute_duration_and_submit_command() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Up));
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+    handle_key(&mut state, char_key('u'));
+    let command = handle_key(&mut state, char_key('1'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SetChannelMuted {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(10),
+            muted: true,
+            duration: Some(crate::discord::MuteDuration::Minutes(15)),
+            label: "Text Channels".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn leader_server_actions_unmute_when_already_muted() {
     let mut state = state_with_channel_tree();
     state.push_event(AppEvent::UserGuildNotificationSettingsInit {

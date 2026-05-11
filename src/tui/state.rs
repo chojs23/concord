@@ -866,22 +866,6 @@ impl DashboardState {
         })
     }
 
-    pub fn toggle_selected_channel_mute(
-        &mut self,
-        duration: Option<MuteDuration>,
-    ) -> Option<AppCommand> {
-        let channel_id = self.selected_channel_cursor_id()?;
-        let channel = self.discord.channel(channel_id)?;
-        let muted = !self.discord.channel_notification_muted(channel_id);
-        Some(AppCommand::SetChannelMuted {
-            guild_id: channel.guild_id,
-            channel_id,
-            muted,
-            duration,
-            label: self.channel_label(channel_id),
-        })
-    }
-
     pub(crate) fn desktop_notification_for_event(
         &self,
         event: &AppEvent,

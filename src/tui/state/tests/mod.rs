@@ -4090,6 +4090,42 @@ fn channel_action_menu_toggle_mute_opens_duration_then_dispatches_command() {
 }
 
 #[test]
+fn category_action_menu_only_lists_mute_and_dispatches_command() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    state.move_up();
+    state.open_selected_channel_actions();
+
+    assert!(state.is_channel_action_menu_open());
+    assert_eq!(
+        state.channel_action_menu_title(),
+        Some("Text Channels".to_owned())
+    );
+
+    let actions = state.selected_channel_action_items();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].kind, ChannelActionKind::ToggleMute);
+    assert_eq!(actions[0].label, "Mute category");
+
+    assert_eq!(state.activate_selected_channel_action(), None);
+    assert!(state.is_channel_action_mute_duration_phase());
+
+    let command = state.activate_selected_channel_action();
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SetChannelMuted {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(10),
+            muted: true,
+            duration: Some(crate::discord::MuteDuration::Minutes(15)),
+            label: "Text Channels".to_owned(),
+        })
+    );
+    assert!(!state.is_channel_action_menu_open());
+}
+
+#[test]
 fn guild_action_menu_toggle_mute_opens_duration_then_dispatches_command() {
     let mut state = state_with_many_guilds(1);
     state.focus_pane(FocusPane::Guilds);

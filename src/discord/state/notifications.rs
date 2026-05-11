@@ -394,14 +394,8 @@ impl DiscordState {
         settings: &GuildNotificationSettingsState,
         channel_id: Id<ChannelMarker>,
     ) -> bool {
-        let direct_muted = settings
-            .channel_overrides
-            .get(&channel_id)
-            .is_some_and(|setting| {
-                notification_setting_muted(setting.muted, setting.mute_end_time.as_deref())
-            });
-        if direct_muted {
-            return true;
+        if let Some(setting) = settings.channel_overrides.get(&channel_id) {
+            return notification_setting_muted(setting.muted, setting.mute_end_time.as_deref());
         }
         self.channels
             .get(&channel_id)

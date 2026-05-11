@@ -29,15 +29,14 @@ impl DashboardState {
             | ChannelActionMenuState::MuteDuration { channel_id, .. }
             | ChannelActionMenuState::Threads { channel_id, .. } => *channel_id,
         };
-        let channel = self.discord.channel(channel_id)?;
-        Some(format!("#{}", channel.name))
+        Some(self.channel_label(channel_id))
     }
 
     pub fn open_selected_channel_actions(&mut self) {
         if self.focus != FocusPane::Channels {
             return;
         }
-        let Some(channel_id) = self.selected_channel_cursor_id() else {
+        let Some(channel_id) = self.selected_channel_action_target_id() else {
             return;
         };
         self.open_channel_actions(channel_id);
@@ -47,7 +46,7 @@ impl DashboardState {
         let Some(channel) = self.discord.channel(channel_id) else {
             return;
         };
-        if channel.is_category() || channel.is_thread() {
+        if channel.is_thread() {
             return;
         }
         self.channel_action_menu = Some(ChannelActionMenuState::Actions {
@@ -79,6 +78,20 @@ impl DashboardState {
             Some(ChannelActionMenuState::Actions { channel_id, .. }) => *channel_id,
             _ => return Vec::new(),
         };
+        let Some(channel) = self.discord.channel(channel_id) else {
+            return Vec::new();
+        };
+        if channel.is_category() {
+            return vec![ChannelActionItem {
+                kind: ChannelActionKind::ToggleMute,
+                label: if self.discord.channel_notification_muted(channel_id) {
+                    "Unmute category".to_owned()
+                } else {
+                    "Mute category".to_owned()
+                },
+                enabled: true,
+            }];
+        }
         let thread_count = self
             .channels()
             .into_iter()
@@ -482,7 +495,7 @@ impl DashboardState {
                     ChannelActionKind::ToggleMute => {
                         if self.discord.channel_notification_muted(channel_id) {
                             self.close_channel_action_menu();
-                            self.toggle_selected_channel_mute(None)
+                            self.toggle_channel_mute(channel_id, None)
                         } else {
                             self.channel_action_menu = Some(ChannelActionMenuState::MuteDuration {
                                 channel_id,
@@ -493,7 +506,10 @@ impl DashboardState {
                     }
                 }
             }
-            ChannelActionMenuState::MuteDuration { selected, .. } => {
+            ChannelActionMenuState::MuteDuration {
+                channel_id,
+                selected,
+            } => {
                 let item =
                     self.selected_channel_mute_duration_items()
                         .get(clamp_selected_index(
@@ -501,7 +517,7 @@ impl DashboardState {
                             self.selected_channel_mute_duration_items().len(),
                         ))?;
                 self.close_channel_action_menu();
-                self.toggle_selected_channel_mute(Some(item.duration))
+                self.toggle_channel_mute(channel_id, Some(item.duration))
             }
             ChannelActionMenuState::Threads { .. } => {
                 let items = self.channel_action_thread_items();
@@ -773,9 +789,26 @@ impl DashboardState {
             .map(|channel| match channel.kind.as_str() {
                 "dm" | "Private" => format!("@{}", channel.name),
                 "group-dm" | "Group" => channel.name.clone(),
+                "category" | "GuildCategory" => channel.name.clone(),
                 _ => format!("#{}", channel.name),
             })
             .unwrap_or_else(|| format!("#channel-{}", channel_id.get()))
+    }
+
+    fn toggle_channel_mute(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        duration: Option<crate::discord::MuteDuration>,
+    ) -> Option<AppCommand> {
+        let channel = self.discord.channel(channel_id)?;
+        let muted = !self.discord.channel_notification_muted(channel_id);
+        Some(AppCommand::SetChannelMuted {
+            guild_id: channel.guild_id,
+            channel_id,
+            muted,
+            duration,
+            label: self.channel_label(channel_id),
+        })
     }
 
     pub fn message_pane_title(&self) -> String {
@@ -1037,6 +1070,14 @@ impl DashboardState {
                     _ => None,
                 }),
             _ => None,
+        }
+    }
+
+    fn selected_channel_action_target_id(&self) -> Option<Id<ChannelMarker>> {
+        match self.channel_pane_entries().get(self.selected_channel()) {
+            Some(ChannelPaneEntry::CategoryHeader { state, .. }) => Some(state.id),
+            Some(ChannelPaneEntry::Channel { state, .. }) => Some(state.id),
+            None => None,
         }
     }
 }

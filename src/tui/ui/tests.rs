@@ -2461,6 +2461,22 @@ fn channel_action_menu_renders_pinned_and_thread_actions() {
 }
 
 #[test]
+fn channel_action_menu_renders_category_mute_shortcut() {
+    let actions = vec![ChannelActionItem {
+        kind: ChannelActionKind::ToggleMute,
+        label: "Mute category".to_owned(),
+        enabled: true,
+    }];
+
+    let lines = channel_action_menu_lines(&actions, 0);
+
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec!["› [u] Mute category", "Shortcut/Enter select · Esc close",]
+    );
+}
+
+#[test]
 fn guild_action_menu_renders_placeholder_action() {
     let actions = vec![GuildActionItem {
         kind: GuildActionKind::NoActionsYet,
