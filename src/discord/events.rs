@@ -487,6 +487,9 @@ pub enum AppEvent {
         user: String,
         user_id: Option<Id<UserMarker>>,
     },
+    CurrentUserCapabilities {
+        can_use_animated_custom_emojis: bool,
+    },
     GuildCreate {
         guild_id: Id<GuildMarker>,
         name: String,

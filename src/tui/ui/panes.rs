@@ -521,7 +521,7 @@ fn mention_picker_lines(
         .collect()
 }
 
-fn emoji_picker_lines(
+pub(super) fn emoji_picker_lines(
     candidates: &[EmojiPickerEntry],
     selected: usize,
     width: usize,
@@ -534,7 +534,11 @@ fn emoji_picker_lines(
             let cursor = if index == selected { "› " } else { "  " };
             let label = format!(":{}: {}", entry.shortcode, entry.name);
             let label = truncate_display_width(&label, max_label_width);
-            let mut row_style = Style::default().fg(Color::White);
+            let mut row_style = if entry.available {
+                Style::default().fg(Color::White)
+            } else {
+                Style::default().fg(DIM).add_modifier(Modifier::CROSSED_OUT)
+            };
             if index == selected {
                 row_style = row_style
                     .bg(Color::Rgb(40, 45, 90))

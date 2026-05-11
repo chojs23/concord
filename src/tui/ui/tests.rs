@@ -16,18 +16,19 @@ use super::{
     channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
     composer_content_line_count, composer_cursor_position, composer_lines,
     composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
-    dm_presence_dot_span, emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
-    filtered_emoji_reaction_picker_lines, focus_pane_at, footer_hint, format_message_sent_time,
-    format_unix_millis_with_offset, forum_post_reaction_summary,
-    forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
-    inline_image_preview_area, inline_image_preview_row, member_action_menu_lines,
-    member_display_label, member_name_style, message_action_menu_lines, message_author_style,
-    message_item_lines, message_starts_new_day, message_viewport_lines, new_messages_notice_line,
-    options_popup_lines, poll_vote_picker_lines, primary_activity_summary,
-    reaction_users_popup_lines, reaction_users_visible_line_count, render_channels, render_guilds,
-    selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
-    sync_view_heights, user_profile_popup_has_avatar, user_profile_popup_lines,
-    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
+    dm_presence_dot_span, emoji_picker_lines, emoji_reaction_picker_lines,
+    emoji_reaction_picker_lines_for_width, filtered_emoji_reaction_picker_lines, focus_pane_at,
+    footer_hint, format_message_sent_time, format_unix_millis_with_offset,
+    forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
+    guild_action_menu_lines, inline_image_preview_area, inline_image_preview_row,
+    member_action_menu_lines, member_display_label, member_name_style, message_action_menu_lines,
+    message_author_style, message_item_lines, message_starts_new_day, message_viewport_lines,
+    new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
+    primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
+    render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
+    selected_message_content_x_offset, sync_view_heights, user_profile_popup_has_avatar,
+    user_profile_popup_lines, user_profile_popup_lines_with_activities,
+    user_profile_popup_text_geometry,
 };
 use crate::{
     config::DisplayOptions,
@@ -49,9 +50,9 @@ use crate::{
         },
         state::{
             ChannelActionItem, ChannelActionKind, ChannelSwitcherItem, ChannelThreadItem,
-            DashboardState, DisplayOptionItem, EmojiReactionItem, FocusPane, GuildActionItem,
-            GuildActionKind, MemberActionItem, MemberActionKind, MessageActionItem,
-            MessageActionKind, PollVotePickerItem,
+            DashboardState, DisplayOptionItem, EmojiPickerEntry, EmojiReactionItem, FocusPane,
+            GuildActionItem, GuildActionKind, MemberActionItem, MemberActionKind,
+            MessageActionItem, MessageActionKind, PollVotePickerItem,
         },
     },
 };
@@ -556,6 +557,62 @@ fn dashboard_renders_custom_emoji_picker_candidate() {
     assert!(
         rendered.contains(":party_time:"),
         "custom emoji picker should show current guild custom emoji:\n{rendered}"
+    );
+}
+
+#[test]
+fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
+    let lines = emoji_picker_lines(
+        &[
+            EmojiPickerEntry {
+                emoji: "◆".to_owned(),
+                shortcode: "gone".to_owned(),
+                name: "custom emoji".to_owned(),
+                wire_format: Some("<:gone:51>".to_owned()),
+                available: false,
+            },
+            EmojiPickerEntry {
+                emoji: "❤️".to_owned(),
+                shortcode: "heart".to_owned(),
+                name: "red heart".to_owned(),
+                wire_format: None,
+                available: true,
+            },
+            EmojiPickerEntry {
+                emoji: "◆".to_owned(),
+                shortcode: "party_time".to_owned(),
+                name: "custom emoji".to_owned(),
+                wire_format: Some("<:party_time:50>".to_owned()),
+                available: true,
+            },
+        ],
+        0,
+        40,
+    );
+
+    assert!(
+        lines[0].spans[1]
+            .style
+            .add_modifier
+            .contains(Modifier::CROSSED_OUT)
+    );
+    assert!(
+        lines[0].spans[3]
+            .style
+            .add_modifier
+            .contains(Modifier::CROSSED_OUT)
+    );
+    assert!(
+        !lines[1].spans[3]
+            .style
+            .add_modifier
+            .contains(Modifier::CROSSED_OUT)
+    );
+    assert!(
+        !lines[2].spans[3]
+            .style
+            .add_modifier
+            .contains(Modifier::CROSSED_OUT)
     );
 }
 

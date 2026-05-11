@@ -801,6 +801,7 @@ impl DiscordState {
                     self.current_user_id = Some(*user_id);
                 }
             }
+            AppEvent::CurrentUserCapabilities { .. } => {}
             AppEvent::ReadStateInit { entries } => {
                 self.read_states.clear();
                 for entry in entries {

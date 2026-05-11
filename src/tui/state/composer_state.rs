@@ -318,7 +318,12 @@ impl DashboardState {
             .selected_channel_guild_id()
             .map(|guild_id| self.discord.custom_emojis_for_guild(guild_id))
             .unwrap_or_default();
-        build_emoji_candidates(query, custom_emojis)
+        build_emoji_candidates(
+            query,
+            custom_emojis,
+            self.current_user_can_use_animated_custom_emojis
+                .unwrap_or(false),
+        )
     }
 
     pub fn move_composer_emoji_selection(&mut self, delta: isize) {
@@ -367,8 +372,9 @@ impl DashboardState {
     }
 
     /// Confirms the highlighted emoji. Unicode emoji are inserted directly;
-    /// custom emoji keep their readable `:name:` form and record a byte range
-    /// so submit can send Discord's wire markup.
+    /// available custom emoji keep their readable `:name:` form and record a
+    /// byte range so submit can send Discord's wire markup. Unavailable custom
+    /// emoji stay visible in the picker as a hint, but cannot be confirmed.
     pub fn confirm_composer_emoji(&mut self) -> bool {
         let Some(_query) = self.composer_emoji_query.clone() else {
             return false;
@@ -381,6 +387,9 @@ impl DashboardState {
             return false;
         };
         let entry = entry.clone();
+        if !entry.available {
+            return false;
+        }
 
         let cursor = self.composer_cursor_byte_index();
         if emoji_start > cursor {
@@ -563,7 +572,12 @@ impl DashboardState {
             .selected_channel_guild_id()
             .map(|guild_id| self.discord.custom_emojis_for_guild(guild_id))
             .unwrap_or_default();
-        build_emoji_candidates(query, custom_emojis)
+        build_emoji_candidates(
+            query,
+            custom_emojis,
+            self.current_user_can_use_animated_custom_emojis
+                .unwrap_or(false),
+        )
     }
 }
 

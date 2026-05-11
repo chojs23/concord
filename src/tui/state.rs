@@ -255,6 +255,7 @@ pub struct DashboardState {
     display_options_save_pending: bool,
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
+    current_user_can_use_animated_custom_emojis: Option<bool>,
     last_status: Option<String>,
     update_available_version: Option<String>,
     should_quit: bool,
@@ -384,6 +385,7 @@ impl DashboardState {
             display_options_save_pending: false,
             current_user: None,
             current_user_id: None,
+            current_user_can_use_animated_custom_emojis: None,
             last_status: None,
             update_available_version: None,
             should_quit: false,
@@ -497,6 +499,12 @@ impl DashboardState {
             AppEvent::Ready { user, user_id } => {
                 self.current_user = Some(user.clone());
                 self.current_user_id = *user_id;
+            }
+            AppEvent::CurrentUserCapabilities {
+                can_use_animated_custom_emojis,
+            } => {
+                self.current_user_can_use_animated_custom_emojis =
+                    Some(*can_use_animated_custom_emojis);
             }
             AppEvent::StatusMessage { message } => {
                 self.last_status = Some(message.clone());

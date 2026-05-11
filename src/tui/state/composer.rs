@@ -31,6 +31,7 @@ pub struct EmojiPickerEntry {
     pub shortcode: String,
     pub name: String,
     pub wire_format: Option<String>,
+    pub available: bool,
 }
 
 pub(super) fn build_mention_candidates(
@@ -96,6 +97,7 @@ pub(super) fn move_mention_selection(selected: usize, len: usize, delta: isize) 
 pub(super) fn build_emoji_candidates(
     query: &str,
     custom_emojis: &[CustomEmojiInfo],
+    can_use_animated_custom_emojis: bool,
 ) -> Vec<EmojiPickerEntry> {
     let needle = query.to_ascii_lowercase();
     if needle.chars().count() < 2 {
@@ -104,7 +106,6 @@ pub(super) fn build_emoji_candidates(
 
     let mut scored: Vec<(u8, String, EmojiPickerEntry)> = custom_emojis
         .iter()
-        .filter(|emoji| emoji.available)
         .filter(|emoji| emoji.name.to_ascii_lowercase().starts_with(&needle))
         .map(|emoji| {
             let shortcode = emoji.name.clone();
@@ -116,6 +117,8 @@ pub(super) fn build_emoji_candidates(
                     shortcode: shortcode.clone(),
                     name: custom_emoji_picker_label(emoji.animated).to_owned(),
                     wire_format: Some(custom_emoji_markup(&shortcode, emoji.id, emoji.animated)),
+                    available: emoji.available
+                        && (!emoji.animated || can_use_animated_custom_emojis),
                 },
             )
         })
@@ -134,6 +137,7 @@ pub(super) fn build_emoji_candidates(
                         shortcode: shortcode.to_owned(),
                         name: emoji.name().to_owned(),
                         wire_format: None,
+                        available: true,
                     },
                 )
             })
