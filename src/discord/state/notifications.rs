@@ -58,7 +58,11 @@ impl DiscordState {
         if self.guild_notification_muted(guild_id) {
             ChannelUnreadState::Seen
         } else {
-            self.guild_unread(guild_id)
+            aggregate_unread_states(
+                self.viewable_channels_for_guild(Some(guild_id))
+                    .into_iter()
+                    .map(|channel| self.channel_sidebar_unread(channel.id)),
+            )
         }
     }
 
@@ -146,37 +150,17 @@ impl DiscordState {
     }
 
     pub fn guild_unread(&self, guild_id: Id<GuildMarker>) -> ChannelUnreadState {
-        let mut mention_count = 0u32;
-        let mut notification_count = 0u32;
-        let mut has_unread = false;
-        for channel in self.viewable_channels_for_guild(Some(guild_id)) {
-            match self.channel_unread(channel.id) {
-                ChannelUnreadState::Mentioned(count) => {
-                    mention_count = mention_count.saturating_add(count);
-                }
-                ChannelUnreadState::Notified(count) => {
-                    notification_count = notification_count.saturating_add(count);
-                }
-                ChannelUnreadState::Unread => has_unread = true,
-                ChannelUnreadState::Seen => {}
-            }
-        }
-
-        if mention_count > 0 {
-            ChannelUnreadState::Mentioned(mention_count)
-        } else if notification_count > 0 {
-            ChannelUnreadState::Notified(notification_count)
-        } else if has_unread {
-            ChannelUnreadState::Unread
-        } else {
-            ChannelUnreadState::Seen
-        }
+        aggregate_unread_states(
+            self.viewable_channels_for_guild(Some(guild_id))
+                .into_iter()
+                .map(|channel| self.channel_unread(channel.id)),
+        )
     }
 
     pub fn direct_message_unread_count(&self) -> usize {
         self.channels_for_guild(None)
             .into_iter()
-            .filter(|channel| self.channel_unread(channel.id) != ChannelUnreadState::Seen)
+            .filter(|channel| self.channel_sidebar_unread(channel.id) != ChannelUnreadState::Seen)
             .count()
     }
 
@@ -482,6 +466,36 @@ fn notification_setting_muted(muted: bool, end_time: Option<&str>) -> bool {
     DateTime::parse_from_rfc3339(end_time)
         .map(|end_time| end_time.with_timezone(&Utc) > Utc::now())
         .unwrap_or(true)
+}
+
+fn aggregate_unread_states(
+    states: impl IntoIterator<Item = ChannelUnreadState>,
+) -> ChannelUnreadState {
+    let mut mention_count = 0u32;
+    let mut notification_count = 0u32;
+    let mut has_unread = false;
+    for state in states {
+        match state {
+            ChannelUnreadState::Mentioned(count) => {
+                mention_count = mention_count.saturating_add(count);
+            }
+            ChannelUnreadState::Notified(count) => {
+                notification_count = notification_count.saturating_add(count);
+            }
+            ChannelUnreadState::Unread => has_unread = true,
+            ChannelUnreadState::Seen => {}
+        }
+    }
+
+    if mention_count > 0 {
+        ChannelUnreadState::Mentioned(mention_count)
+    } else if notification_count > 0 {
+        ChannelUnreadState::Notified(notification_count)
+    } else if has_unread {
+        ChannelUnreadState::Unread
+    } else {
+        ChannelUnreadState::Seen
+    }
 }
 
 fn saturating_u32_count(count: usize) -> u32 {

@@ -901,10 +901,6 @@ impl DashboardState {
         self.discord.channel_unread(channel_id)
     }
 
-    pub fn guild_unread(&self, guild_id: Id<GuildMarker>) -> ChannelUnreadState {
-        self.discord.guild_unread(guild_id)
-    }
-
     pub fn sidebar_channel_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
         self.discord.channel_sidebar_unread(channel_id)
     }
