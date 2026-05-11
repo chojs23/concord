@@ -17,6 +17,7 @@ use std::sync::Once;
 use std::{
     collections::{HashSet, VecDeque},
     io::{Write, stdout},
+    path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -683,22 +684,10 @@ async fn run_dashboard(
                         redraw_diagnostics.resizes = redraw_diagnostics.resizes.saturating_add(1);
                         dirty = true;
                     }
-                    Some(Ok(TerminalEvent::Paste(_))) => {
-                        if let Ok(mut cb) = Clipboard::new() {
-                            let text = if let Ok(text) = cb.get_text() {
-                                text
-                            } else if let Ok(image_data) = cb.get_image() {
-                                match write_image_to_tmp(image_data) {
-                                    Ok(tmp_file) => format!("copy\nfile://{}", tmp_file.display()),
-                                    Err(_) => continue,
-                                }
-                            } else {
-                                continue;
-                            };
-
-                            if input::handle_paste(&mut state, text.as_str()) {
-                                dirty = true;
-                            }
+                    Some(Ok(TerminalEvent::Paste(_text))) => {
+                        let Some((text, requires_cleanup)) = resolve_paste_text(_text) else { continue };
+                        if input::handle_paste(&mut state, text.as_str(), requires_cleanup) {
+                            dirty = true;
                         }
                     }
                     Some(Ok(_)) => {}
@@ -1090,6 +1079,23 @@ fn write_image_to_tmp(img: arboard::ImageData<'_>) -> std::io::Result<std::path:
     }
 
     Ok(path)
+}
+
+fn resolve_paste_text(text: String) -> Option<(String, bool)> {
+    if !text.is_empty() {
+        return Some((text, false));
+    }
+
+    let mut cb = Clipboard::new().ok()?;
+
+    if let Ok(text) = cb.get_text() {
+        Some((text, false))
+    } else if let Ok(image_data) = cb.get_image() {
+        let tmp_file = write_image_to_tmp(image_data).ok()?;
+        Some((format!("copy\nfile://{}", tmp_file.display()), true))
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
