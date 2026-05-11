@@ -1,8 +1,9 @@
 # Concord
 
-Concord is a terminal user interface client for Discord. Full Discord experience, right in your terminal.
+<img width="1613" height="848" alt="concord - a feature-rich TUI client for
+  Discord" src="./docs/example.png" />
 
-<img width="1613" height="848" alt="concord" src="./docs/example.png" />
+Concord is a feature-rich TUI (terminal user interface) client for Discord, written in Rust with ratatui. Full Discord experience, right in your terminal.
 
 ## Installation
 
