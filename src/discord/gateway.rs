@@ -248,14 +248,8 @@ async fn connect_and_run(
     let hello_frame = match reader.next().await {
         Some(Ok(WsMessage::Text(text))) => text,
         Some(Ok(WsMessage::Close(frame))) => {
-            logging::debug(
-                "gateway",
-                format!(
-                    "closed before HELLO: code={:?} reason={:?}",
-                    frame.as_ref().map(|f| u16::from(f.code)),
-                    frame.as_ref().map(|f| f.reason.as_str())
-                ),
-            );
+            let message = websocket_close_message("websocket closed before HELLO", frame.as_ref());
+            log_and_publish_gateway_error(publish, message).await;
             return Ok(ConnectionOutcome::Reidentify);
         }
         Some(Ok(_)) => return Err("unexpected non-text frame before HELLO".to_owned()),
@@ -306,7 +300,8 @@ async fn connect_and_run(
         loop {
             let seq = *sequence_for_heartbeat.lock().await;
             let payload = json!({"op": 1, "d": seq}).to_string();
-            if send_text(&writer_for_heartbeat, payload).await.is_err() {
+            if let Err(error) = send_text(&writer_for_heartbeat, payload).await {
+                logging::error("gateway", format!("heartbeat send failed: {error}"));
                 break;
             }
             sleep(heartbeat_interval).await;
@@ -323,10 +318,9 @@ async fn connect_and_run(
                 match maybe_command {
                     Some(command) => {
                         if let Err(error) = dispatch_command(&writer, command).await {
-                            logging::debug(
-                                "gateway",
-                                format!("command send failed: {error}"),
-                            );
+                            let message = format!("command send failed: {error}");
+                            log_and_publish_gateway_error(publish, message).await;
+                            break ConnectionOutcome::Resume;
                         }
                     }
                     None => break ConnectionOutcome::Stop,
@@ -369,27 +363,29 @@ async fn connect_and_run(
                     }
                     Some(Ok(WsMessage::Ping(payload))) => {
                         let mut writer = writer.lock().await;
-                        if writer.send(WsMessage::Pong(payload)).await.is_err() {
+                        if let Err(error) = writer.send(WsMessage::Pong(payload)).await {
+                            let message = format!("websocket pong send failed: {error}");
+                            log_and_publish_gateway_error(publish, message).await;
                             break ConnectionOutcome::Resume;
                         }
                     }
                     Some(Ok(WsMessage::Pong(_))) | Some(Ok(WsMessage::Frame(_))) => {}
                     Some(Ok(WsMessage::Close(frame))) => {
                         let outcome = close_outcome(frame.as_ref());
-                        log_close(frame.as_ref());
+                        let message = websocket_close_message("websocket closed", frame.as_ref());
+                        log_and_publish_gateway_error(publish, message).await;
                         break outcome;
                     }
                     Some(Err(error)) => {
                         let message = format!("websocket read error: {error}");
-                        logging::error("gateway", &message);
-                        publish_gateway_event(
-                            publish,
-                            AppEvent::GatewayError { message },
-                        )
-                        .await;
+                        log_and_publish_gateway_error(publish, message).await;
                         break ConnectionOutcome::Resume;
                     }
-                    None => break ConnectionOutcome::Resume,
+                    None => {
+                        let message = "websocket closed without frame".to_owned();
+                        log_and_publish_gateway_error(publish, message).await;
+                        break ConnectionOutcome::Resume;
+                    }
                 }
             }
         }
@@ -453,7 +449,10 @@ async fn handle_frame(
         1 => {
             let seq = *context.sequence_cell.lock().await;
             let payload = json!({"op": 1, "d": seq}).to_string();
-            let _ = send_text(context.writer, payload).await;
+            if let Err(error) = send_text(context.writer, payload).await {
+                let message = format!("heartbeat response send failed: {error}");
+                log_and_publish_gateway_error(context.publish, message).await;
+            }
             FrameOutcome::Continue
         }
         // Reconnect — Discord wants us to drop and resume. Saved
@@ -494,6 +493,11 @@ async fn publish_gateway_event(context: GatewayPublishContext<'_>, event: AppEve
     .await;
 }
 
+async fn log_and_publish_gateway_error(context: GatewayPublishContext<'_>, message: String) {
+    logging::error("gateway", &message);
+    publish_gateway_event(context, AppEvent::GatewayError { message }).await;
+}
+
 fn close_outcome(frame: Option<&CloseFrame>) -> ConnectionOutcome {
     let Some(frame) = frame else {
         return ConnectionOutcome::Resume;
@@ -508,18 +512,15 @@ fn close_outcome(frame: Option<&CloseFrame>) -> ConnectionOutcome {
     }
 }
 
-fn log_close(frame: Option<&CloseFrame>) {
+fn websocket_close_message(context: &str, frame: Option<&CloseFrame>) -> String {
     if let Some(frame) = frame {
-        logging::debug(
-            "gateway",
-            format!(
-                "websocket closed: code={} reason={:?}",
-                u16::from(frame.code),
-                frame.reason.as_str()
-            ),
-        );
+        format!(
+            "{context}: code={} reason={:?}",
+            u16::from(frame.code),
+            frame.reason.as_str()
+        )
     } else {
-        logging::debug("gateway", "websocket closed without frame");
+        context.to_owned()
     }
 }
 

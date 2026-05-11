@@ -227,7 +227,7 @@ fn dispatch_desktop_notification(notification: DesktopNotification) {
 
 fn log_notification_failure_once(target: &str, message: String) {
     if !NOTIFICATION_FAILURE_LOGGED.swap(true, Ordering::Relaxed) {
-        logging::debug(target, message);
+        logging::error(target, message);
     }
 }
 

@@ -710,7 +710,13 @@ impl DiscordRest {
             AppError::DiscordRequest(format!("user profile decode failed: {error}"))
         })?;
 
-        let note = self.load_user_note(user_id).await.unwrap_or(None);
+        let note = match self.load_user_note(user_id).await {
+            Ok(note) => note,
+            Err(error) => {
+                crate::logging::error("profile", format!("load user note failed: {error}"));
+                None
+            }
+        };
 
         Ok(parse_user_profile_response(user_id, &body, note))
     }
