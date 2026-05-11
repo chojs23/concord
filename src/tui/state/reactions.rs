@@ -2,7 +2,10 @@ use crate::discord::AppCommand;
 use crate::discord::ids::{Id, marker::GuildMarker};
 
 use super::super::fuzzy::fuzzy_text_score;
-use super::emoji::{custom_emoji_reaction_item, unicode_emoji_reaction_items};
+use super::emoji::{
+    custom_emoji_reaction_item, is_quick_unicode_emoji, quick_unicode_emoji_reaction_items,
+    remaining_unicode_emoji_reaction_items,
+};
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
 use super::{
     DashboardState, EmojiReactionItem, EmojiReactionPickerState, ReactionUsersPopupState,
@@ -34,7 +37,7 @@ impl DashboardState {
         &self,
         guild_id: Option<Id<GuildMarker>>,
     ) -> Vec<EmojiReactionItem> {
-        let mut items = unicode_emoji_reaction_items();
+        let mut items = quick_unicode_emoji_reaction_items();
 
         if let Some(guild_id) = guild_id {
             items.extend(
@@ -45,6 +48,8 @@ impl DashboardState {
                     .map(custom_emoji_reaction_item),
             );
         }
+
+        items.extend(remaining_unicode_emoji_reaction_items());
 
         items
     }
@@ -259,16 +264,29 @@ fn filter_emoji_reaction_items_from_slice(
         return items.to_vec();
     }
 
-    let mut scored: Vec<(usize, usize, EmojiReactionItem)> = items
+    let mut scored: Vec<(usize, usize, usize, EmojiReactionItem)> = items
         .iter()
         .enumerate()
         .filter_map(|(index, item)| {
-            emoji_reaction_filter_score(item, filter).map(|score| (score, index, item.clone()))
+            emoji_reaction_filter_score(item, filter).map(|score| {
+                (
+                    usize::from(emoji_reaction_is_remaining_unicode(item)),
+                    score,
+                    index,
+                    item.clone(),
+                )
+            })
         })
         .collect();
 
-    scored.sort_by_key(|(score, index, _)| (*score, *index));
-    scored.into_iter().map(|(_, _, item)| item).collect()
+    scored.sort_by_key(|(is_remaining_unicode, score, index, _)| {
+        (*is_remaining_unicode, *score, *index)
+    });
+    scored.into_iter().map(|(_, _, _, item)| item).collect()
+}
+
+fn emoji_reaction_is_remaining_unicode(item: &EmojiReactionItem) -> bool {
+    matches!(&item.emoji, crate::discord::ReactionEmoji::Unicode(emoji) if !is_quick_unicode_emoji(emoji))
 }
 
 fn emoji_reaction_filter_score(item: &EmojiReactionItem, filter: &str) -> Option<usize> {

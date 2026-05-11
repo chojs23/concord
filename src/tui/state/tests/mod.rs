@@ -1113,8 +1113,23 @@ fn emoji_picker_items_include_available_custom_emojis_for_selected_message_guild
 
     let items = state.emoji_reaction_items();
 
-    assert_eq!(items.len(), 9);
-    assert_eq!(items[0].emoji, ReactionEmoji::Unicode("👍".to_owned()));
+    assert!(items.len() > 9);
+    assert_eq!(
+        items[..8]
+            .iter()
+            .map(|item| item.emoji.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            ReactionEmoji::Unicode("👍".to_owned()),
+            ReactionEmoji::Unicode("❤️".to_owned()),
+            ReactionEmoji::Unicode("😂".to_owned()),
+            ReactionEmoji::Unicode("🎉".to_owned()),
+            ReactionEmoji::Unicode("😮".to_owned()),
+            ReactionEmoji::Unicode("😢".to_owned()),
+            ReactionEmoji::Unicode("🙏".to_owned()),
+            ReactionEmoji::Unicode("👀".to_owned()),
+        ]
+    );
     assert_eq!(items[8].label, "Party Time");
     assert_eq!(
         items[8].emoji,
@@ -1124,6 +1139,7 @@ fn emoji_picker_items_include_available_custom_emojis_for_selected_message_guild
             animated: true,
         }
     );
+    assert!(matches!(items[9].emoji, ReactionEmoji::Unicode(_)));
 }
 
 #[test]
@@ -1156,7 +1172,7 @@ fn emoji_picker_items_include_custom_emojis_from_update_event() {
 
     let items = state.emoji_reaction_items();
 
-    assert_eq!(items.len(), 9);
+    assert!(items.len() > 9);
     assert_eq!(items[8].label, "Wave");
     assert_eq!(
         items[8].emoji,
@@ -1194,7 +1210,7 @@ fn emoji_picker_uses_channel_guild_when_selected_message_lacks_guild_id() {
 
     let items = state.emoji_reaction_items();
 
-    assert_eq!(items.len(), 9);
+    assert!(items.len() > 9);
     assert_eq!(items[8].label, "Party Time");
 }
 
@@ -1240,7 +1256,13 @@ fn emoji_picker_items_stay_unicode_only_for_direct_messages() {
         forwarded_snapshots: Vec::new(),
     });
 
-    assert_eq!(state.emoji_reaction_items().len(), 8);
+    let items = state.emoji_reaction_items();
+    assert!(items.len() > 8);
+    assert!(
+        items
+            .iter()
+            .all(|item| matches!(item.emoji, ReactionEmoji::Unicode(_)))
+    );
 }
 
 #[test]
