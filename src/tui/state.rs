@@ -17,7 +17,8 @@ use crate::{
 use crate::config::DisplayOptions;
 use crate::discord::{
     AppCommand, AppEvent, ChannelUnreadState, DiscordState, ForumPostArchiveState, MentionInfo,
-    MessageAttachmentUpload, MessageInfo, MessageSnapshotInfo, MessageState, PresenceStatus,
+    MessageAttachmentUpload, MessageInfo, MessageSnapshotInfo, MessageState, MuteDuration,
+    PresenceStatus,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -67,9 +68,9 @@ pub use member_grouping::{MemberEntry, MemberGroup};
 pub use model::{
     ChannelActionItem, ChannelPaneEntry, ChannelSwitcherItem, ChannelThreadItem, EmojiReactionItem,
     FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, ImageViewerItem,
-    MemberActionItem, MessageActionItem, MessageActionKind, PollVotePickerItem,
-    ThreadMessagePreview, ThreadSummary, channel_action_shortcut, guild_action_shortcut,
-    indexed_shortcut, member_action_shortcut, message_action_shortcut,
+    MemberActionItem, MessageActionItem, MessageActionKind, MuteActionDurationItem,
+    PollVotePickerItem, ThreadMessagePreview, ThreadSummary, channel_action_shortcut,
+    guild_action_shortcut, indexed_shortcut, member_action_shortcut, message_action_shortcut,
 };
 #[allow(unused_imports)]
 pub use model::{ChannelActionKind, ChannelBranch, GuildActionKind, GuildBranch, MemberActionKind};
@@ -769,12 +770,19 @@ impl DashboardState {
             );
         }
         if self.guild_action_menu.is_some() {
-            let actions = self.selected_guild_action_items();
-            let matched = actions.iter().enumerate().any(|(index, action)| {
-                action.enabled
-                    && guild_action_shortcut(&actions, index)
-                        .is_some_and(|candidate| candidate == shortcut)
-            });
+            let matched = if self.is_guild_action_mute_duration_phase() {
+                self.selected_guild_mute_duration_items()
+                    .iter()
+                    .enumerate()
+                    .any(|(index, _)| indexed_shortcut(index) == Some(shortcut))
+            } else {
+                let actions = self.selected_guild_action_items();
+                actions.iter().enumerate().any(|(index, action)| {
+                    action.enabled
+                        && guild_action_shortcut(&actions, index)
+                            .is_some_and(|candidate| candidate == shortcut)
+                })
+            };
             return (
                 matched,
                 matched
@@ -792,6 +800,11 @@ impl DashboardState {
                                 .is_some_and(|candidate| candidate == shortcut)
                     })
                 }
+                ChannelActionMenuState::MuteDuration { .. } => self
+                    .selected_channel_mute_duration_items()
+                    .iter()
+                    .enumerate()
+                    .any(|(index, _)| indexed_shortcut(index) == Some(shortcut)),
                 ChannelActionMenuState::Threads { .. } => self
                     .channel_action_thread_items()
                     .iter()
@@ -851,12 +864,47 @@ impl DashboardState {
         self.discord.guild_unread(guild_id)
     }
 
+    pub fn sidebar_channel_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
+        self.discord.channel_sidebar_unread(channel_id)
+    }
+
+    pub fn sidebar_guild_unread(&self, guild_id: Id<GuildMarker>) -> ChannelUnreadState {
+        self.discord.guild_sidebar_unread(guild_id)
+    }
+
+    pub fn channel_notification_muted(&self, channel_id: Id<ChannelMarker>) -> bool {
+        self.discord.channel_notification_muted(channel_id)
+    }
+
+    pub fn guild_notification_muted(&self, guild_id: Id<GuildMarker>) -> bool {
+        self.discord.guild_notification_muted(guild_id)
+    }
+
     pub fn direct_message_unread_count(&self) -> usize {
         self.discord.direct_message_unread_count()
     }
 
     pub fn channel_unread_message_count(&self, channel_id: Id<ChannelMarker>) -> usize {
         self.discord.channel_unread_message_count(channel_id)
+    }
+
+    pub fn toggle_selected_guild_mute(
+        &mut self,
+        duration: Option<MuteDuration>,
+    ) -> Option<AppCommand> {
+        let guild_id = self.selected_guild_cursor_id()?;
+        let label = self
+            .discord
+            .guild(guild_id)
+            .map(|guild| guild.name.clone())
+            .unwrap_or_else(|| format!("server-{}", guild_id.get()));
+        let muted = !self.discord.guild_notification_muted(guild_id);
+        Some(AppCommand::SetGuildMuted {
+            guild_id,
+            muted,
+            duration,
+            label,
+        })
     }
 
     pub(crate) fn desktop_notification_for_event(
@@ -923,6 +971,20 @@ impl DashboardState {
         matches!(
             self.channel_action_menu,
             Some(ChannelActionMenuState::Threads { .. })
+        )
+    }
+
+    pub fn is_channel_action_mute_duration_phase(&self) -> bool {
+        matches!(
+            self.channel_action_menu,
+            Some(ChannelActionMenuState::MuteDuration { .. })
+        )
+    }
+
+    pub fn is_guild_action_mute_duration_phase(&self) -> bool {
+        matches!(
+            self.guild_action_menu,
+            Some(GuildActionMenuState::MuteDuration { .. })
         )
     }
 

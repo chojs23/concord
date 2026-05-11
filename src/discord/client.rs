@@ -7,6 +7,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
+use chrono::{DateTime, Utc};
 use reqwest::header::HeaderValue;
 use tokio::{
     sync::{Mutex as AsyncMutex, mpsc, watch},
@@ -212,6 +213,37 @@ impl DiscordClient {
         message_id: Id<MessageMarker>,
     ) -> Result<()> {
         self.rest.ack_channel(channel_id, message_id).await
+    }
+
+    pub async fn set_guild_muted(
+        &self,
+        guild_id: Id<GuildMarker>,
+        muted: bool,
+        mute_end_time: Option<DateTime<Utc>>,
+        selected_time_window: Option<i64>,
+    ) -> Result<()> {
+        self.rest
+            .set_guild_muted(guild_id, muted, mute_end_time, selected_time_window)
+            .await
+    }
+
+    pub async fn set_channel_muted(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Id<ChannelMarker>,
+        muted: bool,
+        mute_end_time: Option<DateTime<Utc>>,
+        selected_time_window: Option<i64>,
+    ) -> Result<()> {
+        self.rest
+            .set_channel_muted(
+                guild_id,
+                channel_id,
+                muted,
+                mute_end_time,
+                selected_time_window,
+            )
+            .await
     }
 
     pub async fn ack_channels(

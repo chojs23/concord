@@ -33,11 +33,12 @@ use crate::{
     config::DisplayOptions,
     discord::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, AttachmentInfo, ChannelInfo,
-        ChannelRecipientState, ChannelState, ChannelUnreadState, ChannelVisibilityStats, EmbedInfo,
-        FriendStatus, GuildMemberState, MemberInfo, MentionInfo, MessageAttachmentUpload,
+        ChannelNotificationOverrideInfo, ChannelRecipientState, ChannelState, ChannelUnreadState,
+        ChannelVisibilityStats, EmbedInfo, FriendStatus, GuildMemberState,
+        GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageAttachmentUpload,
         MessageInfo, MessageKind, MessageSnapshotInfo, MessageState, MutualGuildInfo,
-        PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo,
-        ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+        NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
+        ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
     },
     tui::{
         format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
@@ -87,11 +88,9 @@ fn options_popup_lines_show_selected_toggle_state() {
     assert_eq!(lines[1].spans[0].content, "› ");
     assert_eq!(lines[1].spans[1].content, "[x] ");
     assert_eq!(lines[2].spans[1].content, "[balanced] ");
-    assert!(
-        lines.last().expect("hint line").spans[0]
-            .content
-            .contains("config.toml")
-    );
+    let footer = &lines.last().expect("hint line").spans[0].content;
+    assert!(footer.contains("saved to "));
+    assert!(footer.contains("Esc close"));
 }
 
 #[test]
@@ -730,6 +729,76 @@ fn server_pane_shows_direct_message_unread_channel_count() {
 }
 
 #[test]
+fn muted_server_name_is_dimmed() {
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(2);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
+        settings: vec![GuildNotificationSettingsInfo {
+            guild_id: Some(guild_id),
+            message_notifications: Some(NotificationLevel::OnlyMentions),
+            muted: true,
+            mute_end_time: None,
+            suppress_everyone: false,
+            suppress_roles: false,
+            channel_overrides: Vec::new(),
+        }],
+    });
+    state.set_guild_view_height(20);
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+
+    terminal
+        .draw(|frame| render_guilds(frame, frame.area(), &state))
+        .expect("draw should succeed");
+
+    let buffer = terminal.backend().buffer();
+    let mut checked = false;
+    for row in 0..buffer.area.height {
+        let text = (0..buffer.area.width)
+            .map(|col| buffer[(col, row)].symbol().to_owned())
+            .collect::<String>();
+        if let Some(name_col) = text.find("guild") {
+            assert!(
+                buffer[(name_col as u16, row)]
+                    .modifier
+                    .contains(Modifier::DIM)
+            );
+            checked = true;
+            break;
+        }
+    }
+
+    assert!(checked, "muted guild row should render guild name");
+}
+
+#[test]
 fn dm_channel_pane_shows_unread_channel_count_badge() {
     let mut state = state_with_unread_direct_messages();
     state.confirm_selected_guild();
@@ -774,6 +843,116 @@ fn dm_channel_pane_shows_loaded_unread_message_count_badge() {
 
     assert!(channel_rows.iter().any(|row| row.contains("(5) @ new")));
     assert!(!channel_rows.iter().any(|row| row.contains("(1) @ new")));
+}
+
+#[test]
+fn muted_category_and_channel_names_are_dimmed() {
+    let mut state = DashboardState::new();
+    let guild_id = Id::new(1);
+    let category_id = Id::new(10);
+    let channel_id = Id::new(11);
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: category_id,
+                parent_id: None,
+                position: Some(0),
+                last_message_id: None,
+                name: "Text Channels".to_owned(),
+                kind: "category".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id,
+                parent_id: Some(category_id),
+                position: Some(0),
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "text".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+        ],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
+        settings: vec![GuildNotificationSettingsInfo {
+            guild_id: Some(guild_id),
+            message_notifications: Some(NotificationLevel::OnlyMentions),
+            muted: false,
+            mute_end_time: None,
+            suppress_everyone: false,
+            suppress_roles: false,
+            channel_overrides: vec![ChannelNotificationOverrideInfo {
+                channel_id: category_id,
+                message_notifications: None,
+                muted: true,
+                mute_end_time: None,
+            }],
+        }],
+    });
+    state.set_channel_view_height(20);
+    let backend = TestBackend::new(40, 8);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+
+    terminal
+        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .expect("draw should succeed");
+
+    let buffer = terminal.backend().buffer();
+    let mut saw_category = false;
+    let mut saw_channel = false;
+    for row in 0..buffer.area.height {
+        let text = (0..buffer.area.width)
+            .map(|col| buffer[(col, row)].symbol().to_owned())
+            .collect::<String>();
+        if let Some(name_col) = text.find("Text Channels") {
+            assert!(
+                buffer[(name_col as u16, row)]
+                    .modifier
+                    .contains(Modifier::DIM)
+            );
+            saw_category = true;
+        }
+        if let Some(name_col) = text.find("general") {
+            assert!(
+                buffer[(name_col as u16, row)]
+                    .modifier
+                    .contains(Modifier::DIM)
+            );
+            saw_channel = true;
+        }
+    }
+
+    assert!(
+        saw_category,
+        "muted category row should render category name"
+    );
+    assert!(
+        saw_channel,
+        "muted category child row should render channel name"
+    );
 }
 
 #[test]
@@ -2442,6 +2621,11 @@ fn channel_action_menu_renders_pinned_and_thread_actions() {
             label: "Show threads (none)".to_owned(),
             enabled: false,
         },
+        ChannelActionItem {
+            kind: ChannelActionKind::ToggleMute,
+            label: "Mute channel".to_owned(),
+            enabled: true,
+        },
     ];
 
     let lines = channel_action_menu_lines(&actions, 0);
@@ -2451,8 +2635,25 @@ fn channel_action_menu_renders_pinned_and_thread_actions() {
         vec![
             "› [p] Show pinned messages",
             "  [t] Show threads (none)",
+            "  [u] Mute channel",
             "Shortcut/Enter select · Esc close",
         ]
+    );
+}
+
+#[test]
+fn channel_action_menu_renders_category_mute_shortcut() {
+    let actions = vec![ChannelActionItem {
+        kind: ChannelActionKind::ToggleMute,
+        label: "Mute category".to_owned(),
+        enabled: true,
+    }];
+
+    let lines = channel_action_menu_lines(&actions, 0);
+
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec!["› [u] Mute category", "Shortcut/Enter select · Esc close",]
     );
 }
 
@@ -2476,12 +2677,19 @@ fn guild_action_menu_renders_placeholder_action() {
 }
 
 #[test]
-fn guild_action_menu_renders_mark_server_read_shortcut() {
-    let actions = vec![GuildActionItem {
-        kind: GuildActionKind::MarkAsRead,
-        label: "Mark server as read".to_owned(),
-        enabled: true,
-    }];
+fn guild_action_menu_renders_mark_server_read_and_mute_shortcuts() {
+    let actions = vec![
+        GuildActionItem {
+            kind: GuildActionKind::MarkAsRead,
+            label: "Mark server as read".to_owned(),
+            enabled: true,
+        },
+        GuildActionItem {
+            kind: GuildActionKind::ToggleMute,
+            label: "Mute server".to_owned(),
+            enabled: true,
+        },
+    ];
 
     let lines = guild_action_menu_lines(&actions, 0);
 
@@ -2489,6 +2697,7 @@ fn guild_action_menu_renders_mark_server_read_shortcut() {
         line_texts_from_ratatui(&lines),
         vec![
             "› [m] Mark server as read",
+            "  [u] Mute server",
             "Shortcut/Enter select · Esc close"
         ]
     );

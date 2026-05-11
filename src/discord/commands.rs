@@ -49,6 +49,28 @@ impl ForumPostArchiveState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MuteDuration {
+    Minutes(u64),
+    Permanent,
+}
+
+impl MuteDuration {
+    pub fn minutes(self) -> Option<u64> {
+        match self {
+            Self::Minutes(minutes) => Some(minutes),
+            Self::Permanent => None,
+        }
+    }
+
+    pub fn selected_time_window_seconds(self) -> i64 {
+        match self {
+            Self::Minutes(minutes) => i64::try_from(minutes.saturating_mul(60)).unwrap_or(i64::MAX),
+            Self::Permanent => -1,
+        }
+    }
+}
+
 impl ReactionEmoji {
     pub fn status_label(&self) -> String {
         match self {
@@ -166,6 +188,19 @@ pub enum AppCommand {
     AckChannel {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
+    },
+    SetGuildMuted {
+        guild_id: Id<GuildMarker>,
+        muted: bool,
+        duration: Option<MuteDuration>,
+        label: String,
+    },
+    SetChannelMuted {
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Id<ChannelMarker>,
+        muted: bool,
+        duration: Option<MuteDuration>,
+        label: String,
     },
     AckChannels {
         targets: Vec<(Id<ChannelMarker>, Id<MessageMarker>)>,

@@ -3913,7 +3913,7 @@ fn channel_action_menu_lists_threads_for_selected_channel() {
 
     assert!(state.is_channel_action_menu_open());
     let actions = state.selected_channel_action_items();
-    assert_eq!(actions.len(), 3);
+    assert_eq!(actions.len(), 4);
     assert_eq!(actions[0].kind, ChannelActionKind::LoadPinnedMessages);
     assert_eq!(actions[0].label, "Show pinned messages");
     assert!(actions[0].enabled);
@@ -3921,6 +3921,8 @@ fn channel_action_menu_lists_threads_for_selected_channel() {
     assert!(actions[1].enabled);
     assert_eq!(actions[2].kind, ChannelActionKind::MarkAsRead);
     assert_eq!(actions[2].label, "Mark as read");
+    assert_eq!(actions[3].kind, ChannelActionKind::ToggleMute);
+    assert_eq!(actions[3].label, "Mute channel");
 
     state.move_channel_action_down();
     let command = state.activate_selected_channel_action();
@@ -4061,11 +4063,99 @@ fn guild_action_menu_lists_disabled_mark_server_read_when_guild_is_read() {
     assert!(state.is_guild_action_menu_open());
     assert_eq!(state.guild_action_menu_title(), Some("guild 1".to_owned()));
     let actions = state.selected_guild_action_items();
-    assert_eq!(actions.len(), 1);
+    assert_eq!(actions.len(), 2);
     assert_eq!(actions[0].kind, GuildActionKind::MarkAsRead);
     assert_eq!(actions[0].label, "Mark server as read");
     assert!(!actions[0].enabled);
+    assert_eq!(actions[1].kind, GuildActionKind::ToggleMute);
+    assert_eq!(actions[1].label, "Mute server");
     assert_eq!(state.activate_selected_guild_action(), None);
+}
+
+#[test]
+fn channel_action_menu_toggle_mute_opens_duration_then_dispatches_command() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    state.move_down();
+    state.open_selected_channel_actions();
+    state.select_channel_action_row(3);
+
+    assert_eq!(state.activate_selected_channel_action(), None);
+    assert!(state.is_channel_action_mute_duration_phase());
+
+    let command = state.activate_selected_channel_action();
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SetChannelMuted {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            muted: true,
+            duration: Some(crate::discord::MuteDuration::Minutes(15)),
+            label: "#general".to_owned(),
+        })
+    );
+    assert!(!state.is_channel_action_menu_open());
+}
+
+#[test]
+fn category_action_menu_only_lists_mute_and_dispatches_command() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    state.move_up();
+    state.open_selected_channel_actions();
+
+    assert!(state.is_channel_action_menu_open());
+    assert_eq!(
+        state.channel_action_menu_title(),
+        Some("Text Channels".to_owned())
+    );
+
+    let actions = state.selected_channel_action_items();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].kind, ChannelActionKind::ToggleMute);
+    assert_eq!(actions[0].label, "Mute category");
+
+    assert_eq!(state.activate_selected_channel_action(), None);
+    assert!(state.is_channel_action_mute_duration_phase());
+
+    let command = state.activate_selected_channel_action();
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SetChannelMuted {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(10),
+            muted: true,
+            duration: Some(crate::discord::MuteDuration::Minutes(15)),
+            label: "Text Channels".to_owned(),
+        })
+    );
+    assert!(!state.is_channel_action_menu_open());
+}
+
+#[test]
+fn guild_action_menu_toggle_mute_opens_duration_then_dispatches_command() {
+    let mut state = state_with_many_guilds(1);
+    state.focus_pane(FocusPane::Guilds);
+    state.open_selected_guild_actions();
+    state.select_guild_action_row(1);
+
+    assert_eq!(state.activate_selected_guild_action(), None);
+    assert!(state.is_guild_action_mute_duration_phase());
+
+    let command = state.activate_selected_guild_action();
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SetGuildMuted {
+            guild_id: Id::new(1),
+            muted: true,
+            duration: Some(crate::discord::MuteDuration::Minutes(15)),
+            label: "guild 1".to_owned(),
+        })
+    );
+    assert!(!state.is_guild_action_menu_open());
 }
 
 #[test]

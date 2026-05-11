@@ -46,6 +46,66 @@ pub(super) struct GuildNotificationSettingsState {
 }
 
 impl DiscordState {
+    pub fn channel_sidebar_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
+        if self.channel_notification_muted(channel_id) {
+            ChannelUnreadState::Seen
+        } else {
+            self.channel_unread(channel_id)
+        }
+    }
+
+    pub fn guild_sidebar_unread(&self, guild_id: Id<GuildMarker>) -> ChannelUnreadState {
+        if self.guild_notification_muted(guild_id) {
+            ChannelUnreadState::Seen
+        } else {
+            self.guild_unread(guild_id)
+        }
+    }
+
+    pub fn guild_notification_muted(&self, guild_id: Id<GuildMarker>) -> bool {
+        self.notification_settings
+            .get(&guild_id)
+            .is_some_and(|settings| {
+                notification_setting_muted(settings.muted, settings.mute_end_time.as_deref())
+            })
+    }
+
+    pub fn channel_notification_muted(&self, channel_id: Id<ChannelMarker>) -> bool {
+        match self.channel_guild_id(channel_id) {
+            Some(guild_id) => self
+                .notification_settings
+                .get(&guild_id)
+                .is_some_and(|settings| {
+                    self.channel_notification_muted_in_settings(settings, channel_id)
+                }),
+            None => self
+                .private_notification_settings
+                .as_ref()
+                .is_some_and(|settings| {
+                    self.channel_notification_muted_in_settings(settings, channel_id)
+                }),
+        }
+    }
+
+    pub fn guild_notification_settings_info(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> GuildNotificationSettingsInfo {
+        let settings = match guild_id {
+            Some(guild_id) => self.notification_settings.get(&guild_id),
+            None => self.private_notification_settings.as_ref(),
+        };
+        GuildNotificationSettingsInfo {
+            guild_id,
+            message_notifications: settings.and_then(|settings| settings.message_notifications),
+            muted: settings.is_some_and(|settings| settings.muted),
+            mute_end_time: settings.and_then(|settings| settings.mute_end_time.clone()),
+            suppress_everyone: settings.is_some_and(|settings| settings.suppress_everyone),
+            suppress_roles: settings.is_some_and(|settings| settings.suppress_roles),
+            channel_overrides: settings.map(channel_override_infos).unwrap_or_default(),
+        }
+    }
+
     pub fn channel_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
         let latest = self
             .channels
@@ -221,7 +281,7 @@ impl DiscordState {
             };
         };
         if notification_setting_muted(settings.muted, settings.mute_end_time.as_deref())
-            || self.channel_notification_muted(settings, channel_id)
+            || self.channel_notification_muted_in_settings(settings, channel_id)
         {
             return MessageNotificationKind::None;
         }
@@ -251,7 +311,7 @@ impl DiscordState {
             return MessageNotificationKind::Notify;
         };
         if notification_setting_muted(settings.muted, settings.mute_end_time.as_deref())
-            || self.channel_notification_muted(settings, channel_id)
+            || self.channel_notification_muted_in_settings(settings, channel_id)
         {
             return MessageNotificationKind::None;
         }
@@ -329,19 +389,13 @@ impl DiscordState {
             .unwrap_or(NotificationLevel::OnlyMentions)
     }
 
-    fn channel_notification_muted(
+    fn channel_notification_muted_in_settings(
         &self,
         settings: &GuildNotificationSettingsState,
         channel_id: Id<ChannelMarker>,
     ) -> bool {
-        let direct_muted = settings
-            .channel_overrides
-            .get(&channel_id)
-            .is_some_and(|setting| {
-                notification_setting_muted(setting.muted, setting.mute_end_time.as_deref())
-            });
-        if direct_muted {
-            return true;
+        if let Some(setting) = settings.channel_overrides.get(&channel_id) {
+            return notification_setting_muted(setting.muted, setting.mute_end_time.as_deref());
         }
         self.channels
             .get(&channel_id)
@@ -383,6 +437,21 @@ impl DiscordState {
                     .any(|role_id| content.contains(&format!("<@&{}>", role_id.get())))
             })
     }
+}
+
+fn channel_override_infos(
+    settings: &GuildNotificationSettingsState,
+) -> Vec<ChannelNotificationOverrideInfo> {
+    settings
+        .channel_overrides
+        .iter()
+        .map(|(channel_id, setting)| ChannelNotificationOverrideInfo {
+            channel_id: *channel_id,
+            message_notifications: setting.message_notifications,
+            muted: setting.muted,
+            mute_end_time: setting.mute_end_time.clone(),
+        })
+        .collect()
 }
 
 fn notification_override_map(
