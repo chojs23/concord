@@ -160,7 +160,10 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
                     format!("{entry:?} unread={}", state.direct_message_unread_count())
                 }
                 state::GuildPaneEntry::Guild { state: guild, .. } => {
-                    format!("{entry:?} unread={:?}", state.guild_unread(guild.id))
+                    format!(
+                        "{entry:?} unread={:?}",
+                        state.sidebar_guild_unread(guild.id)
+                    )
                 }
                 state::GuildPaneEntry::FolderHeader { .. } => format!("{entry:?}"),
             })

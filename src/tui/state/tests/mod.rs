@@ -4664,7 +4664,10 @@ fn guild_action_menu_marks_unread_server_channels_as_read() {
 
     let command = state.activate_selected_guild_action();
 
-    assert_eq!(state.guild_unread(guild_id), ChannelUnreadState::Seen);
+    assert_eq!(
+        state.sidebar_guild_unread(guild_id),
+        ChannelUnreadState::Seen
+    );
     assert!(!state.is_guild_action_menu_open());
     let Some(AppCommand::AckChannels { mut targets }) = command else {
         panic!("expected bulk channel ack command");
