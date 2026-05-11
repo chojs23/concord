@@ -3593,97 +3593,55 @@ fn typing_colon_plus_two_letters_opens_emoji_picker() {
 }
 
 #[test]
-fn emoji_picker_includes_available_custom_emojis_for_selected_guild() {
-    let mut state = state_with_custom_emojis();
-    state.push_effect(AppEvent::CurrentUserCapabilities {
-        can_use_animated_custom_emojis: true,
-    });
-    state.start_composer();
-    for ch in ":pa".chars() {
-        state.push_composer_char(ch);
+fn unavailable_custom_emojis_stay_visible_but_not_selectable() {
+    for (label, query, shortcode, wire_format, set_capability) in [
+        (
+            "animated emoji without Nitro",
+            ":pa",
+            "party_time",
+            "<a:party_time:50>",
+            Some(false),
+        ),
+        (
+            "animated emoji with unknown Nitro state",
+            ":pa",
+            "party_time",
+            "<a:party_time:50>",
+            None,
+        ),
+        (
+            "server-unavailable static emoji",
+            ":go",
+            "gone",
+            "<:gone:51>",
+            None,
+        ),
+    ] {
+        let mut state = state_with_custom_emojis();
+        if let Some(can_use_animated_custom_emojis) = set_capability {
+            state.push_event(AppEvent::CurrentUserCapabilities {
+                can_use_animated_custom_emojis,
+            });
+        }
+        state.start_composer();
+        for ch in query.chars() {
+            state.push_composer_char(ch);
+        }
+
+        let candidates = state.composer_emoji_candidates();
+        let entry = candidates
+            .iter()
+            .find(|entry| entry.shortcode == shortcode)
+            .unwrap_or_else(|| panic!("{label} should stay visible in suggestions"));
+
+        assert!(!entry.available, "{label} should be unavailable");
+        assert_eq!(entry.wire_format.as_deref(), Some(wire_format));
+        assert!(
+            !state.confirm_composer_emoji(),
+            "{label} should not confirm"
+        );
+        assert_eq!(state.composer_input(), query);
     }
-
-    let candidates = state.composer_emoji_candidates();
-
-    assert_eq!(state.composer_emoji_query(), Some("pa"));
-    assert_eq!(candidates[0].shortcode, "party_time");
-    assert_eq!(
-        candidates[0].wire_format.as_deref(),
-        Some("<a:party_time:50>")
-    );
-}
-
-#[test]
-fn animated_custom_emoji_is_marked_unavailable_without_nitro() {
-    let mut state = state_with_custom_emojis();
-    state.push_event(AppEvent::CurrentUserCapabilities {
-        can_use_animated_custom_emojis: false,
-    });
-    state.start_composer();
-    for ch in ":pa".chars() {
-        state.push_composer_char(ch);
-    }
-
-    let candidates = state.composer_emoji_candidates();
-    let party_time = candidates
-        .iter()
-        .find(|entry| entry.shortcode == "party_time")
-        .expect("animated custom emoji should stay visible in suggestions");
-
-    assert!(!party_time.available);
-    assert_eq!(party_time.wire_format.as_deref(), Some("<a:party_time:50>"));
-    assert!(!state.confirm_composer_emoji());
-    assert_eq!(state.composer_input(), ":pa");
-    assert_eq!(
-        state.submit_composer(),
-        Some(AppCommand::SendMessage {
-            channel_id: Id::new(2),
-            content: ":pa".to_owned(),
-            reply_to: None,
-            attachments: Vec::new(),
-        })
-    );
-}
-
-#[test]
-fn animated_custom_emoji_is_marked_unavailable_when_nitro_state_is_unknown() {
-    let mut state = state_with_custom_emojis();
-    state.start_composer();
-    for ch in ":pa".chars() {
-        state.push_composer_char(ch);
-    }
-
-    let candidates = state.composer_emoji_candidates();
-    let party_time = candidates
-        .iter()
-        .find(|entry| entry.shortcode == "party_time")
-        .expect("animated custom emoji should stay visible in suggestions");
-
-    assert!(!party_time.available);
-    assert!(!state.confirm_composer_emoji());
-    assert_eq!(state.composer_input(), ":pa");
-}
-
-#[test]
-fn animated_custom_emoji_remains_available_with_nitro() {
-    let mut state = state_with_custom_emojis();
-    state.push_event(AppEvent::CurrentUserCapabilities {
-        can_use_animated_custom_emojis: true,
-    });
-    state.start_composer();
-    for ch in ":pa".chars() {
-        state.push_composer_char(ch);
-    }
-
-    let candidates = state.composer_emoji_candidates();
-    let party_time = candidates
-        .iter()
-        .find(|entry| entry.shortcode == "party_time")
-        .expect("animated custom emoji should stay visible in suggestions");
-
-    assert!(party_time.available);
-    assert!(state.confirm_composer_emoji());
-    assert_eq!(state.composer_input(), ":party_time: ");
 }
 
 #[test]
@@ -3755,26 +3713,7 @@ fn emoji_picker_keeps_more_than_visible_candidates_selectable() {
 }
 
 #[test]
-fn unavailable_custom_emojis_are_marked_in_candidates() {
-    let mut state = state_with_custom_emojis();
-    state.start_composer();
-    for ch in ":go".chars() {
-        state.push_composer_char(ch);
-    }
-
-    let candidates = state.composer_emoji_candidates();
-    let gone = candidates
-        .iter()
-        .find(|entry| entry.shortcode == "gone")
-        .expect("unavailable custom emoji should stay visible in suggestions");
-
-    assert_eq!(state.composer_emoji_query(), Some("go"));
-    assert!(!gone.available);
-    assert_eq!(gone.wire_format.as_deref(), Some("<:gone:51>"));
-}
-
-#[test]
-fn confirm_custom_emoji_keeps_readable_text_and_submit_expands_to_wire_format() {
+fn custom_emoji_submit_keeps_readable_text_and_sends_wire_format() {
     let mut state = state_with_custom_emojis();
     state.push_event(AppEvent::CurrentUserCapabilities {
         can_use_animated_custom_emojis: true,
@@ -3792,6 +3731,35 @@ fn confirm_custom_emoji_keeps_readable_text_and_submit_expands_to_wire_format() 
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
             content: "<a:party_time:50>".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+    );
+
+    let guild_id = Id::new(1);
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id,
+        emojis: vec![CustomEmojiInfo {
+            id: Id::new(60),
+            name: "wave".to_owned(),
+            animated: false,
+            available: true,
+        }],
+    });
+    state.start_composer();
+    for ch in ":wa".chars() {
+        state.push_composer_char(ch);
+    }
+
+    assert!(state.confirm_composer_emoji());
+
+    assert_eq!(state.composer_input(), ":wave: ");
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(2),
+            content: "<:wave:60>".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
         })
@@ -3828,38 +3796,6 @@ fn submit_expands_mention_and_following_custom_emoji_without_stale_ranges() {
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
             content: "<@20> <a:party_time:50>".to_owned(),
-            reply_to: None,
-            attachments: Vec::new(),
-        })
-    );
-}
-
-#[test]
-fn static_custom_emoji_submit_uses_static_markup() {
-    let guild_id = Id::new(1);
-    let mut state = state_with_messages(1);
-    state.push_event(AppEvent::GuildEmojisUpdate {
-        guild_id,
-        emojis: vec![CustomEmojiInfo {
-            id: Id::new(60),
-            name: "wave".to_owned(),
-            animated: false,
-            available: true,
-        }],
-    });
-    state.start_composer();
-    for ch in ":wa".chars() {
-        state.push_composer_char(ch);
-    }
-
-    assert!(state.confirm_composer_emoji());
-
-    assert_eq!(state.composer_input(), ":wave: ");
-    assert_eq!(
-        state.submit_composer(),
-        Some(AppCommand::SendMessage {
-            channel_id: Id::new(2),
-            content: "<:wave:60>".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
         })

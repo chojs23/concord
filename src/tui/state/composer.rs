@@ -110,13 +110,19 @@ pub(super) fn build_emoji_candidates(
         .filter(|emoji| emoji.name.to_ascii_lowercase().starts_with(&needle))
         .map(|emoji| {
             let shortcode = emoji.name.clone();
+            let marker = if emoji.animated { "◇" } else { "◆" };
+            let label = if emoji.animated {
+                "animated custom emoji"
+            } else {
+                "custom emoji"
+            };
             (
                 0,
                 shortcode.to_ascii_lowercase(),
                 EmojiPickerEntry {
-                    emoji: custom_emoji_picker_marker(emoji.animated).to_owned(),
+                    emoji: marker.to_owned(),
                     shortcode: shortcode.clone(),
-                    name: custom_emoji_picker_label(emoji.animated).to_owned(),
+                    name: label.to_owned(),
                     wire_format: Some(custom_emoji_markup(&shortcode, emoji.id, emoji.animated)),
                     available: emoji.available
                         && (!emoji.animated || can_use_animated_custom_emojis),
@@ -149,18 +155,6 @@ pub(super) fn build_emoji_candidates(
     scored.into_iter().map(|(_, _, entry)| entry).collect()
 }
 
-fn custom_emoji_picker_marker(animated: bool) -> &'static str {
-    if animated { "◇" } else { "◆" }
-}
-
-fn custom_emoji_picker_label(animated: bool) -> &'static str {
-    if animated {
-        "animated custom emoji"
-    } else {
-        "custom emoji"
-    }
-}
-
 fn custom_emoji_markup(name: &str, id: Id<EmojiMarker>, animated: bool) -> String {
     if animated {
         format!("<a:{name}:{}>", id.get())
@@ -174,7 +168,7 @@ fn custom_emoji_image_url(id: Id<EmojiMarker>, animated: bool) -> String {
     format!("https://cdn.discordapp.com/emojis/{}.{extension}", id.get())
 }
 
-pub(super) fn should_start_mention_query(input: &str) -> bool {
+pub(super) fn should_start_completion_query(input: &str) -> bool {
     input.chars().last().is_none_or(char::is_whitespace)
 }
 
@@ -184,10 +178,6 @@ pub(super) fn is_mention_query_char(value: char) -> bool {
 
 pub(super) fn is_emoji_query_char(value: char) -> bool {
     value.is_ascii_alphanumeric() || matches!(value, '_' | '-' | '+')
-}
-
-pub(super) fn should_start_emoji_query(input: &str) -> bool {
-    input.chars().last().is_none_or(char::is_whitespace)
 }
 
 pub(super) fn expand_emoji_shortcodes(input: &str) -> String {

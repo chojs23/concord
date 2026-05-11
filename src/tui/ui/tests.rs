@@ -479,43 +479,7 @@ fn composer_lines_show_pending_upload_above_input() {
 }
 
 #[test]
-fn composer_lines_blank_loaded_custom_emoji_fallback() {
-    let mut state = state_with_message();
-    state.push_event(AppEvent::GuildEmojisUpdate {
-        guild_id: Id::new(1),
-        emojis: vec![CustomEmojiInfo {
-            id: Id::new(60),
-            name: "wave".to_owned(),
-            animated: false,
-            available: true,
-        }],
-    });
-    state.start_composer();
-    for ch in ":wa".chars() {
-        state.push_composer_char(ch);
-    }
-    assert!(state.confirm_composer_emoji());
-
-    let loading_lines = composer_lines_with_loaded_custom_emoji_urls(&state, 80, &[]);
-    let loaded_lines = composer_lines_with_loaded_custom_emoji_urls(
-        &state,
-        80,
-        &["https://cdn.discordapp.com/emojis/60.png".to_owned()],
-    );
-
-    assert_eq!(line_texts_from_ratatui(&loading_lines), vec!["> :wave: "]);
-    assert_eq!(
-        line_texts_from_ratatui(&loaded_lines),
-        vec![format!("> {} ", " ".repeat(2))]
-    );
-    assert_eq!(
-        composer_cursor_position(Rect::new(10, 20, 20, 5), &state),
-        Some(Position { x: 20, y: 21 })
-    );
-}
-
-#[test]
-fn composer_lines_keep_text_close_after_loaded_custom_emoji() {
+fn composer_lines_use_image_width_for_loaded_custom_emoji() {
     let mut state = state_with_message();
     state.push_event(AppEvent::GuildEmojisUpdate {
         guild_id: Id::new(1),
@@ -535,12 +499,17 @@ fn composer_lines_keep_text_close_after_loaded_custom_emoji() {
         state.push_composer_char(ch);
     }
 
+    let loading_lines = composer_lines_with_loaded_custom_emoji_urls(&state, 80, &[]);
     let loaded_lines = composer_lines_with_loaded_custom_emoji_urls(
         &state,
         80,
         &["https://cdn.discordapp.com/emojis/60.png".to_owned()],
     );
 
+    assert_eq!(
+        line_texts_from_ratatui(&loading_lines),
+        vec!["> :long_custom: text"]
+    );
     assert_eq!(line_texts_from_ratatui(&loaded_lines), vec![">    text"]);
 }
 
@@ -581,7 +550,7 @@ fn composer_cursor_position_accounts_for_upload_and_reply_rows() {
 }
 
 #[test]
-fn dashboard_renders_emoji_shortcode_picker_above_composer() {
+fn dashboard_renders_emoji_picker_above_composer() {
     let mut state = state_with_message();
     state.start_composer();
     for ch in ":heart".chars() {
@@ -599,10 +568,7 @@ fn dashboard_renders_emoji_shortcode_picker_above_composer() {
         rendered.contains(":heart:"),
         "emoji picker should show matching shortcode:\n{rendered}"
     );
-}
 
-#[test]
-fn dashboard_renders_custom_emoji_picker_candidate() {
     let mut state = state_with_message();
     state.push_event(AppEvent::GuildEmojisUpdate {
         guild_id: Id::new(1),
@@ -691,7 +657,7 @@ fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
 }
 
 #[test]
-fn dashboard_renders_scrollbar_for_overflowing_mention_picker() {
+fn dashboard_renders_scrollbar_for_overflowing_composer_pickers() {
     let mut state = state_with_message();
     for index in 0..10 {
         state.push_event(AppEvent::GuildMemberUpsert {
@@ -727,10 +693,7 @@ fn dashboard_renders_scrollbar_for_overflowing_mention_picker() {
         rendered.contains('┃'),
         "overflowing mention picker should render a scrollbar thumb:\n{rendered}"
     );
-}
 
-#[test]
-fn dashboard_renders_scrollbar_for_overflowing_emoji_picker() {
     let mut state = state_with_message();
     state.push_event(AppEvent::GuildEmojisUpdate {
         guild_id: Id::new(1),
@@ -1963,35 +1926,22 @@ fn embed_text_emits_inline_emoji_slot_for_image_overlay() {
 }
 
 #[test]
-fn loaded_custom_emoji_message_keeps_following_text_close() {
-    let message = message_with_content(Some("<:long_custom:42>text".to_owned()));
-    let loaded_urls = vec!["https://cdn.discordapp.com/emojis/42.png".to_owned()];
-    let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
-        &message,
-        &DashboardState::new(),
-        200,
-        &loaded_urls,
-    );
-
-    assert_eq!(line_texts(&lines), vec!["  text"]);
-    assert_eq!(lines[0].image_slots[0].col, 0);
-    assert_eq!(lines[0].image_slots[0].display_width, 2);
-}
-
-#[test]
-fn loaded_custom_emoji_message_wraps_using_image_width() {
+fn loaded_custom_emoji_message_uses_image_width() {
     let message = message_with_content(Some("<:long_custom:42>text".to_owned()));
     let loaded_urls = vec!["https://cdn.discordapp.com/emojis/42.png".to_owned()];
 
-    let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
-        &message,
-        &DashboardState::new(),
-        6,
-        &loaded_urls,
-    );
+    for width in [200, 6] {
+        let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+            &message,
+            &DashboardState::new(),
+            width,
+            &loaded_urls,
+        );
 
-    assert_eq!(line_texts(&lines), vec!["  text"]);
-    assert_eq!(lines[0].image_slots[0].col, 0);
+        assert_eq!(line_texts(&lines), vec!["  text"]);
+        assert_eq!(lines[0].image_slots[0].col, 0);
+        assert_eq!(lines[0].image_slots[0].display_width, 2);
+    }
 }
 
 #[test]

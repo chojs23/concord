@@ -406,7 +406,13 @@ pub(super) fn render_composer_mention_picker(
         .title(" mention ")
         .title_style(Style::default().fg(Color::White).bold());
     frame.render_widget(Paragraph::new(lines).block(block), area);
-    render_picker_scrollbar(frame, area, window_start, visible_count, candidates.len());
+    render_vertical_scrollbar(
+        frame,
+        panel_scrollbar_area(area),
+        window_start,
+        visible_count,
+        candidates.len(),
+    );
 }
 
 pub(super) fn render_composer_emoji_picker(
@@ -453,7 +459,13 @@ pub(super) fn render_composer_emoji_picker(
     if state.show_custom_emoji() {
         render_composer_emoji_picker_images(frame, area, visible_candidates, emoji_images);
     }
-    render_picker_scrollbar(frame, area, window_start, visible_count, candidates.len());
+    render_vertical_scrollbar(
+        frame,
+        panel_scrollbar_area(area),
+        window_start,
+        visible_count,
+        candidates.len(),
+    );
 }
 
 /// Picks a rectangle directly above the composer for the picker. Returns
@@ -503,22 +515,6 @@ fn picker_inner_width(area: Rect, shows_scrollbar: bool) -> usize {
     area.width
         .saturating_sub(2)
         .saturating_sub(u16::from(shows_scrollbar)) as usize
-}
-
-fn render_picker_scrollbar(
-    frame: &mut Frame,
-    area: Rect,
-    position: usize,
-    visible_count: usize,
-    total_count: usize,
-) {
-    render_vertical_scrollbar(
-        frame,
-        panel_scrollbar_area(area),
-        position,
-        visible_count,
-        total_count,
-    );
 }
 
 fn mention_picker_lines(

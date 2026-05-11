@@ -106,103 +106,6 @@ impl MessageContentLine {
         self
     }
 
-    /// Blanks the `:name:` fallback of slots whose image is loaded, so the
-    /// overlay is the only visible thing. Slots without a loaded image keep
-    /// the textual fallback as a readable placeholder.
-    #[cfg(test)]
-    pub(super) fn blank_loaded_emoji_fallbacks(
-        &mut self,
-        mut loaded_predicate: impl FnMut(&str) -> bool,
-    ) {
-        if self.image_slots.is_empty() {
-            return;
-        }
-        let mut slots: Vec<(usize, bool)> = self
-            .image_slots
-            .iter()
-            .enumerate()
-            .filter_map(|(index, slot)| {
-                let end = slot.byte_start.saturating_add(slot.byte_len);
-                if end > self.text.len()
-                    || !self.text.is_char_boundary(slot.byte_start)
-                    || !self.text.is_char_boundary(end)
-                {
-                    return None;
-                }
-                Some((index, loaded_predicate(&slot.url)))
-            })
-            .collect();
-        slots.sort_by_key(|(index, _)| self.image_slots[*index].byte_start);
-
-        let original = self.text.clone();
-        let mut output = String::with_capacity(original.len());
-        let mut cursor = 0usize;
-        let mut replacements = Vec::new();
-        let mut slot_updates = vec![None; self.image_slots.len()];
-
-        for (index, loaded) in slots {
-            let slot = &self.image_slots[index];
-            let start = slot.byte_start;
-            let end = slot.byte_start.saturating_add(slot.byte_len);
-            if start < cursor {
-                continue;
-            }
-            output.push_str(&original[cursor..start]);
-            let new_start = output.len();
-            let new_col = u16::try_from(output.width()).unwrap_or(u16::MAX);
-            if loaded {
-                let placeholder = " ".repeat(usize::from(EMOJI_REACTION_IMAGE_WIDTH));
-                output.push_str(&placeholder);
-                replacements.push(LoadedEmojiReplacement {
-                    start,
-                    end,
-                    new_start,
-                    new_len: placeholder.len(),
-                });
-                slot_updates[index] = Some((
-                    new_start,
-                    placeholder.len(),
-                    EMOJI_REACTION_IMAGE_WIDTH,
-                    new_col,
-                ));
-            } else {
-                output.push_str(&original[start..end]);
-                slot_updates[index] = Some((new_start, slot.byte_len, slot.display_width, new_col));
-            }
-            cursor = end;
-        }
-
-        if replacements.is_empty() {
-            return;
-        }
-        output.push_str(&original[cursor..]);
-        self.text = output;
-
-        for (index, slot) in self.image_slots.iter_mut().enumerate() {
-            if let Some((byte_start, byte_len, display_width, col)) = slot_updates[index] {
-                slot.byte_start = byte_start;
-                slot.byte_len = byte_len;
-                slot.display_width = display_width;
-                slot.col = col;
-            } else {
-                slot.byte_start = remap_loaded_emoji_offset(&replacements, slot.byte_start);
-            }
-        }
-        for highlight in &mut self.mention_highlights {
-            let start = remap_loaded_emoji_offset(&replacements, highlight.start);
-            let end = remap_loaded_emoji_offset(&replacements, highlight.end);
-            highlight.start = start;
-            highlight.end = end;
-        }
-        for prefix in &mut self.styled_prefixes {
-            let start = remap_loaded_emoji_offset(&replacements, prefix.start);
-            let end =
-                remap_loaded_emoji_offset(&replacements, prefix.start.saturating_add(prefix.len));
-            prefix.start = start;
-            prefix.len = end.saturating_sub(start);
-        }
-    }
-
     fn styled_range(&mut self, start: usize, len: usize, style: Style) {
         let end = start.saturating_add(len).min(self.text.len());
         if start < end {
@@ -1817,7 +1720,6 @@ pub(super) fn mention_highlight_style(kind: TextHighlightKind) -> Style {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use unicode_width::UnicodeWidthStr;
 
     #[test]
     fn message_content_line_spans_combine_prefix_and_mention_styles() {
@@ -1851,67 +1753,6 @@ mod tests {
             spans[2].style.bg,
             mention_highlight_style(TextHighlightKind::SelfMention).bg
         );
-    }
-
-    #[test]
-    fn loaded_custom_emoji_placeholder_keeps_following_text_close() {
-        let fallback = ":long_custom:";
-        let mut line = MessageContentLine::styled_text(
-            format!("{fallback}text"),
-            Style::default(),
-            Vec::new(),
-        )
-        .with_image_slots(vec![MessageContentImageSlot {
-            col: 0,
-            byte_start: 0,
-            byte_len: fallback.len(),
-            display_width: fallback.len() as u16,
-            url: "emoji-url".to_owned(),
-        }]);
-
-        line.blank_loaded_emoji_fallbacks(|url| url == "emoji-url");
-
-        assert_eq!(line.text, "  text");
-        assert_eq!(line.image_slots[0].byte_start, 0);
-        assert_eq!(
-            line.image_slots[0].byte_len,
-            usize::from(EMOJI_REACTION_IMAGE_WIDTH)
-        );
-        assert_eq!(
-            line.image_slots[0].display_width,
-            EMOJI_REACTION_IMAGE_WIDTH
-        );
-    }
-
-    #[test]
-    fn loaded_custom_emoji_placeholder_remaps_later_slots() {
-        let first = ":first:";
-        let second = ":second:";
-        let text = format!("{first}mid{second}end");
-        let mut line = MessageContentLine::styled_text(text, Style::default(), Vec::new())
-            .with_image_slots(vec![
-                MessageContentImageSlot {
-                    col: 0,
-                    byte_start: 0,
-                    byte_len: first.len(),
-                    display_width: first.len() as u16,
-                    url: "first-url".to_owned(),
-                },
-                MessageContentImageSlot {
-                    col: first.len() as u16 + 3,
-                    byte_start: first.len() + "mid".len(),
-                    byte_len: second.len(),
-                    display_width: second.len() as u16,
-                    url: "second-url".to_owned(),
-                },
-            ]);
-
-        line.blank_loaded_emoji_fallbacks(|url| url.ends_with("-url"));
-
-        assert_eq!(line.text, "  mid  end");
-        assert_eq!(line.image_slots[0].byte_start, 0);
-        assert_eq!(line.image_slots[1].byte_start, "  mid".len());
-        assert_eq!(line.image_slots[1].col, "  mid".width() as u16);
     }
 
     #[test]

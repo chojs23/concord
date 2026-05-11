@@ -5,8 +5,8 @@ use crate::discord::{AppCommand, MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentU
 use super::composer::{
     ComposerEmojiImageCompletion, EmojiCompletion, MentionCompletion, build_emoji_candidates,
     build_mention_candidates, expand_composer_completions, expand_emoji_shortcodes,
-    is_emoji_query_char, is_mention_query_char, move_picker_selection, should_start_emoji_query,
-    should_start_mention_query,
+    is_emoji_query_char, is_mention_query_char, move_picker_selection,
+    should_start_completion_query,
 };
 use super::{DashboardState, EmojiPickerEntry, FocusPane, MentionPickerEntry};
 
@@ -505,7 +505,7 @@ impl DashboardState {
         if query_start > 0 {
             let mention_start = previous_char_boundary(&self.composer_input, query_start);
             if &self.composer_input[mention_start..query_start] == "@"
-                && should_start_mention_query(&self.composer_input[..mention_start])
+                && should_start_completion_query(&self.composer_input[..mention_start])
             {
                 self.composer_mention_query =
                     Some(self.composer_input[query_start..cursor].to_owned());
@@ -535,7 +535,7 @@ impl DashboardState {
             let query = &self.composer_input[query_start..cursor];
             if &self.composer_input[emoji_start..query_start] == ":"
                 && query.chars().count() >= 2
-                && should_start_emoji_query(&self.composer_input[..emoji_start])
+                && should_start_completion_query(&self.composer_input[..emoji_start])
             {
                 let candidates = self.emoji_candidates_for_query(query);
                 if candidates.is_empty() {
