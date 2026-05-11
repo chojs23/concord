@@ -235,6 +235,14 @@ Use `Ctrl+Left` / `Ctrl+Right` to jump the cursor by word.
 When the @mention picker is open, use `Up` / `Down`,
 `Ctrl+p` / `Ctrl+n`, `Tab`, or `Enter` to choose a mention.
 
+#### Emoji picker
+
+Type `:` plus at least two emoji shortcode letters, such as `:he`, to open
+Unicode emoji and current-server custom emoji suggestions. Use `Up` / `Down`,
+`Ctrl+p` / `Ctrl+n`, `Tab`, or `Enter` to choose an emoji. Complete Unicode
+shortcodes such as `:heart:` are converted to their emoji when the message is
+sent; selected custom emojis are sent using Discord's custom emoji markup.
+
 #### Mouse support
 
 Mouse support is also available: click to focus or select rows, double-click to

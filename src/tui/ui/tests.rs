@@ -34,7 +34,7 @@ use crate::{
     discord::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, AttachmentInfo, ChannelInfo,
         ChannelNotificationOverrideInfo, ChannelRecipientState, ChannelState, ChannelUnreadState,
-        ChannelVisibilityStats, EmbedInfo, FriendStatus, GuildMemberState,
+        ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, FriendStatus, GuildMemberState,
         GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageAttachmentUpload,
         MessageInfo, MessageKind, MessageSnapshotInfo, MessageState, MutualGuildInfo,
         NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
@@ -509,6 +509,129 @@ fn composer_cursor_position_accounts_for_upload_and_reply_rows() {
     assert_eq!(
         composer_cursor_position(Rect::new(10, 20, 20, 6), &state),
         Some(Position { x: 15, y: 23 })
+    );
+}
+
+#[test]
+fn dashboard_renders_emoji_shortcode_picker_above_composer() {
+    let mut state = state_with_message();
+    state.start_composer();
+    for ch in ":heart".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let dump = render_dashboard_dump(100, 24, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(
+        rendered.contains(" emoji "),
+        "emoji picker title should render above composer:\n{rendered}"
+    );
+    assert!(
+        rendered.contains(":heart:"),
+        "emoji picker should show matching shortcode:\n{rendered}"
+    );
+}
+
+#[test]
+fn dashboard_renders_custom_emoji_picker_candidate() {
+    let mut state = state_with_message();
+    state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id: Id::new(1),
+        emojis: vec![CustomEmojiInfo {
+            id: Id::new(50),
+            name: "party_time".to_owned(),
+            animated: true,
+            available: true,
+        }],
+    });
+    state.start_composer();
+    for ch in ":pa".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let dump = render_dashboard_dump(100, 24, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(
+        rendered.contains(":party_time:"),
+        "custom emoji picker should show current guild custom emoji:\n{rendered}"
+    );
+}
+
+#[test]
+fn dashboard_renders_scrollbar_for_overflowing_mention_picker() {
+    let mut state = state_with_message();
+    for index in 0..10 {
+        state.push_event(AppEvent::GuildMemberUpsert {
+            guild_id: Id::new(1),
+            member: MemberInfo {
+                user_id: Id::new(100 + index),
+                display_name: format!("Scroll {index:02}"),
+                username: Some(format!("scroll{index:02}")),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            },
+        });
+    }
+    state.start_composer();
+    for ch in "@sc".chars() {
+        state.push_composer_char(ch);
+    }
+    state.move_composer_mention_selection(9);
+
+    let dump = render_dashboard_dump(100, 24, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(
+        rendered.contains("Scroll 09"),
+        "selected overflow mention candidate should stay visible:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("@scroll00"),
+        "picker should scroll away from the first row after selecting the bottom overflow candidate:\n{rendered}"
+    );
+    assert!(
+        rendered.contains('┃'),
+        "overflowing mention picker should render a scrollbar thumb:\n{rendered}"
+    );
+}
+
+#[test]
+fn dashboard_renders_scrollbar_for_overflowing_emoji_picker() {
+    let mut state = state_with_message();
+    state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id: Id::new(1),
+        emojis: (0..10)
+            .map(|index| CustomEmojiInfo {
+                id: Id::new(100 + index),
+                name: format!("overflow_{index:02}"),
+                animated: false,
+                available: true,
+            })
+            .collect(),
+    });
+    state.start_composer();
+    for ch in ":ov".chars() {
+        state.push_composer_char(ch);
+    }
+    state.move_composer_emoji_selection(9);
+
+    let dump = render_dashboard_dump(100, 24, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(
+        rendered.contains(":overflow_09:"),
+        "selected overflow emoji candidate should stay visible:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains(":overflow_00:"),
+        "picker should scroll away from the first row after selecting the bottom overflow candidate:\n{rendered}"
+    );
+    assert!(
+        rendered.contains('┃'),
+        "overflowing emoji picker should render a scrollbar thumb:\n{rendered}"
     );
 }
 

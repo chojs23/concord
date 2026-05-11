@@ -1,5 +1,5 @@
 use super::forum;
-use super::panes::{render_composer, render_composer_mention_picker};
+use super::panes::{render_composer, render_composer_emoji_picker, render_composer_mention_picker};
 use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,6 +86,7 @@ pub(super) fn render_messages(
         render_typing_footer(frame, message_areas.typing, state);
         render_composer(frame, message_areas.composer, state);
         render_composer_mention_picker(frame, message_areas, state);
+        render_composer_emoji_picker(frame, message_areas, state);
         return;
     }
 
@@ -209,6 +210,7 @@ pub(super) fn render_messages(
     render_typing_footer(frame, message_areas.typing, state);
     render_composer(frame, message_areas.composer, state);
     render_composer_mention_picker(frame, message_areas, state);
+    render_composer_emoji_picker(frame, message_areas, state);
 }
 
 fn render_new_messages_notice(frame: &mut Frame, list: Rect, state: &DashboardState) {

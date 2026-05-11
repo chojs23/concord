@@ -18,9 +18,9 @@ use super::super::{
     },
     message_format::{format_attachment_summary, wrap_text_lines},
     state::{
-        ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MAX_MENTION_PICKER_VISIBLE,
-        MemberEntry, MemberGroup, MentionPickerEntry, discord_color, folder_color, presence_color,
-        presence_marker,
+        ChannelPaneEntry, DashboardState, EmojiPickerEntry, FocusPane, GuildPaneEntry,
+        MAX_MENTION_PICKER_VISIBLE, MemberEntry, MemberGroup, MentionPickerEntry, discord_color,
+        folder_color, presence_color, presence_marker,
     },
 };
 use super::{
@@ -359,8 +359,17 @@ pub(super) fn render_composer_mention_picker(
         return;
     };
     frame.render_widget(Clear, area);
-    let inner_width = area.width.saturating_sub(2) as usize;
-    let lines = mention_picker_lines(&candidates, state.composer_mention_selected(), inner_width);
+    let visible_count = picker_visible_count(area, candidates.len());
+    let selected = state.composer_mention_selected().min(candidates.len() - 1);
+    let window_start = picker_window_start(candidates.len(), selected, visible_count);
+    let visible_candidates = &candidates[window_start..window_start + visible_count];
+    let shows_scrollbar = candidates.len() > visible_count;
+    let inner_width = picker_inner_width(area, shows_scrollbar);
+    let lines = mention_picker_lines(
+        visible_candidates,
+        selected.saturating_sub(window_start),
+        inner_width,
+    );
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
@@ -368,6 +377,44 @@ pub(super) fn render_composer_mention_picker(
         .title(" mention ")
         .title_style(Style::default().fg(Color::White).bold());
     frame.render_widget(Paragraph::new(lines).block(block), area);
+    render_picker_scrollbar(frame, area, window_start, visible_count, candidates.len());
+}
+
+pub(super) fn render_composer_emoji_picker(
+    frame: &mut Frame,
+    message_areas: MessageAreas,
+    state: &DashboardState,
+) {
+    if state.composer_emoji_query().is_none() {
+        return;
+    }
+    let candidates = state.composer_emoji_candidates();
+    if candidates.is_empty() {
+        return;
+    }
+    let Some(area) = mention_picker_area(message_areas, candidates.len()) else {
+        return;
+    };
+    frame.render_widget(Clear, area);
+    let visible_count = picker_visible_count(area, candidates.len());
+    let selected = state.composer_emoji_selected().min(candidates.len() - 1);
+    let window_start = picker_window_start(candidates.len(), selected, visible_count);
+    let visible_candidates = &candidates[window_start..window_start + visible_count];
+    let shows_scrollbar = candidates.len() > visible_count;
+    let inner_width = picker_inner_width(area, shows_scrollbar);
+    let lines = emoji_picker_lines(
+        visible_candidates,
+        selected.saturating_sub(window_start),
+        inner_width,
+    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(DIM))
+        .title(" emoji ")
+        .title_style(Style::default().fg(Color::White).bold());
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+    render_picker_scrollbar(frame, area, window_start, visible_count, candidates.len());
 }
 
 /// Picks a rectangle directly above the composer for the picker. Returns
@@ -395,6 +442,44 @@ fn mention_picker_area(message_areas: MessageAreas, candidate_count: usize) -> O
         width,
         height,
     })
+}
+
+fn picker_visible_count(area: Rect, candidate_count: usize) -> usize {
+    usize::from(area.height.saturating_sub(2))
+        .min(candidate_count)
+        .max(1)
+}
+
+fn picker_window_start(total: usize, selected: usize, visible_count: usize) -> usize {
+    if total <= visible_count {
+        return 0;
+    }
+    selected
+        .saturating_add(1)
+        .saturating_sub(visible_count)
+        .min(total.saturating_sub(visible_count))
+}
+
+fn picker_inner_width(area: Rect, shows_scrollbar: bool) -> usize {
+    area.width
+        .saturating_sub(2)
+        .saturating_sub(u16::from(shows_scrollbar)) as usize
+}
+
+fn render_picker_scrollbar(
+    frame: &mut Frame,
+    area: Rect,
+    position: usize,
+    visible_count: usize,
+    total_count: usize,
+) {
+    render_vertical_scrollbar(
+        frame,
+        panel_scrollbar_area(area),
+        position,
+        visible_count,
+        total_count,
+    );
 }
 
 fn mention_picker_lines(
@@ -429,6 +514,35 @@ fn mention_picker_lines(
             Line::from(vec![
                 Span::styled(cursor, Style::default().fg(ACCENT)),
                 Span::styled(presence_marker(entry.status).to_string(), row_style),
+                Span::styled(" ", row_style),
+                Span::styled(label, row_style),
+            ])
+        })
+        .collect()
+}
+
+fn emoji_picker_lines(
+    candidates: &[EmojiPickerEntry],
+    selected: usize,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let max_label_width = width.saturating_sub(6).max(1);
+    candidates
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let cursor = if index == selected { "› " } else { "  " };
+            let label = format!(":{}: {}", entry.shortcode, entry.name);
+            let label = truncate_display_width(&label, max_label_width);
+            let mut row_style = Style::default().fg(Color::White);
+            if index == selected {
+                row_style = row_style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            Line::from(vec![
+                Span::styled(cursor, Style::default().fg(ACCENT)),
+                Span::styled(entry.emoji.clone(), row_style),
                 Span::styled(" ", row_style),
                 Span::styled(label, row_style),
             ])
