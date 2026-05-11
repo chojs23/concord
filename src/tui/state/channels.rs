@@ -910,6 +910,8 @@ impl DashboardState {
 
         self.clamp_message_viewport();
         self.queue_channel_ack(channel_id);
+
+        self.cache.set_last_channel(channel_id);
     }
 
     /// Ack the channel up to its latest message and retire the unread

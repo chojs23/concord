@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 mod notifications;
@@ -13,8 +14,10 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
+use crate::paths;
 pub use notifications::ChannelUnreadState;
 use notifications::{GuildNotificationSettingsState, MessageNotificationKind};
+use serde::{Deserialize, Serialize};
 
 use super::{
     ActivityInfo, AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo,
@@ -341,6 +344,12 @@ pub struct SnapshotRevision {
 pub struct DiscordSnapshot {
     pub revision: u64,
     pub state: DiscordState,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct DiscordStateCache {
+    pub(crate) last_channel_id: Option<u64>,
+    pub(crate) last_guild_id: Option<u64>,
 }
 
 struct MessageUpdateFields {
@@ -1643,6 +1652,66 @@ impl DiscordState {
 
         self.message_author_role_ids
             .insert(key, author_role_ids.to_vec());
+    }
+}
+
+impl DiscordStateCache {
+    pub fn set_last_channel(&mut self, channel: Id<ChannelMarker>) {
+        self.last_channel_id = Some(
+            channel
+                .to_string()
+                .parse::<u64>()
+                .expect("Channel ID should be u64"),
+        );
+    }
+
+    pub fn set_last_guild(&mut self, guild: Option<Id<GuildMarker>>) {
+        self.last_guild_id = guild.map(|g| {
+            g.to_string()
+                .parse::<u64>()
+                .expect("Guild ID should be u64, or, for DMs, empty.")
+        });
+    }
+
+    pub fn write_to_disk(&self) -> Result<(), std::io::Error> {
+        match toml::to_string(&self) {
+            Ok(toml) => std::fs::write(DiscordStateCache::get_cache_file()?, toml),
+            Err(e) => return Err(std::io::Error::other(e.to_string())),
+        }?;
+
+        Ok(())
+    }
+
+    pub fn read_from_disk(&mut self) -> Result<(), std::io::Error> {
+        match toml::from_str::<Self>(&std::fs::read_to_string(
+            DiscordStateCache::get_cache_file()?,
+        )?) {
+            Ok(toml) => {
+                self.last_channel_id = toml.last_channel_id;
+                self.last_guild_id = toml.last_guild_id;
+            }
+            Err(e) => return Err(std::io::Error::other(e.to_string())),
+        }
+
+        Ok(())
+    }
+
+    fn get_cache_file() -> Result<PathBuf, std::io::Error> {
+        let f = paths::data_dir().map_or_else(
+            || {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "could not resolve user data directory",
+                ))
+            },
+            |p| Ok(p.join("state.toml")),
+        )?;
+
+        if !f.exists() {
+            std::fs::write(&f, toml::to_string(&DiscordStateCache::default()).unwrap())?;
+        }
+
+        Ok(f)
     }
 }
 

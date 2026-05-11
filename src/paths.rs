@@ -25,3 +25,10 @@ pub fn log_file() -> Option<PathBuf> {
 pub fn download_dir() -> Option<PathBuf> {
     dirs::download_dir().or_else(|| Some(dirs::home_dir()?.join("Downloads")))
 }
+
+pub fn data_dir() -> Option<PathBuf> {
+    dirs::data_local_dir().map_or_else(
+        || Some(app_dir()?.join("state")),
+        |d| Some(d.join("concord")),
+    )
+}
