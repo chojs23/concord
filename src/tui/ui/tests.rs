@@ -1634,7 +1634,7 @@ fn user_profile_popup_renders_activity_section() {
 }
 
 #[test]
-fn primary_activity_summary_picks_custom_status_first() {
+fn primary_activity_summary_prefers_game_over_custom_status() {
     let activities = vec![
         ActivityInfo {
             kind: ActivityKind::Playing,
@@ -1662,7 +1662,7 @@ fn primary_activity_summary_picks_custom_status_first() {
 
     assert_eq!(
         primary_activity_summary(&activities, &[]).map(|(t, _)| t),
-        Some("🦀 Coding hard".to_owned())
+        Some("Playing Concord".to_owned())
     );
 }
 

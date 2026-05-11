@@ -1175,20 +1175,17 @@ pub(super) fn primary_activity_summary(
 ) -> Option<(String, Option<String>)> {
     let mut sorted: Vec<&ActivityInfo> = activities.iter().collect();
     sorted.sort_by_key(|a| activity_priority(a.kind));
-    let mut custom_fallback = None;
+    let mut image_only_fallback = None;
     for activity in sorted {
-        if activity.kind == ActivityKind::Custom {
-            if custom_fallback.is_none() {
-                custom_fallback = Some(format_activity_summary(activity, emoji_images));
-            }
-            continue;
-        }
         let result = format_activity_summary(activity, emoji_images);
-        if !result.0.trim().is_empty() || result.1.is_some() {
+        if !result.0.trim().is_empty() {
             return Some(result);
         }
+        if result.1.is_some() && image_only_fallback.is_none() {
+            image_only_fallback = Some(result);
+        }
     }
-    custom_fallback.filter(|(text, url)| !text.trim().is_empty() || url.is_some())
+    image_only_fallback
 }
 
 fn activity_priority(kind: ActivityKind) -> u8 {
