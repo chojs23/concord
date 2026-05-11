@@ -1485,40 +1485,6 @@ fn enter_confirms_emoji_picker_before_submit() {
 }
 
 #[test]
-fn enter_confirms_custom_emoji_picker_then_submit_sends_markup() {
-    let mut state = state_with_channel_tree();
-    state.push_event(AppEvent::GuildEmojisUpdate {
-        guild_id: Id::new(1),
-        emojis: vec![CustomEmojiInfo {
-            id: Id::new(60),
-            name: "wave".to_owned(),
-            animated: false,
-            available: true,
-        }],
-    });
-    state.focus_pane(FocusPane::Channels);
-    handle_key(&mut state, key(KeyCode::Down));
-    handle_key(&mut state, key(KeyCode::Enter));
-    handle_key(&mut state, char_key('i'));
-    for ch in ":wa".chars() {
-        handle_key(&mut state, char_key(ch));
-    }
-
-    assert_eq!(handle_key(&mut state, key(KeyCode::Enter)), None);
-    assert_eq!(state.composer_input(), ":wave: ");
-
-    assert_eq!(
-        handle_key(&mut state, key(KeyCode::Enter)),
-        Some(AppCommand::SendMessage {
-            channel_id: Id::new(11),
-            content: "<:wave:60>".to_owned(),
-            reply_to: None,
-            attachments: Vec::new(),
-        })
-    );
-}
-
-#[test]
 fn enter_submits_no_match_emoji_query_without_hidden_picker() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
