@@ -3,16 +3,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    discord::{
-        DiscordStateCache,
-        ids::{
-            Id,
-            marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
-        },
+use crate::discord::{
+    DiscordStateCache,
+    ids::{
+        Id,
+        marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
     },
-    logging,
 };
+#[cfg(not(test))]
+use crate::logging;
 
 use crate::config::DisplayOptions;
 use crate::discord::{
@@ -300,10 +299,7 @@ fn truncate_notification_text(value: &str, max_chars: usize) -> String {
 
 impl DashboardState {
     pub fn new() -> Self {
-        let mut cache = DiscordStateCache::default();
-        if let Err(e) = cache.read_from_disk() {
-            logging::error("app", format!("failed to read cached discord state: {}", e));
-        }
+        let cache = Self::load_cache();
 
         Self {
             discord: DiscordState::default(),
@@ -386,6 +382,20 @@ impl DashboardState {
 
             cache,
         }
+    }
+
+    #[cfg(not(test))]
+    fn load_cache() -> DiscordStateCache {
+        let mut cache = DiscordStateCache::default();
+        if let Err(e) = cache.read_from_disk() {
+            logging::error("app", format!("failed to read cached discord state: {}", e));
+        }
+        cache
+    }
+
+    #[cfg(test)]
+    fn load_cache() -> DiscordStateCache {
+        DiscordStateCache::default()
     }
 
     pub fn next_read_ack_deadline(&self) -> Option<Instant> {
