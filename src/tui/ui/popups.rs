@@ -47,7 +47,7 @@ fn leader_popup_title(state: &DashboardState) -> String {
 }
 
 fn leader_popup_lines(state: &DashboardState, max_lines: usize) -> Vec<Line<'static>> {
-    let mut lines = if state.is_leader_action_mode() {
+    let lines = if state.is_leader_action_mode() {
         leader_action_lines(state)
     } else {
         vec![
@@ -59,10 +59,6 @@ fn leader_popup_lines(state: &DashboardState, max_lines: usize) -> Vec<Line<'sta
             leader_shortcut_text_line("Space", "Switch channels", true),
         ]
     };
-    lines.push(Line::from(Span::styled(
-        "Esc cancel",
-        Style::default().fg(DIM),
-    )));
     leader_shortcut_grid_lines(lines, max_lines)
 }
 
@@ -228,7 +224,7 @@ pub(super) fn render_channel_switcher_popup(frame: &mut Frame, area: Rect, state
     let items = state.channel_switcher_items();
     let selected = state.selected_channel_switcher_index().unwrap_or(0);
     let popup = channel_switcher_popup_area(area);
-    let max_result_lines = usize::from(popup.height.saturating_sub(6)).max(1);
+    let max_result_lines = usize::from(popup.height.saturating_sub(4)).max(1);
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(channel_switcher_lines(
@@ -275,7 +271,7 @@ pub(super) fn channel_switcher_item_index_at(
     let result_line = line.checked_sub(2)?;
     let items = state.channel_switcher_items();
     let selected = state.selected_channel_switcher_index().unwrap_or(0);
-    let max_result_lines = usize::from(popup.height.saturating_sub(6)).max(1);
+    let max_result_lines = usize::from(popup.height.saturating_sub(4)).max(1);
     channel_switcher_visible_result_rows(&items, selected, max_result_lines)
         .get(result_line)
         .and_then(|row| match row {
@@ -336,10 +332,6 @@ pub(super) fn channel_switcher_lines(
         ));
     }
 
-    lines.push(Line::from(Span::styled(
-        "Enter open · Ctrl+n/p move · Esc close",
-        Style::default().fg(DIM),
-    )));
     lines
 }
 
@@ -529,26 +521,16 @@ pub(super) fn render_image_viewer(
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    let [image_area, hint_area] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
     if let Some(image_preview) = image_preview {
-        render_image_preview(frame, image_area, image_preview.state);
+        render_image_preview(frame, inner, image_preview.state);
     } else {
         frame.render_widget(
             Paragraph::new(format!("loading {}...", item.filename))
                 .style(Style::default().fg(DIM))
                 .wrap(Wrap { trim: false }),
-            image_area,
+            inner,
         );
     }
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            "h/← previous · l/→ next · Enter/Space actions · Esc close",
-            Style::default().fg(DIM),
-        )))
-        .alignment(Alignment::Center),
-        hint_area,
-    );
 }
 
 fn image_viewer_title(item: &ImageViewerItem) -> String {
@@ -571,7 +553,7 @@ pub(super) fn render_image_viewer_action_menu(
     let Some(selected) = state.selected_image_viewer_action_index() else {
         return;
     };
-    let popup = centered_rect(area, 42, (actions.len() as u16).saturating_add(4));
+    let popup = centered_rect(area, 42, (actions.len() as u16).saturating_add(2));
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(message_action_menu_lines(&actions, selected))
@@ -592,7 +574,7 @@ pub(super) fn render_message_action_menu(frame: &mut Frame, area: Rect, state: &
     }
 
     let selected = state.selected_message_action_index().unwrap_or(0);
-    let popup = centered_rect(area, 54, (actions.len() as u16).saturating_add(4));
+    let popup = centered_rect(area, 54, (actions.len() as u16).saturating_add(2));
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(message_action_menu_lines(&actions, selected))
@@ -609,10 +591,10 @@ pub(super) fn render_options_popup(frame: &mut Frame, area: Rect, state: &Dashbo
 
     let items = state.display_option_items();
     let selected = state.selected_option_index().unwrap_or(0);
-    let popup = centered_rect(area, 66, (items.len() as u16).saturating_add(5));
+    let popup = centered_rect(area, 66, (items.len() as u16).saturating_add(2));
     let block = panel_block("Options", true);
     let inner = block.inner(popup);
-    let visible_items = usize::from(inner.height.saturating_sub(1)).max(1);
+    let visible_items = usize::from(inner.height).max(1);
     let inner_width = usize::from(inner.width).max(1);
     frame.render_widget(Clear, popup);
     frame.render_widget(
@@ -637,7 +619,7 @@ pub(super) fn options_popup_lines(
     let width = width.max(1);
     let selected = selected.min(items.len().saturating_sub(1));
     let start = selected.saturating_add(1).saturating_sub(visible_items);
-    let mut lines: Vec<Line<'static>> = items
+    let lines: Vec<Line<'static>> = items
         .iter()
         .enumerate()
         .skip(start)
@@ -674,14 +656,6 @@ pub(super) fn options_popup_lines(
         })
         .map(|line| truncate_line_to_display_width(line, width))
         .collect();
-    let footer = format!(
-        "Enter/Space toggle or cycle · j/k move · Esc close · saved to {}",
-        crate::config::config_path_display()
-    );
-    lines.push(truncate_line_to_display_width(
-        Line::from(Span::styled(footer, Style::default().fg(DIM))),
-        width,
-    ));
     lines
 }
 
@@ -701,7 +675,7 @@ pub(super) fn render_guild_action_menu(frame: &mut Frame, area: Rect, state: &Da
     } else {
         actions.len()
     };
-    let popup = centered_rect(area, 48, (row_count as u16).saturating_add(4));
+    let popup = centered_rect(area, 48, (row_count as u16).saturating_add(2));
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(if is_duration_phase {
@@ -738,7 +712,7 @@ pub(super) fn render_channel_action_menu(frame: &mut Frame, area: Rect, state: &
         let threads = state.channel_action_thread_items();
         let selected = state.selected_channel_action_index().unwrap_or(0);
         let row_count = threads.len().max(1) as u16;
-        let popup = centered_rect(area, 54, row_count.saturating_add(4));
+        let popup = centered_rect(area, 54, row_count.saturating_add(2));
         frame.render_widget(Clear, popup);
         frame.render_widget(
             Paragraph::new(channel_thread_menu_lines(&threads, selected))
@@ -760,7 +734,7 @@ pub(super) fn render_channel_action_menu(frame: &mut Frame, area: Rect, state: &
     } else {
         actions.len()
     };
-    let popup = centered_rect(area, 54, (row_count as u16).saturating_add(4));
+    let popup = centered_rect(area, 54, (row_count as u16).saturating_add(2));
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(if is_duration_phase {
@@ -803,16 +777,23 @@ pub(super) fn render_emoji_reaction_picker(
     let desired_visible_items = reactions
         .len()
         .clamp(1, super::super::selection::MAX_EMOJI_REACTION_VISIBLE_ITEMS);
-    let popup = centered_rect(area, 42, (desired_visible_items as u16).saturating_add(5));
+    let extra_lines = u16::from(filter.is_some());
+    let popup = centered_rect(
+        area,
+        42,
+        (desired_visible_items as u16)
+            .saturating_add(extra_lines)
+            .saturating_add(2),
+    );
     let ready_urls = emoji_images
         .iter()
         .map(|image| image.url.clone())
         .collect::<Vec<_>>();
     let block = panel_block("Choose reaction", true);
     let content = block.inner(popup);
-    let footer_lines = if filter.is_some() { 2 } else { 1 };
+    let filter_lines = u16::from(filter.is_some());
     let visible_items =
-        usize::from(content.height.saturating_sub(footer_lines)).min(desired_visible_items);
+        usize::from(content.height.saturating_sub(filter_lines)).min(desired_visible_items);
     let visible_range =
         super::super::selection::visible_item_range(reactions.len(), selected, visible_items);
     frame.render_widget(Clear, popup);
@@ -861,7 +842,7 @@ pub(super) fn render_poll_vote_picker(frame: &mut Frame, area: Rect, state: &Das
     }
 
     let selected = state.selected_poll_vote_picker_index().unwrap_or(0);
-    let popup = centered_rect(area, 58, (answers.len() as u16).saturating_add(4));
+    let popup = centered_rect(area, 58, (answers.len() as u16).saturating_add(2));
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(poll_vote_picker_lines(answers, selected))
@@ -884,7 +865,7 @@ pub(super) fn render_member_action_menu(frame: &mut Frame, area: Rect, state: &D
         .member_action_menu_title()
         .map(|name| format!("Member actions — {name}"))
         .unwrap_or_else(|| "Member actions".to_owned());
-    let popup = centered_rect(area, 48, (actions.len() as u16).saturating_add(4));
+    let popup = centered_rect(area, 48, (actions.len() as u16).saturating_add(2));
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(member_action_menu_lines(&actions, selected))
@@ -898,7 +879,7 @@ pub(super) fn guild_action_menu_lines(
     actions: &[GuildActionItem],
     selected: usize,
 ) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'static>> = actions
+    actions
         .iter()
         .enumerate()
         .map(|(index, action)| {
@@ -920,19 +901,14 @@ pub(super) fn guild_action_menu_lines(
                 Span::styled(action.label.clone(), style),
             ])
         })
-        .collect();
-    lines.push(Line::from(Span::styled(
-        "Shortcut/Enter select · Esc close",
-        Style::default().fg(DIM),
-    )));
-    lines
+        .collect()
 }
 
 fn mute_duration_menu_lines(
     actions: &[MuteActionDurationItem],
     selected: usize,
 ) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'static>> = actions
+    actions
         .iter()
         .enumerate()
         .map(|(index, action)| {
@@ -950,19 +926,14 @@ fn mute_duration_menu_lines(
                 Span::styled(action.label, style),
             ])
         })
-        .collect();
-    lines.push(Line::from(Span::styled(
-        "Shortcut/Enter select · Esc back",
-        Style::default().fg(DIM),
-    )));
-    lines
+        .collect()
 }
 
 pub(super) fn member_action_menu_lines(
     actions: &[MemberActionItem],
     selected: usize,
 ) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'static>> = actions
+    actions
         .iter()
         .enumerate()
         .map(|(index, action)| {
@@ -984,12 +955,7 @@ pub(super) fn member_action_menu_lines(
                 Span::styled(action.label.clone(), style),
             ])
         })
-        .collect();
-    lines.push(Line::from(Span::styled(
-        "Shortcut/Enter select · Esc close",
-        Style::default().fg(DIM),
-    )));
-    lines
+        .collect()
 }
 
 pub(super) fn render_user_profile_popup(
@@ -1259,12 +1225,6 @@ pub(super) fn user_profile_popup_text(
         );
     }
 
-    lines.push(Line::from(Span::raw(String::new())));
-    lines.push(Line::from(Span::styled(
-        "j/k scroll · Esc close",
-        Style::default().fg(DIM),
-    )));
-
     UserProfilePopupText { lines }
 }
 
@@ -1487,11 +1447,6 @@ pub(super) fn debug_log_popup_lines(
             )));
         }
     }
-    lines.push(Line::from(Span::raw(String::new())));
-    lines.push(Line::from(Span::styled(
-        "Showing current-process ERROR logs only · ` / Esc close",
-        Style::default().fg(DIM),
-    )));
     lines
 }
 
@@ -1499,7 +1454,7 @@ pub(super) fn message_action_menu_lines(
     actions: &[MessageActionItem],
     selected: usize,
 ) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'static>> = actions
+    actions
         .iter()
         .enumerate()
         .map(|(index, action)| {
@@ -1526,19 +1481,14 @@ pub(super) fn message_action_menu_lines(
                 Span::styled(label, style),
             ])
         })
-        .collect();
-    lines.push(Line::from(Span::styled(
-        "Shortcut/Enter select · Esc close",
-        Style::default().fg(DIM),
-    )));
-    lines
+        .collect()
 }
 
 pub(super) fn channel_action_menu_lines(
     actions: &[ChannelActionItem],
     selected: usize,
 ) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'static>> = actions
+    actions
         .iter()
         .enumerate()
         .map(|(index, action)| {
@@ -1560,16 +1510,11 @@ pub(super) fn channel_action_menu_lines(
                 Span::styled(action.label.clone(), style),
             ])
         })
-        .collect();
-    lines.push(Line::from(Span::styled(
-        "Shortcut/Enter select · Esc close",
-        Style::default().fg(DIM),
-    )));
-    lines
+        .collect()
 }
 
 fn channel_thread_menu_lines(threads: &[ChannelThreadItem], selected: usize) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'static>> = if threads.is_empty() {
+    if threads.is_empty() {
         vec![Line::from(Span::styled(
             "  (no threads)".to_owned(),
             Style::default().fg(DIM),
@@ -1602,19 +1547,14 @@ fn channel_thread_menu_lines(threads: &[ChannelThreadItem], selected: usize) -> 
                 ])
             })
             .collect()
-    };
-    lines.push(Line::from(Span::styled(
-        "Shortcut/Enter open · Esc back",
-        Style::default().fg(DIM),
-    )));
-    lines
+    }
 }
 
 pub(super) fn poll_vote_picker_lines(
     answers: &[PollVotePickerItem],
     selected: usize,
 ) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'static>> = answers
+    answers
         .iter()
         .enumerate()
         .map(|(index, answer)| {
@@ -1633,12 +1573,7 @@ pub(super) fn poll_vote_picker_lines(
                 Span::styled(format!("{checkbox} {}", answer.label), style),
             ])
         })
-        .collect();
-    lines.push(Line::from(Span::styled(
-        "Shortcut/Space toggle · Enter vote · Esc close",
-        Style::default().fg(DIM),
-    )));
-    lines
+        .collect()
 }
 
 #[cfg(test)]
@@ -1667,25 +1602,12 @@ fn reaction_users_popup_lines_with_custom_emoji_images(
     let data_lines = reaction_users_popup_data_lines(reactions, show_custom_emoji);
     let visible_lines = max_visible_lines.min(data_lines.len());
     let scroll = scroll.min(data_lines.len().saturating_sub(visible_lines));
-    let has_hidden_before = scroll > 0;
-    let has_hidden_after = scroll.saturating_add(visible_lines) < data_lines.len();
-    let mut lines: Vec<Line<'static>> = data_lines
+    data_lines
         .into_iter()
         .skip(scroll)
         .take(visible_lines)
         .map(|line| truncate_line_to_display_width(line, inner_width))
-        .collect();
-    let hint = match (has_hidden_before, has_hidden_after) {
-        (true, true) => "j/k scroll · more above/below · Esc close",
-        (true, false) => "j/k scroll · more above · Esc close",
-        (false, true) => "j/k scroll · more below · Esc close",
-        (false, false) => "Esc close",
-    };
-    lines.push(truncate_line_to_display_width(
-        Line::from(Span::styled(hint, Style::default().fg(DIM))),
-        inner_width,
-    ));
-    lines
+        .collect()
 }
 
 fn truncate_line_to_display_width(line: Line<'static>, max_width: usize) -> Line<'static> {
@@ -1869,10 +1791,6 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
         )));
     }
 
-    lines.push(Line::from(Span::styled(
-        "Shortcut/Enter/Space react · / filter · Esc close",
-        Style::default().fg(DIM),
-    )));
     if let Some(filter) = filter {
         lines.push(Line::from(vec![
             Span::styled("Filter ", Style::default().fg(DIM)),
