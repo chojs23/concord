@@ -3630,6 +3630,55 @@ fn message_viewport_lines_put_reactions_below_image_preview_rows() {
 }
 
 #[test]
+fn message_viewport_lines_group_consecutive_messages_by_author() {
+    let mut state = state_with_message();
+    push_message(&mut state, 2, "follow-up");
+    state.jump_top();
+    let messages = state.messages();
+
+    let lines = message_viewport_lines(
+        &messages,
+        None,
+        &state,
+        super::message_viewport_layout(200, 80, 80, 16, 3),
+        &[],
+    );
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert_eq!(texts.iter().filter(|text| text.contains("neo")).count(), 1);
+    assert_eq!(texts[2], "   hello");
+    assert_eq!(texts[3], "   follow-up");
+}
+
+#[test]
+fn message_viewport_lines_keep_reactions_below_reacted_grouped_message() {
+    let mut state = state_with_message();
+    state.push_event(AppEvent::MessageReactionAdd {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        user_id: Id::new(100),
+        emoji: ReactionEmoji::Unicode("👍".to_owned()),
+    });
+    push_message(&mut state, 2, "follow-up");
+    state.jump_top();
+    let messages = state.messages();
+
+    let lines = message_viewport_lines(
+        &messages,
+        None,
+        &state,
+        super::message_viewport_layout(200, 80, 80, 16, 3),
+        &[],
+    );
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert_eq!(texts[2], "   hello");
+    assert_eq!(texts[3], "   [👍 1]");
+    assert_eq!(texts[4], "   follow-up");
+}
+
+#[test]
 fn message_viewport_lines_reserve_bounded_rows_for_image_albums() {
     for (attachment_count, expected_lines, overflow_text) in [
         (3, 9, None),
@@ -4001,6 +4050,7 @@ fn render_messages_shows_new_messages_notice_after_viewport_scrolls_up() {
 
     state.scroll_message_viewport_up();
     state.scroll_message_viewport_up();
+    state.scroll_message_viewport_up();
     push_message(&mut state, 11, "new after viewport scroll");
 
     let dump = render_dashboard_dump(100, 24, &mut state);
@@ -4012,7 +4062,7 @@ fn render_messages_shows_new_messages_notice_after_viewport_scrolls_up() {
 fn new_messages_notice_does_not_reserve_message_list_height() {
     let area = Rect::new(0, 0, 100, 24);
     let mut state = state_with_message();
-    for id in 2..=10 {
+    for id in 2..=30 {
         push_message(&mut state, id, &format!("older {id}"));
     }
     state.focus_pane(FocusPane::Messages);
@@ -4021,7 +4071,11 @@ fn new_messages_notice_does_not_reserve_message_list_height() {
     let height_without_notice = state.message_view_height();
 
     state.scroll_message_viewport_up();
-    push_message(&mut state, 11, "first unread");
+    state.scroll_message_viewport_up();
+    state.scroll_message_viewport_up();
+    state.scroll_message_viewport_up();
+    state.scroll_message_viewport_up();
+    push_message(&mut state, 31, "first unread");
     sync_view_heights(area, &mut state);
 
     assert_eq!(state.new_messages_count(), 1);

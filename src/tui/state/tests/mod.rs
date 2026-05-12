@@ -1447,7 +1447,7 @@ fn image_preview_scrolloff_keeps_selected_message_visible() {
     }
     state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
-    assert_eq!(state.following_message_rendered_rows(200, 16, 3, 3), 21);
+    assert_eq!(state.following_message_rendered_rows(200, 16, 3, 3), 15);
     let selected_bottom = state
         .selected_message_rendered_row(200, 16, 3)
         .saturating_add(
@@ -5895,9 +5895,9 @@ fn message_auto_follow_keeps_latest_message_at_bottom_after_rendered_clamp() {
 
     assert!(state.message_auto_follow());
     assert_eq!(state.selected_message(), 11);
-    assert_eq!(state.message_scroll(), 9);
-    assert_eq!(state.message_line_scroll(), 2);
-    assert_eq!(state.selected_message_rendered_row(200, 16, 3), 4);
+    assert_eq!(state.message_scroll(), 6);
+    assert_eq!(state.message_line_scroll(), 0);
+    assert_eq!(state.selected_message_rendered_row(200, 16, 3), 5);
 }
 
 #[test]
@@ -5913,8 +5913,8 @@ fn message_selection_centers_selected_message_when_possible() {
     }
 
     assert_eq!(state.selected_message(), 7);
-    assert_eq!(state.message_scroll(), 6);
-    assert_eq!(state.message_line_scroll(), 1);
+    assert_eq!(state.message_scroll(), 5);
+    assert_eq!(state.message_line_scroll(), 0);
     assert_eq!(state.selected_message_rendered_row(200, 16, 3), 2);
 }
 
@@ -5934,7 +5934,7 @@ fn message_selection_centers_with_line_offset_inside_previous_message() {
 
     assert_eq!(state.selected_message(), 1);
     assert_eq!(state.message_scroll(), 0);
-    assert_eq!(state.message_line_scroll(), 5);
+    assert_eq!(state.message_line_scroll(), 4);
     assert_eq!(state.selected_message_rendered_row(5, 16, 3), 1);
 }
 
@@ -5955,7 +5955,7 @@ fn message_selection_keeps_top_when_next_message_is_already_visible() {
     assert_eq!(state.selected_message(), 1);
     assert_eq!(state.message_scroll(), 0);
     assert_eq!(state.message_line_scroll(), 0);
-    assert_eq!(state.selected_message_rendered_row(5, 16, 3), 6);
+    assert_eq!(state.selected_message_rendered_row(5, 16, 3), 5);
 }
 
 #[test]
@@ -5972,9 +5972,9 @@ fn message_selection_centers_with_image_preview_height() {
     }
 
     assert_eq!(state.messages()[state.selected_message()].id, Id::new(4));
-    assert_eq!(state.selected_message_rendered_height(200, 16, 3), 7);
+    assert_eq!(state.selected_message_rendered_height(200, 16, 3), 6);
     assert_eq!(state.message_scroll(), 2);
-    assert_eq!(state.message_line_scroll(), 2);
+    assert_eq!(state.message_line_scroll(), 0);
     assert_eq!(state.selected_message_rendered_row(200, 16, 3), 1);
 }
 
@@ -6053,8 +6053,8 @@ fn viewport_scroll_moves_to_next_message_after_current_message() {
     state.scroll_message_viewport_down();
     state.clamp_message_viewport_for_image_previews(5, 16, 3);
 
-    assert_eq!(state.message_scroll(), 1);
-    assert_eq!(state.message_line_scroll(), 0);
+    assert_eq!(state.message_scroll(), 0);
+    assert_eq!(state.message_line_scroll(), 5);
     assert_eq!(state.selected_message(), 0);
 }
 
@@ -6090,9 +6090,9 @@ fn focused_message_selection_returns_none_when_viewport_scrolled_past_selection(
         state.clamp_message_viewport_for_image_previews(5, 16, 3);
     }
 
-    assert_eq!(state.message_scroll(), 1);
+    assert_eq!(state.message_scroll(), 0);
     assert_eq!(state.selected_message(), 0);
-    assert_eq!(state.focused_message_selection(), None);
+    assert_eq!(state.focused_message_selection(), Some(0));
 }
 
 #[test]

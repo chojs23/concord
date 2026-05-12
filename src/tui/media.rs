@@ -1616,7 +1616,7 @@ mod tests {
 
         let targets = visible_image_preview_targets(&state, layout(7));
 
-        assert!(target_message_ids(&targets).is_empty());
+        assert_eq!(target_message_ids(&targets), vec![Id::new(6)]);
     }
 
     #[test]
@@ -1631,7 +1631,7 @@ mod tests {
 
         let targets = visible_image_preview_targets(&state, layout(14));
 
-        assert_eq!(target_message_ids(&targets), vec![Id::new(5)]);
+        assert_eq!(target_message_ids(&targets), vec![Id::new(5), Id::new(6)]);
     }
 
     #[test]

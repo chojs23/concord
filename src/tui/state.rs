@@ -1451,7 +1451,7 @@ impl DashboardState {
     pub(crate) fn message_starts_new_day_at(&self, index: usize) -> bool {
         let messages = self.messages();
         let Some(current) = messages.get(index) else {
-            return false;
+            return true;
         };
         let previous_id = index
             .checked_sub(1)
@@ -1481,6 +1481,38 @@ impl DashboardState {
             extra += 1;
         }
         extra
+    }
+
+    pub(crate) fn message_starts_author_group_at(&self, index: usize) -> bool {
+        let messages = self.messages();
+        let Some(current) = messages.get(index) else {
+            return false;
+        };
+        if index == 0 || self.message_extra_top_lines(index) > 0 {
+            return true;
+        }
+        messages
+            .get(index - 1)
+            .is_none_or(|previous| previous.author_id != current.author_id)
+    }
+
+    pub(crate) fn message_header_line_count_at(&self, index: usize) -> usize {
+        usize::from(self.message_starts_author_group_at(index))
+    }
+
+    pub(crate) fn message_bottom_gap_after(&self, index: usize) -> usize {
+        usize::from(self.message_has_bottom_gap_after(index)) * ui::MESSAGE_ROW_GAP
+    }
+
+    pub(crate) fn message_has_bottom_gap_after(&self, index: usize) -> bool {
+        let Some(next) = index.checked_add(1) else {
+            return true;
+        };
+        next >= self.messages().len() || self.message_starts_author_group_at(next)
+    }
+
+    fn selected_message_extra_bottom_line_at(&self, index: usize) -> usize {
+        usize::from(index == self.selected_message && !self.message_has_bottom_gap_after(index))
     }
 
     /// Index of the first loaded message whose snowflake is newer than the
@@ -2980,6 +3012,17 @@ impl DashboardState {
         1 + body_lines.len() + reaction_lines.len()
     }
 
+    pub(crate) fn message_base_line_count_for_width_at(
+        &self,
+        index: usize,
+        message: &MessageState,
+        content_width: usize,
+    ) -> usize {
+        self.message_base_line_count_for_width(message, content_width)
+            .saturating_sub(1)
+            .saturating_add(self.message_header_line_count_at(index))
+    }
+
     pub(crate) fn message_body_line_count_for_width(
         &self,
         message: &MessageState,
@@ -2988,6 +3031,17 @@ impl DashboardState {
         let (body_lines, _) =
             message_format::format_message_content_sections(message, self, content_width);
         1 + body_lines.len()
+    }
+
+    pub(crate) fn message_body_line_count_for_width_at(
+        &self,
+        index: usize,
+        message: &MessageState,
+        content_width: usize,
+    ) -> usize {
+        self.message_body_line_count_for_width(message, content_width)
+            .saturating_sub(1)
+            .saturating_add(self.message_header_line_count_at(index))
     }
 
     fn message_rendered_height(
@@ -3022,8 +3076,16 @@ impl DashboardState {
         let Some(message) = messages.get(index).copied() else {
             return 0;
         };
-        self.message_rendered_height(message, content_width, preview_width, max_preview_height)
-            + self.message_extra_top_lines(index)
+        let previews = message.inline_previews();
+        let album = media::image_preview_album_layout(&previews, preview_width, max_preview_height);
+        let preview_height = album
+            .height
+            .saturating_add(usize::from(album.overflow_count > 0));
+        self.message_base_line_count_for_width_at(index, message, content_width)
+            .saturating_add(preview_height)
+            .saturating_add(self.message_extra_top_lines(index))
+            .saturating_add(self.selected_message_extra_bottom_line_at(index))
+            .saturating_add(self.message_bottom_gap_after(index))
     }
 }
 
