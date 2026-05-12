@@ -17,13 +17,14 @@ use super::{
     GuildBranch, GuildPaneEntry, MessageActionKind, MessageState, message_rendered_height,
 };
 use crate::discord::{
-    ActivityInfo, ActivityKind, AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo,
-    ChannelRecipientInfo, ChannelUnreadState, ChannelVisibilityStats, CustomEmojiInfo,
-    DiscordState, DownloadAttachmentSource, ForumPostArchiveState, FriendStatus,
-    GuildNotificationSettingsInfo, MemberInfo, MessageAttachmentUpload, MessageInfo, MessageKind,
-    MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo, NotificationLevel,
-    PermissionOverwriteInfo, PermissionOverwriteKind, PresenceStatus, ReactionEmoji, ReactionInfo,
-    ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+    ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo, ChannelInfo,
+    ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
+    ChannelVisibilityStats, CustomEmojiInfo, DiscordState, DownloadAttachmentSource,
+    ForumPostArchiveState, FriendStatus, GuildNotificationSettingsInfo, MemberInfo,
+    MessageAttachmentUpload, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+    MutualGuildInfo, NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind,
+    PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
+    ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
 };
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -2364,6 +2365,95 @@ fn own_regular_message_actions_include_edit_and_delete() {
     );
 }
 
+fn push_reply_message_with_attachments(
+    state: &mut DashboardState,
+    message_id: u64,
+    author_id: u64,
+    content: Option<&str>,
+    attachments: Vec<AttachmentInfo>,
+) {
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(message_id),
+        author_id: Id::new(author_id),
+        author: format!("user-{author_id}"),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: MessageKind::new(19),
+        reference: Some(MessageReferenceInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Some(Id::new(2)),
+            message_id: Some(Id::new(42)),
+        }),
+        reply: Some(ReplyInfo {
+            author: "original".to_owned(),
+            content: Some("original message".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+        }),
+        poll: None,
+        content: content.map(str::to_owned),
+        sticker_names: Vec::new(),
+        mentions: Vec::new(),
+        attachments,
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+}
+
+#[test]
+fn own_reply_message_actions_include_edit_and_delete() {
+    let mut state = state_with_message_ids([]);
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(99)),
+    });
+    push_reply_message_with_attachments(&mut state, 1, 99, Some("reply body"), Vec::new());
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+
+    assert_eq!(
+        actions.iter().map(|action| action.kind).collect::<Vec<_>>(),
+        vec![
+            MessageActionKind::Reply,
+            MessageActionKind::Edit,
+            MessageActionKind::Delete,
+            MessageActionKind::AddReaction,
+            MessageActionKind::ShowProfile,
+            MessageActionKind::SetPinned(true),
+        ]
+    );
+}
+
+#[test]
+fn edit_reply_action_prefills_composer_without_reply_target_and_submits_edit_command() {
+    let mut state = state_with_message_ids([]);
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(99)),
+    });
+    push_reply_message_with_attachments(&mut state, 1, 99, Some("reply body"), Vec::new());
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+    assert!(state.select_message_action_row(1));
+
+    assert_eq!(state.activate_selected_message_action(), None);
+    assert_eq!(state.composer_input(), "reply body");
+    assert!(state.reply_target_message_state().is_none());
+    state.push_composer_char('!');
+
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::EditMessage {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            content: "reply body!".to_owned(),
+        })
+    );
+}
+
 #[test]
 fn other_user_message_actions_do_not_include_edit_or_delete() {
     let mut state = state_with_messages(1);
@@ -2501,6 +2591,72 @@ fn non_image_attachment_action_downloads_with_proxy_url_fallback() {
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
     });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+
+    let actions = state.selected_message_action_items();
+    assert!(actions.iter().any(|action| {
+        action.kind == MessageActionKind::DownloadAttachment(0)
+            && action.label == "Download clip-1.mp4"
+    }));
+    assert!(state.select_message_action_row(1));
+
+    assert_eq!(
+        state.activate_selected_message_action(),
+        Some(AppCommand::DownloadAttachment {
+            url: "https://media.discordapp.net/clip-1.mp4".to_owned(),
+            filename: "clip-1.mp4".to_owned(),
+            source: DownloadAttachmentSource::MessageAction,
+        })
+    );
+}
+
+#[test]
+fn reply_image_attachment_action_can_open_image_viewer() {
+    let mut state = state_with_message_ids([]);
+    push_reply_message_with_attachments(
+        &mut state,
+        1,
+        99,
+        Some("reply image"),
+        vec![image_attachment(1)],
+    );
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+
+    let actions = state.selected_message_action_items();
+
+    assert!(actions.iter().any(|action| {
+        action.kind == MessageActionKind::ViewImage
+            && action.label == "View image"
+            && action.enabled
+    }));
+    assert!(
+        !actions
+            .iter()
+            .any(|action| matches!(action.kind, MessageActionKind::DownloadAttachment(_)))
+    );
+    assert!(state.select_message_action_row(1));
+
+    assert_eq!(state.activate_selected_message_action(), None);
+    assert!(state.is_image_viewer_open());
+    assert_eq!(
+        state.selected_image_viewer_item(),
+        Some(super::ImageViewerItem {
+            index: 1,
+            total: 1,
+            filename: "image-1.png".to_owned(),
+            url: "https://cdn.discordapp.com/image-1.png".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn reply_non_image_attachment_action_downloads_with_proxy_url_fallback() {
+    let mut state = state_with_message_ids([]);
+    let mut attachment = video_attachment(1);
+    attachment.url.clear();
+    push_reply_message_with_attachments(&mut state, 1, 99, Some("reply clip"), vec![attachment]);
     state.focus_pane(FocusPane::Messages);
     state.open_selected_message_actions();
 

@@ -230,10 +230,11 @@ impl MessageState {
             ..MessageCapabilities::default()
         };
 
-        // Poll and attachment actions are only valid for regular type 0
-        // messages. Non-regular messages can still be replies/forwards, but
-        // subtype-like action facets should not leak onto system messages.
-        if !self.message_kind.is_regular() {
+        // Poll and attachment actions are valid for chat messages, including
+        // replies. Other non-regular messages can still be rendered as
+        // replies/forwards, but subtype-like action facets should not leak
+        // onto system messages.
+        if !self.message_kind.is_regular_or_reply() {
             return capabilities;
         }
 
@@ -3959,9 +3960,17 @@ mod tests {
     }
 
     #[test]
-    fn message_capabilities_only_expose_action_facets_for_regular_messages() {
+    fn message_capabilities_expose_action_facets_for_chat_messages_only() {
         let mut message = message_state("system body");
         message.message_kind = MessageKind::new(19);
+        message.attachments = vec![attachment_info(1, "cat.png", "image/png")];
+        message.poll = Some(poll_info());
+
+        let capabilities = message.capabilities();
+        assert!(capabilities.has_poll);
+        assert!(capabilities.has_image);
+
+        message.message_kind = MessageKind::new(7);
         message.attachments = vec![attachment_info(1, "cat.png", "image/png")];
         message.poll = Some(poll_info());
 
