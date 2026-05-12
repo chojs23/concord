@@ -450,7 +450,9 @@ async fn handle_frame(
                     };
                     if let Err(e) = dispatch_command(
                         context.writer,
-                        GatewayCommand::UpdatePresence { status: gateway_status },
+                        GatewayCommand::UpdatePresence {
+                            status: gateway_status,
+                        },
                     )
                     .await
                     {

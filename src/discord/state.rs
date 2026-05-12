@@ -525,6 +525,7 @@ impl DiscordState {
             | AppEvent::GuildMemberRemove { .. }
             | AppEvent::PresenceUpdate { .. }
             | AppEvent::UserPresenceUpdate { .. }
+            | AppEvent::SelfPresenceUpdate { .. }
             | AppEvent::TypingStart { .. }
             | AppEvent::GuildFoldersUpdate { .. }
             | AppEvent::UserNoteLoaded { .. }
@@ -1128,8 +1129,8 @@ impl DiscordState {
                 }
             }
             AppEvent::SelfPresenceUpdate { status } => {
-                if self.presence.current == PresenceStatus::Unknown {
-                    self.presence.current = *status;
+                if self.self_presence.current == PresenceStatus::Unknown {
+                    self.self_presence.current = *status;
                 }
             }
             AppEvent::CurrentUserCapabilities { .. } => {}

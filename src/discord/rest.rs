@@ -276,9 +276,7 @@ impl DiscordRest {
                 AppError::DiscordRequest(format!("set presence request failed: {error}"))
             })?
             .error_for_status()
-            .map_err(|error| {
-                AppError::DiscordRequest(format!("set presence failed: {error}"))
-            })?;
+            .map_err(|error| AppError::DiscordRequest(format!("set presence failed: {error}")))?;
         Ok(())
     }
 

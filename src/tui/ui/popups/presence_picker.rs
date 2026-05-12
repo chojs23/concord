@@ -10,7 +10,11 @@ pub(in crate::tui::ui) fn render_presence_picker(
         return;
     }
     let selected = state.presence_picker_selected();
-    let popup = centered_rect(area, 32, (PRESENCE_PICKER_ITEMS.len() as u16).saturating_add(2));
+    let popup = centered_rect(
+        area,
+        32,
+        (PRESENCE_PICKER_ITEMS.len() as u16).saturating_add(2),
+    );
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(presence_picker_lines(PRESENCE_PICKER_ITEMS, selected))

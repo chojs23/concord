@@ -1766,7 +1766,7 @@ fn user_profile_popup_styles_name_by_status() {
 
     let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Idle);
 
-    assert_eq!(lines[0].spans[0].style.fg, Some(Color::Rgb(180, 140, 0)));
+    assert_eq!(lines[0].spans[0].style.fg, Some(Color::Yellow));
     assert!(
         lines[0].spans[0]
             .style
