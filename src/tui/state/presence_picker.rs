@@ -2,11 +2,11 @@ use crate::discord::{AppCommand, PresenceStatus};
 
 use super::{DashboardState, popups::PresencePickerState, scroll::clamp_selected_index};
 
-pub const PRESENCE_PICKER_ITEMS: &[(PresenceStatus, &str)] = &[
-    (PresenceStatus::Online, "Online"),
-    (PresenceStatus::Idle, "Idle"),
-    (PresenceStatus::DoNotDisturb, "Do Not Disturb"),
-    (PresenceStatus::Offline, "Invisible"),
+pub const PRESENCE_PICKER_ITEMS: &[(PresenceStatus, &str, char)] = &[
+    (PresenceStatus::Online, "Online", 'o'),
+    (PresenceStatus::Idle, "Idle", 'a'),
+    (PresenceStatus::DoNotDisturb, "Do Not Disturb", 'd'),
+    (PresenceStatus::Offline, "Invisible", 'i'),
 ];
 
 impl DashboardState {
@@ -23,7 +23,7 @@ impl DashboardState {
         let current = self.self_status();
         let selected = PRESENCE_PICKER_ITEMS
             .iter()
-            .position(|(s, _)| *s == current)
+            .position(|(s, _, _)| *s == current)
             .unwrap_or(0);
         self.presence_picker = Some(PresencePickerState { selected });
     }
@@ -55,7 +55,17 @@ impl DashboardState {
     pub fn activate_presence_picker(&mut self) -> Option<AppCommand> {
         let picker = self.presence_picker.as_ref()?;
         let selected = clamp_selected_index(picker.selected, PRESENCE_PICKER_ITEMS.len());
-        let (status, _) = PRESENCE_PICKER_ITEMS[selected];
+        let (status, _, _) = PRESENCE_PICKER_ITEMS[selected];
+        self.user_presence_override = Some(status);
+        self.close_presence_picker();
+        Some(AppCommand::SetPresence { status })
+    }
+
+    pub fn activate_presence_picker_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
+        let index = PRESENCE_PICKER_ITEMS
+            .iter()
+            .position(|(_, _, key)| *key == shortcut)?;
+        let (status, _, _) = PRESENCE_PICKER_ITEMS[index];
         self.user_presence_override = Some(status);
         self.close_presence_picker();
         Some(AppCommand::SetPresence { status })

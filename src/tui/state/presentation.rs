@@ -27,7 +27,7 @@ pub fn discord_color(color: Option<u32>, fallback: Color) -> Color {
 pub fn presence_color(status: PresenceStatus) -> Color {
     match status {
         PresenceStatus::Online => Color::Green,
-        PresenceStatus::Idle => Color::Rgb(180, 140, 0),
+        PresenceStatus::Idle => Color::Yellow,
         PresenceStatus::DoNotDisturb => Color::Red,
         PresenceStatus::Offline => Color::DarkGray,
         PresenceStatus::Unknown => Color::DarkGray,

@@ -41,6 +41,7 @@ pub(super) use options::render_options_popup;
 #[cfg(test)]
 pub(super) use polls::poll_vote_picker_lines;
 pub(super) use polls::render_poll_vote_picker;
+pub(super) use presence_picker::render_presence_picker;
 pub(super) use profile::{
     render_user_profile_popup, user_profile_popup_area, user_profile_popup_has_avatar,
     user_profile_popup_text_geometry, user_profile_popup_total_lines,
@@ -53,7 +54,6 @@ pub(super) use reactions::{
     emoji_reaction_picker_lines_with_existing, filtered_emoji_reaction_picker_lines,
     reaction_users_popup_lines,
 };
-pub(super) use presence_picker::render_presence_picker;
 pub(super) use reactions::{render_emoji_reaction_picker, render_reaction_users_popup};
 pub(super) use toast::render_toast;
 #[cfg(test)]
