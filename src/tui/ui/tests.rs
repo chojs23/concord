@@ -1626,14 +1626,14 @@ fn user_profile_popup_renders_activity_section() {
 
     assert!(texts.iter().any(|line| line == "ACTIVITY"));
     assert!(texts.iter().any(|line| line == "🦀 Coding hard"));
-    assert!(texts.iter().any(|line| line == "Listening to Spotify"));
+    assert!(texts.iter().any(|line| line == "♪ Spotify"));
     assert!(texts.iter().any(|line| line == "Bohemian Rhapsody"));
     assert!(texts.iter().any(|line| line == "by Queen"));
-    assert!(texts.iter().any(|line| line == "Playing Concord"));
+    assert!(texts.iter().any(|line| line == "▶ Concord"));
 }
 
 #[test]
-fn primary_activity_summary_picks_custom_status_first() {
+fn primary_activity_summary_prefers_game_over_custom_status() {
     let activities = vec![
         ActivityInfo {
             kind: ActivityKind::Playing,
@@ -1660,8 +1660,8 @@ fn primary_activity_summary_picks_custom_status_first() {
     ];
 
     assert_eq!(
-        primary_activity_summary(&activities),
-        Some("🦀 Coding hard".to_owned())
+        primary_activity_summary(&activities, &[]).map(|(t, _)| t),
+        Some("▶ Concord".to_owned())
     );
 }
 
@@ -1677,8 +1677,8 @@ fn primary_activity_summary_listening_includes_track_and_artist() {
         emoji: None,
     }];
     assert_eq!(
-        primary_activity_summary(&activities),
-        Some("Listening to Spotify — Bohemian Rhapsody by Queen".to_owned())
+        primary_activity_summary(&activities, &[]).map(|(t, _)| t),
+        Some("♪ Spotify — Bohemian Rhapsody by Queen".to_owned())
     );
 }
 

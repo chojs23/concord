@@ -1,7 +1,6 @@
 mod fixtures;
 
 use fixtures::*;
-
 use ratatui::text::Line;
 
 use crate::{

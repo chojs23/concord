@@ -40,7 +40,7 @@ pub struct AvatarImage {
     pub protocol: Protocol,
 }
 
-pub struct EmojiReactionImage<'a> {
+pub struct EmojiImage<'a> {
     pub url: String,
     pub protocol: &'a Protocol,
 }
@@ -114,4 +114,5 @@ pub(crate) enum ActionMenuTarget {
 
 pub(super) struct UserProfilePopupText {
     pub(super) lines: Vec<Line<'static>>,
+    pub(super) emoji_overlays: Vec<(usize, String)>,
 }

@@ -23,7 +23,7 @@ use crate::{
     logging,
 };
 
-use super::ui::{AvatarImage, EmojiReactionImage};
+use super::ui::{AvatarImage, EmojiImage};
 
 const AVATAR_PREVIEW_WIDTH: u16 = 2;
 const AVATAR_PREVIEW_HEIGHT: u16 = 2;
@@ -357,10 +357,7 @@ impl EmojiImageCache {
 
     /// Returns decoded protocols for visible targets and refreshes their
     /// LRU timestamps so they survive the next pruning pass.
-    pub(super) fn render_state(
-        &mut self,
-        targets: &[EmojiImageTarget],
-    ) -> Vec<EmojiReactionImage<'_>> {
+    pub(super) fn render_state(&mut self, targets: &[EmojiImageTarget]) -> Vec<EmojiImage<'_>> {
         let touch_tick = self.next_tick();
         for target in targets {
             if let Some(entry) = self.entries.get_mut(&target.url) {
@@ -373,7 +370,7 @@ impl EmojiImageCache {
                 let EmojiImageEntry::Ready { protocol, .. } = self.entries.get(&target.url)? else {
                     return None;
                 };
-                Some(EmojiReactionImage {
+                Some(EmojiImage {
                     url: target.url.clone(),
                     protocol,
                 })
@@ -458,30 +455,44 @@ impl EmojiImageCache {
         };
 
         match image::load_from_memory(bytes) {
-            Ok(image) => {
-                let render_info = ImagePreviewRenderInfo {
-                    viewer: false,
-                    message_index: 0,
-                    preview_x_offset_columns: 0,
-                    preview_y_offset_rows: 0,
-                    preview_width: EMOJI_REACTION_THUMB_WIDTH,
-                    preview_height: EMOJI_REACTION_THUMB_HEIGHT,
-                    preview_overflow_count: 0,
-                    visible_preview_height: EMOJI_REACTION_THUMB_HEIGHT,
-                    top_clip_rows: 0,
-                    accent_color: None,
-                };
-                if let Some(protocol) = clipped_preview_protocol(picker, &image, render_info) {
-                    self.entries.insert(
-                        url.to_owned(),
-                        EmojiImageEntry::Ready {
-                            protocol,
-                            last_used,
-                        },
-                    );
-                } else {
-                    self.entries
-                        .insert(url.to_owned(), EmojiImageEntry::Failed { last_used });
+            Ok(img) => {
+                let (font_width, font_height) = picker.font_size();
+                let canvas_w = u32::from(EMOJI_REACTION_THUMB_WIDTH) * u32::from(font_width);
+                let canvas_h = u32::from(font_height);
+
+                let max_h = (canvas_h * 3 / 4).max(1);
+                let scaled = img.resize(canvas_w, max_h, FilterType::Lanczos3);
+                let scaled_rgba = scaled.to_rgba8();
+
+                let x_off = ((canvas_w.saturating_sub(scaled_rgba.width())) / 2) as i64;
+                let y_off = ((canvas_h.saturating_sub(scaled_rgba.height())) / 2) as i64;
+
+                let mut canvas = image::RgbaImage::new(canvas_w, canvas_h);
+                image::imageops::overlay(&mut canvas, &scaled_rgba, x_off, y_off);
+
+                match picker.new_protocol(
+                    DynamicImage::ImageRgba8(canvas),
+                    Rect::new(
+                        0,
+                        0,
+                        EMOJI_REACTION_THUMB_WIDTH,
+                        EMOJI_REACTION_THUMB_HEIGHT,
+                    ),
+                    Resize::Fit(None),
+                ) {
+                    Ok(protocol) => {
+                        self.entries.insert(
+                            url.to_owned(),
+                            EmojiImageEntry::Ready {
+                                protocol,
+                                last_used,
+                            },
+                        );
+                    }
+                    Err(_) => {
+                        self.entries
+                            .insert(url.to_owned(), EmojiImageEntry::Failed { last_used });
+                    }
                 }
             }
             Err(_) => {

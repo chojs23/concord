@@ -32,8 +32,8 @@ use super::{
     },
 };
 use crate::discord::{
-    ActivityInfo, ActivityKind, ChannelState, ChannelUnreadState, ChannelVisibilityStats,
-    FriendStatus, MessageState, PresenceStatus, ReactionInfo, ReactionUsersInfo, UserProfileInfo,
+    ActivityInfo, ChannelState, ChannelUnreadState, ChannelVisibilityStats, FriendStatus,
+    MessageState, PresenceStatus, ReactionInfo, ReactionUsersInfo, UserProfileInfo,
 };
 
 /// `#FFA500` — Discord's "you were mentioned" orange.
@@ -89,7 +89,7 @@ use self::types::{
 };
 pub(crate) use self::types::{ActionMenuTarget, MESSAGE_ROW_GAP, MouseTarget};
 pub use self::types::{
-    AvatarImage, EmojiReactionImage, ImagePreview, ImagePreviewLayout, ImagePreviewState,
+    AvatarImage, EmojiImage, ImagePreview, ImagePreviewLayout, ImagePreviewState,
 };
 #[cfg(test)]
 use self::{
@@ -166,7 +166,7 @@ pub fn render(
     state: &DashboardState,
     image_previews: Vec<ImagePreview<'_>>,
     avatar_images: Vec<AvatarImage>,
-    emoji_images: Vec<EmojiReactionImage<'_>>,
+    emoji_images: Vec<EmojiImage<'_>>,
     profile_avatar: Option<AvatarImage>,
 ) {
     let areas = dashboard_areas(frame.area(), state);
@@ -196,7 +196,7 @@ pub fn render(
         &emoji_images,
     );
     if state.is_pane_visible(FocusPane::Members) {
-        render_members(frame, areas.members, state);
+        render_members(frame, areas.members, state, &emoji_images);
     }
     render_footer(frame, areas.footer, state);
     render_leader_popup(frame, areas.messages, state);
@@ -209,9 +209,9 @@ pub fn render(
     }
     render_options_popup(frame, areas.messages, state);
     render_poll_vote_picker(frame, areas.messages, state);
+    render_user_profile_popup(frame, areas.messages, state, profile_avatar, &emoji_images);
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
     render_reaction_users_popup(frame, areas.messages, state);
-    render_user_profile_popup(frame, areas.messages, state, profile_avatar);
     render_image_viewer(frame, areas.messages, state, viewer_image_preview);
     render_image_viewer_action_menu(frame, areas.messages, state);
     render_debug_log_popup(frame, areas.messages, state);
