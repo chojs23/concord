@@ -679,14 +679,20 @@ pub(super) fn composer_lines_with_loaded_custom_emoji_urls(
     if state.is_composing() {
         let mut lines = pending_upload_lines(state, width);
         let display_input = composer_display_input(state, loaded_custom_emoji_urls);
-        let input = Line::from(format!("> {}", display_input.input));
         if let Some(message) = state.reply_target_message_state() {
             lines.push(Line::from(Span::styled(
                 reply_target_hint(message, state, width),
                 Style::default().fg(DIM),
             )));
         }
-        lines.push(input);
+        // Split input by newlines to properly display line breaks
+        for (i, line) in display_input.input.split('\n').enumerate() {
+            if i == 0 {
+                lines.push(Line::from(format!("> {}", line)));
+            } else {
+                lines.push(Line::from(format!("  {}", line)));
+            }
+        }
         return lines;
     }
 
