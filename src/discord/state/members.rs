@@ -97,6 +97,18 @@ impl DiscordState {
             .map(|member| member.display_name.as_str())
     }
 
+    /// Returns true only when the cached member entry has a real Discord
+    /// username — meaning the member data was complete when it was stored.
+    /// A member with `username: None` has a synthesised fallback display name
+    /// and should still be looked up via the profile API.
+    pub fn member_has_known_name(&self, guild_id: Id<GuildMarker>, user_id: Id<UserMarker>) -> bool {
+        self.members
+            .get(&guild_id)
+            .and_then(|members| members.get(&user_id))
+            .map(|member| member.username.is_some())
+            .unwrap_or(false)
+    }
+
     pub(super) fn update_user_activities(
         &mut self,
         user_id: Id<UserMarker>,

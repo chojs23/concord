@@ -5224,7 +5224,7 @@ fn missing_message_author_profile_requests_include_visible_forum_preview_authors
 
     assert_eq!(
         state.missing_message_author_profile_requests(),
-        vec![(Id::new(99), guild_id)]
+        vec![(Id::new(99), Some(guild_id))]
     );
 
     state.push_event(AppEvent::UserProfileLoaded {

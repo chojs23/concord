@@ -269,6 +269,23 @@ impl DiscordState {
         });
     }
 
+    pub(super) fn refresh_message_author_from_profile(
+        &mut self,
+        guild_id: Option<Id<GuildMarker>>,
+        user_id: Id<UserMarker>,
+        display_name: &str,
+        avatar_url: Option<&str>,
+    ) {
+        self.for_each_cached_message_mut(|message| {
+            if message.author_id == user_id && message.guild_id == guild_id {
+                message.author = display_name.to_owned();
+                if avatar_url.is_some() || message.author_avatar_url.is_none() {
+                    message.author_avatar_url = avatar_url.map(str::to_owned);
+                }
+            }
+        });
+    }
+
     pub(super) fn upsert_message(&mut self, mut message: MessageState) {
         let channel_id = message.channel_id;
         let message_id = message.id;

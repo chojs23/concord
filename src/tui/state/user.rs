@@ -289,7 +289,7 @@ impl DashboardState {
 
     pub fn missing_message_author_profile_requests(
         &self,
-    ) -> Vec<(Id<UserMarker>, Id<GuildMarker>)> {
+    ) -> Vec<(Id<UserMarker>, Option<Id<GuildMarker>>)> {
         let mut seen = HashSet::new();
         let mut requests = Vec::new();
 
@@ -327,22 +327,24 @@ impl DashboardState {
 
     fn push_missing_author_profile_request(
         &self,
-        requests: &mut Vec<(Id<UserMarker>, Id<GuildMarker>)>,
-        seen: &mut HashSet<(Id<UserMarker>, Id<GuildMarker>)>,
+        requests: &mut Vec<(Id<UserMarker>, Option<Id<GuildMarker>>)>,
+        seen: &mut HashSet<(Id<UserMarker>, Option<Id<GuildMarker>>)>,
         user_id: Id<UserMarker>,
         guild_id: Option<Id<GuildMarker>>,
     ) {
-        let Some(guild_id) = guild_id else {
-            return;
-        };
-        if self
-            .discord
-            .member_display_name(guild_id, user_id)
-            .is_some()
-            || self.discord.user_profile(user_id, Some(guild_id)).is_some()
-            || !seen.insert((user_id, guild_id))
-        {
-            return;
+        if let Some(guild_id) = guild_id {
+            if self.discord.member_has_known_name(guild_id, user_id)
+                || self.discord.user_profile(user_id, Some(guild_id)).is_some()
+                || !seen.insert((user_id, Some(guild_id)))
+            {
+                return;
+            }
+        } else {
+            if self.discord.user_profile(user_id, None).is_some()
+                || !seen.insert((user_id, None))
+            {
+                return;
+            }
         }
         requests.push((user_id, guild_id));
     }

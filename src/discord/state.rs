@@ -487,10 +487,32 @@ impl DiscordState {
                 if let Some(note) = self.fetched_notes.get(&profile.user_id) {
                     profile.note = note.clone();
                 }
+                let display_name = profile.display_name().to_owned();
+                let avatar_url = profile.avatar_url.clone();
+                let username = profile.username.clone();
+                let user_id = profile.user_id;
                 self.user_profiles.insert(
                     UserProfileCacheKey::new(profile.user_id, *guild_id),
                     profile,
                 );
+                self.refresh_message_author_from_profile(
+                    *guild_id,
+                    user_id,
+                    &display_name,
+                    avatar_url.as_deref(),
+                );
+                if let Some(guild_id) = guild_id {
+                    if let Some(member) = self
+                        .members
+                        .get_mut(guild_id)
+                        .and_then(|members| members.get_mut(&user_id))
+                    {
+                        if member.username.is_none() {
+                            member.display_name = display_name;
+                            member.username = Some(username);
+                        }
+                    }
+                }
             }
             AppEvent::UserNoteLoaded { user_id, note } => {
                 self.fetched_notes.insert(*user_id, note.clone());
