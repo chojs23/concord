@@ -60,8 +60,8 @@ pub(super) fn build_activity_render(
             let name = sanitize_for_display_width(&activity.name);
             let body = if compact {
                 match (activity.details.as_deref(), activity.state.as_deref()) {
-                    (Some(track), Some(artist)) => format!("{name} — {track} by {artist}"),
-                    (Some(track), None) => format!("{name} — {track}"),
+                    (Some(track), Some(artist)) => format!("{name} - {track} by {artist}"),
+                    (Some(track), None) => format!("{name} - {track}"),
                     _ => name,
                 }
             } else {

@@ -564,7 +564,7 @@ pub(super) fn render_image_viewer(
 }
 
 fn image_viewer_title(item: &ImageViewerItem) -> String {
-    format!("Image {}/{} — {}", item.index, item.total, item.filename)
+    format!("Image {}/{} - {}", item.index, item.total, item.filename)
 }
 
 pub(super) fn render_message_action_menu(frame: &mut Frame, area: Rect, state: &DashboardState) {
@@ -654,7 +654,7 @@ pub(super) fn options_popup_lines(
                 Span::styled(marker, Style::default().fg(ACCENT)),
                 Span::styled(format!("{control} "), style),
                 Span::styled(item.label, style),
-                Span::styled(" — ", Style::default().fg(DIM)),
+                Span::styled(" - ", Style::default().fg(DIM)),
                 Span::styled(item.description, Style::default().fg(DIM)),
             ])
         })
@@ -1049,7 +1049,7 @@ pub(super) fn user_profile_popup_text(
                     .map(str::to_owned)
                     .unwrap_or_else(|| format!("guild-{}", entry.guild_id.get()));
                 let body = match entry.nick.as_deref() {
-                    Some(nick) => format!("• {name} — {nick}"),
+                    Some(nick) => format!("• {name} - {nick}"),
                     None => format!("• {name}"),
                 };
                 lines.push(Line::from(vec![

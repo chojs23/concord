@@ -1703,7 +1703,7 @@ fn primary_activity_summary_listening_includes_track_and_artist() {
     }];
     assert_eq!(
         primary_activity_summary(&activities, &[]).map(|r| r.to_display_string()),
-        Some("♪ Spotify — Bohemian Rhapsody by Queen".to_owned())
+        Some("♪ Spotify - Bohemian Rhapsody by Queen".to_owned())
     );
 }
 

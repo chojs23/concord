@@ -1130,7 +1130,7 @@ pub(super) fn render_members(
 }
 
 fn member_group_header(group: &MemberGroup<'_>, content_width: usize) -> Line<'static> {
-    let count_suffix = format!(" — {}", group.entries.len());
+    let count_suffix = format!(" - {}", group.entries.len());
     let label_max = content_width.saturating_sub(count_suffix.width());
     let label = truncate_display_width(&group.label, label_max);
     Line::from(vec![
