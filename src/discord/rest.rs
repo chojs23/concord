@@ -26,7 +26,7 @@ use crate::{
 const REACTION_USERS_PAGE_LIMIT: u16 = 100;
 const FORUM_POST_SEARCH_PAGE_LIMIT: u16 = 25;
 // Discord returns 202 ACCEPTED while it warms the per-forum search index.
-// Wait briefly then retry; with two attempts after the original we cover the
+// Wait briefly then retry. With two attempts after the original we cover the
 // common cold-start window without making the user wait on a stuck index.
 const FORUM_POST_SEARCH_RETRY_DELAYS: [Duration; 2] =
     [Duration::from_millis(250), Duration::from_millis(500)];
@@ -173,7 +173,7 @@ impl DiscordRest {
         Ok(())
     }
 
-    /// `token: null` is the legacy anti-spam echo field; modern clients
+    /// `token: null` is the legacy anti-spam echo field. Modern clients
     /// always send null.
     pub async fn ack_channel(
         &self,
@@ -395,7 +395,7 @@ impl DiscordRest {
     ) -> Result<ForumPostPage> {
         // `/threads/search` is the only Discord endpoint that ships
         // `first_messages` alongside thread metadata, so we never want to
-        // fall back to the active/archived endpoints — they can't supply
+        // fall back to the active or archived endpoints. They cannot supply
         // previews and routinely 403 on user-account tokens. Instead retry
         // briefly when the search index is still warming up.
         let mut last_error = None;
@@ -819,7 +819,7 @@ fn reaction_user_info_from_raw(value: &Value) -> Option<ReactionUserInfo> {
 }
 
 /// Builds the dashboard's `UserProfileInfo` from Discord's
-/// `/users/{id}/profile` JSON. Friend status is left as `None` here — the
+/// `/users/{id}/profile` JSON. Friend status is left as `None` here because the
 /// caller fills it in from cached relationship data.
 fn parse_user_profile_response(
     user_id: Id<UserMarker>,
@@ -1016,10 +1016,10 @@ impl ForumSearchSort {
 }
 
 /// Combine the two first-page responses Discord uses to build the "Recent
-/// activity" view. `active` (last_message_time) carries threads with replies;
+/// activity" view. `active` (last_message_time) carries threads with replies.
 /// `recent` (creation_time) carries the freshly-created zero-reply ones. We
-/// dedupe by `channel_id` — the order doesn't matter because the display
-/// layer re-sorts by `last_message_id` snowflake. `has_more` only follows the
+/// dedupe by `channel_id`. The order does not matter because the display layer
+/// re-sorts by `last_message_id` snowflake. `has_more` only follows the
 /// `last_message_time` cursor since subsequent pages use that sort alone.
 fn merge_forum_pages(active: ForumPostPage, recent: ForumPostPage) -> ForumPostPage {
     let mut seen_posts = std::collections::HashSet::new();
@@ -1537,8 +1537,8 @@ mod tests {
                 forum_post(forum_id, 300, "creation-only"),
             ],
             preview_messages: Vec::new(),
-            // `has_more` from the creation_time side should be ignored —
-            // pagination beyond the first page only follows last_message_time.
+            // Ignore `has_more` from the creation_time side. Pagination beyond
+            // the first page only follows last_message_time.
             has_more: false,
         };
 

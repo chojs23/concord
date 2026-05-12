@@ -296,8 +296,8 @@ impl DashboardState {
         //
         //  1. Pinned posts come back interleaved with everything else by
         //     activity time, but the official client lifts them to the top.
-        //  2. The server-side `sort_by=last_message_time` index can be stale —
-        //     posts with newer messages sometimes sit below older ones. The
+        //  2. The server-side `sort_by=last_message_time` index can be stale.
+        //     Posts with newer messages sometimes sit below older ones. The
         //     `last_message_id` snowflake encodes the actual message
         //     timestamp, and we keep it fresh via gateway updates, so a local
         //     resort by that field tracks Discord's UI more closely.
@@ -579,7 +579,7 @@ impl DashboardState {
     pub fn channels(&self) -> Vec<&ChannelState> {
         match self.active_guild {
             ActiveGuildScope::Unset => Vec::new(),
-            // DMs do not carry guild-style permissions; show every channel.
+            // DMs do not carry guild-style permissions, so show every channel.
             ActiveGuildScope::DirectMessages => self.discord.channels_for_guild(None),
             // Filter to channels we have VIEW_CHANNEL on, otherwise the
             // sidebar surfaces channels that REST refuses with 403.
@@ -592,7 +592,7 @@ impl DashboardState {
     pub fn channel_pane_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
         let mut channels = self.channels();
         // Threads are reached through the channel action menu instead of
-        // appearing as top-level entries; without this filter their parent
+        // appearing as top-level entries. Without this filter their parent
         // channel would not be in `category_ids`, so the roots filter below
         // would let them through and render them under the channel list.
         channels.retain(|channel| !channel.is_thread());
@@ -973,7 +973,7 @@ impl DashboardState {
             self.unread_divider_last_acked_id = last_acked_snapshot;
             self.pending_unread_anchor_scroll = true;
             self.message_auto_follow = false;
-            // Disable selection-keep until the snap lands; otherwise the
+            // Disable selection-keep until the snap lands. Otherwise the
             // centering pass in `clamp_message_viewport_for_image_previews`
             // would pull the viewport to the latest message before the
             // snap can pin it to the last-read anchor.
@@ -1009,7 +1009,7 @@ impl DashboardState {
     /// Ack the channel up to its latest message and retire the unread
     /// divider/banner immediately so the visible cue matches the new
     /// fully-read state. Use this for explicit user actions like
-    /// "Mark as read"; activation already runs `queue_channel_ack` on its
+    /// "Mark as read" because activation already runs `queue_channel_ack` on its
     /// own.
     pub fn mark_channel_as_read(&mut self, channel_id: Id<ChannelMarker>) {
         self.queue_channel_ack(channel_id);

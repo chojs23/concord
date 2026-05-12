@@ -12,8 +12,8 @@ use crate::discord::{
 };
 
 /// Build a guild with a single channel where @everyone keeps
-/// VIEW_CHANNEL but loses SEND_MESSAGES — i.e. an announcement-style
-/// "read-only" channel that the user can read but not post in.
+/// VIEW_CHANNEL but loses SEND_MESSAGES. This is an announcement-style
+/// read-only channel that the user can read but not post in.
 pub(super) fn state_with_read_only_channel() -> DashboardState {
     guild_state_with_overwrites(vec![PermissionOverwriteInfo {
         id: 1,
@@ -23,8 +23,7 @@ pub(super) fn state_with_read_only_channel() -> DashboardState {
     }])
 }
 
-/// Build a guild with a single channel that is fully hidden — used to
-/// verify the visibility stats accounting.
+/// Build a guild with a single hidden channel to verify visibility stats.
 pub(super) fn state_with_view_denied_channel() -> DashboardState {
     guild_state_with_overwrites(vec![PermissionOverwriteInfo {
         id: 1,

@@ -977,7 +977,7 @@ fn member_groups_split_role_online_and_offline_buckets() {
         ]
     );
 
-    // Admin role group only carries the online admin (alice); the offline
+    // Admin role group only carries the online admin (alice). The offline
     // admin (amy) belongs to the Offline bucket.
     let admin_names: Vec<_> = groups[0]
         .entries
@@ -1396,9 +1396,8 @@ fn user_sent_message_from_history_position_does_not_force_follow() {
     let parked_message_id = state.messages()[state.selected_message()].id;
 
     // Simulate the REST send response arriving as a self-authored
-    // MessageCreate. Auto-follow must NOT yank the cursor down — the user
-    // was reading older history, and that intent outranks the convenience
-    // of jumping to their own send.
+    // MessageCreate. Auto-follow must not yank the cursor down because the
+    // user was reading older history.
     state.push_event(AppEvent::MessageCreate {
         guild_id: Some(Id::new(1)),
         channel_id: Id::new(2),
@@ -3364,8 +3363,7 @@ fn typing_at_sign_at_start_opens_mention_picker() {
 
 #[test]
 fn typing_at_sign_after_letter_does_not_trigger_picker() {
-    // `me@` should not open the picker — the user is mid-word, not
-    // starting a fresh mention.
+    // `me@` should not open the picker because the user is mid-word.
     let mut state = state_with_writable_channel_and_members();
     state.start_composer();
     for ch in "me".chars() {
@@ -4106,7 +4104,7 @@ fn member_list_subscription_target_uses_active_channel_or_fallback() {
     );
 
     // Switching the active channel to a thread must fall back to the
-    // parent text channel — Discord rejects op-37 ranges against threads.
+    // parent text channel because Discord rejects op-37 ranges against threads.
     state.activate_channel(Id::new(10));
     assert_eq!(
         state.member_list_subscription_target(),
@@ -5041,8 +5039,8 @@ fn archived_forum_posts_render_after_active_posts_without_moving_shared_active_p
 #[test]
 fn forum_posts_resort_by_last_message_id_when_server_index_is_stale() {
     // Discord's `/threads/search?sort_by=last_message_time` sometimes returns
-    // posts out of strict timestamp order — its index lags behind real
-    // activity. We re-sort by `last_message_id` (the snowflake encodes the
+    // posts out of strict timestamp order because its index lags behind real
+    // activity. We re-sort by `last_message_id` because the snowflake encodes the
     // exact message timestamp) so the displayed order matches the official
     // client even when the API reply is stale.
     let guild_id = Id::new(1);

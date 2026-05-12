@@ -57,7 +57,7 @@ impl DashboardState {
     /// Picks a channel suitable for sending a guild op-37 subscription so
     /// Discord starts shipping `GUILD_MEMBER_LIST_UPDATE` events. Member-list
     /// updates only flow once the client subscribes to *some* channel in the
-    /// guild; this lets the sidebar populate before the user opens a channel.
+    /// guild. This lets the sidebar populate before the user opens a channel.
     pub fn guild_member_list_channel(
         &self,
         guild_id: Id<GuildMarker>,

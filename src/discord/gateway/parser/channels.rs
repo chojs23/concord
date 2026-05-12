@@ -116,7 +116,7 @@ pub(crate) fn parse_channel_info(
 }
 
 /// Parse one entry from a channel's `permission_overwrites` array. Discord
-/// serializes the bitfields as decimal strings; the numeric fallback keeps
+/// serializes the bitfields as decimal strings. The numeric fallback keeps
 /// the parser tolerant of synthetic payloads (used in tests).
 fn parse_permission_overwrite(value: &Value) -> Option<PermissionOverwriteInfo> {
     let id = value.get("id").and_then(|value| {

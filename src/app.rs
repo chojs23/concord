@@ -52,12 +52,8 @@ impl App {
         let gateway_task = client.start_gateway();
         let command_task = start_command_loop(client.clone(), commands_rx);
 
-        // Warm up the REST connection pool in the background. Without this
-        // the first user-triggered REST call (typically opening a forum
-        // channel) pays the full TCP+TLS+HTTP/2 handshake before it can even
-        // start the request, adding ~1s of perceived latency. Firing a cheap
-        // GET here lets the pool finish the handshake while the user is
-        // still navigating the UI.
+        // Warm the REST pool before the first user-triggered request pays the
+        // TCP, TLS, and HTTP/2 setup cost.
         let prime_client = client.clone();
         tokio::spawn(async move {
             let started = Instant::now();
@@ -113,11 +109,8 @@ fn start_command_loop(
     tokio::spawn(async move {
         let attachment_preview_permits =
             Arc::new(Semaphore::new(MAX_CONCURRENT_ATTACHMENT_PREVIEWS));
-        // Each command spawns its own task so they run concurrently. The
-        // previous serial loop blocked the queue: a slow LoadGuildMembers
-        // could delay the LoadForumPosts behind it for seconds. The HTTP
-        // client multiplexes over a shared connection pool, so parallel
-        // spawning costs almost nothing here.
+        // Spawn commands independently so slow REST calls do not block the
+        // whole UI command queue.
         while let Some(command) = commands.recv().await {
             let client = client.clone();
             let attachment_preview_permits = attachment_preview_permits.clone();
@@ -269,13 +262,9 @@ fn start_command_loop(
                         {
                             Ok(page) => {
                                 let elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0;
-                                // Surface forum-load timing at error level so it
-                                // always lands in the log file, even without
-                                // CONCORD_DEBUG. The first forum opened in a
-                                // session is reproducibly the slow one and we
-                                // need elapsed numbers per call to tell whether
-                                // the bottleneck is TLS, the search index, or
-                                // something else.
+                                // Keep forum-load timings in the normal log so
+                                // first forum-open latency can be diagnosed
+                                // without enabling debug logging first.
                                 logging::error(
                                     "history",
                                     format!(
@@ -731,9 +720,8 @@ fn start_command_loop(
                         channel_id,
                         message_id,
                     } => {
-                        // Fire-and-forget: the TUI already cleared its local
-                        // unread state, a failure here only loses the cross-
-                        // client sync.
+                        // Local unread state is already clear. A failure here
+                        // only loses cross-client sync.
                         if let Err(error) = client.ack_channel(channel_id, message_id).await {
                             log_app_error("ack channel failed", &error);
                         }
@@ -840,9 +828,8 @@ fn start_command_loop(
                         }
                     }
                     AppCommand::AckChannels { targets } => {
-                        // Fire-and-forget: the TUI already cleared its local
-                        // unread state, a failure here only loses the cross-
-                        // client sync.
+                        // Local unread state is already clear. A failure here
+                        // only loses cross-client sync.
                         if let Err(error) = client.ack_channels(&targets).await {
                             log_app_error("ack channels failed", &error);
                         }

@@ -948,8 +948,7 @@ pub(super) fn composer_text(state: &DashboardState, width: u16) -> String {
         if !state.can_send_in_selected_channel() {
             return format!("read-only · cannot send messages in {label}");
         }
-        // SEND is allowed but ATTACH isn't — flag it so a future attachment
-        // picker has a coherent UX, and the user knows uploads will be
+        // SEND is allowed but ATTACH is not. Tell the user uploads will be
         // refused before they try.
         if !state.can_attach_in_selected_channel() {
             return format!("press i to write in {label} (attachments disabled)");

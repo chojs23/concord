@@ -168,7 +168,7 @@ pub struct RenderedText {
     pub emoji_slots: Vec<InlineEmojiSlot>,
 }
 
-/// `byte_start..byte_start+byte_len` holds the `:name:` textual fallback;
+/// `byte_start..byte_start+byte_len` holds the `:name:` textual fallback.
 /// the renderer overwrites it with spaces and blits the image only once the
 /// cache has a protocol for `url`. `display_width` equals `byte_len` because
 /// Discord emoji names are ASCII-only.
@@ -194,7 +194,7 @@ pub struct TextHighlight {
 pub enum TextHighlightKind {
     /// The current user is being notified (`<@me>`, `@everyone`, `@here`).
     SelfMention,
-    /// Some other user is being mentioned. Subdued background; informational.
+    /// Some other user is being mentioned. Subdued background for information.
     OtherMention,
 }
 
@@ -264,7 +264,7 @@ where
 }
 
 /// String-only fallback used by thread/channel previews where no image
-/// overlay is possible; replaces `<:name:id>` and `<a:name:id>` with
+/// overlay is possible. Replaces `<:name:id>` and `<a:name:id>` with
 /// `:name:`. The body pipeline uses
 /// [`replace_custom_emoji_markup_in_rendered`].
 pub fn replace_custom_emoji_markup(value: &str) -> String {
@@ -525,7 +525,7 @@ fn parse_mention(value: &str, start: usize) -> Option<(usize, MentionTarget)> {
                     Prefix::Role
                 }
                 Some(&b'!') => {
-                    // Legacy nickname-mention prefix; same target as a plain user mention.
+                    // Legacy nickname-mention prefix. Same target as a plain user mention.
                     index = index.saturating_add(1);
                     Prefix::User
                 }

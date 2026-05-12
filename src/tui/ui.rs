@@ -36,7 +36,7 @@ use crate::discord::{
     MessageState, PresenceStatus, ReactionInfo, ReactionUsersInfo, UserProfileInfo,
 };
 
-/// `#FFA500` — Discord's "you were mentioned" orange.
+/// Discord's "you were mentioned" orange, `#FFA500`.
 const MENTION_ORANGE: Color = Color::Rgb(255, 165, 0);
 
 /// Explicit RGB instead of `Modifier::DIM` so CJK wide characters dim
@@ -299,10 +299,10 @@ fn render_vertical_scrollbar(
 ///
 /// Truncation prevents `Paragraph` from wrapping a long line and bleeding the
 /// continuation onto adjacent rows. Padding to the full width ensures every
-/// cell in the popup row is painted by `Paragraph` — Windows Terminal under
-/// WSL does not always clear the right-hand cell of a wide grapheme (Korean,
-/// emoji) when ratatui's diff sends a default-style space via `Clear`. Writing
-/// an explicit styled space through the paragraph fixes the residue.
+/// cell in the popup row is painted by `Paragraph`. Windows Terminal under WSL
+/// does not always clear the right-hand cell of a wide grapheme such as Korean
+/// text or emoji when ratatui's diff sends a default-style space via `Clear`.
+/// Writing an explicit styled space through the paragraph fixes the residue.
 fn channel_prefix(kind: &str) -> &'static str {
     match kind {
         "dm" | "Private" => "@ ",
@@ -323,7 +323,7 @@ fn dm_presence_dot_span(channel: &ChannelState) -> Option<Span<'static>> {
     ))
 }
 
-/// Active channels skip decoration; the highlight bar handles them and
+/// Active channels skip decoration because the highlight bar handles them and
 /// the activate-time ack clears their unread state anyway.
 fn channel_unread_decoration(
     unread: ChannelUnreadState,

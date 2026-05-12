@@ -111,10 +111,8 @@ fn build_custom(activity: &ActivityInfo, emoji_images: &[EmojiImage<'_>]) -> Act
         .as_ref()
         .map(|emoji| {
             if emoji.id.is_some() {
-                // Custom emoji whose image isn't cached yet
                 format!(":{}:", emoji.name)
             } else {
-                // Unicode emoji — render the glyph itself.
                 emoji.name.clone()
             }
         })

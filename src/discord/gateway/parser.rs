@@ -229,7 +229,7 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
         }
     }
 
-    // VERSIONED_READ_STATES wraps the array as `{ entries, version, partial }`;
+    // VERSIONED_READ_STATES wraps the array as `{ entries, version, partial }`.
     // older shards send a bare array. Accept both.
     if let Some(entries) = data
         .get("read_state")
@@ -248,9 +248,9 @@ fn parse_ready(data: &Value) -> Vec<AppEvent> {
     }
 
     // Guild folder ordering and grouping live in the legacy `user_settings`
-    // payload (the modern `user_settings_proto` blob is base64+protobuf and is
-    // skipped for now). When present, every guild appears in some folder —
-    // either an explicit one or a single-guild "container" with `id == null`.
+    // payload. The modern `user_settings_proto` blob is base64+protobuf and is
+    // skipped for now. When present, every guild appears in some folder, either
+    // an explicit one or a single-guild "container" with `id == null`.
     let folders_started = Instant::now();
     if let Some(folders) = data
         .get("user_settings")
@@ -1376,7 +1376,7 @@ fn parse_relationship_remove(data: &Value) -> Option<AppEvent> {
 
 fn parse_relationship_entry(value: &Value) -> Option<(Id<UserMarker>, FriendStatus)> {
     // READY's `relationships` array uses ids on the entry itself for the
-    // target user. Older shards may nest it under `user.id`; check both.
+    // target user. Older shards may nest it under `user.id`, so check both.
     let user_id = value
         .get("id")
         .and_then(parse_id::<UserMarker>)
@@ -1477,8 +1477,8 @@ mod tests {
     #[test]
     fn raw_member_list_update_processes_all_sync_ranges() {
         // Discord can ship more than one SYNC chunk in a single
-        // GUILD_MEMBER_LIST_UPDATE — e.g. range [0,99] plus [100,199] — and
-        // we need members from every chunk, not just the first.
+        // GUILD_MEMBER_LIST_UPDATE, such as ranges [0,99] and [100,199]. We
+        // need members from every chunk, not just the first.
         let events = parse_user_account_event(
             &json!({
                 "t": "GUILD_MEMBER_LIST_UPDATE",

@@ -491,7 +491,7 @@ fn push_embed_text(
     let Some(value) = value.filter(|value| !value.is_empty()) else {
         return;
     };
-    // Skip the mention pass; embeds never carry user mentions but custom
+    // Skip the mention pass. Embeds never carry user mentions but custom
     // emojis in title/fields/footer must still produce slots.
     let rendered = replace_custom_emoji_markup_in_rendered_with_images(
         RenderedText {
@@ -925,7 +925,7 @@ fn prefix_message_content_line(prefix: &str, mut line: MessageContentLine) -> Me
     line
 }
 
-/// Single-line variant of slot distribution; used where wrapping is skipped.
+/// Single-line variant of slot distribution for places where wrapping is skipped.
 fn emoji_slots_to_image_slots(
     text: &str,
     emoji_slots: &[InlineEmojiSlot],
@@ -1705,12 +1705,11 @@ fn format_attachment(attachment: &AttachmentInfo) -> String {
 
 pub(super) fn mention_highlight_style(kind: TextHighlightKind) -> Style {
     match kind {
-        // The current user got pinged — Discord paints this gold/yellow.
+        // The current user got pinged, so match Discord's gold highlight.
         TextHighlightKind::SelfMention => Style::default()
             .bg(Color::Rgb(92, 76, 35))
             .fg(Color::Yellow),
-        // Someone else was pinged — render with Discord's softer blue tint so
-        // the user can see the chip without the "you" alarm colour.
+        // Someone else was pinged, so use Discord's softer blue tint.
         TextHighlightKind::OtherMention => Style::default()
             .bg(Color::Rgb(40, 50, 92))
             .fg(Color::Rgb(193, 206, 247)),
@@ -1792,7 +1791,7 @@ mod tests {
 
     #[test]
     fn wrap_keeps_emoji_text_fallback_atomic_at_line_edge() {
-        // width 4 cannot fit "ab" + 3-cell ":e:" on one line — emoji wraps.
+        // Width 4 cannot fit "ab" + 3-cell ":e:" on one line, so the emoji wraps.
         let text = "ab:e:";
         let slots = vec![InlineEmojiSlot {
             byte_start: 2,

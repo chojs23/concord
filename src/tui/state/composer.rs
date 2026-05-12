@@ -8,7 +8,7 @@ use crate::discord::{CustomEmojiInfo, PresenceStatus};
 use super::MemberEntry;
 
 /// Maximum number of suggestions composer pickers show at once. Candidate
-/// builders still return every match; rendering scrolls this many rows.
+/// builders still return every match. Rendering scrolls this many rows.
 pub const MAX_MENTION_PICKER_VISIBLE: usize = 8;
 
 /// One entry in the rendered @-mention picker list.

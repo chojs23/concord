@@ -6,7 +6,7 @@ mod notifications;
 mod permissions;
 
 /// Typing indicators stay visible for this long after the latest TYPING_START
-/// from a given user — matches Discord's documented 10-second window so the
+/// from a given user. This matches Discord's documented 10-second window so the
 /// label tracks what other clients show.
 const TYPING_INDICATOR_TTL: Duration = Duration::from_secs(10);
 
@@ -95,7 +95,7 @@ impl ChannelState {
 pub struct ChannelRecipientState {
     pub user_id: Id<UserMarker>,
     pub display_name: String,
-    /// Discord login handle. Mirrors `ChannelRecipientInfo::username`; the
+    /// Discord login handle. Mirrors `ChannelRecipientInfo::username`. The
     /// @-mention picker matches against this in addition to `display_name`.
     pub username: Option<String>,
     pub is_bot: bool,
@@ -259,7 +259,7 @@ impl MessageState {
 pub struct GuildMemberState {
     pub user_id: Id<UserMarker>,
     pub display_name: String,
-    /// Discord login handle. Mirrors `MemberInfo::username`; the @-mention
+    /// Discord login handle. Mirrors `MemberInfo::username`. The @-mention
     /// picker matches against this in addition to `display_name`.
     pub username: Option<String>,
     pub is_bot: bool,
@@ -307,7 +307,7 @@ pub struct DiscordState {
     profile_role_ids: ProfileRoleIds,
     custom_emojis: BTreeMap<Id<GuildMarker>, Vec<CustomEmojiInfo>>,
     /// User's `guild_folders` setting in display order. Empty until READY
-    /// delivers it; the dashboard falls back to a flat guild list.
+    /// delivers it. The dashboard falls back to a flat guild list.
     guild_folders: Vec<GuildFolder>,
     /// Cached profile lookups so the profile popup can render instantly when
     /// the same user is opened again.
@@ -326,7 +326,7 @@ pub struct DiscordState {
     current_user_id: Option<Id<UserMarker>>,
     current_user: Option<String>,
     /// Most recent TYPING_START arrival per (channel, user). Discord renews
-    /// the indicator every ~10 seconds; readers prune stale entries via
+    /// the indicator every ~10 seconds. Readers prune stale entries via
     /// `typing_users` so the map stays small.
     typing: BTreeMap<Id<ChannelMarker>, BTreeMap<Id<UserMarker>, Instant>>,
     read_states: BTreeMap<Id<ChannelMarker>, ChannelReadState>,
@@ -882,7 +882,7 @@ impl DiscordState {
     /// Returns the user IDs that have typed in `channel_id` within the TTL
     /// window, sorted by most-recent activity first. Read-only so render
     /// paths can call it without taking a mutable borrow on the whole
-    /// `DiscordState`; pruning of stale entries happens lazily on the next
+    /// `DiscordState`. Pruning of stale entries happens lazily on the next
     /// `TYPING_START` for the same channel.
     pub fn typing_users(&self, channel_id: Id<ChannelMarker>) -> Vec<Id<UserMarker>> {
         let now = Instant::now();
@@ -940,9 +940,9 @@ impl DiscordState {
     }
 
     /// Snowflake of the authenticated user, captured during READY. `None`
-    /// before the gateway hands us a `READY` payload — callers that depend on
-    /// our identity (permission checks, mention detection) should treat the
-    /// missing case as "can't compute, fall back to permissive".
+    /// before the gateway hands us a `READY` payload. Callers that depend on
+    /// our identity, such as permission checks and mention detection, should
+    /// treat the missing case as "can't compute, fall back to permissive".
     pub fn current_user_id(&self) -> Option<Id<UserMarker>> {
         self.current_user_id
     }
@@ -989,7 +989,7 @@ impl DiscordState {
 
     /// Visible/hidden channel counts for a guild scope. DM scope reports
     /// `(visible, 0)` since DMs are never hidden. Threads are excluded from
-    /// both sides — the debug-panel readout focuses on top-level channels
+    /// both sides. The debug-panel readout focuses on top-level channels
     /// because those are what the user navigates by.
     pub fn channel_visibility_stats(
         &self,
@@ -1183,9 +1183,9 @@ impl DiscordState {
             .or_else(|| existing.map(|existing| existing.recipients.clone()))
             .unwrap_or_default();
 
-        // Threads do not own channel-level overwrites — `permitted` is decided
-        // by the parent. For everything else we take the newest payload as
-        // authoritative, since CHANNEL_UPDATE always carries the full array.
+        // Threads do not own channel-level overwrites. `permitted` is decided
+        // by the parent. For everything else, take the newest payload as
+        // authoritative because CHANNEL_UPDATE always carries the full array.
         let permission_overwrites = if permissions::is_thread_kind(&channel.kind) {
             existing
                 .map(|existing| existing.permission_overwrites.clone())
@@ -5950,8 +5950,8 @@ mod tests {
         let me = Id::new(10);
         let guild = Id::new(1);
         let channel = Id::new(2);
-        // @everyone (role id == guild id) explicitly denies VIEW_CHANNEL — but
-        // the owner short-circuit must still grant access.
+        // @everyone explicitly denies VIEW_CHANNEL, but the owner short-circuit
+        // must still grant access.
         let state = guild_with_permissions(
             me,
             me,
@@ -6017,7 +6017,7 @@ mod tests {
         let guild = Id::new(1);
         let channel = Id::new(2);
         // @everyone has VIEW_CHANNEL by default, but the channel-level
-        // overwrite revokes it — non-admin, non-owner user cannot see it.
+        // overwrite revokes it for a plain member.
         let state = guild_with_permissions(
             owner,
             me,
@@ -6124,8 +6124,8 @@ mod tests {
         let guild = Id::new(1);
         let parent = Id::new(2);
         let thread = Id::new(3);
-        // Parent denies VIEW_CHANNEL — the thread (which carries no overwrites
-        // of its own) must inherit the same answer.
+        // Parent denies VIEW_CHANNEL. The thread carries no overwrites of its
+        // own and must inherit the same answer.
         let mut state = guild_with_permissions(
             owner,
             me,
@@ -6200,7 +6200,7 @@ mod tests {
         );
         assert!(state.viewable_channels_for_guild(Some(guild)).is_empty());
 
-        // A message arrives for the hidden channel — same author as a
+        // A message arrives for the hidden channel with the same author as a
         // legitimate Discord push.
         let message_id = Id::new(900);
         state.apply_event(&AppEvent::MessageCreate {
@@ -6223,7 +6223,7 @@ mod tests {
             forwarded_snapshots: Vec::new(),
         });
 
-        // Channel must remain hidden — no permission promotion happened.
+        // The channel must remain hidden because no permission promotion happened.
         assert!(state.viewable_channels_for_guild(Some(guild)).is_empty());
         assert_eq!(
             state.channel_visibility_stats(Some(guild)),
@@ -6233,7 +6233,7 @@ mod tests {
             }
         );
         // The underlying channel record still exists and the message was
-        // stored — gating is a sidebar concern, not a data-purge concern.
+        // stored. Gating is a sidebar concern, not a data-purge concern.
         assert!(state.channel(channel).is_some());
         assert_eq!(state.messages_for_channel(channel).len(), 1);
     }
@@ -6451,9 +6451,8 @@ mod tests {
 
     #[test]
     fn channel_visibility_stats_count_only_top_level() {
-        // Threads should not skew the stats — the user navigates by channel,
-        // and a thread under a hidden parent already inherits the parent's
-        // visibility.
+        // Threads should not skew the stats. The user navigates by channel, and
+        // a thread under a hidden parent already inherits the parent's visibility.
         let me = Id::new(10);
         let owner = Id::new(11);
         let guild = Id::new(1);
@@ -6553,8 +6552,8 @@ mod tests {
 
     #[test]
     fn missing_current_user_id_falls_back_to_visible() {
-        // Until READY arrives we cannot decide — be permissive so the sidebar
-        // is not empty during the brief window between connect and READY.
+        // Until READY arrives we cannot decide. Be permissive so the sidebar is
+        // not empty during the brief window between connect and READY.
         let mut state = DiscordState::default();
         state.apply_event(&AppEvent::GuildCreate {
             guild_id: Id::new(1),

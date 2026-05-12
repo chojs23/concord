@@ -70,7 +70,7 @@ pub(super) fn guild_member_groups<'a>(
     let mut grouped_online: HashSet<Id<UserMarker>> = HashSet::new();
 
     // Hoisted role groups list only online members (online/idle/dnd) to
-    // mirror the official Discord client's sidebar; offline members from
+    // mirror the official Discord client's sidebar. Offline members from
     // any role roll up into the bottom "Offline" group instead.
     for role in hoisted_roles {
         let mut entries: Vec<&GuildMemberState> = members

@@ -261,8 +261,8 @@ fn render_unread_banner(frame: &mut Frame, area: Rect, state: &DashboardState) {
         return;
     }
     // The banner row is reserved by `message_areas` based on the same
-    // `unread_banner()` predicate, so a missing payload here is a stale
-    // layout — bail out rather than paint an empty Discord-blue strip.
+    // `unread_banner()` predicate. A missing payload here is a stale layout,
+    // so avoid painting an empty Discord-blue strip.
     let Some(banner) = state.unread_banner() else {
         return;
     };

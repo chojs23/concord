@@ -111,10 +111,8 @@ pub fn handle_mouse_event(
                 move_modal_down(state);
                 return MouseOutcome::handled(None);
             }
-            // Wheel events while the user-profile popup is open scroll the
-            // popup body — not the pane below it. The popup is modal for
-            // keyboard input but transparent for wheel events otherwise,
-            // which feels jarring (the page underneath jumps).
+            // Wheel events while the user-profile popup is open should scroll
+            // the popup body, not the pane below it.
             if state.is_user_profile_popup_open() {
                 state.scroll_user_profile_popup_down();
                 return MouseOutcome::handled(None);

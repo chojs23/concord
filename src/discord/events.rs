@@ -101,7 +101,7 @@ pub struct ChannelInfo {
     pub thread_archived: Option<bool>,
     pub thread_locked: Option<bool>,
     /// Whether this thread is pinned in its parent forum/media channel.
-    /// Discord encodes the bit in `flags` (`PINNED = 1 << 1`); only set on
+    /// Discord encodes the bit in `flags` (`PINNED = 1 << 1`). Only set on
     /// threads inside forum-style parents.
     pub thread_pinned: Option<bool>,
     pub recipients: Option<Vec<ChannelRecipientInfo>>,
@@ -180,7 +180,7 @@ pub struct MentionInfo {
 }
 
 /// One entry from the user's `guild_folders` setting. A folder with `id ==
-/// None` and a single member is an ungrouped guild — Discord stores those as
+/// None` and a single member is an ungrouped guild. Discord stores those as
 /// "folders" too just for ordering. Real folders carry an integer id, an
 /// optional name, and an optional RGB color.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -746,7 +746,7 @@ pub enum AppEvent {
     RelationshipRemove {
         user_id: Id<UserMarker>,
     },
-    /// Tells the TUI to switch to a specific channel — emitted after a
+    /// Tells the TUI to switch to a specific channel after a
     /// REST-side action (e.g. opening a DM) creates or resolves a channel
     /// outside the gateway flow. The channel itself must already be in
     /// state (typically because a prior `ChannelUpsert` for the same id

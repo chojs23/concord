@@ -16,7 +16,7 @@ use super::super::{
 };
 
 /// Wide-enough wrap width for the prefetch walk. URL emission is
-/// wrap-independent; we just need to defeat slot truncation in reply previews.
+/// wrap-independent. It only needs to avoid slot truncation in reply previews.
 const EMOJI_PREFETCH_FORMAT_WIDTH: usize = 10_000;
 use super::AVATAR_PREVIEW_HEIGHT;
 
@@ -533,7 +533,6 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
         }
     }
 
-    // Picker emojis (existing behaviour).
     if state.is_emoji_reaction_picker_open() {
         let reactions = state.filtered_emoji_reaction_items_slice().unwrap_or(&[]);
         if !reactions.is_empty() {
@@ -597,7 +596,6 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
         }
     }
 
-    // Activity emojis for visible member list members.
     for member in state.flattened_members() {
         for activity in state.user_activities(member.user_id()) {
             if let Some(url) = activity.emoji.as_ref().and_then(|emoji| emoji.image_url())

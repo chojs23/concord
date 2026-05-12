@@ -979,7 +979,7 @@ pub(super) fn render_user_profile_popup(
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    // The avatar sits inside the inner area; reserve a fixed column gutter
+    // The avatar sits inside the inner area, so reserve a fixed column gutter
     // so the text section starts cleanly to its right.
     let has_avatar = user_profile_popup_has_avatar_inside(
         inner,
@@ -1310,9 +1310,8 @@ fn push_activity_lines(
     let render = build_activity_render(activity, emoji_images, false);
     if !render.is_empty() {
         let line_index = lines.len();
-        // The leading marker (image placeholder or icon) costs 2 columns —
-        // 2-cell image, or icon + single space — so the body budget loses
-        // those columns. The plain-body variant gets the full width.
+        // The leading marker costs 2 columns, either a 2-cell image or an icon
+        // plus one space. The plain-body variant gets the full width.
         let line = match render.leading {
             ActivityLeading::Image(url) => {
                 emoji_overlays.push((line_index, url));

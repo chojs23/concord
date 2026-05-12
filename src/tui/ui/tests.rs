@@ -1706,9 +1706,8 @@ fn user_profile_popup_lists_mutual_servers_without_selection_marker() {
     let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Online);
     let texts = line_texts_from_ratatui(&lines);
 
-    // The popup no longer drives a per-row cursor — every mutual entry
-    // gets a uniform "  • name" prefix and the user navigates by
-    // scrolling.
+    // The popup no longer drives a per-row cursor. Every mutual entry gets a
+    // uniform "  • name" prefix and the user navigates by scrolling.
     assert!(texts.iter().any(|line| line == "  • guild-1"));
     assert!(texts.iter().any(|line| line == "  • guild-3"));
     assert!(!texts.iter().any(|line| line.starts_with("› ")));
@@ -2748,7 +2747,7 @@ fn lay_out_reaction_chips_custom_emoji_reserves_image_slot() {
 
     let layout = lay_out_reaction_chips(&reactions, 200);
 
-    // First line concatenates both chips with two spaces; the custom-emoji
+    // First line concatenates both chips with two spaces. The custom-emoji
     // chip reserves two cells of spaces in place of the textual `:name:`.
     assert_eq!(layout.lines, vec!["[👍 2]  [   1]"]);
     assert_eq!(layout.self_ranges.len(), 1);
@@ -3099,9 +3098,9 @@ fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
         .expect("first draw");
 
     // Scroll the popup down past the long username, then back up. The
-    // reported bug appeared after the long username was rendered and the
-    // user scrolled up through earlier names — that is the diff path the
-    // popup must survive without bleeding the wrap continuation onto
+    // reported bug appeared after the long username was rendered and the user
+    // scrolled up through earlier names. That is the diff path the popup must
+    // survive without bleeding the wrap continuation onto
     // neighbouring rows.
     for _ in 0..6 {
         state.scroll_reaction_users_popup_down();
@@ -3135,8 +3134,8 @@ fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
     // "파닥파닥( 40%..? )" appearing on rows that should hold a different
     // (shorter) name. After scrolling, count the number of rows whose
     // popup-content section ends with the long username's tail. Only the
-    // single row that actually renders that user should match — any other
-    // matches indicate wrap continuation has bled across rows.
+    // single row that actually renders that user should match. Any other match
+    // means wrap continuation bled across rows.
     let trailing_matches = dump.iter().filter(|line| line.contains("? )")).count();
     assert!(
         trailing_matches <= 1,

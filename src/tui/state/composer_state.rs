@@ -19,8 +19,8 @@ impl DashboardState {
         let Some(message_id) = self.selected_message_state().map(|message| message.id) else {
             return;
         };
-        // Same gating as `start_composer` — replies are sends, so the channel
-        // must allow SEND_MESSAGES for the action to be useful.
+        // Replies are sends, so the channel must allow SEND_MESSAGES for the
+        // action to be useful.
         if !self.can_send_in_selected_channel() {
             return;
         }
@@ -359,7 +359,7 @@ impl DashboardState {
         true
     }
 
-    /// Confirms the highlighted emoji. Unicode emoji are inserted directly;
+    /// Confirms the highlighted emoji. Unicode emoji are inserted directly.
     /// available custom emoji keep their readable `:name:` form and record a
     /// byte range so submit can send Discord's wire markup. Unavailable custom
     /// emoji stay visible in the picker as a hint, but cannot be confirmed.

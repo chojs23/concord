@@ -23,7 +23,7 @@ const PERMISSIONS_UNKNOWN: u64 = u64::MAX;
 
 impl DiscordState {
     /// Whether the authenticated user has `VIEW_CHANNEL` for `channel`.
-    /// Thin wrapper over `effective_permissions_for_channel`; see that
+    /// Thin wrapper over `effective_permissions_for_channel`. See that
     /// function for the algorithm.
     pub fn can_view_channel(&self, channel: &ChannelState) -> bool {
         permission_set(
@@ -53,7 +53,7 @@ impl DiscordState {
     /// Compute the effective Discord permission bitfield for the
     /// authenticated user in `channel`.
     ///
-    /// 1. DMs and group DMs grant every permission — Discord does not apply
+    /// 1. DMs and group DMs grant every permission because Discord does not apply
     ///    guild-style overwrites to them.
     /// 2. Threads inherit from their parent. A missing parent returns
     ///    `PERMISSIONS_UNKNOWN` so callers default to "permissive".

@@ -319,7 +319,7 @@ impl DashboardState {
             active_guild: ActiveGuildScope::Unset,
             active_channel_id: None,
             // Index 0 is the virtual "Direct Messages" entry. Start on the
-            // first real guild when one exists; the bounds clamp inside
+            // first real guild when one exists. The bounds clamp inside
             // `selected_guild()` falls back to the DM entry while the guild
             // list is still empty.
             selected_guild: 1,
@@ -465,14 +465,13 @@ impl DashboardState {
         //   preserved by message id.
         // * Auto-follow: a superset of auto-scroll that also moves the
         //   cursor to the new latest message. Triggers only when the user
-        //   was already following the latest message (cursor on last AND
-        //   viewport at bottom). Self-sent messages no longer force-follow;
-        //   if the user is reading older history, sending a message keeps
-        //   the viewport parked.
+        //   was already following the latest message. Self-sent messages no longer force-follow.
+        //   If the user is reading older history, sending a message keeps the
+        //   viewport parked.
         //
-        // Both share the `message_auto_follow` flag — that flag really means
-        // "next render should align the viewport to the bottom" and applies
-        // to both modes. Auto-follow simply adds the cursor jump.
+        // Both modes share `message_auto_follow`. It means the next render
+        // should align the viewport to the bottom. Auto-follow also jumps
+        // the cursor.
         let was_auto_follow = self.message_auto_follow;
         let was_at_latest = was_auto_follow || self.is_viewport_at_latest_message();
         let was_cursor_on_last = self.cursor_on_last_message();
@@ -1144,14 +1143,13 @@ impl DashboardState {
                 // Discord notifies role members on a role mention, but
                 // computing the membership check here would require the
                 // current user's role list. For the highlight pass we treat
-                // every role mention as informational; the message-level
+                // every role mention as informational. The message-level
                 // mention notification still drives self-targeted styling
                 // through the literal `@everyone`/`@here` pass below when
                 // those are used.
                 MentionTarget::Role(_) => Some(TextHighlightKind::OtherMention),
-                // Channel mentions never notify, but we highlight them so
-                // the rendered `#channel-name` stays visually distinct from
-                // surrounding text — same treatment as role mentions.
+                // Channel mentions never notify, but we still highlight them
+                // like role mentions so `#channel-name` stays distinct.
                 MentionTarget::Channel(_) => Some(TextHighlightKind::OtherMention),
             },
         );
@@ -2529,19 +2527,19 @@ impl DashboardState {
             if lines > 0 {
                 lines += 1;
             }
-            lines += 1; // group header
+            lines += 1;
             for member in group.entries {
-                lines += 1; // member name row
+                lines += 1;
                 if self.member_has_activity_row(member) {
-                    lines += 1; // activity sub-row
+                    lines += 1;
                 }
             }
         }
         lines
     }
 
-    /// Must mirror `tui::ui::panes::render_members` — line counting and
-    /// selection drift apart silently if the two predicates diverge.
+    /// Must mirror `tui::ui::panes::render_members`. Line counting and
+    /// selection drift apart silently if the predicates diverge.
     fn member_has_activity_row(&self, member: MemberEntry<'_>) -> bool {
         if matches!(
             member.status(),
@@ -2567,12 +2565,10 @@ impl DashboardState {
         self.selected_message >= messages.len().saturating_sub(1)
     }
 
-    /// Returns true when the rendered viewport currently shows the latest
-    /// message — that is, the user can see the bottom of the last message,
-    /// regardless of where the cursor is parked. This is the auto-scroll
-    /// trigger condition. With no rendered width yet (unit-test setups),
-    /// falls back to a simple item-count check against the configured view
-    /// height.
+    /// Returns true when the rendered viewport shows the bottom of the latest
+    /// message, regardless of where the cursor is parked. This is the
+    /// auto-scroll trigger condition. With no rendered width yet in unit tests,
+    /// falls back to an item-count check against the configured view height.
     fn is_viewport_at_latest_message(&self) -> bool {
         if self.selected_channel_is_forum() || self.is_pinned_message_view_active() {
             return false;
@@ -2598,14 +2594,13 @@ impl DashboardState {
         total.saturating_sub(pos) <= viewport
     }
 
-    /// Re-engages auto-follow only when both invariants hold: the cursor is
-    /// on the last message and the viewport is currently showing it. Either
-    /// condition alone is not enough — if the user has scrolled the viewport
-    /// off the bottom while the cursor remains on the last message, the
-    /// next render must not snap the viewport back. Moving the cursor away
-    /// from the last message also disengages, so the bottom-snap inside
-    /// `clamp_message_viewport_for_image_previews` won't fight
-    /// cursor-visibility centering.
+    /// Re-engages auto-follow only when the cursor is on the last message and
+    /// the viewport is showing it. Either condition alone is not enough. If the
+    /// user has scrolled the viewport off the bottom while the cursor remains
+    /// on the last message, the next render must not snap the viewport back.
+    /// Moving the cursor away from the last message also disengages, so the
+    /// bottom-snap inside `clamp_message_viewport_for_image_previews` won't
+    /// fight cursor-visibility centering.
     fn refresh_message_auto_follow(&mut self) {
         self.message_auto_follow =
             self.cursor_on_last_message() && self.is_viewport_at_latest_message();
@@ -2662,7 +2657,7 @@ impl DashboardState {
     }
 
     fn follow_latest_message(&mut self) {
-        // Only updates the selection; scroll position is left for
+        // Only updates the selection. Scroll position is left for
         // `align_message_viewport_to_bottom` to recompute on the next render.
         // Touching scroll/line_scroll here would briefly collapse the viewport
         // to a single-message state, and a key press (e.g. `k`) landing in
@@ -2675,7 +2670,7 @@ impl DashboardState {
     /// Snap the viewport so the user's last-read message sits at the top of
     /// the message pane and the unread divider is visible just below it.
     /// No-op until the captured `last_acked` snowflake is resolvable from
-    /// the loaded slice; the call is retried each frame so the snap fires
+    /// the loaded slice. The call is retried each frame so the snap fires
     /// once history streams in. Once applied, the pending flag clears so
     /// subsequent navigation is not pinned to the anchor.
     pub(crate) fn try_apply_unread_anchor_scroll(&mut self) {

@@ -73,7 +73,7 @@ impl DashboardState {
             return;
         };
         let user_id = entry.user_id();
-        // For DM/group-DM panes there is no guild context; pass it through so
+        // For DM/group-DM panes there is no guild context. Pass it through so
         // the profile fetch can omit `guild_id` and skip the guild_member
         // section gracefully.
         let guild_id = match self.active_guild {
@@ -165,7 +165,7 @@ impl DashboardState {
 
     /// Opens the profile popup for `user_id`. Returns
     /// `AppCommand::LoadUserProfile` to fetch fresh data when nothing is
-    /// cached yet — the popup itself shows a loading state in the meantime.
+    /// cached yet. The popup itself shows a loading state in the meantime.
     pub fn open_user_profile_popup(
         &mut self,
         user_id: Id<UserMarker>,

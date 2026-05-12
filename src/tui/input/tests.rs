@@ -2901,7 +2901,7 @@ fn state_with_forum_channel_posts() -> DashboardState {
     state.confirm_selected_guild();
     state.confirm_selected_channel();
 
-    // Discord's `/threads/search` returns posts newest-first; emit them in
+    // Discord's `/threads/search` returns posts newest-first. Emit them in
     // descending channel-id order so the test sees the same layout.
     state.push_event(AppEvent::ForumPostsLoaded {
         channel_id: forum_id,

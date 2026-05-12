@@ -53,7 +53,7 @@ pub enum GatewayCommand {
 
 /// Discord user-account gateway endpoint. We pin to `v=9` because the v9
 /// dispatch shapes line up with everything `parse_user_account_event` already
-/// understands. `compress=false` keeps the wire human-readable; switching to
+/// understands. `compress=false` keeps the wire human-readable. Switching to
 /// `zlib-stream` is a follow-up.
 const GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=9&encoding=json";
 
@@ -65,7 +65,7 @@ const GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=9&encoding=json";
 /// We deliberately copy arikawa/ningen's set rather than reaching for the
 /// modern client's full bitmask. The extra modern bits (USER_SETTINGS_PROTO,
 /// CLIENT_STATE_V2, PASSIVE_GUILD_UPDATE, …) tell Discord to send things in
-/// formats we don't decode yet — most painfully `user_settings_proto` instead
+/// formats we don't decode yet, especially `user_settings_proto` instead
 /// of the legacy JSON `user_settings.guild_folders`, which would leave the
 /// sidebar with no folder grouping and unstable ordering.
 ///
@@ -119,13 +119,13 @@ struct FrameContext<'a> {
 
 /// What to do after one connection lifecycle ends.
 enum ConnectionOutcome {
-    /// The websocket dropped or Discord asked us to reconnect; try to RESUME
+    /// The websocket dropped or Discord asked us to reconnect. Try to RESUME
     /// using the saved session_id + sequence number.
     Resume,
-    /// Authentication failed or Discord told us the session is dead; throw
+    /// Authentication failed or Discord told us the session is dead. Throw
     /// the saved session away and start over with a fresh IDENTIFY.
     Reidentify,
-    /// The downstream consumers went away — stop the loop entirely.
+    /// The downstream consumers went away, so stop the loop entirely.
     Stop,
 }
 
@@ -272,7 +272,7 @@ async fn connect_and_run(
     let heartbeat_interval = Duration::from_millis(heartbeat_interval_ms);
 
     // Either resume with the saved session or send a fresh IDENTIFY. RESUME
-    // tells Discord to replay missed dispatches (good for transient drops);
+    // tells Discord to replay missed dispatches. This is good for transient drops.
     // IDENTIFY rebuilds the world from scratch.
     if session.can_resume() {
         let payload = build_resume_payload(token, session);
@@ -444,8 +444,8 @@ async fn handle_frame(
             }
             FrameOutcome::Continue
         }
-        // Heartbeat request from Discord — answer immediately even though our
-        // background task is pacing things.
+        // Answer Discord heartbeat requests immediately. The background task
+        // only paces our own heartbeat sends.
         1 => {
             let seq = *context.sequence_cell.lock().await;
             let payload = json!({"op": 1, "d": seq}).to_string();
@@ -455,14 +455,14 @@ async fn handle_frame(
             }
             FrameOutcome::Continue
         }
-        // Reconnect — Discord wants us to drop and resume. Saved
-        // session_id + seq makes the resume cheap.
+        // Discord wants us to drop and resume. Saved session_id and seq make
+        // the resume cheap.
         7 => {
             logging::debug("gateway", "RECONNECT requested");
             FrameOutcome::Resume
         }
-        // Invalid Session — `d` is a bool that says whether the session is
-        // resumable. Anything else means we have to throw it away.
+        // `d` tells us whether an invalid session is resumable. Anything else
+        // means we have to throw it away.
         9 => {
             let resumable = value.get("d").and_then(Value::as_bool).unwrap_or(false);
             logging::debug("gateway", format!("INVALID_SESSION resumable={resumable}"));
@@ -472,7 +472,7 @@ async fn handle_frame(
                 FrameOutcome::Reidentify
             }
         }
-        // Heartbeat ack — just drop, no action needed.
+        // Heartbeat ack. No action needed.
         11 => FrameOutcome::Continue,
         other => {
             logging::debug("gateway", format!("unhandled gateway op={other}"));

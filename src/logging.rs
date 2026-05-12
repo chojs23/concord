@@ -87,11 +87,8 @@ impl FileLogger {
         }
     }
 
-    /// During `cargo test` we never want to touch the real log file because
-    /// the unit tests below intentionally call `error(...)` with synthetic
-    /// targets ("test", "history") to exercise the in-memory queue. Without
-    /// this guard those entries would be appended to the user's log file
-    /// and pollute the debug-log popup on the next run.
+    /// Tests exercise logging with synthetic entries, so they must not write to
+    /// the user's real log file.
     #[cfg(test)]
     fn write(&self, _level: Level, _target: &str, _message: &str) {}
 
