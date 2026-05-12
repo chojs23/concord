@@ -1,6 +1,7 @@
 use super::message_list::render_image_preview;
 use super::*;
-use crate::discord::ActivityEmoji;
+use crate::discord::{ActivityEmoji, ActivityKind};
+use crate::tui::format::sanitize_for_display_width;
 use crate::tui::state::MuteActionDurationItem;
 use ratatui::layout::Position;
 
@@ -1222,7 +1223,14 @@ pub(super) fn user_profile_popup_text(
     if !activities.is_empty() {
         lines.push(Line::from(Span::raw(String::new())));
         push_section_header(&mut lines, "ACTIVITY");
-        for activity in activities {
+        let mut sorted_activities: Vec<&ActivityInfo> = activities.iter().collect();
+        sorted_activities.sort_by_key(|a| activity_priority(a.kind));
+        let mut first = true;
+        for activity in sorted_activities {
+            if !first {
+                lines.push(Line::from(Span::raw(String::new())));
+            }
+            first = false;
             push_activity_lines(
                 &mut lines,
                 &mut emoji_overlays,
@@ -1349,6 +1357,19 @@ fn push_activity_lines(
                 Span::raw("  "),
                 Span::styled(body, Style::default().fg(DIM)),
             ])
+        } else if let Some(icon) = primary
+            .chars()
+            .next()
+            .filter(|c| matches!(c, '▶' | '◉' | '♪' | '▷'))
+        {
+            let icon_len = icon.len_utf8();
+            let body = primary.get(icon_len + 1..).unwrap_or("");
+            let body = truncate_display_width(body, width.saturating_sub(2));
+            Line::from(vec![
+                Span::styled(icon.to_string(), Style::default().fg(Color::Green)),
+                Span::raw(" "),
+                Span::styled(body, Style::default().fg(DIM)),
+            ])
         } else {
             Line::from(Span::styled(
                 truncate_display_width(&primary, width),
@@ -1384,6 +1405,18 @@ fn activity_emoji_image_url(emoji: &ActivityEmoji) -> Option<String> {
     ))
 }
 
+fn activity_priority(kind: ActivityKind) -> u8 {
+    match kind {
+        ActivityKind::Custom => 0,
+        ActivityKind::Streaming => 1,
+        ActivityKind::Playing => 2,
+        ActivityKind::Listening => 3,
+        ActivityKind::Watching => 4,
+        ActivityKind::Competing => 5,
+        ActivityKind::Unknown => 6,
+    }
+}
+
 fn activity_primary_line(
     activity: &ActivityInfo,
     emoji_images: &[EmojiImage<'_>],
@@ -1417,12 +1450,30 @@ fn activity_primary_line(
             };
             (text, image_url)
         }
-        ActivityKind::Playing => (format!("Playing {}", activity.name), None),
-        ActivityKind::Streaming => (format!("Streaming {}", activity.name), None),
-        ActivityKind::Listening => (format!("Listening to {}", activity.name), None),
-        ActivityKind::Watching => (format!("Watching {}", activity.name), None),
-        ActivityKind::Competing => (format!("Competing in {}", activity.name), None),
-        ActivityKind::Unknown => (activity.name.clone(), None),
+        ActivityKind::Playing => (
+            format!("▶ {}", sanitize_for_display_width(&activity.name)),
+            None,
+        ),
+        ActivityKind::Streaming => (
+            format!("◉ {}", sanitize_for_display_width(&activity.name)),
+            None,
+        ),
+        ActivityKind::Listening => (
+            format!("♪ {}", sanitize_for_display_width(&activity.name)),
+            None,
+        ),
+        ActivityKind::Watching => (
+            format!("▷ {}", sanitize_for_display_width(&activity.name)),
+            None,
+        ),
+        ActivityKind::Competing => (
+            format!(
+                "Competing in {}",
+                sanitize_for_display_width(&activity.name)
+            ),
+            None,
+        ),
+        ActivityKind::Unknown => (sanitize_for_display_width(&activity.name), None),
     }
 }
 

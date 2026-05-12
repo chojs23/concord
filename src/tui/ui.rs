@@ -32,8 +32,8 @@ use super::{
     },
 };
 use crate::discord::{
-    ActivityInfo, ActivityKind, ChannelState, ChannelUnreadState, ChannelVisibilityStats,
-    FriendStatus, MessageState, PresenceStatus, ReactionInfo, ReactionUsersInfo, UserProfileInfo,
+    ActivityInfo, ChannelState, ChannelUnreadState, ChannelVisibilityStats, FriendStatus,
+    MessageState, PresenceStatus, ReactionInfo, ReactionUsersInfo, UserProfileInfo,
 };
 
 /// `#FFA500` — Discord's "you were mentioned" orange.

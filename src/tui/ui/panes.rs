@@ -1029,24 +1029,44 @@ pub(super) fn render_members(
                 let activities = state.user_activities(member.user_id());
                 if let Some((text, image_url)) = primary_activity_summary(activities, emoji_images)
                 {
-                    let text = sanitize_for_display_width(&text);
                     let h_scroll = state.member_horizontal_scroll();
-                    let (prefix, text) = if image_url.is_some() {
+                    let line = if image_url.is_some() {
                         let body = text.get(3..).unwrap_or("");
                         let body = truncate_display_width_from(
                             body,
                             h_scroll,
                             max_name_width.saturating_sub(3),
                         );
-                        ("     ", body.to_owned())
+                        Line::from(vec![
+                            Span::raw("     "),
+                            Span::styled(body, Style::default().fg(DIM)),
+                        ])
+                    } else if let Some(icon) = text
+                        .chars()
+                        .next()
+                        .filter(|c| matches!(c, '▶' | '◉' | '♪' | '▷'))
+                    {
+                        let icon_len = icon.len_utf8();
+                        let body = text.get(icon_len + 1..).unwrap_or("");
+                        let body = truncate_display_width_from(
+                            body,
+                            h_scroll,
+                            max_name_width.saturating_sub(2),
+                        );
+                        Line::from(vec![
+                            Span::raw("   "),
+                            Span::styled(icon.to_string(), Style::default().fg(Color::Green)),
+                            Span::raw(" "),
+                            Span::styled(body, Style::default().fg(DIM)),
+                        ])
                     } else {
                         let t = truncate_display_width_from(&text, h_scroll, max_name_width);
-                        ("   ", t)
+                        Line::from(vec![
+                            Span::raw("   "),
+                            Span::styled(t, Style::default().fg(DIM)),
+                        ])
                     };
-                    lines.push(Line::from(vec![
-                        Span::raw(prefix),
-                        Span::styled(text, Style::default().fg(DIM)),
-                    ]));
+                    lines.push(line);
                     if let Some(url) = image_url {
                         emoji_line_urls.push((line_index, url));
                     }
@@ -1233,21 +1253,35 @@ fn format_activity_summary(
             };
             (text, image_url)
         }
-        ActivityKind::Playing => (format!("Playing {}", activity.name), None),
-        ActivityKind::Streaming => (format!("Streaming {}", activity.name), None),
+        ActivityKind::Playing => (
+            format!("▶ {}", sanitize_for_display_width(&activity.name)),
+            None,
+        ),
+        ActivityKind::Streaming => (
+            format!("◉ {}", sanitize_for_display_width(&activity.name)),
+            None,
+        ),
         ActivityKind::Listening => {
+            let name = sanitize_for_display_width(&activity.name);
             let text = match (activity.details.as_deref(), activity.state.as_deref()) {
-                (Some(track), Some(artist)) => {
-                    format!("Listening to {} — {} by {}", activity.name, track, artist)
-                }
-                (Some(track), None) => format!("Listening to {} — {}", activity.name, track),
-                _ => format!("Listening to {}", activity.name),
+                (Some(track), Some(artist)) => format!("♪ {} — {} by {}", name, track, artist),
+                (Some(track), None) => format!("♪ {} — {}", name, track),
+                _ => format!("♪ {}", name),
             };
             (text, None)
         }
-        ActivityKind::Watching => (format!("Watching {}", activity.name), None),
-        ActivityKind::Competing => (format!("Competing in {}", activity.name), None),
-        ActivityKind::Unknown => (activity.name.clone(), None),
+        ActivityKind::Watching => (
+            format!("▷ {}", sanitize_for_display_width(&activity.name)),
+            None,
+        ),
+        ActivityKind::Competing => (
+            format!(
+                "Competing in {}",
+                sanitize_for_display_width(&activity.name)
+            ),
+            None,
+        ),
+        ActivityKind::Unknown => (sanitize_for_display_width(&activity.name), None),
     }
 }
 
