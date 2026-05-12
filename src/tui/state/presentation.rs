@@ -111,7 +111,7 @@ fn member_status_rank(status: PresenceStatus) -> u8 {
 pub fn presence_marker(status: PresenceStatus) -> char {
     match status {
         PresenceStatus::Online | PresenceStatus::Idle | PresenceStatus::DoNotDisturb => '●',
-        PresenceStatus::Offline | PresenceStatus::Unknown => ' ',
+        PresenceStatus::Offline | PresenceStatus::Unknown => '○',
     }
 }
 
@@ -126,4 +126,26 @@ pub(super) fn sort_direct_message_channels(channels: &mut [&ChannelState]) {
             .cmp(&left.last_message_id)
             .then_with(|| right.id.cmp(&left.id))
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn presence_marker_shows_empty_circle_for_offline_like_statuses() {
+        assert_eq!(presence_marker(PresenceStatus::Offline), '○');
+        assert_eq!(presence_marker(PresenceStatus::Unknown), '○');
+    }
+
+    #[test]
+    fn presence_marker_shows_filled_circle_for_online_like_statuses() {
+        for status in [
+            PresenceStatus::Online,
+            PresenceStatus::Idle,
+            PresenceStatus::DoNotDisturb,
+        ] {
+            assert_eq!(presence_marker(status), '●');
+        }
+    }
 }
