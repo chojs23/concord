@@ -346,6 +346,13 @@ impl DiscordClient {
             .load_user_profile(user_id, guild_id, is_self)
             .await
     }
+
+    pub async fn load_user_note(
+        &self,
+        user_id: Id<UserMarker>,
+    ) -> Result<Option<String>> {
+        self.rest.load_user_note(user_id).await
+    }
 }
 
 pub(super) async fn publish_app_event(

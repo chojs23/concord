@@ -313,6 +313,7 @@ pub struct DiscordState {
     /// Cached profile lookups so the profile popup can render instantly when
     /// the same user is opened again.
     user_profiles: BTreeMap<UserProfileCacheKey, UserProfileInfo>,
+    fetched_notes: BTreeMap<Id<UserMarker>, Option<String>>,
     /// Friend / blocked / pending request state delivered through READY's
     /// `relationships` array. Used to colour the profile popup's friend
     /// indicator and to enrich `UserProfileInfo` on insert.
@@ -385,6 +386,7 @@ impl DiscordState {
             custom_emojis: BTreeMap::new(),
             guild_folders: Vec::new(),
             user_profiles: BTreeMap::new(),
+            fetched_notes: BTreeMap::new(),
             relationships: BTreeMap::new(),
             user_presences: BTreeMap::new(),
             user_activities: BTreeMap::new(),
@@ -758,10 +760,23 @@ impl DiscordState {
                     .get(&profile.user_id)
                     .copied()
                     .unwrap_or(FriendStatus::None);
+                if let Some(note) = self.fetched_notes.get(&profile.user_id) {
+                    profile.note = note.clone();
+                }
                 self.user_profiles.insert(
                     UserProfileCacheKey::new(profile.user_id, *guild_id),
                     profile,
                 );
+            }
+            AppEvent::UserNoteLoaded { user_id, note } => {
+                self.fetched_notes.insert(*user_id, note.clone());
+                for profile in self
+                    .user_profiles
+                    .values_mut()
+                    .filter(|profile| profile.user_id == *user_id)
+                {
+                    profile.note = note.clone();
+                }
             }
             AppEvent::RelationshipsLoaded { relationships } => {
                 self.relationships.clear();
@@ -910,6 +925,10 @@ impl DiscordState {
             .get(&UserProfileCacheKey::new(user_id, guild_id))
     }
 
+    pub fn is_note_fetched(&self, user_id: Id<UserMarker>) -> bool {
+        self.fetched_notes.contains_key(&user_id)
+    }
+
     pub fn guild(&self, guild_id: Id<GuildMarker>) -> Option<&GuildState> {
         self.guilds.get(&guild_id)
     }
@@ -967,6 +986,7 @@ impl DiscordState {
         self.custom_emojis = snapshot.custom_emojis.clone();
         self.guild_folders = snapshot.guild_folders.clone();
         self.user_profiles = snapshot.user_profiles.clone();
+        self.fetched_notes = snapshot.fetched_notes.clone();
         self.relationships = snapshot.relationships.clone();
         self.user_presences = snapshot.user_presences.clone();
         self.user_activities = snapshot.user_activities.clone();

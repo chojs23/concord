@@ -186,6 +186,9 @@ pub enum AppCommand {
         user_id: Id<UserMarker>,
         guild_id: Option<Id<GuildMarker>>,
     },
+    LoadUserNote {
+        user_id: Id<UserMarker>,
+    },
     AckChannel {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
