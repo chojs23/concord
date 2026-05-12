@@ -600,14 +600,10 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
     // Activity emojis for visible member list members.
     for member in state.flattened_members() {
         for activity in state.user_activities(member.user_id()) {
-            if let Some(emoji) = &activity.emoji {
-                if let Some(id) = emoji.id {
-                    let ext = if emoji.animated { "gif" } else { "png" };
-                    let url = format!("https://cdn.discordapp.com/emojis/{}.{}", id.get(), ext);
-                    if seen.insert(url.clone()) {
-                        targets.push(EmojiImageTarget { url });
-                    }
-                }
+            if let Some(url) = activity.emoji.as_ref().and_then(|emoji| emoji.image_url())
+                && seen.insert(url.clone())
+            {
+                targets.push(EmojiImageTarget { url });
             }
         }
     }

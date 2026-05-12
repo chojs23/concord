@@ -47,6 +47,7 @@ const READ_DIM: Color = Color::Rgb(130, 130, 130);
 /// monospace fonts can't apply to CJK glyphs.
 const UNREAD_BRIGHT: Color = Color::Rgb(255, 255, 255);
 
+mod activity;
 mod forum;
 mod interaction;
 mod layout;

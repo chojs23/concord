@@ -9,14 +9,11 @@ use ratatui_image::Image as RatatuiImage;
 use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{
-    ActivityEmoji, ActivityInfo, ActivityKind, ChannelUnreadState, MessageState, PresenceStatus,
+    ActivityInfo, ActivityKind, ChannelUnreadState, MessageState, PresenceStatus,
 };
 
 use super::super::{
-    format::{
-        sanitize_for_display_width, truncate_display_width, truncate_display_width_from,
-        truncate_text,
-    },
+    format::{truncate_display_width, truncate_display_width_from, truncate_text},
     message_format::{EMOJI_REACTION_IMAGE_WIDTH, format_attachment_summary, wrap_text_lines},
     state::{
         ChannelPaneEntry, DashboardState, EmojiPickerEntry, FocusPane, GuildPaneEntry,
@@ -25,8 +22,9 @@ use super::super::{
     },
 };
 use super::{
-    active_text_style, channel_prefix, channel_unread_decoration, dm_presence_dot_span,
-    highlight_style,
+    active_text_style,
+    activity::{ActivityLeading, ActivityRender, build_activity_render},
+    channel_prefix, channel_unread_decoration, dm_presence_dot_span, highlight_style,
     layout::{composer_inner_width, panel_scrollbar_area},
     panel_block, panel_block_line, panel_content_height, render_vertical_scrollbar,
     selection_marker, styled_list_item,
@@ -1027,49 +1025,44 @@ pub(super) fn render_members(
                 PresenceStatus::Offline | PresenceStatus::Unknown
             ) {
                 let activities = state.user_activities(member.user_id());
-                if let Some((text, image_url)) = primary_activity_summary(activities, emoji_images)
-                {
+                if let Some(render) = primary_activity_summary(activities, emoji_images) {
                     let h_scroll = state.member_horizontal_scroll();
-                    let line = if image_url.is_some() {
-                        let body = text.get(3..).unwrap_or("");
-                        let body = truncate_display_width_from(
-                            body,
-                            h_scroll,
-                            max_name_width.saturating_sub(3),
-                        );
-                        Line::from(vec![
-                            Span::raw("     "),
-                            Span::styled(body, Style::default().fg(DIM)),
-                        ])
-                    } else if let Some(icon) = text
-                        .chars()
-                        .next()
-                        .filter(|c| matches!(c, '▶' | '◉' | '♪' | '▷'))
-                    {
-                        let icon_len = icon.len_utf8();
-                        let body = text.get(icon_len + 1..).unwrap_or("");
-                        let body = truncate_display_width_from(
-                            body,
-                            h_scroll,
-                            max_name_width.saturating_sub(2),
-                        );
-                        Line::from(vec![
-                            Span::raw("   "),
-                            Span::styled(icon.to_string(), Style::default().fg(Color::Green)),
-                            Span::raw(" "),
-                            Span::styled(body, Style::default().fg(DIM)),
-                        ])
-                    } else {
-                        let t = truncate_display_width_from(&text, h_scroll, max_name_width);
-                        Line::from(vec![
-                            Span::raw("   "),
-                            Span::styled(t, Style::default().fg(DIM)),
-                        ])
+                    let line = match render.leading {
+                        ActivityLeading::Image(url) => {
+                            let body = truncate_display_width_from(
+                                &render.body,
+                                h_scroll,
+                                max_name_width.saturating_sub(3),
+                            );
+                            emoji_line_urls.push((line_index, url));
+                            Line::from(vec![
+                                Span::raw("     "),
+                                Span::styled(body, Style::default().fg(DIM)),
+                            ])
+                        }
+                        ActivityLeading::Icon(icon) => {
+                            let body = truncate_display_width_from(
+                                &render.body,
+                                h_scroll,
+                                max_name_width.saturating_sub(2),
+                            );
+                            Line::from(vec![
+                                Span::raw("   "),
+                                Span::styled(icon.to_string(), Style::default().fg(Color::Green)),
+                                Span::raw(" "),
+                                Span::styled(body, Style::default().fg(DIM)),
+                            ])
+                        }
+                        ActivityLeading::None => {
+                            let body =
+                                truncate_display_width_from(&render.body, h_scroll, max_name_width);
+                            Line::from(vec![
+                                Span::raw("   "),
+                                Span::styled(body, Style::default().fg(DIM)),
+                            ])
+                        }
                     };
                     lines.push(line);
-                    if let Some(url) = image_url {
-                        emoji_line_urls.push((line_index, url));
-                    }
                     line_index += 1;
                 }
             }
@@ -1192,22 +1185,24 @@ pub(super) fn member_display_label(
 pub(super) fn primary_activity_summary(
     activities: &[ActivityInfo],
     emoji_images: &[EmojiImage<'_>],
-) -> Option<(String, Option<String>)> {
+) -> Option<ActivityRender> {
     let mut sorted: Vec<&ActivityInfo> = activities.iter().collect();
     sorted.sort_by_key(|a| activity_priority(a.kind));
-    let mut image_only_fallback = None;
+    let mut image_only_fallback: Option<ActivityRender> = None;
     for activity in sorted {
-        let result = format_activity_summary(activity, emoji_images);
-        if !result.0.trim().is_empty() {
-            return Some(result);
+        let render = build_activity_render(activity, emoji_images, true);
+        if !render.body.trim().is_empty() {
+            return Some(render);
         }
-        if result.1.is_some() && image_only_fallback.is_none() {
-            image_only_fallback = Some(result);
+        if matches!(render.leading, ActivityLeading::Image(_)) && image_only_fallback.is_none() {
+            image_only_fallback = Some(render);
         }
     }
     image_only_fallback
 }
 
+/// Member-list ordering. Intentionally differs from
+/// `popups::activity_priority`: see [`primary_activity_summary`].
 fn activity_priority(kind: ActivityKind) -> u8 {
     match kind {
         ActivityKind::Streaming => 0,
@@ -1218,81 +1213,6 @@ fn activity_priority(kind: ActivityKind) -> u8 {
         ActivityKind::Custom => 5,
         ActivityKind::Unknown => 6,
     }
-}
-
-fn format_activity_summary(
-    activity: &ActivityInfo,
-    emoji_images: &[EmojiImage<'_>],
-) -> (String, Option<String>) {
-    match activity.kind {
-        ActivityKind::Custom => {
-            let image_url = activity
-                .emoji
-                .as_ref()
-                .and_then(activity_emoji_image_url)
-                .filter(|url| emoji_images.iter().any(|img| img.url == *url));
-            let emoji = activity
-                .emoji
-                .as_ref()
-                .map(|emoji| {
-                    if image_url.is_some() {
-                        "  ".to_owned()
-                    } else if emoji.id.is_some() {
-                        format!(":{}:", emoji.name)
-                    } else {
-                        emoji.name.clone()
-                    }
-                })
-                .unwrap_or_default();
-            let body = activity.state.clone().unwrap_or_default();
-            let text = match (emoji.is_empty(), body.is_empty()) {
-                (true, true) => activity.name.clone(),
-                (false, true) => emoji,
-                (true, false) => body,
-                (false, false) => format!("{emoji} {body}"),
-            };
-            (text, image_url)
-        }
-        ActivityKind::Playing => (
-            format!("▶ {}", sanitize_for_display_width(&activity.name)),
-            None,
-        ),
-        ActivityKind::Streaming => (
-            format!("◉ {}", sanitize_for_display_width(&activity.name)),
-            None,
-        ),
-        ActivityKind::Listening => {
-            let name = sanitize_for_display_width(&activity.name);
-            let text = match (activity.details.as_deref(), activity.state.as_deref()) {
-                (Some(track), Some(artist)) => format!("♪ {} — {} by {}", name, track, artist),
-                (Some(track), None) => format!("♪ {} — {}", name, track),
-                _ => format!("♪ {}", name),
-            };
-            (text, None)
-        }
-        ActivityKind::Watching => (
-            format!("▷ {}", sanitize_for_display_width(&activity.name)),
-            None,
-        ),
-        ActivityKind::Competing => (
-            format!(
-                "Competing in {}",
-                sanitize_for_display_width(&activity.name)
-            ),
-            None,
-        ),
-        ActivityKind::Unknown => (sanitize_for_display_width(&activity.name), None),
-    }
-}
-
-fn activity_emoji_image_url(emoji: &ActivityEmoji) -> Option<String> {
-    let id = emoji.id?;
-    let ext = if emoji.animated { "gif" } else { "png" };
-    Some(format!(
-        "https://cdn.discordapp.com/emojis/{}.{}",
-        id.get(),
-        ext
-    ))
 }
 
 pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardState) {

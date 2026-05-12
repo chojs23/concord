@@ -61,6 +61,21 @@ pub struct ActivityEmoji {
     pub animated: bool,
 }
 
+impl ActivityEmoji {
+    /// CDN URL for the emoji image, when this is a custom emoji (i.e. carries
+    /// an `id`). Returns `None` for unicode-only emojis, which render as text
+    /// and don't need a network fetch.
+    pub fn image_url(&self) -> Option<String> {
+        let id = self.id?;
+        let ext = if self.animated { "gif" } else { "png" };
+        Some(format!(
+            "https://cdn.discordapp.com/emojis/{}.{}",
+            id.get(),
+            ext
+        ))
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActivityInfo {
     pub kind: ActivityKind,

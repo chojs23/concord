@@ -1660,7 +1660,7 @@ fn primary_activity_summary_prefers_game_over_custom_status() {
     ];
 
     assert_eq!(
-        primary_activity_summary(&activities, &[]).map(|(t, _)| t),
+        primary_activity_summary(&activities, &[]).map(|r| r.to_display_string()),
         Some("▶ Concord".to_owned())
     );
 }
@@ -1677,7 +1677,7 @@ fn primary_activity_summary_listening_includes_track_and_artist() {
         emoji: None,
     }];
     assert_eq!(
-        primary_activity_summary(&activities, &[]).map(|(t, _)| t),
+        primary_activity_summary(&activities, &[]).map(|r| r.to_display_string()),
         Some("♪ Spotify — Bohemian Rhapsody by Queen".to_owned())
     );
 }
