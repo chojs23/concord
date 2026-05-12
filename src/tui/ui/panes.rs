@@ -1392,7 +1392,9 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
         spans.push(Span::styled(" Connected as ", Style::default().fg(DIM)));
         spans.push(Span::styled(
             format!("{user} "),
-            Style::default().fg(presence_color(state.self_status())).bold(),
+            Style::default()
+                .fg(presence_color(state.self_status()))
+                .bold(),
         ));
     } else {
         spans.push(Span::styled(
