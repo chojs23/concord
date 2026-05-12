@@ -338,8 +338,22 @@ fn composer_cursor_position_with_loaded_custom_emoji_urls(
     let display_cursor = display_input
         .map_byte_index(cursor)
         .min(display_input.input.len());
-    let prompt_prefix = format!("> {}", &display_input.input[..display_cursor]);
-    let wrapped = wrap_text_lines(&prompt_prefix, inner_width);
+    // Build the prefixed text matching what composer_lines renders:
+    // first line gets "> " prefix, continuation lines get "  " prefix
+    let text_before_cursor = &display_input.input[..display_cursor];
+    let prefixed: String = text_before_cursor
+        .split('\n')
+        .enumerate()
+        .map(|(i, part)| {
+            if i == 0 {
+                format!("> {}", part)
+            } else {
+                format!("  {}", part)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let wrapped = wrap_text_lines(&prefixed, inner_width);
     let mut prompt_row = wrapped.len().saturating_sub(1);
     let mut prompt_column = wrapped.last().map(|line| line.width()).unwrap_or_default();
     if prompt_column >= inner_width {
@@ -679,14 +693,20 @@ pub(super) fn composer_lines_with_loaded_custom_emoji_urls(
     if state.is_composing() {
         let mut lines = pending_upload_lines(state, width);
         let display_input = composer_display_input(state, loaded_custom_emoji_urls);
-        let input = Line::from(format!("> {}", display_input.input));
         if let Some(message) = state.reply_target_message_state() {
             lines.push(Line::from(Span::styled(
                 reply_target_hint(message, state, width),
                 Style::default().fg(DIM),
             )));
         }
-        lines.push(input);
+        // Split input by newlines to properly display line breaks
+        for (i, line) in display_input.input.split('\n').enumerate() {
+            if i == 0 {
+                lines.push(Line::from(format!("> {}", line)));
+            } else {
+                lines.push(Line::from(format!("  {}", line)));
+            }
+        }
         return lines;
     }
 
