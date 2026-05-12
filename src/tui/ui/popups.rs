@@ -1,7 +1,7 @@
+use super::activity::{ActivityLeading, build_activity_render};
 use super::message_list::render_image_preview;
 use super::*;
-use crate::discord::{ActivityEmoji, ActivityKind};
-use crate::tui::format::sanitize_for_display_width;
+use crate::discord::ActivityKind;
 use crate::tui::state::MuteActionDurationItem;
 use ratatui::layout::Position;
 
@@ -1307,39 +1307,37 @@ fn push_activity_lines(
     width: usize,
     emoji_images: &[EmojiImage<'_>],
 ) {
-    let (primary, image_url) = activity_primary_line(activity, emoji_images);
-    if !primary.is_empty() || image_url.is_some() {
+    let render = build_activity_render(activity, emoji_images, false);
+    if !render.is_empty() {
         let line_index = lines.len();
-        let line = if image_url.is_some() {
-            let body = primary.get(3..).unwrap_or("");
-            let body = truncate_display_width(body, width.saturating_sub(2));
-            Line::from(vec![
-                Span::raw("  "),
-                Span::styled(body, Style::default().fg(DIM)),
-            ])
-        } else if let Some(icon) = primary
-            .chars()
-            .next()
-            .filter(|c| matches!(c, '▶' | '◉' | '♪' | '▷'))
-        {
-            let icon_len = icon.len_utf8();
-            let body = primary.get(icon_len + 1..).unwrap_or("");
-            let body = truncate_display_width(body, width.saturating_sub(2));
-            Line::from(vec![
+        // The leading marker (image placeholder or icon) costs 2 columns —
+        // 2-cell image, or icon + single space — so the body budget loses
+        // those columns. The plain-body variant gets the full width.
+        let line = match render.leading {
+            ActivityLeading::Image(url) => {
+                emoji_overlays.push((line_index, url));
+                Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(
+                        truncate_display_width(&render.body, width.saturating_sub(2)),
+                        Style::default().fg(DIM),
+                    ),
+                ])
+            }
+            ActivityLeading::Icon(icon) => Line::from(vec![
                 Span::styled(icon.to_string(), Style::default().fg(Color::Green)),
                 Span::raw(" "),
-                Span::styled(body, Style::default().fg(DIM)),
-            ])
-        } else {
-            Line::from(Span::styled(
-                truncate_display_width(&primary, width),
+                Span::styled(
+                    truncate_display_width(&render.body, width.saturating_sub(2)),
+                    Style::default().fg(DIM),
+                ),
+            ]),
+            ActivityLeading::None => Line::from(Span::styled(
+                truncate_display_width(&render.body, width),
                 Style::default().fg(DIM),
-            ))
+            )),
         };
         lines.push(line);
-        if let Some(url) = image_url {
-            emoji_overlays.push((line_index, url));
-        }
     }
     if let Some(secondary) = activity_secondary_line(activity) {
         lines.push(Line::from(Span::styled(
@@ -1355,16 +1353,10 @@ fn push_activity_lines(
     }
 }
 
-fn activity_emoji_image_url(emoji: &ActivityEmoji) -> Option<String> {
-    let id = emoji.id?;
-    let ext = if emoji.animated { "gif" } else { "png" };
-    Some(format!(
-        "https://cdn.discordapp.com/emojis/{}.{}",
-        id.get(),
-        ext
-    ))
-}
-
+/// Profile-popup ordering. Intentionally differs from
+/// `panes::activity_priority`: the popup has the vertical space to lead with
+/// the user's Custom Status, while the member-list row uses one line per
+/// member and prefers game-at-a-glance signals.
 fn activity_priority(kind: ActivityKind) -> u8 {
     match kind {
         ActivityKind::Custom => 0,
@@ -1374,66 +1366,6 @@ fn activity_priority(kind: ActivityKind) -> u8 {
         ActivityKind::Watching => 4,
         ActivityKind::Competing => 5,
         ActivityKind::Unknown => 6,
-    }
-}
-
-fn activity_primary_line(
-    activity: &ActivityInfo,
-    emoji_images: &[EmojiImage<'_>],
-) -> (String, Option<String>) {
-    match activity.kind {
-        ActivityKind::Custom => {
-            let image_url = activity
-                .emoji
-                .as_ref()
-                .and_then(activity_emoji_image_url)
-                .filter(|url| emoji_images.iter().any(|img| img.url == *url));
-            let emoji = activity
-                .emoji
-                .as_ref()
-                .map(|emoji| {
-                    if image_url.is_some() {
-                        "  ".to_owned()
-                    } else if emoji.id.is_some() {
-                        String::new()
-                    } else {
-                        emoji.name.clone()
-                    }
-                })
-                .unwrap_or_default();
-            let body = activity.state.clone().unwrap_or_default();
-            let text = match (emoji.is_empty(), body.is_empty()) {
-                (true, true) => String::new(),
-                (false, true) => emoji,
-                (true, false) => body,
-                (false, false) => format!("{emoji} {body}"),
-            };
-            (text, image_url)
-        }
-        ActivityKind::Playing => (
-            format!("▶ {}", sanitize_for_display_width(&activity.name)),
-            None,
-        ),
-        ActivityKind::Streaming => (
-            format!("◉ {}", sanitize_for_display_width(&activity.name)),
-            None,
-        ),
-        ActivityKind::Listening => (
-            format!("♪ {}", sanitize_for_display_width(&activity.name)),
-            None,
-        ),
-        ActivityKind::Watching => (
-            format!("▷ {}", sanitize_for_display_width(&activity.name)),
-            None,
-        ),
-        ActivityKind::Competing => (
-            format!(
-                "Competing in {}",
-                sanitize_for_display_width(&activity.name)
-            ),
-            None,
-        ),
-        ActivityKind::Unknown => (sanitize_for_display_width(&activity.name), None),
     }
 }
 
