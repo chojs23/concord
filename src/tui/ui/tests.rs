@@ -1741,11 +1741,14 @@ fn user_profile_popup_lists_mutual_servers_without_selection_marker() {
 }
 
 #[test]
-fn unknown_dm_status_uses_dim_presence_dot() {
-    let channel = channel_with_recipients("dm", &[PresenceStatus::Unknown]);
+fn offline_like_dm_status_uses_empty_dim_presence_marker() {
+    for status in [PresenceStatus::Offline, PresenceStatus::Unknown] {
+        let channel = channel_with_recipients("dm", &[status]);
 
-    let dot = dm_presence_dot_span(&channel).expect("DM should still produce a dot");
-    assert_eq!(dot.style.fg, Some(Color::DarkGray));
+        let dot = dm_presence_dot_span(&channel).expect("DM should still produce a dot");
+        assert_eq!(dot.content.as_ref(), "○ ");
+        assert_eq!(dot.style.fg, Some(Color::DarkGray));
+    }
 }
 
 #[test]

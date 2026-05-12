@@ -28,7 +28,7 @@ use super::{
         DisplayOptionItem, EmojiReactionItem, FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem,
         ImageViewerItem, MemberActionItem, MessageActionItem, PollVotePickerItem,
         channel_action_shortcut, discord_color, guild_action_shortcut, indexed_shortcut,
-        member_action_shortcut, message_action_shortcut, presence_color,
+        member_action_shortcut, message_action_shortcut, presence_color, presence_marker,
     },
 };
 use crate::discord::{
@@ -317,7 +317,7 @@ fn channel_prefix(kind: &str) -> &'static str {
 fn dm_presence_dot_span(channel: &ChannelState) -> Option<Span<'static>> {
     let status = one_to_one_dm_recipient_status(channel)?;
     Some(Span::styled(
-        "● ",
+        format!("{} ", presence_marker(status)),
         Style::default().fg(presence_color(status)),
     ))
 }
