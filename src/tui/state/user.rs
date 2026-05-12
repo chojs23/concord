@@ -354,6 +354,49 @@ impl DashboardState {
         self.discord.member_role_color(guild_id, member.user_id())
     }
 
+    /// Resolved display name for a member panel entry. Falls through to the
+    /// profile cache when the guild member entry only has fallback data.
+    pub fn member_display_name(&self, entry: MemberEntry<'_>) -> String {
+        let name = entry.display_name();
+        if entry.username().is_none() && name == "unknown" {
+            if let Some(guild_id) = self.selected_guild_id() {
+                if let Some(profile) = self.discord.user_profile(entry.user_id(), Some(guild_id)) {
+                    return profile.display_name().to_owned();
+                }
+            }
+        }
+        name
+    }
+
+    /// Profile requests for visible members in the member panel whose name is
+    /// still a fallback placeholder. Complements
+    /// `missing_message_author_profile_requests` which only covers messages.
+    pub fn missing_visible_member_profile_requests(
+        &self,
+    ) -> Vec<(Id<UserMarker>, Option<Id<GuildMarker>>)> {
+        let Some(guild_id) = self.selected_guild_id() else {
+            return Vec::new();
+        };
+        let members = self.flattened_members();
+        let start = self.member_scroll();
+        let end = (start + self.member_content_height()).min(members.len());
+        let mut seen = HashSet::new();
+        let mut requests = Vec::new();
+        for entry in &members[start..end] {
+            if entry.username().is_some() {
+                continue;
+            }
+            let user_id = entry.user_id();
+            if self.discord.user_profile(user_id, Some(guild_id)).is_some() {
+                continue;
+            }
+            if seen.insert((user_id, Some(guild_id))) {
+                requests.push((user_id, Some(guild_id)));
+            }
+        }
+        requests
+    }
+
     pub fn member_panel_title(&self) -> Line<'static> {
         let Some(guild_id) = self.selected_guild_id() else {
             return Line::from(" Members ");

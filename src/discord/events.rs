@@ -395,6 +395,7 @@ pub struct MessageSnapshotInfo {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplyInfo {
+    pub author_id: Option<Id<UserMarker>>,
     pub author: String,
     pub content: Option<String>,
     pub sticker_names: Vec<String>,

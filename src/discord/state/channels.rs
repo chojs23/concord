@@ -209,6 +209,42 @@ impl DiscordState {
         );
     }
 
+    pub(super) fn refresh_dm_channel_info_from_profile(
+        &mut self,
+        user_id: Id<UserMarker>,
+        display_name: &str,
+        username: &str,
+        avatar_url: Option<&str>,
+    ) {
+        for channel in self.channels.values_mut() {
+            if channel.guild_id.is_some() {
+                continue;
+            }
+            let mut updated = false;
+            for recipient in &mut channel.recipients {
+                if recipient.user_id == user_id {
+                    recipient.display_name = display_name.to_owned();
+                    recipient.username = Some(username.to_owned());
+                    if avatar_url.is_some() || recipient.avatar_url.is_none() {
+                        recipient.avatar_url = avatar_url.map(str::to_owned);
+                    }
+                    updated = true;
+                }
+            }
+            if updated {
+                let new_name = channel
+                    .recipients
+                    .iter()
+                    .map(|r| r.display_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if !new_name.is_empty() {
+                    channel.name = new_name;
+                }
+            }
+        }
+    }
+
     pub(super) fn update_channel_recipient_presence(
         &mut self,
         user_id: Id<UserMarker>,

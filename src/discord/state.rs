@@ -512,6 +512,13 @@ impl DiscordState {
                             member.username = Some(username);
                         }
                     }
+                } else {
+                    self.refresh_dm_channel_info_from_profile(
+                        user_id,
+                        &display_name,
+                        &username,
+                        avatar_url.as_deref(),
+                    );
                 }
             }
             AppEvent::UserNoteLoaded { user_id, note } => {
@@ -2117,6 +2124,7 @@ mod tests {
             message_kind: MessageKind::new(19),
             reference: None,
             reply: Some(ReplyInfo {
+                author_id: None,
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
                 sticker_names: Vec::new(),
@@ -2166,6 +2174,7 @@ mod tests {
             message_kind: MessageKind::new(19),
             reference: None,
             reply: Some(ReplyInfo {
+                author_id: None,
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
                 sticker_names: Vec::new(),
@@ -2553,6 +2562,7 @@ mod tests {
     fn message_capabilities_track_reply_and_forwarded_traits() {
         let mut message = message_state("reply body");
         message.reply = Some(ReplyInfo {
+                author_id: None,
             author: "neo".to_owned(),
             content: Some("original".to_owned()),
             sticker_names: Vec::new(),

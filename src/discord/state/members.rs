@@ -128,14 +128,49 @@ pub(super) fn upsert_member(
     previous_status: Option<PresenceStatus>,
 ) {
     let status = previous_status.unwrap_or(PresenceStatus::Unknown);
+
+    // When the incoming payload is a bare-minimum fallback (no username resolved,
+    // display_name fell through to "unknown"), don't clobber a previously cached
+    // complete entry — the complete data came from a profile fetch and is better.
+    let is_fallback = member.username.is_none() && member.display_name == "unknown";
+    let (display_name, username, avatar_url) = if is_fallback {
+        if let Some(existing) = map.get(&member.user_id) {
+            if existing.username.is_some() {
+                (
+                    existing.display_name.clone(),
+                    existing.username.clone(),
+                    existing.avatar_url.clone(),
+                )
+            } else {
+                (
+                    member.display_name.clone(),
+                    member.username.clone(),
+                    member.avatar_url.clone(),
+                )
+            }
+        } else {
+            (
+                member.display_name.clone(),
+                member.username.clone(),
+                member.avatar_url.clone(),
+            )
+        }
+    } else {
+        (
+            member.display_name.clone(),
+            member.username.clone(),
+            member.avatar_url.clone(),
+        )
+    };
+
     map.insert(
         member.user_id,
         GuildMemberState {
             user_id: member.user_id,
-            display_name: member.display_name.clone(),
-            username: member.username.clone(),
+            display_name,
+            username,
             is_bot: member.is_bot,
-            avatar_url: member.avatar_url.clone(),
+            avatar_url,
             role_ids: member.role_ids.clone(),
             status,
         },

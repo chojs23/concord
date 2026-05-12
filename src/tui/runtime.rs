@@ -510,7 +510,11 @@ pub(super) async fn run_dashboard(
             }
         }
 
-        for (user_id, guild_id) in state.missing_message_author_profile_requests() {
+        let profile_requests = state
+            .missing_message_author_profile_requests()
+            .into_iter()
+            .chain(state.missing_visible_member_profile_requests());
+        for (user_id, guild_id) in profile_requests {
             if !requested_author_profiles.insert((user_id, guild_id)) {
                 continue;
             }

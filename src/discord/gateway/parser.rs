@@ -1924,6 +1924,7 @@ mod tests {
         assert_eq!(
             reply,
             Some(ReplyInfo {
+                author_id: Some(Id::new(31)),
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
                 sticker_names: Vec::new(),
