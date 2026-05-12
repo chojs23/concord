@@ -191,6 +191,15 @@ impl DiscordClient {
             .map_err(|_| "gateway command channel closed".to_owned())
     }
 
+    pub fn update_presence(
+        &self,
+        status: &'static str,
+    ) -> std::result::Result<(), String> {
+        self.gateway_commands_tx
+            .send(GatewayCommand::UpdatePresence { status })
+            .map_err(|_| "gateway command channel closed".to_owned())
+    }
+
     pub fn update_member_list_subscription(
         &self,
         guild_id: Id<GuildMarker>,

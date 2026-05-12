@@ -3598,9 +3598,9 @@ fn leader_popup_renders_as_bottom_window() {
     assert!(rendered.contains("[2]"), "{rendered}");
     assert!(rendered.contains("[4]"), "{rendered}");
     assert!(rendered.contains("[a]"), "{rendered}");
-    assert!(rendered.contains("toggle Servers"), "{rendered}");
-    assert!(rendered.contains("toggle Channels"), "{rendered}");
-    assert!(rendered.contains("toggle Members"), "{rendered}");
+    assert!(rendered.contains("Toggle servers"), "{rendered}");
+    assert!(rendered.contains("Toggle channels"), "{rendered}");
+    assert!(rendered.contains("Toggle members"), "{rendered}");
     assert!(rendered.contains("Actions"), "{rendered}");
 }
 

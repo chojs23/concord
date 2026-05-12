@@ -11,6 +11,7 @@ mod debug_log;
 mod image_viewer;
 mod options;
 mod polls;
+mod presence_picker;
 mod profile;
 mod reactions;
 mod toast;
@@ -52,6 +53,7 @@ pub(super) use reactions::{
     emoji_reaction_picker_lines_with_existing, filtered_emoji_reaction_picker_lines,
     reaction_users_popup_lines,
 };
+pub(super) use presence_picker::render_presence_picker;
 pub(super) use reactions::{render_emoji_reaction_picker, render_reaction_users_popup};
 pub(super) use toast::render_toast;
 #[cfg(test)]

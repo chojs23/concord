@@ -49,6 +49,9 @@ pub enum GatewayCommand {
         channel_id: Id<ChannelMarker>,
         ranges: Vec<(u32, u32)>,
     },
+    UpdatePresence {
+        status: &'static str,
+    },
 }
 
 /// Discord user-account gateway endpoint. We pin to `v=9` because the v9
@@ -571,6 +574,19 @@ async fn dispatch_command(writer: &WriterHandle, command: GatewayCommand) -> Res
                 ),
             );
             guild_channel_subscribe_payload(guild_id, channel_id, &ranges)
+        }
+        GatewayCommand::UpdatePresence { status } => {
+            logging::debug("gateway", format!("updating presence: status={status}"));
+            json!({
+                "op": 3,
+                "d": {
+                    "status": status,
+                    "since": 0,
+                    "activities": [],
+                    "afk": false,
+                },
+            })
+            .to_string()
         }
     };
     send_text(writer, payload).await
