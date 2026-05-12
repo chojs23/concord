@@ -12,14 +12,14 @@ concurrency:
 
 jobs:
   check:
-    name: fmt + test
+    name: fmt + clippy + test
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -27,6 +27,9 @@ jobs:
 
       - name: rustfmt
         run: cargo fmt --all --check
+
+      - name: clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: test
         run: cargo test --all-features
