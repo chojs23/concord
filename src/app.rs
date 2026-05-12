@@ -811,8 +811,11 @@ fn start_command_loop(
                             crate::discord::PresenceStatus::Offline => "invisible",
                             crate::discord::PresenceStatus::Unknown => "online",
                         };
+                        if let Err(error) = client.update_presence(value) {
+                            logging::error("app", &error);
+                        }
                         if let Err(error) = client.set_presence(value).await {
-                            log_app_error("set presence failed", &error);
+                            log_app_error("set presence (settings) failed", &error);
                         }
                     }
                 }

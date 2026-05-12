@@ -1127,6 +1127,11 @@ impl DiscordState {
                     self.refresh_current_user_role_cache();
                 }
             }
+            AppEvent::SelfPresenceUpdate { status } => {
+                if self.presence.current == PresenceStatus::Unknown {
+                    self.presence.current = *status;
+                }
+            }
             AppEvent::CurrentUserCapabilities { .. } => {}
             AppEvent::ReadStateInit { entries } => {
                 self.notifications.read_states.clear();

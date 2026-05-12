@@ -10,12 +10,17 @@ pub const PRESENCE_PICKER_ITEMS: &[(PresenceStatus, &str)] = &[
 ];
 
 impl DashboardState {
+    pub fn self_status(&self) -> crate::discord::PresenceStatus {
+        self.user_presence_override
+            .unwrap_or_else(|| self.discord.self_status())
+    }
+
     pub fn is_presence_picker_open(&self) -> bool {
         self.presence_picker.is_some()
     }
 
     pub fn open_presence_picker(&mut self) {
-        let current = self.discord.self_status();
+        let current = self.self_status();
         let selected = PRESENCE_PICKER_ITEMS
             .iter()
             .position(|(s, _)| *s == current)
@@ -51,7 +56,7 @@ impl DashboardState {
         let picker = self.presence_picker.as_ref()?;
         let selected = clamp_selected_index(picker.selected, PRESENCE_PICKER_ITEMS.len());
         let (status, _) = PRESENCE_PICKER_ITEMS[selected];
-        self.discord.set_self_status(status);
+        self.user_presence_override = Some(status);
         self.close_presence_picker();
         Some(AppCommand::SetPresence { status })
     }

@@ -54,6 +54,15 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
             user: name,
             user_id,
         });
+        if let Some(status) = data
+            .get("user_settings")
+            .and_then(|s| s.get("status"))
+            .and_then(Value::as_str)
+            .map(parse_status)
+            .filter(|s| *s != PresenceStatus::Unknown)
+        {
+            events.push(AppEvent::SelfPresenceUpdate { status });
+        }
         if let Some(can_use_animated_custom_emojis) =
             parse_user_can_use_animated_custom_emojis(user)
         {

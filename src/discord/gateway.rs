@@ -21,6 +21,7 @@ use tokio_tungstenite::{
 };
 
 use super::{
+    PresenceStatus,
     client::publish_app_event,
     events::{AppEvent, SequencedAppEvent},
     state::{DiscordState, SnapshotRevision},
@@ -435,6 +436,28 @@ async fn handle_frame(
             let started = Instant::now();
             let events = parse_user_account_event(raw);
             logging::timing("gateway", "dispatch parse", started.elapsed());
+            // When READY tells us the user's saved presence, sync the current
+            // gateway session to match. Without this op3, the session starts
+            // as "online" regardless of the user's actual setting.
+            for event in &events {
+                if let AppEvent::SelfPresenceUpdate { status } = event {
+                    let gateway_status = match status {
+                        PresenceStatus::Online => "online",
+                        PresenceStatus::Idle => "idle",
+                        PresenceStatus::DoNotDisturb => "dnd",
+                        PresenceStatus::Offline => "invisible",
+                        PresenceStatus::Unknown => continue,
+                    };
+                    if let Err(e) = dispatch_command(
+                        context.writer,
+                        GatewayCommand::UpdatePresence { status: gateway_status },
+                    )
+                    .await
+                    {
+                        logging::debug("gateway", format!("initial presence sync failed: {e}"));
+                    }
+                }
+            }
             for app_event in events {
                 publish_gateway_event(context.publish, app_event).await;
             }
