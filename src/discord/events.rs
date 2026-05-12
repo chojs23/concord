@@ -6,7 +6,7 @@ use crate::discord::ids::{
     },
 };
 
-use super::commands::{ForumPostArchiveState, ReactionEmoji};
+use super::commands::{DownloadAttachmentSource, ForumPostArchiveState, ReactionEmoji};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum PresenceStatus {
@@ -713,8 +713,9 @@ pub enum AppEvent {
     GatewayError {
         message: String,
     },
-    StatusMessage {
-        message: String,
+    AttachmentDownloadCompleted {
+        path: String,
+        source: DownloadAttachmentSource,
     },
     UpdateAvailable {
         latest_version: String,
@@ -778,7 +779,7 @@ impl AppEvent {
             self,
             AppEvent::GatewayError { .. }
                 | AppEvent::CurrentUserCapabilities { .. }
-                | AppEvent::StatusMessage { .. }
+                | AppEvent::AttachmentDownloadCompleted { .. }
                 | AppEvent::UpdateAvailable { .. }
                 | AppEvent::ReactionUsersLoaded { .. }
                 | AppEvent::AttachmentPreviewLoaded { .. }
@@ -808,7 +809,7 @@ impl AppEvent {
                 | AppEvent::ReactionUsersLoaded { .. }
                 | AppEvent::GatewayError { .. }
                 | AppEvent::CurrentUserCapabilities { .. }
-                | AppEvent::StatusMessage { .. }
+                | AppEvent::AttachmentDownloadCompleted { .. }
                 | AppEvent::UpdateAvailable { .. }
                 | AppEvent::ActivateChannel { .. }
                 | AppEvent::AttachmentPreviewLoaded { .. }

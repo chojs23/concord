@@ -13,7 +13,7 @@ use crate::discord::{
 };
 
 use super::super::{
-    format::{truncate_display_width, truncate_display_width_from, truncate_text},
+    format::{truncate_display_width, truncate_display_width_from},
     message_format::{EMOJI_REACTION_IMAGE_WIDTH, format_attachment_summary, wrap_text_lines},
     state::{
         ChannelPaneEntry, DashboardState, EmojiPickerEntry, FocusPane, GuildPaneEntry,
@@ -1237,6 +1237,13 @@ fn activity_priority(kind: ActivityKind) -> u8 {
 pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let title = format!(" Concord - v{} ", env!("CARGO_PKG_VERSION"));
     let mut spans = vec![Span::styled(title, Style::default().fg(Color::Cyan).bold())];
+    if let Some(user) = state.current_user() {
+        spans.push(Span::styled(" Connected as ", Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            format!("{user} "),
+            Style::default().fg(Color::Green).bold(),
+        ));
+    }
     if let Some(version) = state.update_available_version() {
         spans.push(Span::styled(
             format!(" New version available: v{version} "),
@@ -1247,28 +1254,4 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
         Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
         area,
     );
-}
-
-pub(super) fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    let user = footer_user_label(state);
-    let mut spans = vec![Span::styled(
-        format!(" {user} "),
-        Style::default().fg(Color::Green).bold(),
-    )];
-    if let Some(status) = state.last_status() {
-        spans.push(Span::raw(" | "));
-        spans.push(Span::styled(
-            truncate_text(status, 72),
-            Style::default().fg(Color::Green),
-        ));
-    }
-
-    frame.render_widget(
-        Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
-        area,
-    );
-}
-
-pub(super) fn footer_user_label(state: &DashboardState) -> &str {
-    state.current_user().unwrap_or("Loading Concord...")
 }

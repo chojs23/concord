@@ -61,7 +61,6 @@ pub(super) struct VisibleDashboardSignature {
     channel_action_threads_phase: bool,
     message_pane_title: String,
     typing_footer: Option<String>,
-    status_message: Option<String>,
     popups: VisiblePopupSignature,
     visible_guilds: Vec<String>,
     pub(super) visible_channels: Vec<String>,
@@ -75,6 +74,7 @@ struct VisiblePopupSignature {
     message_action_open: bool,
     image_viewer_open: bool,
     image_viewer_action_open: bool,
+    image_viewer_download_message: Option<String>,
     guild_action_open: bool,
     channel_action_open: bool,
     member_action_open: bool,
@@ -132,11 +132,11 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
         channel_action_threads_phase: state.is_channel_action_threads_phase(),
         message_pane_title: state.message_pane_title(),
         typing_footer: state.typing_footer_for_selected_channel(),
-        status_message: state.last_status().map(str::to_owned),
         popups: VisiblePopupSignature {
             message_action_open: state.is_message_action_menu_open(),
             image_viewer_open: state.is_image_viewer_open(),
             image_viewer_action_open: state.is_image_viewer_action_menu_open(),
+            image_viewer_download_message: state.image_viewer_download_message().map(str::to_owned),
             guild_action_open: state.is_guild_action_menu_open(),
             channel_action_open: state.is_channel_action_menu_open(),
             member_action_open: state.is_member_action_menu_open(),
@@ -253,7 +253,6 @@ pub(super) fn record_visible_signature_change(
         || before.channel_pane_visible != after.channel_pane_visible
         || before.member_pane_visible != after.member_pane_visible
         || before.current_user != after.current_user
-        || before.status_message != after.status_message
         || before.popups != after.popups
         || before.channel_action_threads_phase != after.channel_action_threads_phase
     {
@@ -289,7 +288,6 @@ fn only_visible_member_signature_changed(
         && before.new_messages_count == after.new_messages_count
         && before.message_pane_title == after.message_pane_title
         && before.typing_footer == after.typing_footer
-        && before.status_message == after.status_message
         && before.popups == after.popups
         && before.channel_action_threads_phase == after.channel_action_threads_phase
         && before.visible_guilds == after.visible_guilds
@@ -332,7 +330,6 @@ fn only_new_message_notice_changed(
         && before.member_horizontal_scroll == after.member_horizontal_scroll
         && before.message_pane_title == after.message_pane_title
         && before.typing_footer == after.typing_footer
-        && before.status_message == after.status_message
         && before.popups == after.popups
         && before.channel_action_threads_phase == after.channel_action_threads_phase
         && before.visible_guilds == after.visible_guilds

@@ -15,9 +15,9 @@ use crate::logging;
 
 use crate::config::DisplayOptions;
 use crate::discord::{
-    AppCommand, AppEvent, ChannelUnreadState, DiscordState, ForumPostArchiveState, MentionInfo,
-    MessageAttachmentUpload, MessageInfo, MessageSnapshotInfo, MessageState, MuteDuration,
-    PresenceStatus,
+    AppCommand, AppEvent, ChannelUnreadState, DiscordState, DownloadAttachmentSource,
+    ForumPostArchiveState, MentionInfo, MessageAttachmentUpload, MessageInfo, MessageSnapshotInfo,
+    MessageState, MuteDuration, PresenceStatus,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -257,7 +257,6 @@ pub struct DashboardState {
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
     current_user_can_use_animated_custom_emojis: Option<bool>,
-    last_status: Option<String>,
     update_available_version: Option<String>,
     should_quit: bool,
     older_history_requests: HashMap<Id<ChannelMarker>, OlderHistoryRequestState>,
@@ -388,7 +387,6 @@ impl DashboardState {
             current_user: None,
             current_user_id: None,
             current_user_can_use_animated_custom_emojis: None,
-            last_status: None,
             update_available_version: None,
             should_quit: false,
             older_history_requests: HashMap::new(),
@@ -507,8 +505,10 @@ impl DashboardState {
                 self.current_user_can_use_animated_custom_emojis =
                     Some(*can_use_animated_custom_emojis);
             }
-            AppEvent::StatusMessage { message } => {
-                self.last_status = Some(message.clone());
+            AppEvent::AttachmentDownloadCompleted { path, source }
+                if *source == DownloadAttachmentSource::ImageViewer =>
+            {
+                self.record_image_viewer_download_completed(path);
             }
             AppEvent::UpdateAvailable { latest_version } => {
                 self.update_available_version = Some(latest_version.clone());

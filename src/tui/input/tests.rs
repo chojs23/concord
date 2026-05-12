@@ -13,9 +13,9 @@ use crate::{
     config::ImagePreviewQualityPreset,
     discord::{
         AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
-        CustomEmojiInfo, GuildFolder, GuildNotificationSettingsInfo, MemberInfo,
-        MessageReferenceInfo, NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus,
-        ReactionEmoji, ReactionUserInfo, ReactionUsersInfo,
+        CustomEmojiInfo, DownloadAttachmentSource, GuildFolder, GuildNotificationSettingsInfo,
+        MemberInfo, MessageReferenceInfo, NotificationLevel, PollAnswerInfo, PollInfo,
+        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReactionUsersInfo,
     },
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };
@@ -962,7 +962,7 @@ fn mouse_click_outside_dashboard_panes_does_not_change_focus() {
 
     assert!(!handle_mouse(
         &mut state,
-        mouse(MouseEventKind::Down(MouseButton::Left), 10, 19),
+        mouse(MouseEventKind::Down(MouseButton::Left), 10, 0),
         dashboard_area(),
     ));
     assert_eq!(state.focus(), FocusPane::Messages);
@@ -2066,9 +2066,14 @@ fn image_viewer_action_shortcut_downloads_image() {
         Some(AppCommand::DownloadAttachment {
             url: "https://cdn.discordapp.com/cat.png".to_owned(),
             filename: "cat.png".to_owned(),
+            source: DownloadAttachmentSource::ImageViewer,
         })
     );
-    assert!(!state.is_image_viewer_action_menu_open());
+    assert!(state.is_image_viewer_action_menu_open());
+    assert_eq!(
+        state.image_viewer_download_message(),
+        Some("Downloading image...")
+    );
 }
 
 #[test]

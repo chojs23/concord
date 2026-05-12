@@ -428,11 +428,6 @@ fn start_command_loop(
                     } => match client.edit_message(channel_id, message_id, &content).await {
                         Ok(message) => {
                             client.publish_event(message_update_event(message)).await;
-                            client
-                                .publish_event(AppEvent::StatusMessage {
-                                    message: "edited message".to_owned(),
-                                })
-                                .await;
                         }
                         Err(error) => {
                             log_app_error("edit message failed", &error);
@@ -455,11 +450,6 @@ fn start_command_loop(
                                     message_id,
                                 })
                                 .await;
-                            client
-                                .publish_event(AppEvent::StatusMessage {
-                                    message: "deleted message".to_owned(),
-                                })
-                                .await;
                         }
                         Err(error) => {
                             log_app_error("delete message failed", &error);
@@ -480,7 +470,11 @@ fn start_command_loop(
                                 .await;
                         }
                     }
-                    AppCommand::DownloadAttachment { url, filename } => {
+                    AppCommand::DownloadAttachment {
+                        url,
+                        filename,
+                        source,
+                    } => {
                         match timeout(
                             ATTACHMENT_PREVIEW_TIMEOUT,
                             download_attachment(&url, &filename),
@@ -496,11 +490,9 @@ fn start_command_loop(
                             }
                             Ok(Ok(path)) => {
                                 client
-                                    .publish_event(AppEvent::StatusMessage {
-                                        message: format!(
-                                            "downloaded attachment to {}",
-                                            path.display()
-                                        ),
+                                    .publish_event(AppEvent::AttachmentDownloadCompleted {
+                                        path: path.display().to_string(),
+                                        source,
                                     })
                                     .await
                             }
@@ -523,11 +515,6 @@ fn start_command_loop(
                                     channel_id,
                                     message_id,
                                     emoji: emoji.clone(),
-                                })
-                                .await;
-                            client
-                                .publish_event(AppEvent::StatusMessage {
-                                    message: format!("added {} reaction", emoji.status_label()),
                                 })
                                 .await;
                         }
@@ -554,11 +541,6 @@ fn start_command_loop(
                                     channel_id,
                                     message_id,
                                     emoji: emoji.clone(),
-                                })
-                                .await;
-                            client
-                                .publish_event(AppEvent::StatusMessage {
-                                    message: format!("removed {} reaction", emoji.status_label()),
                                 })
                                 .await;
                         }
@@ -645,15 +627,6 @@ fn start_command_loop(
                                     pinned,
                                 })
                                 .await;
-                            client
-                                .publish_event(AppEvent::StatusMessage {
-                                    message: if pinned {
-                                        "pinned message".to_owned()
-                                    } else {
-                                        "unpinned message".to_owned()
-                                    },
-                                })
-                                .await;
                         }
                         Err(error) => {
                             log_app_error("set pin failed", &error);
@@ -675,11 +648,6 @@ fn start_command_loop(
                                     channel_id,
                                     message_id,
                                     answer_ids,
-                                })
-                                .await;
-                            client
-                                .publish_event(AppEvent::StatusMessage {
-                                    message: "updated poll vote".to_owned(),
                                 })
                                 .await;
                         }
@@ -730,7 +698,7 @@ fn start_command_loop(
                         guild_id,
                         muted,
                         duration,
-                        label,
+                        label: _,
                     } => {
                         let mute_end_time = mute_end_time_from_duration(duration, muted);
                         let selected_time_window =
@@ -750,18 +718,6 @@ fn start_command_loop(
                                         ),
                                     })
                                     .await;
-                                client
-                                    .publish_event(AppEvent::StatusMessage {
-                                        message: if muted {
-                                            format!(
-                                                "muted server {label}{}",
-                                                mute_status_suffix(duration)
-                                            )
-                                        } else {
-                                            format!("unmuted server {label}")
-                                        },
-                                    })
-                                    .await;
                             }
                             Err(error) => {
                                 log_app_error("set guild mute failed", &error);
@@ -778,7 +734,7 @@ fn start_command_loop(
                         channel_id,
                         muted,
                         duration,
-                        label,
+                        label: _,
                     } => {
                         let mute_end_time = mute_end_time_from_duration(duration, muted);
                         let selected_time_window =
@@ -802,18 +758,6 @@ fn start_command_loop(
                                             None,
                                             Some((channel_id, muted, mute_end_time)),
                                         ),
-                                    })
-                                    .await;
-                                client
-                                    .publish_event(AppEvent::StatusMessage {
-                                        message: if muted {
-                                            format!(
-                                                "muted channel {label}{}",
-                                                mute_status_suffix(duration)
-                                            )
-                                        } else {
-                                            format!("unmuted channel {label}")
-                                        },
                                     })
                                     .await;
                             }
@@ -867,18 +811,6 @@ fn selected_time_window_from_duration(duration: Option<MuteDuration>, muted: boo
             .unwrap_or(MuteDuration::Permanent)
             .selected_time_window_seconds()
     })
-}
-
-fn mute_status_suffix(duration: Option<MuteDuration>) -> String {
-    match duration {
-        Some(MuteDuration::Minutes(15)) => " for 15m".to_owned(),
-        Some(MuteDuration::Minutes(60)) => " for 1h".to_owned(),
-        Some(MuteDuration::Minutes(minutes)) if minutes % 60 == 0 => {
-            format!(" for {}h", minutes / 60)
-        }
-        Some(MuteDuration::Minutes(minutes)) => format!(" for {minutes}m"),
-        Some(MuteDuration::Permanent) | None => String::new(),
-    }
 }
 
 fn guild_notification_settings_update(

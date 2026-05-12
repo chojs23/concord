@@ -4,10 +4,6 @@ use super::{ActiveGuildScope, DashboardState};
 use crate::logging;
 
 impl DashboardState {
-    pub fn last_status(&self) -> Option<&str> {
-        self.last_status.as_deref()
-    }
-
     pub fn update_available_version(&self) -> Option<&str> {
         self.update_available_version.as_deref()
     }

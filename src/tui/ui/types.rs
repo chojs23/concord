@@ -77,7 +77,6 @@ pub(super) struct DashboardAreas {
     pub(super) channels: Rect,
     pub(super) messages: Rect,
     pub(super) members: Rect,
-    pub(super) footer: Rect,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -1,4 +1,6 @@
-use crate::discord::{AppCommand, InlinePreviewInfo, ids::Id, ids::marker::MessageMarker};
+use crate::discord::{
+    AppCommand, DownloadAttachmentSource, InlinePreviewInfo, ids::Id, ids::marker::MessageMarker,
+};
 
 use super::scroll::clamp_selected_index;
 use super::{
@@ -36,6 +38,7 @@ impl DashboardState {
             message_id: message.id,
             selected: 0,
             action_menu_selected: None,
+            download_message: None,
         });
         true
     }
@@ -123,6 +126,19 @@ impl DashboardState {
             .map(|selected| clamp_selected_index(selected, IMAGE_VIEWER_ACTION_COUNT))
     }
 
+    pub fn image_viewer_download_message(&self) -> Option<&str> {
+        self.image_viewer
+            .as_ref()
+            .and_then(|viewer| viewer.download_message.as_deref())
+    }
+
+    pub fn record_image_viewer_download_completed(&mut self, path: &str) {
+        if let Some(viewer) = &mut self.image_viewer {
+            viewer.action_menu_selected.get_or_insert(0);
+            viewer.download_message = Some(format!("Downloaded to {path}"));
+        }
+    }
+
     pub fn activate_selected_image_viewer_action(&mut self) -> Option<AppCommand> {
         let item = self.selected_image_viewer_item()?;
         let action = self
@@ -135,10 +151,13 @@ impl DashboardState {
 
         match action.kind {
             MessageActionKind::DownloadImage => {
-                self.close_image_viewer_action_menu();
+                if let Some(viewer) = &mut self.image_viewer {
+                    viewer.download_message = Some("Downloading image...".to_owned());
+                }
                 Some(AppCommand::DownloadAttachment {
                     url: item.url,
                     filename: item.filename,
+                    source: DownloadAttachmentSource::ImageViewer,
                 })
             }
             _ => None,

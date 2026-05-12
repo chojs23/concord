@@ -152,6 +152,7 @@ pub enum AppCommand {
     DownloadAttachment {
         url: String,
         filename: String,
+        source: DownloadAttachmentSource,
     },
     AddReaction {
         channel_id: Id<ChannelMarker>,
@@ -205,4 +206,10 @@ pub enum AppCommand {
     AckChannels {
         targets: Vec<(Id<ChannelMarker>, Id<MessageMarker>)>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DownloadAttachmentSource {
+    ImageViewer,
+    MessageAction,
 }

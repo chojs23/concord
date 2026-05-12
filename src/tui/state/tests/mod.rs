@@ -19,11 +19,11 @@ use super::{
 use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo,
     ChannelRecipientInfo, ChannelUnreadState, ChannelVisibilityStats, CustomEmojiInfo,
-    DiscordState, ForumPostArchiveState, FriendStatus, GuildNotificationSettingsInfo, MemberInfo,
-    MessageAttachmentUpload, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    MutualGuildInfo, NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind,
-    PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
-    ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+    DiscordState, DownloadAttachmentSource, ForumPostArchiveState, FriendStatus,
+    GuildNotificationSettingsInfo, MemberInfo, MessageAttachmentUpload, MessageInfo, MessageKind,
+    MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo, NotificationLevel,
+    PermissionOverwriteInfo, PermissionOverwriteKind, PresenceStatus, ReactionEmoji, ReactionInfo,
+    ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
 };
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -111,16 +111,6 @@ fn tracks_current_user_from_ready() {
     });
     assert_eq!(state.current_user(), Some("neo"));
     assert_eq!(state.current_user_id, Some(Id::new(10)));
-}
-
-#[test]
-fn gateway_error_stays_out_of_footer_state() {
-    let mut state = DashboardState::new();
-    state.push_event(AppEvent::GatewayError {
-        message: "boom".to_owned(),
-    });
-
-    assert_eq!(state.last_status(), None);
 }
 
 #[test]
@@ -2184,10 +2174,15 @@ fn image_viewer_navigation_clamps_and_downloads_current_image() {
         Some(AppCommand::DownloadAttachment {
             url: "https://cdn.discordapp.com/image-11.png".to_owned(),
             filename: "image-11.png".to_owned(),
+            source: DownloadAttachmentSource::ImageViewer,
         })
     );
     assert!(state.is_image_viewer_open());
-    assert!(!state.is_image_viewer_action_menu_open());
+    assert!(state.is_image_viewer_action_menu_open());
+    assert_eq!(
+        state.image_viewer_download_message(),
+        Some("Downloading image...")
+    );
 }
 
 #[test]
@@ -2222,8 +2217,51 @@ fn image_viewer_download_uses_original_url_not_preview_proxy() {
         Some(AppCommand::DownloadAttachment {
             url: "https://cdn.discordapp.com/original/photo.png".to_owned(),
             filename: "image-10.png".to_owned(),
+            source: DownloadAttachmentSource::ImageViewer,
         })
     );
+}
+
+#[test]
+fn image_viewer_download_completed_event_updates_action_menu_message() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            content: Some(String::new()),
+            attachments: vec![image_attachment(10)],
+            ..message_info(Id::new(2), 1)
+        }],
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+    state.move_message_action_down();
+    state.activate_selected_message_action();
+
+    state.push_event(AppEvent::AttachmentDownloadCompleted {
+        path: "/tmp/cat.png".to_owned(),
+        source: DownloadAttachmentSource::ImageViewer,
+    });
+
+    assert!(state.is_image_viewer_action_menu_open());
+    assert_eq!(
+        state.image_viewer_download_message(),
+        Some("Downloaded to /tmp/cat.png")
+    );
+}
+
+#[test]
+fn message_action_download_completed_event_does_not_open_image_feedback() {
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::AttachmentDownloadCompleted {
+        path: "/tmp/clip.mp4".to_owned(),
+        source: DownloadAttachmentSource::MessageAction,
+    });
+
+    assert!(!state.is_image_viewer_action_menu_open());
+    assert_eq!(state.image_viewer_download_message(), None);
 }
 
 #[test]
@@ -2478,6 +2516,7 @@ fn non_image_attachment_action_downloads_with_proxy_url_fallback() {
         Some(AppCommand::DownloadAttachment {
             url: "https://media.discordapp.net/clip-1.mp4".to_owned(),
             filename: "clip-1.mp4".to_owned(),
+            source: DownloadAttachmentSource::MessageAction,
         })
     );
 }
@@ -2944,7 +2983,6 @@ fn reaction_users_loaded_opens_popup_state() {
     });
 
     assert!(state.is_reaction_users_popup_open());
-    assert_eq!(state.last_status(), None);
     assert_eq!(
         state
             .reaction_users_popup()
@@ -2963,7 +3001,6 @@ fn pinned_messages_loaded_does_not_update_status() {
         messages: vec![message_info(channel_id, 1)],
     });
 
-    assert_eq!(state.last_status(), None);
     assert_eq!(state.pinned_messages().len(), 1);
 }
 
@@ -6152,8 +6189,8 @@ fn viewport_scroll_survives_selection_clamp_after_events() {
     guild_state.scroll_focused_pane_viewport_down();
     guild_state.scroll_focused_pane_viewport_down();
     let guild_scroll = guild_state.guild_scroll();
-    guild_state.push_event(AppEvent::StatusMessage {
-        message: "tick".to_owned(),
+    guild_state.push_event(AppEvent::UpdateAvailable {
+        latest_version: "tick".to_owned(),
     });
     assert_eq!(guild_state.selected_guild(), selected_guild);
     assert_eq!(guild_state.guild_scroll(), guild_scroll);
@@ -6169,8 +6206,8 @@ fn viewport_scroll_survives_selection_clamp_after_events() {
     channel_state.scroll_focused_pane_viewport_down();
     channel_state.scroll_focused_pane_viewport_down();
     let channel_scroll = channel_state.channel_scroll();
-    channel_state.push_event(AppEvent::StatusMessage {
-        message: "tick".to_owned(),
+    channel_state.push_event(AppEvent::UpdateAvailable {
+        latest_version: "tick".to_owned(),
     });
     assert_eq!(channel_state.selected_channel(), selected_channel);
     assert_eq!(channel_state.channel_scroll(), channel_scroll);
@@ -6186,8 +6223,8 @@ fn viewport_scroll_survives_selection_clamp_after_events() {
     member_state.scroll_focused_pane_viewport_down();
     member_state.scroll_focused_pane_viewport_down();
     let member_scroll = member_state.member_scroll();
-    member_state.push_event(AppEvent::StatusMessage {
-        message: "tick".to_owned(),
+    member_state.push_event(AppEvent::UpdateAvailable {
+        latest_version: "tick".to_owned(),
     });
     assert_eq!(member_state.selected_member(), selected_member);
     assert_eq!(member_state.member_scroll(), member_scroll);
@@ -6753,7 +6790,6 @@ fn restoring_discord_snapshot_recovers_missed_guilds_and_direct_messages() {
     let mut state = DashboardState::new();
     state.restore_discord_snapshot(snapshot);
 
-    assert_eq!(state.last_status(), None);
     assert_eq!(state.current_user(), Some("neo"));
     assert_eq!(state.current_user_id, Some(Id::new(10)));
     assert_eq!(state.guild_pane_entries().len(), 2);

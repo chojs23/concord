@@ -243,7 +243,11 @@ impl DashboardState {
                 let url = attachment.preferred_url()?.to_owned();
                 let filename = attachment.filename.clone();
                 self.close_message_action_menu();
-                Some(AppCommand::DownloadAttachment { url, filename })
+                Some(AppCommand::DownloadAttachment {
+                    url,
+                    filename,
+                    source: crate::discord::DownloadAttachmentSource::MessageAction,
+                })
             }
             MessageActionKind::AddReaction => {
                 self.open_emoji_reaction_picker();

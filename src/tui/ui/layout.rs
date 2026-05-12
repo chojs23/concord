@@ -15,12 +15,7 @@ use super::types::{
 };
 
 pub(super) fn dashboard_areas(area: Rect, state: &DashboardState) -> DashboardAreas {
-    let [header, main, footer] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(0),
-        Constraint::Length(1),
-    ])
-    .areas(area);
+    let [header, main] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
 
     let [guilds, channels, center, members] = Layout::horizontal([
         pane_width(
@@ -45,7 +40,6 @@ pub(super) fn dashboard_areas(area: Rect, state: &DashboardState) -> DashboardAr
         channels,
         messages: center,
         members,
-        footer,
     }
 }
 

@@ -555,10 +555,25 @@ pub(super) fn render_image_viewer_action_menu(
     let Some(selected) = state.selected_image_viewer_action_index() else {
         return;
     };
-    let popup = centered_rect(area, 42, (actions.len() as u16).saturating_add(2));
+    let download_message = state.image_viewer_download_message();
+    let download_message_height: u16 = download_message.is_some().into();
+    let popup = centered_rect(
+        area,
+        42,
+        (actions.len() as u16)
+            .saturating_add(2)
+            .saturating_add(download_message_height),
+    );
     frame.render_widget(Clear, popup);
+    let mut lines = message_action_menu_lines(&actions, selected);
+    if let Some(message) = download_message {
+        lines.push(Line::from(Span::styled(
+            truncate_display_width(message, popup.width.saturating_sub(2).into()),
+            Style::default().fg(Color::Green),
+        )));
+    }
     frame.render_widget(
-        Paragraph::new(message_action_menu_lines(&actions, selected))
+        Paragraph::new(lines)
             .block(panel_block("Image actions", true))
             .wrap(Wrap { trim: false }),
         popup,

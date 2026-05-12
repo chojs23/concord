@@ -836,7 +836,7 @@ impl DiscordState {
                 self.upsert_notification_settings(settings);
             }
             AppEvent::GatewayError { .. }
-            | AppEvent::StatusMessage { .. }
+            | AppEvent::AttachmentDownloadCompleted { .. }
             | AppEvent::UpdateAvailable { .. }
             | AppEvent::ReactionUsersLoaded { .. }
             | AppEvent::AttachmentPreviewLoaded { .. }

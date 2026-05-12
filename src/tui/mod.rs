@@ -1037,9 +1037,7 @@ fn save_display_options_if_needed(state: &mut DashboardState) {
     };
 
     match config::save_display_options(&options) {
-        Ok(()) => state.push_effect(AppEvent::StatusMessage {
-            message: "Options saved.".to_owned(),
-        }),
+        Ok(()) => {}
         Err(error) => state.push_effect(AppEvent::GatewayError {
             message: format!("save options failed: {error}"),
         }),
@@ -1052,9 +1050,12 @@ mod tests {
 
     use crate::discord::ids::{
         Id,
-        marker::{ChannelMarker, GuildMarker, MessageMarker},
+        marker::{AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker},
     };
-    use crate::discord::{AppEvent, ChannelInfo, MessageKind, ReadStateInfo, SequencedAppEvent};
+    use crate::discord::{
+        AppEvent, AttachmentInfo, ChannelInfo, DownloadAttachmentSource, MessageKind,
+        ReadStateInfo, SequencedAppEvent,
+    };
 
     use super::{
         AvatarImageCache, EffectContext, EmojiImageCache, ForumPostRequests, HistoryRequests,
@@ -1162,6 +1163,26 @@ mod tests {
         let after = visible_dashboard_signature(&state);
 
         assert_ne!(before, after);
+    }
+
+    #[test]
+    fn visible_signature_changes_when_image_download_message_changes() {
+        let mut state = state_with_messages(0);
+        push_image_message(&mut state, 1);
+        assert!(state.open_image_viewer_for_selected_message());
+        state.open_image_viewer_action_menu();
+        let before = visible_dashboard_signature(&state);
+
+        state.push_event(AppEvent::AttachmentDownloadCompleted {
+            path: "/tmp/cat.png".to_owned(),
+            source: DownloadAttachmentSource::ImageViewer,
+        });
+        let after = visible_dashboard_signature(&state);
+
+        assert_ne!(before, after);
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, true, false,
+        ));
     }
 
     #[test]
@@ -1415,6 +1436,38 @@ mod tests {
             sticker_names: Vec::new(),
             mentions: Vec::new(),
             attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+    }
+
+    fn push_image_message(state: &mut DashboardState, message_id: u64) {
+        state.push_event(AppEvent::MessageCreate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(message_id),
+            author_id: Id::new(99),
+            author: "neo".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some(format!("image {message_id}")),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: vec![AttachmentInfo {
+                id: Id::<AttachmentMarker>::new(message_id),
+                filename: "cat.png".to_owned(),
+                url: "https://cdn.discordapp.com/cat.png".to_owned(),
+                proxy_url: "https://media.discordapp.net/cat.png".to_owned(),
+                content_type: Some("image/png".to_owned()),
+                size: 128,
+                width: Some(32),
+                height: Some(32),
+                description: None,
+            }],
             embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         });

@@ -167,6 +167,21 @@ fn header_shows_available_update_version() {
 }
 
 #[test]
+fn header_shows_connected_account() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "muri".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+
+    let dump = render_dashboard_dump(100, 10, &mut state);
+    let header = dump.first().expect("dashboard render includes header");
+
+    assert!(header.contains("Concord - v"), "{header}");
+    assert!(header.contains("Connected as muri"), "{header}");
+}
+
+#[test]
 fn channel_switcher_lines_show_search_and_grouped_selection() {
     let items = vec![
         ChannelSwitcherItem {
@@ -339,7 +354,7 @@ fn focus_pane_at_maps_dashboard_regions_and_ignores_non_panes() {
         (21, 1, Some(FocusPane::Channels)),
         (50, 1, Some(FocusPane::Messages)),
         (100, 1, Some(FocusPane::Members)),
-        (1, 19, None),
+        (1, 0, None),
         (120, 1, None),
         (1, 20, None),
     ];
@@ -400,9 +415,9 @@ fn sync_view_heights_reserves_space_for_composer_height() {
     }
 
     let cases = [
-        (String::new(), ExpectedHeight::Exact(13)),
-        ("a\nb\nc".to_owned(), ExpectedHeight::Exact(11)),
-        ("x".repeat(100), ExpectedHeight::LessThan(14)),
+        (String::new(), ExpectedHeight::Exact(14)),
+        ("a\nb\nc".to_owned(), ExpectedHeight::Exact(12)),
+        ("x".repeat(100), ExpectedHeight::LessThan(15)),
     ];
 
     for (input, expected) in cases {
@@ -4174,7 +4189,7 @@ fn message_preview_rows_do_not_shrink_message_viewport() {
 
     sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
 
-    assert_eq!(state.message_view_height(), 13);
+    assert_eq!(state.message_view_height(), 14);
 }
 
 #[test]

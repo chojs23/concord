@@ -22,6 +22,7 @@ pub(super) struct ImageViewerState {
     pub(super) message_id: Id<MessageMarker>,
     pub(super) selected: usize,
     pub(super) action_menu_selected: Option<usize>,
+    pub(super) download_message: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

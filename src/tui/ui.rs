@@ -73,7 +73,7 @@ use self::panes::{
     composer_text, emoji_picker_lines, member_display_label, member_name_style,
     primary_activity_summary,
 };
-use self::panes::{render_channels, render_footer, render_guilds, render_header, render_members};
+use self::panes::{render_channels, render_guilds, render_header, render_members};
 use self::popups::{
     render_channel_action_menu, render_channel_switcher_popup, render_debug_log_popup,
     render_emoji_reaction_picker, render_guild_action_menu, render_image_viewer,
@@ -199,7 +199,6 @@ pub fn render(
     if state.is_pane_visible(FocusPane::Members) {
         render_members(frame, areas.members, state, &emoji_images);
     }
-    render_footer(frame, areas.footer, state);
     render_leader_popup(frame, areas.messages, state);
     render_channel_switcher_popup(frame, areas.messages, state);
     if !state.is_leader_action_mode() {
