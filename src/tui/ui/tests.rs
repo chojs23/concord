@@ -167,6 +167,17 @@ fn header_shows_available_update_version() {
 }
 
 #[test]
+fn header_shows_loading_before_connected_account_is_ready() {
+    let mut state = DashboardState::new();
+
+    let dump = render_dashboard_dump(100, 10, &mut state);
+    let header = dump.first().expect("dashboard render includes header");
+
+    assert!(header.contains("Concord - v"), "{header}");
+    assert!(header.contains("Loading..."), "{header}");
+}
+
+#[test]
 fn header_shows_connected_account() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
@@ -179,6 +190,7 @@ fn header_shows_connected_account() {
 
     assert!(header.contains("Concord - v"), "{header}");
     assert!(header.contains("Connected as muri"), "{header}");
+    assert!(!header.contains("Loading..."), "{header}");
 }
 
 #[test]

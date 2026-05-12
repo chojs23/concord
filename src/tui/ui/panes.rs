@@ -1243,6 +1243,11 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
             format!("{user} "),
             Style::default().fg(Color::Green).bold(),
         ));
+    } else {
+        spans.push(Span::styled(
+            " Loading... ",
+            Style::default().fg(Color::Yellow).bold(),
+        ));
     }
     if let Some(version) = state.update_available_version() {
         spans.push(Span::styled(
