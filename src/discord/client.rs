@@ -296,6 +296,10 @@ impl DiscordClient {
         self.rest.ack_channels(targets).await
     }
 
+    pub async fn set_presence(&self, status: &str) -> Result<()> {
+        self.rest.set_presence(status).await
+    }
+
     pub async fn load_message_history(
         &self,
         channel_id: Id<ChannelMarker>,

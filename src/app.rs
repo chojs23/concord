@@ -804,15 +804,15 @@ fn start_command_loop(
                         }
                     }
                     AppCommand::SetPresence { status } => {
-                        let gateway_value = match status {
+                        let value = match status {
                             crate::discord::PresenceStatus::Online => "online",
                             crate::discord::PresenceStatus::Idle => "idle",
                             crate::discord::PresenceStatus::DoNotDisturb => "dnd",
                             crate::discord::PresenceStatus::Offline => "invisible",
                             crate::discord::PresenceStatus::Unknown => "online",
                         };
-                        if let Err(message) = client.update_presence(gateway_value) {
-                            logging::error("app", &message);
+                        if let Err(error) = client.set_presence(value).await {
+                            log_app_error("set presence failed", &error);
                         }
                     }
                 }
