@@ -197,6 +197,7 @@ fn channel_switcher_lines_show_search_and_grouped_selection() {
         ChannelSwitcherItem {
             channel_id: Id::new(1),
             guild_id: None,
+            guild_name: None,
             group_label: "Direct Messages".to_owned(),
             parent_label: None,
             channel_label: "@alice".to_owned(),
@@ -210,6 +211,7 @@ fn channel_switcher_lines_show_search_and_grouped_selection() {
         ChannelSwitcherItem {
             channel_id: Id::new(2),
             guild_id: Some(Id::new(1)),
+            guild_name: Some("guild".to_owned()),
             group_label: "guild".to_owned(),
             parent_label: Some("Text".to_owned()),
             channel_label: "#general".to_owned(),
@@ -250,6 +252,7 @@ fn channel_switcher_lines_show_unread_badges_like_channel_pane() {
     let items = vec![ChannelSwitcherItem {
         channel_id: Id::new(1),
         guild_id: None,
+        guild_name: None,
         group_label: "Direct Messages".to_owned(),
         parent_label: None,
         channel_label: "@new".to_owned(),
@@ -275,6 +278,7 @@ fn selected_channel_switcher_unread_row_keeps_highlight() {
     let items = vec![ChannelSwitcherItem {
         channel_id: Id::new(1),
         guild_id: Some(Id::new(1)),
+        guild_name: Some("guild".to_owned()),
         group_label: "guild".to_owned(),
         parent_label: None,
         channel_label: "#alerts".to_owned(),

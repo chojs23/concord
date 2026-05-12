@@ -715,10 +715,7 @@ impl DiscordRest {
 
     /// Returns the user's saved note, or `None` if Discord responds 404
     /// (no note set). Other errors propagate.
-    pub(super) async fn load_user_note(
-        &self,
-        user_id: Id<UserMarker>,
-    ) -> Result<Option<String>> {
+    pub(super) async fn load_user_note(&self, user_id: Id<UserMarker>) -> Result<Option<String>> {
         let url = format!(
             "https://discord.com/api/v9/users/@me/notes/{}",
             user_id.get()

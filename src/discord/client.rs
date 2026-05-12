@@ -347,10 +347,7 @@ impl DiscordClient {
             .await
     }
 
-    pub async fn load_user_note(
-        &self,
-        user_id: Id<UserMarker>,
-    ) -> Result<Option<String>> {
+    pub async fn load_user_note(&self, user_id: Id<UserMarker>) -> Result<Option<String>> {
         self.rest.load_user_note(user_id).await
     }
 }
