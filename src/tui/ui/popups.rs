@@ -2,7 +2,6 @@ use super::activity::{ActivityLeading, build_activity_render};
 use super::message_list::render_image_preview;
 use super::*;
 use crate::discord::ActivityKind;
-use crate::tui::state::MuteActionDurationItem;
 use ratatui::layout::Position;
 
 const LEADER_POPUP_WIDTH: u16 = 74;
@@ -41,10 +40,20 @@ fn leader_popup_area(area: Rect, line_count: u16) -> Rect {
 }
 
 fn leader_popup_title(state: &DashboardState) -> String {
-    if state.is_leader_action_mode() {
-        "Leader Actions".to_owned()
+    if !state.is_leader_action_mode() {
+        return "Leader".to_owned();
+    }
+
+    if state.is_message_action_menu_open() {
+        "Message Actions".to_owned()
+    } else if state.is_channel_leader_action_active() {
+        "Channel Actions".to_owned()
+    } else if state.is_guild_leader_action_active() {
+        "Server Actions".to_owned()
+    } else if state.is_member_leader_action_active() {
+        "Member Actions".to_owned()
     } else {
-        "Leader".to_owned()
+        "Actions".to_owned()
     }
 }
 
@@ -119,7 +128,7 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             })
             .collect();
     }
-    if state.is_guild_action_menu_open() {
+    if state.is_guild_leader_action_active() {
         if state.is_guild_action_mute_duration_phase() {
             return state
                 .selected_guild_mute_duration_items()
@@ -153,7 +162,7 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             })
             .collect();
     }
-    if state.is_channel_action_menu_open() {
+    if state.is_channel_leader_action_active() {
         if state.is_channel_action_mute_duration_phase() {
             return state
                 .selected_channel_mute_duration_items()
@@ -177,7 +186,7 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             })
             .collect();
     }
-    if state.is_member_action_menu_open() {
+    if state.is_member_leader_action_active() {
         let actions = state.selected_member_action_items();
         return actions
             .iter()
@@ -522,62 +531,40 @@ pub(super) fn render_image_viewer(
     let block = panel_block_owned(title, true);
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
+    let image_area = Rect {
+        height: inner.height.saturating_sub(1),
+        ..inner
+    };
+    let download_area = Rect {
+        y: inner.y + inner.height.saturating_sub(1),
+        height: inner.height.min(1),
+        ..inner
+    };
 
     if let Some(image_preview) = image_preview {
-        render_image_preview(frame, inner, image_preview.state);
+        render_image_preview(frame, image_area, image_preview.state);
     } else {
         frame.render_widget(
             Paragraph::new(format!("loading {}...", item.filename))
                 .style(Style::default().fg(DIM))
                 .wrap(Wrap { trim: false }),
-            inner,
+            image_area,
+        );
+    }
+    if let Some(message) = state.image_viewer_download_message() {
+        frame.render_widget(
+            Paragraph::new(truncate_display_width(
+                message,
+                download_area.width.saturating_sub(1).into(),
+            ))
+            .style(Style::default().fg(Color::Green)),
+            download_area,
         );
     }
 }
 
 fn image_viewer_title(item: &ImageViewerItem) -> String {
     format!("Image {}/{} — {}", item.index, item.total, item.filename)
-}
-
-pub(super) fn render_image_viewer_action_menu(
-    frame: &mut Frame,
-    area: Rect,
-    state: &DashboardState,
-) {
-    if !state.is_image_viewer_action_menu_open() {
-        return;
-    }
-
-    let actions = state.selected_image_viewer_action_items();
-    if actions.is_empty() {
-        return;
-    }
-    let Some(selected) = state.selected_image_viewer_action_index() else {
-        return;
-    };
-    let download_message = state.image_viewer_download_message();
-    let download_message_height: u16 = download_message.is_some().into();
-    let popup = centered_rect(
-        area,
-        42,
-        (actions.len() as u16)
-            .saturating_add(2)
-            .saturating_add(download_message_height),
-    );
-    frame.render_widget(Clear, popup);
-    let mut lines = message_action_menu_lines(&actions, selected);
-    if let Some(message) = download_message {
-        lines.push(Line::from(Span::styled(
-            truncate_display_width(message, popup.width.saturating_sub(2).into()),
-            Style::default().fg(Color::Green),
-        )));
-    }
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("Image actions", true))
-            .wrap(Wrap { trim: false }),
-        popup,
-    );
 }
 
 pub(super) fn render_message_action_menu(frame: &mut Frame, area: Rect, state: &DashboardState) {
@@ -676,102 +663,6 @@ pub(super) fn options_popup_lines(
     lines
 }
 
-pub(super) fn render_guild_action_menu(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    if !state.is_guild_action_menu_open() {
-        return;
-    }
-    let actions = state.selected_guild_action_items();
-    if actions.is_empty() {
-        return;
-    }
-    let selected = state.selected_guild_action_index().unwrap_or(0);
-    let is_duration_phase = state.is_guild_action_mute_duration_phase();
-    let title = state.guild_action_menu_title();
-    let row_count = if is_duration_phase {
-        state.selected_guild_mute_duration_items().len()
-    } else {
-        actions.len()
-    };
-    let popup = centered_rect(area, 48, (row_count as u16).saturating_add(2));
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(if is_duration_phase {
-            mute_duration_menu_lines(state.selected_guild_mute_duration_items(), selected)
-        } else {
-            guild_action_menu_lines(&actions, selected)
-        })
-        .block(panel_block_owned(
-            if is_duration_phase {
-                format!("Mute server for... — {}", title.unwrap_or_default())
-            } else {
-                title
-                    .map(|name| format!("Server actions — {name}"))
-                    .unwrap_or_else(|| "Server actions".to_owned())
-            },
-            true,
-        ))
-        .wrap(Wrap { trim: false }),
-        popup,
-    );
-}
-
-pub(super) fn render_channel_action_menu(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    if !state.is_channel_action_menu_open() {
-        return;
-    }
-
-    let title_suffix = state
-        .channel_action_menu_title()
-        .map(|name| format!(" — {name}"))
-        .unwrap_or_default();
-
-    if state.is_channel_action_threads_phase() {
-        let threads = state.channel_action_thread_items();
-        let selected = state.selected_channel_action_index().unwrap_or(0);
-        let row_count = threads.len().max(1) as u16;
-        let popup = centered_rect(area, 54, row_count.saturating_add(2));
-        frame.render_widget(Clear, popup);
-        frame.render_widget(
-            Paragraph::new(channel_thread_menu_lines(&threads, selected))
-                .block(panel_block_owned(format!("Threads{title_suffix}"), true))
-                .wrap(Wrap { trim: false }),
-            popup,
-        );
-        return;
-    }
-
-    let is_duration_phase = state.is_channel_action_mute_duration_phase();
-    let actions = state.selected_channel_action_items();
-    if actions.is_empty() && !is_duration_phase {
-        return;
-    }
-    let selected = state.selected_channel_action_index().unwrap_or(0);
-    let row_count = if is_duration_phase {
-        state.selected_channel_mute_duration_items().len()
-    } else {
-        actions.len()
-    };
-    let popup = centered_rect(area, 54, (row_count as u16).saturating_add(2));
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(if is_duration_phase {
-            mute_duration_menu_lines(state.selected_channel_mute_duration_items(), selected)
-        } else {
-            channel_action_menu_lines(&actions, selected)
-        })
-        .block(panel_block_owned(
-            if is_duration_phase {
-                format!("Mute channel for...{title_suffix}")
-            } else {
-                format!("Channel actions{title_suffix}")
-            },
-            true,
-        ))
-        .wrap(Wrap { trim: false }),
-        popup,
-    );
-}
-
 pub(super) fn render_emoji_reaction_picker(
     frame: &mut Frame,
     area: Rect,
@@ -867,112 +758,6 @@ pub(super) fn render_poll_vote_picker(frame: &mut Frame, area: Rect, state: &Das
             .wrap(Wrap { trim: false }),
         popup,
     );
-}
-
-pub(super) fn render_member_action_menu(frame: &mut Frame, area: Rect, state: &DashboardState) {
-    if !state.is_member_action_menu_open() {
-        return;
-    }
-    let actions = state.selected_member_action_items();
-    if actions.is_empty() {
-        return;
-    }
-    let selected = state.selected_member_action_index().unwrap_or(0);
-    let title = state
-        .member_action_menu_title()
-        .map(|name| format!("Member actions — {name}"))
-        .unwrap_or_else(|| "Member actions".to_owned());
-    let popup = centered_rect(area, 48, (actions.len() as u16).saturating_add(2));
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(member_action_menu_lines(&actions, selected))
-            .block(panel_block_owned(title, true))
-            .wrap(Wrap { trim: false }),
-        popup,
-    );
-}
-
-pub(super) fn guild_action_menu_lines(
-    actions: &[GuildActionItem],
-    selected: usize,
-) -> Vec<Line<'static>> {
-    actions
-        .iter()
-        .enumerate()
-        .map(|(index, action)| {
-            let marker = if index == selected { "› " } else { "  " };
-            let shortcut = shortcut_prefix(guild_action_shortcut(actions, index));
-            let mut style = if action.enabled {
-                Style::default()
-            } else {
-                Style::default().fg(DIM)
-            };
-            if index == selected {
-                style = style
-                    .bg(Color::Rgb(40, 45, 90))
-                    .add_modifier(Modifier::BOLD);
-            }
-            Line::from(vec![
-                Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(shortcut, Style::default().fg(DIM)),
-                Span::styled(action.label.clone(), style),
-            ])
-        })
-        .collect()
-}
-
-fn mute_duration_menu_lines(
-    actions: &[MuteActionDurationItem],
-    selected: usize,
-) -> Vec<Line<'static>> {
-    actions
-        .iter()
-        .enumerate()
-        .map(|(index, action)| {
-            let marker = if index == selected { "› " } else { "  " };
-            let shortcut = shortcut_prefix(indexed_shortcut(index));
-            let mut style = Style::default();
-            if index == selected {
-                style = style
-                    .bg(Color::Rgb(40, 45, 90))
-                    .add_modifier(Modifier::BOLD);
-            }
-            Line::from(vec![
-                Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(shortcut, Style::default().fg(DIM)),
-                Span::styled(action.label, style),
-            ])
-        })
-        .collect()
-}
-
-pub(super) fn member_action_menu_lines(
-    actions: &[MemberActionItem],
-    selected: usize,
-) -> Vec<Line<'static>> {
-    actions
-        .iter()
-        .enumerate()
-        .map(|(index, action)| {
-            let marker = if index == selected { "› " } else { "  " };
-            let shortcut = shortcut_prefix(member_action_shortcut(actions, index));
-            let mut style = if action.enabled {
-                Style::default()
-            } else {
-                Style::default().fg(DIM)
-            };
-            if index == selected {
-                style = style
-                    .bg(Color::Rgb(40, 45, 90))
-                    .add_modifier(Modifier::BOLD);
-            }
-            Line::from(vec![
-                Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(shortcut, Style::default().fg(DIM)),
-                Span::styled(action.label.clone(), style),
-            ])
-        })
-        .collect()
 }
 
 pub(super) fn render_user_profile_popup(
@@ -1562,72 +1347,6 @@ pub(super) fn message_action_menu_lines(
             ])
         })
         .collect()
-}
-
-pub(super) fn channel_action_menu_lines(
-    actions: &[ChannelActionItem],
-    selected: usize,
-) -> Vec<Line<'static>> {
-    actions
-        .iter()
-        .enumerate()
-        .map(|(index, action)| {
-            let marker = if index == selected { "› " } else { "  " };
-            let shortcut = shortcut_prefix(channel_action_shortcut(actions, index));
-            let mut style = if action.enabled {
-                Style::default()
-            } else {
-                Style::default().fg(DIM)
-            };
-            if index == selected {
-                style = style
-                    .bg(Color::Rgb(40, 45, 90))
-                    .add_modifier(Modifier::BOLD);
-            }
-            Line::from(vec![
-                Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(shortcut, Style::default().fg(DIM)),
-                Span::styled(action.label.clone(), style),
-            ])
-        })
-        .collect()
-}
-
-fn channel_thread_menu_lines(threads: &[ChannelThreadItem], selected: usize) -> Vec<Line<'static>> {
-    if threads.is_empty() {
-        vec![Line::from(Span::styled(
-            "  (no threads)".to_owned(),
-            Style::default().fg(DIM),
-        ))]
-    } else {
-        threads
-            .iter()
-            .enumerate()
-            .map(|(index, thread)| {
-                let marker = if index == selected { "› " } else { "  " };
-                let shortcut = shortcut_prefix(indexed_shortcut(index));
-                let mut suffix = String::new();
-                if thread.archived {
-                    suffix.push_str(" [archived]");
-                }
-                if thread.locked {
-                    suffix.push_str(" [locked]");
-                }
-                let mut style = Style::default();
-                if index == selected {
-                    style = style
-                        .bg(Color::Rgb(40, 45, 90))
-                        .add_modifier(Modifier::BOLD);
-                }
-                Line::from(vec![
-                    Span::styled(marker, Style::default().fg(ACCENT)),
-                    Span::styled(shortcut, Style::default().fg(DIM)),
-                    Span::styled(format!("» {}", thread.label), style),
-                    Span::styled(suffix, Style::default().fg(DIM)),
-                ])
-            })
-            .collect()
-    }
 }
 
 pub(super) fn poll_vote_picker_lines(

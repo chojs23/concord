@@ -28,7 +28,7 @@ impl DashboardState {
     }
 
     pub fn open_channel_switcher(&mut self) {
-        self.close_all_action_menus();
+        self.close_all_action_contexts();
         self.close_leader();
         self.channel_switcher = Some(ChannelSwitcherState {
             query: String::new(),

@@ -203,7 +203,9 @@ Press `Space` to open the leader shortcut window.
 #### Action menus
 
 Focus a pane, then press `Space`, `a` to open actions for that pane. Action
-shortcuts are shown inside the popup and only run when the action is enabled.
+shortcuts are shown inside the leader popup and only run when the action is
+enabled. Messages also support a direct message action menu from the selected
+message.
 
 Server actions:
 
@@ -218,6 +220,8 @@ Channel actions:
 | `p`      | Show pinned messages | Open the selected channel's pinned messages |
 | `t`      | Show threads         | List threads for the selected channel       |
 | `m`      | Mark as read         | Mark the selected channel read              |
+
+When the image viewer is open, press `d` to download the current image directly.
 
 Hidden side panes give their width back to Messages. Pressing a hidden pane's
 number key directly shows and focuses it again.

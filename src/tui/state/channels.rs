@@ -14,24 +14,15 @@ use super::{
         ChannelActionItem, ChannelActionKind, ChannelBranch, ChannelPaneEntry, ChannelThreadItem,
         FocusPane, MUTE_ACTION_DURATIONS, channel_action_shortcut, indexed_shortcut,
     },
-    popups::ChannelActionMenuState,
+    popups::ChannelLeaderActionState,
     presentation::{is_direct_message_channel, sort_channels, sort_direct_message_channels},
     scroll::{
-        clamp_list_viewport, clamp_selected_index, close_collapsed_key, move_index_down,
-        move_index_up, open_collapsed_key, pane_content_height, toggle_collapsed_key,
+        clamp_list_viewport, clamp_selected_index, close_collapsed_key, open_collapsed_key,
+        pane_content_height, toggle_collapsed_key,
     },
 };
 
 impl DashboardState {
-    pub fn channel_action_menu_title(&self) -> Option<String> {
-        let channel_id = match self.channel_action_menu.as_ref()? {
-            ChannelActionMenuState::Actions { channel_id, .. }
-            | ChannelActionMenuState::MuteDuration { channel_id, .. }
-            | ChannelActionMenuState::Threads { channel_id, .. } => *channel_id,
-        };
-        Some(self.channel_label(channel_id))
-    }
-
     pub fn open_selected_channel_actions(&mut self) {
         if self.focus != FocusPane::Channels {
             return;
@@ -49,33 +40,36 @@ impl DashboardState {
         if channel.is_thread() {
             return;
         }
-        self.channel_action_menu = Some(ChannelActionMenuState::Actions {
+        self.channel_leader_action = Some(ChannelLeaderActionState::Actions {
             channel_id,
             selected: 0,
         });
     }
 
-    pub fn close_channel_action_menu(&mut self) {
-        self.channel_action_menu = None;
+    pub fn close_channel_leader_action(&mut self) {
+        self.channel_leader_action = None;
     }
 
-    pub fn back_channel_action_menu(&mut self) {
-        match self.channel_action_menu.as_ref() {
-            Some(ChannelActionMenuState::Threads { channel_id, .. })
-            | Some(ChannelActionMenuState::MuteDuration { channel_id, .. }) => {
+    pub fn back_channel_leader_action(&mut self) -> bool {
+        match self.channel_leader_action.as_ref() {
+            Some(
+                ChannelLeaderActionState::Threads { channel_id, .. }
+                | ChannelLeaderActionState::MuteDuration { channel_id, .. },
+            ) => {
                 let channel_id = *channel_id;
-                self.channel_action_menu = Some(ChannelActionMenuState::Actions {
+                self.channel_leader_action = Some(ChannelLeaderActionState::Actions {
                     channel_id,
                     selected: 0,
                 });
+                true
             }
-            _ => self.channel_action_menu = None,
+            _ => false,
         }
     }
 
     pub fn selected_channel_action_items(&self) -> Vec<ChannelActionItem> {
-        let channel_id = match self.channel_action_menu.as_ref() {
-            Some(ChannelActionMenuState::Actions { channel_id, .. }) => *channel_id,
+        let channel_id = match self.channel_leader_action.as_ref() {
+            Some(ChannelLeaderActionState::Actions { channel_id, .. }) => *channel_id,
             _ => return Vec::new(),
         };
         let Some(channel) = self.discord.channel(channel_id) else {
@@ -143,8 +137,8 @@ impl DashboardState {
     }
 
     pub fn channel_action_thread_items(&self) -> Vec<ChannelThreadItem> {
-        let channel_id = match self.channel_action_menu.as_ref() {
-            Some(ChannelActionMenuState::Threads { channel_id, .. }) => *channel_id,
+        let channel_id = match self.channel_leader_action.as_ref() {
+            Some(ChannelLeaderActionState::Threads { channel_id, .. }) => *channel_id,
             _ => return Vec::new(),
         };
         self.child_thread_items(channel_id)
@@ -379,65 +373,31 @@ impl DashboardState {
     }
 
     pub fn selected_channel_action_index(&self) -> Option<usize> {
-        match self.channel_action_menu.as_ref()? {
-            ChannelActionMenuState::Actions { selected, .. } => Some(clamp_selected_index(
+        match self.channel_leader_action.as_ref()? {
+            ChannelLeaderActionState::Actions { selected, .. } => Some(clamp_selected_index(
                 *selected,
                 self.selected_channel_action_items().len(),
             )),
-            ChannelActionMenuState::MuteDuration { selected, .. } => Some(clamp_selected_index(
+            ChannelLeaderActionState::MuteDuration { selected, .. } => Some(clamp_selected_index(
                 *selected,
                 self.selected_channel_mute_duration_items().len(),
             )),
-            ChannelActionMenuState::Threads { selected, .. } => Some(clamp_selected_index(
+            ChannelLeaderActionState::Threads { selected, .. } => Some(clamp_selected_index(
                 *selected,
                 self.channel_action_thread_items().len(),
             )),
         }
     }
 
-    pub fn move_channel_action_down(&mut self) {
-        let len = match self.channel_action_menu.as_ref() {
-            Some(ChannelActionMenuState::Actions { .. }) => {
-                self.selected_channel_action_items().len()
-            }
-            Some(ChannelActionMenuState::MuteDuration { .. }) => {
-                self.selected_channel_mute_duration_items().len()
-            }
-            Some(ChannelActionMenuState::Threads { .. }) => {
-                self.channel_action_thread_items().len()
-            }
-            None => return,
-        };
-        if let Some(menu) = self.channel_action_menu.as_mut() {
-            let selected = match menu {
-                ChannelActionMenuState::Actions { selected, .. }
-                | ChannelActionMenuState::MuteDuration { selected, .. }
-                | ChannelActionMenuState::Threads { selected, .. } => selected,
-            };
-            move_index_down(selected, len);
-        }
-    }
-
-    pub fn move_channel_action_up(&mut self) {
-        if let Some(menu) = self.channel_action_menu.as_mut() {
-            let selected = match menu {
-                ChannelActionMenuState::Actions { selected, .. }
-                | ChannelActionMenuState::MuteDuration { selected, .. }
-                | ChannelActionMenuState::Threads { selected, .. } => selected,
-            };
-            move_index_up(selected);
-        }
-    }
-
     pub fn select_channel_action_row(&mut self, row: usize) -> bool {
-        let len = match self.channel_action_menu.as_ref() {
-            Some(ChannelActionMenuState::Actions { .. }) => {
+        let len = match self.channel_leader_action.as_ref() {
+            Some(ChannelLeaderActionState::Actions { .. }) => {
                 self.selected_channel_action_items().len()
             }
-            Some(ChannelActionMenuState::MuteDuration { .. }) => {
+            Some(ChannelLeaderActionState::MuteDuration { .. }) => {
                 self.selected_channel_mute_duration_items().len()
             }
-            Some(ChannelActionMenuState::Threads { .. }) => {
+            Some(ChannelLeaderActionState::Threads { .. }) => {
                 self.channel_action_thread_items().len()
             }
             None => return false,
@@ -445,11 +405,11 @@ impl DashboardState {
         if row >= len {
             return false;
         }
-        if let Some(menu) = self.channel_action_menu.as_mut() {
-            let selected = match menu {
-                ChannelActionMenuState::Actions { selected, .. }
-                | ChannelActionMenuState::MuteDuration { selected, .. }
-                | ChannelActionMenuState::Threads { selected, .. } => selected,
+        if let Some(action) = self.channel_leader_action.as_mut() {
+            let selected = match action {
+                ChannelLeaderActionState::Actions { selected, .. }
+                | ChannelLeaderActionState::MuteDuration { selected, .. }
+                | ChannelLeaderActionState::Threads { selected, .. } => selected,
             };
             *selected = row;
             return true;
@@ -458,9 +418,9 @@ impl DashboardState {
     }
 
     pub fn activate_selected_channel_action(&mut self) -> Option<AppCommand> {
-        let menu = self.channel_action_menu.clone()?;
-        match menu {
-            ChannelActionMenuState::Actions {
+        let action = self.channel_leader_action.clone()?;
+        match action {
+            ChannelLeaderActionState::Actions {
                 channel_id,
                 selected,
             } => {
@@ -474,11 +434,11 @@ impl DashboardState {
                 match item.kind {
                     ChannelActionKind::LoadPinnedMessages => {
                         self.enter_pinned_message_view(channel_id);
-                        self.close_channel_action_menu();
+                        self.close_channel_leader_action();
                         Some(AppCommand::LoadPinnedMessages { channel_id })
                     }
                     ChannelActionKind::ShowThreads => {
-                        self.channel_action_menu = Some(ChannelActionMenuState::Threads {
+                        self.channel_leader_action = Some(ChannelLeaderActionState::Threads {
                             channel_id,
                             selected: 0,
                         });
@@ -486,7 +446,7 @@ impl DashboardState {
                     }
                     ChannelActionKind::MarkAsRead => {
                         self.mark_channel_as_read(channel_id);
-                        self.close_channel_action_menu();
+                        self.close_channel_leader_action();
                         // `mark_channel_as_read` already queued the
                         // `AckChannel` command via `queue_channel_ack`, so
                         // there's nothing extra for the dispatch loop here.
@@ -494,19 +454,20 @@ impl DashboardState {
                     }
                     ChannelActionKind::ToggleMute => {
                         if self.discord.channel_notification_muted(channel_id) {
-                            self.close_channel_action_menu();
+                            self.close_channel_leader_action();
                             self.toggle_channel_mute(channel_id, None)
                         } else {
-                            self.channel_action_menu = Some(ChannelActionMenuState::MuteDuration {
-                                channel_id,
-                                selected: 0,
-                            });
+                            self.channel_leader_action =
+                                Some(ChannelLeaderActionState::MuteDuration {
+                                    channel_id,
+                                    selected: 0,
+                                });
                             None
                         }
                     }
                 }
             }
-            ChannelActionMenuState::MuteDuration {
+            ChannelLeaderActionState::MuteDuration {
                 channel_id,
                 selected,
             } => {
@@ -516,10 +477,10 @@ impl DashboardState {
                             selected,
                             self.selected_channel_mute_duration_items().len(),
                         ))?;
-                self.close_channel_action_menu();
+                self.close_channel_leader_action();
                 self.toggle_channel_mute(channel_id, Some(item.duration))
             }
-            ChannelActionMenuState::Threads { .. } => {
+            ChannelLeaderActionState::Threads { .. } => {
                 let items = self.channel_action_thread_items();
                 let index = self.selected_channel_action_index()?;
                 let item = items.get(index)?.clone();
@@ -528,7 +489,7 @@ impl DashboardState {
                     .channel(item.channel_id)
                     .and_then(|c| c.guild_id);
                 self.activate_channel(item.channel_id);
-                self.close_channel_action_menu();
+                self.close_channel_leader_action();
                 guild_id.map(|guild_id| AppCommand::SubscribeGuildChannel {
                     guild_id,
                     channel_id: item.channel_id,
@@ -539,8 +500,8 @@ impl DashboardState {
 
     pub fn activate_channel_action_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
         let shortcut = shortcut.to_ascii_lowercase();
-        match self.channel_action_menu.as_ref()? {
-            ChannelActionMenuState::Actions { .. } => {
+        match self.channel_leader_action.as_ref()? {
+            ChannelLeaderActionState::Actions { .. } => {
                 let actions = self.selected_channel_action_items();
                 let index = actions.iter().enumerate().position(|(index, action)| {
                     action.enabled
@@ -550,7 +511,7 @@ impl DashboardState {
                 self.select_channel_action_row(index);
                 self.activate_selected_channel_action()
             }
-            ChannelActionMenuState::MuteDuration { .. } => {
+            ChannelLeaderActionState::MuteDuration { .. } => {
                 let index = self
                     .selected_channel_mute_duration_items()
                     .iter()
@@ -559,7 +520,7 @@ impl DashboardState {
                 self.select_channel_action_row(index);
                 self.activate_selected_channel_action()
             }
-            ChannelActionMenuState::Threads { .. } => {
+            ChannelLeaderActionState::Threads { .. } => {
                 let threads = self.channel_action_thread_items();
                 let index = threads
                     .iter()
@@ -591,7 +552,7 @@ impl DashboardState {
 
     pub fn channel_pane_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
         let mut channels = self.channels();
-        // Threads are reached through the channel action menu instead of
+        // Threads are reached through channel Leader Actions instead of
         // appearing as top-level entries. Without this filter their parent
         // channel would not be in `category_ids`, so the roots filter below
         // would let them through and render them under the channel list.

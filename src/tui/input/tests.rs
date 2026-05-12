@@ -1706,7 +1706,7 @@ fn a_key_no_longer_opens_actions_directly() {
     handle_key(&mut state, char_key('a'));
 
     assert!(!state.is_message_action_menu_open());
-    assert!(!state.is_channel_action_menu_open());
+    assert!(!state.is_channel_leader_action_active());
 }
 
 #[test]
@@ -1737,7 +1737,39 @@ fn leader_a_opens_selected_channel_actions_from_channel_pane() {
     handle_key(&mut state, char_key('a'));
 
     assert!(state.is_leader_action_mode());
-    assert!(state.is_channel_action_menu_open());
+    assert!(state.is_channel_leader_action_active());
+}
+
+#[test]
+fn leader_channel_subphase_esc_returns_to_channel_actions() {
+    let mut state = state_with_thread_created_message();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+    handle_key(&mut state, char_key('t'));
+    assert!(state.is_channel_action_threads_phase());
+
+    handle_key(&mut state, key(KeyCode::Esc));
+
+    assert!(state.is_leader_action_mode());
+    assert!(state.is_channel_leader_action_active());
+    assert!(!state.is_channel_action_threads_phase());
+}
+
+#[test]
+fn leader_guild_subphase_esc_returns_to_server_actions() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Guilds);
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+    handle_key(&mut state, char_key('u'));
+    assert!(state.is_guild_action_mute_duration_phase());
+
+    handle_key(&mut state, key(KeyCode::Esc));
+
+    assert!(state.is_leader_action_mode());
+    assert!(state.is_guild_leader_action_active());
+    assert!(!state.is_guild_action_mute_duration_phase());
 }
 
 #[test]
@@ -1750,7 +1782,7 @@ fn leader_a_opens_message_actions_from_message_pane() {
 
     assert!(state.is_leader_action_mode());
     assert!(state.is_message_action_menu_open());
-    assert!(!state.is_channel_action_menu_open());
+    assert!(!state.is_channel_leader_action_active());
 }
 
 #[test]
@@ -1762,7 +1794,7 @@ fn leader_a_opens_server_actions_from_guild_pane() {
     handle_key(&mut state, char_key('a'));
 
     assert!(state.is_leader_action_mode());
-    assert!(state.is_guild_action_menu_open());
+    assert!(state.is_guild_leader_action_active());
 }
 
 #[test]
@@ -1774,7 +1806,7 @@ fn leader_a_opens_member_actions_from_member_pane() {
     handle_key(&mut state, char_key('a'));
 
     assert!(state.is_leader_action_mode());
-    assert!(state.is_member_action_menu_open());
+    assert!(state.is_member_leader_action_active());
     let actions = state.selected_member_action_items();
     assert_eq!(actions.len(), 1);
     assert_eq!(actions[0].label, "Show profile");
@@ -1988,7 +2020,7 @@ fn canceling_reply_composer_clears_reply_target() {
 }
 
 #[test]
-fn message_action_menu_view_image_opens_viewer_and_esc_closes_nested_menu_first() {
+fn message_action_menu_view_image_opens_viewer_and_esc_closes_viewer() {
     let mut state = state_with_image_message();
     state.focus_pane(FocusPane::Messages);
     handle_key(&mut state, key(KeyCode::Enter));
@@ -2040,19 +2072,12 @@ fn message_action_menu_view_image_opens_viewer_and_esc_closes_nested_menu_first(
         Some(1)
     );
 
-    handle_key(&mut state, key(KeyCode::Enter));
-    assert!(state.is_image_viewer_action_menu_open());
-
-    handle_key(&mut state, key(KeyCode::Esc));
-    assert!(!state.is_image_viewer_action_menu_open());
-    assert!(state.is_image_viewer_open());
-
     handle_key(&mut state, key(KeyCode::Esc));
     assert!(!state.is_image_viewer_open());
 }
 
 #[test]
-fn image_viewer_action_shortcut_downloads_image() {
+fn image_viewer_d_shortcut_downloads_image() {
     let mut state = state_with_image_message();
     state.focus_pane(FocusPane::Messages);
     handle_key(&mut state, key(KeyCode::Enter));
@@ -2069,7 +2094,6 @@ fn image_viewer_action_shortcut_downloads_image() {
             source: DownloadAttachmentSource::ImageViewer,
         })
     );
-    assert!(state.is_image_viewer_action_menu_open());
     assert_eq!(
         state.image_viewer_download_message(),
         Some("Downloading image...")

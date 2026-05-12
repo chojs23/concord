@@ -56,7 +56,7 @@ pub fn handle_mouse_event(
     clicks: &mut MouseClickTracker,
 ) -> MouseOutcome {
     if state.is_leader_active() {
-        state.close_all_action_menus();
+        state.close_all_action_contexts();
         state.close_leader();
         clicks.clear();
     }
@@ -254,9 +254,6 @@ fn select_action_menu_row(
 ) -> bool {
     match menu {
         ui::ActionMenuTarget::Message => state.select_message_action_row(row),
-        ui::ActionMenuTarget::Guild => state.select_guild_action_row(row),
-        ui::ActionMenuTarget::Channel => state.select_channel_action_row(row),
-        ui::ActionMenuTarget::Member => state.select_member_action_row(row),
     }
 }
 
@@ -266,33 +263,18 @@ fn activate_action_menu(
 ) -> Option<AppCommand> {
     match menu {
         ui::ActionMenuTarget::Message => state.activate_selected_message_action(),
-        ui::ActionMenuTarget::Guild => state.activate_selected_guild_action(),
-        ui::ActionMenuTarget::Channel => state.activate_selected_channel_action(),
-        ui::ActionMenuTarget::Member => state.activate_selected_member_action(),
     }
 }
 
 fn move_action_menu_down(state: &mut DashboardState) {
     if state.is_message_action_menu_open() {
         state.move_message_action_down();
-    } else if state.is_guild_action_menu_open() {
-        state.move_guild_action_down();
-    } else if state.is_channel_action_menu_open() {
-        state.move_channel_action_down();
-    } else if state.is_member_action_menu_open() {
-        state.move_member_action_down();
     }
 }
 
 fn move_action_menu_up(state: &mut DashboardState) {
     if state.is_message_action_menu_open() {
         state.move_message_action_up();
-    } else if state.is_guild_action_menu_open() {
-        state.move_guild_action_up();
-    } else if state.is_channel_action_menu_open() {
-        state.move_channel_action_up();
-    } else if state.is_member_action_menu_open() {
-        state.move_member_action_up();
     }
 }
 
@@ -315,9 +297,9 @@ fn ignores_dashboard_mouse(state: &DashboardState) -> bool {
         || state.is_emoji_reaction_picker_open()
         || state.is_message_action_menu_open()
         || state.is_image_viewer_open()
-        || state.is_guild_action_menu_open()
-        || state.is_channel_action_menu_open()
-        || state.is_member_action_menu_open()
+        || state.is_guild_leader_action_active()
+        || state.is_channel_leader_action_active()
+        || state.is_member_leader_action_active()
         || state.is_channel_switcher_open()
 }
 

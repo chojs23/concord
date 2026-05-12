@@ -12,10 +12,10 @@ use super::{
         FocusPane, GuildActionItem, GuildActionKind, GuildBranch, GuildPaneEntry,
         MUTE_ACTION_DURATIONS, guild_action_shortcut, indexed_shortcut,
     },
-    popups::GuildActionMenuState,
+    popups::GuildLeaderActionState,
     scroll::{
-        clamp_list_viewport, clamp_selected_index, close_collapsed_key, move_index_down,
-        move_index_up, open_collapsed_key, pane_content_height, toggle_collapsed_key,
+        clamp_list_viewport, clamp_selected_index, close_collapsed_key, open_collapsed_key,
+        pane_content_height, toggle_collapsed_key,
     },
 };
 
@@ -196,26 +196,30 @@ impl DashboardState {
         }
         match self.guild_pane_entries().get(self.selected_guild()) {
             Some(GuildPaneEntry::DirectMessages | GuildPaneEntry::Guild { .. }) => {
-                self.guild_action_menu = Some(GuildActionMenuState::Actions { selected: 0 });
+                self.guild_leader_action = Some(GuildLeaderActionState::Actions { selected: 0 });
             }
             Some(GuildPaneEntry::FolderHeader { .. }) | None => {}
         }
     }
 
-    pub fn close_guild_action_menu(&mut self) {
-        self.guild_action_menu = None;
+    pub fn close_guild_leader_action(&mut self) {
+        self.guild_leader_action = None;
     }
 
-    pub fn guild_action_menu_title(&self) -> Option<String> {
-        match self.guild_pane_entries().get(self.selected_guild())? {
-            GuildPaneEntry::DirectMessages => Some("Direct Messages".to_owned()),
-            GuildPaneEntry::Guild { state, .. } => Some(state.name.clone()),
-            GuildPaneEntry::FolderHeader { .. } => None,
+    pub fn back_guild_leader_action(&mut self) -> bool {
+        if matches!(
+            self.guild_leader_action,
+            Some(GuildLeaderActionState::MuteDuration { .. })
+        ) {
+            self.guild_leader_action = Some(GuildLeaderActionState::Actions { selected: 0 });
+            true
+        } else {
+            false
         }
     }
 
     pub fn selected_guild_action_items(&self) -> Vec<GuildActionItem> {
-        if self.guild_action_menu.is_none() {
+        if self.guild_leader_action.is_none() {
             return Vec::new();
         }
         match self.guild_pane_entries().get(self.selected_guild()) {
@@ -248,48 +252,12 @@ impl DashboardState {
         &MUTE_ACTION_DURATIONS
     }
 
-    pub fn selected_guild_action_index(&self) -> Option<usize> {
-        match self.guild_action_menu.as_ref()? {
-            GuildActionMenuState::Actions { selected } => Some(clamp_selected_index(
-                *selected,
-                self.selected_guild_action_items().len(),
-            )),
-            GuildActionMenuState::MuteDuration { selected } => Some(clamp_selected_index(
-                *selected,
-                self.selected_guild_mute_duration_items().len(),
-            )),
-        }
-    }
-
-    pub fn move_guild_action_down(&mut self) {
-        let len = match self.guild_action_menu.as_ref() {
-            Some(GuildActionMenuState::Actions { .. }) => self.selected_guild_action_items().len(),
-            Some(GuildActionMenuState::MuteDuration { .. }) => {
-                self.selected_guild_mute_duration_items().len()
-            }
-            None => return,
-        };
-        if let Some(menu) = self.guild_action_menu.as_mut() {
-            match menu {
-                GuildActionMenuState::Actions { selected }
-                | GuildActionMenuState::MuteDuration { selected } => move_index_down(selected, len),
-            }
-        }
-    }
-
-    pub fn move_guild_action_up(&mut self) {
-        if let Some(menu) = self.guild_action_menu.as_mut() {
-            match menu {
-                GuildActionMenuState::Actions { selected }
-                | GuildActionMenuState::MuteDuration { selected } => move_index_up(selected),
-            }
-        }
-    }
-
     pub fn select_guild_action_row(&mut self, row: usize) -> bool {
-        let len = match self.guild_action_menu.as_ref() {
-            Some(GuildActionMenuState::Actions { .. }) => self.selected_guild_action_items().len(),
-            Some(GuildActionMenuState::MuteDuration { .. }) => {
+        let len = match self.guild_leader_action.as_ref() {
+            Some(GuildLeaderActionState::Actions { .. }) => {
+                self.selected_guild_action_items().len()
+            }
+            Some(GuildLeaderActionState::MuteDuration { .. }) => {
                 self.selected_guild_mute_duration_items().len()
             }
             None => return false,
@@ -297,10 +265,10 @@ impl DashboardState {
         if row >= len {
             return false;
         }
-        if let Some(menu) = self.guild_action_menu.as_mut() {
-            match menu {
-                GuildActionMenuState::Actions { selected }
-                | GuildActionMenuState::MuteDuration { selected } => *selected = row,
+        if let Some(action) = self.guild_leader_action.as_mut() {
+            match action {
+                GuildLeaderActionState::Actions { selected }
+                | GuildLeaderActionState::MuteDuration { selected } => *selected = row,
             }
             return true;
         }
@@ -308,9 +276,9 @@ impl DashboardState {
     }
 
     pub fn activate_selected_guild_action(&mut self) -> Option<AppCommand> {
-        let menu = self.guild_action_menu.clone()?;
-        match menu {
-            GuildActionMenuState::Actions { selected } => {
+        let action = self.guild_leader_action.clone()?;
+        match action {
+            GuildLeaderActionState::Actions { selected } => {
                 let items = self.selected_guild_action_items();
                 let item = items.get(clamp_selected_index(selected, items.len()))?;
                 if !item.enabled {
@@ -321,25 +289,25 @@ impl DashboardState {
                     GuildActionKind::ToggleMute => {
                         let guild_id = self.selected_guild_cursor_id()?;
                         if self.discord.guild_notification_muted(guild_id) {
-                            self.close_guild_action_menu();
+                            self.close_guild_leader_action();
                             self.toggle_selected_guild_mute(None)
                         } else {
-                            self.guild_action_menu =
-                                Some(GuildActionMenuState::MuteDuration { selected: 0 });
+                            self.guild_leader_action =
+                                Some(GuildLeaderActionState::MuteDuration { selected: 0 });
                             None
                         }
                     }
                     GuildActionKind::NoActionsYet => None,
                 }
             }
-            GuildActionMenuState::MuteDuration { selected } => {
+            GuildLeaderActionState::MuteDuration { selected } => {
                 let item = self
                     .selected_guild_mute_duration_items()
                     .get(clamp_selected_index(
                         selected,
                         self.selected_guild_mute_duration_items().len(),
                     ))?;
-                self.close_guild_action_menu();
+                self.close_guild_leader_action();
                 self.toggle_selected_guild_mute(Some(item.duration))
             }
         }
@@ -347,8 +315,8 @@ impl DashboardState {
 
     pub fn activate_guild_action_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
         let shortcut = shortcut.to_ascii_lowercase();
-        match self.guild_action_menu.as_ref()? {
-            GuildActionMenuState::Actions { .. } => {
+        match self.guild_leader_action.as_ref()? {
+            GuildLeaderActionState::Actions { .. } => {
                 let actions = self.selected_guild_action_items();
                 let index = actions.iter().enumerate().position(|(index, action)| {
                     action.enabled
@@ -358,7 +326,7 @@ impl DashboardState {
                 self.select_guild_action_row(index);
                 self.activate_selected_guild_action()
             }
-            GuildActionMenuState::MuteDuration { .. } => {
+            GuildLeaderActionState::MuteDuration { .. } => {
                 let index = self
                     .selected_guild_mute_duration_items()
                     .iter()
@@ -367,17 +335,6 @@ impl DashboardState {
                 self.select_guild_action_row(index);
                 self.activate_selected_guild_action()
             }
-        }
-    }
-
-    pub fn back_guild_action_menu(&mut self) {
-        if matches!(
-            self.guild_action_menu,
-            Some(GuildActionMenuState::MuteDuration { .. })
-        ) {
-            self.guild_action_menu = Some(GuildActionMenuState::Actions { selected: 0 });
-        } else {
-            self.guild_action_menu = None;
         }
     }
 
@@ -404,7 +361,7 @@ impl DashboardState {
                 self.clear_new_messages_marker();
             }
         }
-        self.close_guild_action_menu();
+        self.close_guild_leader_action();
         Some(AppCommand::AckChannels { targets })
     }
 

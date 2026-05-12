@@ -52,7 +52,7 @@ use channel_switcher::ChannelSwitcherState;
 use composer::{EmojiCompletion, MentionCompletion};
 use message_render::{add_literal_mention_highlights, normalize_text_highlights};
 use popups::{
-    ChannelActionMenuState, GuildActionMenuState, ImageViewerState, MemberActionMenuState,
+    ChannelLeaderActionState, GuildLeaderActionState, ImageViewerState, MemberLeaderActionState,
     UserProfilePopupState,
 };
 use scroll::{
@@ -64,6 +64,7 @@ use scroll::{
 
 pub use composer::{EmojiPickerEntry, MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry};
 pub use member_grouping::{MemberEntry, MemberGroup};
+#[allow(unused_imports)]
 pub use model::{
     ChannelActionItem, ChannelPaneEntry, ChannelSwitcherItem, ChannelThreadItem, EmojiReactionItem,
     FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, ImageViewerItem,
@@ -239,9 +240,9 @@ pub struct DashboardState {
     message_action_menu: Option<MessageActionMenuState>,
     options_popup: Option<popups::OptionsPopupState>,
     image_viewer: Option<ImageViewerState>,
-    guild_action_menu: Option<GuildActionMenuState>,
-    channel_action_menu: Option<ChannelActionMenuState>,
-    member_action_menu: Option<MemberActionMenuState>,
+    guild_leader_action: Option<GuildLeaderActionState>,
+    channel_leader_action: Option<ChannelLeaderActionState>,
+    member_leader_action: Option<MemberLeaderActionState>,
     user_profile_popup: Option<UserProfilePopupState>,
     emoji_reaction_picker: Option<EmojiReactionPickerState>,
     poll_vote_picker: Option<PollVotePickerState>,
@@ -369,9 +370,9 @@ impl DashboardState {
             message_action_menu: None,
             options_popup: None,
             image_viewer: None,
-            guild_action_menu: None,
-            channel_action_menu: None,
-            member_action_menu: None,
+            guild_leader_action: None,
+            channel_leader_action: None,
+            member_leader_action: None,
             user_profile_popup: None,
             emoji_reaction_picker: None,
             poll_vote_picker: None,
@@ -762,32 +763,32 @@ impl DashboardState {
     }
 
     pub fn open_leader_actions_for_focused_target(&mut self) {
-        self.close_all_action_menus();
+        self.close_all_action_contexts();
         match self.focus {
             FocusPane::Guilds => self.open_selected_guild_actions(),
             FocusPane::Channels => self.open_selected_channel_actions(),
             FocusPane::Messages => self.open_selected_message_actions(),
             FocusPane::Members => self.open_selected_member_actions(),
         }
-        if self.is_any_action_menu_open() {
+        if self.is_any_action_context_active() {
             self.leader_mode = Some(LeaderMode::Actions);
         } else {
             self.leader_mode = Some(LeaderMode::Root);
         }
     }
 
-    pub fn close_all_action_menus(&mut self) {
+    pub fn close_all_action_contexts(&mut self) {
         self.message_action_menu = None;
-        self.guild_action_menu = None;
-        self.channel_action_menu = None;
-        self.member_action_menu = None;
+        self.guild_leader_action = None;
+        self.channel_leader_action = None;
+        self.member_leader_action = None;
     }
 
-    pub fn is_any_action_menu_open(&self) -> bool {
+    pub fn is_any_action_context_active(&self) -> bool {
         self.message_action_menu.is_some()
-            || self.guild_action_menu.is_some()
-            || self.channel_action_menu.is_some()
-            || self.member_action_menu.is_some()
+            || self.guild_leader_action.is_some()
+            || self.channel_leader_action.is_some()
+            || self.member_leader_action.is_some()
     }
 
     pub fn activate_leader_action_shortcut(
@@ -809,7 +810,7 @@ impl DashboardState {
                     .flatten(),
             );
         }
-        if self.guild_action_menu.is_some() {
+        if self.guild_leader_action.is_some() {
             let matched = if self.is_guild_action_mute_duration_phase() {
                 self.selected_guild_mute_duration_items()
                     .iter()
@@ -830,9 +831,9 @@ impl DashboardState {
                     .flatten(),
             );
         }
-        if let Some(menu) = self.channel_action_menu.as_ref() {
-            let matched = match menu {
-                ChannelActionMenuState::Actions { .. } => {
+        if let Some(action) = self.channel_leader_action.as_ref() {
+            let matched = match action {
+                ChannelLeaderActionState::Actions { .. } => {
                     let actions = self.selected_channel_action_items();
                     actions.iter().enumerate().any(|(index, action)| {
                         action.enabled
@@ -840,12 +841,12 @@ impl DashboardState {
                                 .is_some_and(|candidate| candidate == shortcut)
                     })
                 }
-                ChannelActionMenuState::MuteDuration { .. } => self
+                ChannelLeaderActionState::MuteDuration { .. } => self
                     .selected_channel_mute_duration_items()
                     .iter()
                     .enumerate()
                     .any(|(index, _)| indexed_shortcut(index) == Some(shortcut)),
-                ChannelActionMenuState::Threads { .. } => self
+                ChannelLeaderActionState::Threads { .. } => self
                     .channel_action_thread_items()
                     .iter()
                     .enumerate()
@@ -858,7 +859,7 @@ impl DashboardState {
                     .flatten(),
             );
         }
-        if self.member_action_menu.is_some() {
+        if self.member_leader_action.is_some() {
             let actions = self.selected_member_action_items();
             let matched = actions.iter().enumerate().any(|(index, action)| {
                 action.enabled
@@ -995,32 +996,32 @@ impl DashboardState {
         self.current_user_id
     }
 
-    pub fn is_channel_action_menu_open(&self) -> bool {
-        self.channel_action_menu.is_some()
+    pub fn is_channel_leader_action_active(&self) -> bool {
+        self.channel_leader_action.is_some()
     }
 
-    pub fn is_guild_action_menu_open(&self) -> bool {
-        self.guild_action_menu.is_some()
+    pub fn is_guild_leader_action_active(&self) -> bool {
+        self.guild_leader_action.is_some()
     }
 
     pub fn is_channel_action_threads_phase(&self) -> bool {
         matches!(
-            self.channel_action_menu,
-            Some(ChannelActionMenuState::Threads { .. })
+            self.channel_leader_action,
+            Some(ChannelLeaderActionState::Threads { .. })
         )
     }
 
     pub fn is_channel_action_mute_duration_phase(&self) -> bool {
         matches!(
-            self.channel_action_menu,
-            Some(ChannelActionMenuState::MuteDuration { .. })
+            self.channel_leader_action,
+            Some(ChannelLeaderActionState::MuteDuration { .. })
         )
     }
 
     pub fn is_guild_action_mute_duration_phase(&self) -> bool {
         matches!(
-            self.guild_action_menu,
-            Some(GuildActionMenuState::MuteDuration { .. })
+            self.guild_leader_action,
+            Some(GuildLeaderActionState::MuteDuration { .. })
         )
     }
 
@@ -2404,7 +2405,7 @@ impl DashboardState {
         self.member_keep_selection_visible = true;
         self.cancel_composer();
         self.close_message_action_menu();
-        self.close_channel_action_menu();
+        self.close_channel_leader_action();
         self.close_emoji_reaction_picker();
         self.close_poll_vote_picker();
         self.close_reaction_users_popup();

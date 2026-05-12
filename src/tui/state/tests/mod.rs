@@ -2167,8 +2167,7 @@ fn image_viewer_navigation_clamps_and_downloads_current_image() {
         Some(2)
     );
 
-    state.open_image_viewer_action_menu();
-    let command = state.activate_selected_image_viewer_action();
+    let command = state.download_selected_image_viewer_image();
 
     assert_eq!(
         command,
@@ -2179,7 +2178,6 @@ fn image_viewer_navigation_clamps_and_downloads_current_image() {
         })
     );
     assert!(state.is_image_viewer_open());
-    assert!(state.is_image_viewer_action_menu_open());
     assert_eq!(
         state.image_viewer_download_message(),
         Some("Downloading image...")
@@ -2209,9 +2207,8 @@ fn image_viewer_download_uses_original_url_not_preview_proxy() {
     state.open_selected_message_actions();
     state.move_message_action_down();
     state.activate_selected_message_action();
-    state.open_image_viewer_action_menu();
 
-    let command = state.activate_selected_image_viewer_action();
+    let command = state.download_selected_image_viewer_image();
 
     assert_eq!(
         command,
@@ -2224,7 +2221,7 @@ fn image_viewer_download_uses_original_url_not_preview_proxy() {
 }
 
 #[test]
-fn image_viewer_download_completed_event_updates_action_menu_message() {
+fn image_viewer_download_completed_event_updates_viewer_message() {
     let mut state = state_with_messages(1);
     state.push_event(AppEvent::MessageHistoryLoaded {
         channel_id: Id::new(2),
@@ -2245,7 +2242,6 @@ fn image_viewer_download_completed_event_updates_action_menu_message() {
         source: DownloadAttachmentSource::ImageViewer,
     });
 
-    assert!(state.is_image_viewer_action_menu_open());
     assert_eq!(
         state.image_viewer_download_message(),
         Some("Downloaded to /tmp/cat.png")
@@ -2261,7 +2257,6 @@ fn message_action_download_completed_event_does_not_open_image_feedback() {
         source: DownloadAttachmentSource::MessageAction,
     });
 
-    assert!(!state.is_image_viewer_action_menu_open());
     assert_eq!(state.image_viewer_download_message(), None);
 }
 
@@ -4510,12 +4505,12 @@ fn channel_switcher_query_deletes_grapheme_before_cursor() {
 }
 
 #[test]
-fn channel_action_menu_lists_threads_for_selected_channel() {
+fn channel_leader_action_lists_threads_for_selected_channel() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Channels);
     state.open_selected_channel_actions();
 
-    assert!(state.is_channel_action_menu_open());
+    assert!(state.is_channel_leader_action_active());
     let actions = state.selected_channel_action_items();
     assert_eq!(actions.len(), 4);
     assert_eq!(actions[0].kind, ChannelActionKind::LoadPinnedMessages);
@@ -4528,8 +4523,7 @@ fn channel_action_menu_lists_threads_for_selected_channel() {
     assert_eq!(actions[3].kind, ChannelActionKind::ToggleMute);
     assert_eq!(actions[3].label, "Mute channel");
 
-    state.move_channel_action_down();
-    let command = state.activate_selected_channel_action();
+    let command = state.activate_channel_action_shortcut('t');
     assert_eq!(command, None);
     assert!(state.is_channel_action_threads_phase());
 
@@ -4621,16 +4615,15 @@ fn mark_as_read_action_enablement_is_scoped_to_action_channel() {
 }
 
 #[test]
-fn channel_action_menu_open_thread_activates_and_subscribes() {
+fn channel_leader_action_open_thread_activates_and_subscribes() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Channels);
     state.open_selected_channel_actions();
-    state.move_channel_action_down();
-    state.activate_selected_channel_action();
+    state.activate_channel_action_shortcut('t');
     let command = state.activate_selected_channel_action();
 
     assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
-    assert!(!state.is_channel_action_menu_open());
+    assert!(!state.is_channel_leader_action_active());
     assert_eq!(
         command,
         Some(AppCommand::SubscribeGuildChannel {
@@ -4641,7 +4634,7 @@ fn channel_action_menu_open_thread_activates_and_subscribes() {
 }
 
 #[test]
-fn channel_action_menu_loads_pinned_messages_for_selected_channel() {
+fn channel_leader_action_loads_pinned_messages_for_selected_channel() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Channels);
     state.open_selected_channel_actions();
@@ -4655,17 +4648,16 @@ fn channel_action_menu_loads_pinned_messages_for_selected_channel() {
         })
     );
     assert!(state.is_pinned_message_view());
-    assert!(!state.is_channel_action_menu_open());
+    assert!(!state.is_channel_leader_action_active());
 }
 
 #[test]
-fn guild_action_menu_lists_disabled_mark_server_read_when_guild_is_read() {
+fn guild_leader_action_lists_disabled_mark_server_read_when_guild_is_read() {
     let mut state = state_with_many_guilds(1);
     state.focus_pane(FocusPane::Guilds);
     state.open_selected_guild_actions();
 
-    assert!(state.is_guild_action_menu_open());
-    assert_eq!(state.guild_action_menu_title(), Some("guild 1".to_owned()));
+    assert!(state.is_guild_leader_action_active());
     let actions = state.selected_guild_action_items();
     assert_eq!(actions.len(), 2);
     assert_eq!(actions[0].kind, GuildActionKind::MarkAsRead);
@@ -4677,7 +4669,7 @@ fn guild_action_menu_lists_disabled_mark_server_read_when_guild_is_read() {
 }
 
 #[test]
-fn channel_action_menu_toggle_mute_opens_duration_then_dispatches_command() {
+fn channel_leader_action_toggle_mute_opens_duration_then_dispatches_command() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
     state.move_down();
@@ -4699,22 +4691,17 @@ fn channel_action_menu_toggle_mute_opens_duration_then_dispatches_command() {
             label: "#general".to_owned(),
         })
     );
-    assert!(!state.is_channel_action_menu_open());
+    assert!(!state.is_channel_leader_action_active());
 }
 
 #[test]
-fn category_action_menu_only_lists_mute_and_dispatches_command() {
+fn category_leader_action_only_lists_mute_and_dispatches_command() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
     state.move_up();
     state.open_selected_channel_actions();
 
-    assert!(state.is_channel_action_menu_open());
-    assert_eq!(
-        state.channel_action_menu_title(),
-        Some("Text Channels".to_owned())
-    );
-
+    assert!(state.is_channel_leader_action_active());
     let actions = state.selected_channel_action_items();
     assert_eq!(actions.len(), 1);
     assert_eq!(actions[0].kind, ChannelActionKind::ToggleMute);
@@ -4735,11 +4722,11 @@ fn category_action_menu_only_lists_mute_and_dispatches_command() {
             label: "Text Channels".to_owned(),
         })
     );
-    assert!(!state.is_channel_action_menu_open());
+    assert!(!state.is_channel_leader_action_active());
 }
 
 #[test]
-fn guild_action_menu_toggle_mute_opens_duration_then_dispatches_command() {
+fn guild_leader_action_toggle_mute_opens_duration_then_dispatches_command() {
     let mut state = state_with_many_guilds(1);
     state.focus_pane(FocusPane::Guilds);
     state.open_selected_guild_actions();
@@ -4759,11 +4746,11 @@ fn guild_action_menu_toggle_mute_opens_duration_then_dispatches_command() {
             label: "guild 1".to_owned(),
         })
     );
-    assert!(!state.is_guild_action_menu_open());
+    assert!(!state.is_guild_leader_action_active());
 }
 
 #[test]
-fn guild_action_menu_marks_unread_server_channels_as_read() {
+fn guild_leader_action_marks_unread_server_channels_as_read() {
     let guild_id: Id<GuildMarker> = Id::new(1);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
@@ -4858,7 +4845,7 @@ fn guild_action_menu_marks_unread_server_channels_as_read() {
         state.sidebar_guild_unread(guild_id),
         ChannelUnreadState::Seen
     );
-    assert!(!state.is_guild_action_menu_open());
+    assert!(!state.is_guild_leader_action_active());
     let Some(AppCommand::AckChannels { mut targets }) = command else {
         panic!("expected bulk channel ack command");
     };
@@ -4870,7 +4857,7 @@ fn guild_action_menu_marks_unread_server_channels_as_read() {
 }
 
 #[test]
-fn guild_action_menu_skips_hidden_channels_when_marking_server_read() {
+fn guild_leader_action_skips_hidden_channels_when_marking_server_read() {
     let mut state = state_with_hidden_and_visible_channels();
     state.push_event(AppEvent::ReadStateInit {
         entries: vec![
@@ -4891,8 +4878,6 @@ fn guild_action_menu_skips_hidden_channels_when_marking_server_read() {
     state.focus_pane(FocusPane::Guilds);
     state.move_down();
     state.open_selected_guild_actions();
-    assert_eq!(state.guild_action_menu_title(), Some("guild".to_owned()));
-
     let command = state.activate_selected_guild_action();
 
     let Some(AppCommand::AckChannels { targets }) = command else {
@@ -5403,23 +5388,6 @@ fn returning_from_forum_post_restores_parent_post_cursor() {
     assert!(state.selected_channel_is_forum());
     assert_eq!(state.selected_forum_post(), expected_selected);
     assert_eq!(state.message_scroll(), expected_scroll);
-}
-
-#[test]
-fn channel_action_menu_back_returns_to_actions_phase() {
-    let mut state = state_with_thread_created_message();
-    state.focus_pane(FocusPane::Channels);
-    state.open_selected_channel_actions();
-    state.move_channel_action_down();
-    state.activate_selected_channel_action();
-    assert!(state.is_channel_action_threads_phase());
-
-    state.back_channel_action_menu();
-    assert!(state.is_channel_action_menu_open());
-    assert!(!state.is_channel_action_threads_phase());
-
-    state.back_channel_action_menu();
-    assert!(!state.is_channel_action_menu_open());
 }
 
 #[test]

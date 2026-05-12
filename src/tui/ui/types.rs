@@ -106,9 +106,6 @@ pub(crate) enum MouseTarget {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ActionMenuTarget {
     Message,
-    Guild,
-    Channel,
-    Member,
 }
 
 pub(super) struct UserProfilePopupText {

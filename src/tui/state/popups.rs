@@ -21,12 +21,11 @@ pub(super) struct OptionsPopupState {
 pub(super) struct ImageViewerState {
     pub(super) message_id: Id<MessageMarker>,
     pub(super) selected: usize,
-    pub(super) action_menu_selected: Option<usize>,
     pub(super) download_message: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum GuildActionMenuState {
+pub(super) enum GuildLeaderActionState {
     Actions { selected: usize },
     MuteDuration { selected: usize },
 }
@@ -48,14 +47,14 @@ pub(super) struct UserProfilePopupState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct MemberActionMenuState {
+pub(super) struct MemberLeaderActionState {
     pub(super) user_id: Id<UserMarker>,
     pub(super) guild_id: Option<Id<GuildMarker>>,
     pub(super) selected: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum ChannelActionMenuState {
+pub(super) enum ChannelLeaderActionState {
     Actions {
         channel_id: Id<ChannelMarker>,
         selected: usize,

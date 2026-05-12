@@ -24,11 +24,11 @@ use super::{
         lay_out_reaction_chips_with_custom_emoji_images, reaction_line_spans, wrap_text_lines,
     },
     state::{
-        ChannelActionItem, ChannelSwitcherItem, ChannelThreadItem, DashboardState,
-        DisplayOptionItem, EmojiReactionItem, FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem,
-        ImageViewerItem, MemberActionItem, MessageActionItem, PollVotePickerItem,
-        channel_action_shortcut, discord_color, guild_action_shortcut, indexed_shortcut,
-        member_action_shortcut, message_action_shortcut, presence_color, presence_marker,
+        ChannelSwitcherItem, ChannelThreadItem, DashboardState, DisplayOptionItem,
+        EmojiReactionItem, FORUM_POST_CARD_HEIGHT, FocusPane, ImageViewerItem, MessageActionItem,
+        PollVotePickerItem, channel_action_shortcut, discord_color, guild_action_shortcut,
+        indexed_shortcut, member_action_shortcut, message_action_shortcut, presence_color,
+        presence_marker,
     },
 };
 use crate::discord::{
@@ -75,12 +75,11 @@ use self::panes::{
 };
 use self::panes::{render_channels, render_guilds, render_header, render_members};
 use self::popups::{
-    render_channel_action_menu, render_channel_switcher_popup, render_debug_log_popup,
-    render_emoji_reaction_picker, render_guild_action_menu, render_image_viewer,
-    render_image_viewer_action_menu, render_leader_popup, render_member_action_menu,
-    render_message_action_menu, render_options_popup, render_poll_vote_picker,
-    render_reaction_users_popup, render_user_profile_popup, user_profile_popup_has_avatar,
-    user_profile_popup_text_geometry, user_profile_popup_total_lines,
+    render_channel_switcher_popup, render_debug_log_popup, render_emoji_reaction_picker,
+    render_image_viewer, render_leader_popup, render_message_action_menu, render_options_popup,
+    render_poll_vote_picker, render_reaction_users_popup, render_user_profile_popup,
+    user_profile_popup_has_avatar, user_profile_popup_text_geometry,
+    user_profile_popup_total_lines,
 };
 use self::types::{
     ACCENT, DIM, DISCORD_EPOCH_MILLIS, EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET,
@@ -104,11 +103,10 @@ use self::{
         selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
     },
     popups::{
-        channel_action_menu_lines, channel_switcher_cursor_position, channel_switcher_lines,
-        debug_log_popup_lines, emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
-        filtered_emoji_reaction_picker_lines, guild_action_menu_lines, member_action_menu_lines,
-        message_action_menu_lines, options_popup_lines, poll_vote_picker_lines,
-        reaction_users_popup_lines, user_profile_popup_lines,
+        channel_switcher_cursor_position, channel_switcher_lines, debug_log_popup_lines,
+        emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
+        filtered_emoji_reaction_picker_lines, message_action_menu_lines, options_popup_lines,
+        poll_vote_picker_lines, reaction_users_popup_lines, user_profile_popup_lines,
         user_profile_popup_lines_with_activities,
     },
 };
@@ -203,9 +201,6 @@ pub fn render(
     render_channel_switcher_popup(frame, areas.messages, state);
     if !state.is_leader_action_mode() {
         render_message_action_menu(frame, areas.messages, state);
-        render_guild_action_menu(frame, areas.messages, state);
-        render_channel_action_menu(frame, areas.messages, state);
-        render_member_action_menu(frame, areas.messages, state);
     }
     render_options_popup(frame, areas.messages, state);
     render_poll_vote_picker(frame, areas.messages, state);
@@ -213,7 +208,6 @@ pub fn render(
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
     render_reaction_users_popup(frame, areas.messages, state);
     render_image_viewer(frame, areas.messages, state, viewer_image_preview);
-    render_image_viewer_action_menu(frame, areas.messages, state);
     render_debug_log_popup(frame, areas.messages, state);
 }
 

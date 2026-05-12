@@ -52,24 +52,8 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_message_action_menu_key(state, key);
     }
 
-    if state.is_image_viewer_action_menu_open() {
-        return handle_image_viewer_action_menu_key(state, key);
-    }
-
     if state.is_image_viewer_open() {
         return handle_image_viewer_key(state, key);
-    }
-
-    if state.is_guild_action_menu_open() {
-        return handle_guild_action_menu_key(state, key);
-    }
-
-    if state.is_channel_action_menu_open() {
-        return handle_channel_action_menu_key(state, key);
-    }
-
-    if state.is_member_action_menu_open() {
-        return handle_member_action_menu_key(state, key);
     }
 
     if state.is_user_profile_popup_open() {
@@ -242,26 +226,36 @@ fn handle_channel_switcher_key(state: &mut DashboardState, key: KeyEvent) -> Opt
 fn handle_leader_action_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match key.code {
         KeyCode::Esc => {
-            state.close_all_action_menus();
+            if state.back_channel_leader_action() || state.back_guild_leader_action() {
+                return None;
+            }
+            state.close_all_action_contexts();
             state.close_leader();
             None
         }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.close_all_action_menus();
+            state.close_all_action_contexts();
             state.close_leader();
             state.quit();
             None
         }
         KeyCode::Char(shortcut) if is_shortcut_key(key) => {
             let (matched, command) = state.activate_leader_action_shortcut(shortcut);
-            if !matched || !state.is_any_action_menu_open() {
-                state.close_all_action_menus();
+            if !matched || !state.is_any_action_context_active() {
+                state.close_all_action_contexts();
                 state.close_leader();
             }
             command
         }
+        code if is_left_key(code) => {
+            if !state.back_channel_leader_action() && !state.back_guild_leader_action() {
+                state.close_all_action_contexts();
+                state.close_leader();
+            }
+            None
+        }
         _ => {
-            state.close_all_action_menus();
+            state.close_all_action_contexts();
             state.close_leader();
             None
         }
@@ -425,22 +419,8 @@ fn handle_image_viewer_key(state: &mut DashboardState, key: KeyEvent) -> Option<
         KeyCode::Esc => state.close_image_viewer(),
         code if is_left_key(code) => state.move_image_viewer_previous(),
         code if is_right_key(code) => state.move_image_viewer_next(),
-        code if is_confirm_key(code) => state.open_image_viewer_action_menu(),
-        _ => {}
-    }
-
-    None
-}
-
-fn handle_image_viewer_action_menu_key(
-    state: &mut DashboardState,
-    key: KeyEvent,
-) -> Option<AppCommand> {
-    match key.code {
-        KeyCode::Esc => state.close_image_viewer_action_menu(),
-        code if is_confirm_key(code) => return state.activate_selected_image_viewer_action(),
-        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
-            return state.activate_image_viewer_action_shortcut(shortcut);
+        KeyCode::Char('d') if is_shortcut_key(key) => {
+            return state.download_selected_image_viewer_image();
         }
         _ => {}
     }
@@ -455,57 +435,6 @@ fn handle_user_profile_popup_key(state: &mut DashboardState, key: KeyEvent) -> O
         code if is_up_key(code) => state.scroll_user_profile_popup_up(),
         _ => {}
     }
-    None
-}
-
-fn handle_member_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match key.code {
-        KeyCode::Esc => state.close_member_action_menu(),
-        code if is_down_key(code) => state.move_member_action_down(),
-        code if is_up_key(code) => state.move_member_action_up(),
-        code if is_confirm_key(code) => return state.activate_selected_member_action(),
-        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
-            return state.activate_member_action_shortcut(shortcut);
-        }
-        _ => {}
-    }
-    None
-}
-
-fn handle_guild_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match key.code {
-        KeyCode::Esc => state.back_guild_action_menu(),
-        code if is_down_key(code) => state.move_guild_action_down(),
-        code if is_up_key(code) => state.move_guild_action_up(),
-        code if is_confirm_key(code) => return state.activate_selected_guild_action(),
-        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
-            return state.activate_guild_action_shortcut(shortcut);
-        }
-        _ => {}
-    }
-    None
-}
-
-fn handle_channel_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match key.code {
-        // Esc steps back to the action list when viewing threads, otherwise
-        // closes the menu entirely.
-        KeyCode::Esc => state.back_channel_action_menu(),
-        code if is_left_key(code)
-            && (state.is_channel_action_threads_phase()
-                || state.is_channel_action_mute_duration_phase()) =>
-        {
-            state.back_channel_action_menu()
-        }
-        code if is_down_key(code) => state.move_channel_action_down(),
-        code if is_up_key(code) => state.move_channel_action_up(),
-        code if is_confirm_key(code) => return state.activate_selected_channel_action(),
-        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
-            return state.activate_channel_action_shortcut(shortcut);
-        }
-        _ => {}
-    }
-
     None
 }
 

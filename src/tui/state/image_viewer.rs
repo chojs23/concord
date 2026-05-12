@@ -3,23 +3,12 @@ use crate::discord::{
 };
 
 use super::scroll::clamp_selected_index;
-use super::{
-    DashboardState, ImageViewerItem, MessageActionItem, MessageActionKind, message_action_shortcut,
-};
+use super::{DashboardState, ImageViewerItem};
 use crate::tui::state::popups::ImageViewerState;
-
-const IMAGE_VIEWER_ACTION_COUNT: usize = 1;
 
 impl DashboardState {
     pub fn is_image_viewer_open(&self) -> bool {
         self.image_viewer.is_some()
-    }
-
-    pub fn is_image_viewer_action_menu_open(&self) -> bool {
-        self.image_viewer
-            .as_ref()
-            .and_then(|viewer| viewer.action_menu_selected)
-            .is_some()
     }
 
     pub fn open_image_viewer_for_selected_message(&mut self) -> bool {
@@ -37,7 +26,6 @@ impl DashboardState {
         self.image_viewer = Some(ImageViewerState {
             message_id: message.id,
             selected: 0,
-            action_menu_selected: None,
             download_message: None,
         });
         true
@@ -45,20 +33,6 @@ impl DashboardState {
 
     pub fn close_image_viewer(&mut self) {
         self.image_viewer = None;
-    }
-
-    pub fn open_image_viewer_action_menu(&mut self) {
-        if self.selected_image_viewer_item().is_some()
-            && let Some(viewer) = &mut self.image_viewer
-        {
-            viewer.action_menu_selected = Some(0);
-        }
-    }
-
-    pub fn close_image_viewer_action_menu(&mut self) {
-        if let Some(viewer) = &mut self.image_viewer {
-            viewer.action_menu_selected = None;
-        }
     }
 
     pub fn move_image_viewer_previous(&mut self) {
@@ -108,24 +82,6 @@ impl DashboardState {
         Some((viewer.message_id, selected, preview))
     }
 
-    pub fn selected_image_viewer_action_items(&self) -> Vec<MessageActionItem> {
-        if self.selected_image_viewer_item().is_none() {
-            return Vec::new();
-        }
-        vec![MessageActionItem {
-            kind: MessageActionKind::DownloadImage,
-            label: "Download image".to_owned(),
-            enabled: true,
-        }]
-    }
-
-    pub fn selected_image_viewer_action_index(&self) -> Option<usize> {
-        self.image_viewer
-            .as_ref()
-            .and_then(|viewer| viewer.action_menu_selected)
-            .map(|selected| clamp_selected_index(selected, IMAGE_VIEWER_ACTION_COUNT))
-    }
-
     pub fn image_viewer_download_message(&self) -> Option<&str> {
         self.image_viewer
             .as_ref()
@@ -134,48 +90,20 @@ impl DashboardState {
 
     pub fn record_image_viewer_download_completed(&mut self, path: &str) {
         if let Some(viewer) = &mut self.image_viewer {
-            viewer.action_menu_selected.get_or_insert(0);
             viewer.download_message = Some(format!("Downloaded to {path}"));
         }
     }
 
-    pub fn activate_selected_image_viewer_action(&mut self) -> Option<AppCommand> {
+    pub fn download_selected_image_viewer_image(&mut self) -> Option<AppCommand> {
         let item = self.selected_image_viewer_item()?;
-        let action = self
-            .selected_image_viewer_action_items()
-            .get(self.selected_image_viewer_action_index()?)?
-            .clone();
-        if !action.enabled {
-            return None;
-        }
-
-        match action.kind {
-            MessageActionKind::DownloadImage => {
-                if let Some(viewer) = &mut self.image_viewer {
-                    viewer.download_message = Some("Downloading image...".to_owned());
-                }
-                Some(AppCommand::DownloadAttachment {
-                    url: item.url,
-                    filename: item.filename,
-                    source: DownloadAttachmentSource::ImageViewer,
-                })
-            }
-            _ => None,
-        }
-    }
-
-    pub fn activate_image_viewer_action_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
-        let shortcut = shortcut.to_ascii_lowercase();
-        let actions = self.selected_image_viewer_action_items();
-        let index = actions.iter().enumerate().position(|(index, action)| {
-            action.enabled
-                && message_action_shortcut(&actions, index)
-                    .is_some_and(|candidate| candidate == shortcut)
-        })?;
         if let Some(viewer) = &mut self.image_viewer {
-            viewer.action_menu_selected = Some(index);
+            viewer.download_message = Some("Downloading image...".to_owned());
         }
-        self.activate_selected_image_viewer_action()
+        Some(AppCommand::DownloadAttachment {
+            url: item.url,
+            filename: item.filename,
+            source: DownloadAttachmentSource::ImageViewer,
+        })
     }
 
     fn image_viewer_previews(

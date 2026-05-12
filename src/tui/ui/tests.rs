@@ -12,23 +12,22 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     ACCENT, DIM, DISCORD_EPOCH_MILLIS, ImagePreview, ImagePreviewState, MENTION_ORANGE,
     MemberEntry, READ_DIM, SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER,
-    SNOWFLAKE_TIMESTAMP_SHIFT, UNREAD_BRIGHT, channel_action_menu_lines,
-    channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
-    composer_content_line_count, composer_cursor_position, composer_lines,
-    composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count, composer_text,
-    date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_picker_lines,
-    emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
-    filtered_emoji_reaction_picker_lines, focus_pane_at, format_message_sent_time,
-    format_unix_millis_with_offset, forum_post_reaction_summary,
-    forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
-    inline_image_preview_area, inline_image_preview_row, member_action_menu_lines,
-    member_display_label, member_name_style, message_action_menu_lines, message_author_style,
-    message_item_lines, message_starts_new_day, message_viewport_lines, new_messages_notice_line,
-    options_popup_lines, poll_vote_picker_lines, primary_activity_summary,
-    reaction_users_popup_lines, reaction_users_visible_line_count, render_channels, render_guilds,
-    selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
-    sync_view_heights, user_profile_popup_has_avatar, user_profile_popup_lines,
-    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
+    SNOWFLAKE_TIMESTAMP_SHIFT, UNREAD_BRIGHT, channel_switcher_cursor_position,
+    channel_switcher_lines, channel_unread_decoration, composer_content_line_count,
+    composer_cursor_position, composer_lines, composer_lines_with_loaded_custom_emoji_urls,
+    composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
+    dm_presence_dot_span, emoji_picker_lines, emoji_reaction_picker_lines,
+    emoji_reaction_picker_lines_for_width, filtered_emoji_reaction_picker_lines, focus_pane_at,
+    format_message_sent_time, format_unix_millis_with_offset, forum_post_reaction_summary,
+    forum_post_scrollbar_visible_count, forum_post_viewport_lines, inline_image_preview_area,
+    inline_image_preview_row, member_display_label, member_name_style, message_action_menu_lines,
+    message_author_style, message_item_lines, message_starts_new_day, message_viewport_lines,
+    new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
+    primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
+    render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
+    selected_message_content_x_offset, sync_view_heights, user_profile_popup_has_avatar,
+    user_profile_popup_lines, user_profile_popup_lines_with_activities,
+    user_profile_popup_text_geometry,
 };
 use crate::{
     config::DisplayOptions,
@@ -50,10 +49,9 @@ use crate::{
             reaction_line_test_spans, wrap_text_lines,
         },
         state::{
-            ChannelActionItem, ChannelActionKind, ChannelSwitcherItem, ChannelThreadItem,
-            DashboardState, DisplayOptionItem, EmojiPickerEntry, EmojiReactionItem, FocusPane,
-            GuildActionItem, GuildActionKind, MemberActionItem, MemberActionKind,
-            MessageActionItem, MessageActionKind, PollVotePickerItem,
+            ChannelSwitcherItem, ChannelThreadItem, DashboardState, DisplayOptionItem,
+            EmojiPickerEntry, EmojiReactionItem, FocusPane, MessageActionItem, MessageActionKind,
+            PollVotePickerItem,
         },
     },
 };
@@ -2827,8 +2825,8 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
             enabled: true,
         },
         MessageActionItem {
-            kind: MessageActionKind::DownloadImage,
-            label: "Download image".to_owned(),
+            kind: MessageActionKind::DownloadAttachment(0),
+            label: "Download file".to_owned(),
             enabled: false,
         },
     ];
@@ -2837,7 +2835,7 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["  [r] Reply", "› [d] Download image (unavailable)",]
+        vec!["  [r] Reply", "› [f] Download file (unavailable)",]
     );
 }
 
@@ -2850,7 +2848,7 @@ fn message_action_menu_uses_numbered_shortcuts_for_duplicate_preferred_keys() {
             enabled: true,
         },
         MessageActionItem {
-            kind: MessageActionKind::DownloadImage,
+            kind: MessageActionKind::Delete,
             label: "Download image".to_owned(),
             enabled: true,
         },
@@ -2862,103 +2860,6 @@ fn message_action_menu_uses_numbered_shortcuts_for_duplicate_preferred_keys() {
         line_texts_from_ratatui(&lines),
         vec!["› [1] Delete message", "  [2] Download image"]
     );
-}
-
-#[test]
-fn channel_action_menu_renders_pinned_and_thread_actions() {
-    let actions = vec![
-        ChannelActionItem {
-            kind: ChannelActionKind::LoadPinnedMessages,
-            label: "Show pinned messages".to_owned(),
-            enabled: true,
-        },
-        ChannelActionItem {
-            kind: ChannelActionKind::ShowThreads,
-            label: "Show threads (none)".to_owned(),
-            enabled: false,
-        },
-        ChannelActionItem {
-            kind: ChannelActionKind::ToggleMute,
-            label: "Mute channel".to_owned(),
-            enabled: true,
-        },
-    ];
-
-    let lines = channel_action_menu_lines(&actions, 0);
-
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec![
-            "› [p] Show pinned messages",
-            "  [t] Show threads (none)",
-            "  [u] Mute channel",
-        ]
-    );
-}
-
-#[test]
-fn channel_action_menu_renders_category_mute_shortcut() {
-    let actions = vec![ChannelActionItem {
-        kind: ChannelActionKind::ToggleMute,
-        label: "Mute category".to_owned(),
-        enabled: true,
-    }];
-
-    let lines = channel_action_menu_lines(&actions, 0);
-
-    assert_eq!(line_texts_from_ratatui(&lines), vec!["› [u] Mute category"]);
-}
-
-#[test]
-fn guild_action_menu_renders_placeholder_action() {
-    let actions = vec![GuildActionItem {
-        kind: GuildActionKind::NoActionsYet,
-        label: "No server actions yet".to_owned(),
-        enabled: false,
-    }];
-
-    let lines = guild_action_menu_lines(&actions, 0);
-
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec!["›     No server actions yet"]
-    );
-}
-
-#[test]
-fn guild_action_menu_renders_mark_server_read_and_mute_shortcuts() {
-    let actions = vec![
-        GuildActionItem {
-            kind: GuildActionKind::MarkAsRead,
-            label: "Mark server as read".to_owned(),
-            enabled: true,
-        },
-        GuildActionItem {
-            kind: GuildActionKind::ToggleMute,
-            label: "Mute server".to_owned(),
-            enabled: true,
-        },
-    ];
-
-    let lines = guild_action_menu_lines(&actions, 0);
-
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec!["› [m] Mark server as read", "  [u] Mute server",]
-    );
-}
-
-#[test]
-fn member_action_menu_renders_profile_shortcut() {
-    let actions = vec![MemberActionItem {
-        kind: MemberActionKind::ShowProfile,
-        label: "Show profile".to_owned(),
-        enabled: true,
-    }];
-
-    let lines = member_action_menu_lines(&actions, 0);
-
-    assert_eq!(line_texts_from_ratatui(&lines), vec!["› [p] Show profile"]);
 }
 
 #[test]
@@ -3371,11 +3272,55 @@ fn leader_action_popup_renders_focused_pane_actions() {
     let dump = render_dashboard_dump(120, 20, &mut state);
     let rendered = dump.join("\n");
 
-    assert!(rendered.contains("Leader Actions"), "{rendered}");
+    assert!(rendered.contains("Channel Actions"), "{rendered}");
     assert!(rendered.contains("[p]"), "{rendered}");
     assert!(rendered.contains("Show pinned messages"), "{rendered}");
     assert!(rendered.contains("Show threads"), "{rendered}");
     assert!(rendered.contains("Mark as read"), "{rendered}");
+}
+
+#[test]
+fn leader_action_popup_from_messages_hides_standalone_message_action_menu() {
+    let mut state = state_with_message();
+    state.focus_pane(FocusPane::Messages);
+    state.open_leader();
+    state.open_leader_actions_for_focused_target();
+
+    let dump = render_dashboard_dump(120, 20, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(rendered.contains("Message Actions"), "{rendered}");
+    assert!(rendered.contains("Reply"), "{rendered}");
+    assert!(!rendered.contains("Message actions"), "{rendered}");
+}
+
+#[test]
+fn leader_action_popup_from_guilds_uses_server_action_title() {
+    let mut state = state_with_message();
+    state.focus_pane(FocusPane::Guilds);
+    state.open_leader();
+    state.open_leader_actions_for_focused_target();
+
+    let dump = render_dashboard_dump(120, 20, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(rendered.contains("Server Actions"), "{rendered}");
+    assert!(rendered.contains("Mark server as read"), "{rendered}");
+}
+
+#[test]
+fn leader_action_popup_from_members_uses_member_action_title() {
+    let mut state = state_with_member(42, "Neo");
+    state.confirm_selected_guild();
+    state.focus_pane(FocusPane::Members);
+    state.open_leader();
+    state.open_leader_actions_for_focused_target();
+
+    let dump = render_dashboard_dump(120, 20, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(rendered.contains("Member Actions"), "{rendered}");
+    assert!(rendered.contains("Show profile"), "{rendered}");
 }
 
 #[test]

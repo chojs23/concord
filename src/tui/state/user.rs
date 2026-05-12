@@ -19,8 +19,8 @@ use super::{
         guild_member_groups,
     },
     model::{FocusPane, MemberActionItem, MemberActionKind, member_action_shortcut},
-    popups::{MemberActionMenuState, UserProfilePopupState},
-    scroll::{clamp_selected_index, move_index_down, move_index_up},
+    popups::{MemberLeaderActionState, UserProfilePopupState},
+    scroll::clamp_selected_index,
 };
 
 /// Holds `popup.scroll` inside `[0, max(0, total_lines - view_height)]` so
@@ -37,19 +37,12 @@ impl DashboardState {
         self.user_profile_popup.is_some()
     }
 
-    pub fn is_member_action_menu_open(&self) -> bool {
-        self.member_action_menu.is_some()
-    }
-
-    pub fn member_action_menu_title(&self) -> Option<String> {
-        let menu = self.member_action_menu.as_ref()?;
-        let entries = self.flattened_members();
-        let entry = entries.iter().find(|m| m.user_id() == menu.user_id)?;
-        Some(entry.display_name())
+    pub fn is_member_leader_action_active(&self) -> bool {
+        self.member_leader_action.is_some()
     }
 
     /// Direct shortcut from the member pane: open the profile popup for the
-    /// currently selected member without going through the action menu.
+    /// currently selected member without going through Leader Actions.
     pub fn show_selected_member_profile(&mut self) -> Option<AppCommand> {
         if self.focus != FocusPane::Members {
             return None;
@@ -80,19 +73,19 @@ impl DashboardState {
             ActiveGuildScope::Guild(guild_id) => Some(guild_id),
             ActiveGuildScope::DirectMessages | ActiveGuildScope::Unset => None,
         };
-        self.member_action_menu = Some(MemberActionMenuState {
+        self.member_leader_action = Some(MemberLeaderActionState {
             user_id,
             guild_id,
             selected: 0,
         });
     }
 
-    pub fn close_member_action_menu(&mut self) {
-        self.member_action_menu = None;
+    pub fn close_member_leader_action(&mut self) {
+        self.member_leader_action = None;
     }
 
     pub fn selected_member_action_items(&self) -> Vec<MemberActionItem> {
-        if self.member_action_menu.is_none() {
+        if self.member_leader_action.is_none() {
             return Vec::new();
         }
         vec![MemberActionItem {
@@ -102,51 +95,30 @@ impl DashboardState {
         }]
     }
 
-    pub fn selected_member_action_index(&self) -> Option<usize> {
-        let menu = self.member_action_menu.as_ref()?;
-        Some(clamp_selected_index(
-            menu.selected,
-            self.selected_member_action_items().len(),
-        ))
-    }
-
-    pub fn move_member_action_down(&mut self) {
-        let len = self.selected_member_action_items().len();
-        if let Some(menu) = self.member_action_menu.as_mut() {
-            move_index_down(&mut menu.selected, len);
-        }
-    }
-
-    pub fn move_member_action_up(&mut self) {
-        if let Some(menu) = self.member_action_menu.as_mut() {
-            move_index_up(&mut menu.selected);
-        }
-    }
-
     pub fn select_member_action_row(&mut self, row: usize) -> bool {
         if row >= self.selected_member_action_items().len() {
             return false;
         }
-        if let Some(menu) = self.member_action_menu.as_mut() {
-            menu.selected = row;
+        if let Some(action) = self.member_leader_action.as_mut() {
+            action.selected = row;
             return true;
         }
         false
     }
 
     pub fn activate_selected_member_action(&mut self) -> Option<AppCommand> {
-        let menu = self.member_action_menu.clone()?;
+        let action = self.member_leader_action.clone()?;
         let items = self.selected_member_action_items();
         let item = items
-            .get(clamp_selected_index(menu.selected, items.len()))?
+            .get(clamp_selected_index(action.selected, items.len()))?
             .clone();
         if !item.enabled {
             return None;
         }
         match item.kind {
             MemberActionKind::ShowProfile => {
-                self.close_member_action_menu();
-                self.open_user_profile_popup(menu.user_id, menu.guild_id)
+                self.close_member_leader_action();
+                self.open_user_profile_popup(action.user_id, action.guild_id)
             }
         }
     }

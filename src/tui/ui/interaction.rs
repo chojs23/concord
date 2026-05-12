@@ -106,45 +106,6 @@ fn action_menu_mouse_target(
             row,
         );
     }
-    if state.is_guild_action_menu_open() {
-        let item_count = if state.is_guild_action_mute_duration_phase() {
-            state.selected_guild_mute_duration_items().len()
-        } else {
-            state.selected_guild_action_items().len()
-        };
-        return action_menu_row_target(
-            guild_action_menu_area(area, state),
-            item_count,
-            ActionMenuTarget::Guild,
-            column,
-            row,
-        );
-    }
-    if state.is_channel_action_menu_open() {
-        let item_count = if state.is_channel_action_threads_phase() {
-            state.channel_action_thread_items().len()
-        } else if state.is_channel_action_mute_duration_phase() {
-            state.selected_channel_mute_duration_items().len()
-        } else {
-            state.selected_channel_action_items().len()
-        };
-        return action_menu_row_target(
-            channel_action_menu_area(area, state),
-            item_count,
-            ActionMenuTarget::Channel,
-            column,
-            row,
-        );
-    }
-    if state.is_member_action_menu_open() {
-        return action_menu_row_target(
-            member_action_menu_area(area, state),
-            state.selected_member_action_items().len(),
-            ActionMenuTarget::Member,
-            column,
-            row,
-        );
-    }
     None
 }
 
@@ -174,34 +135,6 @@ fn action_menu_row_target(
 fn message_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
     let actions = state.selected_message_action_items();
     (!actions.is_empty()).then(|| centered_rect(area, 54, (actions.len() as u16).saturating_add(4)))
-}
-
-fn guild_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
-    let row_count = if state.is_guild_action_mute_duration_phase() {
-        state.selected_guild_mute_duration_items().len()
-    } else {
-        state.selected_guild_action_items().len()
-    };
-    (row_count > 0).then(|| centered_rect(area, 48, (row_count as u16).saturating_add(4)))
-}
-
-fn channel_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
-    if state.is_channel_action_threads_phase() {
-        let row_count = state.channel_action_thread_items().len().max(1) as u16;
-        Some(centered_rect(area, 54, row_count.saturating_add(4)))
-    } else if state.is_channel_action_mute_duration_phase() {
-        let row_count = state.selected_channel_mute_duration_items().len() as u16;
-        Some(centered_rect(area, 54, row_count.saturating_add(4)))
-    } else {
-        let actions = state.selected_channel_action_items();
-        (!actions.is_empty())
-            .then(|| centered_rect(area, 54, (actions.len() as u16).saturating_add(4)))
-    }
-}
-
-fn member_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
-    let actions = state.selected_member_action_items();
-    (!actions.is_empty()).then(|| centered_rect(area, 48, (actions.len() as u16).saturating_add(4)))
 }
 
 fn pane_row_mouse_target(

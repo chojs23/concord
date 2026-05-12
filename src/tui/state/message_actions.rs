@@ -95,9 +95,9 @@ impl DashboardState {
             });
         }
         if message.message_kind.is_regular_or_reply() {
-            // Image attachments already have a download path through the image
-            // viewer's action menu, so the message-level menu only surfaces
-            // downloads for the file/video kinds that have no other entry point.
+            // Image attachments already have a direct `d` download path in the
+            // image viewer, so the message-level menu only surfaces downloads
+            // for the file/video kinds that have no other entry point.
             for (index, attachment) in message.attachments_in_display_order().enumerate() {
                 if attachment.is_image() && attachment.preferred_url().is_some() {
                     continue;
@@ -231,10 +231,6 @@ impl DashboardState {
             MessageActionKind::ViewImage => {
                 self.close_message_action_menu();
                 self.open_image_viewer_for_selected_message();
-                None
-            }
-            MessageActionKind::DownloadImage => {
-                self.close_message_action_menu();
                 None
             }
             MessageActionKind::DownloadAttachment(index) => {

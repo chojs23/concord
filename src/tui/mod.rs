@@ -1170,7 +1170,6 @@ mod tests {
         let mut state = state_with_messages(0);
         push_image_message(&mut state, 1);
         assert!(state.open_image_viewer_for_selected_message());
-        state.open_image_viewer_action_menu();
         let before = visible_dashboard_signature(&state);
 
         state.push_event(AppEvent::AttachmentDownloadCompleted {
