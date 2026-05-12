@@ -38,7 +38,9 @@ impl DashboardState {
         let Some(message) = self.selected_message_state() else {
             return;
         };
-        if Some(message.author_id) != self.current_user_id || !message.message_kind.is_regular() {
+        if Some(message.author_id) != self.current_user_id
+            || !message.message_kind.is_regular_or_reply()
+        {
             return;
         }
         let Some(content) = message.content.clone() else {
@@ -46,10 +48,15 @@ impl DashboardState {
         };
         let channel_id = message.channel_id;
         let message_id = message.id;
+        let message_reference = message.reference.clone();
         self.composer_input = content;
         self.composer_cursor_byte_index = self.composer_input.len();
         self.pending_composer_attachments.clear();
-        self.reply_target_message_id = None;
+        if let Some(reference) = &message_reference {
+            self.reply_target_message_id = reference.message_id;
+        } else {
+            self.reply_target_message_id = None;
+        }
         self.edit_target_message = Some((channel_id, message_id));
         self.reset_mention_picker_state();
         self.composer_active = true;
