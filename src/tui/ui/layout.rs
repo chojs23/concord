@@ -95,7 +95,7 @@ pub(super) fn vertical_scrollbar_visible(
 
 pub(super) fn reaction_users_visible_line_count(area: Rect) -> usize {
     usize::from(area.height)
-        .saturating_sub(5)
+        .saturating_sub(4)
         .min(MAX_REACTION_USERS_VISIBLE_LINES)
 }
 

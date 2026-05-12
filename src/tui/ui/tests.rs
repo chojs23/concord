@@ -18,7 +18,7 @@ use super::{
     composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count, composer_text,
     date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_picker_lines,
     emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
-    filtered_emoji_reaction_picker_lines, focus_pane_at, footer_hint, format_message_sent_time,
+    filtered_emoji_reaction_picker_lines, focus_pane_at, format_message_sent_time,
     format_unix_millis_with_offset, forum_post_reaction_summary,
     forum_post_scrollbar_visible_count, forum_post_viewport_lines, guild_action_menu_lines,
     inline_image_preview_area, inline_image_preview_row, member_action_menu_lines,
@@ -90,9 +90,7 @@ fn options_popup_lines_show_selected_toggle_state() {
     assert_eq!(lines[1].spans[0].content, "› ");
     assert_eq!(lines[1].spans[1].content, "[x] ");
     assert_eq!(lines[2].spans[1].content, "[balanced] ");
-    let footer = &lines.last().expect("hint line").spans[0].content;
-    assert!(footer.contains("saved to "));
-    assert!(footer.contains("Esc close"));
+    assert_eq!(lines.len(), 3);
 }
 
 #[test]
@@ -214,10 +212,12 @@ fn channel_switcher_lines_show_search_and_grouped_selection() {
             .iter()
             .any(|line| line.to_string().contains("Text / #general"))
     );
-    let hint = lines.last().expect("hint").to_string();
-    assert!(hint.contains("Ctrl+n/p"));
-    assert!(!hint.contains("cursor"));
-    assert!(!hint.contains("type to filter"));
+    assert!(!lines.iter().any(|line| line.to_string().contains("cursor")));
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.to_string().contains("type to filter"))
+    );
 }
 
 #[test]
@@ -1552,7 +1552,6 @@ fn user_profile_popup_does_not_show_dm_hint_without_dm_context() {
         let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Online);
         let texts = line_texts_from_ratatui(&lines);
 
-        assert!(texts.iter().any(|line| line == "j/k scroll · Esc close"));
         assert!(!texts.iter().any(|line| line.contains("m send DM")));
     }
 }
@@ -2809,11 +2808,7 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec![
-            "  [r] Reply",
-            "› [d] Download image (unavailable)",
-            "Shortcut/Enter select · Esc close"
-        ]
+        vec!["  [r] Reply", "› [d] Download image (unavailable)",]
     );
 }
 
@@ -2836,11 +2831,7 @@ fn message_action_menu_uses_numbered_shortcuts_for_duplicate_preferred_keys() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec![
-            "› [1] Delete message",
-            "  [2] Download image",
-            "Shortcut/Enter select · Esc close"
-        ]
+        vec!["› [1] Delete message", "  [2] Download image"]
     );
 }
 
@@ -2872,7 +2863,6 @@ fn channel_action_menu_renders_pinned_and_thread_actions() {
             "› [p] Show pinned messages",
             "  [t] Show threads (none)",
             "  [u] Mute channel",
-            "Shortcut/Enter select · Esc close",
         ]
     );
 }
@@ -2887,10 +2877,7 @@ fn channel_action_menu_renders_category_mute_shortcut() {
 
     let lines = channel_action_menu_lines(&actions, 0);
 
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec!["› [u] Mute category", "Shortcut/Enter select · Esc close",]
-    );
+    assert_eq!(line_texts_from_ratatui(&lines), vec!["› [u] Mute category"]);
 }
 
 #[test]
@@ -2905,10 +2892,7 @@ fn guild_action_menu_renders_placeholder_action() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec![
-            "›     No server actions yet",
-            "Shortcut/Enter select · Esc close"
-        ]
+        vec!["›     No server actions yet"]
     );
 }
 
@@ -2931,11 +2915,7 @@ fn guild_action_menu_renders_mark_server_read_and_mute_shortcuts() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec![
-            "› [m] Mark server as read",
-            "  [u] Mute server",
-            "Shortcut/Enter select · Esc close"
-        ]
+        vec!["› [m] Mark server as read", "  [u] Mute server",]
     );
 }
 
@@ -2949,10 +2929,7 @@ fn member_action_menu_renders_profile_shortcut() {
 
     let lines = member_action_menu_lines(&actions, 0);
 
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec!["› [p] Show profile", "Shortcut/Enter select · Esc close"]
-    );
+    assert_eq!(line_texts_from_ratatui(&lines), vec!["› [p] Show profile"]);
 }
 
 #[test]
@@ -2976,11 +2953,7 @@ fn emoji_reaction_picker_marks_selected_reaction() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec![
-            "  [1] 👍 Thumbs up",
-            "› [2] :party: Party",
-            "Shortcut/Enter/Space react · / filter · Esc close"
-        ]
+        vec!["  [1] 👍 Thumbs up", "› [2] :party: Party",]
     );
 }
 
@@ -3003,11 +2976,7 @@ fn poll_vote_picker_marks_selected_and_checked_answers() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec![
-            "  [1] [x] Soup",
-            "› [2] [ ] Noodles",
-            "Shortcut/Space toggle · Enter vote · Esc close",
-        ]
+        vec!["  [1] [x] Soup", "› [2] [ ] Noodles"]
     );
 }
 
@@ -3054,7 +3023,6 @@ fn reaction_users_popup_groups_users_by_reaction() {
             "  trinity",
             ":party: · 0 users",
             "  no users found",
-            "Esc close",
         ]
     );
 }
@@ -3077,15 +3045,7 @@ fn reaction_users_popup_scrolls_long_lists() {
         .into_iter()
         .map(|line| line.trim_end().to_owned())
         .collect::<Vec<_>>();
-    assert_eq!(
-        trimmed,
-        vec![
-            "  user-3",
-            "  user-4",
-            "  user-5",
-            "j/k scroll · more above/below · Esc close",
-        ]
-    );
+    assert_eq!(trimmed, vec!["  user-3", "  user-4", "  user-5",]);
 }
 
 #[test]
@@ -3251,9 +3211,9 @@ fn reaction_users_popup_truncates_long_lines_to_fit_width() {
 }
 
 #[test]
-fn reaction_users_popup_reserves_footer_space_in_short_areas() {
-    assert_eq!(reaction_users_visible_line_count(Rect::new(0, 0, 20, 5)), 0);
-    assert_eq!(reaction_users_visible_line_count(Rect::new(0, 0, 20, 6)), 1);
+fn reaction_users_popup_reserves_border_space_in_short_areas() {
+    assert_eq!(reaction_users_visible_line_count(Rect::new(0, 0, 20, 5)), 1);
+    assert_eq!(reaction_users_visible_line_count(Rect::new(0, 0, 20, 6)), 2);
     assert_eq!(
         reaction_users_visible_line_count(Rect::new(0, 0, 20, 40)),
         14
@@ -3278,13 +3238,7 @@ fn emoji_reaction_picker_reserves_space_for_loaded_custom_image() {
         &["https://cdn.discordapp.com/emojis/42.png".to_owned()],
     );
 
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec![
-            "› [1]    Party",
-            "Shortcut/Enter/Space react · / filter · Esc close"
-        ]
-    );
+    assert_eq!(line_texts_from_ratatui(&lines), vec!["› [1]    Party"]);
 }
 
 #[test]
@@ -3336,7 +3290,6 @@ fn emoji_reaction_picker_windows_long_lists_around_selection() {
             "      :emoji_10: Emoji 10",
             "      :emoji_11: Emoji 11",
             "›     :emoji_12: Emoji 12",
-            "Shortcut/Enter/Space react · / filter · Esc close"
         ]
     );
 }
@@ -3356,52 +3309,8 @@ fn emoji_reaction_picker_shows_active_filter() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec![
-            "› [1] :this: This goose",
-            "Shortcut/Enter/Space react · / filter · Esc close",
-            "Filter /thi",
-        ]
+        vec!["› [1] :this: This goose", "Filter /thi",]
     );
-}
-
-#[test]
-fn footer_hint_does_not_advertise_horizontal_scroll_for_messages() {
-    let mut state = state_with_message();
-    state.focus_pane(FocusPane::Messages);
-
-    assert!(!footer_hint(&state).contains("H/L scroll name"));
-}
-
-#[test]
-fn footer_hint_switches_for_modal_states() {
-    let mut emoji_state = state_with_message();
-    emoji_state.open_selected_message_actions();
-    emoji_state.move_message_action_down();
-    emoji_state.activate_selected_message_action();
-
-    let mut image_state = state_with_image_message();
-    image_state.open_selected_message_actions();
-    image_state.move_message_action_down();
-    image_state.activate_selected_message_action();
-
-    let mut debug_state = DashboardState::new();
-    debug_state.toggle_debug_log_popup();
-
-    let cases = [
-        (
-            emoji_state,
-            "j/k choose emoji | enter/space react | esc close",
-        ),
-        (
-            image_state,
-            "h/← previous image | l/→ next image | enter/space actions | esc close",
-        ),
-        (debug_state, "`/esc close debug logs"),
-    ];
-
-    for (state, expected) in cases {
-        assert_eq!(footer_hint(&state), expected);
-    }
 }
 
 #[test]
@@ -3421,7 +3330,6 @@ fn leader_popup_renders_as_bottom_window() {
     assert!(rendered.contains("toggle Channels"), "{rendered}");
     assert!(rendered.contains("toggle Members"), "{rendered}");
     assert!(rendered.contains("Actions"), "{rendered}");
-    assert!(rendered.contains("Esc cancel"), "{rendered}");
 }
 
 #[test]
@@ -3462,8 +3370,6 @@ fn debug_log_popup_shows_recent_errors() {
             "Channels: 12 visible · 3 hidden by permissions",
             "",
             "2 [ERROR] second: recent",
-            "",
-            "Showing current-process ERROR logs only · ` / Esc close"
         ]
     );
 }
@@ -3478,8 +3384,6 @@ fn debug_log_popup_has_empty_state() {
             "Channels: 0 visible · 0 hidden by permissions",
             "",
             "No errors recorded in this process.",
-            "",
-            "Showing current-process ERROR logs only · ` / Esc close"
         ]
     );
 }
@@ -4584,31 +4488,6 @@ fn state_with_message() -> DashboardState {
         embeds: Vec::new(),
         forwarded_snapshots: Vec::new(),
     });
-    state
-}
-
-fn state_with_image_message() -> DashboardState {
-    let mut state = state_with_message();
-    state.push_event(AppEvent::MessageCreate {
-        guild_id: Some(Id::new(1)),
-        channel_id: Id::new(2),
-        message_id: Id::new(2),
-        author_id: Id::new(99),
-        author: "neo".to_owned(),
-        author_avatar_url: None,
-        author_role_ids: Vec::new(),
-        message_kind: crate::discord::MessageKind::regular(),
-        reference: None,
-        reply: None,
-        poll: None,
-        content: Some(String::new()),
-        sticker_names: Vec::new(),
-        mentions: Vec::new(),
-        attachments: vec![image_attachment()],
-        embeds: Vec::new(),
-        forwarded_snapshots: Vec::new(),
-    });
-    state.jump_bottom();
     state
 }
 

@@ -1312,13 +1312,10 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
 
 pub(super) fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let user = footer_user_label(state);
-    let mut spans = vec![
-        Span::styled(
-            format!(" {user} "),
-            Style::default().fg(Color::Green).bold(),
-        ),
-        Span::styled(footer_hint(state), Style::default().fg(DIM)),
-    ];
+    let mut spans = vec![Span::styled(
+        format!(" {user} "),
+        Style::default().fg(Color::Green).bold(),
+    )];
     if let Some(status) = state.last_status() {
         spans.push(Span::raw(" | "));
         spans.push(Span::styled(
@@ -1335,47 +1332,4 @@ pub(super) fn render_footer(frame: &mut Frame, area: Rect, state: &DashboardStat
 
 pub(super) fn footer_user_label(state: &DashboardState) -> &str {
     state.current_user().unwrap_or("Loading Concord...")
-}
-
-pub(super) fn footer_hint(state: &DashboardState) -> String {
-    if state.is_debug_log_popup_open() {
-        "`/esc close debug logs".to_owned()
-    } else if state.is_reaction_users_popup_open() {
-        "esc close reacted users".to_owned()
-    } else if state.is_poll_vote_picker_open() {
-        "j/k choose answer | space toggle | enter vote | esc close".to_owned()
-    } else if state.is_emoji_reaction_picker_open() {
-        "j/k choose emoji | enter/space react | esc close".to_owned()
-    } else if state.is_image_viewer_action_menu_open() {
-        "enter/space download image | esc close menu".to_owned()
-    } else if state.is_image_viewer_open() {
-        "h/← previous image | l/→ next image | enter/space actions | esc close".to_owned()
-    } else if state.is_user_profile_popup_open() {
-        "j/k pick mutual server | enter open server | esc close".to_owned()
-    } else if state.is_message_action_menu_open()
-        || state.is_guild_action_menu_open()
-        || state.is_member_action_menu_open()
-    {
-        if state.is_guild_action_mute_duration_phase() {
-            "j/k choose duration | enter select | esc back | q quit".to_owned()
-        } else {
-            "j/k choose action | enter select | esc close | q quit".to_owned()
-        }
-    } else if state.is_channel_action_menu_open() {
-        if state.is_channel_action_threads_phase() {
-            "j/k choose thread | enter open | esc/← back | q quit".to_owned()
-        } else if state.is_channel_action_mute_duration_phase() {
-            "j/k choose duration | enter select | esc/← back | q quit".to_owned()
-        } else {
-            "j/k choose action | enter select | esc close | q quit".to_owned()
-        }
-    } else if state.focus() == FocusPane::Members {
-        "tab/shift+tab/1-4 focus | alt+h/l/←/→ width | j/k move | H/L scroll name | enter profile | space leader | i write | q quit".to_owned()
-    } else if state.focus() == FocusPane::Channels {
-        "tab/shift+tab/1-4 focus | alt+h/l/←/→ width | j/k move | H/L scroll name | enter open | space leader | h/← close | l/→ open | ` logs | i write | q quit".to_owned()
-    } else if state.focus() == FocusPane::Guilds {
-        "tab/shift+tab/1-4 focus | alt+h/l/←/→ width | j/k move | J/K scroll | H/L scroll name | enter action/tree | space leader | h/← close | l/→ open | ` logs | i write | esc cancel | q quit".to_owned()
-    } else {
-        "tab/shift+tab/1-4 focus | j/k move | J/K scroll | enter actions | space leader | ` logs | i write | esc cancel | q quit".to_owned()
-    }
 }
