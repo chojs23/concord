@@ -7,6 +7,7 @@ mod members;
 mod messages;
 mod notifications;
 mod permissions;
+mod presence;
 mod profiles;
 mod reads;
 
@@ -59,6 +60,7 @@ pub struct DiscordState {
     guild_details: GuildDetailCache,
     profiles: ProfileCache,
     presence: PresenceCache,
+    self_presence: presence::PresenceState,
     session: SessionState,
     notifications: NotificationCache,
 }
@@ -374,6 +376,7 @@ impl DiscordState {
             guild_details: GuildDetailCache::default(),
             profiles: ProfileCache::default(),
             presence: PresenceCache::default(),
+            self_presence: presence::PresenceState::new(),
             session: SessionState::default(),
             notifications: NotificationCache::default(),
         }
@@ -1174,6 +1177,15 @@ impl DiscordState {
             | AppEvent::ActivateChannel { .. }
             | AppEvent::GatewayClosed => {}
         }
+    }
+
+
+    pub fn self_status(&self) -> PresenceStatus {
+        self.self_presence.current
+    }
+
+    pub fn set_self_status(&mut self, status: PresenceStatus) {
+        self.self_presence.current = status;
     }
 
     fn private_user_display_name(
