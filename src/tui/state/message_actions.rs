@@ -64,8 +64,8 @@ impl DashboardState {
         }];
 
         let capabilities = message.capabilities();
-        let is_own_chat_message =
-            Some(message.author_id) == self.current_user_id && message.message_kind.is_regular_or_reply();
+        let is_own_chat_message = Some(message.author_id) == self.current_user_id
+            && message.message_kind.is_regular_or_reply();
         if is_own_chat_message {
             if message.content.is_some() {
                 actions.push(MessageActionItem {
