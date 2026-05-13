@@ -64,37 +64,14 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_user_profile_popup_key(state, key);
     }
 
-    if state.is_guild_pane_filter_active() || state.is_channel_pane_filter_active() {
-        if let Some(command) = handle_pane_filter_key(state, key) {
-            return command;
-        }
-    }
-
     let focus = state.focus();
     let kb = state.key_bindings().clone();
 
-    if key.code == KeyCode::Esc && !state.return_from_pinned_message_view() {
-        state.return_from_opened_thread();
-    } else if kb.quit.matches(key) {
-        state.quit();
-    } else if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        state.quit();
-    } else if kb.open_composer.matches(key) {
-        state.start_composer();
-    } else if kb.open_keymap.matches(key) {
-        state.open_keymap_popup();
-    } else if kb.open_leader.matches(key) {
-        state.open_leader();
-    } else if key.code == KeyCode::Char('1') {
-        state.show_and_focus_pane(FocusPane::Guilds);
-    } else if key.code == KeyCode::Char('2') {
-        state.show_and_focus_pane(FocusPane::Channels);
-    } else if key.code == KeyCode::Char('3') {
-        state.show_and_focus_pane(FocusPane::Messages);
-    } else if key.code == KeyCode::Char('4') {
-        state.show_and_focus_pane(FocusPane::Members);
-    } else if (key.code == KeyCode::Char('h') || key.code == KeyCode::Left)
-        && key.modifiers.contains(KeyModifiers::ALT)
+    // Only intercept filter input when the pane that owns the filter is still
+    // focused. Moving the mouse to another pane should let normal keybinds
+    // work (e.g. pressing the open_composer key after clicking Messages).
+    if (state.is_guild_pane_filter_active() && focus == FocusPane::Guilds)
+        || (state.is_channel_pane_filter_active() && focus == FocusPane::Channels)
     {
         state.adjust_focused_pane_width(-1);
     } else if (key.code == KeyCode::Char('l') || key.code == KeyCode::Right)
@@ -458,10 +435,15 @@ fn handle_user_profile_popup_key(state: &mut DashboardState, key: KeyEvent) -> O
 /// Returns `Some(command)` when the filter handler has fully handled the key
 /// and the caller should return that command. Returns `None` when the key
 /// should fall through to normal navigation (e.g. j/k to scroll the list).
-fn handle_pane_filter_key(state: &mut DashboardState, key: KeyEvent) -> Option<Option<AppCommand>> {
+fn handle_pane_filter_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+    focus: FocusPane,
+) -> Option<Option<AppCommand>> {
+    let guild_focused = focus == FocusPane::Guilds;
     match key.code {
         KeyCode::Esc => {
-            if state.is_guild_pane_filter_active() {
+            if guild_focused {
                 state.close_guild_pane_filter();
             } else {
                 state.close_channel_pane_filter();
@@ -469,7 +451,7 @@ fn handle_pane_filter_key(state: &mut DashboardState, key: KeyEvent) -> Option<O
             Some(None)
         }
         KeyCode::Enter => {
-            if state.is_guild_pane_filter_active() {
+            if guild_focused {
                 state.confirm_guild_pane_filter();
                 Some(None)
             } else {
@@ -477,7 +459,7 @@ fn handle_pane_filter_key(state: &mut DashboardState, key: KeyEvent) -> Option<O
             }
         }
         KeyCode::Backspace => {
-            if state.is_guild_pane_filter_active() {
+            if guild_focused {
                 state.pop_guild_pane_filter_char();
             } else {
                 state.pop_channel_pane_filter_char();
@@ -485,7 +467,7 @@ fn handle_pane_filter_key(state: &mut DashboardState, key: KeyEvent) -> Option<O
             Some(None)
         }
         KeyCode::Left => {
-            if state.is_guild_pane_filter_active() {
+            if guild_focused {
                 state.move_guild_pane_filter_cursor_left();
             } else {
                 state.move_channel_pane_filter_cursor_left();
@@ -493,7 +475,7 @@ fn handle_pane_filter_key(state: &mut DashboardState, key: KeyEvent) -> Option<O
             Some(None)
         }
         KeyCode::Right => {
-            if state.is_guild_pane_filter_active() {
+            if guild_focused {
                 state.move_guild_pane_filter_cursor_right();
             } else {
                 state.move_channel_pane_filter_cursor_right();
@@ -513,7 +495,7 @@ fn handle_pane_filter_key(state: &mut DashboardState, key: KeyEvent) -> Option<O
             Some(None)
         }
         KeyCode::Char(value) if is_shortcut_key(key) => {
-            if state.is_guild_pane_filter_active() {
+            if guild_focused {
                 state.push_guild_pane_filter_char(value);
             } else {
                 state.push_channel_pane_filter_char(value);

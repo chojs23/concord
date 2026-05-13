@@ -689,13 +689,17 @@ impl DashboardState {
         let Some(query) = query else {
             return self.channel_pane_entries();
         };
-        self.channel_pane_entries()
+        // Search directly over channels() so children inside collapsed
+        // categories are included in results even when not normally visible.
+        let mut channels = self.channels();
+        channels.retain(|c| {
+            !c.is_thread() && !c.is_category() && fuzzy_text_score(&c.name, &query).is_some()
+        });
+        channels
             .into_iter()
-            .filter(|entry| match entry {
-                ChannelPaneEntry::CategoryHeader { .. } => false,
-                ChannelPaneEntry::Channel { state, .. } => {
-                    fuzzy_text_score(&state.name, &query).is_some()
-                }
+            .map(|state| ChannelPaneEntry::Channel {
+                state,
+                branch: ChannelBranch::None,
             })
             .collect()
     }

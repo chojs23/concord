@@ -132,19 +132,23 @@ impl DashboardState {
         let Some(query) = query else {
             return self.guild_pane_entries();
         };
-        self.guild_pane_entries()
-            .into_iter()
-            .filter(|entry| match entry {
-                GuildPaneEntry::DirectMessages => {
-                    fuzzy_text_score("direct messages", &query).is_some()
-                        || fuzzy_text_score("dm", &query).is_some()
-                }
-                GuildPaneEntry::FolderHeader { .. } => false,
-                GuildPaneEntry::Guild { state, .. } => {
-                    fuzzy_text_score(&state.name, &query).is_some()
-                }
-            })
-            .collect()
+        // Search directly over discord.guilds() so servers inside collapsed
+        // folders appear in results even when they're not normally visible.
+        let mut results: Vec<GuildPaneEntry<'_>> = Vec::new();
+        if fuzzy_text_score("direct messages", &query).is_some()
+            || fuzzy_text_score("dm", &query).is_some()
+        {
+            results.push(GuildPaneEntry::DirectMessages);
+        }
+        for guild in self.discord.guilds() {
+            if fuzzy_text_score(&guild.name, &query).is_some() {
+                results.push(GuildPaneEntry::Guild {
+                    state: guild,
+                    branch: GuildBranch::None,
+                });
+            }
+        }
+        results
     }
 
     pub fn is_guild_pane_filter_active(&self) -> bool {
