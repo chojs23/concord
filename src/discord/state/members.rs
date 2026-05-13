@@ -137,34 +137,21 @@ pub(super) fn upsert_member(
     // display_name fell through to "unknown"), don't clobber a previously cached
     // complete entry — the complete data came from a profile fetch and is better.
     let is_fallback = member.username.is_none() && member.display_name == "unknown";
-    let (display_name, username, avatar_url) = if is_fallback {
-        if let Some(existing) = map.get(&member.user_id) {
-            if existing.username.is_some() {
-                (
-                    existing.display_name.clone(),
-                    existing.username.clone(),
-                    existing.avatar_url.clone(),
-                )
-            } else {
-                (
-                    member.display_name.clone(),
-                    member.username.clone(),
-                    member.avatar_url.clone(),
-                )
-            }
-        } else {
-            (
-                member.display_name.clone(),
-                member.username.clone(),
-                member.avatar_url.clone(),
-            )
-        }
-    } else {
-        (
+    let existing_complete = is_fallback
+        .then(|| map.get(&member.user_id))
+        .flatten()
+        .filter(|e| e.username.is_some());
+    let (display_name, username, avatar_url) = match existing_complete {
+        Some(existing) => (
+            existing.display_name.clone(),
+            existing.username.clone(),
+            existing.avatar_url.clone(),
+        ),
+        None => (
             member.display_name.clone(),
             member.username.clone(),
             member.avatar_url.clone(),
-        )
+        ),
     };
 
     map.insert(

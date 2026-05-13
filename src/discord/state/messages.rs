@@ -294,19 +294,19 @@ impl DiscordState {
             .values_mut()
             .chain(self.pinned_messages.values_mut())
         {
-            for message in messages.iter_mut() {
-                if message.guild_id == Some(guild_id) {
-                    if message.author_id == member.user_id {
-                        message.author = display_name.clone();
-                        if avatar_url.is_some() || message.author_avatar_url.is_none() {
-                            message.author_avatar_url = avatar_url.clone();
-                        }
+            for message in messages.iter_mut().filter(|m| m.guild_id == Some(guild_id)) {
+                if message.author_id == member.user_id {
+                    message.author = display_name.clone();
+                    if avatar_url.is_some() || message.author_avatar_url.is_none() {
+                        message.author_avatar_url = avatar_url.clone();
                     }
-                    if let Some(reply) = &mut message.reply {
-                        if reply.author_id == Some(member.user_id) {
-                            reply.author = display_name.clone();
-                        }
-                    }
+                }
+                if let Some(reply) = message
+                    .reply
+                    .as_mut()
+                    .filter(|r| r.author_id == Some(member.user_id))
+                {
+                    reply.author = display_name.clone();
                 }
             }
         }
