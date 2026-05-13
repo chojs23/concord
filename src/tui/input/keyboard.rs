@@ -576,6 +576,13 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
     {
         return command;
     }
+
+    // Check configurable bindings before the fixed-key match below.
+    if state.key_bindings().open_in_editor.matches(key) {
+        state.request_open_composer_in_editor();
+        return None;
+    }
+
     match key.code {
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
             state.push_composer_char('\n');
