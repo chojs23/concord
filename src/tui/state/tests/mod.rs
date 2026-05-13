@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{
     ChannelActionKind, ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildActionKind,
-    GuildBranch, GuildPaneEntry, MessageActionKind, MessageState, message_rendered_height,
+    GuildBranch, GuildPaneEntry, MessageActionKind, MessageState,
 };
 use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo, ChannelInfo,
@@ -26,6 +26,20 @@ use crate::discord::{
     PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
     ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
 };
+
+fn message_rendered_height(
+    message: &MessageState,
+    content_width: usize,
+    preview_width: u16,
+    max_preview_height: u16,
+) -> usize {
+    DashboardState::new().message_rendered_height(
+        message,
+        content_width,
+        preview_width,
+        max_preview_height,
+    )
+}
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
     UserProfileInfo {
@@ -2478,7 +2492,7 @@ fn edit_reply_action_prefills_composer_without_reply_target_and_submits_edit_com
 }
 
 #[test]
-fn other_user_message_actions_do_not_include_edit_or_delete() {
+fn other_user_message_actions_do_not_include_edit() {
     let mut state = state_with_messages(1);
     state.push_event(AppEvent::Ready {
         user: "me".to_owned(),
@@ -2488,10 +2502,73 @@ fn other_user_message_actions_do_not_include_edit_or_delete() {
 
     let actions = state.selected_message_action_items();
 
-    assert!(!actions.iter().any(|action| matches!(
-        action.kind,
-        MessageActionKind::Edit | MessageActionKind::Delete
-    )));
+    assert!(
+        !actions
+            .iter()
+            .any(|action| action.kind == MessageActionKind::Edit)
+    );
+}
+
+#[test]
+fn unhydrated_guild_permissions_keep_other_user_delete_available() {
+    let mut state =
+        state_with_other_user_message_permissions_hydrating_member(PERM_VIEW_CHANNEL, Vec::new());
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.kind == MessageActionKind::Delete)
+    );
+}
+
+#[test]
+fn other_user_message_actions_include_delete_with_manage_messages() {
+    let mut state = state_with_other_user_message_permissions(
+        PERM_VIEW_CHANNEL | PERM_READ_MESSAGE_HISTORY | PERM_MANAGE_MESSAGES,
+        Vec::new(),
+    );
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+    let delete_index = actions
+        .iter()
+        .position(|action| action.kind == MessageActionKind::Delete)
+        .expect("manage messages should show delete");
+
+    assert!(
+        !actions
+            .iter()
+            .any(|action| action.kind == MessageActionKind::Edit)
+    );
+    state.open_selected_message_actions();
+    assert!(state.select_message_action_row(delete_index));
+    assert_eq!(
+        state.activate_selected_message_action(),
+        Some(AppCommand::DeleteMessage {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+        })
+    );
+}
+
+#[test]
+fn other_user_message_actions_do_not_include_delete_without_manage_messages() {
+    let mut state = state_with_other_user_message_permissions(
+        PERM_VIEW_CHANNEL | PERM_READ_MESSAGE_HISTORY,
+        Vec::new(),
+    );
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+
+    assert!(
+        !actions
+            .iter()
+            .any(|action| action.kind == MessageActionKind::Delete)
+    );
 }
 
 #[test]
@@ -2587,6 +2664,35 @@ fn own_attachment_only_message_can_be_deleted_but_not_edited() {
             channel_id: Id::new(2),
             message_id: Id::new(1),
         })
+    );
+}
+
+#[test]
+fn pin_message_action_requires_pin_messages_permission() {
+    let mut without_pin = state_with_other_user_message_permissions(
+        PERM_VIEW_CHANNEL | PERM_READ_MESSAGE_HISTORY,
+        Vec::new(),
+    );
+    without_pin.focus_pane(FocusPane::Messages);
+
+    assert!(
+        !without_pin
+            .selected_message_action_items()
+            .iter()
+            .any(|action| matches!(action.kind, MessageActionKind::SetPinned(_)))
+    );
+
+    let mut with_pin = state_with_other_user_message_permissions(
+        PERM_VIEW_CHANNEL | PERM_READ_MESSAGE_HISTORY | PERM_PIN_MESSAGES,
+        Vec::new(),
+    );
+    with_pin.focus_pane(FocusPane::Messages);
+
+    assert!(
+        with_pin
+            .selected_message_action_items()
+            .iter()
+            .any(|action| action.kind == MessageActionKind::SetPinned(true))
     );
 }
 
@@ -2947,6 +3053,106 @@ fn reaction_message_actions_use_single_reacted_users_item() {
         1
     );
     assert!(!actions.iter().any(|action| action.label == "Show 👍 users"));
+}
+
+#[test]
+fn add_reaction_action_requires_history_and_existing_or_add_reactions_permission() {
+    let mut without_add = state_with_other_user_message_permissions(
+        PERM_VIEW_CHANNEL | PERM_READ_MESSAGE_HISTORY,
+        Vec::new(),
+    );
+    without_add.focus_pane(FocusPane::Messages);
+
+    assert!(
+        !without_add
+            .selected_message_action_items()
+            .iter()
+            .any(|action| action.kind == MessageActionKind::AddReaction)
+    );
+
+    let mut with_add = state_with_other_user_message_permissions(
+        PERM_VIEW_CHANNEL | PERM_READ_MESSAGE_HISTORY | PERM_ADD_REACTIONS,
+        Vec::new(),
+    );
+    with_add.focus_pane(FocusPane::Messages);
+
+    assert!(
+        with_add
+            .selected_message_action_items()
+            .iter()
+            .any(|action| action.kind == MessageActionKind::AddReaction)
+    );
+}
+
+#[test]
+fn existing_reaction_can_be_added_without_add_reactions_permission() {
+    let mut state = state_with_other_user_message_permissions(
+        PERM_VIEW_CHANNEL | PERM_READ_MESSAGE_HISTORY,
+        vec![ReactionInfo {
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+            count: 1,
+            me: false,
+        }],
+    );
+    state.focus_pane(FocusPane::Messages);
+    let add_reaction_index = state
+        .selected_message_action_items()
+        .iter()
+        .position(|action| action.kind == MessageActionKind::AddReaction)
+        .expect("existing reaction should keep reaction picker available");
+    state.open_selected_message_actions();
+    assert!(state.select_message_action_row(add_reaction_index));
+
+    assert_eq!(state.activate_selected_message_action(), None);
+    assert!(state.is_emoji_reaction_picker_open());
+    assert_eq!(
+        state
+            .emoji_reaction_items()
+            .iter()
+            .map(|item| item.emoji.clone())
+            .collect::<Vec<_>>(),
+        vec![ReactionEmoji::Unicode("👍".to_owned())]
+    );
+    assert_eq!(
+        state.activate_selected_emoji_reaction(),
+        Some(AppCommand::AddReaction {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        })
+    );
+}
+
+#[test]
+fn show_reacted_users_requires_read_message_history() {
+    let reactions = vec![ReactionInfo {
+        emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        count: 1,
+        me: false,
+    }];
+    let mut without_history =
+        state_with_other_user_message_permissions(PERM_VIEW_CHANNEL, reactions.clone());
+    without_history.focus_pane(FocusPane::Messages);
+
+    assert!(
+        !without_history
+            .selected_message_action_items()
+            .iter()
+            .any(|action| action.kind == MessageActionKind::ShowReactionUsers)
+    );
+
+    let mut with_history = state_with_other_user_message_permissions(
+        PERM_VIEW_CHANNEL | PERM_READ_MESSAGE_HISTORY,
+        reactions,
+    );
+    with_history.focus_pane(FocusPane::Messages);
+
+    assert!(
+        with_history
+            .selected_message_action_items()
+            .iter()
+            .any(|action| action.kind == MessageActionKind::ShowReactionUsers)
+    );
 }
 
 #[test]

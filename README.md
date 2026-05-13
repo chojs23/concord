@@ -185,7 +185,7 @@ With vim-style navigation:
 | `Space`                   | Open leader shortcut window          |
 | `i`                       | Text insert mode                     |
 | `Esc`                     | Close popup, cancel mode, or go back |
-| `q` / `Ctrl+c`            | Quit                                 |
+| `q`                       | Quit                                 |
 
 #### Leader key
 
@@ -233,6 +233,7 @@ are shown above the input before sending, and `Ctrl+Backspace` removes the last
 pending attachment.
 
 Use `Ctrl+Left` / `Ctrl+Right` to jump the cursor by word.
+Use `Ctrl+c` to clear the current draft.
 
 #### Mention picker
 

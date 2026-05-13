@@ -12,7 +12,8 @@ use super::{
 use super::{
     model::{
         ChannelActionItem, ChannelActionKind, ChannelBranch, ChannelPaneEntry, ChannelThreadItem,
-        FocusPane, MUTE_ACTION_DURATIONS, channel_action_shortcut, indexed_shortcut,
+        FORUM_POST_CARD_HEIGHT, FocusPane, MUTE_ACTION_DURATIONS, channel_action_shortcut,
+        indexed_shortcut,
     },
     popups::ChannelLeaderActionState,
     presentation::{is_direct_message_channel, sort_channels, sort_direct_message_channels},
@@ -217,6 +218,52 @@ impl DashboardState {
             Some(selected - self.message_scroll)
         } else {
             None
+        }
+    }
+
+    pub(super) fn select_visible_forum_post_row(&mut self, row: usize) -> bool {
+        let mut rendered_row = 0usize;
+        for (visible_index, post) in self.visible_forum_post_items().into_iter().enumerate() {
+            if post.section_label.is_some() {
+                if row == rendered_row {
+                    return false;
+                }
+                rendered_row = rendered_row.saturating_add(1);
+            }
+            if row < rendered_row.saturating_add(FORUM_POST_CARD_HEIGHT) {
+                let index = self.message_scroll.saturating_add(visible_index);
+                if index >= self.selected_forum_post_items().len() {
+                    return false;
+                }
+                self.selected_message = index;
+                self.message_auto_follow = false;
+                self.message_keep_selection_visible = false;
+                return true;
+            }
+            rendered_row = rendered_row.saturating_add(FORUM_POST_CARD_HEIGHT);
+        }
+        false
+    }
+
+    pub(super) fn clamp_forum_post_viewport(&mut self) {
+        let posts = self.selected_forum_post_items();
+        if posts.is_empty() {
+            self.message_scroll = 0;
+            return;
+        }
+
+        let selected = self.selected_message.min(posts.len() - 1);
+        self.message_scroll = self.message_scroll.min(selected);
+        let height = self.message_content_height().max(1);
+        while self.message_scroll < selected {
+            let rendered_rows: usize = posts[self.message_scroll..=selected]
+                .iter()
+                .map(|post| post.rendered_height())
+                .sum();
+            if rendered_rows <= height {
+                break;
+            }
+            self.message_scroll = self.message_scroll.saturating_add(1);
         }
     }
 

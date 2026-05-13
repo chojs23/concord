@@ -66,7 +66,6 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
             state.return_from_opened_thread();
         }
         KeyCode::Char('q') => state.quit(),
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
         KeyCode::Char('i') => state.start_composer(),
         KeyCode::Char(' ') if is_shortcut_key(key) => state.open_leader(),
         KeyCode::Char('1') => state.show_and_focus_pane(FocusPane::Guilds),
@@ -172,10 +171,7 @@ fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCom
             state.close_leader();
         }
         KeyCode::Char(' ') if is_shortcut_key(key) => state.open_channel_switcher(),
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.close_leader();
-            state.quit();
-        }
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.close_leader(),
         KeyCode::Esc => state.close_leader(),
         _ => state.close_leader(),
     }
@@ -191,7 +187,6 @@ fn handle_channel_switcher_key(state: &mut DashboardState, key: KeyEvent) -> Opt
         }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.close_channel_switcher();
-            state.quit();
             None
         }
         KeyCode::Enter => state.activate_selected_channel_switcher_item(),
@@ -236,7 +231,6 @@ fn handle_leader_action_key(state: &mut DashboardState, key: KeyEvent) -> Option
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.close_all_action_contexts();
             state.close_leader();
-            state.quit();
             None
         }
         KeyCode::Char(shortcut) if is_shortcut_key(key) => {
@@ -572,11 +566,11 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
         }
         KeyCode::Enter => state.submit_composer(),
         KeyCode::Esc => {
-            state.cancel_composer();
+            state.close_composer();
             None
         }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.quit();
+            state.clear_composer_input();
             None
         }
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::CONTROL) => {

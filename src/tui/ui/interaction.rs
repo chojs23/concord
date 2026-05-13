@@ -134,7 +134,7 @@ fn action_menu_row_target(
 
 fn message_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
     let actions = state.selected_message_action_items();
-    (!actions.is_empty()).then(|| centered_rect(area, 54, (actions.len() as u16).saturating_add(4)))
+    (!actions.is_empty()).then(|| centered_rect(area, 54, (actions.len() as u16).saturating_add(2)))
 }
 
 fn pane_row_mouse_target(

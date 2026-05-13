@@ -1,5 +1,4 @@
 use crate::discord::ids::{Id, marker::MessageMarker};
-use chrono::{DateTime, Local, NaiveDate};
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -65,7 +64,6 @@ use self::layout::{
 };
 #[cfg(test)]
 use self::layout::{composer_content_line_count, composer_prompt_line_count};
-pub(crate) use self::message_list::message_starts_new_day;
 use self::message_list::render_messages;
 #[cfg(test)]
 use self::panes::{
@@ -82,12 +80,11 @@ use self::popups::{
     user_profile_popup_total_lines,
 };
 use self::types::{
-    ACCENT, DIM, DISCORD_EPOCH_MILLIS, EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET,
-    MESSAGE_AVATAR_PLACEHOLDER, MessageViewportLayout, SCROLLBAR_THUMB, SELECTED_FORUM_POST_BORDER,
-    SELECTED_MESSAGE_BORDER, SELECTED_MESSAGE_CONTENT_OFFSET, SNOWFLAKE_TIMESTAMP_SHIFT,
-    UserProfilePopupText,
+    ACCENT, DIM, EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET, MESSAGE_AVATAR_PLACEHOLDER,
+    MESSAGE_SELECTION_PREFIX_WIDTH, MessageViewportLayout, SCROLLBAR_THUMB,
+    SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UserProfilePopupText,
 };
-pub(crate) use self::types::{ActionMenuTarget, MESSAGE_ROW_GAP, MouseTarget};
+pub(crate) use self::types::{ActionMenuTarget, MouseTarget};
 pub use self::types::{
     AvatarImage, EmojiImage, ImagePreview, ImagePreviewLayout, ImagePreviewState,
 };
@@ -97,11 +94,10 @@ use self::{
         forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
     },
     message_list::{
-        date_separator_line, format_message_sent_time, format_unix_millis_with_offset,
-        inline_image_preview_row, message_author_style, message_body_custom_emoji_rows,
-        message_item_lines, message_viewport_layout, message_viewport_lines,
-        new_messages_notice_line, selected_avatar_x_offset, selected_message_card_width,
-        selected_message_content_x_offset,
+        date_separator_line, format_message_sent_time, inline_image_preview_row,
+        message_author_style, message_body_custom_emoji_rows, message_item_lines,
+        message_viewport_layout, message_viewport_lines, new_messages_notice_line,
+        selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
     },
     popups::{
         channel_switcher_cursor_position, channel_switcher_lines, debug_log_popup_lines,
@@ -112,7 +108,6 @@ use self::{
         user_profile_popup_lines_with_activities,
     },
 };
-
 pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
     let areas = dashboard_areas(area, state);
     state.set_guild_view_height(visible_panel_content_height(

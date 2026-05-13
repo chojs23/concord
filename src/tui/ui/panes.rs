@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph},
 };
 use ratatui_image::Image as RatatuiImage;
 use unicode_width::UnicodeWidthStr;
@@ -25,7 +25,7 @@ use super::{
     active_text_style,
     activity::{ActivityLeading, ActivityRender, build_activity_render},
     channel_prefix, channel_unread_decoration, dm_presence_dot_span, highlight_style,
-    layout::{composer_inner_width, panel_scrollbar_area},
+    layout::{composer_inner_width, panel_scrollbar_area, prefixed_composer_input},
     panel_block, panel_block_line, panel_content_height, render_vertical_scrollbar,
     selection_marker, styled_list_item,
     types::{ACCENT, DIM, EmojiImage, MessageAreas},
@@ -300,8 +300,7 @@ pub(super) fn render_composer(
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(border_color))
                     .title_style(Style::default().fg(Color::White).bold()),
-            )
-            .wrap(Wrap { trim: false }),
+            ),
         area,
     );
     if state.show_custom_emoji() {
@@ -338,21 +337,8 @@ fn composer_cursor_position_with_loaded_custom_emoji_urls(
     let display_cursor = display_input
         .map_byte_index(cursor)
         .min(display_input.input.len());
-    // Build the prefixed text matching what composer_lines renders:
-    // first line gets "> " prefix, continuation lines get "  " prefix
     let text_before_cursor = &display_input.input[..display_cursor];
-    let prefixed: String = text_before_cursor
-        .split('\n')
-        .enumerate()
-        .map(|(i, part)| {
-            if i == 0 {
-                format!("> {}", part)
-            } else {
-                format!("  {}", part)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let prefixed = prefixed_composer_input(text_before_cursor);
     let wrapped = wrap_text_lines(&prefixed, inner_width);
     let mut prompt_row = wrapped.len().saturating_sub(1);
     let mut prompt_column = wrapped.last().map(|line| line.width()).unwrap_or_default();
@@ -690,22 +676,24 @@ pub(super) fn composer_lines_with_loaded_custom_emoji_urls(
     width: u16,
     loaded_custom_emoji_urls: &[String],
 ) -> Vec<Line<'static>> {
-    if state.is_composing() {
+    if state.is_composing()
+        || !state.composer_input().is_empty()
+        || !state.pending_composer_attachments().is_empty()
+    {
         let mut lines = pending_upload_lines(state, width);
         let display_input = composer_display_input(state, loaded_custom_emoji_urls);
-        if let Some(message) = state.reply_target_message_state() {
+        if state.is_composing()
+            && let Some(message) = state.reply_target_message_state()
+        {
             lines.push(Line::from(Span::styled(
                 reply_target_hint(message, state, width),
                 Style::default().fg(DIM),
             )));
         }
-        // Split input by newlines to properly display line breaks
-        for (i, line) in display_input.input.split('\n').enumerate() {
-            if i == 0 {
-                lines.push(Line::from(format!("> {}", line)));
-            } else {
-                lines.push(Line::from(format!("  {}", line)));
-            }
+        let prefixed_input = prefixed_composer_input(&display_input.input);
+        let wrapped = wrap_text_lines(&prefixed_input, width as usize);
+        for subline in wrapped {
+            lines.push(Line::from(subline));
         }
         return lines;
     }
@@ -875,8 +863,8 @@ fn composer_custom_emoji_image_position(
     if inner_width == 0 || byte_start > byte_end || byte_end > input.len() {
         return None;
     }
-    let before = format!("> {}", &input[..byte_start]);
-    let through = format!("> {}", &input[..byte_end]);
+    let before = prefixed_composer_input(&input[..byte_start]);
+    let through = prefixed_composer_input(&input[..byte_end]);
     let before_wrapped = wrap_text_lines(&before, inner_width);
     let through_wrapped = wrap_text_lines(&through, inner_width);
     if before_wrapped.len() != through_wrapped.len() {
@@ -929,11 +917,17 @@ fn format_byte_size(bytes: u64) -> String {
 pub(super) fn composer_text(state: &DashboardState, width: u16) -> String {
     if state.is_composing() {
         let mut lines = pending_upload_texts(state, width);
-        let input = format!("> {}", state.composer_input());
+        let input = prefixed_composer_input(state.composer_input());
         if let Some(message) = state.reply_target_message_state() {
             lines.push(reply_target_hint(message, state, width));
         }
         lines.push(input);
+        return lines.join("\n");
+    }
+
+    if !state.composer_input().is_empty() || !state.pending_composer_attachments().is_empty() {
+        let mut lines = pending_upload_texts(state, width);
+        lines.push(prefixed_composer_input(state.composer_input()));
         return lines.join("\n");
     }
 

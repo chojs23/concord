@@ -10,25 +10,28 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    ACCENT, DIM, DISCORD_EPOCH_MILLIS, ImagePreview, ImagePreviewState, MENTION_ORANGE,
-    MemberEntry, READ_DIM, SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER,
-    SNOWFLAKE_TIMESTAMP_SHIFT, UNREAD_BRIGHT, channel_switcher_cursor_position,
-    channel_switcher_lines, channel_unread_decoration, composer_content_line_count,
-    composer_cursor_position, composer_lines, composer_lines_with_loaded_custom_emoji_urls,
-    composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
-    dm_presence_dot_span, emoji_picker_lines, emoji_reaction_picker_lines,
-    emoji_reaction_picker_lines_for_width, emoji_reaction_picker_lines_with_existing,
-    filtered_emoji_reaction_picker_lines, focus_pane_at, format_message_sent_time,
-    format_unix_millis_with_offset, forum_post_reaction_summary,
-    forum_post_scrollbar_visible_count, forum_post_viewport_lines, inline_image_preview_area,
-    inline_image_preview_row, member_display_label, member_name_style, message_action_menu_lines,
-    message_author_style, message_body_custom_emoji_rows, message_item_lines,
-    message_starts_new_day, message_viewport_lines, new_messages_notice_line, options_popup_lines,
-    poll_vote_picker_lines, primary_activity_summary, reaction_users_popup_lines,
-    reaction_users_visible_line_count, render_channels, render_guilds, selected_avatar_x_offset,
-    selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
-    user_profile_popup_has_avatar, user_profile_popup_lines,
-    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
+    ACCENT, DIM, ImagePreview, ImagePreviewState, MENTION_ORANGE, MemberEntry, READ_DIM,
+    SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT,
+    channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
+    composer_content_line_count, composer_cursor_position, composer_lines,
+    composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count, composer_text,
+    date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_picker_lines,
+    emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
+    emoji_reaction_picker_lines_with_existing, filtered_emoji_reaction_picker_lines, focus_pane_at,
+    format_message_sent_time, forum_post_reaction_summary, forum_post_scrollbar_visible_count,
+    forum_post_viewport_lines, inline_image_preview_area, inline_image_preview_row,
+    member_display_label, member_name_style, message_action_menu_lines, message_author_style,
+    message_body_custom_emoji_rows, message_item_lines, message_viewport_lines,
+    new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
+    primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
+    render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
+    selected_message_content_x_offset, sync_view_heights, user_profile_popup_has_avatar,
+    user_profile_popup_lines, user_profile_popup_lines_with_activities,
+    user_profile_popup_text_geometry,
+};
+use crate::tui::message_time::{
+    discord_epoch_unix_millis, format_unix_millis_with_offset, message_starts_new_day,
+    test_message_id_for_unix_millis,
 };
 use crate::{
     config::DisplayOptions,
@@ -54,6 +57,7 @@ use crate::{
             EmojiPickerEntry, EmojiReactionItem, FocusPane, MessageActionItem, MessageActionKind,
             PollVotePickerItem,
         },
+        ui::{ActionMenuTarget, MouseTarget, mouse_target_at},
     },
 };
 
@@ -190,6 +194,36 @@ fn header_shows_connected_account() {
     assert!(header.contains("Concord - v"), "{header}");
     assert!(header.contains("Connected as muri"), "{header}");
     assert!(!header.contains("Loading..."), "{header}");
+}
+
+#[test]
+fn image_viewer_render_shows_download_hint_below_popup() {
+    let mut state = state_with_message();
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some(String::new()),
+        sticker_names: Vec::new(),
+        mentions: Vec::new(),
+        attachments: vec![image_attachment()],
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    assert!(state.open_image_viewer_for_selected_message());
+
+    let dump = render_dashboard_dump(100, 25, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(rendered.contains("[d] download image"), "{rendered}");
 }
 
 #[test]
@@ -423,6 +457,38 @@ fn focus_pane_at_uses_configured_pane_widths() {
 }
 
 #[test]
+fn mouse_target_at_maps_visible_message_action_rows() {
+    let area = Rect::new(0, 0, 120, 20);
+    let mut state = state_with_message();
+    state.open_selected_message_actions();
+    let action_count = state.selected_message_action_items().len();
+    let last_row = action_count
+        .checked_sub(1)
+        .expect("message action menu has actions");
+    let popup_height = action_count as u16 + 2;
+    let first_action_y = 1 + (19 - popup_height) / 2 + 1;
+
+    assert_eq!(
+        mouse_target_at(area, &state, 46, first_action_y - 1),
+        Some(MouseTarget::ModalBackdrop)
+    );
+    assert_eq!(
+        mouse_target_at(area, &state, 46, first_action_y),
+        Some(MouseTarget::ActionRow {
+            menu: ActionMenuTarget::Message,
+            row: 0,
+        })
+    );
+    assert_eq!(
+        mouse_target_at(area, &state, 46, first_action_y + last_row as u16),
+        Some(MouseTarget::ActionRow {
+            menu: ActionMenuTarget::Message,
+            row: last_row,
+        })
+    );
+}
+
+#[test]
 fn sync_view_heights_reserves_space_for_composer_height() {
     enum ExpectedHeight {
         Exact(usize),
@@ -453,6 +519,38 @@ fn sync_view_heights_reserves_space_for_composer_height() {
 #[test]
 fn composer_prompt_line_count_uses_display_width_for_wide_chars() {
     assert_eq!(composer_prompt_line_count("漢字仮", 4), 2);
+}
+
+#[test]
+fn composer_prompt_line_count_matches_prefixed_multiline_rendering() {
+    let mut state = state_with_message();
+    state.start_composer();
+    for ch in "a\nbbbb".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let rendered = line_texts_from_ratatui(&composer_lines(&state, 5));
+
+    assert_eq!(rendered, vec!["> a", "  bbb", "b"]);
+    assert_eq!(composer_prompt_line_count(state.composer_input(), 5), 3);
+    assert_eq!(composer_content_line_count(&state, 5), 3);
+}
+
+#[test]
+fn composer_lines_show_saved_draft_when_not_composing() {
+    let mut state = state_with_message();
+    state.start_composer();
+    for ch in "draft".chars() {
+        state.push_composer_char(ch);
+    }
+
+    state.close_composer();
+
+    assert_eq!(composer_text(&state, 80), "> draft");
+    assert_eq!(
+        line_texts_from_ratatui(&composer_lines(&state, 80)),
+        vec!["> draft"]
+    );
 }
 
 #[test]
@@ -2073,7 +2171,7 @@ fn message_content_highlights_current_user_mentions() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["oo neo 00:00", "   hello @server alias", ""]
+        vec!["  oooo  neo 00:00", "  oooo  hello @server alias", ""]
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@server alias");
     assert_eq!(
@@ -2108,7 +2206,7 @@ fn message_content_highlights_other_user_mentions_with_softer_color() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["oo neo 00:00", "   hello @alice", ""]
+        vec!["  oooo  neo 00:00", "  oooo  hello @alice", ""]
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@alice");
     assert_eq!(
@@ -2144,7 +2242,7 @@ fn message_content_highlights_everyone_mentions_for_current_user() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["oo neo 00:00", "   ping @everyone", ""]
+        vec!["  oooo  neo 00:00", "  oooo  ping @everyone", ""]
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@everyone");
     assert_eq!(
@@ -2176,7 +2274,7 @@ fn message_content_highlights_mixed_everyone_and_direct_mentions_in_order() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["oo neo 00:00", "   @everyone hello @neo", ""]
+        vec!["  oooo  neo 00:00", "  oooo  @everyone hello @neo", ""]
     );
     assert_eq!(lines[1].spans[1].content.as_ref(), "@everyone");
     assert_eq!(lines[1].spans[3].content.as_ref(), "@neo");
@@ -2212,7 +2310,7 @@ fn message_content_highlights_here_mentions_for_current_user() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["oo neo 00:00", "   ping @here", ""]
+        vec!["  oooo  neo 00:00", "  oooo  ping @here", ""]
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@here");
     assert_eq!(
@@ -2239,7 +2337,7 @@ fn message_content_highlights_role_mentions_with_role_name() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["oo neo 00:00", "   hello @moderators", ""]
+        vec!["  oooo  neo 00:00", "  oooo  hello @moderators", ""]
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@moderators");
     assert_eq!(
@@ -2282,7 +2380,7 @@ fn mention_like_display_name_does_not_duplicate_highlight_spans() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["oo neo 00:00", "   hello @everyone", ""]
+        vec!["  oooo  neo 00:00", "  oooo  hello @everyone", ""]
     );
     assert_eq!(lines[1].spans.len(), 3);
     assert_eq!(lines[1].spans[2].content.as_ref(), "@everyone");
@@ -2387,9 +2485,10 @@ fn boost_message_types_use_discord_like_copy() {
 fn thread_created_message_uses_cached_thread_details() {
     let mut message = message_with_content(Some("release notes".to_owned()));
     message.message_kind = MessageKind::new(18);
-    message.id = snowflake_for_unix_ms(current_unix_millis().saturating_sub(10 * 60 * 1000));
+    message.id =
+        test_message_id_for_unix_millis(current_unix_millis().saturating_sub(10 * 60 * 1000));
     let latest_thread_message_id =
-        snowflake_for_unix_ms(current_unix_millis().saturating_sub(2 * 60 * 1000));
+        test_message_id_for_unix_millis(current_unix_millis().saturating_sub(2 * 60 * 1000));
     let mut state = DashboardState::new();
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         guild_id: Some(Id::new(1)),
@@ -2426,8 +2525,9 @@ fn thread_created_message_uses_cached_thread_message_when_last_id_missing() {
     let now = current_unix_millis();
     let mut message = message_with_content(Some("release notes".to_owned()));
     message.message_kind = MessageKind::new(18);
-    message.id = snowflake_for_unix_ms(now.saturating_sub(10 * 60 * 1000));
-    let latest_thread_message_id = snowflake_for_unix_ms(now.saturating_sub(2 * 60 * 1000));
+    message.id = test_message_id_for_unix_millis(now.saturating_sub(10 * 60 * 1000));
+    let latest_thread_message_id =
+        test_message_id_for_unix_millis(now.saturating_sub(2 * 60 * 1000));
     let mut state = DashboardState::new();
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         guild_id: Some(Id::new(1)),
@@ -2476,7 +2576,8 @@ fn thread_created_message_uses_cached_thread_message_when_last_id_missing() {
 fn thread_created_message_falls_back_to_system_message_time() {
     let mut message = message_with_content(Some("release notes".to_owned()));
     message.message_kind = MessageKind::new(18);
-    message.id = snowflake_for_unix_ms(current_unix_millis().saturating_sub(2 * 60 * 1000));
+    message.id =
+        test_message_id_for_unix_millis(current_unix_millis().saturating_sub(2 * 60 * 1000));
     let mut state = DashboardState::new();
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         guild_id: Some(Id::new(1)),
@@ -2506,7 +2607,8 @@ fn thread_created_message_falls_back_to_system_message_time() {
 fn thread_created_message_keeps_archived_and_locked_metadata() {
     let mut message = message_with_content(Some("release notes".to_owned()));
     message.message_kind = MessageKind::new(18);
-    message.id = snowflake_for_unix_ms(current_unix_millis().saturating_sub(2 * 60 * 1000));
+    message.id =
+        test_message_id_for_unix_millis(current_unix_millis().saturating_sub(2 * 60 * 1000));
     let mut state = DashboardState::new();
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         guild_id: Some(Id::new(1)),
@@ -3657,7 +3759,7 @@ fn message_viewport_lines_put_reactions_below_image_preview_rows() {
     );
 
     assert_eq!(lines.len(), 8);
-    assert_eq!(line_texts_from_ratatui(&lines)[6], "   [👍 3]");
+    assert_eq!(line_texts_from_ratatui(&lines)[6], "        [👍 3]");
 }
 
 #[test]
@@ -3677,17 +3779,17 @@ fn message_viewport_lines_group_consecutive_messages_by_author() {
     let texts = line_texts_from_ratatui(&lines);
 
     assert_eq!(texts.iter().filter(|text| text.contains("neo")).count(), 1);
-    assert_eq!(texts[2], "   hello");
-    assert_eq!(texts[3], "   follow-up");
+    assert_eq!(texts[2], "  oooo  hello");
+    assert_eq!(texts[3], "        follow-up");
 }
 
 #[test]
 fn message_viewport_lines_start_new_author_group_after_time_gap() {
     let base = 1_743_465_600_000;
-    let mut state = state_with_message_id(snowflake_for_unix_ms(base), "hello");
+    let mut state = state_with_message_id(test_message_id_for_unix_millis(base), "hello");
     push_message_with_id(
         &mut state,
-        snowflake_for_unix_ms(base + 7 * 60 * 1000),
+        test_message_id_for_unix_millis(base + 7 * 60 * 1000),
         "later follow-up",
     );
     state.jump_top();
@@ -3707,7 +3809,7 @@ fn message_viewport_lines_start_new_author_group_after_time_gap() {
 }
 
 #[test]
-fn selected_grouped_continuation_uses_empty_top_border() {
+fn selected_grouped_continuation_shows_time_gutter() {
     let mut state = state_with_message();
     push_message(&mut state, 2, "follow-up");
     state.jump_top();
@@ -3722,10 +3824,9 @@ fn selected_grouped_continuation_uses_empty_top_border() {
     );
     let texts = line_texts_from_ratatui(&lines);
 
+    let sent_time = format_message_sent_time(Id::new(2));
     assert!(texts[3].starts_with("╭"));
-    assert!(!texts[3].contains("follow-up"));
-    assert!(texts[4].starts_with("│"));
-    assert!(texts[4].contains("follow-up"));
+    assert!(texts[4].starts_with(&format!("│ {sent_time} follow-up")));
 }
 
 #[test]
@@ -3770,9 +3871,9 @@ fn message_viewport_lines_keep_reactions_below_reacted_grouped_message() {
     );
     let texts = line_texts_from_ratatui(&lines);
 
-    assert_eq!(texts[2], "   hello");
-    assert_eq!(texts[3], "   [👍 1]");
-    assert_eq!(texts[4], "   follow-up");
+    assert_eq!(texts[2], "  oooo  hello");
+    assert_eq!(texts[3], "        [👍 1]");
+    assert_eq!(texts[4], "        follow-up");
 }
 
 #[test]
@@ -3780,7 +3881,7 @@ fn message_viewport_lines_reserve_bounded_rows_for_image_albums() {
     for (attachment_count, expected_lines, overflow_text) in [
         (3, 9, None),
         (4, 10, None),
-        (5, 12, Some("   +1 more images")),
+        (5, 12, Some("        +1 more images")),
     ] {
         let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
         message.attachments = image_attachments(attachment_count);
@@ -3814,7 +3915,7 @@ fn embed_image_preview_rows_continue_embed_gutter() {
         0,
     );
 
-    assert_eq!(line_texts_from_ratatui(&lines)[2], "     ▎ ");
+    assert_eq!(line_texts_from_ratatui(&lines)[2], "          ▎ ");
     assert_eq!(lines[2].spans[1].style.fg, Some(Color::Rgb(255, 0, 0)));
 }
 
@@ -3833,7 +3934,7 @@ fn text_only_message_item_has_header_and_content_rows() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["oo neo 00:00", "   look", ""]
+        vec!["  oooo  neo 00:00", "  oooo  look", ""]
     );
 }
 
@@ -3856,14 +3957,14 @@ fn message_item_lines_can_start_after_line_offset() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["   second", "   third", ""]
+        vec!["        second", "        third", ""]
     );
 }
 
 #[test]
 fn message_item_header_uses_display_width_for_wide_author() {
     let ascii = message_item_lines(
-        "bruised8".to_owned(),
+        "alice".to_owned(),
         message_author_style(None),
         "00:00".to_owned(),
         vec![MessageContentLine::plain("plain text".to_owned())],
@@ -3883,8 +3984,8 @@ fn message_item_header_uses_display_width_for_wide_author() {
         0,
     );
 
-    assert_eq!(line_texts_from_ratatui(&ascii)[0], "oo bruised8 00:00");
-    assert_eq!(line_texts_from_ratatui(&wide)[0], "oo 漢字名 00:00");
+    assert_eq!(line_texts_from_ratatui(&ascii)[0], "  oooo  alice 00:00");
+    assert_eq!(line_texts_from_ratatui(&wide)[0], "  oooo  漢字名 00:00");
 }
 
 #[test]
@@ -4052,14 +4153,9 @@ fn message_sent_time_formats_with_timezone_offset() {
     let kst = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("KST offset should be valid");
 
     assert_eq!(
-        format_unix_millis_with_offset(DISCORD_EPOCH_MILLIS, kst),
+        format_unix_millis_with_offset(discord_epoch_unix_millis(), kst),
         Some("09:00".to_owned())
     );
-}
-
-fn snowflake_for_unix_ms(unix_ms: u64) -> Id<MessageMarker> {
-    let raw = (unix_ms - DISCORD_EPOCH_MILLIS) << SNOWFLAKE_TIMESTAMP_SHIFT;
-    Id::new(raw.max(1))
 }
 
 fn current_unix_millis() -> u64 {
@@ -4075,8 +4171,8 @@ fn current_unix_millis() -> u64 {
 fn date_separator_appears_when_local_date_changes() {
     // 24h apart at noon UTC guarantees different local dates regardless of
     // the test runner's timezone.
-    let day_one = snowflake_for_unix_ms(1_743_465_600_000); // 2026-04-01 00:00:00 UTC + 12h ≈ noon
-    let day_two = snowflake_for_unix_ms(1_743_465_600_000 + 24 * 60 * 60 * 1000);
+    let day_one = test_message_id_for_unix_millis(1_743_465_600_000); // 2026-04-01 00:00:00 UTC + 12h ≈ noon
+    let day_two = test_message_id_for_unix_millis(1_743_465_600_000 + 24 * 60 * 60 * 1000);
 
     assert!(message_starts_new_day(day_one, None));
     assert!(!message_starts_new_day(day_one, Some(day_one)));
@@ -4085,7 +4181,7 @@ fn date_separator_appears_when_local_date_changes() {
 
 #[test]
 fn date_separator_line_centers_label_within_full_width() {
-    let id = snowflake_for_unix_ms(1_743_508_800_000); // arbitrary timestamp
+    let id = test_message_id_for_unix_millis(1_743_508_800_000); // arbitrary timestamp
     let line = date_separator_line(id, 30);
     let text = line
         .spans
@@ -4221,17 +4317,17 @@ fn message_viewport_lines_keep_rows_from_tall_following_message() {
     let visible_text = line_texts_from_ratatui(&visible_rows);
     let sent_time = format_message_sent_time(Id::new(1));
 
-    assert!(visible_text[0].starts_with("╭─oo "));
+    assert!(visible_text[0].starts_with("╭─oooo  "));
     assert!(visible_text[0].contains(&sent_time));
-    assert!(visible_text[1].contains("selected"));
+    assert!(visible_text[1].starts_with("│ oooo  selected"));
     assert!(visible_text[2].starts_with("╰"));
-    assert!(visible_text[3].starts_with("oo "));
+    assert!(visible_text[3].starts_with("  oooo  "));
     assert!(visible_text[3].ends_with(&sent_time));
     assert!(visible_text[4].ends_with("abcdefgh"));
 }
 
 #[test]
-fn selected_message_uses_border_without_background() {
+fn selected_author_group_keeps_avatar_body_inside_border() {
     let message = message_with_content(Some("abcdefghijkl".to_owned()));
     let messages = [&message];
 
@@ -4239,7 +4335,7 @@ fn selected_message_uses_border_without_background() {
         &messages,
         Some(0),
         &DashboardState::new(),
-        super::message_viewport_layout(5, 80, 80, 16, 3),
+        super::message_viewport_layout(20, 80, 80, 16, 3),
         &[],
     );
     let sent_time = format_message_sent_time(Id::new(1));
@@ -4247,14 +4343,13 @@ fn selected_message_uses_border_without_background() {
     let texts = line_texts_from_ratatui(&lines);
 
     assert_eq!(texts.len(), 3);
-    assert!(texts[0].starts_with(&format!("╭─oo neo {sent_time}")));
+    assert!(texts[0].starts_with("╭─oooo  neo "));
+    assert!(texts[0].contains(&sent_time));
     assert!(texts[0].ends_with("╮"));
-    assert!(texts[0].contains(" ─"));
-    assert!(texts[1].starts_with("│    abcdefghijkl"));
+    assert!(texts[1].starts_with("│ oooo  abcdefghijkl"));
     assert!(texts[1].ends_with(" │"));
     assert!(texts[2].starts_with("╰"));
     assert!(texts[2].ends_with("╯"));
-    assert!(texts.iter().all(|text| text.width() == 80));
     assert_eq!(lines[0].spans[0].style.fg, Some(SELECTED_MESSAGE_BORDER));
     assert_eq!(lines[1].spans[0].style.fg, Some(SELECTED_MESSAGE_BORDER));
     assert!(
@@ -4272,11 +4367,18 @@ fn selected_message_uses_border_without_background() {
 }
 
 #[test]
-fn selected_message_right_border_can_reserve_scrollbar_column() {
+fn selected_message_media_moves_inside_border() {
     let message = message_with_content(Some("a".repeat(73)));
     let messages = [&message];
 
-    let texts = line_texts_from_ratatui(&message_viewport_lines(
+    let unselected = line_texts_from_ratatui(&message_viewport_lines(
+        &messages,
+        None,
+        &DashboardState::new(),
+        super::message_viewport_layout(40, 80, selected_message_card_width(80, true), 16, 3),
+        &[],
+    ));
+    let selected = line_texts_from_ratatui(&message_viewport_lines(
         &messages,
         Some(0),
         &DashboardState::new(),
@@ -4284,18 +4386,24 @@ fn selected_message_right_border_can_reserve_scrollbar_column() {
         &[],
     ));
 
-    assert!(texts[0].starts_with("╭─oo"));
-    assert!(texts[0].ends_with("╮"));
-    assert!(texts[1].ends_with("│"));
-    assert!(texts[2].ends_with("│"));
-    assert!(texts[3].ends_with("╯"));
-    assert!(texts.iter().all(|text| text.width() == 79));
+    assert_eq!(selected_message_content_x_offset(true), 0);
+    let selected_content_col = selected[1]
+        .split('a')
+        .next()
+        .expect("selected line contains content")
+        .width();
+    let unselected_content_col = unselected[1]
+        .split('a')
+        .next()
+        .expect("unselected line contains content")
+        .width();
+    assert_eq!(selected_content_col, unselected_content_col);
 }
 
 #[test]
-fn selected_message_avatar_moves_inside_border() {
+fn selected_message_avatar_stays_in_fixed_gutter() {
     assert_eq!(selected_avatar_x_offset(Some(0), 0), 2);
-    assert_eq!(selected_avatar_x_offset(Some(1), 0), 0);
+    assert_eq!(selected_avatar_x_offset(Some(1), 0), 2);
 }
 
 #[test]
@@ -4313,7 +4421,7 @@ fn inline_image_preview_slot_follows_image_message_content() {
 
     assert_eq!(
         inline_image_preview_area(area, 2, 0, 77, 4, None),
-        Some(Rect::new(13, 8, 77, 4))
+        Some(Rect::new(18, 8, 72, 4))
     );
 }
 
@@ -4323,18 +4431,18 @@ fn embed_image_preview_area_leaves_room_for_gutter() {
 
     assert_eq!(
         inline_image_preview_area(area, 2, 0, 77, 4, Some(0xff0000)),
-        Some(Rect::new(17, 8, 73, 4))
+        Some(Rect::new(22, 8, 68, 4))
     );
 }
 
 #[test]
-fn selected_inline_image_preview_area_follows_bordered_message_content() {
+fn selected_inline_image_preview_area_keeps_fixed_content_column() {
     let area = Rect::new(10, 5, 80, 12);
     let selected_offset = selected_message_content_x_offset(true);
 
     assert_eq!(
         inline_image_preview_area(area, 2, selected_offset, 77, 4, None),
-        Some(Rect::new(15, 8, 75, 4))
+        Some(Rect::new(18, 8, 72, 4))
     );
 }
 
@@ -4353,7 +4461,7 @@ fn later_image_preview_slot_accounts_for_prior_preview_rows() {
     assert_eq!(row, 14);
     assert_eq!(
         inline_image_preview_area(area, row, 0, 77, 4, None),
-        Some(Rect::new(13, 20, 77, 3))
+        Some(Rect::new(18, 20, 72, 3))
     );
 }
 
@@ -4374,7 +4482,7 @@ fn second_inline_preview_slot_uses_album_column_offset() {
     assert_eq!(row, 3);
     assert_eq!(
         inline_image_preview_area(area, row, 8, 8, 3, None),
-        Some(Rect::new(21, 9, 8, 3))
+        Some(Rect::new(26, 9, 8, 3))
     );
 }
 
@@ -4410,7 +4518,7 @@ fn inline_image_preview_area_hides_preview_at_list_bottom() {
 
     assert_eq!(
         inline_image_preview_area(area, 3, 0, 77, 4, None),
-        Some(Rect::new(13, 9, 77, 2))
+        Some(Rect::new(18, 9, 72, 2))
     );
 }
 
@@ -4420,7 +4528,7 @@ fn inline_image_preview_area_clips_preview_at_list_top() {
 
     assert_eq!(
         inline_image_preview_area(area, -2, 0, 77, 4, None),
-        Some(Rect::new(13, 5, 77, 3))
+        Some(Rect::new(18, 5, 72, 3))
     );
 }
 
@@ -4481,7 +4589,7 @@ fn message_viewport_lines_render_overflow_marker_as_text_fallback() {
         &[],
     );
 
-    assert!(line_texts_from_ratatui(&lines).contains(&"   +2 more images".to_owned()));
+    assert!(line_texts_from_ratatui(&lines).contains(&"        +2 more images".to_owned()));
 }
 
 fn render_dashboard_dump(width: u16, height: u16, state: &mut DashboardState) -> Vec<String> {

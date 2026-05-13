@@ -138,6 +138,17 @@ impl DashboardState {
         self.reset_mention_picker_state();
     }
 
+    pub fn close_composer(&mut self) {
+        self.composer_active = false;
+        self.reset_mention_picker_state();
+    }
+
+    pub fn clear_composer_input(&mut self) {
+        self.composer_input.clear();
+        self.composer_cursor_byte_index = 0;
+        self.reset_mention_picker_state();
+    }
+
     pub fn push_composer_char(&mut self, value: char) {
         let mut text = String::new();
         text.push(value);

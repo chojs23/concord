@@ -149,22 +149,20 @@ pub(in crate::tui) fn visible_image_preview_targets(
 
         let line_offset = usize::from(message_index == 0) * state.message_line_scroll();
         let global_index = state.message_scroll().saturating_add(message_index);
-        let separator_lines = state.message_extra_top_lines(global_index);
-        let body_rows =
-            state.message_body_line_count_for_width_at(global_index, message, layout.content_width);
-        let base_rows =
-            state.message_base_line_count_for_width_at(global_index, message, layout.content_width);
-        let selected_extra_top = state.selected_message_extra_top_line_at(global_index);
-        let preview_rows_before_message = body_rows
-            .saturating_add(separator_lines)
-            .saturating_add(selected_extra_top);
-        let block_rows = base_rows
-            .saturating_add(separator_lines)
-            .saturating_add(selected_extra_top);
-
         let previews = message.inline_previews();
         let album =
             image_preview_album_layout(&previews, layout.preview_width, layout.max_preview_height);
+        let metrics = state.message_row_metrics_at_with_selected_bottom(
+            global_index,
+            message,
+            layout.content_width,
+            layout.preview_width,
+            layout.max_preview_height,
+            message_index == state.focused_message_selection().unwrap_or(usize::MAX),
+        );
+        let preview_rows_before_message = metrics
+            .body_top_offset()
+            .saturating_add(metrics.body_rows());
         let album_accent_color = (previews.len() == 1)
             .then(|| previews.first().and_then(|preview| preview.accent_color))
             .flatten();
@@ -203,17 +201,8 @@ pub(in crate::tui) fn visible_image_preview_targets(
             }
         }
 
-        rendered_rows = rendered_rows.saturating_add(
-            block_rows
-                .saturating_add(album.height)
-                .saturating_add(usize::from(album.overflow_count > 0))
-                .saturating_add(usize::from(
-                    message_index == state.focused_message_selection().unwrap_or(usize::MAX)
-                        && !state.message_has_bottom_gap_after(global_index),
-                ))
-                .saturating_add(state.message_bottom_gap_after(global_index))
-                .saturating_sub(line_offset),
-        );
+        rendered_rows =
+            rendered_rows.saturating_add(metrics.visible_rows_after_scroll(line_offset));
     }
 
     targets
@@ -471,13 +460,16 @@ pub(in crate::tui) fn visible_avatar_targets(
 
         let line_offset = usize::from(rendered_rows == 0) * state.message_line_scroll();
         let global_index = state.message_scroll().saturating_add(local_index);
-        let separator_lines = state.message_extra_top_lines(global_index);
-        let body_base_rows =
-            state.message_base_line_count_for_width_at(global_index, message, layout.content_width);
-        let selected_extra_top = state.selected_message_extra_top_line_at(global_index);
-        let block_rows = body_base_rows + separator_lines + selected_extra_top;
+        let metrics = state.message_row_metrics_at_with_selected_bottom(
+            global_index,
+            message,
+            layout.content_width,
+            layout.preview_width,
+            layout.max_preview_height,
+            local_index == state.focused_message_selection().unwrap_or(usize::MAX),
+        );
         let message_block_top = rendered_rows as isize - line_offset as isize;
-        let body_top = message_block_top + separator_lines as isize + selected_extra_top as isize;
+        let body_top = message_block_top + metrics.body_top_offset() as isize;
         let avatar_bottom = body_top.saturating_add(AVATAR_PREVIEW_HEIGHT as isize);
         let visible_top = body_top.max(0);
         let visible_bottom = avatar_bottom.min(layout.list_height as isize);
@@ -493,22 +485,8 @@ pub(in crate::tui) fn visible_avatar_targets(
             });
         }
 
-        let previews = message.inline_previews();
-        let album =
-            image_preview_album_layout(&previews, layout.preview_width, layout.max_preview_height);
-        let preview_height = album
-            .height
-            .saturating_add(usize::from(album.overflow_count > 0));
-        rendered_rows = rendered_rows.saturating_add(
-            block_rows
-                .saturating_add(preview_height)
-                .saturating_add(usize::from(
-                    local_index == state.focused_message_selection().unwrap_or(usize::MAX)
-                        && !state.message_has_bottom_gap_after(global_index),
-                ))
-                .saturating_add(state.message_bottom_gap_after(global_index))
-                .saturating_sub(line_offset),
-        );
+        rendered_rows =
+            rendered_rows.saturating_add(metrics.visible_rows_after_scroll(line_offset));
     }
 
     targets

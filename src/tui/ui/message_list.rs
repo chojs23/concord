@@ -1,6 +1,9 @@
 use super::forum;
 use super::panes::{render_composer, render_composer_emoji_picker, render_composer_mention_picker};
 use super::*;
+use crate::tui::message_time::{
+    format_message_local_time, message_local_date, message_local_datetime,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct InlinePreviewSpacer {
@@ -20,12 +23,6 @@ struct MessageItemLinesInput<'a> {
     preview_spacers: &'a [InlinePreviewSpacer],
     bottom_gap: bool,
     line_offset: usize,
-}
-
-#[derive(Clone, Copy)]
-enum SelectedMessageLineKind {
-    Top,
-    Body,
 }
 
 pub(super) fn render_messages(
@@ -314,10 +311,11 @@ fn unread_banner_line(left: String, right: &str, width: usize, style: Style) -> 
 }
 
 fn format_unread_banner_since(message_id: Id<MessageMarker>) -> Option<String> {
-    let unix_millis = (message_id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS;
-    let unix_millis = i64::try_from(unix_millis).ok()?;
-    let dt = DateTime::from_timestamp_millis(unix_millis)?.with_timezone(&Local);
-    Some(dt.format("%Y-%m-%d %H:%M").to_string())
+    Some(
+        message_local_datetime(message_id)?
+            .format("%Y-%m-%d %H:%M")
+            .to_string(),
+    )
 }
 
 fn render_inline_reaction_emojis(
@@ -351,27 +349,24 @@ fn render_inline_reaction_emojis(
             0
         };
         let global_index = state.message_scroll().saturating_add(index);
-        let separator_lines = state.message_extra_top_lines(global_index) as isize;
-        let body_rows =
-            state.message_body_line_count_for_width_at(global_index, message, content_width)
-                as isize;
-        let total_base_rows =
-            state.message_base_line_count_for_width_at(global_index, message, content_width)
-                as isize;
-        let block_rows = total_base_rows + separator_lines;
-        let preview_height = total_inline_preview_height_for_message(
+        let preview_width = if state.show_images() {
+            inline_image_preview_width(list)
+        } else {
+            0
+        };
+        let max_preview_height = if state.show_images() {
+            inline_image_preview_height(list, true)
+        } else {
+            0
+        };
+        let metrics = state.message_row_metrics_at_with_selected_bottom(
+            global_index,
             message,
-            if state.show_images() {
-                inline_image_preview_width(list)
-            } else {
-                0
-            },
-            if state.show_images() {
-                inline_image_preview_height(list, true)
-            } else {
-                0
-            },
-        ) as isize;
+            content_width,
+            preview_width,
+            max_preview_height,
+            selected == Some(index),
+        );
 
         let layout = lay_out_reaction_chips_with_custom_emoji_images(
             &message.reactions,
@@ -384,10 +379,7 @@ fn render_inline_reaction_emojis(
             // reaction strip begins at:
             //     body_top + body_rows + preview_height
             let message_top = rendered_rows - line_offset;
-            let body_top = message_top
-                + separator_lines
-                + state.selected_message_extra_top_line_at(global_index) as isize;
-            let reaction_strip_top = body_top + body_rows + preview_height;
+            let reaction_strip_top = message_top + metrics.reaction_top_offset() as isize;
 
             for slot in layout.slots {
                 let row_in_list = reaction_strip_top + slot.line as isize;
@@ -423,16 +415,8 @@ fn render_inline_reaction_emojis(
             }
         }
 
-        rendered_rows = rendered_rows.saturating_add(
-            (block_rows
-                + preview_height
-                + state.selected_message_extra_top_line_at(global_index) as isize
-                + usize::from(
-                    selected == Some(index) && !state.message_has_bottom_gap_after(global_index),
-                ) as isize
-                + state.message_bottom_gap_after(global_index) as isize)
-                - line_offset,
-        );
+        rendered_rows = rendered_rows
+            .saturating_add(metrics.visible_rows_after_scroll(line_offset as usize) as isize);
     }
 }
 
@@ -467,11 +451,24 @@ fn render_inline_message_body_emojis(
             0
         };
         let global_index = state.message_scroll().saturating_add(index);
-        let separator_lines = state.message_extra_top_lines(global_index) as isize;
+        let metrics = state.message_row_metrics_at_with_selected_bottom(
+            global_index,
+            message,
+            content_width,
+            if state.show_images() {
+                inline_image_preview_width(list)
+            } else {
+                0
+            },
+            if state.show_images() {
+                inline_image_preview_height(list, true)
+            } else {
+                0
+            },
+            selected == Some(index),
+        );
         let message_top = rendered_rows - line_offset;
-        let body_top = message_top
-            + separator_lines
-            + state.selected_message_extra_top_line_at(global_index) as isize;
+        let body_top = message_top + metrics.body_top_offset() as isize;
 
         let loaded_custom_emoji_urls = loaded_custom_emoji_urls(emoji_images);
         let body_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
@@ -480,8 +477,6 @@ fn render_inline_message_body_emojis(
             content_width.max(8),
             &loaded_custom_emoji_urls,
         );
-        let body_base_rows =
-            state.message_header_line_count_at(global_index) as isize + body_lines.len() as isize;
         for (line_idx, line) in body_lines.iter().enumerate() {
             if line.image_slots.is_empty() {
                 continue;
@@ -522,30 +517,8 @@ fn render_inline_message_body_emojis(
             }
         }
 
-        let preview_height = total_inline_preview_height_for_message(
-            message,
-            if state.show_images() {
-                inline_image_preview_width(list)
-            } else {
-                0
-            },
-            if state.show_images() {
-                inline_image_preview_height(list, true)
-            } else {
-                0
-            },
-        ) as isize;
-        let block_rows = body_base_rows + separator_lines;
-        rendered_rows = rendered_rows.saturating_add(
-            (block_rows
-                + preview_height
-                + state.selected_message_extra_top_line_at(global_index) as isize
-                + usize::from(
-                    selected == Some(index) && !state.message_has_bottom_gap_after(global_index),
-                ) as isize
-                + state.message_bottom_gap_after(global_index) as isize)
-                - line_offset,
-        );
+        rendered_rows = rendered_rows
+            .saturating_add(metrics.visible_rows_after_scroll(line_offset as usize) as isize);
     }
 }
 
@@ -569,11 +542,16 @@ pub(super) fn message_body_custom_emoji_rows(
             0
         };
         let global_index = state.message_scroll().saturating_add(index);
-        let separator_lines = state.message_extra_top_lines(global_index) as isize;
+        let metrics = state.message_row_metrics_at_with_selected_bottom(
+            global_index,
+            message,
+            content_width,
+            preview_width,
+            max_preview_height,
+            selected == Some(index),
+        );
         let message_top = rendered_rows - line_offset;
-        let body_top = message_top
-            + separator_lines
-            + state.selected_message_extra_top_line_at(global_index) as isize;
+        let body_top = message_top + metrics.body_top_offset() as isize;
 
         let body_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
             message,
@@ -581,8 +559,6 @@ pub(super) fn message_body_custom_emoji_rows(
             content_width.max(8),
             loaded_custom_emoji_urls,
         );
-        let body_base_rows =
-            state.message_header_line_count_at(global_index) as isize + body_lines.len() as isize;
         for (line_idx, line) in body_lines.iter().enumerate() {
             if !line.image_slots.is_empty() {
                 rows.push(
@@ -593,20 +569,8 @@ pub(super) fn message_body_custom_emoji_rows(
             }
         }
 
-        let preview_height =
-            total_inline_preview_height_for_message(message, preview_width, max_preview_height)
-                as isize;
-        let block_rows = body_base_rows + separator_lines;
-        rendered_rows = rendered_rows.saturating_add(
-            (block_rows
-                + preview_height
-                + state.selected_message_extra_top_line_at(global_index) as isize
-                + usize::from(
-                    selected == Some(index) && !state.message_has_bottom_gap_after(global_index),
-                ) as isize
-                + state.message_bottom_gap_after(global_index) as isize)
-                - line_offset,
-        );
+        rendered_rows = rendered_rows
+            .saturating_add(metrics.visible_rows_after_scroll(line_offset as usize) as isize);
     }
 
     rows
@@ -702,11 +666,7 @@ pub(super) fn message_viewport_lines(
         let separator_lines = top_lines.len();
         let line_offset = usize::from(index == 0) * state.message_line_scroll();
         let body_skip = line_offset.saturating_sub(separator_lines);
-        let item_content_width = if selected == Some(index) {
-            selected_message_content_width(layout.selected_card_width)
-        } else {
-            layout.content_width
-        };
+        let item_content_width = layout.content_width;
         let selected_grouped_continuation = selected == Some(index) && !show_header;
         let item_line_offset = if selected_grouped_continuation {
             body_skip.saturating_sub(1)
@@ -726,10 +686,11 @@ pub(super) fn message_viewport_lines(
             &loaded_custom_emoji_urls,
         );
 
+        let sent_time = format_message_sent_time(message.id);
         let item_lines = message_item_lines_with_previews(MessageItemLinesInput {
             author,
             author_style,
-            sent_time: format_message_sent_time(message.id),
+            sent_time: sent_time.clone(),
             show_header,
             content,
             reactions,
@@ -741,7 +702,8 @@ pub(super) fn message_viewport_lines(
         if selected == Some(index) {
             lines.extend(selected_message_lines(
                 item_lines,
-                selected_message_card_inner_width(layout.selected_card_width),
+                &sent_time,
+                layout.selected_card_width,
                 body_skip == 0,
                 bottom_gap,
                 show_header,
@@ -833,8 +795,12 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
     } else {
         Vec::new()
     };
-    lines.extend(content.into_iter().map(|line| {
-        let mut spans = vec![message_avatar_spacer_span()];
+    lines.extend(content.into_iter().enumerate().map(|(index, line)| {
+        let mut spans = vec![if show_header && index == 0 {
+            message_avatar_span()
+        } else {
+            message_avatar_spacer_span()
+        }];
         spans.extend(line.spans());
         Line::from(spans)
     }));
@@ -884,8 +850,15 @@ pub(super) fn message_avatar_area(
 }
 
 fn message_avatar_span() -> Span<'static> {
+    let prefix = " ".repeat(MESSAGE_SELECTION_PREFIX_WIDTH as usize);
+    let padding = (MESSAGE_AVATAR_OFFSET as usize)
+        .saturating_sub(MESSAGE_SELECTION_PREFIX_WIDTH as usize)
+        .saturating_sub(MESSAGE_AVATAR_PLACEHOLDER.width());
     Span::styled(
-        format!("{MESSAGE_AVATAR_PLACEHOLDER} "),
+        format!(
+            "{prefix}{MESSAGE_AVATAR_PLACEHOLDER}{}",
+            " ".repeat(padding)
+        ),
         Style::default().fg(DIM),
     )
 }
@@ -896,105 +869,129 @@ fn message_avatar_spacer_span() -> Span<'static> {
 
 fn selected_message_lines(
     lines: Vec<Line<'static>>,
-    inner_width: usize,
+    sent_time: &str,
+    card_width: usize,
     top_visible: bool,
     has_bottom_gap: bool,
     has_header: bool,
 ) -> Vec<Line<'static>> {
     let last_index = lines.len().saturating_sub(1);
+    let mut stamped = false;
     let mut selected_lines = Vec::new();
     if top_visible && !has_header {
-        selected_lines.push(selected_message_empty_top_line(inner_width));
+        selected_lines.push(selected_message_empty_top_line(card_width));
     }
     selected_lines.extend(lines.into_iter().enumerate().map(|(index, line)| {
         if has_bottom_gap && index == last_index {
-            selected_message_bottom_line(inner_width)
-        } else if index == 0 && top_visible && has_header {
-            selected_message_content_line(line, inner_width, SelectedMessageLineKind::Top)
+            selected_message_bottom_line(card_width)
         } else {
-            selected_message_content_line(line, inner_width, SelectedMessageLineKind::Body)
+            let show_time = !stamped && !has_header && line_has_gutter(&line);
+            if show_time {
+                stamped = true;
+            }
+            selected_message_content_line(
+                line,
+                card_width,
+                index == 0 && top_visible && has_header,
+                show_time.then_some(sent_time),
+            )
         }
     }));
     if !has_bottom_gap {
-        selected_lines.push(selected_message_bottom_line(inner_width));
+        selected_lines.push(selected_message_bottom_line(card_width));
     }
     selected_lines
 }
 
-fn selected_message_content_line(
-    line: Line<'static>,
-    inner_width: usize,
-    kind: SelectedMessageLineKind,
-) -> Line<'static> {
-    if matches!(kind, SelectedMessageLineKind::Top) {
-        return selected_message_top_line(line, inner_width);
-    }
-
-    let inner_width = inner_width.max(1);
-    let used_width = line
-        .spans
-        .iter()
-        .map(|span| span.content.width())
-        .sum::<usize>();
-    let padding = inner_width.saturating_sub(used_width);
-    let border_style = selected_message_border_style();
-    let mut spans = vec![Span::styled("│ ", border_style)];
-    spans.extend(line.spans);
-    spans.push(Span::raw(" ".repeat(padding)));
-    spans.push(Span::styled(" │", border_style));
-    Line::from(spans)
+fn line_has_gutter(line: &Line<'_>) -> bool {
+    line.spans
+        .first()
+        .is_some_and(|span| span.content.width() == MESSAGE_AVATAR_OFFSET as usize)
 }
 
-fn selected_message_top_line(line: Line<'static>, inner_width: usize) -> Line<'static> {
-    const TOP_HEADER_LEFT_FILL: usize = 1;
+fn selected_time_gutter_span(sent_time: &str) -> Span<'static> {
+    let gutter_width =
+        (MESSAGE_AVATAR_OFFSET as usize).saturating_sub(MESSAGE_SELECTION_PREFIX_WIDTH as usize);
+    let time = truncate_display_width(sent_time, gutter_width);
+    let padding = gutter_width.saturating_sub(time.width());
+    Span::styled(
+        format!("{time}{}", " ".repeat(padding)),
+        Style::default().fg(DIM),
+    )
+}
 
-    let border_style = selected_message_border_style();
-    let header_width = line
-        .spans
-        .iter()
-        .map(|span| span.content.width())
-        .sum::<usize>();
-    let right_gap = usize::from(
-        TOP_HEADER_LEFT_FILL
-            .saturating_add(header_width)
-            .saturating_add(1)
-            <= inner_width.saturating_add(2),
-    );
-    let right_fill_width = inner_width
-        .saturating_add(2)
-        .saturating_sub(TOP_HEADER_LEFT_FILL)
-        .saturating_sub(header_width)
-        .saturating_sub(right_gap);
-
-    let mut spans = vec![Span::styled(
-        format!("╭{}", "─".repeat(TOP_HEADER_LEFT_FILL)),
-        border_style,
-    )];
-    spans.extend(line.spans);
-    if right_gap > 0 {
-        spans.push(Span::styled(" ", border_style));
-    }
+fn selected_message_content_line(
+    line: Line<'static>,
+    card_width: usize,
+    top_line: bool,
+    sent_time: Option<&str>,
+) -> Line<'static> {
+    let mut spans = line.spans;
+    replace_selection_prefix(&mut spans, if top_line { "╭─" } else { "│ " }, sent_time);
+    let used_width = spans.iter().map(|span| span.content.width()).sum::<usize>();
+    let right_border = if top_line { "╮" } else { " │" };
+    let fill_char = if top_line { '─' } else { ' ' };
+    let right_border_width = right_border.width();
+    let padding = card_width
+        .saturating_sub(used_width)
+        .saturating_sub(right_border_width);
     spans.push(Span::styled(
-        format!("{}╮", "─".repeat(right_fill_width)),
-        border_style,
+        fill_char.to_string().repeat(padding),
+        selected_message_border_style(),
+    ));
+    spans.push(Span::styled(
+        right_border.to_owned(),
+        selected_message_border_style(),
     ));
     Line::from(spans)
 }
 
-fn selected_message_empty_top_line(inner_width: usize) -> Line<'static> {
-    let card_width = inner_width.saturating_add(4).max(4);
+fn selected_message_empty_top_line(card_width: usize) -> Line<'static> {
     Line::from(Span::styled(
         format!("╭{}╮", "─".repeat(card_width.saturating_sub(2))),
         selected_message_border_style(),
     ))
 }
 
-fn selected_message_bottom_line(inner_width: usize) -> Line<'static> {
-    let card_width = inner_width.saturating_add(4).max(4);
+fn selected_message_bottom_line(card_width: usize) -> Line<'static> {
     Line::from(Span::styled(
         format!("╰{}╯", "─".repeat(card_width.saturating_sub(2))),
         selected_message_border_style(),
     ))
+}
+
+fn replace_selection_prefix(
+    spans: &mut Vec<Span<'static>>,
+    replacement: &str,
+    sent_time: Option<&str>,
+) {
+    if spans.first().is_some_and(|span| {
+        span.content.width() >= MESSAGE_SELECTION_PREFIX_WIDTH as usize
+            && span
+                .content
+                .chars()
+                .take(MESSAGE_SELECTION_PREFIX_WIDTH as usize)
+                .all(|ch| ch == ' ')
+    }) {
+        let original = spans.remove(0);
+        let remaining = if let Some(time) = sent_time {
+            selected_time_gutter_span(time)
+        } else {
+            Span::styled(
+                original
+                    .content
+                    .chars()
+                    .skip(MESSAGE_SELECTION_PREFIX_WIDTH as usize)
+                    .collect::<String>(),
+                original.style,
+            )
+        };
+        spans.insert(0, remaining);
+    }
+    spans.insert(
+        0,
+        Span::styled(replacement.to_owned(), selected_message_border_style()),
+    );
 }
 
 fn selected_message_border_style() -> Style {
@@ -1004,11 +1001,8 @@ fn selected_message_border_style() -> Style {
 }
 
 pub(super) fn selected_message_content_x_offset(selected: bool) -> u16 {
-    if selected {
-        SELECTED_MESSAGE_CONTENT_OFFSET
-    } else {
-        0
-    }
+    let _ = selected;
+    0
 }
 
 fn loaded_custom_emoji_urls(emoji_images: &[EmojiImage<'_>]) -> Vec<String> {
@@ -1016,27 +1010,15 @@ fn loaded_custom_emoji_urls(emoji_images: &[EmojiImage<'_>]) -> Vec<String> {
 }
 
 pub(super) fn selected_avatar_x_offset(selected_body_top: Option<isize>, avatar_row: isize) -> u16 {
-    if selected_body_top.is_some_and(|row| avatar_row == row.max(0)) {
-        SELECTED_MESSAGE_CONTENT_OFFSET
-    } else {
-        0
-    }
+    let _ = selected_body_top;
+    let _ = avatar_row;
+    MESSAGE_SELECTION_PREFIX_WIDTH
 }
 
 pub(super) fn selected_message_card_width(list_width: usize, scrollbar_visible: bool) -> usize {
     list_width
         .saturating_sub(usize::from(scrollbar_visible))
         .max(4)
-}
-
-fn selected_message_content_width(card_width: usize) -> usize {
-    selected_message_card_inner_width(card_width)
-        .saturating_sub(MESSAGE_AVATAR_OFFSET as usize)
-        .max(8)
-}
-
-fn selected_message_card_inner_width(list_width: usize) -> usize {
-    list_width.saturating_sub(4).max(1)
 }
 
 fn message_body_top_row(
@@ -1051,61 +1033,28 @@ fn message_body_top_row(
     for (index, message) in messages.iter().enumerate() {
         let line_offset = usize::from(index == 0) * state.message_line_scroll();
         let global_index = state.message_scroll().saturating_add(index);
-        let separator_lines = state.message_extra_top_lines(global_index);
-        let body_top = rendered_rows as isize - line_offset as isize
-            + separator_lines as isize
-            + state.selected_message_extra_top_line_at(global_index) as isize;
+        let metrics = state.message_row_metrics_at_with_selected_bottom(
+            global_index,
+            message,
+            content_width,
+            preview_width,
+            max_preview_height,
+            false,
+        );
+        let body_top =
+            rendered_rows as isize - line_offset as isize + metrics.body_top_offset() as isize;
         if index == local_index {
             return Some(body_top);
         }
 
-        let body_base_rows =
-            state.message_base_line_count_for_width_at(global_index, message, content_width);
-        let preview_height =
-            total_inline_preview_height_for_message(message, preview_width, max_preview_height);
-        rendered_rows = rendered_rows.saturating_add(
-            body_base_rows
-                .saturating_add(separator_lines)
-                .saturating_add(preview_height)
-                .saturating_add(state.selected_message_extra_top_line_at(global_index))
-                .saturating_add(usize::from(
-                    local_index == index && !state.message_has_bottom_gap_after(global_index),
-                ))
-                .saturating_add(state.message_bottom_gap_after(global_index))
-                .saturating_sub(line_offset),
-        );
+        rendered_rows =
+            rendered_rows.saturating_add(metrics.visible_rows_after_scroll(line_offset));
     }
     None
 }
 
 pub(super) fn format_message_sent_time(message_id: Id<MessageMarker>) -> String {
-    let unix_millis = (message_id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS;
-    format_unix_millis_local_time(unix_millis).unwrap_or_else(|| "--:--".to_owned())
-}
-
-fn format_unix_millis_local_time(unix_millis: u64) -> Option<String> {
-    let unix_millis = i64::try_from(unix_millis).ok()?;
-    let utc = DateTime::from_timestamp_millis(unix_millis)?;
-    Some(utc.with_timezone(&Local).format("%H:%M").to_string())
-}
-
-fn message_local_date(message_id: Id<MessageMarker>) -> NaiveDate {
-    let unix_millis = (message_id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS;
-    i64::try_from(unix_millis)
-        .ok()
-        .and_then(DateTime::from_timestamp_millis)
-        .map(|dt| dt.with_timezone(&Local).date_naive())
-        .unwrap_or_else(|| NaiveDate::from_ymd_opt(2015, 1, 1).expect("static date is valid"))
-}
-
-pub(crate) fn message_starts_new_day(
-    current: Id<MessageMarker>,
-    previous: Option<Id<MessageMarker>>,
-) -> bool {
-    match previous {
-        None => true,
-        Some(prev) => message_local_date(current) != message_local_date(prev),
-    }
+    format_message_local_time(message_id)
 }
 
 pub(super) fn date_separator_line(message_id: Id<MessageMarker>, width: usize) -> Line<'static> {
@@ -1162,16 +1111,6 @@ fn separator_line(label: &str, width: usize, style: Style) -> Line<'static> {
         format!("{}{}{}", "─".repeat(left), label, "─".repeat(right)),
         style,
     ))
-}
-
-#[cfg(test)]
-pub(super) fn format_unix_millis_with_offset(
-    unix_millis: u64,
-    offset: chrono::FixedOffset,
-) -> Option<String> {
-    let unix_millis = i64::try_from(unix_millis).ok()?;
-    let utc = DateTime::from_timestamp_millis(unix_millis)?;
-    Some(utc.with_timezone(&offset).format("%H:%M").to_string())
 }
 
 fn image_preview_spacer_lines(spacer: &InlinePreviewSpacer) -> Vec<Line<'static>> {
@@ -1271,23 +1210,33 @@ pub(super) fn inline_image_preview_row(
         .take(message_index)
         .map(|(local_idx, message)| {
             let global = state.message_scroll().saturating_add(local_idx);
-            state.message_base_line_count_for_width_at(global, message, content_width)
-                + state.message_extra_top_lines(global)
-                + state.selected_message_extra_top_line_at(global)
-                + state.message_bottom_gap_after(global)
-                + usize::from(
-                    state.focused_message_selection() == Some(local_idx)
-                        && !state.message_has_bottom_gap_after(global),
+            state
+                .message_row_metrics_at_with_selected_bottom(
+                    global,
+                    message,
+                    content_width,
+                    0,
+                    0,
+                    state.focused_message_selection() == Some(local_idx),
                 )
+                .total_rows()
         })
         .sum::<usize>();
     let current_rows = messages
         .get(message_index)
         .map(|message| {
             let global = state.message_scroll().saturating_add(message_index);
-            state.message_body_line_count_for_width_at(global, message, content_width)
-                + state.message_extra_top_lines(global)
-                + state.selected_message_extra_top_line_at(global)
+            let metrics = state.message_row_metrics_at_with_selected_bottom(
+                global,
+                message,
+                content_width,
+                0,
+                0,
+                false,
+            );
+            metrics
+                .body_top_offset()
+                .saturating_add(metrics.body_rows())
         })
         .unwrap_or(0);
     let row = prior_rows
