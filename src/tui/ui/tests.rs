@@ -21,13 +21,13 @@ use super::{
     format_message_sent_time, format_unix_millis_with_offset, forum_post_reaction_summary,
     forum_post_scrollbar_visible_count, forum_post_viewport_lines, inline_image_preview_area,
     inline_image_preview_row, member_display_label, member_name_style, message_action_menu_lines,
-    message_author_style, message_item_lines, message_starts_new_day, message_viewport_lines,
-    new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
-    primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
-    render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
-    selected_message_content_x_offset, sync_view_heights, user_profile_popup_has_avatar,
-    user_profile_popup_lines, user_profile_popup_lines_with_activities,
-    user_profile_popup_text_geometry,
+    message_author_style, message_body_custom_emoji_rows, message_item_lines,
+    message_starts_new_day, message_viewport_lines, new_messages_notice_line, options_popup_lines,
+    poll_vote_picker_lines, primary_activity_summary, reaction_users_popup_lines,
+    reaction_users_visible_line_count, render_channels, render_guilds, selected_avatar_x_offset,
+    selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
+    user_profile_popup_has_avatar, user_profile_popup_lines,
+    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
 };
 use crate::{
     config::DisplayOptions,
@@ -3630,6 +3630,121 @@ fn message_viewport_lines_put_reactions_below_image_preview_rows() {
 }
 
 #[test]
+fn message_viewport_lines_group_consecutive_messages_by_author() {
+    let mut state = state_with_message();
+    push_message(&mut state, 2, "follow-up");
+    state.jump_top();
+    let messages = state.messages();
+
+    let lines = message_viewport_lines(
+        &messages,
+        None,
+        &state,
+        super::message_viewport_layout(200, 80, 80, 16, 3),
+        &[],
+    );
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert_eq!(texts.iter().filter(|text| text.contains("neo")).count(), 1);
+    assert_eq!(texts[2], "   hello");
+    assert_eq!(texts[3], "   follow-up");
+}
+
+#[test]
+fn message_viewport_lines_start_new_author_group_after_time_gap() {
+    let base = 1_743_465_600_000;
+    let mut state = state_with_message_id(snowflake_for_unix_ms(base), "hello");
+    push_message_with_id(
+        &mut state,
+        snowflake_for_unix_ms(base + 7 * 60 * 1000),
+        "later follow-up",
+    );
+    state.jump_top();
+    let messages = state.messages();
+
+    let lines = message_viewport_lines(
+        &messages,
+        None,
+        &state,
+        super::message_viewport_layout(200, 80, 80, 16, 3),
+        &[],
+    );
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert_eq!(texts.iter().filter(|text| text.contains("neo")).count(), 2);
+    assert!(state.message_starts_author_group_at(1));
+}
+
+#[test]
+fn selected_grouped_continuation_uses_empty_top_border() {
+    let mut state = state_with_message();
+    push_message(&mut state, 2, "follow-up");
+    state.jump_top();
+    let messages = state.messages();
+
+    let lines = message_viewport_lines(
+        &messages,
+        Some(1),
+        &state,
+        super::message_viewport_layout(200, 80, 80, 16, 3),
+        &[],
+    );
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert!(texts[3].starts_with("╭"));
+    assert!(!texts[3].contains("follow-up"));
+    assert!(texts[4].starts_with("│"));
+    assert!(texts[4].contains("follow-up"));
+}
+
+#[test]
+fn grouped_continuation_custom_emoji_image_uses_body_row() {
+    let mut state = state_with_message();
+    push_message(&mut state, 2, "<:long_custom:42>text");
+    state.jump_top();
+    let messages = state.messages();
+    let rows = message_body_custom_emoji_rows(
+        &messages,
+        &state,
+        200,
+        None,
+        &["https://cdn.discordapp.com/emojis/42.png".to_owned()],
+        16,
+        3,
+    );
+
+    assert_eq!(rows, vec![3]);
+}
+
+#[test]
+fn message_viewport_lines_keep_reactions_below_reacted_grouped_message() {
+    let mut state = state_with_message();
+    state.push_event(AppEvent::MessageReactionAdd {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        user_id: Id::new(100),
+        emoji: ReactionEmoji::Unicode("👍".to_owned()),
+    });
+    push_message(&mut state, 2, "follow-up");
+    state.jump_top();
+    let messages = state.messages();
+
+    let lines = message_viewport_lines(
+        &messages,
+        None,
+        &state,
+        super::message_viewport_layout(200, 80, 80, 16, 3),
+        &[],
+    );
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert_eq!(texts[2], "   hello");
+    assert_eq!(texts[3], "   [👍 1]");
+    assert_eq!(texts[4], "   follow-up");
+}
+
+#[test]
 fn message_viewport_lines_reserve_bounded_rows_for_image_albums() {
     for (attachment_count, expected_lines, overflow_text) in [
         (3, 9, None),
@@ -4001,6 +4116,7 @@ fn render_messages_shows_new_messages_notice_after_viewport_scrolls_up() {
 
     state.scroll_message_viewport_up();
     state.scroll_message_viewport_up();
+    state.scroll_message_viewport_up();
     push_message(&mut state, 11, "new after viewport scroll");
 
     let dump = render_dashboard_dump(100, 24, &mut state);
@@ -4012,7 +4128,7 @@ fn render_messages_shows_new_messages_notice_after_viewport_scrolls_up() {
 fn new_messages_notice_does_not_reserve_message_list_height() {
     let area = Rect::new(0, 0, 100, 24);
     let mut state = state_with_message();
-    for id in 2..=10 {
+    for id in 2..=30 {
         push_message(&mut state, id, &format!("older {id}"));
     }
     state.focus_pane(FocusPane::Messages);
@@ -4021,7 +4137,11 @@ fn new_messages_notice_does_not_reserve_message_list_height() {
     let height_without_notice = state.message_view_height();
 
     state.scroll_message_viewport_up();
-    push_message(&mut state, 11, "first unread");
+    state.scroll_message_viewport_up();
+    state.scroll_message_viewport_up();
+    state.scroll_message_viewport_up();
+    state.scroll_message_viewport_up();
+    push_message(&mut state, 31, "first unread");
     sync_view_heights(area, &mut state);
 
     assert_eq!(state.new_messages_count(), 1);
@@ -4414,6 +4534,10 @@ fn youtube_embed() -> EmbedInfo {
 }
 
 fn state_with_message() -> DashboardState {
+    state_with_message_id(Id::new(1), "hello")
+}
+
+fn state_with_message_id(message_id: Id<MessageMarker>, content: &str) -> DashboardState {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
@@ -4450,7 +4574,7 @@ fn state_with_message() -> DashboardState {
     state.push_event(AppEvent::MessageCreate {
         guild_id: Some(guild_id),
         channel_id,
-        message_id: Id::new(1),
+        message_id,
         author_id: Id::new(99),
         author: "neo".to_owned(),
         author_avatar_url: None,
@@ -4459,7 +4583,7 @@ fn state_with_message() -> DashboardState {
         reference: None,
         reply: None,
         poll: None,
-        content: Some("hello".to_owned()),
+        content: Some(content.to_owned()),
         sticker_names: Vec::new(),
         mentions: Vec::new(),
         attachments: Vec::new(),
@@ -4612,10 +4736,14 @@ fn state_with_unread_direct_messages_with_loaded_unread_messages(count: u64) -> 
 }
 
 fn push_message(state: &mut DashboardState, message_id: u64, content: &str) {
+    push_message_with_id(state, Id::new(message_id), content);
+}
+
+fn push_message_with_id(state: &mut DashboardState, message_id: Id<MessageMarker>, content: &str) {
     state.push_event(AppEvent::MessageCreate {
         guild_id: Some(Id::new(1)),
         channel_id: Id::new(2),
-        message_id: Id::new(message_id),
+        message_id,
         author_id: Id::new(99),
         author: "neo".to_owned(),
         author_avatar_url: None,
