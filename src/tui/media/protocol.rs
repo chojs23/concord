@@ -4,7 +4,7 @@ use ratatui_image::{Resize, picker::Picker};
 
 use crate::logging;
 
-pub(super) const AVATAR_PREVIEW_WIDTH: u16 = 2;
+pub(super) const AVATAR_PREVIEW_WIDTH: u16 = 4;
 pub(super) const AVATAR_PREVIEW_HEIGHT: u16 = 2;
 pub(super) const PROFILE_POPUP_AVATAR_WIDTH: u16 = 8;
 pub(super) const PROFILE_POPUP_AVATAR_HEIGHT: u16 = 4;
