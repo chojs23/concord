@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::keybinding::Action;
 
 pub(in crate::tui::ui) fn render_keymap_popup(
     frame: &mut Frame,
@@ -17,8 +18,8 @@ pub(in crate::tui::ui) fn render_keymap_popup(
     let kb = state.key_bindings();
     let title = format!(
         "Default Keymaps  [{}/{}/Esc to close]",
-        kb.open_keymap.label(),
-        kb.quit.label(),
+        kb.label(Action::OpenKeymap),
+        kb.label(Action::Quit),
     );
     frame.render_widget(
         Paragraph::new(lines)
@@ -30,21 +31,21 @@ pub(in crate::tui::ui) fn render_keymap_popup(
 
 pub fn keymap_popup_lines(state: &DashboardState) -> Vec<Line<'static>> {
     let kb = state.key_bindings();
-    let move_down = kb.move_down.label();
-    let move_up = kb.move_up.label();
-    let jump_top = kb.jump_top.label();
-    let jump_bottom = kb.jump_bottom.label();
-    let half_page_down = kb.half_page_down.label();
-    let half_page_up = kb.half_page_up.label();
-    let scroll_pane_left = kb.scroll_pane_left.label();
-    let scroll_pane_right = kb.scroll_pane_right.label();
-    let quit = kb.quit.label();
-    let open_leader = kb.open_leader.label();
-    let open_composer = kb.open_composer.label();
-    let open_in_editor = kb.open_in_editor.label();
-    let scroll_viewport_down = kb.scroll_viewport_down.label();
-    let scroll_viewport_up = kb.scroll_viewport_up.label();
-    let open_keymap = kb.open_keymap.label();
+    let move_down = kb.label(Action::MoveDown);
+    let move_up = kb.label(Action::MoveUp);
+    let jump_top = kb.label(Action::JumpTop);
+    let jump_bottom = kb.label(Action::JumpBottom);
+    let half_page_down = kb.label(Action::HalfPageDown);
+    let half_page_up = kb.label(Action::HalfPageUp);
+    let scroll_pane_left = kb.label(Action::ScrollPaneLeft);
+    let scroll_pane_right = kb.label(Action::ScrollPaneRight);
+    let quit = kb.label(Action::Quit);
+    let open_leader = kb.label(Action::OpenLeader);
+    let open_composer = kb.label(Action::OpenComposer);
+    let open_in_editor = kb.label(Action::OpenInEditor);
+    let scroll_viewport_down = kb.label(Action::ScrollViewportDown);
+    let scroll_viewport_up = kb.label(Action::ScrollViewportUp);
+    let open_keymap = kb.label(Action::OpenKeymap);
 
     fn row(key: String, desc: &'static str) -> Line<'static> {
         Line::from(vec![

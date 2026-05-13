@@ -2,7 +2,6 @@ use super::activity::{ActivityLeading, build_activity_render};
 use super::message_list::render_image_preview;
 use super::*;
 use crate::discord::ActivityKind;
-use crate::tui::keybinding::Action;
 use ratatui::layout::Position;
 
 mod action_menu;
@@ -45,8 +44,6 @@ pub(super) use reactions::{
     filtered_emoji_reaction_picker_lines, reaction_users_popup_lines,
 };
 pub(super) use keymap::render_keymap_popup;
-#[cfg(test)]
-pub(super) use keymap::keymap_popup_lines;
 pub(super) use reactions::{render_emoji_reaction_picker, render_reaction_users_popup};
 
 fn truncate_line_to_display_width(line: Line<'static>, max_width: usize) -> Line<'static> {
