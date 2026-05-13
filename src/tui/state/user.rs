@@ -339,12 +339,10 @@ impl DashboardState {
             {
                 return;
             }
-        } else {
-            if self.discord.user_profile(user_id, None).is_some()
-                || !seen.insert((user_id, None))
-            {
-                return;
-            }
+        } else if self.discord.user_profile(user_id, None).is_some()
+            || !seen.insert((user_id, None))
+        {
+            return;
         }
         requests.push((user_id, guild_id));
     }

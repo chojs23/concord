@@ -1023,8 +1023,12 @@ pub(super) fn render_members(
                 member_name_style(member, state.member_role_color(member), is_selected);
 
             let display_name = state.member_display_name(member);
-            let display =
-                member_display_label(member, &display_name, state.member_horizontal_scroll(), max_name_width);
+            let display = member_display_label(
+                member,
+                &display_name,
+                state.member_horizontal_scroll(),
+                max_name_width,
+            );
             lines.push(Line::from(vec![
                 Span::styled(
                     format!(" {} ", presence_marker(member.status())),

@@ -1930,7 +1930,7 @@ fn reply_preview_reserves_connector_row_without_extra_type_label() {
         message_kind: MessageKind::new(19),
         reference: None,
         reply: Some(ReplyInfo {
-                author_id: None,
+            author_id: None,
             author: "casey".to_owned(),
             content: Some("looks good".to_owned()),
             sticker_names: Vec::new(),
@@ -2027,7 +2027,7 @@ fn thread_starter_message_reserves_system_card_rows() {
     let mut message = height_test_message("");
     message.message_kind = MessageKind::new(21);
     message.reply = Some(ReplyInfo {
-                author_id: None,
+        author_id: None,
         author: "alice".to_owned(),
         content: Some("original topic".to_owned()),
         sticker_names: Vec::new(),
@@ -2398,7 +2398,7 @@ fn push_reply_message_with_attachments(
             message_id: Some(Id::new(42)),
         }),
         reply: Some(ReplyInfo {
-                author_id: None,
+            author_id: None,
             author: "original".to_owned(),
             content: Some("original message".to_owned()),
             sticker_names: Vec::new(),
