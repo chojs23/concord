@@ -2,7 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
-## [unreleased]
+## [1.3.3] - 2026-05-13
+
+### Bug Fixes
+
+- Align composer cursor with manual text wrapping (#50) in [#50](https://github.com/chojs23/concord/pull/50) by @AnalogCyan
+- Fix composer multiline height wrapping to match rendered prefixes by @chojs23
+- Message action menu mouse hitbox geometry by @chojs23
+
+### Features
+
+- Group messages based on sender (#56) in [#56](https://github.com/chojs23/concord/pull/56) by @nexxai
+- Composer draft preservation (#61) in [#61](https://github.com/chojs23/concord/pull/61) by @chojs23
+- Add Discord permission gates for message moderation actions (#62) in [#62](https://github.com/chojs23/concord/pull/62) by @chojs23
+- Image viewer key helper by @chojs23
+- Make message rows with larger avatars and stable selected grouped timestamps (#63) by @chojs23
+
+### Refactor
+
+- Refactor message row layout into modules and shared metrics by @chojs23
+- Move forum-post viewport helpers by @chojs23
+- Split discord state domain by @chojs23
+- Split tui modules by @chojs23
+- Gateway parser and TUI popup modules by @chojs23
+
+
+### New Contributors
+
+- @AnalogCyan made their first contribution in [#50](https://github.com/chojs23/concord/pull/50)
+## [1.3.2] - 2026-05-12
 
 ### Bug Fixes
 
