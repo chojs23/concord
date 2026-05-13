@@ -710,12 +710,14 @@ pub(super) fn render_emoji_reaction_picker(
         Paragraph::new(emoji_reaction_picker_lines_with_custom_emoji_images(
             reactions,
             selected,
-            visible_items,
-            &ready_urls,
-            existing_reactions,
-            state.show_custom_emoji(),
-            filter,
-            usize::from(content.width),
+            EmojiReactionPickerRenderOptions {
+                max_visible_items: visible_items,
+                thumbnail_urls: &ready_urls,
+                existing_reactions,
+                show_custom_emoji: state.show_custom_emoji(),
+                filter,
+                max_width: usize::from(content.width),
+            },
         ))
         .block(block)
         .wrap(Wrap { trim: false }),
@@ -1497,12 +1499,14 @@ pub(super) fn emoji_reaction_picker_lines(
     emoji_reaction_picker_lines_with_custom_emoji_images(
         reactions,
         selected,
-        max_visible_items,
-        thumbnail_urls,
-        &[],
-        true,
-        None,
-        usize::MAX,
+        EmojiReactionPickerRenderOptions {
+            max_visible_items,
+            thumbnail_urls,
+            existing_reactions: &[],
+            show_custom_emoji: true,
+            filter: None,
+            max_width: usize::MAX,
+        },
     )
 }
 
@@ -1517,12 +1521,14 @@ pub(super) fn emoji_reaction_picker_lines_for_width(
     emoji_reaction_picker_lines_with_custom_emoji_images(
         reactions,
         selected,
-        max_visible_items,
-        thumbnail_urls,
-        &[],
-        true,
-        None,
-        width,
+        EmojiReactionPickerRenderOptions {
+            max_visible_items,
+            thumbnail_urls,
+            existing_reactions: &[],
+            show_custom_emoji: true,
+            filter: None,
+            max_width: width,
+        },
     )
 }
 
@@ -1537,12 +1543,14 @@ pub(super) fn emoji_reaction_picker_lines_with_existing(
     emoji_reaction_picker_lines_with_custom_emoji_images(
         reactions,
         selected,
-        max_visible_items,
-        thumbnail_urls,
-        existing_reactions,
-        true,
-        None,
-        usize::MAX,
+        EmojiReactionPickerRenderOptions {
+            max_visible_items,
+            thumbnail_urls,
+            existing_reactions,
+            show_custom_emoji: true,
+            filter: None,
+            max_width: usize::MAX,
+        },
     )
 }
 
@@ -1557,27 +1565,33 @@ pub(super) fn filtered_emoji_reaction_picker_lines(
     emoji_reaction_picker_lines_with_custom_emoji_images(
         reactions,
         selected,
-        max_visible_items,
-        thumbnail_urls,
-        &[],
-        true,
-        Some(filter),
-        usize::MAX,
+        EmojiReactionPickerRenderOptions {
+            max_visible_items,
+            thumbnail_urls,
+            existing_reactions: &[],
+            show_custom_emoji: true,
+            filter: Some(filter),
+            max_width: usize::MAX,
+        },
     )
+}
+
+struct EmojiReactionPickerRenderOptions<'a> {
+    max_visible_items: usize,
+    thumbnail_urls: &'a [String],
+    existing_reactions: &'a [crate::discord::ReactionEmoji],
+    show_custom_emoji: bool,
+    filter: Option<&'a str>,
+    max_width: usize,
 }
 
 fn emoji_reaction_picker_lines_with_custom_emoji_images(
     reactions: &[EmojiReactionItem],
     selected: usize,
-    max_visible_items: usize,
-    thumbnail_urls: &[String],
-    existing_reactions: &[crate::discord::ReactionEmoji],
-    show_custom_emoji: bool,
-    filter: Option<&str>,
-    max_width: usize,
+    options: EmojiReactionPickerRenderOptions<'_>,
 ) -> Vec<Line<'static>> {
     let selected = selected.min(reactions.len().saturating_sub(1));
-    let visible_items = max_visible_items.max(1).min(reactions.len().max(1));
+    let visible_items = options.max_visible_items.max(1).min(reactions.len().max(1));
     let visible_range =
         super::super::selection::visible_item_range(reactions.len(), selected, visible_items);
 
@@ -1589,7 +1603,7 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
             let marker = if index == selected { "› " } else { "  " };
             let shortcut = shortcut_prefix(emoji_reaction_shortcut(
                 reactions,
-                existing_reactions,
+                options.existing_reactions,
                 index,
             ));
             let mut style = Style::default();
@@ -1598,15 +1612,19 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
                     .bg(Color::Rgb(40, 45, 90))
                     .add_modifier(Modifier::BOLD);
             }
-            let thumbnail_ready = show_custom_emoji
+            let thumbnail_ready = options.show_custom_emoji
                 && reaction
                     .custom_image_url()
-                    .is_some_and(|url| thumbnail_urls.iter().any(|ready| ready == &url));
+                    .is_some_and(|url| options.thumbnail_urls.iter().any(|ready| ready == &url));
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
                 Span::styled(shortcut, Style::default().fg(DIM)),
                 Span::styled(
-                    format_emoji_reaction_item(reaction, thumbnail_ready, show_custom_emoji),
+                    format_emoji_reaction_item(
+                        reaction,
+                        thumbnail_ready,
+                        options.show_custom_emoji,
+                    ),
                     style,
                 ),
             ])
@@ -1620,7 +1638,7 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
         )));
     }
 
-    if let Some(filter) = filter {
+    if let Some(filter) = options.filter {
         lines.push(Line::from(vec![
             Span::styled("Filter ", Style::default().fg(DIM)),
             Span::styled(
@@ -1629,12 +1647,12 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
             ),
         ]));
     }
-    if max_width == usize::MAX {
+    if options.max_width == usize::MAX {
         lines
     } else {
         lines
             .into_iter()
-            .map(|line| truncate_line_to_display_width(line, max_width))
+            .map(|line| truncate_line_to_display_width(line, options.max_width))
             .collect()
     }
 }
