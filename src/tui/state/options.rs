@@ -1,4 +1,5 @@
 use crate::config::{DisplayOptions, ImagePreviewQualityPreset};
+use crate::tui::keybinding::ActiveKeyBindings;
 
 use super::{DashboardState, FocusPane, popups::OptionsPopupState};
 
@@ -21,6 +22,14 @@ impl DashboardState {
             display_options,
             ..Self::new()
         }
+    }
+
+    pub fn set_key_bindings(&mut self, key_bindings: ActiveKeyBindings) {
+        self.key_bindings = key_bindings;
+    }
+
+    pub fn key_bindings(&self) -> &ActiveKeyBindings {
+        &self.key_bindings
     }
 
     pub fn display_options(&self) -> DisplayOptions {

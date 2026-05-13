@@ -81,15 +81,101 @@ impl DisplayOptions {
     }
 }
 
+/// Raw key-binding strings from the config file, e.g. `"ctrl+e"`.
+///
+/// Each field accepts a key spec of the form `[modifier+]key` where modifier
+/// is one of `ctrl`, `alt`, `shift` and key is a single character, `space`,
+/// or a special name (`enter`, `esc`, `tab`, `f1`–`f12`, `pageup`, etc.).
+/// Unrecognised specs silently fall back to the built-in default.
+///
+/// Example `~/.config/concord/config.toml`:
+/// ```toml
+/// [keybindings]
+/// move_down       = "ctrl+n"
+/// move_up         = "ctrl+p"
+/// open_composer   = "a"
+/// ```
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct KeyBindingsConfig {
+    /// Open the current composer buffer in `$EDITOR`. Default: `ctrl+e`.
+    pub open_in_editor: String,
+    /// Quit the application. Default: `q`.
+    pub quit: String,
+    /// Open the message composer. Default: `i`.
+    pub open_composer: String,
+    /// Open the leader menu. Default: `space`.
+    pub open_leader: String,
+    /// Open the keybinding help popup. Default: `?`.
+    pub open_keymap: String,
+    /// Open the pane search/filter bar. Default: `/`.
+    pub pane_search: String,
+    /// Move selection down. Arrow-down always works as an alternate. Default: `j`.
+    pub move_down: String,
+    /// Move selection up. Arrow-up always works as an alternate. Default: `k`.
+    pub move_up: String,
+    /// Jump to the top of the list. Default: `g`.
+    pub jump_top: String,
+    /// Jump to the bottom of the list. Default: `shift+g` (G).
+    pub jump_bottom: String,
+    /// Scroll down by half a page. PageDown always works as an alternate. Default: `ctrl+d`.
+    pub half_page_down: String,
+    /// Scroll up by half a page. PageUp always works as an alternate. Default: `ctrl+u`.
+    pub half_page_up: String,
+    /// Scroll the message viewport down (Messages pane only). Default: `shift+j` (J).
+    pub scroll_viewport_down: String,
+    /// Scroll the message viewport up (Messages pane only). Default: `shift+k` (K).
+    pub scroll_viewport_up: String,
+    /// Scroll the focused pane horizontally left. Default: `shift+h` (H).
+    pub scroll_pane_left: String,
+    /// Scroll the focused pane horizontally right. Default: `shift+l` (L).
+    pub scroll_pane_right: String,
+}
+
+impl Default for KeyBindingsConfig {
+    fn default() -> Self {
+        Self {
+            open_in_editor: "ctrl+e".to_owned(),
+            quit: "q".to_owned(),
+            open_composer: "i".to_owned(),
+            open_leader: "space".to_owned(),
+            open_keymap: "?".to_owned(),
+            pane_search: "/".to_owned(),
+            move_down: "j".to_owned(),
+            move_up: "k".to_owned(),
+            jump_top: "g".to_owned(),
+            jump_bottom: "shift+g".to_owned(),
+            half_page_down: "ctrl+d".to_owned(),
+            half_page_up: "ctrl+u".to_owned(),
+            scroll_viewport_down: "shift+j".to_owned(),
+            scroll_viewport_up: "shift+k".to_owned(),
+            scroll_pane_left: "shift+h".to_owned(),
+            scroll_pane_right: "shift+l".to_owned(),
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct AppConfig {
     display: DisplayOptions,
+    keybindings: KeyBindingsConfig,
 }
 
 pub fn load_display_options() -> Result<DisplayOptions> {
     let path = config_path()?;
     load_display_options_from_path(&path)
+}
+
+pub fn load_key_bindings_config() -> Result<KeyBindingsConfig> {
+    let path = config_path()?;
+    match std::fs::read_to_string(&path) {
+        Ok(content) => Ok(toml::from_str::<AppConfig>(&content)?.keybindings),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(KeyBindingsConfig::default())
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// User-facing description of where config lives, e.g. for help text. Falls
@@ -121,7 +207,13 @@ fn save_display_options_to_path(path: &Path, options: &DisplayOptions) -> Result
         set_private_dir_permissions(parent)?;
     }
 
-    let config = AppConfig { display: *options };
+    // Load the existing config so other sections (e.g. [keybindings]) are
+    // preserved. Fall back to defaults when the file is missing or unparseable.
+    let mut config = match fs::read_to_string(path) {
+        Ok(content) => toml::from_str::<AppConfig>(&content).unwrap_or_default(),
+        Err(_) => AppConfig::default(),
+    };
+    config.display = *options;
     write_private_file(path, &toml::to_string_pretty(&config)?)
 }
 
@@ -185,8 +277,8 @@ mod tests {
     };
 
     use super::{
-        AppConfig, DisplayOptions, ImagePreviewQualityPreset, load_display_options_from_path,
-        save_display_options_to_path,
+        AppConfig, DisplayOptions, ImagePreviewQualityPreset, KeyBindingsConfig,
+        load_display_options_from_path, save_display_options_to_path,
     };
 
     #[test]
@@ -269,6 +361,54 @@ mod tests {
         let loaded = load_display_options_from_path(&path).expect("config should load");
 
         assert_eq!(loaded, options);
+        let _ = fs::remove_file(&path);
+        if let Some(parent) = path.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
+    }
+
+    #[test]
+    fn keybindings_default_to_ctrl_e() {
+        let config = KeyBindingsConfig::default();
+        assert_eq!(config.open_in_editor, "ctrl+e");
+    }
+
+    #[test]
+    fn keybindings_config_parses_from_toml() {
+        let toml = "[keybindings]\nopen_in_editor = \"ctrl+o\"\n";
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        assert_eq!(config.keybindings.open_in_editor, "ctrl+o");
+    }
+
+    #[test]
+    fn keybindings_config_defaults_when_section_absent() {
+        let toml = "[display]\ndisable_image_preview = true\n";
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        assert_eq!(config.keybindings.open_in_editor, "ctrl+e");
+    }
+
+    #[test]
+    fn save_display_options_preserves_keybindings() {
+        let path = test_config_path();
+
+        // Write a config that has a custom keybinding.
+        let initial = "[keybindings]\nopen_in_editor = \"alt+e\"\n";
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("should create dir");
+        }
+        fs::write(&path, initial).expect("should write initial config");
+
+        // Save display options — must not clobber the keybinding.
+        let options = DisplayOptions::default();
+        save_display_options_to_path(&path, &options).expect("should save");
+
+        let content = fs::read_to_string(&path).expect("should read back");
+        let config: AppConfig = toml::from_str(&content).expect("should parse back");
+        assert_eq!(
+            config.keybindings.open_in_editor, "alt+e",
+            "keybinding should survive a display-options save"
+        );
+
         let _ = fs::remove_file(&path);
         if let Some(parent) = path.parent() {
             let _ = fs::remove_dir_all(parent);
