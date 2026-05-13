@@ -29,13 +29,16 @@ pub enum ImagePreviewQualityPreset {
     Balanced,
     High,
     Original,
+    /// Alias for `balanced`; accepted so configs that say `"auto"` still load.
+    #[serde(rename = "auto")]
+    Auto,
 }
 
 impl ImagePreviewQualityPreset {
     pub fn label(self) -> &'static str {
         match self {
             Self::Efficient => "efficient",
-            Self::Balanced => "balanced",
+            Self::Balanced | Self::Auto => "balanced",
             Self::High => "high",
             Self::Original => "original",
         }
@@ -44,7 +47,7 @@ impl ImagePreviewQualityPreset {
     pub fn next(self) -> Self {
         match self {
             Self::Efficient => Self::Balanced,
-            Self::Balanced => Self::High,
+            Self::Balanced | Self::Auto => Self::High,
             Self::High => Self::Original,
             Self::Original => Self::Efficient,
         }
@@ -170,7 +173,7 @@ pub fn load_display_options() -> Result<DisplayOptions> {
 pub fn load_key_bindings_config() -> Result<KeyBindingsConfig> {
     let path = config_path()?;
     match std::fs::read_to_string(&path) {
-        Ok(content) => Ok(toml::from_str::<AppConfig>(&content)?.keybindings),
+        Ok(content) => Ok(section_from_toml::<KeyBindingsConfig>(&content, "keybindings")?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Ok(KeyBindingsConfig::default())
         }
@@ -190,9 +193,25 @@ pub fn config_path_display() -> String {
 
 fn load_display_options_from_path(path: &Path) -> Result<DisplayOptions> {
     match fs::read_to_string(path) {
-        Ok(content) => Ok(toml::from_str::<AppConfig>(&content)?.display),
+        Ok(content) => Ok(section_from_toml::<DisplayOptions>(&content, "display")?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(DisplayOptions::default()),
         Err(error) => Err(error.into()),
+    }
+}
+
+/// Parse a named top-level section from a TOML string, returning the section's
+/// value deserialized as `T`. If the section is absent, the `Default` is used.
+/// Parsing only the requested section means a bad value in another section
+/// (e.g. an unknown enum variant in `[display]`) won't prevent `[keybindings]`
+/// from loading, and vice versa.
+fn section_from_toml<T>(content: &str, section: &str) -> Result<T>
+where
+    T: Default + serde::de::DeserializeOwned,
+{
+    let mut table: toml::Table = toml::from_str(content)?;
+    match table.remove(section) {
+        Some(value) => Ok(T::deserialize(value)?),
+        None => Ok(T::default()),
     }
 }
 
@@ -368,23 +387,28 @@ mod tests {
     }
 
     #[test]
-    fn keybindings_default_to_ctrl_e() {
+    fn keybindings_default_is_empty_map() {
+        // Default config has no overrides; defaults come from Action::default_binding.
         let config = KeyBindingsConfig::default();
-        assert_eq!(config.open_in_editor, "ctrl+e");
+        assert!(config.0.is_empty());
     }
 
     #[test]
     fn keybindings_config_parses_from_toml() {
         let toml = "[keybindings]\nopen_in_editor = \"ctrl+o\"\n";
         let config: AppConfig = toml::from_str(toml).expect("should parse");
-        assert_eq!(config.keybindings.open_in_editor, "ctrl+o");
+        assert_eq!(
+            config.keybindings.0.get("open_in_editor").map(String::as_str),
+            Some("ctrl+o")
+        );
     }
 
     #[test]
-    fn keybindings_config_defaults_when_section_absent() {
+    fn keybindings_config_empty_when_section_absent() {
         let toml = "[display]\ndisable_image_preview = true\n";
         let config: AppConfig = toml::from_str(toml).expect("should parse");
-        assert_eq!(config.keybindings.open_in_editor, "ctrl+e");
+        // No overrides present — defaults handled by ActiveKeyBindings::from_config.
+        assert!(config.keybindings.0.is_empty());
     }
 
     #[test]
@@ -405,7 +429,8 @@ mod tests {
         let content = fs::read_to_string(&path).expect("should read back");
         let config: AppConfig = toml::from_str(&content).expect("should parse back");
         assert_eq!(
-            config.keybindings.open_in_editor, "alt+e",
+            config.keybindings.0.get("open_in_editor").map(String::as_str),
+            Some("alt+e"),
             "keybinding should survive a display-options save"
         );
 

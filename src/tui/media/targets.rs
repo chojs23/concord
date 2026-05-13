@@ -323,7 +323,9 @@ fn discord_media_proxy_preview_url(
         ImagePreviewQualityPreset::High => {
             params.push(format!("quality={DISCORD_MEDIA_PROXY_PREVIEW_QUALITY}"));
         }
-        ImagePreviewQualityPreset::Balanced | ImagePreviewQualityPreset::Original => {}
+        ImagePreviewQualityPreset::Balanced
+        | ImagePreviewQualityPreset::Auto
+        | ImagePreviewQualityPreset::Original => {}
     }
     params.push(format!("width={width}"));
     params.push(format!("height={height}"));
@@ -361,7 +363,7 @@ fn discord_media_proxy_preview_dimensions(
 fn preview_source_scale(quality: ImagePreviewQualityPreset) -> (u64, u64) {
     match quality {
         ImagePreviewQualityPreset::Efficient => (3, 10),
-        ImagePreviewQualityPreset::Balanced => (1, 2),
+        ImagePreviewQualityPreset::Balanced | ImagePreviewQualityPreset::Auto => (1, 2),
         ImagePreviewQualityPreset::High | ImagePreviewQualityPreset::Original => (1, 1),
     }
 }
@@ -412,6 +414,7 @@ fn preview_source_pixels_per_cell(quality: ImagePreviewQualityPreset) -> (u64, u
     let pixels_per_column = match quality {
         ImagePreviewQualityPreset::Efficient => EFFICIENT_IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN,
         ImagePreviewQualityPreset::Balanced
+        | ImagePreviewQualityPreset::Auto
         | ImagePreviewQualityPreset::High
         | ImagePreviewQualityPreset::Original => IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN,
     };
