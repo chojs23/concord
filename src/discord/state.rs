@@ -31,8 +31,8 @@ use profiles::{ProfileRoleIds, UserProfileCacheKey};
 use reads::ChannelReadState;
 
 use super::{
-    ActivityInfo, AppEvent, CustomEmojiInfo, FriendStatus, GuildFolder,
-    PresenceStatus, RelationshipInfo, UserProfileInfo,
+    ActivityInfo, AppEvent, CustomEmojiInfo, FriendStatus, GuildFolder, PresenceStatus,
+    RelationshipInfo, UserProfileInfo,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;

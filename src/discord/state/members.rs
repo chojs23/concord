@@ -101,7 +101,11 @@ impl DiscordState {
     /// username — meaning the member data was complete when it was stored.
     /// A member with `username: None` has a synthesised fallback display name
     /// and should still be looked up via the profile API.
-    pub fn member_has_known_name(&self, guild_id: Id<GuildMarker>, user_id: Id<UserMarker>) -> bool {
+    pub fn member_has_known_name(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> bool {
         self.members
             .get(&guild_id)
             .and_then(|members| members.get(&user_id))

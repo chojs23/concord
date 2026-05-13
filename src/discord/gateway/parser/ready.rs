@@ -8,8 +8,7 @@ use serde_json::Value;
 use crate::{
     discord::{
         ActivityInfo, ChannelInfo, ChannelRecipientInfo, GuildFolder, PresenceStatus,
-        RelationshipInfo,
-        ReadStateInfo, RoleInfo,
+        ReadStateInfo, RelationshipInfo, RoleInfo,
         events::AppEvent,
         ids::{
             Id,

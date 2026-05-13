@@ -1,10 +1,6 @@
 use serde_json::Value;
 
-use crate::discord::{
-    FriendStatus, RelationshipInfo,
-    events::AppEvent,
-    ids::marker::UserMarker,
-};
+use crate::discord::{FriendStatus, RelationshipInfo, events::AppEvent, ids::marker::UserMarker};
 
 use super::shared::parse_id;
 
