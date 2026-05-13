@@ -11,7 +11,6 @@ pub(super) const IMAGE_PREVIEW_HEIGHT: u16 = 10;
 pub(super) const IMAGE_PREVIEW_WIDTH: u16 = 72;
 pub(super) const MESSAGE_AVATAR_PLACEHOLDER: &str = "oo";
 pub(super) const MESSAGE_AVATAR_OFFSET: u16 = 3;
-pub(crate) const MESSAGE_ROW_GAP: usize = 1;
 pub(super) const EMBED_PREVIEW_GUTTER_PREFIX: &str = "  ▎ ";
 pub(super) const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
 pub(super) const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;

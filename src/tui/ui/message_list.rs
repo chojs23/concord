@@ -351,27 +351,24 @@ fn render_inline_reaction_emojis(
             0
         };
         let global_index = state.message_scroll().saturating_add(index);
-        let separator_lines = state.message_extra_top_lines(global_index) as isize;
-        let body_rows =
-            state.message_body_line_count_for_width_at(global_index, message, content_width)
-                as isize;
-        let total_base_rows =
-            state.message_base_line_count_for_width_at(global_index, message, content_width)
-                as isize;
-        let block_rows = total_base_rows + separator_lines;
-        let preview_height = total_inline_preview_height_for_message(
+        let preview_width = if state.show_images() {
+            inline_image_preview_width(list)
+        } else {
+            0
+        };
+        let max_preview_height = if state.show_images() {
+            inline_image_preview_height(list, true)
+        } else {
+            0
+        };
+        let metrics = state.message_row_metrics_at_with_selected_bottom(
+            global_index,
             message,
-            if state.show_images() {
-                inline_image_preview_width(list)
-            } else {
-                0
-            },
-            if state.show_images() {
-                inline_image_preview_height(list, true)
-            } else {
-                0
-            },
-        ) as isize;
+            content_width,
+            preview_width,
+            max_preview_height,
+            selected == Some(index),
+        );
 
         let layout = lay_out_reaction_chips_with_custom_emoji_images(
             &message.reactions,
@@ -384,10 +381,7 @@ fn render_inline_reaction_emojis(
             // reaction strip begins at:
             //     body_top + body_rows + preview_height
             let message_top = rendered_rows - line_offset;
-            let body_top = message_top
-                + separator_lines
-                + state.selected_message_extra_top_line_at(global_index) as isize;
-            let reaction_strip_top = body_top + body_rows + preview_height;
+            let reaction_strip_top = message_top + metrics.reaction_top_offset() as isize;
 
             for slot in layout.slots {
                 let row_in_list = reaction_strip_top + slot.line as isize;
@@ -423,16 +417,8 @@ fn render_inline_reaction_emojis(
             }
         }
 
-        rendered_rows = rendered_rows.saturating_add(
-            (block_rows
-                + preview_height
-                + state.selected_message_extra_top_line_at(global_index) as isize
-                + usize::from(
-                    selected == Some(index) && !state.message_has_bottom_gap_after(global_index),
-                ) as isize
-                + state.message_bottom_gap_after(global_index) as isize)
-                - line_offset,
-        );
+        rendered_rows = rendered_rows
+            .saturating_add(metrics.visible_rows_after_scroll(line_offset as usize) as isize);
     }
 }
 
@@ -467,11 +453,24 @@ fn render_inline_message_body_emojis(
             0
         };
         let global_index = state.message_scroll().saturating_add(index);
-        let separator_lines = state.message_extra_top_lines(global_index) as isize;
+        let metrics = state.message_row_metrics_at_with_selected_bottom(
+            global_index,
+            message,
+            content_width,
+            if state.show_images() {
+                inline_image_preview_width(list)
+            } else {
+                0
+            },
+            if state.show_images() {
+                inline_image_preview_height(list, true)
+            } else {
+                0
+            },
+            selected == Some(index),
+        );
         let message_top = rendered_rows - line_offset;
-        let body_top = message_top
-            + separator_lines
-            + state.selected_message_extra_top_line_at(global_index) as isize;
+        let body_top = message_top + metrics.body_top_offset() as isize;
 
         let loaded_custom_emoji_urls = loaded_custom_emoji_urls(emoji_images);
         let body_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
@@ -480,8 +479,6 @@ fn render_inline_message_body_emojis(
             content_width.max(8),
             &loaded_custom_emoji_urls,
         );
-        let body_base_rows =
-            state.message_header_line_count_at(global_index) as isize + body_lines.len() as isize;
         for (line_idx, line) in body_lines.iter().enumerate() {
             if line.image_slots.is_empty() {
                 continue;
@@ -522,30 +519,8 @@ fn render_inline_message_body_emojis(
             }
         }
 
-        let preview_height = total_inline_preview_height_for_message(
-            message,
-            if state.show_images() {
-                inline_image_preview_width(list)
-            } else {
-                0
-            },
-            if state.show_images() {
-                inline_image_preview_height(list, true)
-            } else {
-                0
-            },
-        ) as isize;
-        let block_rows = body_base_rows + separator_lines;
-        rendered_rows = rendered_rows.saturating_add(
-            (block_rows
-                + preview_height
-                + state.selected_message_extra_top_line_at(global_index) as isize
-                + usize::from(
-                    selected == Some(index) && !state.message_has_bottom_gap_after(global_index),
-                ) as isize
-                + state.message_bottom_gap_after(global_index) as isize)
-                - line_offset,
-        );
+        rendered_rows = rendered_rows
+            .saturating_add(metrics.visible_rows_after_scroll(line_offset as usize) as isize);
     }
 }
 
@@ -569,11 +544,16 @@ pub(super) fn message_body_custom_emoji_rows(
             0
         };
         let global_index = state.message_scroll().saturating_add(index);
-        let separator_lines = state.message_extra_top_lines(global_index) as isize;
+        let metrics = state.message_row_metrics_at_with_selected_bottom(
+            global_index,
+            message,
+            content_width,
+            preview_width,
+            max_preview_height,
+            selected == Some(index),
+        );
         let message_top = rendered_rows - line_offset;
-        let body_top = message_top
-            + separator_lines
-            + state.selected_message_extra_top_line_at(global_index) as isize;
+        let body_top = message_top + metrics.body_top_offset() as isize;
 
         let body_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
             message,
@@ -581,8 +561,6 @@ pub(super) fn message_body_custom_emoji_rows(
             content_width.max(8),
             loaded_custom_emoji_urls,
         );
-        let body_base_rows =
-            state.message_header_line_count_at(global_index) as isize + body_lines.len() as isize;
         for (line_idx, line) in body_lines.iter().enumerate() {
             if !line.image_slots.is_empty() {
                 rows.push(
@@ -593,20 +571,8 @@ pub(super) fn message_body_custom_emoji_rows(
             }
         }
 
-        let preview_height =
-            total_inline_preview_height_for_message(message, preview_width, max_preview_height)
-                as isize;
-        let block_rows = body_base_rows + separator_lines;
-        rendered_rows = rendered_rows.saturating_add(
-            (block_rows
-                + preview_height
-                + state.selected_message_extra_top_line_at(global_index) as isize
-                + usize::from(
-                    selected == Some(index) && !state.message_has_bottom_gap_after(global_index),
-                ) as isize
-                + state.message_bottom_gap_after(global_index) as isize)
-                - line_offset,
-        );
+        rendered_rows = rendered_rows
+            .saturating_add(metrics.visible_rows_after_scroll(line_offset as usize) as isize);
     }
 
     rows
@@ -1051,29 +1017,22 @@ fn message_body_top_row(
     for (index, message) in messages.iter().enumerate() {
         let line_offset = usize::from(index == 0) * state.message_line_scroll();
         let global_index = state.message_scroll().saturating_add(index);
-        let separator_lines = state.message_extra_top_lines(global_index);
-        let body_top = rendered_rows as isize - line_offset as isize
-            + separator_lines as isize
-            + state.selected_message_extra_top_line_at(global_index) as isize;
+        let metrics = state.message_row_metrics_at_with_selected_bottom(
+            global_index,
+            message,
+            content_width,
+            preview_width,
+            max_preview_height,
+            false,
+        );
+        let body_top =
+            rendered_rows as isize - line_offset as isize + metrics.body_top_offset() as isize;
         if index == local_index {
             return Some(body_top);
         }
 
-        let body_base_rows =
-            state.message_base_line_count_for_width_at(global_index, message, content_width);
-        let preview_height =
-            total_inline_preview_height_for_message(message, preview_width, max_preview_height);
-        rendered_rows = rendered_rows.saturating_add(
-            body_base_rows
-                .saturating_add(separator_lines)
-                .saturating_add(preview_height)
-                .saturating_add(state.selected_message_extra_top_line_at(global_index))
-                .saturating_add(usize::from(
-                    local_index == index && !state.message_has_bottom_gap_after(global_index),
-                ))
-                .saturating_add(state.message_bottom_gap_after(global_index))
-                .saturating_sub(line_offset),
-        );
+        rendered_rows =
+            rendered_rows.saturating_add(metrics.visible_rows_after_scroll(line_offset));
     }
     None
 }
@@ -1271,23 +1230,33 @@ pub(super) fn inline_image_preview_row(
         .take(message_index)
         .map(|(local_idx, message)| {
             let global = state.message_scroll().saturating_add(local_idx);
-            state.message_base_line_count_for_width_at(global, message, content_width)
-                + state.message_extra_top_lines(global)
-                + state.selected_message_extra_top_line_at(global)
-                + state.message_bottom_gap_after(global)
-                + usize::from(
-                    state.focused_message_selection() == Some(local_idx)
-                        && !state.message_has_bottom_gap_after(global),
+            state
+                .message_row_metrics_at_with_selected_bottom(
+                    global,
+                    message,
+                    content_width,
+                    0,
+                    0,
+                    state.focused_message_selection() == Some(local_idx),
                 )
+                .total_rows()
         })
         .sum::<usize>();
     let current_rows = messages
         .get(message_index)
         .map(|message| {
             let global = state.message_scroll().saturating_add(message_index);
-            state.message_body_line_count_for_width_at(global, message, content_width)
-                + state.message_extra_top_lines(global)
-                + state.selected_message_extra_top_line_at(global)
+            let metrics = state.message_row_metrics_at_with_selected_bottom(
+                global,
+                message,
+                content_width,
+                0,
+                0,
+                false,
+            );
+            metrics
+                .body_top_offset()
+                .saturating_add(metrics.body_rows())
         })
         .unwrap_or(0);
     let row = prior_rows

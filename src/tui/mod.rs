@@ -4,6 +4,7 @@ mod input;
 mod login;
 mod media;
 mod message_format;
+mod message_rows;
 mod redraw;
 mod requests;
 mod selection;

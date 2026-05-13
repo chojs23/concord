@@ -87,7 +87,7 @@ use self::types::{
     SELECTED_MESSAGE_BORDER, SELECTED_MESSAGE_CONTENT_OFFSET, SNOWFLAKE_TIMESTAMP_SHIFT,
     UserProfilePopupText,
 };
-pub(crate) use self::types::{ActionMenuTarget, MESSAGE_ROW_GAP, MouseTarget};
+pub(crate) use self::types::{ActionMenuTarget, MouseTarget};
 pub use self::types::{
     AvatarImage, EmojiImage, ImagePreview, ImagePreviewLayout, ImagePreviewState,
 };
@@ -111,7 +111,6 @@ use self::{
         user_profile_popup_lines_with_activities,
     },
 };
-
 pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
     let areas = dashboard_areas(area, state);
     state.set_guild_view_height(visible_panel_content_height(
