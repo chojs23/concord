@@ -16,6 +16,7 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
         return;
     }
     let filter = state.emoji_reaction_filter();
+    let existing_reactions = state.existing_emoji_reactions();
 
     let selected = state
         .selected_emoji_reaction_index_for_len(reactions.len())
@@ -46,11 +47,14 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
         Paragraph::new(emoji_reaction_picker_lines_with_custom_emoji_images(
             reactions,
             selected,
-            visible_items,
-            &ready_urls,
-            state.show_custom_emoji(),
-            filter,
-            usize::from(content.width),
+            EmojiReactionPickerRenderOptions {
+                max_visible_items: visible_items,
+                thumbnail_urls: &ready_urls,
+                existing_reactions,
+                show_custom_emoji: state.show_custom_emoji(),
+                filter,
+                max_width: usize::from(content.width),
+            },
         ))
         .block(block)
         .wrap(Wrap { trim: false }),
@@ -217,11 +221,14 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines(
     emoji_reaction_picker_lines_with_custom_emoji_images(
         reactions,
         selected,
-        max_visible_items,
-        thumbnail_urls,
-        true,
-        None,
-        usize::MAX,
+        EmojiReactionPickerRenderOptions {
+            max_visible_items,
+            thumbnail_urls,
+            existing_reactions: &[],
+            show_custom_emoji: true,
+            filter: None,
+            max_width: usize::MAX,
+        },
     )
 }
 
@@ -236,11 +243,36 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_for_width(
     emoji_reaction_picker_lines_with_custom_emoji_images(
         reactions,
         selected,
-        max_visible_items,
-        thumbnail_urls,
-        true,
-        None,
-        width,
+        EmojiReactionPickerRenderOptions {
+            max_visible_items,
+            thumbnail_urls,
+            existing_reactions: &[],
+            show_custom_emoji: true,
+            filter: None,
+            max_width: width,
+        },
+    )
+}
+
+#[cfg(test)]
+pub(in crate::tui::ui) fn emoji_reaction_picker_lines_with_existing(
+    reactions: &[EmojiReactionItem],
+    existing_reactions: &[crate::discord::ReactionEmoji],
+    selected: usize,
+    max_visible_items: usize,
+    thumbnail_urls: &[String],
+) -> Vec<Line<'static>> {
+    emoji_reaction_picker_lines_with_custom_emoji_images(
+        reactions,
+        selected,
+        EmojiReactionPickerRenderOptions {
+            max_visible_items,
+            thumbnail_urls,
+            existing_reactions,
+            show_custom_emoji: true,
+            filter: None,
+            max_width: usize::MAX,
+        },
     )
 }
 
@@ -255,25 +287,33 @@ pub(in crate::tui::ui) fn filtered_emoji_reaction_picker_lines(
     emoji_reaction_picker_lines_with_custom_emoji_images(
         reactions,
         selected,
-        max_visible_items,
-        thumbnail_urls,
-        true,
-        Some(filter),
-        usize::MAX,
+        EmojiReactionPickerRenderOptions {
+            max_visible_items,
+            thumbnail_urls,
+            existing_reactions: &[],
+            show_custom_emoji: true,
+            filter: Some(filter),
+            max_width: usize::MAX,
+        },
     )
+}
+
+struct EmojiReactionPickerRenderOptions<'a> {
+    max_visible_items: usize,
+    thumbnail_urls: &'a [String],
+    existing_reactions: &'a [crate::discord::ReactionEmoji],
+    show_custom_emoji: bool,
+    filter: Option<&'a str>,
+    max_width: usize,
 }
 
 fn emoji_reaction_picker_lines_with_custom_emoji_images(
     reactions: &[EmojiReactionItem],
     selected: usize,
-    max_visible_items: usize,
-    thumbnail_urls: &[String],
-    show_custom_emoji: bool,
-    filter: Option<&str>,
-    max_width: usize,
+    options: EmojiReactionPickerRenderOptions<'_>,
 ) -> Vec<Line<'static>> {
     let selected = selected.min(reactions.len().saturating_sub(1));
-    let visible_items = max_visible_items.max(1).min(reactions.len().max(1));
+    let visible_items = options.max_visible_items.max(1).min(reactions.len().max(1));
     let visible_range = selection::visible_item_range(reactions.len(), selected, visible_items);
 
     let mut lines: Vec<Line<'static>> = reactions[visible_range.clone()]
@@ -282,22 +322,30 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
         .map(|(offset, reaction)| {
             let index = visible_range.start + offset;
             let marker = if index == selected { "› " } else { "  " };
-            let shortcut = shortcut_prefix(indexed_shortcut(index));
+            let shortcut = shortcut_prefix(emoji_reaction_shortcut(
+                reactions,
+                options.existing_reactions,
+                index,
+            ));
             let mut style = Style::default();
             if index == selected {
                 style = style
                     .bg(Color::Rgb(40, 45, 90))
                     .add_modifier(Modifier::BOLD);
             }
-            let thumbnail_ready = show_custom_emoji
+            let thumbnail_ready = options.show_custom_emoji
                 && reaction
                     .custom_image_url()
-                    .is_some_and(|url| thumbnail_urls.iter().any(|ready| ready == &url));
+                    .is_some_and(|url| options.thumbnail_urls.iter().any(|ready| ready == &url));
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
                 Span::styled(shortcut, Style::default().fg(DIM)),
                 Span::styled(
-                    format_emoji_reaction_item(reaction, thumbnail_ready, show_custom_emoji),
+                    format_emoji_reaction_item(
+                        reaction,
+                        thumbnail_ready,
+                        options.show_custom_emoji,
+                    ),
                     style,
                 ),
             ])
@@ -311,7 +359,7 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
         )));
     }
 
-    if let Some(filter) = filter {
+    if let Some(filter) = options.filter {
         lines.push(Line::from(vec![
             Span::styled("Filter ", Style::default().fg(DIM)),
             Span::styled(
@@ -320,12 +368,12 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
             ),
         ]));
     }
-    if max_width == usize::MAX {
+    if options.max_width == usize::MAX {
         lines
     } else {
         lines
             .into_iter()
-            .map(|line| truncate_line_to_display_width(line, max_width))
+            .map(|line| truncate_line_to_display_width(line, options.max_width))
             .collect()
     }
 }
@@ -358,13 +406,18 @@ fn render_emoji_reaction_images(
             continue;
         }
         let image_area = Rect::new(
-            area.x.saturating_add(2),
+            area.x.saturating_add(emoji_reaction_image_x_offset()),
             y,
-            EMOJI_REACTION_IMAGE_WIDTH.min(area.width.saturating_sub(2)),
+            EMOJI_REACTION_IMAGE_WIDTH
+                .min(area.width.saturating_sub(emoji_reaction_image_x_offset())),
             1,
         );
         frame.render_widget(RatatuiImage::new(image.protocol), image_area);
     }
+}
+
+fn emoji_reaction_image_x_offset() -> u16 {
+    2 + shortcut_prefix(Some('q')).width() as u16
 }
 
 fn format_emoji_reaction_item(
