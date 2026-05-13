@@ -382,13 +382,18 @@ impl ActiveKeyBindings {
                 .get(action.name())
                 .map(String::as_str)
                 .unwrap_or(default_spec);
-            let binding = KeyBinding::parse(spec)
-                .unwrap_or_else(|| KeyBinding::parse(default_spec).expect("default is always valid"));
+            let binding = KeyBinding::parse(spec).unwrap_or_else(|| {
+                KeyBinding::parse(default_spec).expect("default is always valid")
+            });
             named.insert(binding.clone(), action);
             reverse.insert(action, binding);
         }
 
-        Self { named, reverse, fixed }
+        Self {
+            named,
+            reverse,
+            fixed,
+        }
     }
 
     /// Look up which action the given key event triggers, if any.
@@ -534,40 +539,85 @@ mod tests {
     fn shift_binding_matches_all_three_terminal_styles() {
         let b = KeyBinding::parse("shift+j").expect("should parse");
         // (a) crossterm canonical: lowercase + SHIFT modifier
-        assert_eq!(b, KeyBinding::from_event(press(KeyCode::Char('j'), KeyModifiers::SHIFT)));
+        assert_eq!(
+            b,
+            KeyBinding::from_event(press(KeyCode::Char('j'), KeyModifiers::SHIFT))
+        );
         // (b) legacy: uppercase + no modifier
-        assert_eq!(b, KeyBinding::from_event(press(KeyCode::Char('J'), KeyModifiers::empty())));
+        assert_eq!(
+            b,
+            KeyBinding::from_event(press(KeyCode::Char('J'), KeyModifiers::empty()))
+        );
         // (c) uppercase WITH SHIFT still set (some terminals)
-        assert_eq!(b, KeyBinding::from_event(press(KeyCode::Char('J'), KeyModifiers::SHIFT)));
+        assert_eq!(
+            b,
+            KeyBinding::from_event(press(KeyCode::Char('J'), KeyModifiers::SHIFT))
+        );
         // must NOT match plain lowercase
-        assert_ne!(b, KeyBinding::from_event(press(KeyCode::Char('j'), KeyModifiers::empty())));
+        assert_ne!(
+            b,
+            KeyBinding::from_event(press(KeyCode::Char('j'), KeyModifiers::empty()))
+        );
     }
 
     #[test]
     fn jump_bottom_matches_capital_g() {
         let b = KeyBinding::parse("shift+g").expect("should parse");
-        assert_eq!(b, KeyBinding::from_event(press(KeyCode::Char('g'), KeyModifiers::SHIFT)));
-        assert_eq!(b, KeyBinding::from_event(press(KeyCode::Char('G'), KeyModifiers::empty())));
-        assert_eq!(b, KeyBinding::from_event(press(KeyCode::Char('G'), KeyModifiers::SHIFT)));
-        assert_ne!(b, KeyBinding::from_event(press(KeyCode::Char('g'), KeyModifiers::empty())));
+        assert_eq!(
+            b,
+            KeyBinding::from_event(press(KeyCode::Char('g'), KeyModifiers::SHIFT))
+        );
+        assert_eq!(
+            b,
+            KeyBinding::from_event(press(KeyCode::Char('G'), KeyModifiers::empty()))
+        );
+        assert_eq!(
+            b,
+            KeyBinding::from_event(press(KeyCode::Char('G'), KeyModifiers::SHIFT))
+        );
+        assert_ne!(
+            b,
+            KeyBinding::from_event(press(KeyCode::Char('g'), KeyModifiers::empty()))
+        );
     }
 
     #[test]
     fn default_bindings_look_up_correctly() {
         let kb = ActiveKeyBindings::default();
-        assert_eq!(kb.lookup(press(KeyCode::Char('q'), KeyModifiers::empty())), Some(Action::Quit));
-        assert_eq!(kb.lookup(press(KeyCode::Char('j'), KeyModifiers::empty())), Some(Action::MoveDown));
-        assert_eq!(kb.lookup(press(KeyCode::Down, KeyModifiers::empty())), Some(Action::MoveDown));
-        assert_eq!(kb.lookup(press(KeyCode::Tab, KeyModifiers::empty())), Some(Action::CycleFocusForward));
-        assert_eq!(kb.lookup(press(KeyCode::BackTab, KeyModifiers::empty())), Some(Action::CycleFocusBackward));
-        assert_eq!(kb.lookup(press(KeyCode::Enter, KeyModifiers::empty())), Some(Action::Confirm));
-        assert_eq!(kb.lookup(press(KeyCode::Esc, KeyModifiers::empty())), Some(Action::Return));
+        assert_eq!(
+            kb.lookup(press(KeyCode::Char('q'), KeyModifiers::empty())),
+            Some(Action::Quit)
+        );
+        assert_eq!(
+            kb.lookup(press(KeyCode::Char('j'), KeyModifiers::empty())),
+            Some(Action::MoveDown)
+        );
+        assert_eq!(
+            kb.lookup(press(KeyCode::Down, KeyModifiers::empty())),
+            Some(Action::MoveDown)
+        );
+        assert_eq!(
+            kb.lookup(press(KeyCode::Tab, KeyModifiers::empty())),
+            Some(Action::CycleFocusForward)
+        );
+        assert_eq!(
+            kb.lookup(press(KeyCode::BackTab, KeyModifiers::empty())),
+            Some(Action::CycleFocusBackward)
+        );
+        assert_eq!(
+            kb.lookup(press(KeyCode::Enter, KeyModifiers::empty())),
+            Some(Action::Confirm)
+        );
+        assert_eq!(
+            kb.lookup(press(KeyCode::Esc, KeyModifiers::empty())),
+            Some(Action::Return)
+        );
     }
 
     #[test]
     fn from_config_falls_back_on_bad_spec() {
-        use std::collections::HashMap;
         use crate::config::KeyBindingsConfig;
+        use std::collections::HashMap;
         let mut map = HashMap::new();
         map.insert("open_in_editor".to_owned(), "notakey".to_owned());
         let cfg = KeyBindingsConfig(map);
@@ -581,8 +631,8 @@ mod tests {
 
     #[test]
     fn custom_binding_overrides_default() {
-        use std::collections::HashMap;
         use crate::config::KeyBindingsConfig;
+        use std::collections::HashMap;
         let mut map = HashMap::new();
         map.insert("open_composer".to_owned(), "e".to_owned());
         let cfg = KeyBindingsConfig(map);

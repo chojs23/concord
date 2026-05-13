@@ -120,7 +120,10 @@ pub fn load_display_options() -> Result<DisplayOptions> {
 pub fn load_key_bindings_config() -> Result<KeyBindingsConfig> {
     let path = config_path()?;
     match std::fs::read_to_string(&path) {
-        Ok(content) => Ok(section_from_toml::<KeyBindingsConfig>(&content, "keybindings")?),
+        Ok(content) => Ok(section_from_toml::<KeyBindingsConfig>(
+            &content,
+            "keybindings",
+        )?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Ok(KeyBindingsConfig::default())
         }
@@ -345,7 +348,11 @@ mod tests {
         let toml = "[keybindings]\nopen_in_editor = \"ctrl+o\"\n";
         let config: AppConfig = toml::from_str(toml).expect("should parse");
         assert_eq!(
-            config.keybindings.0.get("open_in_editor").map(String::as_str),
+            config
+                .keybindings
+                .0
+                .get("open_in_editor")
+                .map(String::as_str),
             Some("ctrl+o")
         );
     }
@@ -376,7 +383,11 @@ mod tests {
         let content = fs::read_to_string(&path).expect("should read back");
         let config: AppConfig = toml::from_str(&content).expect("should parse back");
         assert_eq!(
-            config.keybindings.0.get("open_in_editor").map(String::as_str),
+            config
+                .keybindings
+                .0
+                .get("open_in_editor")
+                .map(String::as_str),
             Some("alt+e"),
             "keybinding should survive a display-options save"
         );

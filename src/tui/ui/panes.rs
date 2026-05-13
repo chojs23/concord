@@ -178,8 +178,7 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
     if let Some(filter_rect) = filter_area {
         let query = filter_query.unwrap_or_default();
         let cursor = state.guild_pane_filter_cursor().unwrap_or(0);
-        let cursor_x =
-            render_pane_filter_bar(frame, filter_rect, query, cursor, focused);
+        let cursor_x = render_pane_filter_bar(frame, filter_rect, query, cursor, focused);
         if focused {
             frame.set_cursor_position(Position {
                 x: filter_rect.x.saturating_add(cursor_x as u16),
@@ -1388,9 +1387,9 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
     let keymap_key = state.key_bindings().label(Action::OpenKeymap);
     let hint = format!("Press {keymap_key} to see keybinds");
     frame.render_widget(
-        Paragraph::new(hint).alignment(Alignment::Right).style(Style::default()),
+        Paragraph::new(hint)
+            .alignment(Alignment::Right)
+            .style(Style::default()),
         area,
     );
 }
-
-
