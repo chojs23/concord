@@ -11,6 +11,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::discord::{
     ActivityInfo, ActivityKind, ChannelUnreadState, MessageState, PresenceStatus,
 };
+use crate::tui::keybinding::Action;
 
 use super::super::{
     format::{truncate_display_width, truncate_display_width_from},
@@ -177,7 +178,8 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
     if let Some(filter_rect) = filter_area {
         let query = filter_query.unwrap_or_default();
         let cursor = state.guild_pane_filter_cursor().unwrap_or(0);
-        let cursor_x = render_pane_filter_bar(frame, filter_rect, query, cursor, focused);
+        let cursor_x =
+            render_pane_filter_bar(frame, filter_rect, query, cursor, focused);
         if focused {
             frame.set_cursor_position(Position {
                 x: filter_rect.x.saturating_add(cursor_x as u16),
@@ -1071,9 +1073,11 @@ pub(super) fn composer_text(state: &DashboardState, width: u16) -> String {
         // SEND is allowed but ATTACH is not. Tell the user uploads will be
         // refused before they try.
         if !state.can_attach_in_selected_channel() {
-            return format!("press i to write in {label} (attachments disabled)");
+            let key = state.key_bindings().label(Action::OpenComposer);
+            return format!("press {key} to write in {label} (attachments disabled)");
         }
-        return format!("press i to write in {label}");
+        let key = state.key_bindings().label(Action::OpenComposer);
+        return format!("press {key} to write in {label}");
     }
 
     "select a channel to write a message".to_owned()
@@ -1381,12 +1385,12 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
     );
 
     // Right-aligned hint so users discover the keybind help popup.
-    let keymap_key = state.key_bindings().open_keymap.label();
+    let keymap_key = state.key_bindings().label(Action::OpenKeymap);
     let hint = format!("Press {keymap_key} to see keybinds");
     frame.render_widget(
-        Paragraph::new(hint)
-            .alignment(Alignment::Right)
-            .style(Style::default()),
+        Paragraph::new(hint).alignment(Alignment::Right).style(Style::default()),
         area,
     );
 }
+
+

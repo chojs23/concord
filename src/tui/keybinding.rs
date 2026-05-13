@@ -1,36 +1,50 @@
+use std::collections::HashMap;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::config::KeyBindingsConfig;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct KeyBinding {
     code: KeyCode,
     modifiers: KeyModifiers,
 }
 
 impl KeyBinding {
-    pub fn matches(&self, key: KeyEvent) -> bool {
-        if key.code == self.code && key.modifiers == self.modifiers {
-            return true;
+    /// Normalise a raw key-event into a canonical `KeyBinding` for HashMap lookup.
+    ///
+    /// Crossterm / terminals report Shift+letter in three different styles:
+    ///   (a) Char('j') + SHIFT     — crossterm canonical
+    ///   (b) Char('J') + empty     — legacy no-modifier uppercase
+    ///   (c) Char('J') + SHIFT     — uppercase WITH shift still set
+    ///
+    /// All three are normalised to form (a): lowercase char + SHIFT.
+    /// `BackTab` (Shift+Tab) is normalised to `Tab + SHIFT`.
+    fn from_event(key: KeyEvent) -> Self {
+        if key.code == KeyCode::BackTab {
+            return Self {
+                code: KeyCode::Tab,
+                modifiers: KeyModifiers::SHIFT,
+            };
         }
-        // Many terminals report Shift+<letter> as uppercase letter with either
-        // no SHIFT modifier or with SHIFT still set. Accept all three forms so
-        // bindings like "shift+j" match capital-J from any terminal style:
-        //   (a) Char('j') + SHIFT  — crossterm canonical
-        //   (b) Char('J') + empty  — legacy no-modifier uppercase
-        //   (c) Char('J') + SHIFT  — uppercase WITH shift still set
-        if self.modifiers == KeyModifiers::SHIFT {
-            if let KeyCode::Char(c) = self.code {
-                let upper = c.to_uppercase().next().unwrap_or(c);
-                if upper != c
-                    && key.code == KeyCode::Char(upper)
-                    && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
-                {
-                    return true;
+        if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
+            if let KeyCode::Char(c) = key.code {
+                if c.is_uppercase() {
+                    if let Some(lower) = c.to_lowercase().next() {
+                        if lower != c {
+                            return Self {
+                                code: KeyCode::Char(lower),
+                                modifiers: KeyModifiers::SHIFT,
+                            };
+                        }
+                    }
                 }
             }
         }
-        false
+        Self {
+            code: key.code,
+            modifiers: key.modifiers,
+        }
     }
 
     /// Human-readable label for display in the keymap popup, e.g. `"Ctrl+E"`.
@@ -49,9 +63,6 @@ impl KeyBinding {
         let key: &str = match self.code {
             KeyCode::Char(' ') => "Space",
             KeyCode::Char(c) => {
-                // Bare characters (no modifier) display as-is so "j" shows as
-                // "j" not "J". Characters with any modifier display uppercase
-                // ("Ctrl+E", "Shift+J") matching conventional notation.
                 key_buf = if self.modifiers.is_empty() {
                     c.to_string()
                 } else {
@@ -82,11 +93,10 @@ impl KeyBinding {
         parts.join("+")
     }
 
-    /// Parse a key spec like `"ctrl+e"`, `"alt+shift+f1"`, `"enter"`.
+    /// Parse a key spec like `"ctrl+e"`, `"alt+shift+f1"`, `"backtab"`, `"enter"`.
     pub fn parse(spec: &str) -> Option<Self> {
         let spec = spec.trim().to_lowercase();
         let parts: Vec<&str> = spec.split('+').collect();
-        // split_last returns (last_element, rest_of_slice)
         let (key_part, modifier_parts) = parts.split_last()?;
 
         let mut modifiers = KeyModifiers::empty();
@@ -104,6 +114,12 @@ impl KeyBinding {
             "esc" | "escape" => KeyCode::Esc,
             "backspace" => KeyCode::Backspace,
             "delete" | "del" => KeyCode::Delete,
+            // "backtab" and "shift+tab" both normalise to Tab+SHIFT so they
+            // hash-match the BackTab event produced by from_event.
+            "backtab" => {
+                modifiers |= KeyModifiers::SHIFT;
+                KeyCode::Tab
+            }
             "tab" => KeyCode::Tab,
             "space" | "spc" => KeyCode::Char(' '),
             "home" => KeyCode::Home,
@@ -126,74 +142,284 @@ impl KeyBinding {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct ActiveKeyBindings {
-    pub open_in_editor: KeyBinding,
-    pub quit: KeyBinding,
-    pub open_composer: KeyBinding,
-    pub open_leader: KeyBinding,
-    pub open_keymap: KeyBinding,
-    pub pane_search: KeyBinding,
-    pub move_down: KeyBinding,
-    pub move_up: KeyBinding,
-    pub jump_top: KeyBinding,
-    pub jump_bottom: KeyBinding,
-    pub half_page_down: KeyBinding,
-    pub half_page_up: KeyBinding,
-    pub scroll_viewport_down: KeyBinding,
-    pub scroll_viewport_up: KeyBinding,
-    pub scroll_pane_left: KeyBinding,
-    pub scroll_pane_right: KeyBinding,
+/// Every action that a key-press can trigger in normal (non-composer) mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Action {
+    Quit,
+    Return,
+    ToggleDebugLog,
+    FocusGuilds,
+    FocusChannels,
+    FocusMessages,
+    FocusMembers,
+    CycleFocusForward,
+    CycleFocusBackward,
+    OpenComposer,
+    OpenInEditor,
+    OpenKeymap,
+    OpenLeader,
+    PaneSearch,
+    MoveDown,
+    MoveUp,
+    HalfPageDown,
+    HalfPageUp,
+    JumpTop,
+    JumpBottom,
+    ScrollViewportDown,
+    ScrollViewportUp,
+    ScrollPaneLeft,
+    ScrollPaneRight,
+    NarrowPane,
+    WidenPane,
+    Confirm,
+    ExpandRight,
+    CollapseLeft,
+    /// Home key: scroll to top of viewport (Messages) or jump to first item.
+    ScrollTop,
+    /// End key: scroll to bottom of viewport (Messages) or jump to last item.
+    ScrollBottom,
 }
 
-fn parse_binding(spec: &str, fallback: &str) -> KeyBinding {
-    KeyBinding::parse(spec)
-        .unwrap_or_else(|| KeyBinding::parse(fallback).expect("fallback binding is always valid"))
-}
+impl Action {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Quit => "quit",
+            Self::Return => "return",
+            Self::ToggleDebugLog => "toggle_debug_log",
+            Self::FocusGuilds => "focus_guilds",
+            Self::FocusChannels => "focus_channels",
+            Self::FocusMessages => "focus_messages",
+            Self::FocusMembers => "focus_members",
+            Self::CycleFocusForward => "cycle_focus_forward",
+            Self::CycleFocusBackward => "cycle_focus_backward",
+            Self::OpenComposer => "open_composer",
+            Self::OpenInEditor => "open_in_editor",
+            Self::OpenKeymap => "open_keymap",
+            Self::OpenLeader => "open_leader",
+            Self::PaneSearch => "pane_search",
+            Self::MoveDown => "move_down",
+            Self::MoveUp => "move_up",
+            Self::HalfPageDown => "half_page_down",
+            Self::HalfPageUp => "half_page_up",
+            Self::JumpTop => "jump_top",
+            Self::JumpBottom => "jump_bottom",
+            Self::ScrollViewportDown => "scroll_viewport_down",
+            Self::ScrollViewportUp => "scroll_viewport_up",
+            Self::ScrollPaneLeft => "scroll_pane_left",
+            Self::ScrollPaneRight => "scroll_pane_right",
+            Self::NarrowPane => "narrow_pane",
+            Self::WidenPane => "widen_pane",
+            Self::Confirm => "confirm",
+            Self::ExpandRight => "expand_right",
+            Self::CollapseLeft => "collapse_left",
+            Self::ScrollTop => "scroll_top",
+            Self::ScrollBottom => "scroll_bottom",
+        }
+    }
 
-impl Default for ActiveKeyBindings {
-    fn default() -> Self {
-        Self {
-            open_in_editor: KeyBinding::parse("ctrl+e").expect("default binding is valid"),
-            quit: KeyBinding::parse("q").expect("default binding is valid"),
-            open_composer: KeyBinding::parse("i").expect("default binding is valid"),
-            open_leader: KeyBinding::parse("space").expect("default binding is valid"),
-            open_keymap: KeyBinding::parse("?").expect("default binding is valid"),
-            pane_search: KeyBinding::parse("/").expect("default binding is valid"),
-            move_down: KeyBinding::parse("j").expect("default binding is valid"),
-            move_up: KeyBinding::parse("k").expect("default binding is valid"),
-            jump_top: KeyBinding::parse("g").expect("default binding is valid"),
-            jump_bottom: KeyBinding::parse("shift+g").expect("default binding is valid"),
-            half_page_down: KeyBinding::parse("ctrl+d").expect("default binding is valid"),
-            half_page_up: KeyBinding::parse("ctrl+u").expect("default binding is valid"),
-            scroll_viewport_down: KeyBinding::parse("shift+j").expect("default binding is valid"),
-            scroll_viewport_up: KeyBinding::parse("shift+k").expect("default binding is valid"),
-            scroll_pane_left: KeyBinding::parse("shift+h").expect("default binding is valid"),
-            scroll_pane_right: KeyBinding::parse("shift+l").expect("default binding is valid"),
+    #[allow(dead_code)]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "quit" => Some(Self::Quit),
+            "return" => Some(Self::Return),
+            "toggle_debug_log" => Some(Self::ToggleDebugLog),
+            "focus_guilds" => Some(Self::FocusGuilds),
+            "focus_channels" => Some(Self::FocusChannels),
+            "focus_messages" => Some(Self::FocusMessages),
+            "focus_members" => Some(Self::FocusMembers),
+            "cycle_focus_forward" => Some(Self::CycleFocusForward),
+            "cycle_focus_backward" => Some(Self::CycleFocusBackward),
+            "open_composer" => Some(Self::OpenComposer),
+            "open_in_editor" => Some(Self::OpenInEditor),
+            "open_keymap" => Some(Self::OpenKeymap),
+            "open_leader" => Some(Self::OpenLeader),
+            "pane_search" => Some(Self::PaneSearch),
+            "move_down" => Some(Self::MoveDown),
+            "move_up" => Some(Self::MoveUp),
+            "half_page_down" => Some(Self::HalfPageDown),
+            "half_page_up" => Some(Self::HalfPageUp),
+            "jump_top" => Some(Self::JumpTop),
+            "jump_bottom" => Some(Self::JumpBottom),
+            "scroll_viewport_down" => Some(Self::ScrollViewportDown),
+            "scroll_viewport_up" => Some(Self::ScrollViewportUp),
+            "scroll_pane_left" => Some(Self::ScrollPaneLeft),
+            "scroll_pane_right" => Some(Self::ScrollPaneRight),
+            "narrow_pane" => Some(Self::NarrowPane),
+            "widen_pane" => Some(Self::WidenPane),
+            "confirm" => Some(Self::Confirm),
+            "expand_right" => Some(Self::ExpandRight),
+            "collapse_left" => Some(Self::CollapseLeft),
+            "scroll_top" => Some(Self::ScrollTop),
+            "scroll_bottom" => Some(Self::ScrollBottom),
+            _ => None,
+        }
+    }
+
+    /// Default key spec for user-configurable actions; `None` for fixed-only actions.
+    pub fn default_binding(self) -> Option<&'static str> {
+        match self {
+            Self::Quit => Some("q"),
+            Self::Return => Some("esc"),
+            Self::ToggleDebugLog => Some("`"),
+            Self::FocusGuilds => Some("1"),
+            Self::FocusChannels => Some("2"),
+            Self::FocusMessages => Some("3"),
+            Self::FocusMembers => Some("4"),
+            Self::CycleFocusForward => Some("tab"),
+            Self::CycleFocusBackward => Some("backtab"),
+            Self::OpenComposer => Some("i"),
+            Self::OpenInEditor => Some("ctrl+e"),
+            Self::OpenKeymap => Some("?"),
+            Self::OpenLeader => Some("space"),
+            Self::PaneSearch => Some("/"),
+            Self::MoveDown => Some("j"),
+            Self::MoveUp => Some("k"),
+            Self::HalfPageDown => Some("ctrl+d"),
+            Self::HalfPageUp => Some("ctrl+u"),
+            Self::JumpTop => Some("g"),
+            Self::JumpBottom => Some("shift+g"),
+            Self::ScrollViewportDown => Some("shift+j"),
+            Self::ScrollViewportUp => Some("shift+k"),
+            Self::ScrollPaneLeft => Some("shift+h"),
+            Self::ScrollPaneRight => Some("shift+l"),
+            Self::NarrowPane => Some("alt+h"),
+            Self::WidenPane => Some("alt+l"),
+            Self::Confirm => Some("enter"),
+            Self::ExpandRight => Some("l"),
+            Self::CollapseLeft => Some("h"),
+            Self::ScrollTop | Self::ScrollBottom => None,
         }
     }
 }
 
+/// All configurable actions in the order they appear in the config schema.
+const CONFIGURABLE_ACTIONS: &[Action] = &[
+    Action::Quit,
+    Action::Return,
+    Action::ToggleDebugLog,
+    Action::FocusGuilds,
+    Action::FocusChannels,
+    Action::FocusMessages,
+    Action::FocusMembers,
+    Action::CycleFocusForward,
+    Action::CycleFocusBackward,
+    Action::OpenComposer,
+    Action::OpenInEditor,
+    Action::OpenKeymap,
+    Action::OpenLeader,
+    Action::PaneSearch,
+    Action::MoveDown,
+    Action::MoveUp,
+    Action::HalfPageDown,
+    Action::HalfPageUp,
+    Action::JumpTop,
+    Action::JumpBottom,
+    Action::ScrollViewportDown,
+    Action::ScrollViewportUp,
+    Action::ScrollPaneLeft,
+    Action::ScrollPaneRight,
+    Action::NarrowPane,
+    Action::WidenPane,
+    Action::Confirm,
+    Action::ExpandRight,
+    Action::CollapseLeft,
+];
+
+/// Fixed aliases that are always present and cannot be overridden by config.
+/// These cover hardware-conventional keys (arrow keys, Enter, Esc, Tab, …).
+fn fixed_table() -> HashMap<KeyBinding, Action> {
+    let mut m = HashMap::new();
+    let entries: &[(&str, Action)] = &[
+        ("ctrl+c", Action::Quit),
+        ("down", Action::MoveDown),
+        ("up", Action::MoveUp),
+        ("pagedown", Action::HalfPageDown),
+        ("pageup", Action::HalfPageUp),
+        ("home", Action::ScrollTop),
+        ("end", Action::ScrollBottom),
+        ("right", Action::ExpandRight),
+        ("left", Action::CollapseLeft),
+        ("alt+left", Action::NarrowPane),
+        ("alt+right", Action::WidenPane),
+        ("tab", Action::CycleFocusForward),
+        ("backtab", Action::CycleFocusBackward),
+        ("enter", Action::Confirm),
+        ("esc", Action::Return),
+    ];
+    for (spec, action) in entries {
+        if let Some(binding) = KeyBinding::parse(spec) {
+            m.insert(binding, *action);
+        }
+    }
+    m
+}
+
+/// Resolved keybindings used at runtime.
+#[derive(Clone, Debug)]
+pub struct ActiveKeyBindings {
+    /// User-configurable bindings: config spec → action (with fallback to default).
+    named: HashMap<KeyBinding, Action>,
+    /// Reverse of `named`: action → its current key label (for display).
+    reverse: HashMap<Action, KeyBinding>,
+    /// Immutable hardware-conventional aliases (arrow keys, Enter, Esc, Tab, …).
+    fixed: HashMap<KeyBinding, Action>,
+}
+
 impl ActiveKeyBindings {
     pub fn from_config(config: &KeyBindingsConfig) -> Self {
-        Self {
-            open_in_editor: parse_binding(&config.open_in_editor, "ctrl+e"),
-            quit: parse_binding(&config.quit, "q"),
-            open_composer: parse_binding(&config.open_composer, "i"),
-            open_leader: parse_binding(&config.open_leader, "space"),
-            open_keymap: parse_binding(&config.open_keymap, "?"),
-            pane_search: parse_binding(&config.pane_search, "/"),
-            move_down: parse_binding(&config.move_down, "j"),
-            move_up: parse_binding(&config.move_up, "k"),
-            jump_top: parse_binding(&config.jump_top, "g"),
-            jump_bottom: parse_binding(&config.jump_bottom, "shift+g"),
-            half_page_down: parse_binding(&config.half_page_down, "ctrl+d"),
-            half_page_up: parse_binding(&config.half_page_up, "ctrl+u"),
-            scroll_viewport_down: parse_binding(&config.scroll_viewport_down, "shift+j"),
-            scroll_viewport_up: parse_binding(&config.scroll_viewport_up, "shift+k"),
-            scroll_pane_left: parse_binding(&config.scroll_pane_left, "shift+h"),
-            scroll_pane_right: parse_binding(&config.scroll_pane_right, "shift+l"),
+        let fixed = fixed_table();
+        let mut named: HashMap<KeyBinding, Action> = HashMap::new();
+        let mut reverse: HashMap<Action, KeyBinding> = HashMap::new();
+
+        for &action in CONFIGURABLE_ACTIONS {
+            let default_spec = match action.default_binding() {
+                Some(s) => s,
+                None => continue,
+            };
+            // Use the user's spec if present and parseable; fall back to default.
+            let spec = config
+                .0
+                .get(action.name())
+                .map(String::as_str)
+                .unwrap_or(default_spec);
+            let binding = KeyBinding::parse(spec)
+                .unwrap_or_else(|| KeyBinding::parse(default_spec).expect("default is always valid"));
+            named.insert(binding.clone(), action);
+            reverse.insert(action, binding);
         }
+
+        Self { named, reverse, fixed }
+    }
+
+    /// Look up which action the given key event triggers, if any.
+    /// Named (user-configurable) bindings take priority over fixed aliases.
+    pub fn lookup(&self, key: KeyEvent) -> Option<Action> {
+        let binding = KeyBinding::from_event(key);
+        self.named
+            .get(&binding)
+            .or_else(|| self.fixed.get(&binding))
+            .copied()
+    }
+
+    /// Human-readable key label for `action`, e.g. `"Ctrl+E"`.
+    /// Returns the current user binding if one exists, otherwise the fixed alias,
+    /// otherwise `"?"`.
+    pub fn label(&self, action: Action) -> String {
+        if let Some(binding) = self.reverse.get(&action) {
+            return binding.label();
+        }
+        for (binding, a) in &self.fixed {
+            if *a == action {
+                return binding.label();
+            }
+        }
+        "?".to_owned()
+    }
+}
+
+impl Default for ActiveKeyBindings {
+    fn default() -> Self {
+        Self::from_config(&KeyBindingsConfig::default())
     }
 }
 
@@ -215,33 +441,39 @@ mod tests {
     #[test]
     fn parse_ctrl_e() {
         let b = KeyBinding::parse("ctrl+e").expect("should parse");
-        assert!(b.matches(press(KeyCode::Char('e'), KeyModifiers::CONTROL)));
-        assert!(!b.matches(press(KeyCode::Char('e'), KeyModifiers::empty())));
-        assert!(!b.matches(press(KeyCode::Char('o'), KeyModifiers::CONTROL)));
+        assert!(b == KeyBinding::from_event(press(KeyCode::Char('e'), KeyModifiers::CONTROL)));
+        assert!(b != KeyBinding::from_event(press(KeyCode::Char('e'), KeyModifiers::empty())));
+        assert!(b != KeyBinding::from_event(press(KeyCode::Char('o'), KeyModifiers::CONTROL)));
     }
 
     #[test]
     fn parse_is_case_insensitive() {
         let b = KeyBinding::parse("Ctrl+E").expect("should parse");
-        assert!(b.matches(press(KeyCode::Char('e'), KeyModifiers::CONTROL)));
+        assert_eq!(b, KeyBinding::parse("ctrl+e").unwrap());
     }
 
     #[test]
     fn parse_alt_modifier() {
         let b = KeyBinding::parse("alt+e").expect("should parse");
-        assert!(b.matches(press(KeyCode::Char('e'), KeyModifiers::ALT)));
+        assert_eq!(
+            b,
+            KeyBinding::from_event(press(KeyCode::Char('e'), KeyModifiers::ALT))
+        );
     }
 
     #[test]
     fn parse_option_alias_for_alt() {
         let b = KeyBinding::parse("option+e").expect("should parse");
-        assert!(b.matches(press(KeyCode::Char('e'), KeyModifiers::ALT)));
+        assert_eq!(b, KeyBinding::parse("alt+e").unwrap());
     }
 
     #[test]
     fn parse_function_key() {
         let b = KeyBinding::parse("f12").expect("should parse");
-        assert!(b.matches(press(KeyCode::F(12), KeyModifiers::empty())));
+        assert_eq!(
+            b,
+            KeyBinding::from_event(press(KeyCode::F(12), KeyModifiers::empty()))
+        );
     }
 
     #[test]
@@ -249,6 +481,20 @@ mod tests {
         assert!(KeyBinding::parse("enter").is_some());
         assert!(KeyBinding::parse("esc").is_some());
         assert!(KeyBinding::parse("ctrl+backspace").is_some());
+    }
+
+    #[test]
+    fn parse_backtab_and_shift_tab_are_equivalent() {
+        let backtab = KeyBinding::parse("backtab").expect("should parse");
+        let shift_tab = KeyBinding::parse("shift+tab").expect("should parse");
+        assert_eq!(backtab, shift_tab);
+    }
+
+    #[test]
+    fn backtab_event_normalises_to_shift_tab() {
+        let backtab_event = KeyBinding::from_event(press(KeyCode::BackTab, KeyModifiers::empty()));
+        let shift_tab = KeyBinding::parse("shift+tab").expect("should parse");
+        assert_eq!(backtab_event, shift_tab);
     }
 
     #[test]
@@ -279,40 +525,84 @@ mod tests {
     }
 
     #[test]
+    fn label_backtab_is_shift_tab() {
+        let b = KeyBinding::parse("backtab").expect("should parse");
+        assert_eq!(b.label(), "Shift+Tab");
+    }
+
+    #[test]
     fn shift_binding_matches_all_three_terminal_styles() {
         let b = KeyBinding::parse("shift+j").expect("should parse");
         // (a) crossterm canonical: lowercase + SHIFT modifier
-        assert!(b.matches(press(KeyCode::Char('j'), KeyModifiers::SHIFT)));
+        assert_eq!(b, KeyBinding::from_event(press(KeyCode::Char('j'), KeyModifiers::SHIFT)));
         // (b) legacy: uppercase + no modifier
-        assert!(b.matches(press(KeyCode::Char('J'), KeyModifiers::empty())));
+        assert_eq!(b, KeyBinding::from_event(press(KeyCode::Char('J'), KeyModifiers::empty())));
         // (c) uppercase WITH SHIFT still set (some terminals)
-        assert!(b.matches(press(KeyCode::Char('J'), KeyModifiers::SHIFT)));
+        assert_eq!(b, KeyBinding::from_event(press(KeyCode::Char('J'), KeyModifiers::SHIFT)));
         // must NOT match plain lowercase
-        assert!(!b.matches(press(KeyCode::Char('j'), KeyModifiers::empty())));
+        assert_ne!(b, KeyBinding::from_event(press(KeyCode::Char('j'), KeyModifiers::empty())));
     }
 
     #[test]
     fn jump_bottom_matches_capital_g() {
         let b = KeyBinding::parse("shift+g").expect("should parse");
-        assert!(b.matches(press(KeyCode::Char('g'), KeyModifiers::SHIFT)));
-        assert!(b.matches(press(KeyCode::Char('G'), KeyModifiers::empty())));
-        assert!(b.matches(press(KeyCode::Char('G'), KeyModifiers::SHIFT)));
-        assert!(!b.matches(press(KeyCode::Char('g'), KeyModifiers::empty())));
+        assert_eq!(b, KeyBinding::from_event(press(KeyCode::Char('g'), KeyModifiers::SHIFT)));
+        assert_eq!(b, KeyBinding::from_event(press(KeyCode::Char('G'), KeyModifiers::empty())));
+        assert_eq!(b, KeyBinding::from_event(press(KeyCode::Char('G'), KeyModifiers::SHIFT)));
+        assert_ne!(b, KeyBinding::from_event(press(KeyCode::Char('g'), KeyModifiers::empty())));
+    }
+
+    #[test]
+    fn default_bindings_look_up_correctly() {
+        let kb = ActiveKeyBindings::default();
+        assert_eq!(kb.lookup(press(KeyCode::Char('q'), KeyModifiers::empty())), Some(Action::Quit));
+        assert_eq!(kb.lookup(press(KeyCode::Char('j'), KeyModifiers::empty())), Some(Action::MoveDown));
+        assert_eq!(kb.lookup(press(KeyCode::Down, KeyModifiers::empty())), Some(Action::MoveDown));
+        assert_eq!(kb.lookup(press(KeyCode::Tab, KeyModifiers::empty())), Some(Action::CycleFocusForward));
+        assert_eq!(kb.lookup(press(KeyCode::BackTab, KeyModifiers::empty())), Some(Action::CycleFocusBackward));
+        assert_eq!(kb.lookup(press(KeyCode::Enter, KeyModifiers::empty())), Some(Action::Confirm));
+        assert_eq!(kb.lookup(press(KeyCode::Esc, KeyModifiers::empty())), Some(Action::Return));
     }
 
     #[test]
     fn from_config_falls_back_on_bad_spec() {
+        use std::collections::HashMap;
         use crate::config::KeyBindingsConfig;
-        let cfg = KeyBindingsConfig {
-            open_in_editor: "notakey".to_owned(),
-            ..KeyBindingsConfig::default()
-        };
+        let mut map = HashMap::new();
+        map.insert("open_in_editor".to_owned(), "notakey".to_owned());
+        let cfg = KeyBindingsConfig(map);
         let bindings = ActiveKeyBindings::from_config(&cfg);
         // Should have fallen back to ctrl+e
-        assert!(
-            bindings
-                .open_in_editor
-                .matches(press(KeyCode::Char('e'), KeyModifiers::CONTROL))
+        assert_eq!(
+            bindings.lookup(press(KeyCode::Char('e'), KeyModifiers::CONTROL)),
+            Some(Action::OpenInEditor)
         );
+    }
+
+    #[test]
+    fn custom_binding_overrides_default() {
+        use std::collections::HashMap;
+        use crate::config::KeyBindingsConfig;
+        let mut map = HashMap::new();
+        map.insert("open_composer".to_owned(), "e".to_owned());
+        let cfg = KeyBindingsConfig(map);
+        let bindings = ActiveKeyBindings::from_config(&cfg);
+        assert_eq!(
+            bindings.lookup(press(KeyCode::Char('e'), KeyModifiers::empty())),
+            Some(Action::OpenComposer)
+        );
+        // Old default 'i' should no longer be mapped
+        assert_ne!(
+            bindings.lookup(press(KeyCode::Char('i'), KeyModifiers::empty())),
+            Some(Action::OpenComposer)
+        );
+    }
+
+    #[test]
+    fn label_returns_current_binding() {
+        let kb = ActiveKeyBindings::default();
+        assert_eq!(kb.label(Action::MoveDown), "j");
+        assert_eq!(kb.label(Action::Quit), "q");
+        assert_eq!(kb.label(Action::OpenInEditor), "Ctrl+E");
     }
 }

@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -84,79 +85,25 @@ impl DisplayOptions {
     }
 }
 
-/// Raw key-binding strings from the config file, e.g. `"ctrl+e"`.
+/// Raw key-binding overrides from the config file, as a map of action name →
+/// key spec string (e.g. `"ctrl+e"`).  Only entries that differ from the
+/// built-in defaults need to be present; absent entries use the defaults
+/// defined in `Action::default_binding`.
 ///
-/// Each field accepts a key spec of the form `[modifier+]key` where modifier
+/// Each value accepts a key spec of the form `[modifier+]key` where modifier
 /// is one of `ctrl`, `alt`, `shift` and key is a single character, `space`,
-/// or a special name (`enter`, `esc`, `tab`, `f1`–`f12`, `pageup`, etc.).
+/// or a special name (`enter`, `esc`, `tab`, `backtab`, `f1`–`f12`, …).
 /// Unrecognised specs silently fall back to the built-in default.
 ///
 /// Example `~/.config/concord/config.toml`:
 /// ```toml
 /// [keybindings]
-/// move_down       = "ctrl+n"
-/// move_up         = "ctrl+p"
-/// open_composer   = "a"
+/// move_down     = "ctrl+n"
+/// move_up       = "ctrl+p"
+/// open_composer = "a"
 /// ```
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(default)]
-pub struct KeyBindingsConfig {
-    /// Open the current composer buffer in `$EDITOR`. Default: `ctrl+e`.
-    pub open_in_editor: String,
-    /// Quit the application. Default: `q`.
-    pub quit: String,
-    /// Open the message composer. Default: `i`.
-    pub open_composer: String,
-    /// Open the leader menu. Default: `space`.
-    pub open_leader: String,
-    /// Open the keybinding help popup. Default: `?`.
-    pub open_keymap: String,
-    /// Open the pane search/filter bar. Default: `/`.
-    pub pane_search: String,
-    /// Move selection down. Arrow-down always works as an alternate. Default: `j`.
-    pub move_down: String,
-    /// Move selection up. Arrow-up always works as an alternate. Default: `k`.
-    pub move_up: String,
-    /// Jump to the top of the list. Default: `g`.
-    pub jump_top: String,
-    /// Jump to the bottom of the list. Default: `shift+g` (G).
-    pub jump_bottom: String,
-    /// Scroll down by half a page. PageDown always works as an alternate. Default: `ctrl+d`.
-    pub half_page_down: String,
-    /// Scroll up by half a page. PageUp always works as an alternate. Default: `ctrl+u`.
-    pub half_page_up: String,
-    /// Scroll the message viewport down (Messages pane only). Default: `shift+j` (J).
-    pub scroll_viewport_down: String,
-    /// Scroll the message viewport up (Messages pane only). Default: `shift+k` (K).
-    pub scroll_viewport_up: String,
-    /// Scroll the focused pane horizontally left. Default: `shift+h` (H).
-    pub scroll_pane_left: String,
-    /// Scroll the focused pane horizontally right. Default: `shift+l` (L).
-    pub scroll_pane_right: String,
-}
-
-impl Default for KeyBindingsConfig {
-    fn default() -> Self {
-        Self {
-            open_in_editor: "ctrl+e".to_owned(),
-            quit: "q".to_owned(),
-            open_composer: "i".to_owned(),
-            open_leader: "space".to_owned(),
-            open_keymap: "?".to_owned(),
-            pane_search: "/".to_owned(),
-            move_down: "j".to_owned(),
-            move_up: "k".to_owned(),
-            jump_top: "g".to_owned(),
-            jump_bottom: "shift+g".to_owned(),
-            half_page_down: "ctrl+d".to_owned(),
-            half_page_up: "ctrl+u".to_owned(),
-            scroll_viewport_down: "shift+j".to_owned(),
-            scroll_viewport_up: "shift+k".to_owned(),
-            scroll_pane_left: "shift+h".to_owned(),
-            scroll_pane_right: "shift+l".to_owned(),
-        }
-    }
-}
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct KeyBindingsConfig(pub HashMap<String, String>);
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]

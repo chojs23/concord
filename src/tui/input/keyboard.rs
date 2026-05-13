@@ -4,6 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::discord::{AppCommand, MessageAttachmentUpload};
 
+use super::super::keybinding::Action;
 use super::super::state::{DashboardState, FocusPane};
 
 pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
@@ -31,7 +32,11 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_composer_key(state, key);
     }
 
-    if key.code == KeyCode::Char('`') {
+    let action = state.key_bindings().lookup(key);
+
+    // ToggleDebugLog fires before any modal or filter — accessible from anywhere
+    // except while composing or with a popup already open.
+    if action == Some(Action::ToggleDebugLog) {
         state.toggle_debug_log_popup();
         return None;
     }
@@ -65,7 +70,6 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     }
 
     let focus = state.focus();
-    let kb = state.key_bindings().clone();
 
     // Only intercept filter input when the pane that owns the filter is still
     // focused. Moving the mouse to another pane should let normal keybinds
@@ -73,76 +77,177 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     if (state.is_guild_pane_filter_active() && focus == FocusPane::Guilds)
         || (state.is_channel_pane_filter_active() && focus == FocusPane::Channels)
     {
-        state.adjust_focused_pane_width(-1);
-    } else if (key.code == KeyCode::Char('l') || key.code == KeyCode::Right)
-        && key.modifiers.contains(KeyModifiers::ALT)
-    {
-        state.adjust_focused_pane_width(1);
-    } else if kb.move_down.matches(key) || key.code == KeyCode::Down {
-        state.move_down();
-    } else if kb.scroll_viewport_down.matches(key) && focus == FocusPane::Messages {
-        state.scroll_message_viewport_down();
-    } else if kb.scroll_pane_right.matches(key) {
-        state.scroll_focused_pane_horizontal_right();
-    } else if kb.move_up.matches(key) || key.code == KeyCode::Up {
-        state.move_up();
-        return state.next_older_history_command();
-    } else if kb.scroll_viewport_up.matches(key) && focus == FocusPane::Messages {
-        state.scroll_message_viewport_up();
-    } else if kb.scroll_pane_left.matches(key) {
-        state.scroll_focused_pane_horizontal_left();
-    } else if kb.half_page_down.matches(key) || key.code == KeyCode::PageDown {
-        state.half_page_down();
-    } else if kb.half_page_up.matches(key) || key.code == KeyCode::PageUp {
-        state.half_page_up();
-        return state.next_older_history_command();
-    } else if kb.jump_top.matches(key) {
-        state.jump_top();
-    } else if key.code == KeyCode::Home {
-        if focus == FocusPane::Messages {
-            state.scroll_message_viewport_top();
-        } else {
-            state.jump_top();
+        if let Some(command) = handle_pane_filter_key(state, key, focus) {
+            return command;
         }
-    } else if kb.jump_bottom.matches(key) {
-        state.jump_bottom();
-    } else if key.code == KeyCode::End {
-        if focus == FocusPane::Messages {
-            state.scroll_message_viewport_bottom();
-        } else {
-            state.jump_bottom();
-        }
-    } else if key.code == KeyCode::BackTab {
-        state.cycle_focus_backward();
-    } else if key.code == KeyCode::Tab {
-        state.cycle_focus();
-    } else if kb.pane_search.matches(key) {
-        // Tree headers act like a small tree: Enter toggles, Right
-        // opens, and Left closes. Anywhere else these keys are no-ops.
-        match focus {
-            FocusPane::Guilds => state.open_guild_pane_filter(),
-            FocusPane::Channels => state.open_channel_pane_filter(),
-            _ => {}
-        }
-    } else if key.code == KeyCode::Enter && focus == FocusPane::Guilds {
-        state.confirm_selected_guild();
-    } else if key.code == KeyCode::Enter && focus == FocusPane::Channels {
-        return state.confirm_selected_channel_command();
-    } else if key.code == KeyCode::Enter && focus == FocusPane::Members {
-        return state.show_selected_member_profile();
-    } else if key.code == KeyCode::Enter && focus == FocusPane::Messages {
-        return state.activate_selected_message_pane_item();
-    } else if is_right_key(key.code) && focus == FocusPane::Guilds {
-        state.open_selected_folder();
-    } else if is_left_key(key.code) && focus == FocusPane::Guilds {
-        state.close_selected_folder();
-    } else if is_right_key(key.code) && focus == FocusPane::Channels {
-        state.open_selected_channel_category();
-    } else if is_left_key(key.code) && focus == FocusPane::Channels {
-        state.close_selected_channel_category();
     }
 
-    None
+    if let Some(action) = action {
+        dispatch_action(state, action, focus)
+    } else {
+        None
+    }
+}
+
+fn dispatch_action(
+    state: &mut DashboardState,
+    action: Action,
+    focus: FocusPane,
+) -> Option<AppCommand> {
+    match action {
+        Action::Quit => {
+            state.quit();
+            None
+        }
+        Action::Return => {
+            if !state.return_from_pinned_message_view() {
+                state.return_from_opened_thread();
+            }
+            None
+        }
+        Action::ToggleDebugLog => {
+            state.toggle_debug_log_popup();
+            None
+        }
+        Action::FocusGuilds => {
+            state.show_and_focus_pane(FocusPane::Guilds);
+            None
+        }
+        Action::FocusChannels => {
+            state.show_and_focus_pane(FocusPane::Channels);
+            None
+        }
+        Action::FocusMessages => {
+            state.show_and_focus_pane(FocusPane::Messages);
+            None
+        }
+        Action::FocusMembers => {
+            state.show_and_focus_pane(FocusPane::Members);
+            None
+        }
+        Action::CycleFocusForward => {
+            state.cycle_focus();
+            None
+        }
+        Action::CycleFocusBackward => {
+            state.cycle_focus_backward();
+            None
+        }
+        Action::OpenComposer => {
+            state.start_composer();
+            None
+        }
+        Action::OpenInEditor => None, // only valid inside the composer context
+        Action::OpenKeymap => {
+            state.open_keymap_popup();
+            None
+        }
+        Action::OpenLeader => {
+            state.open_leader();
+            None
+        }
+        Action::PaneSearch => {
+            match focus {
+                FocusPane::Guilds => state.open_guild_pane_filter(),
+                FocusPane::Channels => state.open_channel_pane_filter(),
+                _ => {}
+            }
+            None
+        }
+        Action::MoveDown => {
+            state.move_down();
+            None
+        }
+        Action::MoveUp => {
+            state.move_up();
+            state.next_older_history_command()
+        }
+        Action::HalfPageDown => {
+            state.half_page_down();
+            None
+        }
+        Action::HalfPageUp => {
+            state.half_page_up();
+            state.next_older_history_command()
+        }
+        Action::JumpTop => {
+            state.jump_top();
+            None
+        }
+        Action::JumpBottom => {
+            state.jump_bottom();
+            None
+        }
+        Action::ScrollTop => {
+            if focus == FocusPane::Messages {
+                state.scroll_message_viewport_top();
+            } else {
+                state.jump_top();
+            }
+            None
+        }
+        Action::ScrollBottom => {
+            if focus == FocusPane::Messages {
+                state.scroll_message_viewport_bottom();
+            } else {
+                state.jump_bottom();
+            }
+            None
+        }
+        Action::ScrollViewportDown => {
+            if focus == FocusPane::Messages {
+                state.scroll_message_viewport_down();
+            }
+            None
+        }
+        Action::ScrollViewportUp => {
+            if focus == FocusPane::Messages {
+                state.scroll_message_viewport_up();
+            }
+            None
+        }
+        Action::ScrollPaneLeft => {
+            state.scroll_focused_pane_horizontal_left();
+            None
+        }
+        Action::ScrollPaneRight => {
+            state.scroll_focused_pane_horizontal_right();
+            None
+        }
+        Action::NarrowPane => {
+            state.adjust_focused_pane_width(-1);
+            None
+        }
+        Action::WidenPane => {
+            state.adjust_focused_pane_width(1);
+            None
+        }
+        Action::Confirm => match focus {
+            FocusPane::Guilds => {
+                state.confirm_selected_guild();
+                None
+            }
+            FocusPane::Channels => state.confirm_selected_channel_command(),
+            FocusPane::Members => state.show_selected_member_profile(),
+            FocusPane::Messages => state.activate_selected_message_pane_item(),
+        },
+        Action::ExpandRight => {
+            match focus {
+                FocusPane::Guilds => state.open_selected_folder(),
+                FocusPane::Channels => state.open_selected_channel_category(),
+                _ => {}
+            }
+            None
+        }
+        Action::CollapseLeft => {
+            match focus {
+                FocusPane::Guilds => state.close_selected_folder(),
+                FocusPane::Channels => state.close_selected_channel_category(),
+                _ => {}
+            }
+            None
+        }
+    }
 }
 
 fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
@@ -643,7 +748,7 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
     }
 
     // Check configurable bindings before the fixed-key match below.
-    if state.key_bindings().open_in_editor.matches(key) {
+    if state.key_bindings().lookup(key) == Some(Action::OpenInEditor) {
         state.request_open_composer_in_editor();
         return None;
     }

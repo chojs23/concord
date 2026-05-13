@@ -2,6 +2,7 @@ use super::activity::{ActivityLeading, build_activity_render};
 use super::message_list::render_image_preview;
 use super::*;
 use crate::discord::ActivityKind;
+use crate::tui::keybinding::Action;
 use ratatui::layout::Position;
 
 mod action_menu;
