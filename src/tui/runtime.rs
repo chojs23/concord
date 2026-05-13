@@ -594,12 +594,12 @@ fn open_composer_in_editor(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut DashboardState,
 ) -> crate::Result<()> {
-    use std::{env, io::stdout};
-    use crossterm::execute;
     use crossterm::event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
         KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     };
+    use crossterm::execute;
+    use std::{env, io::stdout};
 
     let editor = env::var("EDITOR").unwrap_or_else(|_| "vi".to_owned());
 

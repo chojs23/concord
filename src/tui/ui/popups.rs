@@ -26,6 +26,7 @@ pub(super) use channel_switcher::{
 pub(super) use debug_log::debug_log_popup_lines;
 pub(super) use debug_log::render_debug_log_popup;
 pub(super) use image_viewer::render_image_viewer;
+pub(super) use keymap::render_keymap_popup;
 #[cfg(test)]
 pub(super) use options::options_popup_lines;
 pub(super) use options::render_options_popup;
@@ -43,7 +44,6 @@ pub(super) use reactions::{
     emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
     filtered_emoji_reaction_picker_lines, reaction_users_popup_lines,
 };
-pub(super) use keymap::render_keymap_popup;
 pub(super) use reactions::{render_emoji_reaction_picker, render_reaction_users_popup};
 
 fn truncate_line_to_display_width(line: Line<'static>, max_width: usize) -> Line<'static> {
