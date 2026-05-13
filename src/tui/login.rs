@@ -22,7 +22,7 @@ use self::{
     state::{LoginScreen, LoginState},
     terminal_events::{LoginAction, handle_terminal},
 };
-use super::TerminalRestoreGuard;
+use super::terminal::TerminalRestoreGuard;
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     let mut terminal = ratatui::init();
