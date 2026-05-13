@@ -3,11 +3,9 @@ use std::time::Duration;
 use crate::discord::MessageState;
 
 use super::*;
-use crate::tui::{media, message_format, message_rows::MessageRowMetrics, ui};
+use crate::tui::{media, message_format, message_rows::MessageRowMetrics, message_time};
 
 const AUTHOR_GROUP_MAX_GAP: Duration = Duration::from_secs(5 * 60);
-const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
-const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
 
 impl DashboardState {
     pub(crate) fn message_scroll_row_position(
@@ -74,7 +72,7 @@ impl DashboardState {
         let previous_id = index
             .checked_sub(1)
             .and_then(|prev_index| messages.get(prev_index).map(|message| message.id));
-        ui::message_starts_new_day(current.id, previous_id)
+        message_time::message_starts_new_day(current.id, previous_id)
     }
 
     /// Number of extra rows that the message at `index` reserves above its
@@ -112,7 +110,7 @@ impl DashboardState {
             * crate::tui::message_rows::MESSAGE_ROW_GAP
     }
 
-    pub(crate) fn selected_message_extra_top_line_at(&self, index: usize) -> usize {
+    fn selected_message_extra_top_line_at(&self, index: usize) -> usize {
         usize::from(
             self.messages().get(index).is_some()
                 && index == self.selected_message
@@ -120,29 +118,11 @@ impl DashboardState {
         )
     }
 
-    pub(crate) fn message_has_bottom_gap_after(&self, index: usize) -> bool {
+    fn message_has_bottom_gap_after(&self, index: usize) -> bool {
         let Some(next) = index.checked_add(1) else {
             return true;
         };
         next >= self.messages().len() || self.message_starts_author_group_at(next)
-    }
-
-    pub(in crate::tui) fn message_row_metrics_at(
-        &self,
-        index: usize,
-        message: &MessageState,
-        content_width: usize,
-        preview_width: u16,
-        max_preview_height: u16,
-    ) -> MessageRowMetrics {
-        self.message_row_metrics_at_with_selected_bottom(
-            index,
-            message,
-            content_width,
-            preview_width,
-            max_preview_height,
-            index == self.selected_message,
-        )
     }
 
     pub(in crate::tui) fn message_row_metrics_at_with_selected_bottom(
@@ -279,38 +259,20 @@ impl DashboardState {
         let Some(message) = messages.get(index).copied() else {
             return 0;
         };
-        self.message_row_metrics_at(
+        self.message_row_metrics_at_with_selected_bottom(
             index,
             message,
             content_width,
             preview_width,
             max_preview_height,
+            index == self.selected_message,
         )
         .total_rows()
     }
 }
 
 fn messages_exceed_author_group_gap(previous: &MessageState, current: &MessageState) -> bool {
-    let previous_created = message_created_at(previous);
-    let current_created = message_created_at(current);
+    let previous_created = Duration::from_millis(message_time::message_unix_millis(previous.id));
+    let current_created = Duration::from_millis(message_time::message_unix_millis(current.id));
     current_created.saturating_sub(previous_created) >= AUTHOR_GROUP_MAX_GAP
-}
-
-fn message_created_at(message: &MessageState) -> Duration {
-    Duration::from_millis((message.id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS)
-}
-
-#[cfg(test)]
-pub(super) fn message_rendered_height(
-    message: &MessageState,
-    content_width: usize,
-    preview_width: u16,
-    max_preview_height: u16,
-) -> usize {
-    DashboardState::new().message_rendered_height(
-        message,
-        content_width,
-        preview_width,
-        max_preview_height,
-    )
 }

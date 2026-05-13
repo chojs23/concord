@@ -17,10 +17,6 @@ impl MessageRowMetrics {
         self.header_rows.saturating_add(self.content_rows)
     }
 
-    pub(in crate::tui) fn base_rows(self) -> usize {
-        self.body_rows().saturating_add(self.reaction_rows)
-    }
-
     pub(in crate::tui) fn body_top_offset(self) -> usize {
         self.top_rows.saturating_add(self.selected_extra_top_rows)
     }
@@ -33,7 +29,8 @@ impl MessageRowMetrics {
 
     pub(in crate::tui) fn total_rows(self) -> usize {
         self.top_rows
-            .saturating_add(self.base_rows())
+            .saturating_add(self.body_rows())
+            .saturating_add(self.reaction_rows)
             .saturating_add(self.preview_rows)
             .saturating_add(self.selected_extra_top_rows)
             .saturating_add(self.selected_extra_bottom_rows)

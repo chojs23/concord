@@ -1,6 +1,9 @@
 use super::forum;
 use super::panes::{render_composer, render_composer_emoji_picker, render_composer_mention_picker};
 use super::*;
+use crate::tui::message_time::{
+    format_message_local_time, message_local_date, message_local_datetime,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct InlinePreviewSpacer {
@@ -314,10 +317,11 @@ fn unread_banner_line(left: String, right: &str, width: usize, style: Style) -> 
 }
 
 fn format_unread_banner_since(message_id: Id<MessageMarker>) -> Option<String> {
-    let unix_millis = (message_id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS;
-    let unix_millis = i64::try_from(unix_millis).ok()?;
-    let dt = DateTime::from_timestamp_millis(unix_millis)?.with_timezone(&Local);
-    Some(dt.format("%Y-%m-%d %H:%M").to_string())
+    Some(
+        message_local_datetime(message_id)?
+            .format("%Y-%m-%d %H:%M")
+            .to_string(),
+    )
 }
 
 fn render_inline_reaction_emojis(
@@ -1038,33 +1042,7 @@ fn message_body_top_row(
 }
 
 pub(super) fn format_message_sent_time(message_id: Id<MessageMarker>) -> String {
-    let unix_millis = (message_id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS;
-    format_unix_millis_local_time(unix_millis).unwrap_or_else(|| "--:--".to_owned())
-}
-
-fn format_unix_millis_local_time(unix_millis: u64) -> Option<String> {
-    let unix_millis = i64::try_from(unix_millis).ok()?;
-    let utc = DateTime::from_timestamp_millis(unix_millis)?;
-    Some(utc.with_timezone(&Local).format("%H:%M").to_string())
-}
-
-fn message_local_date(message_id: Id<MessageMarker>) -> NaiveDate {
-    let unix_millis = (message_id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS;
-    i64::try_from(unix_millis)
-        .ok()
-        .and_then(DateTime::from_timestamp_millis)
-        .map(|dt| dt.with_timezone(&Local).date_naive())
-        .unwrap_or_else(|| NaiveDate::from_ymd_opt(2015, 1, 1).expect("static date is valid"))
-}
-
-pub(crate) fn message_starts_new_day(
-    current: Id<MessageMarker>,
-    previous: Option<Id<MessageMarker>>,
-) -> bool {
-    match previous {
-        None => true,
-        Some(prev) => message_local_date(current) != message_local_date(prev),
-    }
+    format_message_local_time(message_id)
 }
 
 pub(super) fn date_separator_line(message_id: Id<MessageMarker>, width: usize) -> Line<'static> {
@@ -1121,16 +1099,6 @@ fn separator_line(label: &str, width: usize, style: Style) -> Line<'static> {
         format!("{}{}{}", "─".repeat(left), label, "─".repeat(right)),
         style,
     ))
-}
-
-#[cfg(test)]
-pub(super) fn format_unix_millis_with_offset(
-    unix_millis: u64,
-    offset: chrono::FixedOffset,
-) -> Option<String> {
-    let unix_millis = i64::try_from(unix_millis).ok()?;
-    let utc = DateTime::from_timestamp_millis(unix_millis)?;
-    Some(utc.with_timezone(&offset).format("%H:%M").to_string())
 }
 
 fn image_preview_spacer_lines(spacer: &InlinePreviewSpacer) -> Vec<Line<'static>> {

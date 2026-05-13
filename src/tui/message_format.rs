@@ -16,6 +16,7 @@ use super::{
         InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind,
         replace_custom_emoji_markup_in_rendered_with_images, truncate_display_width, truncate_text,
     },
+    message_time,
     state::{DashboardState, ThreadSummary, discord_color},
 };
 use crate::discord::{
@@ -26,8 +27,6 @@ use crate::discord::{
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
 const SELF_REACTION: Color = Color::Yellow;
-const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
-const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
 const THREAD_CARD_INDENT: &str = "  ";
 const EDITED_MARKER: &str = " (edited)";
 pub(super) const EMOJI_REACTION_IMAGE_WIDTH: u16 = 2;
@@ -1539,7 +1538,7 @@ fn format_latest_message_preview(
 }
 
 pub(super) fn format_message_relative_age(message_id: Id<MessageMarker>) -> String {
-    let created = (message_id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS;
+    let created = message_time::message_unix_millis(message_id);
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()

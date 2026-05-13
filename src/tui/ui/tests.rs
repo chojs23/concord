@@ -10,24 +10,27 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    ACCENT, DIM, DISCORD_EPOCH_MILLIS, ImagePreview, ImagePreviewState, MENTION_ORANGE,
-    MemberEntry, READ_DIM, SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER,
-    SNOWFLAKE_TIMESTAMP_SHIFT, UNREAD_BRIGHT, channel_switcher_cursor_position,
-    channel_switcher_lines, channel_unread_decoration, composer_content_line_count,
-    composer_cursor_position, composer_lines, composer_lines_with_loaded_custom_emoji_urls,
-    composer_prompt_line_count, composer_text, date_separator_line, debug_log_popup_lines,
-    dm_presence_dot_span, emoji_picker_lines, emoji_reaction_picker_lines,
-    emoji_reaction_picker_lines_for_width, filtered_emoji_reaction_picker_lines, focus_pane_at,
-    format_message_sent_time, format_unix_millis_with_offset, forum_post_reaction_summary,
-    forum_post_scrollbar_visible_count, forum_post_viewport_lines, inline_image_preview_area,
-    inline_image_preview_row, member_display_label, member_name_style, message_action_menu_lines,
-    message_author_style, message_body_custom_emoji_rows, message_item_lines,
-    message_starts_new_day, message_viewport_lines, new_messages_notice_line, options_popup_lines,
+    ACCENT, DIM, ImagePreview, ImagePreviewState, MENTION_ORANGE, MemberEntry, READ_DIM,
+    SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT,
+    channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
+    composer_content_line_count, composer_cursor_position, composer_lines,
+    composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count, composer_text,
+    date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_picker_lines,
+    emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
+    filtered_emoji_reaction_picker_lines, focus_pane_at, format_message_sent_time,
+    forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
+    inline_image_preview_area, inline_image_preview_row, member_display_label, member_name_style,
+    message_action_menu_lines, message_author_style, message_body_custom_emoji_rows,
+    message_item_lines, message_viewport_lines, new_messages_notice_line, options_popup_lines,
     poll_vote_picker_lines, primary_activity_summary, reaction_users_popup_lines,
     reaction_users_visible_line_count, render_channels, render_guilds, selected_avatar_x_offset,
     selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
     user_profile_popup_has_avatar, user_profile_popup_lines,
     user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
+};
+use crate::tui::message_time::{
+    discord_epoch_unix_millis, format_unix_millis_with_offset, message_starts_new_day,
+    test_message_id_for_unix_millis,
 };
 use crate::{
     config::DisplayOptions,
@@ -2386,9 +2389,10 @@ fn boost_message_types_use_discord_like_copy() {
 fn thread_created_message_uses_cached_thread_details() {
     let mut message = message_with_content(Some("release notes".to_owned()));
     message.message_kind = MessageKind::new(18);
-    message.id = snowflake_for_unix_ms(current_unix_millis().saturating_sub(10 * 60 * 1000));
+    message.id =
+        test_message_id_for_unix_millis(current_unix_millis().saturating_sub(10 * 60 * 1000));
     let latest_thread_message_id =
-        snowflake_for_unix_ms(current_unix_millis().saturating_sub(2 * 60 * 1000));
+        test_message_id_for_unix_millis(current_unix_millis().saturating_sub(2 * 60 * 1000));
     let mut state = DashboardState::new();
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         guild_id: Some(Id::new(1)),
@@ -2425,8 +2429,9 @@ fn thread_created_message_uses_cached_thread_message_when_last_id_missing() {
     let now = current_unix_millis();
     let mut message = message_with_content(Some("release notes".to_owned()));
     message.message_kind = MessageKind::new(18);
-    message.id = snowflake_for_unix_ms(now.saturating_sub(10 * 60 * 1000));
-    let latest_thread_message_id = snowflake_for_unix_ms(now.saturating_sub(2 * 60 * 1000));
+    message.id = test_message_id_for_unix_millis(now.saturating_sub(10 * 60 * 1000));
+    let latest_thread_message_id =
+        test_message_id_for_unix_millis(now.saturating_sub(2 * 60 * 1000));
     let mut state = DashboardState::new();
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         guild_id: Some(Id::new(1)),
@@ -2475,7 +2480,8 @@ fn thread_created_message_uses_cached_thread_message_when_last_id_missing() {
 fn thread_created_message_falls_back_to_system_message_time() {
     let mut message = message_with_content(Some("release notes".to_owned()));
     message.message_kind = MessageKind::new(18);
-    message.id = snowflake_for_unix_ms(current_unix_millis().saturating_sub(2 * 60 * 1000));
+    message.id =
+        test_message_id_for_unix_millis(current_unix_millis().saturating_sub(2 * 60 * 1000));
     let mut state = DashboardState::new();
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         guild_id: Some(Id::new(1)),
@@ -2505,7 +2511,8 @@ fn thread_created_message_falls_back_to_system_message_time() {
 fn thread_created_message_keeps_archived_and_locked_metadata() {
     let mut message = message_with_content(Some("release notes".to_owned()));
     message.message_kind = MessageKind::new(18);
-    message.id = snowflake_for_unix_ms(current_unix_millis().saturating_sub(2 * 60 * 1000));
+    message.id =
+        test_message_id_for_unix_millis(current_unix_millis().saturating_sub(2 * 60 * 1000));
     let mut state = DashboardState::new();
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         guild_id: Some(Id::new(1)),
@@ -3653,10 +3660,10 @@ fn message_viewport_lines_group_consecutive_messages_by_author() {
 #[test]
 fn message_viewport_lines_start_new_author_group_after_time_gap() {
     let base = 1_743_465_600_000;
-    let mut state = state_with_message_id(snowflake_for_unix_ms(base), "hello");
+    let mut state = state_with_message_id(test_message_id_for_unix_millis(base), "hello");
     push_message_with_id(
         &mut state,
-        snowflake_for_unix_ms(base + 7 * 60 * 1000),
+        test_message_id_for_unix_millis(base + 7 * 60 * 1000),
         "later follow-up",
     );
     state.jump_top();
@@ -4021,14 +4028,9 @@ fn message_sent_time_formats_with_timezone_offset() {
     let kst = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("KST offset should be valid");
 
     assert_eq!(
-        format_unix_millis_with_offset(DISCORD_EPOCH_MILLIS, kst),
+        format_unix_millis_with_offset(discord_epoch_unix_millis(), kst),
         Some("09:00".to_owned())
     );
-}
-
-fn snowflake_for_unix_ms(unix_ms: u64) -> Id<MessageMarker> {
-    let raw = (unix_ms - DISCORD_EPOCH_MILLIS) << SNOWFLAKE_TIMESTAMP_SHIFT;
-    Id::new(raw.max(1))
 }
 
 fn current_unix_millis() -> u64 {
@@ -4044,8 +4046,8 @@ fn current_unix_millis() -> u64 {
 fn date_separator_appears_when_local_date_changes() {
     // 24h apart at noon UTC guarantees different local dates regardless of
     // the test runner's timezone.
-    let day_one = snowflake_for_unix_ms(1_743_465_600_000); // 2026-04-01 00:00:00 UTC + 12h ≈ noon
-    let day_two = snowflake_for_unix_ms(1_743_465_600_000 + 24 * 60 * 60 * 1000);
+    let day_one = test_message_id_for_unix_millis(1_743_465_600_000); // 2026-04-01 00:00:00 UTC + 12h ≈ noon
+    let day_two = test_message_id_for_unix_millis(1_743_465_600_000 + 24 * 60 * 60 * 1000);
 
     assert!(message_starts_new_day(day_one, None));
     assert!(!message_starts_new_day(day_one, Some(day_one)));
@@ -4054,7 +4056,7 @@ fn date_separator_appears_when_local_date_changes() {
 
 #[test]
 fn date_separator_line_centers_label_within_full_width() {
-    let id = snowflake_for_unix_ms(1_743_508_800_000); // arbitrary timestamp
+    let id = test_message_id_for_unix_millis(1_743_508_800_000); // arbitrary timestamp
     let line = date_separator_line(id, 30);
     let text = line
         .spans

@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{
     ChannelActionKind, ChannelBranch, ChannelPaneEntry, DashboardState, FocusPane, GuildActionKind,
-    GuildBranch, GuildPaneEntry, MessageActionKind, MessageState, message_rendered_height,
+    GuildBranch, GuildPaneEntry, MessageActionKind, MessageState,
 };
 use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo, ChannelInfo,
@@ -26,6 +26,20 @@ use crate::discord::{
     PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
     ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
 };
+
+fn message_rendered_height(
+    message: &MessageState,
+    content_width: usize,
+    preview_width: u16,
+    max_preview_height: u16,
+) -> usize {
+    DashboardState::new().message_rendered_height(
+        message,
+        content_width,
+        preview_width,
+        max_preview_height,
+    )
+}
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
     UserProfileInfo {

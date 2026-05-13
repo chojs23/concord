@@ -598,6 +598,7 @@ mod tests {
             MessageInfo, MessageSnapshotInfo, ReactionEmoji, ReactionInfo,
         },
         tui::{
+            message_time::test_message_id_for_unix_millis,
             state::{DashboardState, FocusPane},
             ui::ImagePreviewLayout,
         },
@@ -2572,8 +2573,8 @@ mod tests {
         state.confirm_selected_guild();
         state.confirm_selected_channel();
 
-        let day_one = snowflake_for_unix_ms(1_743_465_600_000);
-        let day_two = snowflake_for_unix_ms(1_743_465_600_000 + 24 * 60 * 60 * 1000);
+        let day_one = test_message_id_for_unix_millis(1_743_465_600_000);
+        let day_two = test_message_id_for_unix_millis(1_743_465_600_000 + 24 * 60 * 60 * 1000);
         for (message_id, attachments) in
             [(day_one, Vec::new()), (day_two, vec![image_attachment(2)])]
         {
@@ -2666,13 +2667,6 @@ mod tests {
             url: format!("https://cdn.discordapp.com/image-{id}.png"),
             filename: format!("image-{id}.png"),
         }
-    }
-
-    fn snowflake_for_unix_ms(unix_ms: u64) -> Id<MessageMarker> {
-        const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
-        const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
-        let raw = (unix_ms - DISCORD_EPOCH_MILLIS) << SNOWFLAKE_TIMESTAMP_SHIFT;
-        Id::new(raw.max(1))
     }
 
     fn image_attachment(id: u64) -> AttachmentInfo {

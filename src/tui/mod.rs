@@ -5,6 +5,7 @@ mod login;
 mod media;
 mod message_format;
 mod message_rows;
+mod message_time;
 mod redraw;
 mod requests;
 mod selection;
