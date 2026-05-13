@@ -676,10 +676,15 @@ pub(super) fn composer_lines_with_loaded_custom_emoji_urls(
     width: u16,
     loaded_custom_emoji_urls: &[String],
 ) -> Vec<Line<'static>> {
-    if state.is_composing() {
+    if state.is_composing()
+        || !state.composer_input().is_empty()
+        || !state.pending_composer_attachments().is_empty()
+    {
         let mut lines = pending_upload_lines(state, width);
         let display_input = composer_display_input(state, loaded_custom_emoji_urls);
-        if let Some(message) = state.reply_target_message_state() {
+        if state.is_composing()
+            && let Some(message) = state.reply_target_message_state()
+        {
             lines.push(Line::from(Span::styled(
                 reply_target_hint(message, state, width),
                 Style::default().fg(DIM),
@@ -917,6 +922,12 @@ pub(super) fn composer_text(state: &DashboardState, width: u16) -> String {
             lines.push(reply_target_hint(message, state, width));
         }
         lines.push(input);
+        return lines.join("\n");
+    }
+
+    if !state.composer_input().is_empty() || !state.pending_composer_attachments().is_empty() {
+        let mut lines = pending_upload_texts(state, width);
+        lines.push(prefixed_composer_input(state.composer_input()));
         return lines.join("\n");
     }
 

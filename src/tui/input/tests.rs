@@ -1151,6 +1151,58 @@ fn number_keys_type_digits_while_composing() {
 }
 
 #[test]
+fn esc_closes_composer_without_clearing_draft() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+    for value in "draft".chars() {
+        handle_key(&mut state, char_key(value));
+    }
+
+    handle_key(&mut state, key(KeyCode::Esc));
+
+    assert!(!state.is_composing());
+    assert_eq!(state.composer_input(), "draft");
+    assert!(!state.should_quit());
+
+    handle_key(&mut state, char_key('i'));
+
+    assert!(state.is_composing());
+    assert_eq!(state.composer_input(), "draft");
+    assert_eq!(state.composer_cursor_byte_index(), "draft".len());
+}
+
+#[test]
+fn ctrl_c_clears_composer_without_quitting() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+    for value in "draft".chars() {
+        handle_key(&mut state, char_key(value));
+    }
+
+    handle_key(&mut state, ctrl_key('c'));
+
+    assert!(state.is_composing());
+    assert_eq!(state.composer_input(), "");
+    assert_eq!(state.composer_cursor_byte_index(), 0);
+    assert!(!state.should_quit());
+}
+
+#[test]
+fn ctrl_c_does_not_quit_dashboard() {
+    let mut state = state_with_channel_tree();
+
+    handle_key(&mut state, ctrl_key('c'));
+
+    assert!(!state.should_quit());
+}
+
+#[test]
 fn backtick_toggles_debug_log_popup() {
     let mut state = DashboardState::new();
 

@@ -506,6 +506,23 @@ fn composer_prompt_line_count_matches_prefixed_multiline_rendering() {
 }
 
 #[test]
+fn composer_lines_show_saved_draft_when_not_composing() {
+    let mut state = state_with_message();
+    state.start_composer();
+    for ch in "draft".chars() {
+        state.push_composer_char(ch);
+    }
+
+    state.close_composer();
+
+    assert_eq!(composer_text(&state, 80), "> draft");
+    assert_eq!(
+        line_texts_from_ratatui(&composer_lines(&state, 80)),
+        vec!["> draft"]
+    );
+}
+
+#[test]
 fn reply_composer_text_uses_original_reply_target_after_selection_changes() {
     let mut state = state_with_message();
     state.open_selected_message_actions();
