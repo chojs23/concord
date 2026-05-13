@@ -247,6 +247,12 @@ fn dispatch_action(
             }
             None
         }
+        Action::React => {
+            if focus == FocusPane::Messages {
+                state.open_emoji_reaction_picker();
+            }
+            None
+        }
     }
 }
 

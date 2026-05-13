@@ -178,6 +178,8 @@ pub enum Action {
     ScrollTop,
     /// End key: scroll to bottom of viewport (Messages) or jump to last item.
     ScrollBottom,
+    /// Open the emoji reaction picker for the selected message.
+    React,
 }
 
 impl Action {
@@ -214,6 +216,7 @@ impl Action {
             Self::CollapseLeft => "collapse_left",
             Self::ScrollTop => "scroll_top",
             Self::ScrollBottom => "scroll_bottom",
+            Self::React => "react",
         }
     }
 
@@ -251,6 +254,7 @@ impl Action {
             "collapse_left" => Some(Self::CollapseLeft),
             "scroll_top" => Some(Self::ScrollTop),
             "scroll_bottom" => Some(Self::ScrollBottom),
+            "react" => Some(Self::React),
             _ => None,
         }
     }
@@ -288,6 +292,7 @@ impl Action {
             Self::ExpandRight => Some("l"),
             Self::CollapseLeft => Some("h"),
             Self::ScrollTop | Self::ScrollBottom => None,
+            Self::React => Some("r"),
         }
     }
 }
@@ -323,6 +328,7 @@ const CONFIGURABLE_ACTIONS: &[Action] = &[
     Action::Confirm,
     Action::ExpandRight,
     Action::CollapseLeft,
+    Action::React,
 ];
 
 /// Fixed aliases that are always present and cannot be overridden by config.
