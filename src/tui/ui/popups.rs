@@ -678,6 +678,7 @@ pub(super) fn render_emoji_reaction_picker(
         return;
     }
     let filter = state.emoji_reaction_filter();
+    let existing_reactions = state.existing_emoji_reactions();
 
     let selected = state
         .selected_emoji_reaction_index_for_len(reactions.len())
@@ -711,6 +712,7 @@ pub(super) fn render_emoji_reaction_picker(
             selected,
             visible_items,
             &ready_urls,
+            existing_reactions,
             state.show_custom_emoji(),
             filter,
             usize::from(content.width),
@@ -1497,6 +1499,7 @@ pub(super) fn emoji_reaction_picker_lines(
         selected,
         max_visible_items,
         thumbnail_urls,
+        &[],
         true,
         None,
         usize::MAX,
@@ -1516,9 +1519,30 @@ pub(super) fn emoji_reaction_picker_lines_for_width(
         selected,
         max_visible_items,
         thumbnail_urls,
+        &[],
         true,
         None,
         width,
+    )
+}
+
+#[cfg(test)]
+pub(super) fn emoji_reaction_picker_lines_with_existing(
+    reactions: &[EmojiReactionItem],
+    existing_reactions: &[crate::discord::ReactionEmoji],
+    selected: usize,
+    max_visible_items: usize,
+    thumbnail_urls: &[String],
+) -> Vec<Line<'static>> {
+    emoji_reaction_picker_lines_with_custom_emoji_images(
+        reactions,
+        selected,
+        max_visible_items,
+        thumbnail_urls,
+        existing_reactions,
+        true,
+        None,
+        usize::MAX,
     )
 }
 
@@ -1535,6 +1559,7 @@ pub(super) fn filtered_emoji_reaction_picker_lines(
         selected,
         max_visible_items,
         thumbnail_urls,
+        &[],
         true,
         Some(filter),
         usize::MAX,
@@ -1546,6 +1571,7 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
     selected: usize,
     max_visible_items: usize,
     thumbnail_urls: &[String],
+    existing_reactions: &[crate::discord::ReactionEmoji],
     show_custom_emoji: bool,
     filter: Option<&str>,
     max_width: usize,
@@ -1561,7 +1587,11 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
         .map(|(offset, reaction)| {
             let index = visible_range.start + offset;
             let marker = if index == selected { "› " } else { "  " };
-            let shortcut = shortcut_prefix(indexed_shortcut(index));
+            let shortcut = shortcut_prefix(emoji_reaction_shortcut(
+                reactions,
+                existing_reactions,
+                index,
+            ));
             let mut style = Style::default();
             if index == selected {
                 style = style
@@ -1644,13 +1674,18 @@ fn render_emoji_reaction_images(
             continue;
         }
         let image_area = Rect::new(
-            area.x.saturating_add(2),
+            area.x.saturating_add(emoji_reaction_image_x_offset()),
             y,
-            EMOJI_REACTION_IMAGE_WIDTH.min(area.width.saturating_sub(2)),
+            EMOJI_REACTION_IMAGE_WIDTH
+                .min(area.width.saturating_sub(emoji_reaction_image_x_offset())),
             1,
         );
         frame.render_widget(RatatuiImage::new(image.protocol), image_area);
     }
+}
+
+fn emoji_reaction_image_x_offset() -> u16 {
+    2 + shortcut_prefix(Some('q')).width() as u16
 }
 
 fn format_emoji_reaction_item(

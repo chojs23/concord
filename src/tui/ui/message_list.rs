@@ -129,26 +129,6 @@ pub(super) fn render_messages(
     );
 
     frame.render_widget(Paragraph::new(lines), message_areas.list);
-    let selected_avatar_body_top = selected.and_then(|selected| {
-        message_body_top_row(
-            &messages,
-            state,
-            selected,
-            content_width,
-            preview_width,
-            max_preview_height,
-        )
-    });
-    for avatar in avatar_images {
-        if let Some(area) = message_avatar_area(
-            message_areas.list,
-            avatar.row,
-            avatar.visible_height,
-            selected_avatar_x_offset(selected_avatar_body_top, avatar.row),
-        ) {
-            frame.render_widget(RatatuiImage::new(&avatar.protocol), area);
-        }
-    }
     render_inline_reaction_emojis(
         frame,
         message_areas.list,
@@ -199,6 +179,26 @@ pub(super) fn render_messages(
                 preview_area,
                 image_preview.preview_overflow_count,
             );
+        }
+    }
+    let selected_avatar_body_top = selected.and_then(|selected| {
+        message_body_top_row(
+            &messages,
+            state,
+            selected,
+            content_width,
+            preview_width,
+            max_preview_height,
+        )
+    });
+    for avatar in avatar_images {
+        if let Some(area) = message_avatar_area(
+            message_areas.list,
+            avatar.row,
+            avatar.visible_height,
+            selected_avatar_x_offset(selected_avatar_body_top, avatar.row),
+        ) {
+            frame.render_widget(RatatuiImage::new(&avatar.protocol), area);
         }
     }
     render_vertical_scrollbar(

@@ -26,9 +26,9 @@ use super::{
     state::{
         ChannelSwitcherItem, ChannelThreadItem, DashboardState, DisplayOptionItem,
         EmojiReactionItem, FORUM_POST_CARD_HEIGHT, FocusPane, ImageViewerItem, MessageActionItem,
-        PollVotePickerItem, channel_action_shortcut, discord_color, guild_action_shortcut,
-        indexed_shortcut, member_action_shortcut, message_action_shortcut, presence_color,
-        presence_marker,
+        PollVotePickerItem, channel_action_shortcut, discord_color, emoji_reaction_shortcut,
+        guild_action_shortcut, indexed_shortcut, member_action_shortcut, message_action_shortcut,
+        presence_color, presence_marker,
     },
 };
 use crate::discord::{
@@ -106,8 +106,9 @@ use self::{
     popups::{
         channel_switcher_cursor_position, channel_switcher_lines, debug_log_popup_lines,
         emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
-        filtered_emoji_reaction_picker_lines, message_action_menu_lines, options_popup_lines,
-        poll_vote_picker_lines, reaction_users_popup_lines, user_profile_popup_lines,
+        emoji_reaction_picker_lines_with_existing, filtered_emoji_reaction_picker_lines,
+        message_action_menu_lines, options_popup_lines, poll_vote_picker_lines,
+        reaction_users_popup_lines, user_profile_popup_lines,
         user_profile_popup_lines_with_activities,
     },
 };

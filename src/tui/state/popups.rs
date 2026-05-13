@@ -1,3 +1,4 @@
+use crate::discord::ReactionEmoji;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
@@ -75,6 +76,7 @@ pub struct EmojiReactionPickerState {
     pub(super) filter: Option<String>,
     pub(super) items: Vec<EmojiReactionItem>,
     pub(super) filtered_items: Vec<EmojiReactionItem>,
+    pub(super) existing_reactions: Vec<ReactionEmoji>,
     pub(super) guild_id: Option<Id<GuildMarker>>,
     pub(super) channel_id: Id<ChannelMarker>,
     pub(super) message_id: Id<MessageMarker>,

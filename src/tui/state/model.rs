@@ -234,6 +234,31 @@ pub fn indexed_shortcut(index: usize) -> Option<char> {
     }
 }
 
+pub fn emoji_reaction_shortcut(
+    reactions: &[EmojiReactionItem],
+    existing_reactions: &[ReactionEmoji],
+    index: usize,
+) -> Option<char> {
+    let reaction = reactions.get(index)?;
+    if let Some(existing_index) = existing_reactions
+        .iter()
+        .position(|existing| existing == &reaction.emoji)
+    {
+        return qwerty_shortcut(existing_index);
+    }
+
+    let regular_index = reactions[..index]
+        .iter()
+        .filter(|item| !existing_reactions.contains(&item.emoji))
+        .count();
+    indexed_shortcut(regular_index)
+}
+
+fn qwerty_shortcut(index: usize) -> Option<char> {
+    const SHORTCUTS: &[u8] = b"qwertyuiop";
+    SHORTCUTS.get(index).map(|shortcut| char::from(*shortcut))
+}
+
 fn unique_preferred_shortcut(
     preferred: Option<char>,
     shortcuts: impl IntoIterator<Item = Option<char>>,

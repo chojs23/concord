@@ -1266,6 +1266,34 @@ fn emoji_picker_items_stay_unicode_only_for_direct_messages() {
 }
 
 #[test]
+fn reaction_picker_prioritizes_existing_reactions_and_qwerty_shortcuts() {
+    let mut state = state_with_reaction_message();
+
+    state.open_emoji_reaction_picker();
+
+    let items = state.filtered_emoji_reaction_items();
+    assert_eq!(items[0].emoji, ReactionEmoji::Unicode("👍".to_owned()));
+    assert_eq!(
+        items[1].emoji,
+        ReactionEmoji::Custom {
+            id: Id::new(50),
+            name: Some("party".to_owned()),
+            animated: false,
+        }
+    );
+
+    let command = state.activate_emoji_reaction_shortcut('q');
+    assert_eq!(
+        command,
+        Some(AppCommand::RemoveReaction {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        })
+    );
+}
+
+#[test]
 fn message_creation_keeps_viewport_on_latest() {
     let guild_id = Id::new(1);
     let channel_id: Id<ChannelMarker> = Id::new(2);
