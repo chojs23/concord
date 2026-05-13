@@ -209,6 +209,22 @@ pub(super) fn composer_content_line_count(state: &DashboardState, width: u16) ->
 
 pub(super) fn composer_prompt_line_count(input: &str, width: u16) -> u16 {
     let width = usize::from(width.max(1));
-    let prompt = format!("> {input}");
+    let prompt = prefixed_composer_input(input);
     wrap_text_lines(&prompt, width).len() as u16
+}
+
+pub(super) fn prefixed_composer_input(input: &str) -> String {
+    let mut prefixed = String::with_capacity(input.len().saturating_add(2));
+    for (index, line) in input.split('\n').enumerate() {
+        if index > 0 {
+            prefixed.push('\n');
+        }
+        if index == 0 {
+            prefixed.push_str("> ");
+        } else {
+            prefixed.push_str("  ");
+        }
+        prefixed.push_str(line);
+    }
+    prefixed
 }

@@ -458,6 +458,21 @@ fn composer_prompt_line_count_uses_display_width_for_wide_chars() {
 }
 
 #[test]
+fn composer_prompt_line_count_matches_prefixed_multiline_rendering() {
+    let mut state = state_with_message();
+    state.start_composer();
+    for ch in "a\nbbbb".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let rendered = line_texts_from_ratatui(&composer_lines(&state, 5));
+
+    assert_eq!(rendered, vec!["> a", "  bbb", "b"]);
+    assert_eq!(composer_prompt_line_count(state.composer_input(), 5), 3);
+    assert_eq!(composer_content_line_count(&state, 5), 3);
+}
+
+#[test]
 fn reply_composer_text_uses_original_reply_target_after_selection_changes() {
     let mut state = state_with_message();
     state.open_selected_message_actions();
