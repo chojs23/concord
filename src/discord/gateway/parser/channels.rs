@@ -2,14 +2,14 @@ use serde_json::Value;
 
 use crate::discord::{
     ChannelInfo, ChannelRecipientInfo,
-    events::{PermissionOverwriteInfo, PermissionOverwriteKind},
+    events::{AppEvent, PermissionOverwriteInfo, PermissionOverwriteKind},
     ids::{
         Id,
         marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
     },
 };
 
-use super::{parse_id, parse_status, raw_user_avatar_url};
+use super::shared::{parse_id, parse_status, raw_user_avatar_url};
 
 pub(crate) fn parse_channel_info(
     value: &Value,
@@ -194,4 +194,32 @@ pub(super) fn parse_channel_recipient_info(value: &Value) -> Option<ChannelRecip
         avatar_url: raw_user_avatar_url(user_id, value),
         status,
     })
+}
+
+pub(super) fn parse_channel_upsert(data: &Value) -> Option<AppEvent> {
+    let info = parse_channel_info(data, None)?;
+    Some(AppEvent::ChannelUpsert(info))
+}
+
+pub(super) fn parse_channel_delete(data: &Value) -> Option<AppEvent> {
+    let channel_id = parse_id::<ChannelMarker>(data.get("id")?)?;
+    let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
+    Some(AppEvent::ChannelDelete {
+        guild_id,
+        channel_id,
+    })
+}
+
+pub(super) fn parse_thread_list_sync(data: &Value) -> Vec<AppEvent> {
+    let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
+    data.get("threads")
+        .and_then(Value::as_array)
+        .map(|threads| {
+            threads
+                .iter()
+                .filter_map(|thread| parse_channel_info(thread, guild_id))
+                .map(AppEvent::ChannelUpsert)
+                .collect()
+        })
+        .unwrap_or_default()
 }

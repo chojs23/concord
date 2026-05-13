@@ -5,6 +5,7 @@ use crate::{
         AttachmentInfo, EmbedFieldInfo, EmbedInfo, MentionInfo, MessageInfo, MessageKind,
         MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo, ReactionEmoji,
         ReactionInfo, ReplyInfo,
+        events::{AppEvent, AttachmentUpdate},
         ids::{
             Id,
             marker::{
@@ -16,7 +17,7 @@ use crate::{
     logging,
 };
 
-use super::{parse_id, raw_user_avatar_url};
+use super::shared::{parse_id, raw_user_avatar_url};
 
 pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
     let channel_id = parse_id::<ChannelMarker>(data.get("channel_id")?)?;
@@ -591,5 +592,129 @@ fn parse_attachment(value: &Value) -> Option<AttachmentInfo> {
             .get("description")
             .and_then(Value::as_str)
             .map(str::to_owned),
+    })
+}
+
+pub(super) fn parse_message_create(data: &Value) -> Option<AppEvent> {
+    let message = parse_message_info(data)?;
+    Some(AppEvent::MessageCreate {
+        guild_id: message.guild_id,
+        channel_id: message.channel_id,
+        message_id: message.message_id,
+        author_id: message.author_id,
+        author: message.author,
+        author_avatar_url: message.author_avatar_url,
+        author_role_ids: message.author_role_ids,
+        message_kind: message.message_kind,
+        reference: message.reference,
+        reply: message.reply,
+        poll: message.poll,
+        content: message.content,
+        sticker_names: message.sticker_names,
+        mentions: message.mentions,
+        attachments: message.attachments,
+        embeds: message.embeds,
+        forwarded_snapshots: message.forwarded_snapshots,
+    })
+}
+
+pub(super) fn parse_message_update(data: &Value) -> Option<AppEvent> {
+    let channel_id = parse_id::<ChannelMarker>(data.get("channel_id")?)?;
+    let message_id = parse_id::<MessageMarker>(data.get("id")?)?;
+    let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
+    let content = data
+        .get("content")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let sticker_names = data
+        .get("sticker_items")
+        .map(|value| parse_sticker_names(Some(value)));
+    let attachments = if data.get("attachments").is_some() {
+        AttachmentUpdate::Replace(parse_attachments(data.get("attachments")))
+    } else {
+        AttachmentUpdate::Unchanged
+    };
+    let poll = data
+        .get("poll")
+        .and_then(parse_poll_info)
+        .or_else(|| parse_poll_result_embed(data.get("embeds")));
+    let embeds = data.get("embeds").map(|value| parse_embeds(Some(value)));
+    let mentions = data
+        .get("mentions")
+        .map(|value| parse_mentions(Some(value)));
+    let edited_timestamp = data
+        .get("edited_timestamp")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    Some(AppEvent::MessageUpdate {
+        guild_id,
+        channel_id,
+        message_id,
+        poll,
+        content,
+        sticker_names,
+        mentions,
+        attachments,
+        embeds,
+        edited_timestamp,
+    })
+}
+
+pub(super) fn parse_message_delete(data: &Value) -> Option<AppEvent> {
+    let channel_id = parse_id::<ChannelMarker>(data.get("channel_id")?)?;
+    let message_id = parse_id::<MessageMarker>(data.get("id")?)?;
+    let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
+    Some(AppEvent::MessageDelete {
+        guild_id,
+        channel_id,
+        message_id,
+    })
+}
+
+pub(super) fn parse_message_ack(data: &Value) -> Option<AppEvent> {
+    Some(AppEvent::MessageAck {
+        channel_id: parse_id::<ChannelMarker>(data.get("channel_id")?)?,
+        message_id: parse_id::<MessageMarker>(data.get("message_id")?)?,
+        mention_count: data
+            .get("mention_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+    })
+}
+
+pub(super) fn parse_message_reaction_add(data: &Value) -> Option<AppEvent> {
+    Some(AppEvent::MessageReactionAdd {
+        guild_id: data.get("guild_id").and_then(parse_id::<GuildMarker>),
+        channel_id: parse_id::<ChannelMarker>(data.get("channel_id")?)?,
+        message_id: parse_id::<MessageMarker>(data.get("message_id")?)?,
+        user_id: parse_id::<UserMarker>(data.get("user_id")?)?,
+        emoji: parse_reaction_emoji(data.get("emoji")?)?,
+    })
+}
+
+pub(super) fn parse_message_reaction_remove(data: &Value) -> Option<AppEvent> {
+    Some(AppEvent::MessageReactionRemove {
+        guild_id: data.get("guild_id").and_then(parse_id::<GuildMarker>),
+        channel_id: parse_id::<ChannelMarker>(data.get("channel_id")?)?,
+        message_id: parse_id::<MessageMarker>(data.get("message_id")?)?,
+        user_id: parse_id::<UserMarker>(data.get("user_id")?)?,
+        emoji: parse_reaction_emoji(data.get("emoji")?)?,
+    })
+}
+
+pub(super) fn parse_message_reaction_remove_all(data: &Value) -> Option<AppEvent> {
+    Some(AppEvent::MessageReactionRemoveAll {
+        guild_id: data.get("guild_id").and_then(parse_id::<GuildMarker>),
+        channel_id: parse_id::<ChannelMarker>(data.get("channel_id")?)?,
+        message_id: parse_id::<MessageMarker>(data.get("message_id")?)?,
+    })
+}
+
+pub(super) fn parse_message_reaction_remove_emoji(data: &Value) -> Option<AppEvent> {
+    Some(AppEvent::MessageReactionRemoveEmoji {
+        guild_id: data.get("guild_id").and_then(parse_id::<GuildMarker>),
+        channel_id: parse_id::<ChannelMarker>(data.get("channel_id")?)?,
+        message_id: parse_id::<MessageMarker>(data.get("message_id")?)?,
+        emoji: parse_reaction_emoji(data.get("emoji")?)?,
     })
 }
