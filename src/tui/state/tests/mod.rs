@@ -3677,6 +3677,7 @@ fn cancel_composer_clears_pending_attachments() {
         path: "/tmp/cat.png".into(),
         filename: "cat.png".to_owned(),
         size_bytes: 2_048,
+        requires_cleanup: false,
     }]);
 
     state.cancel_composer();
@@ -3695,6 +3696,7 @@ fn pending_attachments_are_capped_at_upload_limit() {
             path: format!("/tmp/{index}.txt").into(),
             filename: format!("{index}.txt"),
             size_bytes: 1,
+            requires_cleanup: false,
         })
         .collect();
 

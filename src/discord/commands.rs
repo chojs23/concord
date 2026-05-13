@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 
-use crate::discord::ids::{
-    Id,
-    marker::{ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, UserMarker},
+use crate::{
+    discord::ids::{
+        Id,
+        marker::{ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, UserMarker},
+    },
+    logging,
 };
 
 pub const MAX_UPLOAD_FILE_BYTES: u64 = 10 * 1024 * 1024;
@@ -14,6 +17,23 @@ pub struct MessageAttachmentUpload {
     pub path: PathBuf,
     pub filename: String,
     pub size_bytes: u64,
+    pub requires_cleanup: bool,
+}
+
+impl Drop for MessageAttachmentUpload {
+    fn drop(&mut self) {
+        if self.requires_cleanup {
+            if let Err(e) = std::fs::remove_file(&self.path) {
+                logging::error(
+                    "app",
+                    format!(
+                        "could not remove temp attachment file {}: {e}",
+                        &self.path.display()
+                    ),
+                );
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

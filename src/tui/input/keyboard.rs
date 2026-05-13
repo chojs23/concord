@@ -262,13 +262,13 @@ fn handle_leader_action_key(state: &mut DashboardState, key: KeyEvent) -> Option
     }
 }
 
-pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
+pub fn handle_paste(state: &mut DashboardState, text: &str, requires_cleanup: bool) -> bool {
     if !state.is_composing() {
         return false;
     }
 
     if state.composer_accepts_attachments() {
-        if let Some(attachments) = pasted_file_attachments(text) {
+        if let Some(attachments) = pasted_file_attachments(text, requires_cleanup) {
             state.add_pending_composer_attachments(attachments);
             return true;
         }
@@ -282,7 +282,10 @@ pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
     true
 }
 
-fn pasted_file_attachments(text: &str) -> Option<Vec<MessageAttachmentUpload>> {
+fn pasted_file_attachments(
+    text: &str,
+    requires_cleanup: bool,
+) -> Option<Vec<MessageAttachmentUpload>> {
     let mut attachments = Vec::new();
     for line in meaningful_paste_lines(text) {
         let values = if let Some(path) = pasted_file_path(line).filter(|path| path.is_file()) {
@@ -304,6 +307,7 @@ fn pasted_file_attachments(text: &str) -> Option<Vec<MessageAttachmentUpload>> {
                     .to_owned(),
                 path,
                 size_bytes: metadata.len(),
+                requires_cleanup,
             });
         }
     }

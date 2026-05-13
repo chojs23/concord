@@ -19,6 +19,7 @@ use std::sync::Once;
 use std::{
     collections::{HashSet, VecDeque},
     io::{Write, stdout},
+    path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -26,6 +27,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
+use arboard::Clipboard;
 use crossterm::{
     event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -684,8 +686,9 @@ async fn run_dashboard(
                         redraw_diagnostics.resizes = redraw_diagnostics.resizes.saturating_add(1);
                         dirty = true;
                     }
-                    Some(Ok(TerminalEvent::Paste(text))) => {
-                        if input::handle_paste(&mut state, &text) {
+                    Some(Ok(TerminalEvent::Paste(_text))) => {
+                        let Some((text, requires_cleanup)) = resolve_paste_text(_text) else { continue };
+                        if input::handle_paste(&mut state, text.as_str(), requires_cleanup) {
                             dirty = true;
                         }
                     }
@@ -1043,6 +1046,55 @@ fn save_display_options_if_needed(state: &mut DashboardState) {
         Err(error) => state.push_effect(AppEvent::GatewayError {
             message: format!("save options failed: {error}"),
         }),
+    }
+}
+
+fn write_image_to_tmp(img: arboard::ImageData<'_>) -> std::io::Result<std::path::PathBuf> {
+    let path = std::env::temp_dir().join(format!("concord-paste-{}.png", uuid::Uuid::new_v4()));
+
+    let Ok(width) = u32::try_from(img.width) else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Clipboard Image Width was invalid ({})", img.width),
+        ));
+    };
+
+    let Ok(height) = u32::try_from(img.height) else {
+        return Err(std::io::Error::other(format!(
+            "Clipboard Image Height was invalid ({})",
+            img.height
+        )));
+    };
+
+    if let Err(e) = image::save_buffer_with_format(
+        &path,
+        &img.bytes,
+        width,
+        height,
+        image::ColorType::Rgba8,
+        image::ImageFormat::Png,
+    ) {
+        logging::error("app", e.to_string());
+        return Err(std::io::Error::other(e.to_string()));
+    }
+
+    Ok(path)
+}
+
+fn resolve_paste_text(text: String) -> Option<(String, bool)> {
+    if !text.is_empty() {
+        return Some((text, false));
+    }
+
+    let mut cb = Clipboard::new().ok()?;
+
+    if let Ok(text) = cb.get_text() {
+        Some((text, false))
+    } else if let Ok(image_data) = cb.get_image() {
+        let tmp_file = write_image_to_tmp(image_data).ok()?;
+        Some((format!("copy\nfile://{}", tmp_file.display()), true))
+    } else {
+        None
     }
 }
 

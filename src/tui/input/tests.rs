@@ -1248,7 +1248,7 @@ fn paste_inserts_text_while_composing() {
     handle_key(&mut state, key(KeyCode::Enter));
     handle_key(&mut state, char_key('i'));
 
-    assert!(handle_paste(&mut state, "hello\r\nworld"));
+    assert!(handle_paste(&mut state, "hello\r\nworld", false));
 
     assert_eq!(state.composer_input(), "hello\nworld");
 }
@@ -1267,7 +1267,7 @@ fn paste_inserts_text_at_composer_cursor() {
         handle_key(&mut state, key(KeyCode::Left));
     }
 
-    assert!(handle_paste(&mut state, " "));
+    assert!(handle_paste(&mut state, " ", false));
 
     assert_eq!(state.composer_input(), "hello world");
     assert_eq!(state.composer_cursor_byte_index(), "hello ".len());
@@ -1284,7 +1284,8 @@ fn paste_file_path_adds_pending_attachment() {
 
     assert!(handle_paste(
         &mut state,
-        path.to_str().expect("temp path is valid unicode")
+        path.to_str().expect("temp path is valid unicode"),
+        false,
     ));
 
     assert_eq!(state.composer_input(), "");
@@ -1308,7 +1309,7 @@ fn paste_single_quoted_file_path_adds_pending_attachment() {
     handle_key(&mut state, char_key('i'));
     let pasted = format!("'{}'", path.to_str().expect("temp path is valid unicode"));
 
-    assert!(handle_paste(&mut state, &pasted));
+    assert!(handle_paste(&mut state, &pasted, false));
 
     assert_eq!(state.composer_input(), "");
     assert_eq!(state.pending_composer_attachments().len(), 1);
@@ -1333,7 +1334,7 @@ fn paste_backslash_escaped_file_path_adds_pending_attachment() {
         .expect("temp path is valid unicode")
         .replace(' ', "\\ ");
 
-    assert!(handle_paste(&mut state, &pasted));
+    assert!(handle_paste(&mut state, &pasted, false));
 
     assert_eq!(state.composer_input(), "");
     assert_eq!(state.pending_composer_attachments().len(), 1);
@@ -1358,7 +1359,7 @@ fn paste_file_uri_list_can_submit_attachment_only_message() {
     handle_key(&mut state, key(KeyCode::Enter));
     handle_key(&mut state, char_key('i'));
 
-    assert!(handle_paste(&mut state, &uri));
+    assert!(handle_paste(&mut state, &uri, false));
     let command = handle_key(&mut state, key(KeyCode::Enter));
 
     assert_eq!(state.pending_composer_attachments(), &[]);
@@ -1372,6 +1373,7 @@ fn paste_file_uri_list_can_submit_attachment_only_message() {
                 path: path.clone(),
                 filename: "uri path.txt".to_owned(),
                 size_bytes: 6,
+                requires_cleanup: false
             }],
         })
     );
@@ -1394,7 +1396,7 @@ fn ctrl_backspace_removes_last_pending_attachment() {
         second.to_str().expect("temp path is valid unicode")
     );
 
-    assert!(handle_paste(&mut state, &pasted));
+    assert!(handle_paste(&mut state, &pasted, false));
     handle_key(
         &mut state,
         KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL),
@@ -1417,7 +1419,8 @@ fn paste_file_path_while_editing_inserts_text_instead_of_attachment() {
 
     assert!(handle_paste(
         &mut state,
-        path.to_str().expect("temp path is valid unicode")
+        path.to_str().expect("temp path is valid unicode"),
+        false
     ));
 
     assert!(state.pending_composer_attachments().is_empty());
@@ -1433,7 +1436,7 @@ fn paste_file_path_while_editing_inserts_text_instead_of_attachment() {
 fn paste_is_ignored_when_not_composing() {
     let mut state = state_with_channel_tree();
 
-    assert!(!handle_paste(&mut state, "hello"));
+    assert!(!handle_paste(&mut state, "hello", false));
 
     assert_eq!(state.composer_input(), "");
 }

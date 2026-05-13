@@ -513,6 +513,7 @@ fn composer_lines_show_pending_upload_above_input() {
         path: "/tmp/cat.png".into(),
         filename: "cat.png".to_owned(),
         size_bytes: 2_048,
+        requires_cleanup: false,
     }]);
 
     let lines = composer_lines(&state, 80);
@@ -585,6 +586,7 @@ fn composer_cursor_position_accounts_for_upload_and_reply_rows() {
         path: "/tmp/cat.png".into(),
         filename: "cat.png".to_owned(),
         size_bytes: 2_048,
+        requires_cleanup: false,
     }]);
     for value in "hi".chars() {
         state.push_composer_char(value);
