@@ -62,13 +62,6 @@ const GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=9&encoding=json";
 /// `PRESENCE_UPDATE` dispatches. Without these bits set Discord assumes the
 /// session is a bot and silently drops friend presence streaming.
 ///
-/// We deliberately copy arikawa/ningen's set rather than reaching for the
-/// modern client's full bitmask. The extra modern bits (USER_SETTINGS_PROTO,
-/// CLIENT_STATE_V2, PASSIVE_GUILD_UPDATE, …) tell Discord to send things in
-/// formats we don't decode yet, especially `user_settings_proto` instead
-/// of the legacy JSON `user_settings.guild_folders`, which would leave the
-/// sidebar with no folder grouping and unstable ordering.
-///
 /// Bits enabled (sum 253):
 ///   0  LAZY_USER_NOTIFICATIONS
 ///   2  VERSIONED_READ_STATES

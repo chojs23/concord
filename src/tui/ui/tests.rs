@@ -196,6 +196,36 @@ fn header_shows_connected_account() {
 }
 
 #[test]
+fn image_viewer_render_shows_download_hint_below_popup() {
+    let mut state = state_with_message();
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some(String::new()),
+        sticker_names: Vec::new(),
+        mentions: Vec::new(),
+        attachments: vec![image_attachment()],
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    assert!(state.open_image_viewer_for_selected_message());
+
+    let dump = render_dashboard_dump(100, 25, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(rendered.contains("[d] download image"), "{rendered}");
+}
+
+#[test]
 fn channel_switcher_lines_show_search_and_grouped_selection() {
     let items = vec![
         ChannelSwitcherItem {

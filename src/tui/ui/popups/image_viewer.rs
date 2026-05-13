@@ -1,5 +1,7 @@
 use super::*;
 
+const IMAGE_VIEWER_DOWNLOAD_HINT: &str = "[d] download image";
+
 pub(in crate::tui::ui) fn render_image_viewer(
     frame: &mut Frame,
     area: Rect,
@@ -26,6 +28,12 @@ pub(in crate::tui::ui) fn render_image_viewer(
         height: inner.height.min(1),
         ..inner
     };
+    let hint_y = popup.y.saturating_add(popup.height);
+    let hint_area = (hint_y < area.y.saturating_add(area.height)).then_some(Rect {
+        y: hint_y,
+        height: 1,
+        ..popup
+    });
 
     if let Some(image_preview) = image_preview {
         render_image_preview(frame, image_area, image_preview.state);
@@ -45,6 +53,14 @@ pub(in crate::tui::ui) fn render_image_viewer(
             ))
             .style(Style::default().fg(Color::Green)),
             download_area,
+        );
+    }
+    if let Some(hint_area) = hint_area {
+        frame.render_widget(
+            Paragraph::new(IMAGE_VIEWER_DOWNLOAD_HINT)
+                .style(Style::default().fg(DIM))
+                .alignment(Alignment::Center),
+            hint_area,
         );
     }
 }
