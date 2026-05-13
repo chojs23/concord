@@ -11,8 +11,12 @@ use super::{ChannelState, DiscordState};
 /// does not need to depend on twilight's bitflags.
 const PERMISSION_VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
 const PERMISSION_SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
+const PERMISSION_MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
 const PERMISSION_ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
+const PERMISSION_READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
 const PERMISSION_ADMINISTRATOR: u64 = 0x0000_0000_0000_0008;
+const PERMISSION_ADD_REACTIONS: u64 = 0x0000_0000_0000_0040;
+const PERMISSION_PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
 
 /// Sentinel returned by `effective_permissions_for_channel` when the data
 /// needed to compute the user's permissions is missing (no READY yet, no
@@ -48,6 +52,46 @@ impl DiscordState {
         permission_set(permissions, PERMISSION_VIEW_CHANNEL)
             && permission_set(permissions, PERMISSION_SEND_MESSAGES)
             && permission_set(permissions, PERMISSION_ATTACH_FILES)
+    }
+
+    /// Whether the user can delete other users' messages in `channel`.
+    /// Deleting your own messages is author-based and should be checked by the
+    /// caller before consulting this moderation permission.
+    pub fn can_manage_messages_in_channel(&self, channel: &ChannelState) -> bool {
+        if channel.guild_id.is_none() {
+            return false;
+        }
+        let permissions = self.effective_permissions_for_channel(channel);
+        if permissions == PERMISSIONS_UNKNOWN {
+            return self.guild_roles_are_hydrated_but_current_member_is_pending(channel);
+        }
+        permission_set(permissions, PERMISSION_VIEW_CHANNEL)
+            && permission_set(permissions, PERMISSION_MANAGE_MESSAGES)
+    }
+
+    /// Whether the user can pin or unpin messages in `channel`.
+    pub fn can_pin_messages_in_channel(&self, channel: &ChannelState) -> bool {
+        let permissions = self.effective_permissions_for_channel(channel);
+        permission_set(permissions, PERMISSION_VIEW_CHANNEL)
+            && permission_set(permissions, PERMISSION_PIN_MESSAGES)
+    }
+
+    /// Whether the user can read already-sent messages in `channel`.
+    pub fn can_read_message_history_in_channel(&self, channel: &ChannelState) -> bool {
+        let permissions = self.effective_permissions_for_channel(channel);
+        permission_set(permissions, PERMISSION_VIEW_CHANNEL)
+            && permission_set(permissions, PERMISSION_READ_MESSAGE_HISTORY)
+    }
+
+    /// Whether the user can create a new emoji reaction in `channel`.
+    /// Reacting with an emoji that is already present only needs message
+    /// history, so callers should combine this with message-local reaction
+    /// state.
+    pub fn can_add_reactions_in_channel(&self, channel: &ChannelState) -> bool {
+        let permissions = self.effective_permissions_for_channel(channel);
+        permission_set(permissions, PERMISSION_VIEW_CHANNEL)
+            && permission_set(permissions, PERMISSION_READ_MESSAGE_HISTORY)
+            && permission_set(permissions, PERMISSION_ADD_REACTIONS)
     }
 
     /// Compute the effective Discord permission bitfield for the
@@ -184,6 +228,38 @@ impl DiscordState {
         }
 
         0
+    }
+
+    fn guild_roles_are_hydrated_but_current_member_is_pending(
+        &self,
+        channel: &ChannelState,
+    ) -> bool {
+        let Some(guild_id) = channel.guild_id else {
+            return false;
+        };
+        if channel.is_thread() {
+            let Some(parent_id) = channel.parent_id else {
+                return false;
+            };
+            let Some(parent) = self.channels.get(&parent_id) else {
+                return false;
+            };
+            return self.guild_roles_are_hydrated_but_current_member_is_pending(parent);
+        }
+        let Some(my_id) = self.current_user_id else {
+            return false;
+        };
+        if !self.guilds.contains_key(&guild_id) {
+            return false;
+        }
+        let Some(roles) = self.roles.get(&guild_id) else {
+            return false;
+        };
+        !roles.is_empty()
+            && !self
+                .members
+                .get(&guild_id)
+                .is_some_and(|members| members.contains_key(&my_id))
     }
 }
 

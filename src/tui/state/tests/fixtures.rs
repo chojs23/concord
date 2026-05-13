@@ -11,6 +11,12 @@ use crate::discord::{
     RoleInfo,
 };
 
+pub(super) const PERM_ADD_REACTIONS: u64 = 0x0000_0000_0000_0040;
+pub(super) const PERM_VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
+pub(super) const PERM_MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
+pub(super) const PERM_READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
+pub(super) const PERM_PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
+
 /// Build a guild with a single channel where @everyone keeps
 /// VIEW_CHANNEL but loses SEND_MESSAGES. This is an announcement-style
 /// read-only channel that the user can read but not post in.
@@ -37,6 +43,90 @@ pub(super) fn state_with_view_denied_channel() -> DashboardState {
 /// (no overwrites), so the composer should open and submit normally.
 pub(super) fn state_with_writable_channel() -> DashboardState {
     guild_state_with_overwrites(Vec::new())
+}
+
+pub(super) fn state_with_other_user_message_permissions(
+    permissions: u64,
+    reactions: Vec<ReactionInfo>,
+) -> DashboardState {
+    state_with_other_user_message_permissions_and_member(permissions, reactions, true)
+}
+
+pub(super) fn state_with_other_user_message_permissions_hydrating_member(
+    permissions: u64,
+    reactions: Vec<ReactionInfo>,
+) -> DashboardState {
+    state_with_other_user_message_permissions_and_member(permissions, reactions, false)
+}
+
+fn state_with_other_user_message_permissions_and_member(
+    permissions: u64,
+    reactions: Vec<ReactionInfo>,
+    include_current_member: bool,
+) -> DashboardState {
+    let me: Id<UserMarker> = Id::new(10);
+    let owner: Id<UserMarker> = Id::new(11);
+    let guild: Id<GuildMarker> = Id::new(1);
+    let channel: Id<ChannelMarker> = Id::new(2);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(me),
+    });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: guild,
+        name: "guild".to_owned(),
+        member_count: Some(1),
+        owner_id: Some(owner),
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild),
+            channel_id: channel,
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: include_current_member
+            .then_some(MemberInfo {
+                user_id: me,
+                display_name: "me".to_owned(),
+                username: Some("me".to_owned()),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            })
+            .into_iter()
+            .collect(),
+        presences: Vec::new(),
+        roles: vec![RoleInfo {
+            id: Id::new(guild.get()),
+            name: "@everyone".to_owned(),
+            color: None,
+            position: 0,
+            hoist: false,
+            permissions,
+        }],
+        emojis: Vec::new(),
+    });
+    state.activate_guild(ActiveGuildScope::Guild(guild));
+    state.activate_channel(channel);
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: channel,
+        before: None,
+        messages: vec![MessageInfo {
+            reactions,
+            ..message_info(channel, 1)
+        }],
+    });
+    state
 }
 
 pub(super) fn state_with_hidden_and_visible_channels() -> DashboardState {

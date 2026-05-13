@@ -4405,8 +4405,12 @@ mod tests {
 
     const VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
     const SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
+    const MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
     const ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
+    const READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
     const ADMINISTRATOR: u64 = 0x0000_0000_0000_0008;
+    const ADD_REACTIONS: u64 = 0x0000_0000_0000_0040;
+    const PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
 
     fn perm_role(id: u64, allow: u64, deny: u64) -> PermissionOverwriteInfo {
         PermissionOverwriteInfo {
@@ -4904,6 +4908,135 @@ mod tests {
         assert!(state.can_view_channel(ch));
         assert!(!state.can_send_in_channel(ch));
         assert!(!state.can_attach_in_channel(ch));
+    }
+
+    #[test]
+    fn manage_messages_requires_explicit_guild_permission() {
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        let state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            channel,
+            vec![],
+            vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: VIEW_CHANNEL | MANAGE_MESSAGES,
+            }],
+            Vec::new(),
+        );
+
+        let ch = state.channel(channel).expect("channel");
+        assert!(state.can_manage_messages_in_channel(ch));
+    }
+
+    #[test]
+    fn manage_messages_defaults_permissive_while_guild_member_roles_hydrate() {
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(me),
+        });
+        state.apply_event(&AppEvent::GuildCreate {
+            guild_id: guild,
+            name: "guild".to_owned(),
+            member_count: Some(1),
+            owner_id: Some(owner),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild),
+                channel_id: channel,
+                parent_id: None,
+                position: Some(0),
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: VIEW_CHANNEL,
+            }],
+            emojis: Vec::new(),
+        });
+
+        let ch = state.channel(channel).expect("channel");
+        assert!(state.can_manage_messages_in_channel(ch));
+    }
+
+    #[test]
+    fn manage_messages_is_never_granted_for_dm_channels() {
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id: Id::new(99),
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "alice".to_owned(),
+            kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }));
+
+        let ch = state.channel(Id::new(99)).expect("channel");
+        assert!(!state.can_manage_messages_in_channel(ch));
+    }
+
+    #[test]
+    fn pin_and_reaction_helpers_use_documented_permission_bits() {
+        let me = Id::new(10);
+        let owner = Id::new(11);
+        let guild = Id::new(1);
+        let channel = Id::new(2);
+        let state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            channel,
+            vec![],
+            vec![RoleInfo {
+                id: Id::new(guild.get()),
+                name: "@everyone".to_owned(),
+                color: None,
+                position: 0,
+                hoist: false,
+                permissions: VIEW_CHANNEL | READ_MESSAGE_HISTORY | ADD_REACTIONS | PIN_MESSAGES,
+            }],
+            Vec::new(),
+        );
+
+        let ch = state.channel(channel).expect("channel");
+        assert!(state.can_read_message_history_in_channel(ch));
+        assert!(state.can_add_reactions_in_channel(ch));
+        assert!(state.can_pin_messages_in_channel(ch));
     }
 
     #[test]
