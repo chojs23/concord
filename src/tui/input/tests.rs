@@ -62,7 +62,7 @@ fn message_row_point(row: u16) -> (u16, u16) {
 }
 
 fn message_action_row_point(row: u16) -> (u16, u16) {
-    (46, 7 + row)
+    (46, 8 + row)
 }
 
 fn dashboard_area() -> Rect {

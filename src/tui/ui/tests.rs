@@ -56,6 +56,7 @@ use crate::{
             EmojiPickerEntry, EmojiReactionItem, FocusPane, MessageActionItem, MessageActionKind,
             PollVotePickerItem,
         },
+        ui::{ActionMenuTarget, MouseTarget, mouse_target_at},
     },
 };
 
@@ -422,6 +423,38 @@ fn focus_pane_at_uses_configured_pane_widths() {
         Some(FocusPane::Messages)
     );
     assert_eq!(focus_pane_at(area, &state, 85, 1), Some(FocusPane::Members));
+}
+
+#[test]
+fn mouse_target_at_maps_visible_message_action_rows() {
+    let area = Rect::new(0, 0, 120, 20);
+    let mut state = state_with_message();
+    state.open_selected_message_actions();
+    let action_count = state.selected_message_action_items().len();
+    let last_row = action_count
+        .checked_sub(1)
+        .expect("message action menu has actions");
+    let popup_height = action_count as u16 + 2;
+    let first_action_y = 1 + (19 - popup_height) / 2 + 1;
+
+    assert_eq!(
+        mouse_target_at(area, &state, 46, first_action_y - 1),
+        Some(MouseTarget::ModalBackdrop)
+    );
+    assert_eq!(
+        mouse_target_at(area, &state, 46, first_action_y),
+        Some(MouseTarget::ActionRow {
+            menu: ActionMenuTarget::Message,
+            row: 0,
+        })
+    );
+    assert_eq!(
+        mouse_target_at(area, &state, 46, first_action_y + last_row as u16),
+        Some(MouseTarget::ActionRow {
+            menu: ActionMenuTarget::Message,
+            row: last_row,
+        })
+    );
 }
 
 #[test]
