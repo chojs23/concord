@@ -142,11 +142,27 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
         })
         .collect();
 
-    let list = List::new(items)
-        .block(panel_block("Servers", state.focus() == FocusPane::Guilds))
-        .highlight_style(highlight_style());
+    let list = List::new(items).highlight_style(highlight_style());
+    let list = if filter_area.is_none() {
+        list.block(panel_block("Servers", focused))
+    } else {
+        list
+    };
+    frame.render_widget(list, list_area);
 
-    frame.render_widget(list, area);
+    if let Some(filter_rect) = filter_area {
+        let query = filter_query.unwrap_or_default();
+        let cursor = state.guild_pane_filter_cursor().unwrap_or(0);
+        let cursor_x =
+            render_pane_filter_bar(frame, filter_rect, query, cursor, focused);
+        if focused {
+            frame.set_cursor_position(Position {
+                x: filter_rect.x.saturating_add(cursor_x as u16),
+                y: filter_rect.y,
+            });
+        }
+    }
+
     render_vertical_scrollbar(
         frame,
         panel_scrollbar_area(area),
@@ -258,14 +274,26 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
         })
         .collect();
 
-    let list = List::new(items)
-        .block(panel_block(
-            "Channels",
-            state.focus() == FocusPane::Channels,
-        ))
-        .highlight_style(highlight_style());
+    let list = List::new(items).highlight_style(highlight_style());
+    let list = if filter_area.is_none() {
+        list.block(panel_block("Channels", focused))
+    } else {
+        list
+    };
+    frame.render_widget(list, list_area);
 
-    frame.render_widget(list, area);
+    if let Some(filter_rect) = filter_area {
+        let query = filter_query.unwrap_or_default();
+        let cursor = state.channel_pane_filter_cursor().unwrap_or(0);
+        let cursor_x = render_pane_filter_bar(frame, filter_rect, query, cursor, focused);
+        if focused {
+            frame.set_cursor_position(Position {
+                x: filter_rect.x.saturating_add(cursor_x as u16),
+                y: filter_rect.y,
+            });
+        }
+    }
+
     render_vertical_scrollbar(
         frame,
         panel_scrollbar_area(area),
@@ -1251,6 +1279,14 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
     }
     frame.render_widget(
         Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
+        area,
+    );
+
+    // Right-aligned hint so users discover the keybind help popup.
+    let keymap_key = state.key_bindings().open_keymap.label();
+    let hint = format!("Press {keymap_key} to see keybinds");
+    frame.render_widget(
+        Paragraph::new(hint).alignment(Alignment::Right).style(Style::default()),
         area,
     );
 }

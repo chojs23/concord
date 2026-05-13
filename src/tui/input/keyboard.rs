@@ -11,6 +11,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return None;
     }
 
+    if state.is_keymap_popup_open() {
+        return handle_keymap_popup_key(state, key);
+    }
+
     if state.is_debug_log_popup_open() {
         return handle_debug_log_popup_key(state, key);
     }
@@ -61,85 +65,90 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     }
 
     let focus = state.focus();
-    match key.code {
-        KeyCode::Esc if !state.return_from_pinned_message_view() => {
-            state.return_from_opened_thread();
-        }
-        KeyCode::Char('q') => state.quit(),
-        KeyCode::Char('i') => state.start_composer(),
-        KeyCode::Char(' ') if is_shortcut_key(key) => state.open_leader(),
-        KeyCode::Char('1') => state.show_and_focus_pane(FocusPane::Guilds),
-        KeyCode::Char('2') => state.show_and_focus_pane(FocusPane::Channels),
-        KeyCode::Char('3') => state.show_and_focus_pane(FocusPane::Messages),
-        KeyCode::Char('4') => state.show_and_focus_pane(FocusPane::Members),
-        KeyCode::Char('h') | KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
-            state.adjust_focused_pane_width(-1)
-        }
-        KeyCode::Char('l') | KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
-            state.adjust_focused_pane_width(1)
-        }
-        KeyCode::Char('j') | KeyCode::Down => state.move_down(),
-        KeyCode::Char('J') if focus == FocusPane::Messages => state.scroll_message_viewport_down(),
-        KeyCode::Char('L') => state.scroll_focused_pane_horizontal_right(),
-        KeyCode::Char('k') | KeyCode::Up => {
-            state.move_up();
-            return state.next_older_history_command();
-        }
-        KeyCode::Char('K') if focus == FocusPane::Messages => state.scroll_message_viewport_up(),
-        KeyCode::Char('H') => state.scroll_focused_pane_horizontal_left(),
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.half_page_down()
-        }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.half_page_up();
-            return state.next_older_history_command();
-        }
-        KeyCode::PageDown => state.half_page_down(),
-        KeyCode::PageUp => {
-            state.half_page_up();
-            return state.next_older_history_command();
-        }
-        KeyCode::Char('g') => {
+    let kb = state.key_bindings().clone();
+
+    if key.code == KeyCode::Esc && !state.return_from_pinned_message_view() {
+        state.return_from_opened_thread();
+    } else if kb.quit.matches(key) {
+        state.quit();
+    } else if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        state.quit();
+    } else if kb.open_composer.matches(key) {
+        state.start_composer();
+    } else if kb.open_keymap.matches(key) {
+        state.open_keymap_popup();
+    } else if kb.open_leader.matches(key) {
+        state.open_leader();
+    } else if key.code == KeyCode::Char('1') {
+        state.show_and_focus_pane(FocusPane::Guilds);
+    } else if key.code == KeyCode::Char('2') {
+        state.show_and_focus_pane(FocusPane::Channels);
+    } else if key.code == KeyCode::Char('3') {
+        state.show_and_focus_pane(FocusPane::Messages);
+    } else if key.code == KeyCode::Char('4') {
+        state.show_and_focus_pane(FocusPane::Members);
+    } else if (key.code == KeyCode::Char('h') || key.code == KeyCode::Left)
+        && key.modifiers.contains(KeyModifiers::ALT)
+    {
+        state.adjust_focused_pane_width(-1);
+    } else if (key.code == KeyCode::Char('l') || key.code == KeyCode::Right)
+        && key.modifiers.contains(KeyModifiers::ALT)
+    {
+        state.adjust_focused_pane_width(1);
+    } else if kb.move_down.matches(key) || key.code == KeyCode::Down {
+        state.move_down();
+    } else if kb.scroll_viewport_down.matches(key) && focus == FocusPane::Messages {
+        state.scroll_message_viewport_down();
+    } else if kb.scroll_pane_right.matches(key) {
+        state.scroll_focused_pane_horizontal_right();
+    } else if kb.move_up.matches(key) || key.code == KeyCode::Up {
+        state.move_up();
+        return state.next_older_history_command();
+    } else if kb.scroll_viewport_up.matches(key) && focus == FocusPane::Messages {
+        state.scroll_message_viewport_up();
+    } else if kb.scroll_pane_left.matches(key) {
+        state.scroll_focused_pane_horizontal_left();
+    } else if kb.half_page_down.matches(key) || key.code == KeyCode::PageDown {
+        state.half_page_down();
+    } else if kb.half_page_up.matches(key) || key.code == KeyCode::PageUp {
+        state.half_page_up();
+        return state.next_older_history_command();
+    } else if kb.jump_top.matches(key) {
+        state.jump_top();
+    } else if key.code == KeyCode::Home {
+        if focus == FocusPane::Messages {
+            state.scroll_message_viewport_top();
+        } else {
             state.jump_top();
         }
-        KeyCode::Home => {
-            if focus == FocusPane::Messages {
-                state.scroll_message_viewport_top();
-            } else {
-                state.jump_top();
-            }
+    } else if kb.jump_bottom.matches(key) {
+        state.jump_bottom();
+    } else if key.code == KeyCode::End {
+        if focus == FocusPane::Messages {
+            state.scroll_message_viewport_bottom();
+        } else {
+            state.jump_bottom();
         }
-        KeyCode::Char('G') => state.jump_bottom(),
-        KeyCode::End => {
-            if focus == FocusPane::Messages {
-                state.scroll_message_viewport_bottom();
-            } else {
-                state.jump_bottom();
-            }
-        }
-        KeyCode::BackTab => state.cycle_focus_backward(),
-        KeyCode::Tab => state.cycle_focus(),
-        // Tree headers act like a small tree: Enter toggles, Right
-        // opens, and Left closes. Anywhere else these keys are no-ops.
-        KeyCode::Enter if focus == FocusPane::Guilds => state.confirm_selected_guild(),
-        KeyCode::Enter if focus == FocusPane::Channels => {
-            return state.confirm_selected_channel_command();
-        }
-        KeyCode::Enter if focus == FocusPane::Members => {
-            return state.show_selected_member_profile();
-        }
-        KeyCode::Enter if focus == FocusPane::Messages => {
-            return state.activate_selected_message_pane_item();
-        }
-        code if is_right_key(code) && focus == FocusPane::Guilds => state.open_selected_folder(),
-        code if is_left_key(code) && focus == FocusPane::Guilds => state.close_selected_folder(),
-        code if is_right_key(code) && focus == FocusPane::Channels => {
-            state.open_selected_channel_category()
-        }
-        code if is_left_key(code) && focus == FocusPane::Channels => {
-            state.close_selected_channel_category()
-        }
-        _ => {}
+    } else if key.code == KeyCode::BackTab {
+        state.cycle_focus_backward();
+    } else if key.code == KeyCode::Tab {
+        state.cycle_focus();
+    } else if key.code == KeyCode::Enter && focus == FocusPane::Guilds {
+        state.confirm_selected_guild();
+    } else if key.code == KeyCode::Enter && focus == FocusPane::Channels {
+        return state.confirm_selected_channel_command();
+    } else if key.code == KeyCode::Enter && focus == FocusPane::Members {
+        return state.show_selected_member_profile();
+    } else if key.code == KeyCode::Enter && focus == FocusPane::Messages {
+        return state.activate_selected_message_pane_item();
+    } else if is_right_key(key.code) && focus == FocusPane::Guilds {
+        state.open_selected_folder();
+    } else if is_left_key(key.code) && focus == FocusPane::Guilds {
+        state.close_selected_folder();
+    } else if is_right_key(key.code) && focus == FocusPane::Channels {
+        state.open_selected_channel_category();
+    } else if is_left_key(key.code) && focus == FocusPane::Channels {
+        state.close_selected_channel_category();
     }
 
     None
@@ -494,6 +503,14 @@ fn handle_reaction_users_popup_key(
         _ => {}
     }
 
+    None
+}
+
+fn handle_keymap_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => state.close_keymap_popup(),
+        _ => {}
+    }
     None
 }
 

@@ -8,6 +8,7 @@ mod action_menu;
 mod channel_switcher;
 mod debug_log;
 mod image_viewer;
+mod keymap;
 mod options;
 mod polls;
 mod profile;
@@ -42,6 +43,9 @@ pub(super) use reactions::{
     emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
     filtered_emoji_reaction_picker_lines, reaction_users_popup_lines,
 };
+pub(super) use keymap::render_keymap_popup;
+#[cfg(test)]
+pub(super) use keymap::keymap_popup_lines;
 pub(super) use reactions::{render_emoji_reaction_picker, render_reaction_users_popup};
 
 fn truncate_line_to_display_width(line: Line<'static>, max_width: usize) -> Line<'static> {

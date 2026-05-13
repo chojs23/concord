@@ -20,6 +20,18 @@ impl DashboardState {
         self.debug_log_popup_open = false;
     }
 
+    pub fn is_keymap_popup_open(&self) -> bool {
+        self.keymap_popup_open
+    }
+
+    pub fn open_keymap_popup(&mut self) {
+        self.keymap_popup_open = true;
+    }
+
+    pub fn close_keymap_popup(&mut self) {
+        self.keymap_popup_open = false;
+    }
+
     pub fn debug_log_lines(&self) -> Vec<String> {
         logging::error_entries()
             .into_iter()
