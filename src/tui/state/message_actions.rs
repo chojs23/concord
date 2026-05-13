@@ -1,4 +1,4 @@
-use crate::discord::{AppCommand, ReactionEmoji};
+use crate::discord::{AppCommand, MessageState, ReactionEmoji};
 
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
 use super::{
@@ -74,6 +74,8 @@ impl DashboardState {
                     enabled: true,
                 });
             }
+        }
+        if self.can_delete_message(message) {
             actions.push(MessageActionItem {
                 kind: MessageActionKind::Delete,
                 label: "Delete message".to_owned(),
@@ -112,26 +114,30 @@ impl DashboardState {
                 });
             }
         }
-        actions.push(MessageActionItem {
-            kind: MessageActionKind::AddReaction,
-            label: "Add reaction".to_owned(),
-            enabled: true,
-        });
+        if self.can_open_reaction_picker(message) {
+            actions.push(MessageActionItem {
+                kind: MessageActionKind::AddReaction,
+                label: "Add reaction".to_owned(),
+                enabled: true,
+            });
+        }
         actions.push(MessageActionItem {
             kind: MessageActionKind::ShowProfile,
             label: "Show profile".to_owned(),
             enabled: true,
         });
-        actions.push(MessageActionItem {
-            kind: MessageActionKind::SetPinned(!message.pinned),
-            label: if message.pinned {
-                "Unpin message".to_owned()
-            } else {
-                "Pin message".to_owned()
-            },
-            enabled: true,
-        });
-        if !message.reactions.is_empty() {
+        if self.can_pin_messages_for_message(message) {
+            actions.push(MessageActionItem {
+                kind: MessageActionKind::SetPinned(!message.pinned),
+                label: if message.pinned {
+                    "Unpin message".to_owned()
+                } else {
+                    "Pin message".to_owned()
+                },
+                enabled: true,
+            });
+        }
+        if !message.reactions.is_empty() && self.can_show_reaction_users_for_message(message) {
             actions.push(MessageActionItem {
                 kind: MessageActionKind::ShowReactionUsers,
                 label: "Show reacted users".to_owned(),
@@ -206,7 +212,7 @@ impl DashboardState {
             }
             MessageActionKind::Delete => {
                 let message = self.selected_message_state()?;
-                if Some(message.author_id) != self.current_user_id {
+                if !self.can_delete_message(message) {
                     self.close_message_action_menu();
                     return None;
                 }
@@ -271,6 +277,10 @@ impl DashboardState {
             }
             MessageActionKind::ShowReactionUsers => {
                 let message = self.selected_message_state()?;
+                if !self.can_show_reaction_users_for_message(message) {
+                    self.close_message_action_menu();
+                    return None;
+                }
                 let channel_id = message.channel_id;
                 let message_id = message.id;
                 let reactions = message
@@ -291,6 +301,10 @@ impl DashboardState {
             }
             MessageActionKind::SetPinned(pinned) => {
                 let message = self.selected_message_state()?;
+                if !self.can_pin_messages_for_message(message) {
+                    self.close_message_action_menu();
+                    return None;
+                }
                 let channel_id = message.channel_id;
                 let message_id = message.id;
                 self.close_message_action_menu();
@@ -334,6 +348,63 @@ impl DashboardState {
                 })
             }
         }
+    }
+
+    pub(super) fn can_add_reaction_to_message(
+        &self,
+        message: &MessageState,
+        emoji: &ReactionEmoji,
+    ) -> bool {
+        let Some(channel) = self.discord.channel(message.channel_id) else {
+            return true;
+        };
+        if !self.discord.can_read_message_history_in_channel(channel) {
+            return false;
+        }
+        message
+            .reactions
+            .iter()
+            .any(|reaction| &reaction.emoji == emoji)
+            || self.discord.can_add_reactions_in_channel(channel)
+    }
+
+    pub(super) fn can_open_reaction_picker(&self, message: &MessageState) -> bool {
+        let Some(channel) = self.discord.channel(message.channel_id) else {
+            return true;
+        };
+        self.discord.can_read_message_history_in_channel(channel)
+            && (self.discord.can_add_reactions_in_channel(channel) || !message.reactions.is_empty())
+    }
+
+    pub(super) fn can_add_new_reaction_for_message(&self, message: &MessageState) -> bool {
+        let Some(channel) = self.discord.channel(message.channel_id) else {
+            return true;
+        };
+        self.discord.can_add_reactions_in_channel(channel)
+    }
+
+    fn can_show_reaction_users_for_message(&self, message: &MessageState) -> bool {
+        let Some(channel) = self.discord.channel(message.channel_id) else {
+            return true;
+        };
+        self.discord.can_read_message_history_in_channel(channel)
+    }
+
+    fn can_delete_message(&self, message: &MessageState) -> bool {
+        if Some(message.author_id) == self.current_user_id {
+            return true;
+        }
+        let Some(channel) = self.discord.channel(message.channel_id) else {
+            return true;
+        };
+        self.discord.can_manage_messages_in_channel(channel)
+    }
+
+    fn can_pin_messages_for_message(&self, message: &MessageState) -> bool {
+        let Some(channel) = self.discord.channel(message.channel_id) else {
+            return true;
+        };
+        self.discord.can_pin_messages_in_channel(channel)
     }
 
     pub fn activate_message_action_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {

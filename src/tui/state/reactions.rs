@@ -152,7 +152,16 @@ impl DashboardState {
     pub fn activate_selected_emoji_reaction(&mut self) -> Option<AppCommand> {
         let picker = self.emoji_reaction_picker.clone()?;
         let reaction = self.selected_emoji_reaction()?;
-        let already_reacted = self.selected_message_state().is_some_and(|message| {
+        let selected_message = self.selected_message_state().filter(|message| {
+            message.channel_id == picker.channel_id && message.id == picker.message_id
+        });
+        if let Some(message) = selected_message
+            && !self.can_add_reaction_to_message(message, &reaction.emoji)
+        {
+            self.close_emoji_reaction_picker();
+            return None;
+        }
+        let already_reacted = selected_message.is_some_and(|message| {
             message.channel_id == picker.channel_id
                 && message.id == picker.message_id
                 && message
@@ -220,10 +229,24 @@ impl DashboardState {
 
     pub(super) fn open_emoji_reaction_picker(&mut self) {
         if let Some(message) = self.selected_message_state() {
+            if !self.can_open_reaction_picker(message) {
+                return;
+            }
             let guild_id = message
                 .guild_id
                 .or_else(|| self.selected_channel_guild_id());
-            let items = self.emoji_reaction_items_for_guild(guild_id);
+            let items = if self.can_add_new_reaction_for_message(message) {
+                self.emoji_reaction_items_for_guild(guild_id)
+            } else {
+                message
+                    .reactions
+                    .iter()
+                    .map(|reaction| EmojiReactionItem {
+                        emoji: reaction.emoji.clone(),
+                        label: reaction.emoji.status_label(),
+                    })
+                    .collect()
+            };
             self.emoji_reaction_picker = Some(EmojiReactionPickerState {
                 selected: 0,
                 filter: None,
