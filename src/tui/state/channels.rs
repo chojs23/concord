@@ -740,9 +740,9 @@ impl DashboardState {
         self.channel_pane_filter = None;
         if let Some(channel_id) = channel_id {
             // Restore selection to the unfiltered position
-            if let Some(idx) = self.channel_pane_entries().iter().position(|e| {
-                matches!(e, ChannelPaneEntry::Channel { state, .. } if state.id == channel_id)
-            }) {
+            if let Some(idx) = self.channel_pane_entries().iter().position(
+                |e| matches!(e, ChannelPaneEntry::Channel { state, .. } if state.id == channel_id),
+            ) {
                 self.selected_channel = idx;
             }
             self.channel_keep_selection_visible = true;
@@ -780,7 +780,10 @@ impl DashboardState {
     }
 
     pub fn selected_channel(&self) -> usize {
-        clamp_selected_index(self.selected_channel, self.channel_pane_filtered_entries().len())
+        clamp_selected_index(
+            self.selected_channel,
+            self.channel_pane_filtered_entries().len(),
+        )
     }
 
     pub(super) fn selected_channel_cursor_id(&self) -> Option<Id<ChannelMarker>> {

@@ -458,10 +458,7 @@ fn handle_user_profile_popup_key(state: &mut DashboardState, key: KeyEvent) -> O
 /// Returns `Some(command)` when the filter handler has fully handled the key
 /// and the caller should return that command. Returns `None` when the key
 /// should fall through to normal navigation (e.g. j/k to scroll the list).
-fn handle_pane_filter_key(
-    state: &mut DashboardState,
-    key: KeyEvent,
-) -> Option<Option<AppCommand>> {
+fn handle_pane_filter_key(state: &mut DashboardState, key: KeyEvent) -> Option<Option<AppCommand>> {
     match key.code {
         KeyCode::Esc => {
             if state.is_guild_pane_filter_active() {

@@ -46,9 +46,9 @@ mod subscriptions;
 mod user;
 
 use channel_switcher::ChannelSwitcherState;
-use pane_filter::PaneFilterState;
 use composer::{EmojiCompletion, MentionCompletion};
 use message_render::{add_literal_mention_highlights, normalize_text_highlights};
+use pane_filter::PaneFilterState;
 use popups::{
     ChannelLeaderActionState, GuildLeaderActionState, ImageViewerState, MemberLeaderActionState,
     UserProfilePopupState,

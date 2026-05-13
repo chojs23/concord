@@ -113,8 +113,12 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
         state.is_guild_pane_filter_active() && state.is_pane_visible(FocusPane::Guilds),
     );
     state.set_guild_view_height(
-        visible_panel_content_height(areas.guilds, "Servers", state.is_pane_visible(FocusPane::Guilds))
-            .saturating_sub(guild_filter_row),
+        visible_panel_content_height(
+            areas.guilds,
+            "Servers",
+            state.is_pane_visible(FocusPane::Guilds),
+        )
+        .saturating_sub(guild_filter_row),
     );
     let channel_filter_row = usize::from(
         state.is_channel_pane_filter_active() && state.is_pane_visible(FocusPane::Channels),

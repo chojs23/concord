@@ -147,9 +147,8 @@ pub struct ActiveKeyBindings {
 }
 
 fn parse_binding(spec: &str, fallback: &str) -> KeyBinding {
-    KeyBinding::parse(spec).unwrap_or_else(|| {
-        KeyBinding::parse(fallback).expect("fallback binding is always valid")
-    })
+    KeyBinding::parse(spec)
+        .unwrap_or_else(|| KeyBinding::parse(fallback).expect("fallback binding is always valid"))
 }
 
 impl Default for ActiveKeyBindings {
@@ -310,8 +309,10 @@ mod tests {
         };
         let bindings = ActiveKeyBindings::from_config(&cfg);
         // Should have fallen back to ctrl+e
-        assert!(bindings
-            .open_in_editor
-            .matches(press(KeyCode::Char('e'), KeyModifiers::CONTROL)));
+        assert!(
+            bindings
+                .open_in_editor
+                .matches(press(KeyCode::Char('e'), KeyModifiers::CONTROL))
+        );
     }
 }

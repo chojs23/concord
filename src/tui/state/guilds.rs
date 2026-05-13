@@ -243,7 +243,10 @@ impl DashboardState {
     }
 
     pub fn selected_guild(&self) -> usize {
-        clamp_selected_index(self.selected_guild, self.guild_pane_filtered_entries().len())
+        clamp_selected_index(
+            self.selected_guild,
+            self.guild_pane_filtered_entries().len(),
+        )
     }
 
     pub fn guild_scroll(&self) -> usize {
