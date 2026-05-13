@@ -336,7 +336,6 @@ const CONFIGURABLE_ACTIONS: &[Action] = &[
 fn fixed_table() -> HashMap<KeyBinding, Action> {
     let mut m = HashMap::new();
     let entries: &[(&str, Action)] = &[
-        ("ctrl+c", Action::Quit),
         ("down", Action::MoveDown),
         ("up", Action::MoveUp),
         ("pagedown", Action::HalfPageDown),
