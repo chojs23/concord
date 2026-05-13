@@ -4,7 +4,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker},
 };
-use crate::discord::{AppCommand, ChannelState};
+use crate::discord::{AppCommand, ChannelState, ChannelUnreadState};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::fuzzy::fuzzy_text_score;
@@ -77,7 +77,7 @@ impl DashboardState {
         let mut scored: Vec<(usize, ChannelSwitcherItem)> = items
             .into_iter()
             .filter_map(|item| {
-                fuzzy_text_score(&item.search_name, query).map(|score| (score, item))
+                channel_switcher_match_score(&item, query).map(|score| (score, item))
             })
             .collect();
         scored.sort_by_key(|(score, item)| (item.group_order, *score, item.original_index));
@@ -178,8 +178,8 @@ impl DashboardState {
     }
 
     fn all_channel_switcher_items(&self) -> Vec<ChannelSwitcherItem> {
-        let mut items = Vec::new();
-        self.push_direct_message_switcher_items(&mut items);
+        let mut base = Vec::new();
+        self.push_direct_message_switcher_items(&mut base);
 
         let mut seen = HashSet::new();
         for entry in self.guild_pane_entries() {
@@ -187,10 +187,48 @@ impl DashboardState {
                 continue;
             };
             if seen.insert(guild.id) {
-                self.push_guild_channel_switcher_items(&mut items, guild.id, &guild.name);
+                self.push_guild_channel_switcher_items(&mut base, guild.id, &guild.name);
             }
         }
 
+        // Collect channels with active notifications into a dedicated top section.
+        // Muted channels are intentionally excluded so the section reflects what
+        // would actually ping the user.
+        let mut notifications: Vec<ChannelSwitcherItem> = base
+            .iter()
+            .filter(|item| {
+                item.guild_id
+                    .is_none_or(|guild_id| !self.guild_notification_muted(guild_id))
+                    && self.sidebar_channel_unread(item.channel_id) != ChannelUnreadState::Seen
+            })
+            .cloned()
+            .collect();
+        for item in notifications.iter_mut() {
+            item.group_label = "Notifications".to_owned();
+            item.parent_label = item.guild_name.clone();
+            item.depth = 0;
+        }
+        notifications.sort_by_key(|item| match item.unread {
+            ChannelUnreadState::Mentioned(_) => 0,
+            ChannelUnreadState::Notified(_) => 1,
+            ChannelUnreadState::Unread => 2,
+            ChannelUnreadState::Seen => 3,
+        });
+
+        // Shift base group_order so the notifications section sorts above them
+        // in filtered (scored) mode.
+        for item in base.iter_mut() {
+            item.group_order = item.group_order.saturating_add(1);
+        }
+        for item in notifications.iter_mut() {
+            item.group_order = 0;
+        }
+
+        let mut items = notifications;
+        items.extend(base);
+        for (index, item) in items.iter_mut().enumerate() {
+            item.original_index = index;
+        }
         items
     }
 
@@ -204,6 +242,7 @@ impl DashboardState {
                 items,
                 ChannelSwitcherItemInput {
                     guild_id: None,
+                    guild_name: None,
                     group_label: "Direct Messages",
                     parent_label: None,
                     channel,
@@ -248,6 +287,7 @@ impl DashboardState {
                     items,
                     ChannelSwitcherItemInput {
                         guild_id: Some(guild_id),
+                        guild_name: Some(guild_name),
                         group_label: guild_name,
                         parent_label: None,
                         channel: root,
@@ -277,6 +317,7 @@ impl DashboardState {
                     items,
                     ChannelSwitcherItemInput {
                         guild_id: Some(guild_id),
+                        guild_name: Some(guild_name),
                         group_label: guild_name,
                         parent_label: Some(root.name.as_str()),
                         channel: child,
@@ -293,12 +334,13 @@ impl DashboardState {
 
 struct ChannelSwitcherItemInput<'a> {
     guild_id: Option<Id<GuildMarker>>,
+    guild_name: Option<&'a str>,
     group_label: &'a str,
     parent_label: Option<&'a str>,
     channel: &'a ChannelState,
     branch: ChannelBranch,
     group_order: usize,
-    unread: crate::discord::ChannelUnreadState,
+    unread: ChannelUnreadState,
     unread_message_count: usize,
 }
 
@@ -308,6 +350,7 @@ fn push_channel_switcher_item(
 ) {
     let ChannelSwitcherItemInput {
         guild_id,
+        guild_name,
         group_label,
         parent_label,
         channel,
@@ -324,6 +367,7 @@ fn push_channel_switcher_item(
     items.push(ChannelSwitcherItem {
         channel_id: channel.id,
         guild_id,
+        guild_name: guild_name.map(str::to_owned),
         group_label: group_label.to_owned(),
         parent_label: parent_label.map(str::to_owned),
         channel_label: channel_switcher_channel_label(channel),
@@ -334,6 +378,19 @@ fn push_channel_switcher_item(
         group_order,
         original_index,
     });
+}
+
+fn channel_switcher_match_score(item: &ChannelSwitcherItem, query: &str) -> Option<usize> {
+    let name_score = fuzzy_text_score(&item.search_name, query);
+    let guild_score = item
+        .guild_name
+        .as_deref()
+        .and_then(|guild_name| fuzzy_text_score(guild_name, query));
+    match (name_score, guild_score) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(score), None) | (None, Some(score)) => Some(score),
+        (None, None) => None,
+    }
 }
 
 fn channel_switcher_channel_label(channel: &ChannelState) -> String {

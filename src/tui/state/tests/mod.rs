@@ -4420,6 +4420,14 @@ fn channel_switcher_groups_channels_and_filters_by_fuzzy_name() {
         emojis: Vec::new(),
     });
 
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![ReadStateInfo {
+            channel_id: Id::new(40),
+            last_acked_message_id: Some(Id::new(100)),
+            mention_count: 0,
+        }],
+    });
+
     state.open_channel_switcher();
     let all_items = state.channel_switcher_items();
     assert_eq!(all_items[0].group_label, "Direct Messages");
@@ -4466,6 +4474,143 @@ fn channel_switcher_items_carry_unread_metadata() {
 
     assert_eq!(items[0].channel_id, Id::new(40));
     assert_eq!(items[0].unread, ChannelUnreadState::Unread);
+}
+
+#[test]
+fn channel_switcher_query_matches_guild_name() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "acme".to_owned(),
+        member_count: None,
+        owner_id: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "text".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+    });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(2),
+        name: "other".to_owned(),
+        member_count: None,
+        owner_id: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(Id::new(2)),
+            channel_id: Id::new(21),
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "lobby".to_owned(),
+            kind: "text".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+    });
+
+    state.open_channel_switcher();
+    for ch in "acme".chars() {
+        state.push_channel_switcher_char(ch);
+    }
+    let filtered: Vec<Id<ChannelMarker>> = state
+        .channel_switcher_items()
+        .into_iter()
+        .map(|item| item.channel_id)
+        .collect();
+
+    assert!(filtered.contains(&Id::new(11)));
+    assert!(!filtered.contains(&Id::new(21)));
+}
+
+#[test]
+fn channel_switcher_lists_unread_channels_in_notifications_section_first() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        member_count: None,
+        owner_id: None,
+        channels: vec![
+            ChannelInfo {
+                guild_id: Some(Id::new(1)),
+                channel_id: Id::new(11),
+                parent_id: None,
+                position: Some(0),
+                last_message_id: Some(Id::new(101)),
+                name: "alerts".to_owned(),
+                kind: "text".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+            ChannelInfo {
+                guild_id: Some(Id::new(1)),
+                channel_id: Id::new(12),
+                parent_id: None,
+                position: Some(1),
+                last_message_id: None,
+                name: "quiet".to_owned(),
+                kind: "text".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+        ],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+    });
+
+    state.open_channel_switcher();
+    let items = state.channel_switcher_items();
+
+    assert_eq!(items[0].group_label, "Notifications");
+    assert_eq!(items[0].channel_id, Id::new(11));
+    assert_eq!(items[0].parent_label.as_deref(), Some("guild"));
+    assert!(
+        items
+            .iter()
+            .skip(1)
+            .any(|item| { item.group_label == "guild" && item.channel_id == Id::new(11) })
+    );
+    assert!(
+        items
+            .iter()
+            .any(|item| { item.group_label == "guild" && item.channel_id == Id::new(12) })
+    );
 }
 
 #[test]

@@ -3,15 +3,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::discord::{
-    DiscordStateCache,
-    ids::{
-        Id,
-        marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
-    },
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
-#[cfg(not(test))]
-use crate::logging;
 
 use crate::config::DisplayOptions;
 use crate::discord::{
@@ -113,15 +108,6 @@ enum ActiveGuildScope {
     Guild(Id<GuildMarker>),
 }
 
-impl From<ActiveGuildScope> for Option<Id<GuildMarker>> {
-    fn from(val: ActiveGuildScope) -> Self {
-        match val {
-            ActiveGuildScope::Unset | ActiveGuildScope::DirectMessages => None,
-            ActiveGuildScope::Guild(id) => Some(id),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LeaderMode {
     Root,
@@ -165,7 +151,6 @@ struct ForumPostListState {
 #[derive(Debug)]
 pub struct DashboardState {
     discord: DiscordState,
-    cache: DiscordStateCache,
     focus: FocusPane,
     active_guild: ActiveGuildScope,
     active_channel_id: Option<Id<ChannelMarker>>,
@@ -311,8 +296,6 @@ fn truncate_notification_text(value: &str, max_chars: usize) -> String {
 
 impl DashboardState {
     pub fn new() -> Self {
-        let cache = Self::load_cache();
-
         Self {
             discord: DiscordState::default(),
             focus: FocusPane::Guilds,
@@ -396,23 +379,7 @@ impl DashboardState {
             collapsed_channel_categories: HashSet::new(),
             pending_read_acks: HashMap::new(),
             pending_commands: VecDeque::new(),
-
-            cache,
         }
-    }
-
-    #[cfg(not(test))]
-    fn load_cache() -> DiscordStateCache {
-        let mut cache = DiscordStateCache::default();
-        if let Err(e) = cache.read_from_disk() {
-            logging::error("app", format!("failed to read cached discord state: {}", e));
-        }
-        cache
-    }
-
-    #[cfg(test)]
-    fn load_cache() -> DiscordStateCache {
-        DiscordStateCache::default()
     }
 
     pub fn next_read_ack_deadline(&self) -> Option<Instant> {
@@ -701,14 +668,6 @@ impl DashboardState {
         if let Some(user_id) = self.discord.current_user_id() {
             self.current_user_id = Some(user_id);
         }
-        if let Some(last_active_channel) = self.cache.last_channel_id {
-            self.active_channel_id = Some(Id::new(last_active_channel));
-        }
-        self.active_guild = match self.cache.last_guild_id {
-            Some(id) => ActiveGuildScope::Guild(Id::new(id)),
-            None if self.cache.last_channel_id.is_some() => ActiveGuildScope::DirectMessages,
-            _ => ActiveGuildScope::Unset,
-        };
         self.refresh_composer_emoji_candidates_for_current_query();
 
         self.clamp_active_selection();
@@ -734,7 +693,6 @@ impl DashboardState {
     }
 
     pub fn quit(&mut self) {
-        self.cache.write_to_disk().unwrap(); // Doesn't matter if we panic, we're quitting anyway
         self.should_quit = true;
     }
 

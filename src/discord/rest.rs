@@ -710,20 +710,12 @@ impl DiscordRest {
             AppError::DiscordRequest(format!("user profile decode failed: {error}"))
         })?;
 
-        let note = match self.load_user_note(user_id).await {
-            Ok(note) => note,
-            Err(error) => {
-                crate::logging::error("profile", format!("load user note failed: {error}"));
-                None
-            }
-        };
-
-        Ok(parse_user_profile_response(user_id, &body, note))
+        Ok(parse_user_profile_response(user_id, &body, None))
     }
 
     /// Returns the user's saved note, or `None` if Discord responds 404
     /// (no note set). Other errors propagate.
-    async fn load_user_note(&self, user_id: Id<UserMarker>) -> Result<Option<String>> {
+    pub(super) async fn load_user_note(&self, user_id: Id<UserMarker>) -> Result<Option<String>> {
         let url = format!(
             "https://discord.com/api/v9/users/@me/notes/{}",
             user_id.get()

@@ -684,6 +684,18 @@ fn start_command_loop(
                             }
                         }
                     }
+                    AppCommand::LoadUserNote { user_id } => {
+                        match client.load_user_note(user_id).await {
+                            Ok(note) => {
+                                client
+                                    .publish_event(AppEvent::UserNoteLoaded { user_id, note })
+                                    .await;
+                            }
+                            Err(error) => {
+                                log_app_error("load user note failed", &error);
+                            }
+                        }
+                    }
                     AppCommand::AckChannel {
                         channel_id,
                         message_id,

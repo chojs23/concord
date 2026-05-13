@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [unreleased]
+
+### Bug Fixes
+
+- Activity emojis (#28) in [#28](https://github.com/chojs23/concord/pull/28) by @lisk77
+- Align cursor position with newline-aware composer display (#45) in [#45](https://github.com/chojs23/concord/pull/45) by @kimjune01
+- Fix reply edit state and complete reply attachment actions by @chojs23
+- Reuse member presence marker for DM channel status dots by @chojs23
+- Decoupe per-user note fetch from profile warm up by @chojs23
+- Remove cached Discord state persistence (#52) in [#52](https://github.com/chojs23/concord/pull/52) by @chojs23
+
+### Features
+
+- Remove footer and last status by @chojs23
+- Loading indicator by @chojs23
+- Show offline members with an empty circle presence marker by @chojs23
+- Surface unread channels and server-name search in channel switcher by @chojs23
+
+### Miscellaneous Tasks
+
+- Use git-cliff for changelog by @chojs23
+- Add clippy check by @chojs23
+- Clean up comments and simplify required context by @chojs23
+
+### Refactor
+
+- *(tui)* Remove footer and popup hints (#43) in [#43](https://github.com/chojs23/concord/pull/43) by @chojs23
+- Refactor activity rendering with typed ActivityRender struct (#44) in [#44](https://github.com/chojs23/concord/pull/44) by @chojs23
+- Change broken dash by @chojs23
+
+### Refacotr
+
+- Rename leader action state and add context-specific action titles by @chojs23
+
+
+### New Contributors
+
+- @amiralimollaei made their first contribution in [#49](https://github.com/chojs23/concord/pull/49)
+- @kimjune01 made their first contribution in [#45](https://github.com/chojs23/concord/pull/45)
 ## [1.3.1] - 2026-05-11
 
 ### Bug Fixes

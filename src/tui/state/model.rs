@@ -12,6 +12,7 @@ use crate::discord::{
 pub struct ChannelSwitcherItem {
     pub channel_id: Id<ChannelMarker>,
     pub guild_id: Option<Id<GuildMarker>>,
+    pub guild_name: Option<String>,
     pub group_label: String,
     pub parent_label: Option<String>,
     pub channel_label: String,

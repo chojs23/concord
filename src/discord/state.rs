@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 mod notifications;
@@ -14,10 +13,8 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
-use crate::paths;
 pub use notifications::ChannelUnreadState;
 use notifications::{GuildNotificationSettingsState, MessageNotificationKind};
-use serde::{Deserialize, Serialize};
 
 use super::{
     ActivityInfo, AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo,
@@ -313,6 +310,7 @@ pub struct DiscordState {
     /// Cached profile lookups so the profile popup can render instantly when
     /// the same user is opened again.
     user_profiles: BTreeMap<UserProfileCacheKey, UserProfileInfo>,
+    fetched_notes: BTreeMap<Id<UserMarker>, Option<String>>,
     /// Friend / blocked / pending request state delivered through READY's
     /// `relationships` array. Used to colour the profile popup's friend
     /// indicator and to enrich `UserProfileInfo` on insert.
@@ -347,12 +345,6 @@ pub struct DiscordSnapshot {
     pub state: DiscordState,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub struct DiscordStateCache {
-    pub(crate) last_channel_id: Option<u64>,
-    pub(crate) last_guild_id: Option<u64>,
-}
-
 struct MessageUpdateFields {
     poll: Option<PollInfo>,
     content: Option<String>,
@@ -385,6 +377,7 @@ impl DiscordState {
             custom_emojis: BTreeMap::new(),
             guild_folders: Vec::new(),
             user_profiles: BTreeMap::new(),
+            fetched_notes: BTreeMap::new(),
             relationships: BTreeMap::new(),
             user_presences: BTreeMap::new(),
             user_activities: BTreeMap::new(),
@@ -758,10 +751,23 @@ impl DiscordState {
                     .get(&profile.user_id)
                     .copied()
                     .unwrap_or(FriendStatus::None);
+                if let Some(note) = self.fetched_notes.get(&profile.user_id) {
+                    profile.note = note.clone();
+                }
                 self.user_profiles.insert(
                     UserProfileCacheKey::new(profile.user_id, *guild_id),
                     profile,
                 );
+            }
+            AppEvent::UserNoteLoaded { user_id, note } => {
+                self.fetched_notes.insert(*user_id, note.clone());
+                for profile in self
+                    .user_profiles
+                    .values_mut()
+                    .filter(|profile| profile.user_id == *user_id)
+                {
+                    profile.note = note.clone();
+                }
             }
             AppEvent::RelationshipsLoaded { relationships } => {
                 self.relationships.clear();
@@ -910,6 +916,10 @@ impl DiscordState {
             .get(&UserProfileCacheKey::new(user_id, guild_id))
     }
 
+    pub fn is_note_fetched(&self, user_id: Id<UserMarker>) -> bool {
+        self.fetched_notes.contains_key(&user_id)
+    }
+
     pub fn guild(&self, guild_id: Id<GuildMarker>) -> Option<&GuildState> {
         self.guilds.get(&guild_id)
     }
@@ -967,6 +977,7 @@ impl DiscordState {
         self.custom_emojis = snapshot.custom_emojis.clone();
         self.guild_folders = snapshot.guild_folders.clone();
         self.user_profiles = snapshot.user_profiles.clone();
+        self.fetched_notes = snapshot.fetched_notes.clone();
         self.relationships = snapshot.relationships.clone();
         self.user_presences = snapshot.user_presences.clone();
         self.user_activities = snapshot.user_activities.clone();
@@ -1654,66 +1665,6 @@ impl DiscordState {
 
         self.message_author_role_ids
             .insert(key, author_role_ids.to_vec());
-    }
-}
-
-impl DiscordStateCache {
-    pub fn set_last_channel(&mut self, channel: Id<ChannelMarker>) {
-        self.last_channel_id = Some(
-            channel
-                .to_string()
-                .parse::<u64>()
-                .expect("Channel ID should be u64"),
-        );
-    }
-
-    pub fn set_last_guild(&mut self, guild: Option<Id<GuildMarker>>) {
-        self.last_guild_id = guild.map(|g| {
-            g.to_string()
-                .parse::<u64>()
-                .expect("Guild ID should be u64, or, for DMs, empty.")
-        });
-    }
-
-    pub fn write_to_disk(&self) -> Result<(), std::io::Error> {
-        match toml::to_string(&self) {
-            Ok(toml) => std::fs::write(DiscordStateCache::get_cache_file()?, toml),
-            Err(e) => return Err(std::io::Error::other(e.to_string())),
-        }?;
-
-        Ok(())
-    }
-
-    pub fn read_from_disk(&mut self) -> Result<(), std::io::Error> {
-        match toml::from_str::<Self>(&std::fs::read_to_string(
-            DiscordStateCache::get_cache_file()?,
-        )?) {
-            Ok(toml) => {
-                self.last_channel_id = toml.last_channel_id;
-                self.last_guild_id = toml.last_guild_id;
-            }
-            Err(e) => return Err(std::io::Error::other(e.to_string())),
-        }
-
-        Ok(())
-    }
-
-    fn get_cache_file() -> Result<PathBuf, std::io::Error> {
-        let f = paths::data_dir().map_or_else(
-            || {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "could not resolve user data directory",
-                ))
-            },
-            |p| Ok(p.join("state.toml")),
-        )?;
-
-        if !f.exists() {
-            std::fs::write(&f, toml::to_string(&DiscordStateCache::default()).unwrap())?;
-        }
-
-        Ok(f)
     }
 }
 

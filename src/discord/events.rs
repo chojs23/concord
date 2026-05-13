@@ -742,6 +742,10 @@ pub enum AppEvent {
         guild_id: Option<Id<GuildMarker>>,
         message: String,
     },
+    UserNoteLoaded {
+        user_id: Id<UserMarker>,
+        note: Option<String>,
+    },
     RelationshipsLoaded {
         relationships: Vec<(Id<UserMarker>, FriendStatus)>,
     },

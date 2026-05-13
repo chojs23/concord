@@ -151,6 +151,10 @@ impl DashboardState {
             view_height: 0,
             total_lines: 0,
         });
+        if !self.discord.is_note_fetched(user_id) {
+            self.pending_commands
+                .push_back(AppCommand::LoadUserNote { user_id });
+        }
         if self.discord.user_profile(user_id, guild_id).is_some() {
             None
         } else {
