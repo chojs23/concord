@@ -9,15 +9,16 @@ pub(super) const SCROLLBAR_THUMB: Color = Color::Rgb(170, 170, 170);
 pub(super) const MIN_MESSAGE_INPUT_HEIGHT: u16 = 3;
 pub(super) const IMAGE_PREVIEW_HEIGHT: u16 = 10;
 pub(super) const IMAGE_PREVIEW_WIDTH: u16 = 72;
-pub(super) const MESSAGE_AVATAR_PLACEHOLDER: &str = "oo";
-pub(super) const MESSAGE_AVATAR_OFFSET: u16 = 3;
+pub(super) const MESSAGE_AVATAR_PLACEHOLDER: &str = "oooo";
+pub(super) const MESSAGE_SELECTION_PREFIX_WIDTH: u16 = 2;
+pub(super) const MESSAGE_AVATAR_OFFSET: u16 =
+    MESSAGE_SELECTION_PREFIX_WIDTH + MESSAGE_AVATAR_PLACEHOLDER.len() as u16 + 2;
 pub(super) const EMBED_PREVIEW_GUTTER_PREFIX: &str = "  ▎ ";
 pub(super) const MAX_REACTION_USERS_VISIBLE_LINES: usize = 14;
 pub(super) const IMAGE_VIEWER_POPUP_WIDTH: u16 = 78;
 pub(super) const IMAGE_VIEWER_POPUP_HEIGHT: u16 = 16;
 pub(super) const SELECTED_FORUM_POST_BORDER: Color = Color::Green;
 pub(super) const SELECTED_MESSAGE_BORDER: Color = Color::Green;
-pub(super) const SELECTED_MESSAGE_CONTENT_OFFSET: u16 = 2;
 
 pub struct ImagePreview<'a> {
     pub viewer: bool,

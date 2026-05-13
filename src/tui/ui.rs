@@ -81,8 +81,8 @@ use self::popups::{
 };
 use self::types::{
     ACCENT, DIM, EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET, MESSAGE_AVATAR_PLACEHOLDER,
-    MessageViewportLayout, SCROLLBAR_THUMB, SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER,
-    SELECTED_MESSAGE_CONTENT_OFFSET, UserProfilePopupText,
+    MESSAGE_SELECTION_PREFIX_WIDTH, MessageViewportLayout, SCROLLBAR_THUMB,
+    SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UserProfilePopupText,
 };
 pub(crate) use self::types::{ActionMenuTarget, MouseTarget};
 pub use self::types::{
