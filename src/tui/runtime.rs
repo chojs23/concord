@@ -16,7 +16,7 @@ use crate::{
 };
 
 use super::{
-    commands as command_helpers, effects as effect_helpers, events, input,
+    commands as command_helpers, effects as effect_helpers, events, input, keybinding,
     media::{
         AvatarImageCache, EmojiImageCache, ImagePreviewCache, visible_avatar_targets,
         visible_emoji_image_targets, visible_image_preview_targets,
@@ -48,6 +48,14 @@ pub(super) async fn run_dashboard(
         }
     };
     let mut state = DashboardState::new_with_display_options(display_options);
+    let key_bindings = match config::load_key_bindings_config() {
+        Ok(cfg) => keybinding::ActiveKeyBindings::from_config(&cfg),
+        Err(error) => {
+            logging::error("config", format!("failed to load keybindings: {error}"));
+            keybinding::ActiveKeyBindings::default()
+        }
+    };
+    state.set_key_bindings(key_bindings);
     drop(snapshots.borrow_and_update());
     let initial_snapshot = client.current_discord_snapshot();
     let mut current_snapshot_revision = initial_snapshot.revision;
@@ -249,6 +257,11 @@ pub(super) async fn run_dashboard(
                             &mut mouse_clicks,
                             &mut redraw_diagnostics,
                         )?;
+                        if state.take_open_composer_in_editor_request() {
+                            if let Err(error) = open_composer_in_editor(terminal, &mut state) {
+                                logging::error("tui", format!("editor failed: {error}"));
+                            }
+                        }
                         if let Some(command) = outcome.command
                             && commands.send(command).await.is_err()
                         {
@@ -574,5 +587,59 @@ pub(super) async fn run_dashboard(
         }
     }
 
+    Ok(())
+}
+
+fn open_composer_in_editor(
+    terminal: &mut ratatui::DefaultTerminal,
+    state: &mut DashboardState,
+) -> crate::Result<()> {
+    use std::{env, io::stdout};
+    use crossterm::execute;
+    use crossterm::event::{
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    };
+
+    let editor = env::var("EDITOR").unwrap_or_else(|_| "vi".to_owned());
+
+    let mut temp = tempfile::Builder::new()
+        .prefix("concord-message-")
+        .suffix(".txt")
+        .tempfile()?;
+    std::io::Write::write_all(&mut temp, state.composer_input().as_bytes())?;
+    let path = temp.path().to_path_buf();
+
+    let _ = execute!(
+        stdout(),
+        PopKeyboardEnhancementFlags,
+        DisableMouseCapture,
+        DisableBracketedPaste,
+    );
+    ratatui::restore();
+
+    let status = tokio::task::block_in_place(|| {
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{editor} \"$1\""))
+            .arg("--")
+            .arg(&path)
+            .status()
+    });
+
+    *terminal = ratatui::init();
+    let _ = execute!(
+        stdout(),
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+        EnableMouseCapture,
+        EnableBracketedPaste,
+    );
+
+    if let Ok(status) = status
+        && status.success()
+        && let Ok(content) = std::fs::read_to_string(&path)
+    {
+        state.replace_composer_input_from_editor(content);
+    }
     Ok(())
 }
