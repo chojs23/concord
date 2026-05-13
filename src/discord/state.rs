@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::{Duration, Instant};
 
 mod channels;
@@ -31,8 +31,8 @@ use profiles::{ProfileRoleIds, UserProfileCacheKey};
 use reads::ChannelReadState;
 
 use super::{
-    ActivityInfo, AppEvent, CustomEmojiInfo, FriendStatus, GuildFolder, PresenceStatus,
-    UserProfileInfo,
+    ActivityInfo, AppEvent, CustomEmojiInfo, FriendStatus, GuildFolder,
+    PresenceStatus, RelationshipInfo, UserProfileInfo,
 };
 
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -59,7 +59,7 @@ pub struct DiscordState {
     /// Friend / blocked / pending request state delivered through READY's
     /// `relationships` array. Used to colour the profile popup's friend
     /// indicator and to enrich `UserProfileInfo` on insert.
-    relationships: BTreeMap<Id<UserMarker>, FriendStatus>,
+    relationships: BTreeMap<Id<UserMarker>, RelationshipInfo>,
     /// Last known presence by user id. This gives DM/profile views a fallback
     /// when the private-channel recipient payload omitted status.
     user_presences: BTreeMap<Id<UserMarker>, PresenceStatus>,
@@ -482,12 +482,12 @@ impl DiscordState {
                 profile.friend_status = self
                     .relationships
                     .get(&profile.user_id)
-                    .copied()
+                    .map(|relationship| relationship.status)
                     .unwrap_or(FriendStatus::None);
                 if let Some(note) = self.fetched_notes.get(&profile.user_id) {
                     profile.note = note.clone();
                 }
-                let display_name = profile.display_name().to_owned();
+                let profile_display_name = profile.display_name().to_owned();
                 let avatar_url = profile.avatar_url.clone();
                 let username = profile.username.clone();
                 let user_id = profile.user_id;
@@ -495,6 +495,15 @@ impl DiscordState {
                     UserProfileCacheKey::new(profile.user_id, *guild_id),
                     profile,
                 );
+                let display_name = if guild_id.is_some() {
+                    profile_display_name.clone()
+                } else {
+                    self.private_user_display_name(
+                        user_id,
+                        Some(profile_display_name.as_str()),
+                        Some(username.as_str()),
+                    )
+                };
                 self.refresh_message_author_from_profile(
                     *guild_id,
                     user_id,
@@ -508,7 +517,7 @@ impl DiscordState {
                         .and_then(|members| members.get_mut(&user_id))
                     {
                         if member.username.is_none() {
-                            member.display_name = display_name;
+                            member.display_name = profile_display_name;
                             member.username = Some(username);
                         }
                     }
@@ -516,7 +525,7 @@ impl DiscordState {
                     self.refresh_dm_channel_info_from_profile(
                         user_id,
                         &display_name,
-                        &username,
+                        Some(username.as_str()),
                         avatar_url.as_deref(),
                     );
                 }
@@ -532,30 +541,65 @@ impl DiscordState {
                 }
             }
             AppEvent::RelationshipsLoaded { relationships } => {
-                self.relationships.clear();
-                for (user_id, status) in relationships {
-                    self.relationships.insert(*user_id, *status);
+                let previous = std::mem::take(&mut self.relationships);
+                for relationship in relationships {
+                    self.relationships
+                        .insert(relationship.user_id, relationship.clone());
+                }
+                let affected_users: BTreeSet<Id<UserMarker>> = previous
+                    .keys()
+                    .copied()
+                    .chain(self.relationships.keys().copied())
+                    .collect();
+                for user_id in affected_users {
+                    let status = self
+                        .relationships
+                        .get(&user_id)
+                        .map(|relationship| relationship.status)
+                        .unwrap_or(FriendStatus::None);
                     for profile in self
                         .user_profiles
                         .values_mut()
-                        .filter(|profile| profile.user_id == *user_id)
+                        .filter(|profile| profile.user_id == user_id)
                     {
-                        profile.friend_status = *status;
+                        profile.friend_status = status;
                     }
+                    let previous = previous.get(&user_id);
+                    self.refresh_private_user_display_name(
+                        user_id,
+                        previous.and_then(|relationship| relationship.display_name.as_deref()),
+                        previous.and_then(|relationship| relationship.username.as_deref()),
+                        previous.and_then(|relationship| relationship.nickname.as_deref()),
+                    );
                 }
             }
-            AppEvent::RelationshipUpsert { user_id, status } => {
-                self.relationships.insert(*user_id, *status);
+            AppEvent::RelationshipUpsert { relationship } => {
+                let previous = self.relationships.get(&relationship.user_id).cloned();
+                let relationship = merge_relationship_info(previous.as_ref(), relationship);
+                self.relationships
+                    .insert(relationship.user_id, relationship.clone());
                 for profile in self
                     .user_profiles
                     .values_mut()
-                    .filter(|profile| profile.user_id == *user_id)
+                    .filter(|profile| profile.user_id == relationship.user_id)
                 {
-                    profile.friend_status = *status;
+                    profile.friend_status = relationship.status;
                 }
+                self.refresh_private_user_display_name(
+                    relationship.user_id,
+                    previous
+                        .as_ref()
+                        .and_then(|relationship| relationship.display_name.as_deref()),
+                    previous
+                        .as_ref()
+                        .and_then(|relationship| relationship.username.as_deref()),
+                    previous
+                        .as_ref()
+                        .and_then(|relationship| relationship.nickname.as_deref()),
+                );
             }
             AppEvent::RelationshipRemove { user_id } => {
-                self.relationships.remove(user_id);
+                let previous = self.relationships.remove(user_id);
                 for profile in self
                     .user_profiles
                     .values_mut()
@@ -563,6 +607,18 @@ impl DiscordState {
                 {
                     profile.friend_status = FriendStatus::None;
                 }
+                self.refresh_private_user_display_name(
+                    *user_id,
+                    previous
+                        .as_ref()
+                        .and_then(|relationship| relationship.display_name.as_deref()),
+                    previous
+                        .as_ref()
+                        .and_then(|relationship| relationship.username.as_deref()),
+                    previous
+                        .as_ref()
+                        .and_then(|relationship| relationship.nickname.as_deref()),
+                );
             }
             AppEvent::Ready { user, user_id } => {
                 self.current_user = Some(user.clone());
@@ -643,6 +699,111 @@ impl DiscordState {
         self.notification_settings = snapshot.notification_settings.clone();
         self.private_notification_settings = snapshot.private_notification_settings.clone();
     }
+
+    fn private_user_display_name(
+        &self,
+        user_id: Id<UserMarker>,
+        fallback_display_name: Option<&str>,
+        fallback_username: Option<&str>,
+    ) -> String {
+        if let Some(nickname) = self
+            .relationships
+            .get(&user_id)
+            .and_then(|relationship| relationship.nickname.as_deref())
+        {
+            return nickname.to_owned();
+        }
+        if let Some(display_name) = self
+            .relationships
+            .get(&user_id)
+            .and_then(|relationship| relationship.display_name.as_deref())
+        {
+            return display_name.to_owned();
+        }
+        if let Some(profile) = self
+            .user_profiles
+            .get(&UserProfileCacheKey::new(user_id, None))
+        {
+            return profile.display_name().to_owned();
+        }
+        fallback_display_name
+            .filter(|value| !value.is_empty())
+            .or_else(|| fallback_username.filter(|value| !value.is_empty()))
+            .unwrap_or("unknown")
+            .to_owned()
+    }
+
+    fn refresh_private_user_display_name(
+        &mut self,
+        user_id: Id<UserMarker>,
+        fallback_display_name: Option<&str>,
+        fallback_username: Option<&str>,
+        previous_nickname: Option<&str>,
+    ) {
+        let (channel_display_name, channel_username) =
+            self.current_private_recipient_identity(user_id);
+        let channel_display_name = channel_display_name
+            .filter(|display_name| previous_nickname != Some(display_name.as_str()));
+        let display_name = self.private_user_display_name(
+            user_id,
+            fallback_display_name
+                .or(channel_display_name.as_deref())
+                .filter(|value| !value.is_empty()),
+            fallback_username
+                .or(channel_username.as_deref())
+                .filter(|value| !value.is_empty()),
+        );
+        let username = self
+            .relationships
+            .get(&user_id)
+            .and_then(|relationship| relationship.username.clone())
+            .or(channel_username)
+            .or_else(|| fallback_username.map(str::to_owned));
+        self.refresh_message_author_from_profile(None, user_id, &display_name, None);
+        self.refresh_dm_channel_info_from_profile(
+            user_id,
+            &display_name,
+            username.as_deref(),
+            None,
+        );
+    }
+
+    fn current_private_recipient_identity(
+        &self,
+        user_id: Id<UserMarker>,
+    ) -> (Option<String>, Option<String>) {
+        self.channels
+            .values()
+            .filter(|channel| channel.guild_id.is_none())
+            .flat_map(|channel| channel.recipients.iter())
+            .find(|recipient| recipient.user_id == user_id)
+            .map(|recipient| {
+                (
+                    Some(recipient.display_name.clone()),
+                    recipient.username.clone(),
+                )
+            })
+            .unwrap_or((None, None))
+    }
+}
+
+fn merge_relationship_info(
+    previous: Option<&RelationshipInfo>,
+    incoming: &RelationshipInfo,
+) -> RelationshipInfo {
+    RelationshipInfo {
+        user_id: incoming.user_id,
+        status: incoming.status,
+        nickname: incoming.nickname.clone(),
+        display_name: incoming
+            .display_name
+            .clone()
+            .or_else(|| previous.and_then(|relationship| relationship.display_name.clone())),
+        username: incoming
+            .username
+            .clone()
+            .or_else(|| previous.and_then(|relationship| relationship.username.clone())),
+    }
 }
 
 #[cfg(test)]
@@ -659,8 +820,8 @@ mod tests {
         GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, MessageKind,
         MessageReferenceInfo, MessageSnapshotInfo, MessageState, MutualGuildInfo,
         NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo,
-        PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo, ReplyInfo, RoleInfo,
-        UserProfileInfo,
+        PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo, RelationshipInfo,
+        ReplyInfo, RoleInfo, UserProfileInfo,
     };
 
     fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
@@ -677,6 +838,22 @@ mod tests {
             mutual_friends_count: 0,
             friend_status: FriendStatus::None,
             note: None,
+        }
+    }
+
+    fn relationship_info(
+        user_id: u64,
+        status: FriendStatus,
+        nickname: Option<&str>,
+        display_name: Option<&str>,
+        username: Option<&str>,
+    ) -> RelationshipInfo {
+        RelationshipInfo {
+            user_id: Id::new(user_id),
+            status,
+            nickname: nickname.map(str::to_owned),
+            display_name: display_name.map(str::to_owned),
+            username: username.map(str::to_owned),
         }
     }
 
@@ -1569,6 +1746,93 @@ mod tests {
     }
 
     #[test]
+    fn dm_message_author_prefers_friend_nickname() {
+        let channel_id = Id::new(2);
+        let author_id = Id::new(4);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::RelationshipsLoaded {
+            relationships: vec![relationship_info(
+                author_id.get(),
+                FriendStatus::Friend,
+                Some("Bestie"),
+                Some("Alice Global"),
+                Some("alice"),
+            )],
+        });
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(3),
+            author_id,
+            author: "Alice Global".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages[0].author, "Bestie");
+    }
+
+    #[test]
+    fn relationship_nickname_update_refreshes_existing_dm_message_authors() {
+        let channel_id = Id::new(2);
+        let author_id = Id::new(4);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::RelationshipsLoaded {
+            relationships: vec![relationship_info(
+                author_id.get(),
+                FriendStatus::Friend,
+                Some("Bestie"),
+                Some("Alice Global"),
+                Some("alice"),
+            )],
+        });
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(3),
+            author_id,
+            author: "Alice Global".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state.apply_event(&AppEvent::RelationshipUpsert {
+            relationship: relationship_info(
+                author_id.get(),
+                FriendStatus::Friend,
+                None,
+                None,
+                None,
+            ),
+        });
+
+        let messages = state.messages_for_channel(channel_id);
+        assert_eq!(messages[0].author, "Alice Global");
+    }
+
+    #[test]
     fn member_update_refreshes_existing_message_author() {
         let guild_id = Id::new(1);
         let channel_id = Id::new(2);
@@ -1696,6 +1960,159 @@ mod tests {
             Some("https://cdn.discordapp.com/avatar.png")
         );
         assert_eq!(channel.recipients[0].status, PresenceStatus::Online);
+    }
+
+    #[test]
+    fn dm_channel_upsert_prefers_friend_nickname() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::RelationshipsLoaded {
+            relationships: vec![relationship_info(
+                20,
+                FriendStatus::Friend,
+                Some("Bestie"),
+                Some("Alice Global"),
+                Some("alice"),
+            )],
+        });
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "Alice Global".to_owned(),
+            kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: Some(vec![ChannelRecipientInfo {
+                user_id: Id::new(20),
+                display_name: "Alice Global".to_owned(),
+                username: Some("alice".to_owned()),
+                is_bot: false,
+                avatar_url: None,
+                status: None,
+            }]),
+            permission_overwrites: Vec::new(),
+        }));
+
+        let channel = state.channel(channel_id).expect("channel should be stored");
+        assert_eq!(channel.name, "Bestie");
+        assert_eq!(channel.recipients[0].display_name, "Bestie");
+    }
+
+    #[test]
+    fn relationships_without_user_fields_preserve_existing_dm_names() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let user_id: Id<UserMarker> = Id::new(20);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "Alice Global".to_owned(),
+            kind: "dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: Some(vec![ChannelRecipientInfo {
+                user_id,
+                display_name: "Alice Global".to_owned(),
+                username: Some("alice".to_owned()),
+                is_bot: false,
+                avatar_url: None,
+                status: None,
+            }]),
+            permission_overwrites: Vec::new(),
+        }));
+        state.apply_event(&AppEvent::MessageCreate {
+            guild_id: None,
+            channel_id,
+            message_id: Id::new(3),
+            author_id: user_id,
+            author: "Alice Global".to_owned(),
+            author_avatar_url: None,
+            author_role_ids: Vec::new(),
+            message_kind: crate::discord::MessageKind::regular(),
+            reference: None,
+            reply: None,
+            poll: None,
+            content: Some("hello".to_owned()),
+            sticker_names: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            forwarded_snapshots: Vec::new(),
+        });
+        state.apply_event(&AppEvent::RelationshipsLoaded {
+            relationships: vec![relationship_info(
+                user_id.get(),
+                FriendStatus::Friend,
+                None,
+                None,
+                None,
+            )],
+        });
+
+        let channel = state.channel(channel_id).expect("channel should be stored");
+        assert_eq!(channel.name, "Alice Global");
+        assert_eq!(channel.recipients[0].display_name, "Alice Global");
+        assert_eq!(
+            state.messages_for_channel(channel_id)[0].author,
+            "Alice Global"
+        );
+    }
+
+    #[test]
+    fn relationship_nickname_refresh_preserves_explicit_group_dm_name() {
+        let channel_id: Id<ChannelMarker> = Id::new(10);
+        let mut state = DiscordState::default();
+
+        state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: None,
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "project chat".to_owned(),
+            kind: "group-dm".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: Some(vec![ChannelRecipientInfo {
+                user_id: Id::new(20),
+                display_name: "Alice Global".to_owned(),
+                username: Some("alice".to_owned()),
+                is_bot: false,
+                avatar_url: None,
+                status: None,
+            }]),
+            permission_overwrites: Vec::new(),
+        }));
+        state.apply_event(&AppEvent::RelationshipsLoaded {
+            relationships: vec![relationship_info(
+                20,
+                FriendStatus::Friend,
+                Some("Bestie"),
+                Some("Alice Global"),
+                Some("alice"),
+            )],
+        });
+
+        let channel = state.channel(channel_id).expect("channel should be stored");
+        assert_eq!(channel.name, "project chat");
+        assert_eq!(channel.recipients[0].display_name, "Bestie");
     }
 
     #[test]
@@ -2562,7 +2979,7 @@ mod tests {
     fn message_capabilities_track_reply_and_forwarded_traits() {
         let mut message = message_state("reply body");
         message.reply = Some(ReplyInfo {
-                author_id: None,
+            author_id: None,
             author: "neo".to_owned(),
             content: Some("original".to_owned()),
             sticker_names: Vec::new(),

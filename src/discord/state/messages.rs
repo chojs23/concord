@@ -210,6 +210,9 @@ impl DiscordState {
         author_id: Id<UserMarker>,
         fallback: &str,
     ) -> String {
+        if guild_id.is_none() {
+            return self.private_user_display_name(author_id, Some(fallback), None);
+        }
         if let Some(member) = guild_id
             .and_then(|guild_id| self.members.get(&guild_id))
             .and_then(|members| members.get(&author_id))

@@ -7,7 +7,8 @@ use serde_json::Value;
 
 use crate::{
     discord::{
-        ActivityInfo, ChannelInfo, ChannelRecipientInfo, FriendStatus, GuildFolder, PresenceStatus,
+        ActivityInfo, ChannelInfo, ChannelRecipientInfo, GuildFolder, PresenceStatus,
+        RelationshipInfo,
         ReadStateInfo, RoleInfo,
         events::AppEvent,
         ids::{
@@ -154,7 +155,7 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
     // it as a single event so the profile popup can show friend / pending /
     // blocked badges without an extra REST round trip.
     if let Some(relationships) = data.get("relationships").and_then(Value::as_array) {
-        let parsed: Vec<(Id<UserMarker>, FriendStatus)> = relationships
+        let parsed: Vec<RelationshipInfo> = relationships
             .iter()
             .filter_map(parse_relationship_entry)
             .collect();
