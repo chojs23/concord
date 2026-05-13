@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph},
 };
 use ratatui_image::Image as RatatuiImage;
 use unicode_width::UnicodeWidthStr;
@@ -300,8 +300,7 @@ pub(super) fn render_composer(
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(border_color))
                     .title_style(Style::default().fg(Color::White).bold()),
-            )
-            .wrap(Wrap { trim: false }),
+            ),
         area,
     );
     if state.show_custom_emoji() {
@@ -700,12 +699,20 @@ pub(super) fn composer_lines_with_loaded_custom_emoji_urls(
             )));
         }
         // Split input by newlines to properly display line breaks
+        let mut prefixed_input = String::new();
         for (i, line) in display_input.input.split('\n').enumerate() {
-            if i == 0 {
-                lines.push(Line::from(format!("> {}", line)));
-            } else {
-                lines.push(Line::from(format!("  {}", line)));
+            if i > 0 {
+                prefixed_input.push('\n');
             }
+            if i == 0 {
+                prefixed_input.push_str(&format!("> {}", line));
+            } else {
+                prefixed_input.push_str(&format!("  {}", line));
+            }
+        }
+        let wrapped = wrap_text_lines(&prefixed_input, width as usize);
+        for subline in wrapped {
+            lines.push(Line::from(subline));
         }
         return lines;
     }
