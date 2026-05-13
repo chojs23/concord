@@ -64,6 +64,12 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_user_profile_popup_key(state, key);
     }
 
+    if state.is_guild_pane_filter_active() || state.is_channel_pane_filter_active() {
+        if let Some(command) = handle_pane_filter_key(state, key) {
+            return command;
+        }
+    }
+
     let focus = state.focus();
     let kb = state.key_bindings().clone();
 
@@ -133,6 +139,14 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         state.cycle_focus_backward();
     } else if key.code == KeyCode::Tab {
         state.cycle_focus();
+    } else if kb.pane_search.matches(key) {
+        // Tree headers act like a small tree: Enter toggles, Right
+        // opens, and Left closes. Anywhere else these keys are no-ops.
+        match focus {
+            FocusPane::Guilds => state.open_guild_pane_filter(),
+            FocusPane::Channels => state.open_channel_pane_filter(),
+            _ => {}
+        }
     } else if key.code == KeyCode::Enter && focus == FocusPane::Guilds {
         state.confirm_selected_guild();
     } else if key.code == KeyCode::Enter && focus == FocusPane::Channels {
@@ -439,6 +453,78 @@ fn handle_user_profile_popup_key(state: &mut DashboardState, key: KeyEvent) -> O
         _ => {}
     }
     None
+}
+
+/// Returns `Some(command)` when the filter handler has fully handled the key
+/// and the caller should return that command. Returns `None` when the key
+/// should fall through to normal navigation (e.g. j/k to scroll the list).
+fn handle_pane_filter_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<Option<AppCommand>> {
+    match key.code {
+        KeyCode::Esc => {
+            if state.is_guild_pane_filter_active() {
+                state.close_guild_pane_filter();
+            } else {
+                state.close_channel_pane_filter();
+            }
+            Some(None)
+        }
+        KeyCode::Enter => {
+            if state.is_guild_pane_filter_active() {
+                state.confirm_guild_pane_filter();
+                Some(None)
+            } else {
+                Some(state.confirm_channel_pane_filter())
+            }
+        }
+        KeyCode::Backspace => {
+            if state.is_guild_pane_filter_active() {
+                state.pop_guild_pane_filter_char();
+            } else {
+                state.pop_channel_pane_filter_char();
+            }
+            Some(None)
+        }
+        KeyCode::Left => {
+            if state.is_guild_pane_filter_active() {
+                state.move_guild_pane_filter_cursor_left();
+            } else {
+                state.move_channel_pane_filter_cursor_left();
+            }
+            Some(None)
+        }
+        KeyCode::Right => {
+            if state.is_guild_pane_filter_active() {
+                state.move_guild_pane_filter_cursor_right();
+            } else {
+                state.move_channel_pane_filter_cursor_right();
+            }
+            Some(None)
+        }
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.quit();
+            Some(None)
+        }
+        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_down();
+            Some(None)
+        }
+        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_up();
+            Some(None)
+        }
+        KeyCode::Char(value) if is_shortcut_key(key) => {
+            if state.is_guild_pane_filter_active() {
+                state.push_guild_pane_filter_char(value);
+            } else {
+                state.push_channel_pane_filter_char(value);
+            }
+            Some(None)
+        }
+        _ => None, // fall through to normal navigation (arrows, j/k etc.)
+    }
 }
 
 fn handle_emoji_reaction_picker_key(

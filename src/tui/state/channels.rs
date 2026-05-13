@@ -7,7 +7,8 @@ use crate::discord::ids::{
 use crate::discord::{AppCommand, AppEvent, ChannelState};
 
 use super::{
-    ActiveGuildScope, DashboardState, PendingReadAck, READ_ACK_DEBOUNCE, ThreadReturnTarget,
+    ActiveGuildScope, DashboardState, PaneFilterState, PendingReadAck, READ_ACK_DEBOUNCE,
+    ThreadReturnTarget,
 };
 use super::{
     model::{
@@ -22,6 +23,7 @@ use super::{
         pane_content_height, toggle_collapsed_key,
     },
 };
+use crate::tui::fuzzy::fuzzy_text_score;
 
 impl DashboardState {
     pub fn open_selected_channel_actions(&mut self) {
@@ -675,8 +677,110 @@ impl DashboardState {
         entries
     }
 
+    /// Returns channel pane entries filtered by the active pane filter query,
+    /// or all entries if no filter is active. Category headers are omitted when
+    /// a query is present so results appear as a flat list of matching channels.
+    pub fn channel_pane_filtered_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
+        let query = self
+            .channel_pane_filter
+            .as_ref()
+            .map(|f| f.query.trim().to_owned())
+            .filter(|q| !q.is_empty());
+        let Some(query) = query else {
+            return self.channel_pane_entries();
+        };
+        self.channel_pane_entries()
+            .into_iter()
+            .filter(|entry| match entry {
+                ChannelPaneEntry::CategoryHeader { .. } => false,
+                ChannelPaneEntry::Channel { state, .. } => {
+                    fuzzy_text_score(&state.name, &query).is_some()
+                }
+            })
+            .collect()
+    }
+
+    pub fn is_channel_pane_filter_active(&self) -> bool {
+        self.channel_pane_filter.is_some()
+    }
+
+    pub fn channel_pane_filter_query(&self) -> Option<&str> {
+        self.channel_pane_filter.as_ref().map(|f| f.query())
+    }
+
+    pub fn channel_pane_filter_cursor(&self) -> Option<usize> {
+        self.channel_pane_filter
+            .as_ref()
+            .map(|f| f.cursor_byte_index())
+    }
+
+    pub fn open_channel_pane_filter(&mut self) {
+        self.selected_channel = 0;
+        self.channel_scroll = 0;
+        self.channel_keep_selection_visible = true;
+        self.channel_pane_filter = Some(PaneFilterState::new());
+    }
+
+    pub fn close_channel_pane_filter(&mut self) {
+        self.channel_pane_filter = None;
+        self.selected_channel = 0;
+        self.channel_scroll = 0;
+        self.channel_keep_selection_visible = true;
+    }
+
+    pub fn confirm_channel_pane_filter(&mut self) -> Option<AppCommand> {
+        let selected = self.selected_channel();
+        let channel_id = {
+            let entries = self.channel_pane_filtered_entries();
+            match entries.get(selected) {
+                Some(ChannelPaneEntry::Channel { state, .. }) => Some(state.id),
+                _ => None,
+            }
+        };
+        self.channel_pane_filter = None;
+        if let Some(channel_id) = channel_id {
+            // Restore selection to the unfiltered position
+            if let Some(idx) = self.channel_pane_entries().iter().position(|e| {
+                matches!(e, ChannelPaneEntry::Channel { state, .. } if state.id == channel_id)
+            }) {
+                self.selected_channel = idx;
+            }
+            self.channel_keep_selection_visible = true;
+            return self.confirm_selected_channel_command();
+        }
+        None
+    }
+
+    pub fn push_channel_pane_filter_char(&mut self, value: char) {
+        if let Some(f) = self.channel_pane_filter.as_mut() {
+            f.push_char(value);
+            self.selected_channel = 0;
+            self.channel_scroll = 0;
+        }
+    }
+
+    pub fn pop_channel_pane_filter_char(&mut self) {
+        if let Some(f) = self.channel_pane_filter.as_mut() {
+            f.pop_char();
+            self.selected_channel = 0;
+            self.channel_scroll = 0;
+        }
+    }
+
+    pub fn move_channel_pane_filter_cursor_left(&mut self) {
+        if let Some(f) = self.channel_pane_filter.as_mut() {
+            f.cursor_left();
+        }
+    }
+
+    pub fn move_channel_pane_filter_cursor_right(&mut self) {
+        if let Some(f) = self.channel_pane_filter.as_mut() {
+            f.cursor_right();
+        }
+    }
+
     pub fn selected_channel(&self) -> usize {
-        clamp_selected_index(self.selected_channel, self.channel_pane_entries().len())
+        clamp_selected_index(self.selected_channel, self.channel_pane_filtered_entries().len())
     }
 
     pub(super) fn selected_channel_cursor_id(&self) -> Option<Id<ChannelMarker>> {
@@ -691,7 +795,7 @@ impl DashboardState {
     }
 
     pub fn visible_channel_pane_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
-        self.channel_pane_entries()
+        self.channel_pane_filtered_entries()
             .into_iter()
             .skip(self.channel_scroll)
             .take(pane_content_height(self.channel_view_height))
@@ -699,7 +803,7 @@ impl DashboardState {
     }
 
     pub fn focused_channel_selection(&self) -> Option<usize> {
-        if self.focus == FocusPane::Channels && !self.channel_pane_entries().is_empty() {
+        if self.focus == FocusPane::Channels && !self.channel_pane_filtered_entries().is_empty() {
             let selected = self.selected_channel();
             let visible_len = self.visible_channel_pane_entries().len();
             if selected >= self.channel_scroll && selected < self.channel_scroll + visible_len {
@@ -715,7 +819,7 @@ impl DashboardState {
     pub fn set_channel_view_height(&mut self, height: usize) {
         self.channel_view_height = height;
         let height = pane_content_height(self.channel_view_height);
-        let len = self.channel_pane_entries().len();
+        let len = self.channel_pane_filtered_entries().len();
         clamp_list_viewport(
             self.selected_channel,
             &mut self.channel_scroll,

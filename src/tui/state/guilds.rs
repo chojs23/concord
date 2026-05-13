@@ -6,7 +6,7 @@ use crate::discord::ids::{
 };
 use crate::discord::{AppCommand, AppEvent, GuildFolder, GuildState};
 
-use super::{ActiveGuildScope, DashboardState, FolderKey};
+use super::{ActiveGuildScope, DashboardState, FolderKey, PaneFilterState};
 use super::{
     model::{
         FocusPane, GuildActionItem, GuildActionKind, GuildBranch, GuildPaneEntry,
@@ -18,6 +18,7 @@ use super::{
         pane_content_height, toggle_collapsed_key,
     },
 };
+use crate::tui::fuzzy::fuzzy_text_score;
 
 impl DashboardState {
     pub fn guild_name(&self, guild_id: Id<GuildMarker>) -> Option<&str> {
@@ -119,8 +120,130 @@ impl DashboardState {
         entries
     }
 
+    /// Returns guild pane entries filtered by the active pane filter query, or
+    /// all entries if no filter is active. Folder headers are omitted when a
+    /// query is present so results appear as a flat, scored list.
+    pub fn guild_pane_filtered_entries(&self) -> Vec<GuildPaneEntry<'_>> {
+        let query = self
+            .guild_pane_filter
+            .as_ref()
+            .map(|f| f.query.trim().to_owned())
+            .filter(|q| !q.is_empty());
+        let Some(query) = query else {
+            return self.guild_pane_entries();
+        };
+        self.guild_pane_entries()
+            .into_iter()
+            .filter(|entry| match entry {
+                GuildPaneEntry::DirectMessages => {
+                    fuzzy_text_score("direct messages", &query).is_some()
+                        || fuzzy_text_score("dm", &query).is_some()
+                }
+                GuildPaneEntry::FolderHeader { .. } => false,
+                GuildPaneEntry::Guild { state, .. } => {
+                    fuzzy_text_score(&state.name, &query).is_some()
+                }
+            })
+            .collect()
+    }
+
+    pub fn is_guild_pane_filter_active(&self) -> bool {
+        self.guild_pane_filter.is_some()
+    }
+
+    pub fn guild_pane_filter_query(&self) -> Option<&str> {
+        self.guild_pane_filter.as_ref().map(|f| f.query())
+    }
+
+    pub fn guild_pane_filter_cursor(&self) -> Option<usize> {
+        self.guild_pane_filter
+            .as_ref()
+            .map(|f| f.cursor_byte_index())
+    }
+
+    pub fn open_guild_pane_filter(&mut self) {
+        self.selected_guild = 0;
+        self.guild_scroll = 0;
+        self.guild_keep_selection_visible = true;
+        self.guild_pane_filter = Some(PaneFilterState::new());
+    }
+
+    pub fn close_guild_pane_filter(&mut self) {
+        self.guild_pane_filter = None;
+        self.selected_guild = 0;
+        self.guild_scroll = 0;
+        self.guild_keep_selection_visible = true;
+    }
+
+    pub fn confirm_guild_pane_filter(&mut self) {
+        let selected = self.selected_guild();
+        let action = {
+            let entries = self.guild_pane_filtered_entries();
+            match entries.get(selected) {
+                Some(GuildPaneEntry::DirectMessages) => Some(ActiveGuildScope::DirectMessages),
+                Some(GuildPaneEntry::Guild { state, .. }) => {
+                    Some(ActiveGuildScope::Guild(state.id))
+                }
+                _ => None,
+            }
+        };
+        self.guild_pane_filter = None;
+        self.selected_guild = 0;
+        self.guild_scroll = 0;
+        if let Some(scope) = action {
+            match scope {
+                ActiveGuildScope::DirectMessages => {
+                    if let Some(idx) = self
+                        .guild_pane_entries()
+                        .iter()
+                        .position(|e| matches!(e, GuildPaneEntry::DirectMessages))
+                    {
+                        self.selected_guild = idx;
+                    }
+                }
+                ActiveGuildScope::Guild(guild_id) => {
+                    if let Some(idx) = self.guild_pane_entries().iter().position(|e| {
+                        matches!(e, GuildPaneEntry::Guild { state, .. } if state.id == guild_id)
+                    }) {
+                        self.selected_guild = idx;
+                    }
+                }
+                ActiveGuildScope::Unset => {}
+            }
+            self.activate_guild(scope);
+        }
+    }
+
+    pub fn push_guild_pane_filter_char(&mut self, value: char) {
+        if let Some(f) = self.guild_pane_filter.as_mut() {
+            f.push_char(value);
+            self.selected_guild = 0;
+            self.guild_scroll = 0;
+        }
+    }
+
+    pub fn pop_guild_pane_filter_char(&mut self) {
+        if let Some(f) = self.guild_pane_filter.as_mut() {
+            f.pop_char();
+            self.selected_guild = 0;
+            self.guild_scroll = 0;
+        }
+    }
+
+    pub fn move_guild_pane_filter_cursor_left(&mut self) {
+        if let Some(f) = self.guild_pane_filter.as_mut() {
+            f.cursor_left();
+        }
+    }
+
+    pub fn move_guild_pane_filter_cursor_right(&mut self) {
+        if let Some(f) = self.guild_pane_filter.as_mut() {
+            f.cursor_right();
+        }
+    }
+
     pub fn selected_guild(&self) -> usize {
-        clamp_selected_index(self.selected_guild, self.guild_pane_entries().len())
+        clamp_selected_index(self.selected_guild, self.guild_pane_filtered_entries().len())
     }
 
     pub fn guild_scroll(&self) -> usize {
@@ -128,7 +251,7 @@ impl DashboardState {
     }
 
     pub fn visible_guild_pane_entries(&self) -> Vec<GuildPaneEntry<'_>> {
-        self.guild_pane_entries()
+        self.guild_pane_filtered_entries()
             .into_iter()
             .skip(self.guild_scroll)
             .take(pane_content_height(self.guild_view_height))
@@ -136,7 +259,7 @@ impl DashboardState {
     }
 
     pub fn focused_guild_selection(&self) -> Option<usize> {
-        if self.focus == FocusPane::Guilds && !self.guild_pane_entries().is_empty() {
+        if self.focus == FocusPane::Guilds && !self.guild_pane_filtered_entries().is_empty() {
             let selected = self.selected_guild();
             let visible_len = self.visible_guild_pane_entries().len();
             if selected >= self.guild_scroll && selected < self.guild_scroll + visible_len {
@@ -152,7 +275,7 @@ impl DashboardState {
     pub fn set_guild_view_height(&mut self, height: usize) {
         self.guild_view_height = height;
         let height = pane_content_height(self.guild_view_height);
-        let len = self.guild_pane_entries().len();
+        let len = self.guild_pane_filtered_entries().len();
         clamp_list_viewport(
             self.selected_guild,
             &mut self.guild_scroll,
