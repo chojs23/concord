@@ -88,6 +88,9 @@ pub struct UnreadBanner {
 }
 
 const READ_ACK_DEBOUNCE: Duration = Duration::from_millis(1000);
+const AUTHOR_GROUP_MAX_GAP: Duration = Duration::from_secs(5 * 60);
+const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
+const SNOWFLAKE_TIMESTAMP_SHIFT: u8 = 22;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PendingReadAck {
@@ -1491,9 +1494,10 @@ impl DashboardState {
         if index == 0 || self.message_extra_top_lines(index) > 0 {
             return true;
         }
-        messages
-            .get(index - 1)
-            .is_none_or(|previous| previous.author_id != current.author_id)
+        messages.get(index - 1).is_none_or(|previous| {
+            previous.author_id != current.author_id
+                || messages_exceed_author_group_gap(previous, current)
+        })
     }
 
     pub(crate) fn message_header_line_count_at(&self, index: usize) -> usize {
@@ -1502,6 +1506,14 @@ impl DashboardState {
 
     pub(crate) fn message_bottom_gap_after(&self, index: usize) -> usize {
         usize::from(self.message_has_bottom_gap_after(index)) * ui::MESSAGE_ROW_GAP
+    }
+
+    pub(crate) fn selected_message_extra_top_line_at(&self, index: usize) -> usize {
+        usize::from(
+            self.messages().get(index).is_some()
+                && index == self.selected_message
+                && !self.message_starts_author_group_at(index),
+        )
     }
 
     pub(crate) fn message_has_bottom_gap_after(&self, index: usize) -> bool {
@@ -3084,9 +3096,20 @@ impl DashboardState {
         self.message_base_line_count_for_width_at(index, message, content_width)
             .saturating_add(preview_height)
             .saturating_add(self.message_extra_top_lines(index))
+            .saturating_add(self.selected_message_extra_top_line_at(index))
             .saturating_add(self.selected_message_extra_bottom_line_at(index))
             .saturating_add(self.message_bottom_gap_after(index))
     }
+}
+
+fn messages_exceed_author_group_gap(previous: &MessageState, current: &MessageState) -> bool {
+    let previous_created = message_created_at(previous);
+    let current_created = message_created_at(current);
+    current_created.saturating_sub(previous_created) >= AUTHOR_GROUP_MAX_GAP
+}
+
+fn message_created_at(message: &MessageState) -> Duration {
+    Duration::from_millis((message.id.get() >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MILLIS)
 }
 
 fn message_preview_text(content: Option<&str>, sticker_names: &[String]) -> Option<String> {

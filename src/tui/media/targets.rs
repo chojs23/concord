@@ -154,8 +154,13 @@ pub(in crate::tui) fn visible_image_preview_targets(
             state.message_body_line_count_for_width_at(global_index, message, layout.content_width);
         let base_rows =
             state.message_base_line_count_for_width_at(global_index, message, layout.content_width);
-        let preview_rows_before_message = body_rows.saturating_add(separator_lines);
-        let block_rows = base_rows.saturating_add(separator_lines);
+        let selected_extra_top = state.selected_message_extra_top_line_at(global_index);
+        let preview_rows_before_message = body_rows
+            .saturating_add(separator_lines)
+            .saturating_add(selected_extra_top);
+        let block_rows = base_rows
+            .saturating_add(separator_lines)
+            .saturating_add(selected_extra_top);
 
         let previews = message.inline_previews();
         let album =
@@ -469,9 +474,10 @@ pub(in crate::tui) fn visible_avatar_targets(
         let separator_lines = state.message_extra_top_lines(global_index);
         let body_base_rows =
             state.message_base_line_count_for_width_at(global_index, message, layout.content_width);
-        let block_rows = body_base_rows + separator_lines;
+        let selected_extra_top = state.selected_message_extra_top_line_at(global_index);
+        let block_rows = body_base_rows + separator_lines + selected_extra_top;
         let message_block_top = rendered_rows as isize - line_offset as isize;
-        let body_top = message_block_top + separator_lines as isize;
+        let body_top = message_block_top + separator_lines as isize + selected_extra_top as isize;
         let avatar_bottom = body_top.saturating_add(AVATAR_PREVIEW_HEIGHT as isize);
         let visible_top = body_top.max(0);
         let visible_bottom = avatar_bottom.min(layout.list_height as isize);

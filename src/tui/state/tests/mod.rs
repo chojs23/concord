@@ -5895,9 +5895,9 @@ fn message_auto_follow_keeps_latest_message_at_bottom_after_rendered_clamp() {
 
     assert!(state.message_auto_follow());
     assert_eq!(state.selected_message(), 11);
-    assert_eq!(state.message_scroll(), 6);
+    assert_eq!(state.message_scroll(), 7);
     assert_eq!(state.message_line_scroll(), 0);
-    assert_eq!(state.selected_message_rendered_row(200, 16, 3), 5);
+    assert_eq!(state.selected_message_rendered_row(200, 16, 3), 4);
 }
 
 #[test]
@@ -5972,7 +5972,7 @@ fn message_selection_centers_with_image_preview_height() {
     }
 
     assert_eq!(state.messages()[state.selected_message()].id, Id::new(4));
-    assert_eq!(state.selected_message_rendered_height(200, 16, 3), 6);
+    assert_eq!(state.selected_message_rendered_height(200, 16, 3), 7);
     assert_eq!(state.message_scroll(), 2);
     assert_eq!(state.message_line_scroll(), 0);
     assert_eq!(state.selected_message_rendered_row(200, 16, 3), 1);
