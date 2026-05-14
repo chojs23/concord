@@ -2092,6 +2092,30 @@ fn message_embed_renders_tweet_description_as_readable_text() {
 }
 
 #[test]
+fn message_embed_description_preserves_useful_link_destination() {
+    let mut message = message_with_content(Some("read this".to_owned()));
+    let mut embed = youtube_embed();
+    embed.description = Some("See [docs](https://example.com/docs)".to_owned());
+    message.embeds = vec![embed];
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 120);
+
+    assert!(line_texts(&lines).contains(&"  ▎ See docs (https://example.com/docs)"));
+}
+
+#[test]
+fn message_embed_description_preserves_escaped_emphasis_markers() {
+    let mut message = message_with_content(Some("literal markers".to_owned()));
+    let mut embed = youtube_embed();
+    embed.description = Some("\\*\\*literal\\*\\* and **bold**".to_owned());
+    message.embeds = vec![embed];
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 120);
+
+    assert!(line_texts(&lines).contains(&"  ▎ **literal** and bold"));
+}
+
+#[test]
 fn embed_text_emits_inline_emoji_slot_for_image_overlay() {
     let mut message = message_with_content(Some("see embed".to_owned()));
     let mut embed = youtube_embed();

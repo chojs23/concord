@@ -496,11 +496,11 @@ fn plain_embed_text(value: &str) -> String {
     let mut cursor = 0usize;
     while let Some(relative_start) = value[cursor..].find('[') {
         let start = cursor.saturating_add(relative_start);
-        output.push_str(&unescape_embed_markdown(&value[cursor..start]));
+        output.push_str(&plain_embed_fragment(&value[cursor..start]));
 
         let Some(label_end) = value[start + 1..].find(']').map(|end| start + 1 + end) else {
-            output.push_str(&unescape_embed_markdown(&value[start..]));
-            return strip_embed_markdown_emphasis(&output);
+            output.push_str(&plain_embed_fragment(&value[start..]));
+            return output;
         };
         let url_start = label_end.saturating_add(1);
         if !value[url_start..].starts_with('(') {
@@ -512,15 +512,44 @@ fn plain_embed_text(value: &str) -> String {
             .find(')')
             .map(|end| url_start + 1 + end)
         else {
-            output.push_str(&unescape_embed_markdown(&value[start..]));
-            return strip_embed_markdown_emphasis(&output);
+            output.push_str(&plain_embed_fragment(&value[start..]));
+            return output;
         };
 
-        output.push_str(&unescape_embed_markdown(&value[start + 1..label_end]));
+        let label = plain_embed_fragment(&value[start + 1..label_end]);
+        let url = unescape_embed_markdown(&value[url_start + 1..url_end]);
+        push_plain_embed_link(&mut output, &label, &url);
         cursor = url_end.saturating_add(1);
     }
-    output.push_str(&unescape_embed_markdown(&value[cursor..]));
-    strip_embed_markdown_emphasis(&output)
+    output.push_str(&plain_embed_fragment(&value[cursor..]));
+    output
+}
+
+fn plain_embed_fragment(value: &str) -> String {
+    unescape_embed_markdown(&strip_embed_markdown_emphasis(value))
+}
+
+fn push_plain_embed_link(output: &mut String, label: &str, url: &str) {
+    if is_low_value_embed_link_url(url) {
+        output.push_str(label);
+        return;
+    }
+
+    if label.is_empty() {
+        output.push_str(url);
+    } else if label == url || url.is_empty() {
+        output.push_str(label);
+    } else {
+        output.push_str(label);
+        output.push_str(" (");
+        output.push_str(url);
+        output.push(')');
+    }
+}
+
+fn is_low_value_embed_link_url(url: &str) -> bool {
+    let url = url.to_ascii_lowercase();
+    url.starts_with("https://x.com/intent/") || url.starts_with("https://twitter.com/intent/")
 }
 
 fn unescape_embed_markdown(value: &str) -> String {
