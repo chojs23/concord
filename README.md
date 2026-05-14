@@ -117,8 +117,8 @@ Tokens are saved under Concord's config directory in plain text. See the Securit
 - Use @mention autocomplete while composing messages
 - View full message history with pagination
 - Rich content display (embeds, attachments, stickers, and mentions)
-- Message action menu for reply, edit, delete, open thread, show profile,
-  pin/unpin, reactions, poll votes, and attachment/image actions
+- Direct message shortcuts for copy, reply, edit, delete, pin/unpin, reactions,
+  image viewing, and profile lookup
 
 ### Reactions & Polls
 
@@ -204,8 +204,21 @@ Press `Space` to open the leader shortcut window.
 
 Focus a pane, then press `Space`, `a` to open actions for that pane. Action
 shortcuts are shown inside the leader popup and only run when the action is
-enabled. Messages also support a direct message action menu from the selected
-message.
+enabled. In the Messages pane, the selected message also supports direct
+shortcuts:
+
+Message shortcuts:
+
+| Shortcut | Action       | Description                                               |
+| -------- | ------------ | --------------------------------------------------------- |
+| `y`      | Copy         | Copy the selected message text and show a short toast      |
+| `r`      | React        | Open the reaction picker for the selected message          |
+| `R`      | Reply        | Start a reply to the selected message                     |
+| `d`      | Delete       | Open a delete confirmation before deleting the message     |
+| `e`      | Edit         | Start editing the selected message when editing is allowed |
+| `v`      | View image   | Open the selected message's image viewer                   |
+| `p`      | Profile      | Open the selected message author's profile                 |
+| `P`      | Pin / unpin  | Open a pin or unpin confirmation for the selected message  |
 
 Server actions:
 
