@@ -50,7 +50,7 @@ fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
 }
 
 fn channel_row_point(row: u16) -> (u16, u16) {
-    (21, 2 + row)
+    (21, 3 + row)
 }
 
 fn composer_point() -> (u16, u16) {
@@ -112,6 +112,30 @@ fn enter_toggles_selected_channel_category_and_space_opens_leader() {
 
     handle_key(&mut state, char_key(' '));
     assert!(state.is_leader_active());
+    assert_selected_channel_category_collapsed(&state, true);
+}
+
+#[test]
+fn channel_filter_opens_child_inside_collapsed_category() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Enter));
+    assert_selected_channel_category_collapsed(&state, true);
+
+    handle_key(&mut state, char_key('/'));
+    for value in "random".chars() {
+        handle_key(&mut state, char_key(value));
+    }
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SubscribeGuildChannel {
+            guild_id: Id::new(1),
+            channel_id: Id::new(12),
+        })
+    );
+    assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
     assert_selected_channel_category_collapsed(&state, true);
 }
 
@@ -596,11 +620,18 @@ fn leader_leader_switcher_j_and_k_type_into_search() {
 }
 
 #[test]
-fn leader_leader_switcher_ctrl_n_and_ctrl_p_move_selection() {
+fn leader_leader_switcher_selection_aliases_move_selection() {
     let mut state = state_with_channel_tree();
 
     handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key(' '));
+
+    handle_key(&mut state, key(KeyCode::Down));
+    assert_eq!(state.selected_channel_switcher_index(), Some(1));
+
+    handle_key(&mut state, key(KeyCode::Up));
+    assert_eq!(state.selected_channel_switcher_index(), Some(0));
+
     handle_key(&mut state, ctrl_key('n'));
     assert_eq!(state.selected_channel_switcher_index(), Some(1));
 
@@ -1203,6 +1234,58 @@ fn ctrl_c_does_not_quit_dashboard() {
 }
 
 #[test]
+fn composer_treats_vim_keys_as_text() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+
+    handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, char_key('k'));
+
+    assert!(state.is_composing());
+    assert_eq!(state.composer_input(), "jk");
+}
+
+#[test]
+fn composer_ignores_unhandled_control_characters() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+
+    handle_key(&mut state, ctrl_key('a'));
+    handle_key(&mut state, ctrl_key('j'));
+    handle_key(&mut state, ctrl_key('k'));
+
+    assert!(state.is_composing());
+    assert_eq!(state.composer_input(), "");
+}
+
+#[test]
+fn pane_filters_treat_vim_keys_as_text() {
+    let mut guild_state = state_with_folder();
+    guild_state.focus_pane(FocusPane::Guilds);
+    handle_key(&mut guild_state, char_key('/'));
+
+    handle_key(&mut guild_state, char_key('j'));
+    handle_key(&mut guild_state, char_key('k'));
+
+    assert_eq!(guild_state.guild_pane_filter_query(), Some("jk"));
+
+    let mut channel_state = state_with_channel_tree();
+    channel_state.focus_pane(FocusPane::Channels);
+    handle_key(&mut channel_state, char_key('/'));
+
+    handle_key(&mut channel_state, char_key('j'));
+    handle_key(&mut channel_state, char_key('k'));
+
+    assert_eq!(channel_state.channel_pane_filter_query(), Some("jk"));
+}
+
+#[test]
 fn backtick_toggles_debug_log_popup() {
     let mut state = DashboardState::new();
 
@@ -1640,6 +1723,48 @@ fn options_popup_esc_closes_popup() {
 }
 
 #[test]
+fn options_popup_selection_aliases_move_selection() {
+    let mut state = state_with_messages(1);
+    state.open_options_popup();
+
+    handle_key(&mut state, ctrl_key('n'));
+    assert_eq!(state.selected_option_index(), Some(1));
+
+    handle_key(&mut state, ctrl_key('p'));
+    assert_eq!(state.selected_option_index(), Some(0));
+
+    handle_key(&mut state, char_key('j'));
+    assert_eq!(state.selected_option_index(), Some(1));
+
+    handle_key(&mut state, char_key('k'));
+    assert_eq!(state.selected_option_index(), Some(0));
+
+    handle_key(&mut state, key(KeyCode::Down));
+    assert_eq!(state.selected_option_index(), Some(1));
+
+    handle_key(&mut state, key(KeyCode::Up));
+    assert_eq!(state.selected_option_index(), Some(0));
+}
+
+#[test]
+fn navigation_selection_ignores_modified_j_and_k() {
+    let mut state = state_with_messages(1);
+    state.open_options_popup();
+
+    handle_key(&mut state, ctrl_key('j'));
+    assert_eq!(state.selected_option_index(), Some(0));
+
+    handle_key(&mut state, char_key('j'));
+    assert_eq!(state.selected_option_index(), Some(1));
+
+    handle_key(&mut state, ctrl_key('k'));
+    assert_eq!(state.selected_option_index(), Some(1));
+
+    handle_key(&mut state, char_key('k'));
+    assert_eq!(state.selected_option_index(), Some(0));
+}
+
+#[test]
 fn uppercase_h_l_scroll_focused_side_panes_horizontally() {
     let mut state = state_with_messages(1);
 
@@ -1923,6 +2048,49 @@ fn message_action_menu_navigation_is_modal() {
 }
 
 #[test]
+fn message_action_menu_selection_aliases_move_selection() {
+    let mut state = state_with_messages(2);
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    handle_key(&mut state, key(KeyCode::Down));
+    assert_eq!(
+        state.selected_message_action().map(|action| action.kind),
+        Some(MessageActionKind::AddReaction)
+    );
+
+    handle_key(&mut state, key(KeyCode::Up));
+    assert_eq!(
+        state.selected_message_action().map(|action| action.kind),
+        Some(MessageActionKind::Reply)
+    );
+
+    handle_key(&mut state, char_key('j'));
+    assert_eq!(
+        state.selected_message_action().map(|action| action.kind),
+        Some(MessageActionKind::AddReaction)
+    );
+
+    handle_key(&mut state, char_key('k'));
+    assert_eq!(
+        state.selected_message_action().map(|action| action.kind),
+        Some(MessageActionKind::Reply)
+    );
+
+    handle_key(&mut state, ctrl_key('n'));
+    assert_eq!(
+        state.selected_message_action().map(|action| action.kind),
+        Some(MessageActionKind::AddReaction)
+    );
+
+    handle_key(&mut state, ctrl_key('p'));
+    assert_eq!(
+        state.selected_message_action().map(|action| action.kind),
+        Some(MessageActionKind::Reply)
+    );
+}
+
+#[test]
 fn esc_returns_from_message_opened_thread() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Messages);
@@ -2025,6 +2193,12 @@ fn message_action_shortcuts_edit_and_delete_own_message() {
 
     let command = handle_key(&mut delete_state, char_key('d'));
 
+    assert_eq!(command, None);
+    assert!(!delete_state.is_message_action_menu_open());
+    assert!(delete_state.is_message_delete_confirmation_open());
+
+    let command = handle_key(&mut delete_state, key(KeyCode::Enter));
+
     assert_eq!(
         command,
         Some(AppCommand::DeleteMessage {
@@ -2032,7 +2206,156 @@ fn message_action_shortcuts_edit_and_delete_own_message() {
             message_id: Id::new(1),
         })
     );
-    assert!(!delete_state.is_message_action_menu_open());
+    assert!(!delete_state.is_message_delete_confirmation_open());
+}
+
+#[test]
+fn message_pane_shortcuts_reuse_message_actions() {
+    let mut reaction_state = state_with_messages(1);
+    reaction_state.focus_pane(FocusPane::Messages);
+    handle_key(&mut reaction_state, char_key('r'));
+    assert!(reaction_state.is_emoji_reaction_picker_open());
+
+    let mut reply_state = state_with_messages(1);
+    reply_state.focus_pane(FocusPane::Messages);
+    handle_key(&mut reply_state, char_key('R'));
+    assert!(reply_state.is_composing());
+    handle_key(&mut reply_state, char_key('o'));
+    let command = handle_key(&mut reply_state, key(KeyCode::Enter));
+    assert_eq!(
+        command,
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(2),
+            content: "o".to_owned(),
+            reply_to: Some(Id::new(1)),
+            attachments: Vec::new(),
+        })
+    );
+
+    let mut edit_state = state_with_own_message();
+    edit_state.focus_pane(FocusPane::Messages);
+    handle_key(&mut edit_state, char_key('e'));
+    assert!(edit_state.is_composing());
+    assert_eq!(edit_state.composer_input(), "msg 1");
+}
+
+#[test]
+fn message_action_menu_shortcuts_match_message_pane_shortcuts() {
+    let mut reaction_state = state_with_messages(1);
+    reaction_state.focus_pane(FocusPane::Messages);
+    handle_key(&mut reaction_state, key(KeyCode::Enter));
+    handle_key(&mut reaction_state, char_key('r'));
+    assert!(reaction_state.is_emoji_reaction_picker_open());
+
+    let mut reply_state = state_with_messages(1);
+    reply_state.focus_pane(FocusPane::Messages);
+    handle_key(&mut reply_state, key(KeyCode::Enter));
+    handle_key(&mut reply_state, char_key('R'));
+    assert!(reply_state.is_composing());
+
+    let mut pin_state = state_with_messages(1);
+    pin_state.focus_pane(FocusPane::Messages);
+    handle_key(&mut pin_state, key(KeyCode::Enter));
+    let command = handle_key(&mut pin_state, char_key('P'));
+    assert_eq!(command, None);
+    assert!(pin_state.is_message_pin_confirmation_open());
+}
+
+#[test]
+fn message_pane_copy_shortcut_requests_selected_message_content() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+
+    handle_key(&mut state, char_key('y'));
+
+    assert_eq!(
+        state.take_copy_message_content_request(),
+        Some("msg 1".to_owned())
+    );
+}
+
+#[test]
+fn message_pane_delete_shortcut_requires_confirmation() {
+    let mut state = state_with_own_message();
+    state.focus_pane(FocusPane::Messages);
+
+    let command = handle_key(&mut state, char_key('d'));
+
+    assert_eq!(command, None);
+    assert!(state.is_message_delete_confirmation_open());
+
+    handle_key(&mut state, key(KeyCode::Esc));
+    assert!(!state.is_message_delete_confirmation_open());
+
+    handle_key(&mut state, char_key('d'));
+    let command = handle_key(&mut state, char_key('y'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::DeleteMessage {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+        })
+    );
+    assert!(!state.is_message_delete_confirmation_open());
+}
+
+#[test]
+fn message_pane_view_image_shortcut_opens_viewer() {
+    let mut state = state_with_image_message();
+    state.focus_pane(FocusPane::Messages);
+
+    handle_key(&mut state, char_key('v'));
+
+    assert!(state.is_image_viewer_open());
+    assert_eq!(
+        state.selected_image_viewer_item().map(|item| item.index),
+        Some(1)
+    );
+}
+
+#[test]
+fn message_pane_profile_shortcut_opens_author_profile() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+
+    let command = handle_key(&mut state, char_key('p'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::LoadUserProfile {
+            user_id: Id::new(99),
+            guild_id: Some(Id::new(1)),
+        })
+    );
+    assert!(state.is_user_profile_popup_open());
+}
+
+#[test]
+fn message_pane_pin_shortcut_requires_confirmation() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+
+    let command = handle_key(&mut state, char_key('P'));
+
+    assert_eq!(command, None);
+    assert!(state.is_message_pin_confirmation_open());
+
+    handle_key(&mut state, key(KeyCode::Esc));
+    assert!(!state.is_message_pin_confirmation_open());
+
+    handle_key(&mut state, char_key('P'));
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SetMessagePinned {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            pinned: true,
+        })
+    );
+    assert!(!state.is_message_pin_confirmation_open());
 }
 
 #[test]
@@ -2054,7 +2377,10 @@ fn canceling_reply_composer_clears_reply_target() {
     state.focus_pane(FocusPane::Messages);
     handle_key(&mut state, key(KeyCode::Enter));
     handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('x'));
     handle_key(&mut state, key(KeyCode::Esc));
+
+    assert_eq!(state.composer_input(), "");
 
     handle_key(&mut state, char_key('i'));
     handle_key(&mut state, char_key('n'));
@@ -2069,6 +2395,24 @@ fn canceling_reply_composer_clears_reply_target() {
             attachments: Vec::new(),
         })
     );
+}
+
+#[test]
+fn canceling_edit_composer_clears_edit_draft() {
+    let mut state = state_with_own_message();
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, char_key('e'));
+    handle_key(&mut state, char_key('!'));
+
+    handle_key(&mut state, key(KeyCode::Esc));
+
+    assert!(!state.is_composing());
+    assert_eq!(state.composer_input(), "");
+
+    handle_key(&mut state, char_key('i'));
+
+    assert!(state.is_composing());
+    assert_eq!(state.composer_input(), "");
 }
 
 #[test]
@@ -2279,8 +2623,9 @@ fn emoji_picker_filter_treats_vim_keys_as_text() {
 
     handle_key(&mut state, char_key('/'));
     handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, char_key('k'));
 
-    assert_eq!(state.emoji_reaction_filter(), Some("j"));
+    assert_eq!(state.emoji_reaction_filter(), Some("jk"));
     assert_ne!(
         state.selected_emoji_reaction().map(|item| item.emoji),
         Some(ReactionEmoji::Unicode("❤️".to_owned()))
@@ -2464,6 +2809,34 @@ fn poll_picker_number_shortcut_toggles_answer() {
             answer_ids: vec![1, 2],
         })
     );
+}
+
+#[test]
+fn poll_picker_selection_aliases_move_selection() {
+    let mut state = state_with_multiselect_poll();
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('c'));
+
+    assert!(state.is_poll_vote_picker_open());
+
+    handle_key(&mut state, ctrl_key('n'));
+    assert_eq!(state.selected_poll_vote_picker_index(), Some(1));
+
+    handle_key(&mut state, ctrl_key('p'));
+    assert_eq!(state.selected_poll_vote_picker_index(), Some(0));
+
+    handle_key(&mut state, char_key('j'));
+    assert_eq!(state.selected_poll_vote_picker_index(), Some(1));
+
+    handle_key(&mut state, char_key('k'));
+    assert_eq!(state.selected_poll_vote_picker_index(), Some(0));
+
+    handle_key(&mut state, key(KeyCode::Down));
+    assert_eq!(state.selected_poll_vote_picker_index(), Some(1));
+
+    handle_key(&mut state, key(KeyCode::Up));
+    assert_eq!(state.selected_poll_vote_picker_index(), Some(0));
 }
 
 fn state_with_folder() -> DashboardState {

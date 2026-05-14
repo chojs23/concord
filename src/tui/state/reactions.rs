@@ -238,7 +238,7 @@ impl DashboardState {
         }
     }
 
-    pub(super) fn open_emoji_reaction_picker(&mut self) {
+    pub fn open_emoji_reaction_picker(&mut self) {
         if let Some(message) = self.selected_message_state() {
             if !self.can_open_reaction_picker(message) {
                 return;

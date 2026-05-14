@@ -6,12 +6,14 @@ use ratatui::layout::Position;
 
 mod action_menu;
 mod channel_switcher;
+mod confirmation;
 mod debug_log;
 mod image_viewer;
 mod options;
 mod polls;
 mod profile;
 mod reactions;
+mod toast;
 
 #[cfg(test)]
 pub(super) use action_menu::message_action_menu_lines;
@@ -22,8 +24,15 @@ pub(super) use channel_switcher::{
     channel_switcher_item_index_at, channel_switcher_popup_area, render_channel_switcher_popup,
 };
 #[cfg(test)]
+pub(super) use confirmation::{message_delete_confirmation_lines, message_pin_confirmation_lines};
+pub(super) use confirmation::{
+    render_message_delete_confirmation, render_message_pin_confirmation,
+};
+#[cfg(test)]
 pub(super) use debug_log::debug_log_popup_lines;
 pub(super) use debug_log::render_debug_log_popup;
+#[cfg(test)]
+pub(super) use image_viewer::centered_viewer_preview_area;
 pub(super) use image_viewer::render_image_viewer;
 #[cfg(test)]
 pub(super) use options::options_popup_lines;
@@ -44,6 +53,9 @@ pub(super) use reactions::{
     reaction_users_popup_lines,
 };
 pub(super) use reactions::{render_emoji_reaction_picker, render_reaction_users_popup};
+pub(super) use toast::render_toast;
+#[cfg(test)]
+pub(super) use toast::{toast_area, toast_line};
 
 fn truncate_line_to_display_width(line: Line<'static>, max_width: usize) -> Line<'static> {
     if max_width == 0 {

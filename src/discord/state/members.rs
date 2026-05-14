@@ -7,7 +7,7 @@ use crate::discord::ids::{
 };
 use crate::discord::{ActivityInfo, MemberInfo, PresenceStatus, RoleInfo};
 
-use super::{DiscordState, TYPING_INDICATOR_TTL};
+use super::{DiscordState, TYPING_INDICATOR_TTL, is_fallback_identity};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuildMemberState {
@@ -97,6 +97,22 @@ impl DiscordState {
             .map(|member| member.display_name.as_str())
     }
 
+    /// Returns true only when the cached member entry has a real Discord
+    /// username — meaning the member data was complete when it was stored.
+    /// A member with `username: None` has a synthesised fallback display name
+    /// and should still be looked up via the profile API.
+    pub fn member_has_known_name(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> bool {
+        self.members
+            .get(&guild_id)
+            .and_then(|members| members.get(&user_id))
+            .map(|member| member.username.is_some())
+            .unwrap_or(false)
+    }
+
     pub(super) fn update_user_activities(
         &mut self,
         user_id: Id<UserMarker>,
@@ -116,14 +132,36 @@ pub(super) fn upsert_member(
     previous_status: Option<PresenceStatus>,
 ) {
     let status = previous_status.unwrap_or(PresenceStatus::Unknown);
+
+    // When the incoming payload is a bare-minimum fallback (no username resolved,
+    // display_name fell through to "unknown"), don't clobber a previously cached
+    // complete entry — the complete data came from a profile fetch and is better.
+    let is_fallback = is_fallback_identity(member.username.as_deref(), &member.display_name);
+    let existing_complete = is_fallback
+        .then(|| map.get(&member.user_id))
+        .flatten()
+        .filter(|e| e.username.is_some());
+    let (display_name, username, avatar_url) = match existing_complete {
+        Some(existing) => (
+            existing.display_name.clone(),
+            existing.username.clone(),
+            existing.avatar_url.clone(),
+        ),
+        None => (
+            member.display_name.clone(),
+            member.username.clone(),
+            member.avatar_url.clone(),
+        ),
+    };
+
     map.insert(
         member.user_id,
         GuildMemberState {
             user_id: member.user_id,
-            display_name: member.display_name.clone(),
-            username: member.username.clone(),
+            display_name,
+            username,
             is_bot: member.is_bot,
-            avatar_url: member.avatar_url.clone(),
+            avatar_url,
             role_ids: member.role_ids.clone(),
             status,
         },

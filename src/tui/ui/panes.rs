@@ -13,7 +13,7 @@ use crate::discord::{
 };
 
 use super::super::{
-    format::{truncate_display_width, truncate_display_width_from},
+    format::{sanitize_for_display_width, truncate_display_width, truncate_display_width_from},
     message_format::{EMOJI_REACTION_IMAGE_WIDTH, format_attachment_summary, wrap_text_lines},
     state::{
         ChannelPaneEntry, DashboardState, EmojiPickerEntry, FocusPane, GuildPaneEntry,
@@ -33,8 +33,32 @@ use super::{
 
 pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let dashboard = state;
+    let focused = state.focus() == FocusPane::Guilds;
+    let filter_query = state.guild_pane_filter_query();
+
+    // When the filter is active split off one row at the bottom for the search
+    // bar, rendering the border block separately so we can carve up the inner.
+    let (list_area, filter_area) = if filter_query.is_some() && area.height >= 4 {
+        let block = panel_block("Servers", focused);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let list_h = inner.height.saturating_sub(1);
+        let list_rect = Rect {
+            height: list_h,
+            ..inner
+        };
+        let filter_rect = Rect {
+            y: inner.y + list_h,
+            height: 1,
+            ..inner
+        };
+        (list_rect, Some(filter_rect))
+    } else {
+        (area, None)
+    };
+
     let entries = state.visible_guild_pane_entries();
-    let max_width = area.width.saturating_sub(6) as usize;
+    let max_width = list_area.width.saturating_sub(6) as usize;
     let horizontal_scroll = state.guild_horizontal_scroll();
     let selected = state.focused_guild_selection();
     let items: Vec<ListItem> = entries
@@ -142,11 +166,26 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
         })
         .collect();
 
-    let list = List::new(items)
-        .block(panel_block("Servers", state.focus() == FocusPane::Guilds))
-        .highlight_style(highlight_style());
+    let list = List::new(items).highlight_style(highlight_style());
+    let list = if filter_area.is_none() {
+        list.block(panel_block("Servers", focused))
+    } else {
+        list
+    };
+    frame.render_widget(list, list_area);
 
-    frame.render_widget(list, area);
+    if let Some(filter_rect) = filter_area {
+        let query = filter_query.unwrap_or_default();
+        let cursor = state.guild_pane_filter_cursor().unwrap_or(0);
+        let cursor_x = render_pane_filter_bar(frame, filter_rect, query, cursor, focused);
+        if focused {
+            frame.set_cursor_position(Position {
+                x: filter_rect.x.saturating_add(cursor_x as u16),
+                y: filter_rect.y,
+            });
+        }
+    }
+
     render_vertical_scrollbar(
         frame,
         panel_scrollbar_area(area),
@@ -161,10 +200,107 @@ fn notification_count_badge(unread: ChannelUnreadState) -> Span<'static> {
     badge.expect("numeric unread state always renders a badge")
 }
 
+/// Renders a one-line search bar at `area` and returns the visual column offset
+/// of the cursor within that area (column 0 = leftmost cell of `area`).
+fn render_pane_filter_bar(
+    frame: &mut Frame,
+    area: Rect,
+    query: &str,
+    cursor_byte: usize,
+    focused: bool,
+) -> usize {
+    let prompt = "/ ";
+    let prompt_width = prompt.width();
+    let available = (area.width as usize).saturating_sub(prompt_width).max(1);
+
+    // Scroll the visible window so the cursor is always in view.
+    let cursor_byte = cursor_byte.min(query.len());
+    let mut start = 0usize;
+    while query[start..cursor_byte].width() > available {
+        // Advance start by one char boundary
+        start = query[start..]
+            .char_indices()
+            .nth(1)
+            .map(|(off, _)| start + off)
+            .unwrap_or(query.len());
+    }
+    let mut end = cursor_byte;
+    while end < query.len() {
+        let next = query[end..]
+            .char_indices()
+            .nth(1)
+            .map(|(off, _)| end + off)
+            .unwrap_or(query.len());
+        if query[start..next].width() > available {
+            break;
+        }
+        end = next;
+    }
+    let visible = &query[start..end];
+    let cursor_col = prompt_width + query[start..cursor_byte].width();
+
+    let accent = if focused { ACCENT } else { Color::DarkGray };
+    let shown_query = if query.is_empty() {
+        Span::styled("search...", Style::default().fg(DIM))
+    } else {
+        Span::raw(visible.to_owned())
+    };
+    let line = Line::from(vec![
+        Span::styled(prompt, Style::default().fg(accent)),
+        shown_query,
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
+    cursor_col
+}
+
 pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let dashboard = state;
+    let focused = state.focus() == FocusPane::Channels;
+    let filter_query = state.channel_pane_filter_query();
+    let block = panel_block("Channels", focused);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let header_area = Rect {
+        height: inner.height.min(1),
+        ..inner
+    };
+    if header_area.height > 0 {
+        let server_name = selected_channel_server_label(state);
+        let label = truncate_display_width(&server_name, header_area.width as usize);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                label,
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ))),
+            header_area,
+        );
+    }
+
+    let channels_area = Rect {
+        y: inner.y.saturating_add(header_area.height),
+        height: inner.height.saturating_sub(header_area.height),
+        ..inner
+    };
+
+    let (list_area, filter_area) = if filter_query.is_some() && channels_area.height >= 2 {
+        let list_h = channels_area.height.saturating_sub(1);
+        let list_rect = Rect {
+            height: list_h,
+            ..channels_area
+        };
+        let filter_rect = Rect {
+            y: channels_area.y + list_h,
+            height: 1,
+            ..channels_area
+        };
+        (list_rect, Some(filter_rect))
+    } else {
+        (channels_area, None)
+    };
+
     let entries = state.visible_channel_pane_entries();
-    let max_width = area.width.saturating_sub(8) as usize;
+    let max_width = list_area.width.saturating_sub(8) as usize;
     let horizontal_scroll = state.channel_horizontal_scroll();
     let selected = state.focused_channel_selection();
     let items: Vec<ListItem> = entries
@@ -258,21 +394,36 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
         })
         .collect();
 
-    let list = List::new(items)
-        .block(panel_block(
-            "Channels",
-            state.focus() == FocusPane::Channels,
-        ))
-        .highlight_style(highlight_style());
+    let list = List::new(items).highlight_style(highlight_style());
+    frame.render_widget(list, list_area);
 
-    frame.render_widget(list, area);
+    if let Some(filter_rect) = filter_area {
+        let query = filter_query.unwrap_or_default();
+        let cursor = state.channel_pane_filter_cursor().unwrap_or(0);
+        let cursor_x = render_pane_filter_bar(frame, filter_rect, query, cursor, focused);
+        if focused {
+            frame.set_cursor_position(Position {
+                x: filter_rect.x.saturating_add(cursor_x as u16),
+                y: filter_rect.y,
+            });
+        }
+    }
+
     render_vertical_scrollbar(
         frame,
-        panel_scrollbar_area(area),
+        list_area,
         state.channel_scroll(),
-        panel_content_height(area, "Channels"),
+        list_area.height as usize,
         state.channel_pane_entries().len(),
     );
+}
+
+fn selected_channel_server_label(state: &DashboardState) -> String {
+    state
+        .selected_guild_id()
+        .and_then(|guild_id| state.guild_name(guild_id))
+        .unwrap_or("Direct Messages")
+        .to_owned()
 }
 
 pub(super) fn render_composer(
@@ -295,7 +446,7 @@ pub(super) fn render_composer(
             })
             .block(
                 Block::default()
-                    .title(" Message Input ")
+                    .title(state.composer_title())
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(border_color))
@@ -937,7 +1088,7 @@ pub(super) fn composer_text(state: &DashboardState, width: u16) -> String {
             "group-dm" | "Group" => channel.name.clone(),
             _ => format!("#{}", channel.name),
         };
-        // Tell the user up-front if the keymap won't open the composer here,
+        // Tell the user up-front if the shortcut won't open the composer here,
         // so they don't repeatedly press `i` and wonder why nothing happens.
         if !state.can_send_in_selected_channel() {
             return format!("read-only · cannot send messages in {label}");
@@ -1022,8 +1173,13 @@ pub(super) fn render_members(
             let name_style =
                 member_name_style(member, state.member_role_color(member), is_selected);
 
-            let display =
-                member_display_label(member, state.member_horizontal_scroll(), max_name_width);
+            let display_name = state.member_display_name(member);
+            let display = member_display_label(
+                member,
+                &display_name,
+                state.member_horizontal_scroll(),
+                max_name_width,
+            );
             lines.push(Line::from(vec![
                 Span::styled(
                     format!(" {} ", presence_marker(member.status())),
@@ -1126,7 +1282,7 @@ pub(super) fn render_members(
 fn member_group_header(group: &MemberGroup<'_>, content_width: usize) -> Line<'static> {
     let count_suffix = format!(" - {}", group.entries.len());
     let label_max = content_width.saturating_sub(count_suffix.width());
-    let label = truncate_display_width(&group.label, label_max);
+    let label = truncate_display_width(&sanitize_for_display_width(&group.label), label_max);
     Line::from(vec![
         Span::styled(
             label,
@@ -1163,10 +1319,11 @@ pub(super) fn member_name_style(
 
 pub(super) fn member_display_label(
     member: MemberEntry<'_>,
+    display_name: &str,
     horizontal_scroll: usize,
     max_width: usize,
 ) -> String {
-    let display_name = member.display_name();
+    let display_name = sanitize_for_display_width(display_name);
     if !member.is_bot() {
         return truncate_display_width_from(&display_name, horizontal_scroll, max_width);
     }

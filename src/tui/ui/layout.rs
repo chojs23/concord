@@ -10,9 +10,11 @@ use super::super::{
 };
 use super::types::{
     DashboardAreas, EMBED_PREVIEW_GUTTER_PREFIX, IMAGE_PREVIEW_HEIGHT, IMAGE_PREVIEW_WIDTH,
-    IMAGE_VIEWER_POPUP_HEIGHT, IMAGE_VIEWER_POPUP_WIDTH, MAX_REACTION_USERS_VISIBLE_LINES,
-    MESSAGE_AVATAR_OFFSET, MIN_MESSAGE_INPUT_HEIGHT, MessageAreas,
+    MAX_REACTION_USERS_VISIBLE_LINES, MESSAGE_AVATAR_OFFSET, MIN_MESSAGE_INPUT_HEIGHT,
+    MessageAreas,
 };
+
+const IMAGE_VIEWER_POPUP_PERCENT: u16 = 80;
 
 pub(super) fn dashboard_areas(area: Rect, state: &DashboardState) -> DashboardAreas {
     let [header, main] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
@@ -48,7 +50,11 @@ fn pane_width(visible: bool, width: u16) -> Constraint {
 }
 
 pub(super) fn image_viewer_popup(area: Rect) -> Rect {
-    centered_rect(area, IMAGE_VIEWER_POPUP_WIDTH, IMAGE_VIEWER_POPUP_HEIGHT)
+    centered_rect(
+        area,
+        percentage_of(area.width, IMAGE_VIEWER_POPUP_PERCENT),
+        percentage_of(area.height, IMAGE_VIEWER_POPUP_PERCENT),
+    )
 }
 
 pub(super) fn image_viewer_image_area(area: Rect) -> Rect {
@@ -70,6 +76,11 @@ pub(super) fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
         width,
         height,
     }
+}
+
+fn percentage_of(value: u16, percent: u16) -> u16 {
+    let scaled = u32::from(value) * u32::from(percent) / 100;
+    u16::try_from(scaled).unwrap_or(u16::MAX)
 }
 
 pub(super) fn panel_scrollbar_area(area: Rect) -> Rect {

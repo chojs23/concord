@@ -17,7 +17,9 @@ use crate::{
     logging,
 };
 
-use super::shared::{parse_id, raw_user_avatar_url};
+use super::shared::{
+    display_name_from_parts, display_name_from_parts_or_unknown, parse_id, raw_user_avatar_url,
+};
 
 pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
     let channel_id = parse_id::<ChannelMarker>(data.get("channel_id")?)?;
@@ -158,6 +160,10 @@ fn parse_embed(value: &Value) -> Option<EmbedInfo> {
             .get("description")
             .and_then(Value::as_str)
             .map(str::to_owned),
+        timestamp: value
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         fields,
         footer_text: value
             .get("footer")
@@ -223,6 +229,7 @@ fn embed_has_renderable_content(embed: &EmbedInfo) -> bool {
         || embed.author_name.is_some()
         || embed.title.is_some()
         || embed.description.is_some()
+        || embed.timestamp.is_some()
         || !embed.fields.is_empty()
         || embed.footer_text.is_some()
         || embed.url.is_some()
@@ -252,6 +259,7 @@ fn parse_reply_info(value: &Value) -> Option<ReplyInfo> {
     }
 
     let author = value.get("author")?;
+    let author_id = author.get("id").and_then(parse_id::<UserMarker>);
     let author_name = message_author_display_name(value, author);
     let content = value
         .get("content")
@@ -262,6 +270,7 @@ fn parse_reply_info(value: &Value) -> Option<ReplyInfo> {
     let mentions = parse_mentions(value.get("mentions"));
 
     Some(ReplyInfo {
+        author_id,
         author: author_name,
         content,
         sticker_names,
@@ -315,22 +324,15 @@ fn parse_mention_info(value: &Value) -> Option<MentionInfo> {
     let nick = value
         .get("member")
         .and_then(|member| member.get("nick"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty());
-    let global_name = value
-        .get("global_name")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty());
-    let username = value
-        .get("username")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty());
-    let display_name = nick.or(global_name).or(username)?;
+        .and_then(Value::as_str);
+    let global_name = value.get("global_name").and_then(Value::as_str);
+    let username = value.get("username").and_then(Value::as_str);
+    let display_name = display_name_from_parts(nick, global_name, username)?;
     log_mention_raw_fields(user_id, member, nick, global_name, username, display_name);
 
     Some(MentionInfo {
         user_id,
-        guild_nick: nick.map(str::to_owned),
+        guild_nick: nick.filter(|value| !value.is_empty()).map(str::to_owned),
         display_name: display_name.to_owned(),
     })
 }
@@ -365,17 +367,10 @@ fn message_author_display_name(message: &Value, author: &Value) -> String {
     let nick = message
         .get("member")
         .and_then(|member| member.get("nick"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty());
-    let global_name = author
-        .get("global_name")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty());
+        .and_then(Value::as_str);
+    let global_name = author.get("global_name").and_then(Value::as_str);
     let username = author.get("username").and_then(Value::as_str);
-    nick.or(global_name)
-        .or(username)
-        .unwrap_or("unknown")
-        .to_owned()
+    display_name_from_parts_or_unknown(nick, global_name, username)
 }
 
 pub(super) fn parse_poll_info(value: &Value) -> Option<PollInfo> {

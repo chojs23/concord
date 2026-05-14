@@ -1,16 +1,17 @@
 use serde_json::Value;
 
-use crate::discord::{
-    FriendStatus,
-    events::AppEvent,
-    ids::{Id, marker::UserMarker},
-};
+use crate::discord::{FriendStatus, RelationshipInfo, events::AppEvent, ids::marker::UserMarker};
 
-use super::shared::parse_id;
+use super::shared::{display_name_from_parts, parse_id};
 
 pub(super) fn parse_relationship_add(data: &Value) -> Option<AppEvent> {
-    let (user_id, status) = parse_relationship_entry(data)?;
-    Some(AppEvent::RelationshipUpsert { user_id, status })
+    let relationship = parse_relationship_entry(data)?;
+    Some(AppEvent::RelationshipUpsert { relationship })
+}
+
+pub(super) fn parse_relationship_update(data: &Value) -> Option<AppEvent> {
+    let relationship = parse_relationship_entry(data)?;
+    Some(AppEvent::RelationshipUpsert { relationship })
 }
 
 pub(super) fn parse_relationship_remove(data: &Value) -> Option<AppEvent> {
@@ -25,7 +26,7 @@ pub(super) fn parse_relationship_remove(data: &Value) -> Option<AppEvent> {
     Some(AppEvent::RelationshipRemove { user_id })
 }
 
-pub(super) fn parse_relationship_entry(value: &Value) -> Option<(Id<UserMarker>, FriendStatus)> {
+pub(super) fn parse_relationship_entry(value: &Value) -> Option<RelationshipInfo> {
     // READY's `relationships` array uses ids on the entry itself for the
     // target user. Older shards may nest it under `user.id`, so check both.
     let user_id = value
@@ -45,5 +46,25 @@ pub(super) fn parse_relationship_entry(value: &Value) -> Option<(Id<UserMarker>,
         4 => FriendStatus::OutgoingRequest,
         _ => return None,
     };
-    Some((user_id, status))
+    let nickname = value
+        .get("nickname")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let username = value
+        .get("user")
+        .and_then(|user| user.get("username"))
+        .and_then(Value::as_str);
+    let global_name = value
+        .get("user")
+        .and_then(|user| user.get("global_name"))
+        .and_then(Value::as_str);
+    let display_name = display_name_from_parts(None, global_name, username).map(str::to_owned);
+    Some(RelationshipInfo {
+        user_id,
+        status,
+        nickname,
+        display_name,
+        username: username.map(str::to_owned),
+    })
 }

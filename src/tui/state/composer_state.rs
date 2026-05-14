@@ -70,6 +70,16 @@ impl DashboardState {
         &self.pending_composer_attachments
     }
 
+    pub fn composer_title(&self) -> &'static str {
+        if self.edit_target_message.is_some() {
+            " Edit Message "
+        } else if self.reply_target_message_id.is_some() {
+            " Reply "
+        } else {
+            " Message Input "
+        }
+    }
+
     pub fn add_pending_composer_attachments(&mut self, attachments: Vec<MessageAttachmentUpload>) {
         if attachments.is_empty() || !self.composer_accepts_attachments() {
             return;
@@ -114,7 +124,7 @@ impl DashboardState {
         if self.selected_channel_id().is_none() {
             return;
         }
-        // Refusing here keeps the keymap simple: the same key that opens the
+        // Refusing here keeps the shortcut simple: the same key that opens the
         // composer in writable channels just no-ops in read-only ones, so the
         // user never lands in a typing state for a channel that would 403 on
         // submit.
@@ -128,6 +138,13 @@ impl DashboardState {
         self.focus = FocusPane::Messages;
     }
 
+    pub fn replace_composer_input_from_editor(&mut self, value: String) {
+        self.composer_input = value;
+        self.composer_cursor_byte_index = self.composer_input.len();
+        self.reset_mention_picker_state();
+        self.refresh_active_mention_query();
+    }
+
     pub fn cancel_composer(&mut self) {
         self.composer_active = false;
         self.composer_input.clear();
@@ -139,6 +156,10 @@ impl DashboardState {
     }
 
     pub fn close_composer(&mut self) {
+        if self.reply_target_message_id.is_some() || self.edit_target_message.is_some() {
+            self.cancel_composer();
+            return;
+        }
         self.composer_active = false;
         self.reset_mention_picker_state();
     }

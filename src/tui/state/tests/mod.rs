@@ -1681,7 +1681,7 @@ fn discord_embed_rows_increase_message_rendered_height() {
         ..MessageState::default()
     };
 
-    assert_eq!(message_rendered_height(&message, 80, 16, 3), 8);
+    assert_eq!(message_rendered_height(&message, 80, 16, 3), 9);
 }
 
 #[test]
@@ -1885,7 +1885,7 @@ fn forwarded_snapshot_embed_rows_increase_rendered_height() {
         ..MessageState::default()
     };
 
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 10);
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 11);
 }
 
 #[test]
@@ -1930,6 +1930,7 @@ fn reply_preview_reserves_connector_row_without_extra_type_label() {
         message_kind: MessageKind::new(19),
         reference: None,
         reply: Some(ReplyInfo {
+            author_id: None,
             author: "casey".to_owned(),
             content: Some("looks good".to_owned()),
             sticker_names: Vec::new(),
@@ -2026,6 +2027,7 @@ fn thread_starter_message_reserves_system_card_rows() {
     let mut message = height_test_message("");
     message.message_kind = MessageKind::new(21);
     message.reply = Some(ReplyInfo {
+        author_id: None,
         author: "alice".to_owned(),
         content: Some("original topic".to_owned()),
         sticker_names: Vec::new(),
@@ -2396,6 +2398,7 @@ fn push_reply_message_with_attachments(
             message_id: Some(Id::new(42)),
         }),
         reply: Some(ReplyInfo {
+            author_id: None,
             author: "original".to_owned(),
             content: Some("original message".to_owned()),
             sticker_names: Vec::new(),
@@ -2517,8 +2520,10 @@ fn other_user_message_actions_include_delete_with_manage_messages() {
     );
     state.open_selected_message_actions();
     assert!(state.select_message_action_row(delete_index));
+    assert_eq!(state.activate_selected_message_action(), None);
+    assert!(state.is_message_delete_confirmation_open());
     assert_eq!(
-        state.activate_selected_message_action(),
+        state.confirm_message_delete(),
         Some(AppCommand::DeleteMessage {
             channel_id: Id::new(2),
             message_id: Id::new(1),
@@ -2580,8 +2585,10 @@ fn delete_message_action_submits_delete_command_for_own_message() {
     state.open_selected_message_actions();
     assert!(state.select_message_action_row(2));
 
+    assert_eq!(state.activate_selected_message_action(), None);
+    assert!(state.is_message_delete_confirmation_open());
     assert_eq!(
-        state.activate_selected_message_action(),
+        state.confirm_message_delete(),
         Some(AppCommand::DeleteMessage {
             channel_id: Id::new(2),
             message_id: Id::new(1),
@@ -2630,8 +2637,10 @@ fn own_attachment_only_message_can_be_deleted_but_not_edited() {
             .any(|action| action.kind == MessageActionKind::Edit)
     );
     assert!(state.select_message_action_row(1));
+    assert_eq!(state.activate_selected_message_action(), None);
+    assert!(state.is_message_delete_confirmation_open());
     assert_eq!(
-        state.activate_selected_message_action(),
+        state.confirm_message_delete(),
         Some(AppCommand::DeleteMessage {
             channel_id: Id::new(2),
             message_id: Id::new(1),
@@ -5444,7 +5453,7 @@ fn missing_message_author_profile_requests_include_visible_forum_preview_authors
 
     assert_eq!(
         state.missing_message_author_profile_requests(),
-        vec![(Id::new(99), guild_id)]
+        vec![(Id::new(99), Some(guild_id))]
     );
 
     state.push_event(AppEvent::UserProfileLoaded {
@@ -6600,6 +6609,18 @@ fn member_scroll_uses_scrolloff() {
     state.move_up();
     assert_eq!(state.selected_member(), 4);
     assert_eq!(state.member_scroll(), 2);
+}
+
+#[test]
+fn visible_member_profile_requests_follow_rendered_member_rows() {
+    let mut state = state_with_members(3);
+    state.member_scroll = 1;
+    state.member_view_height = 1;
+
+    assert_eq!(
+        state.missing_visible_member_profile_requests(),
+        vec![(Id::new(1), Some(Id::new(1)))]
+    );
 }
 
 #[test]

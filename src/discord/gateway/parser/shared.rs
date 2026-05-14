@@ -39,10 +39,67 @@ pub(super) fn parse_status(value: &str) -> PresenceStatus {
     }
 }
 
+pub(super) fn display_name_from_parts<'a>(
+    nick: Option<&'a str>,
+    global_name: Option<&'a str>,
+    username: Option<&'a str>,
+) -> Option<&'a str> {
+    nick.and_then(non_empty)
+        .or_else(|| global_name.and_then(non_empty))
+        .or_else(|| username.and_then(non_empty))
+}
+
+pub(super) fn display_name_from_parts_or_unknown(
+    nick: Option<&str>,
+    global_name: Option<&str>,
+    username: Option<&str>,
+) -> String {
+    display_name_from_parts(nick, global_name, username)
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
+fn non_empty(value: &str) -> Option<&str> {
+    (!value.is_empty()).then_some(value)
+}
+
 pub(super) fn parse_id<M>(value: &Value) -> Option<Id<M>> {
     value
         .as_str()
         .and_then(|value| value.parse::<u64>().ok())
         .or_else(|| value.as_u64())
         .and_then(Id::new_checked)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_name_from_parts, display_name_from_parts_or_unknown};
+
+    #[test]
+    fn display_name_from_parts_prefers_nick_global_then_username() {
+        assert_eq!(
+            display_name_from_parts(Some("nick"), Some("global"), Some("user")),
+            Some("nick")
+        );
+        assert_eq!(
+            display_name_from_parts(None, Some("global"), Some("user")),
+            Some("global")
+        );
+        assert_eq!(
+            display_name_from_parts(None, None, Some("user")),
+            Some("user")
+        );
+    }
+
+    #[test]
+    fn display_name_from_parts_ignores_empty_names() {
+        assert_eq!(
+            display_name_from_parts(Some(""), Some(""), Some("user")),
+            Some("user")
+        );
+        assert_eq!(
+            display_name_from_parts_or_unknown(Some(""), Some(""), None),
+            "unknown"
+        );
+    }
 }

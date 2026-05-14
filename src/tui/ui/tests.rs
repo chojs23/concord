@@ -12,22 +12,23 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     ACCENT, DIM, ImagePreview, ImagePreviewState, MENTION_ORANGE, MemberEntry, READ_DIM,
     SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT,
-    channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
-    composer_content_line_count, composer_cursor_position, composer_lines,
-    composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count, composer_text,
-    date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_picker_lines,
-    emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
+    centered_viewer_preview_area, channel_switcher_cursor_position, channel_switcher_lines,
+    channel_unread_decoration, composer_content_line_count, composer_cursor_position,
+    composer_lines, composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count,
+    composer_text, date_separator_line, debug_log_popup_lines, dm_presence_dot_span,
+    emoji_picker_lines, emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
     emoji_reaction_picker_lines_with_existing, filtered_emoji_reaction_picker_lines, focus_pane_at,
     format_message_sent_time, forum_post_reaction_summary, forum_post_scrollbar_visible_count,
-    forum_post_viewport_lines, inline_image_preview_area, inline_image_preview_row,
-    member_display_label, member_name_style, message_action_menu_lines, message_author_style,
-    message_body_custom_emoji_rows, message_item_lines, message_viewport_lines,
-    new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
+    forum_post_viewport_lines, image_viewer_image_area, image_viewer_popup,
+    inline_image_preview_area, inline_image_preview_row, member_display_label, member_name_style,
+    message_action_menu_lines, message_author_style, message_body_custom_emoji_rows,
+    message_delete_confirmation_lines, message_item_lines, message_pin_confirmation_lines,
+    message_viewport_lines, new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
     primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
     render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
-    selected_message_content_x_offset, sync_view_heights, user_profile_popup_has_avatar,
-    user_profile_popup_lines, user_profile_popup_lines_with_activities,
-    user_profile_popup_text_geometry,
+    selected_message_content_x_offset, sync_view_heights, toast_area, toast_line,
+    user_profile_popup_has_avatar, user_profile_popup_lines,
+    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
 };
 use crate::tui::message_time::{
     discord_epoch_unix_millis, format_unix_millis_with_offset, message_starts_new_day,
@@ -94,6 +95,59 @@ fn options_popup_lines_show_selected_toggle_state() {
     assert_eq!(lines[1].spans[1].content, "[x] ");
     assert_eq!(lines[2].spans[1].content, "[balanced] ");
     assert_eq!(lines.len(), 3);
+}
+
+#[test]
+fn message_delete_confirmation_lines_show_controls_and_excerpt() {
+    let lines = message_delete_confirmation_lines(
+        "neo",
+        Some("a very important message that should be deleted"),
+        80,
+    );
+
+    assert_eq!(lines[0].spans[0].content, "Delete this message?");
+    assert_eq!(lines[1].spans[0].content, "From: neo");
+    assert!(lines[2].spans[0].content.contains("important message"));
+    assert!(lines[4].spans[0].content.contains("Enter/y"));
+    assert!(lines[4].spans[2].content.contains("Esc/n"));
+}
+
+#[test]
+fn message_pin_confirmation_lines_show_action_and_excerpt() {
+    let pin_lines = message_pin_confirmation_lines(true, "neo", Some("pin this"), 80);
+    assert_eq!(pin_lines[0].spans[0].content, "Pin this message?");
+    assert!(pin_lines[4].spans[1].content.contains("Pin message"));
+
+    let unpin_lines = message_pin_confirmation_lines(false, "neo", Some("unpin this"), 80);
+    assert_eq!(unpin_lines[0].spans[0].content, "Unpin this message?");
+    assert!(unpin_lines[4].spans[1].content.contains("Unpin message"));
+}
+
+#[test]
+fn toast_area_anchors_to_terminal_bottom_left() {
+    let area = toast_area(Rect::new(5, 2, 40, 12), "Message copied");
+
+    assert_eq!(area, Rect::new(5, 11, 16, 3));
+}
+
+#[test]
+fn toast_line_truncates_to_available_width() {
+    let line = toast_line("Message copied", 7);
+
+    assert_eq!(line.spans[0].content, "Mess...");
+}
+
+#[test]
+fn dashboard_renders_toast_at_bottom_left() {
+    let mut state = DashboardState::new();
+    state.show_success_toast("Message copied", std::time::Instant::now());
+
+    let dump = render_dashboard_dump(40, 10, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(dump[7].starts_with("┌"), "{rendered}");
+    assert!(dump[8].starts_with("│Message copied│"), "{rendered}");
+    assert!(dump[9].starts_with("└"), "{rendered}");
 }
 
 #[test]
@@ -224,6 +278,26 @@ fn image_viewer_render_shows_download_hint_below_popup() {
     let rendered = dump.join("\n");
 
     assert!(rendered.contains("[d] download image"), "{rendered}");
+}
+
+#[test]
+fn image_viewer_popup_uses_eighty_percent_of_message_area() {
+    let area = Rect::new(10, 5, 100, 40);
+
+    let popup = image_viewer_popup(area);
+    let image_area = image_viewer_image_area(area);
+
+    assert_eq!(popup, Rect::new(20, 9, 80, 32));
+    assert_eq!(image_area, Rect::new(21, 10, 78, 29));
+}
+
+#[test]
+fn image_viewer_preview_area_centers_rendered_image() {
+    let area = Rect::new(21, 10, 78, 29);
+
+    let preview = centered_viewer_preview_area(area, 52, 13);
+
+    assert_eq!(preview, Rect::new(34, 18, 52, 13));
 }
 
 #[test]
@@ -584,6 +658,35 @@ fn reply_composer_hint_line_is_dim() {
     );
     assert_eq!(lines[0].spans[0].style.fg, Some(DIM));
     assert_eq!(lines[1].spans[0].style.fg, None);
+}
+
+#[test]
+fn composer_border_title_tracks_message_mode() {
+    let mut normal = state_with_message();
+    normal.start_composer();
+    let normal_rendered = render_dashboard_dump(80, 16, &mut normal).join("\n");
+
+    let mut reply = state_with_message();
+    reply.open_selected_message_actions();
+    reply.activate_selected_message_action();
+    let reply_rendered = render_dashboard_dump(80, 16, &mut reply).join("\n");
+
+    let mut edit = state_with_message();
+    edit.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(99)),
+    });
+    edit.open_selected_message_actions();
+    assert!(edit.select_message_action_row(1));
+    edit.activate_selected_message_action();
+    let edit_rendered = render_dashboard_dump(80, 16, &mut edit).join("\n");
+
+    assert!(
+        normal_rendered.contains("Message Input"),
+        "{normal_rendered}"
+    );
+    assert!(reply_rendered.contains("Reply"), "{reply_rendered}");
+    assert!(edit_rendered.contains("Edit Message"), "{edit_rendered}");
 }
 
 #[test]
@@ -1266,6 +1369,11 @@ fn muted_category_and_channel_names_are_dimmed() {
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
+    let header_text = (0..buffer.area.width)
+        .map(|col| buffer[(col, 1)].symbol().to_owned())
+        .collect::<String>();
+    assert!(header_text.contains("guild"));
+
     let mut saw_category = false;
     let mut saw_channel = false;
     for row in 0..buffer.area.height {
@@ -1811,6 +1919,28 @@ fn primary_activity_summary_listening_includes_track_and_artist() {
 }
 
 #[test]
+fn primary_activity_summary_sanitizes_custom_status_emoji() {
+    let activities = vec![ActivityInfo {
+        kind: ActivityKind::Custom,
+        name: "Custom Status".to_owned(),
+        details: None,
+        state: Some("curse of rah".to_owned()),
+        url: None,
+        application_id: None,
+        emoji: Some(ActivityEmoji {
+            name: "⚜".to_owned(),
+            id: None,
+            animated: false,
+        }),
+    }];
+
+    assert_eq!(
+        primary_activity_summary(&activities, &[]).map(|render| render.to_display_string()),
+        Some("? curse of rah".to_owned())
+    );
+}
+
+#[test]
 fn user_profile_popup_omits_activity_section_when_empty() {
     let profile = user_profile_info(10, "neo");
     let state = DashboardState::new();
@@ -1957,6 +2087,7 @@ fn message_content_lines_render_discord_embed_preview() {
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "  ▎ YouTube",
             "  ▎ Example Video",
+            "  ▎ A video description",
         ]
     );
     assert_eq!(lines[1].style.fg, Some(DIM));
@@ -1988,6 +2119,7 @@ fn message_embed_hides_media_and_player_urls() {
             "watch this",
             "  ▎ YouTube",
             "  ▎ Example Video",
+            "  ▎ A video description",
             "  ▎ https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         ]
     );
@@ -2031,6 +2163,60 @@ fn message_embed_url_underline_skips_marker() {
             .add_modifier
             .contains(Modifier::UNDERLINED)
     );
+}
+
+#[test]
+fn message_embed_renders_tweet_description_as_readable_text() {
+    let mut message = message_with_content(Some(
+        "Fx'ed that for you! https://www.fxtwitter.com/MikeReiss/status/2054582956438524124"
+            .to_owned(),
+    ));
+    let mut embed = youtube_embed();
+    embed.color = Some(0x6364ff);
+    embed.provider_name = None;
+    embed.author_name = Some("Mike Reiss (@MikeReiss)".to_owned());
+    embed.title = None;
+    embed.description = Some(
+        "Patriots rookie Quintayvious Hutchins \\(seventh round, Boston College\\) was arraigned\\.\n\u{fe00}\n**[💬](https://x.com/intent/tweet?in_reply_to=1) 2 [🔁](https://x.com/intent/retweet?tweet_id=1) 11 [❤️](https://x.com/intent/like?tweet_id=1) 44 👁️ 12\\.4K **"
+            .to_owned(),
+    );
+    embed.footer_text = Some("FxTwitter".to_owned());
+    embed.url = Some("https://www.fxtwitter.com/MikeReiss/status/2054582956438524124".to_owned());
+    message.embeds = vec![embed];
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 120);
+    let texts = line_texts(&lines);
+
+    assert!(texts.contains(&"  ▎ Mike Reiss (@MikeReiss)"));
+    assert!(texts.contains(
+        &"  ▎ Patriots rookie Quintayvious Hutchins (seventh round, Boston College) was arraigned."
+    ));
+    assert!(texts.contains(&"  ▎ 💬 2 🔁 11 ❤️ 44 👁️ 12.4K "));
+    assert!(texts.contains(&"  ▎ FxTwitter"));
+}
+
+#[test]
+fn message_embed_description_preserves_useful_link_destination() {
+    let mut message = message_with_content(Some("read this".to_owned()));
+    let mut embed = youtube_embed();
+    embed.description = Some("See [docs](https://example.com/docs)".to_owned());
+    message.embeds = vec![embed];
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 120);
+
+    assert!(line_texts(&lines).contains(&"  ▎ See docs (https://example.com/docs)"));
+}
+
+#[test]
+fn message_embed_description_preserves_escaped_emphasis_markers() {
+    let mut message = message_with_content(Some("literal markers".to_owned()));
+    let mut embed = youtube_embed();
+    embed.description = Some("\\*\\*literal\\*\\* and **bold**".to_owned());
+    message.embeds = vec![embed];
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 120);
+
+    assert!(line_texts(&lines).contains(&"  ▎ **literal** and bold"));
 }
 
 #[test]
@@ -2637,6 +2823,7 @@ fn thread_starter_message_uses_referenced_message_card() {
     let mut message = message_with_content(Some(String::new()));
     message.message_kind = MessageKind::new(21);
     message.reply = Some(ReplyInfo {
+        author_id: None,
         author: "alice".to_owned(),
         content: Some("original topic".to_owned()),
         sticker_names: Vec::new(),
@@ -2686,6 +2873,7 @@ fn reply_message_uses_preview_instead_of_type_label() {
     let mut message = message_with_attachment(Some("message body".to_owned()), image_attachment());
     message.message_kind = MessageKind::new(19);
     message.reply = Some(ReplyInfo {
+        author_id: None,
         author: "casey".to_owned(),
         content: Some("looks good".to_owned()),
         sticker_names: Vec::new(),
@@ -2710,6 +2898,7 @@ fn reply_preview_renders_known_user_mentions() {
     let mut message = message_with_content(Some("asdf".to_owned()));
     message.message_kind = MessageKind::new(19);
     message.reply = Some(ReplyInfo {
+        author_id: None,
         author: "neo".to_owned(),
         content: Some("hello <@10>".to_owned()),
         sticker_names: Vec::new(),
@@ -2727,6 +2916,7 @@ fn reply_preview_renders_mentions_from_reply_metadata() {
     let mut message = message_with_content(Some("asdf".to_owned()));
     message.message_kind = MessageKind::new(19);
     message.reply = Some(ReplyInfo {
+        author_id: None,
         author: "neo".to_owned(),
         content: Some("hello <@10>".to_owned()),
         sticker_names: Vec::new(),
@@ -2932,17 +3122,32 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
             enabled: true,
         },
         MessageActionItem {
+            kind: MessageActionKind::AddReaction,
+            label: "Add reaction".to_owned(),
+            enabled: true,
+        },
+        MessageActionItem {
             kind: MessageActionKind::DownloadAttachment(0),
             label: "Download file".to_owned(),
             enabled: false,
         },
+        MessageActionItem {
+            kind: MessageActionKind::SetPinned(true),
+            label: "Pin message".to_owned(),
+            enabled: true,
+        },
     ];
 
-    let lines = message_action_menu_lines(&actions, 1);
+    let lines = message_action_menu_lines(&actions, 2);
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["  [r] Reply", "› [f] Download file (unavailable)",]
+        vec![
+            "  [R] Reply",
+            "  [r] Add reaction",
+            "› [f] Download file (unavailable)",
+            "  [P] Pin message",
+        ]
     );
 }
 
@@ -3687,6 +3892,7 @@ fn forwarded_snapshot_renders_discord_embed_preview() {
             "│ https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "│   ▎ YouTube",
             "│   ▎ Example Video",
+            "│   ▎ A video description",
         ]
     );
     let url_spans = lines[2].spans();
@@ -4008,9 +4214,27 @@ fn member_label_truncates_by_display_width() {
         status: PresenceStatus::Online,
     };
 
-    let label = member_display_label(MemberEntry::Guild(&member), 0, 12);
+    let label = member_display_label(MemberEntry::Guild(&member), &member.display_name, 0, 12);
 
     assert_eq!(label, "漢字仮名...");
+    assert!(label.width() <= 12);
+}
+
+#[test]
+fn member_label_sanitizes_ambiguous_width_emoji_before_truncating() {
+    let member = GuildMemberState {
+        user_id: Id::new(10),
+        display_name: "user ⚜ status".to_owned(),
+        username: None,
+        is_bot: false,
+        avatar_url: None,
+        role_ids: Vec::new(),
+        status: PresenceStatus::Online,
+    };
+
+    let label = member_display_label(MemberEntry::Guild(&member), &member.display_name, 0, 12);
+
+    assert_eq!(label, "user ? st...");
     assert!(label.width() <= 12);
 }
 
@@ -4049,7 +4273,7 @@ fn member_label_uses_horizontal_scroll_offset() {
         status: PresenceStatus::Online,
     };
 
-    let label = member_display_label(MemberEntry::Guild(&member), 5, 8);
+    let label = member_display_label(MemberEntry::Guild(&member), &member.display_name, 5, 8);
 
     assert_eq!(label, "membe...");
 }
@@ -4657,6 +4881,7 @@ fn youtube_embed() -> EmbedInfo {
         author_name: None,
         title: Some("Example Video".to_owned()),
         description: Some("A video description".to_owned()),
+        timestamp: None,
         fields: Vec::new(),
         footer_text: None,
         url: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),

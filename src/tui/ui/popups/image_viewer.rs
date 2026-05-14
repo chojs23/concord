@@ -36,7 +36,12 @@ pub(in crate::tui::ui) fn render_image_viewer(
     });
 
     if let Some(image_preview) = image_preview {
-        render_image_preview(frame, image_area, image_preview.state);
+        let preview_area = centered_viewer_preview_area(
+            image_area,
+            image_preview.preview_width,
+            image_preview.preview_height,
+        );
+        render_image_preview(frame, preview_area, image_preview.state);
     } else {
         frame.render_widget(
             Paragraph::new(format!("loading {}...", item.filename))
@@ -62,6 +67,25 @@ pub(in crate::tui::ui) fn render_image_viewer(
                 .alignment(Alignment::Center),
             hint_area,
         );
+    }
+}
+
+pub(in crate::tui::ui) fn centered_viewer_preview_area(
+    area: Rect,
+    preview_width: u16,
+    preview_height: u16,
+) -> Rect {
+    if area.is_empty() || preview_width == 0 || preview_height == 0 {
+        return Rect::default();
+    }
+
+    let width = preview_width.min(area.width);
+    let height = preview_height.min(area.height);
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
     }
 }
 

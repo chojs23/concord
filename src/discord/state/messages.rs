@@ -11,8 +11,9 @@ use crate::discord::{
 };
 
 use super::{
-    DiscordState, OLDER_HISTORY_EXTRA_WINDOW_MULTIPLIER,
+    DiscordState, OLDER_HISTORY_EXTRA_WINDOW_MULTIPLIER, is_fallback_identity,
     members::{selected_member_role_color, selected_role_ids_color},
+    profiles::UserProfileCacheKey,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -209,10 +210,23 @@ impl DiscordState {
         author_id: Id<UserMarker>,
         fallback: &str,
     ) -> String {
-        guild_id
+        if guild_id.is_none() {
+            return self.private_user_display_name(author_id, Some(fallback), None);
+        }
+        if let Some(member) = guild_id
             .and_then(|guild_id| self.members.get(&guild_id))
             .and_then(|members| members.get(&author_id))
-            .map(|member| member.display_name.clone())
+        {
+            // Only trust the member entry if it has real name data. When
+            // username is None and display_name is "unknown" the entry is a
+            // bare fallback — fall through to the profile cache instead.
+            if !is_fallback_identity(member.username.as_deref(), &member.display_name) {
+                return member.display_name.clone();
+            }
+        }
+        self.user_profiles
+            .get(&UserProfileCacheKey::new(author_id, guild_id))
+            .map(|profile| profile.display_name().to_owned())
             .unwrap_or_else(|| fallback.to_owned())
     }
 
@@ -259,11 +273,65 @@ impl DiscordState {
         guild_id: Id<GuildMarker>,
         member: &MemberInfo,
     ) {
+        // If this member payload is a fallback ("unknown", no username), avoid
+        // clobbering messages that already have a real name. Try the profile
+        // cache for a better name; if nothing is available, skip the refresh.
+        let display_name = if is_fallback_identity(member.username.as_deref(), &member.display_name)
+        {
+            match self
+                .user_profiles
+                .get(&UserProfileCacheKey::new(member.user_id, Some(guild_id)))
+            {
+                Some(profile) => profile.display_name().to_owned(),
+                None => return,
+            }
+        } else {
+            member.display_name.clone()
+        };
+        let avatar_url = member.avatar_url.clone();
+
+        for messages in self
+            .messages
+            .values_mut()
+            .chain(self.pinned_messages.values_mut())
+        {
+            for message in messages.iter_mut().filter(|m| m.guild_id == Some(guild_id)) {
+                if message.author_id == member.user_id {
+                    message.author = display_name.clone();
+                    if avatar_url.is_some() || message.author_avatar_url.is_none() {
+                        message.author_avatar_url = avatar_url.clone();
+                    }
+                }
+                if let Some(reply) = message
+                    .reply
+                    .as_mut()
+                    .filter(|r| r.author_id == Some(member.user_id))
+                {
+                    reply.author = display_name.clone();
+                }
+            }
+        }
+    }
+
+    pub(super) fn refresh_message_author_from_profile(
+        &mut self,
+        guild_id: Option<Id<GuildMarker>>,
+        user_id: Id<UserMarker>,
+        display_name: &str,
+        avatar_url: Option<&str>,
+    ) {
         self.for_each_cached_message_mut(|message| {
-            if message.guild_id == Some(guild_id) && message.author_id == member.user_id {
-                message.author = member.display_name.clone();
-                if member.avatar_url.is_some() || message.author_avatar_url.is_none() {
-                    message.author_avatar_url = member.avatar_url.clone();
+            if message.guild_id == guild_id {
+                if message.author_id == user_id {
+                    message.author = display_name.to_owned();
+                    if avatar_url.is_some() || message.author_avatar_url.is_none() {
+                        message.author_avatar_url = avatar_url.map(str::to_owned);
+                    }
+                }
+                if let Some(reply) = &mut message.reply {
+                    if reply.author_id == Some(user_id) {
+                        reply.author = display_name.to_owned();
+                    }
                 }
             }
         });

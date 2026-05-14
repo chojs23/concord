@@ -31,7 +31,7 @@ use messages::{
 };
 use presence::{parse_presence_update, parse_typing_start};
 use ready::{parse_ready, parse_ready_supplemental};
-use relationships::{parse_relationship_add, parse_relationship_remove};
+use relationships::{parse_relationship_add, parse_relationship_remove, parse_relationship_update};
 
 /// Best-effort fallback that rebuilds the dashboard's domain events directly
 /// from the raw gateway payload. We only extract the fields the UI consumes,
@@ -85,6 +85,7 @@ pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         "GUILD_MEMBER_LIST_UPDATE" => parse_member_list_update(data),
         "GUILD_MEMBERS_CHUNK" => parse_member_chunk(data),
         "RELATIONSHIP_ADD" => parse_relationship_add(data).into_iter().collect(),
+        "RELATIONSHIP_UPDATE" => parse_relationship_update(data).into_iter().collect(),
         "RELATIONSHIP_REMOVE" => parse_relationship_remove(data).into_iter().collect(),
         "GUILD_MEMBER_REMOVE" => parse_member_remove(data).into_iter().collect(),
         "PRESENCE_UPDATE" => parse_presence_update(data),
@@ -273,7 +274,12 @@ mod tests {
                 "d": {
                     "id": "20",
                     "type": 1,
-                    "user": {"id": "20", "username": "alice"}
+                    "nickname": "Bestie",
+                    "user": {
+                        "id": "20",
+                        "global_name": "Alice Global",
+                        "username": "alice"
+                    }
                 }
             })
             .to_string(),
@@ -281,8 +287,37 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(matches!(
             &events[0],
-            AppEvent::RelationshipUpsert { user_id, status }
-                if *user_id == Id::new(20) && *status == FriendStatus::Friend
+            AppEvent::RelationshipUpsert { relationship }
+                if relationship.user_id == Id::new(20)
+                    && relationship.status == FriendStatus::Friend
+                    && relationship.nickname.as_deref() == Some("Bestie")
+                    && relationship.display_name.as_deref() == Some("Alice Global")
+                    && relationship.username.as_deref() == Some("alice")
+        ));
+    }
+
+    #[test]
+    fn relationship_update_emits_friend_upsert() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "RELATIONSHIP_UPDATE",
+                "d": {
+                    "id": "20",
+                    "type": 1,
+                    "nickname": "Bestie"
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AppEvent::RelationshipUpsert { relationship }
+                if relationship.user_id == Id::new(20)
+                    && relationship.status == FriendStatus::Friend
+                    && relationship.nickname.as_deref() == Some("Bestie")
+                    && relationship.display_name.is_none()
+                    && relationship.username.is_none()
         ));
     }
 
@@ -1702,6 +1737,7 @@ mod tests {
                 "provider": { "name": "YouTube" },
                 "title": "Example Video",
                 "description": "A video description",
+                "timestamp": "2026-05-13T15:22:03+00:00",
                 "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                 "thumbnail": {
                     "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
@@ -1727,6 +1763,10 @@ mod tests {
         assert_eq!(embeds[0].color, Some(16711680));
         assert_eq!(embeds[0].provider_name.as_deref(), Some("YouTube"));
         assert_eq!(embeds[0].title.as_deref(), Some("Example Video"));
+        assert_eq!(
+            embeds[0].timestamp.as_deref(),
+            Some("2026-05-13T15:22:03+00:00")
+        );
         assert_eq!(
             embeds[0].thumbnail_url.as_deref(),
             Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg")
@@ -1754,6 +1794,29 @@ mod tests {
         assert_eq!(
             embeds[0].video_url.as_deref(),
             Some("https://www.youtube.com/embed/dQw4w9WgXcQ")
+        );
+    }
+
+    #[test]
+    fn message_create_parser_keeps_timestamp_only_embeds() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "content": "",
+            "embeds": [{
+                "timestamp": "2026-05-13T15:22:03+00:00"
+            }]
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { embeds, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(embeds.len(), 1);
+        assert_eq!(
+            embeds[0].timestamp.as_deref(),
+            Some("2026-05-13T15:22:03+00:00")
         );
     }
 
@@ -1900,6 +1963,28 @@ mod tests {
     }
 
     #[test]
+    fn message_create_parser_does_not_store_empty_mention_nick() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "content": "hello <@40>",
+            "mentions": [{
+                "id": "40",
+                "username": "alpha",
+                "member": { "nick": "" }
+            }],
+            "attachments": []
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { mentions, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(mentions, vec![mention_info(40, "alpha")]);
+    }
+
+    #[test]
     fn message_create_parser_keeps_reply_preview() {
         let event = parse_message_create(&json!({
             "id": "20",
@@ -1924,6 +2009,7 @@ mod tests {
         assert_eq!(
             reply,
             Some(ReplyInfo {
+                author_id: Some(Id::new(31)),
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
                 sticker_names: Vec::new(),

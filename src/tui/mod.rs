@@ -23,7 +23,6 @@ use crate::{
     Result,
     discord::{AppCommand, DiscordClient, SequencedAppEvent, SnapshotRevision},
 };
-
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
 }

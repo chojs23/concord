@@ -14,6 +14,23 @@ pub struct MessageActionMenuState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageDeleteConfirmationState {
+    pub(super) channel_id: Id<ChannelMarker>,
+    pub(super) message_id: Id<MessageMarker>,
+    pub(super) author: String,
+    pub(super) content: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessagePinConfirmationState {
+    pub(super) channel_id: Id<ChannelMarker>,
+    pub(super) message_id: Id<MessageMarker>,
+    pub(super) pinned: bool,
+    pub(super) author: String,
+    pub(super) content: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct OptionsPopupState {
     pub(super) selected: usize,
 }

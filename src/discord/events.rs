@@ -274,6 +274,7 @@ pub struct EmbedInfo {
     pub author_name: Option<String>,
     pub title: Option<String>,
     pub description: Option<String>,
+    pub timestamp: Option<String>,
     pub fields: Vec<EmbedFieldInfo>,
     pub footer_text: Option<String>,
     pub url: Option<String>,
@@ -395,6 +396,7 @@ pub struct MessageSnapshotInfo {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplyInfo {
+    pub author_id: Option<Id<UserMarker>>,
     pub author: String,
     pub content: Option<String>,
     pub sticker_names: Vec<String>,
@@ -747,11 +749,10 @@ pub enum AppEvent {
         note: Option<String>,
     },
     RelationshipsLoaded {
-        relationships: Vec<(Id<UserMarker>, FriendStatus)>,
+        relationships: Vec<RelationshipInfo>,
     },
     RelationshipUpsert {
-        user_id: Id<UserMarker>,
-        status: FriendStatus,
+        relationship: RelationshipInfo,
     },
     RelationshipRemove {
         user_id: Id<UserMarker>,
@@ -836,6 +837,19 @@ pub enum FriendStatus {
     Blocked,
     IncomingRequest,
     OutgoingRequest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelationshipInfo {
+    pub user_id: Id<UserMarker>,
+    pub status: FriendStatus,
+    /// Friend nickname set by the current user. This is distinct from guild
+    /// nicknames and only applies to 1:1 friendships / DMs.
+    pub nickname: Option<String>,
+    /// Best available non-nickname label from the relationship payload,
+    /// usually `global_name` and otherwise the username.
+    pub display_name: Option<String>,
+    pub username: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

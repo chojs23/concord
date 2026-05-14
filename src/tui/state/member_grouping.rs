@@ -46,6 +46,15 @@ impl MemberEntry<'_> {
         }
     }
 
+    pub fn has_fallback_identity(self) -> bool {
+        match self {
+            Self::Guild(member) => member.username.is_none() && member.display_name == "unknown",
+            Self::Recipient(recipient) => {
+                recipient.username.is_none() && recipient.display_name == "unknown"
+            }
+        }
+    }
+
     pub fn is_bot(self) -> bool {
         match self {
             Self::Guild(member) => member.is_bot,

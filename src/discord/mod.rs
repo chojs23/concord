@@ -24,8 +24,8 @@ pub use events::{
     InlinePreviewInfo, MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
     MessageSnapshotInfo, MutualGuildInfo, NotificationLevel, PermissionOverwriteInfo,
     PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus, ReactionInfo,
-    ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, SequencedAppEvent,
-    UserProfileInfo,
+    ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, RelationshipInfo, ReplyInfo, RoleInfo,
+    SequencedAppEvent, UserProfileInfo,
 };
 pub use ids::{Id, marker};
 pub use rest::ForumPostPage;

@@ -7,8 +7,8 @@ use serde_json::Value;
 
 use crate::{
     discord::{
-        ActivityInfo, ChannelInfo, ChannelRecipientInfo, FriendStatus, GuildFolder, PresenceStatus,
-        ReadStateInfo, RoleInfo,
+        ActivityInfo, ChannelInfo, ChannelRecipientInfo, GuildFolder, PresenceStatus,
+        ReadStateInfo, RelationshipInfo, RoleInfo,
         events::AppEvent,
         ids::{
             Id,
@@ -27,7 +27,7 @@ use super::{
     members::parse_member_info,
     presence::parse_presence_entry,
     relationships::parse_relationship_entry,
-    shared::{parse_id, parse_status},
+    shared::{display_name_from_parts_or_unknown, parse_id, parse_status},
 };
 
 /// User-account READY embeds the full guild list under `d.guilds`. Bots get a
@@ -45,13 +45,11 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
     let user_started = Instant::now();
     if let Some(user) = data.get("user") {
         let user_id = user.get("id").and_then(parse_id::<UserMarker>);
-        let name = user
-            .get("global_name")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .or_else(|| user.get("username").and_then(Value::as_str))
-            .unwrap_or("unknown")
-            .to_owned();
+        let name = display_name_from_parts_or_unknown(
+            None,
+            user.get("global_name").and_then(Value::as_str),
+            user.get("username").and_then(Value::as_str),
+        );
         events.push(AppEvent::Ready {
             user: name,
             user_id,
@@ -154,7 +152,7 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
     // it as a single event so the profile popup can show friend / pending /
     // blocked badges without an extra REST round trip.
     if let Some(relationships) = data.get("relationships").and_then(Value::as_array) {
-        let parsed: Vec<(Id<UserMarker>, FriendStatus)> = relationships
+        let parsed: Vec<RelationshipInfo> = relationships
             .iter()
             .filter_map(parse_relationship_entry)
             .collect();

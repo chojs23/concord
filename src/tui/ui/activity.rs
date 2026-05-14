@@ -59,7 +59,9 @@ pub(super) fn build_activity_render(
         ActivityKind::Listening => {
             let name = sanitize_for_display_width(&activity.name);
             let body = if compact {
-                match (activity.details.as_deref(), activity.state.as_deref()) {
+                let details = activity.details.as_deref().map(sanitize_for_display_width);
+                let state = activity.state.as_deref().map(sanitize_for_display_width);
+                match (details.as_deref(), state.as_deref()) {
                     (Some(track), Some(artist)) => format!("{name} - {track} by {artist}"),
                     (Some(track), None) => format!("{name} - {track}"),
                     _ => name,
@@ -97,7 +99,11 @@ fn build_custom(activity: &ActivityInfo, emoji_images: &[EmojiImage<'_>]) -> Act
         .and_then(|emoji| emoji.image_url())
         .filter(|url| emoji_images.iter().any(|img| img.url == *url));
 
-    let body_text = activity.state.clone().unwrap_or_default();
+    let body_text = activity
+        .state
+        .as_deref()
+        .map(sanitize_for_display_width)
+        .unwrap_or_default();
 
     if let Some(url) = image_url {
         return ActivityRender {
@@ -110,11 +116,12 @@ fn build_custom(activity: &ActivityInfo, emoji_images: &[EmojiImage<'_>]) -> Act
         .emoji
         .as_ref()
         .map(|emoji| {
-            if emoji.id.is_some() {
+            let text = if emoji.id.is_some() {
                 format!(":{}:", emoji.name)
             } else {
                 emoji.name.clone()
-            }
+            };
+            sanitize_for_display_width(&text)
         })
         .unwrap_or_default();
 
