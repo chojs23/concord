@@ -160,6 +160,10 @@ fn parse_embed(value: &Value) -> Option<EmbedInfo> {
             .get("description")
             .and_then(Value::as_str)
             .map(str::to_owned),
+        timestamp: value
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         fields,
         footer_text: value
             .get("footer")

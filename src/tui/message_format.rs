@@ -4,6 +4,7 @@ use crate::discord::ids::{
     Id,
     marker::{GuildMarker, MessageMarker},
 };
+use chrono::{DateTime, Local};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::Span,
@@ -432,6 +433,15 @@ fn format_embed(
         embed_title_style(),
         loaded_custom_emoji_urls,
     );
+    let description = embed.description.as_deref().map(plain_embed_text);
+    push_embed_text(
+        &mut lines,
+        description.as_deref(),
+        show_custom_emoji,
+        inner_width,
+        Style::default(),
+        loaded_custom_emoji_urls,
+    );
     for field in &embed.fields {
         push_embed_text(
             &mut lines,
@@ -450,9 +460,10 @@ fn format_embed(
             loaded_custom_emoji_urls,
         );
     }
+    let footer = format_embed_footer(embed);
     push_embed_text(
         &mut lines,
-        embed.footer_text.as_deref(),
+        footer.as_deref(),
         show_custom_emoji,
         inner_width,
         embed_footer_style(),
@@ -477,6 +488,83 @@ fn format_embed(
         .into_iter()
         .map(|line| prefix_message_content_line_with_style(PREFIX, embed_line_style(embed), line))
         .collect()
+}
+
+fn plain_embed_text(value: &str) -> String {
+    let value = value.replace('\u{fe00}', "");
+    let mut output = String::with_capacity(value.len());
+    let mut cursor = 0usize;
+    while let Some(relative_start) = value[cursor..].find('[') {
+        let start = cursor.saturating_add(relative_start);
+        output.push_str(&unescape_embed_markdown(&value[cursor..start]));
+
+        let Some(label_end) = value[start + 1..].find(']').map(|end| start + 1 + end) else {
+            output.push_str(&unescape_embed_markdown(&value[start..]));
+            return strip_embed_markdown_emphasis(&output);
+        };
+        let url_start = label_end.saturating_add(1);
+        if !value[url_start..].starts_with('(') {
+            output.push('[');
+            cursor = start.saturating_add(1);
+            continue;
+        }
+        let Some(url_end) = value[url_start + 1..]
+            .find(')')
+            .map(|end| url_start + 1 + end)
+        else {
+            output.push_str(&unescape_embed_markdown(&value[start..]));
+            return strip_embed_markdown_emphasis(&output);
+        };
+
+        output.push_str(&unescape_embed_markdown(&value[start + 1..label_end]));
+        cursor = url_end.saturating_add(1);
+    }
+    output.push_str(&unescape_embed_markdown(&value[cursor..]));
+    strip_embed_markdown_emphasis(&output)
+}
+
+fn unescape_embed_markdown(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\'
+            && chars.peek().is_some_and(|next| {
+                matches!(
+                    next,
+                    '\\' | '*' | '_' | '`' | '~' | '|' | '[' | ']' | '(' | ')' | '.' | '!' | '#'
+                )
+            })
+        {
+            if let Some(next) = chars.next() {
+                output.push(next);
+            }
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
+fn strip_embed_markdown_emphasis(value: &str) -> String {
+    value.replace("**", "")
+}
+
+fn format_embed_footer(embed: &EmbedInfo) -> Option<String> {
+    match (
+        embed.footer_text.as_deref(),
+        embed.timestamp.as_deref().and_then(format_embed_timestamp),
+    ) {
+        (Some(text), Some(timestamp)) => Some(format!("{text} · {timestamp}")),
+        (Some(text), None) => Some(text.to_owned()),
+        (None, Some(timestamp)) => Some(timestamp),
+        (None, None) => None,
+    }
+}
+
+fn format_embed_timestamp(timestamp: &str) -> Option<String> {
+    DateTime::parse_from_rfc3339(timestamp)
+        .ok()
+        .map(|datetime| datetime.with_timezone(&Local).format("%H:%M").to_string())
 }
 
 fn push_embed_text(

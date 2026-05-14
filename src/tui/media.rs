@@ -2146,6 +2146,7 @@ mod tests {
             author_name: None,
             title: Some("Example Video".to_owned()),
             description: Some("A video description".to_owned()),
+            timestamp: None,
             fields: Vec::new(),
             footer_text: None,
             url: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),

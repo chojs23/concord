@@ -1681,7 +1681,7 @@ fn discord_embed_rows_increase_message_rendered_height() {
         ..MessageState::default()
     };
 
-    assert_eq!(message_rendered_height(&message, 80, 16, 3), 8);
+    assert_eq!(message_rendered_height(&message, 80, 16, 3), 9);
 }
 
 #[test]
@@ -1885,7 +1885,7 @@ fn forwarded_snapshot_embed_rows_increase_rendered_height() {
         ..MessageState::default()
     };
 
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 10);
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 11);
 }
 
 #[test]

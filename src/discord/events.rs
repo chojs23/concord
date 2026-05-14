@@ -274,6 +274,7 @@ pub struct EmbedInfo {
     pub author_name: Option<String>,
     pub title: Option<String>,
     pub description: Option<String>,
+    pub timestamp: Option<String>,
     pub fields: Vec<EmbedFieldInfo>,
     pub footer_text: Option<String>,
     pub url: Option<String>,
