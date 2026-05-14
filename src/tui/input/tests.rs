@@ -50,7 +50,7 @@ fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
 }
 
 fn channel_row_point(row: u16) -> (u16, u16) {
-    (21, 2 + row)
+    (21, 3 + row)
 }
 
 fn composer_point() -> (u16, u16) {
@@ -2237,6 +2237,28 @@ fn message_pane_shortcuts_reuse_message_actions() {
     handle_key(&mut edit_state, char_key('e'));
     assert!(edit_state.is_composing());
     assert_eq!(edit_state.composer_input(), "msg 1");
+}
+
+#[test]
+fn message_action_menu_shortcuts_match_message_pane_shortcuts() {
+    let mut reaction_state = state_with_messages(1);
+    reaction_state.focus_pane(FocusPane::Messages);
+    handle_key(&mut reaction_state, key(KeyCode::Enter));
+    handle_key(&mut reaction_state, char_key('r'));
+    assert!(reaction_state.is_emoji_reaction_picker_open());
+
+    let mut reply_state = state_with_messages(1);
+    reply_state.focus_pane(FocusPane::Messages);
+    handle_key(&mut reply_state, key(KeyCode::Enter));
+    handle_key(&mut reply_state, char_key('R'));
+    assert!(reply_state.is_composing());
+
+    let mut pin_state = state_with_messages(1);
+    pin_state.focus_pane(FocusPane::Messages);
+    handle_key(&mut pin_state, key(KeyCode::Enter));
+    let command = handle_key(&mut pin_state, char_key('P'));
+    assert_eq!(command, None);
+    assert!(pin_state.is_message_pin_confirmation_open());
 }
 
 #[test]

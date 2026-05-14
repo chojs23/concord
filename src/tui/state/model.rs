@@ -49,6 +49,7 @@ pub enum MessageActionKind {
     OpenPollVotePicker,
 }
 
+// Message action will be removed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageActionItem {
     pub kind: MessageActionKind,
@@ -59,17 +60,17 @@ pub struct MessageActionItem {
 impl MessageActionKind {
     fn preferred_shortcut(&self) -> Option<char> {
         match self {
-            MessageActionKind::Reply => Some('r'),
+            MessageActionKind::Reply => Some('R'),
             MessageActionKind::Edit => Some('e'),
             MessageActionKind::Delete => Some('d'),
             MessageActionKind::OpenThread => Some('t'),
             MessageActionKind::ViewImage => Some('v'),
             MessageActionKind::DownloadAttachment(_) => Some('f'),
-            MessageActionKind::AddReaction => Some('a'),
+            MessageActionKind::AddReaction => Some('r'),
             MessageActionKind::RemoveReaction(_) => Some('x'),
             MessageActionKind::ShowReactionUsers => Some('u'),
             MessageActionKind::ShowProfile => Some('p'),
-            MessageActionKind::SetPinned(_) => Some('n'),
+            MessageActionKind::SetPinned(_) => Some('P'),
             MessageActionKind::VotePollAnswer(_) => None,
             MessageActionKind::OpenPollVotePicker => Some('c'),
         }

@@ -3122,17 +3122,32 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
             enabled: true,
         },
         MessageActionItem {
+            kind: MessageActionKind::AddReaction,
+            label: "Add reaction".to_owned(),
+            enabled: true,
+        },
+        MessageActionItem {
             kind: MessageActionKind::DownloadAttachment(0),
             label: "Download file".to_owned(),
             enabled: false,
         },
+        MessageActionItem {
+            kind: MessageActionKind::SetPinned(true),
+            label: "Pin message".to_owned(),
+            enabled: true,
+        },
     ];
 
-    let lines = message_action_menu_lines(&actions, 1);
+    let lines = message_action_menu_lines(&actions, 2);
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["  [r] Reply", "› [f] Download file (unavailable)",]
+        vec![
+            "  [R] Reply",
+            "  [r] Add reaction",
+            "› [f] Download file (unavailable)",
+            "  [P] Pin message",
+        ]
     );
 }
 
