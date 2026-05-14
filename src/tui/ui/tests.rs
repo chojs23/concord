@@ -1956,6 +1956,7 @@ fn message_content_lines_render_discord_embed_preview() {
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "  ▎ YouTube",
             "  ▎ Example Video",
+            "  ▎ A video description",
         ]
     );
     assert_eq!(lines[1].style.fg, Some(DIM));
@@ -1987,6 +1988,7 @@ fn message_embed_hides_media_and_player_urls() {
             "watch this",
             "  ▎ YouTube",
             "  ▎ Example Video",
+            "  ▎ A video description",
             "  ▎ https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         ]
     );
@@ -2030,6 +2032,36 @@ fn message_embed_url_underline_skips_marker() {
             .add_modifier
             .contains(Modifier::UNDERLINED)
     );
+}
+
+#[test]
+fn message_embed_renders_tweet_description_as_readable_text() {
+    let mut message = message_with_content(Some(
+        "Fx'ed that for you! https://www.fxtwitter.com/MikeReiss/status/2054582956438524124"
+            .to_owned(),
+    ));
+    let mut embed = youtube_embed();
+    embed.color = Some(0x6364ff);
+    embed.provider_name = None;
+    embed.author_name = Some("Mike Reiss (@MikeReiss)".to_owned());
+    embed.title = None;
+    embed.description = Some(
+        "Patriots rookie Quintayvious Hutchins \\(seventh round, Boston College\\) was arraigned\\.\n\u{fe00}\n**[💬](https://x.com/intent/tweet?in_reply_to=1) 2 [🔁](https://x.com/intent/retweet?tweet_id=1) 11 [❤️](https://x.com/intent/like?tweet_id=1) 44 👁️ 12\\.4K **"
+            .to_owned(),
+    );
+    embed.footer_text = Some("FxTwitter".to_owned());
+    embed.url = Some("https://www.fxtwitter.com/MikeReiss/status/2054582956438524124".to_owned());
+    message.embeds = vec![embed];
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 120);
+    let texts = line_texts(&lines);
+
+    assert!(texts.contains(&"  ▎ Mike Reiss (@MikeReiss)"));
+    assert!(texts.contains(
+        &"  ▎ Patriots rookie Quintayvious Hutchins (seventh round, Boston College) was arraigned."
+    ));
+    assert!(texts.contains(&"  ▎ 💬 2 🔁 11 ❤️ 44 👁️ 12.4K "));
+    assert!(texts.contains(&"  ▎ FxTwitter"));
 }
 
 #[test]
@@ -3656,6 +3688,7 @@ fn forwarded_snapshot_renders_discord_embed_preview() {
             "│ https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "│   ▎ YouTube",
             "│   ▎ Example Video",
+            "│   ▎ A video description",
         ]
     );
     let url_spans = lines[2].spans();
@@ -4626,6 +4659,7 @@ fn youtube_embed() -> EmbedInfo {
         author_name: None,
         title: Some("Example Video".to_owned()),
         description: Some("A video description".to_owned()),
+        timestamp: None,
         fields: Vec::new(),
         footer_text: None,
         url: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),

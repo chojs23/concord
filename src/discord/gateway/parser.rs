@@ -1702,6 +1702,7 @@ mod tests {
                 "provider": { "name": "YouTube" },
                 "title": "Example Video",
                 "description": "A video description",
+                "timestamp": "2026-05-13T15:22:03+00:00",
                 "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                 "thumbnail": {
                     "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
@@ -1727,6 +1728,10 @@ mod tests {
         assert_eq!(embeds[0].color, Some(16711680));
         assert_eq!(embeds[0].provider_name.as_deref(), Some("YouTube"));
         assert_eq!(embeds[0].title.as_deref(), Some("Example Video"));
+        assert_eq!(
+            embeds[0].timestamp.as_deref(),
+            Some("2026-05-13T15:22:03+00:00")
+        );
         assert_eq!(
             embeds[0].thumbnail_url.as_deref(),
             Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg")
