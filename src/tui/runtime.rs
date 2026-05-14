@@ -1,10 +1,13 @@
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    io::stdout,
+};
 
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
-use crossterm::event::EventStream;
+use crossterm::{clipboard::CopyToClipboard, event::EventStream};
 use futures::StreamExt;
 use ratatui::layout::Rect;
 use tokio::sync::{mpsc, watch};
@@ -254,6 +257,11 @@ pub(super) async fn run_dashboard(
                             if let Err(error) = open_composer_in_editor(terminal, &mut state) {
                                 logging::error("tui", format!("editor failed: {error}"));
                             }
+                        }
+                        if let Some(content) = state.take_copy_message_content_request()
+                            && let Err(error) = copy_to_clipboard(&content)
+                        {
+                            logging::error("tui", format!("copy message failed: {error}"));
                         }
                         if let Some(command) = outcome.command
                             && commands.send(command).await.is_err()
@@ -582,6 +590,10 @@ pub(super) async fn run_dashboard(
     }
 
     Ok(())
+}
+
+fn copy_to_clipboard(content: &str) -> std::io::Result<()> {
+    crossterm::execute!(stdout(), CopyToClipboard::to_clipboard_from(content))
 }
 
 fn open_composer_in_editor(

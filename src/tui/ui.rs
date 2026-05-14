@@ -74,7 +74,8 @@ use self::panes::{
 use self::panes::{render_channels, render_guilds, render_header, render_members};
 use self::popups::{
     render_channel_switcher_popup, render_debug_log_popup, render_emoji_reaction_picker,
-    render_image_viewer, render_leader_popup, render_message_action_menu, render_options_popup,
+    render_image_viewer, render_leader_popup, render_message_action_menu,
+    render_message_delete_confirmation, render_message_pin_confirmation, render_options_popup,
     render_poll_vote_picker, render_reaction_users_popup, render_user_profile_popup,
     user_profile_popup_has_avatar, user_profile_popup_text_geometry,
     user_profile_popup_total_lines,
@@ -102,7 +103,8 @@ use self::{
     popups::{
         channel_switcher_cursor_position, channel_switcher_lines, debug_log_popup_lines,
         emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
-        filtered_emoji_reaction_picker_lines, message_action_menu_lines, options_popup_lines,
+        filtered_emoji_reaction_picker_lines, message_action_menu_lines,
+        message_delete_confirmation_lines, message_pin_confirmation_lines, options_popup_lines,
         poll_vote_picker_lines, reaction_users_popup_lines, user_profile_popup_lines,
         user_profile_popup_lines_with_activities,
     },
@@ -211,6 +213,8 @@ pub fn render(
     if !state.is_leader_action_mode() {
         render_message_action_menu(frame, areas.messages, state);
     }
+    render_message_delete_confirmation(frame, areas.messages, state);
+    render_message_pin_confirmation(frame, areas.messages, state);
     render_options_popup(frame, areas.messages, state);
     render_poll_vote_picker(frame, areas.messages, state);
     render_user_profile_popup(frame, areas.messages, state, profile_avatar, &emoji_images);

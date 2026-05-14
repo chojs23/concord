@@ -2520,8 +2520,10 @@ fn other_user_message_actions_include_delete_with_manage_messages() {
     );
     state.open_selected_message_actions();
     assert!(state.select_message_action_row(delete_index));
+    assert_eq!(state.activate_selected_message_action(), None);
+    assert!(state.is_message_delete_confirmation_open());
     assert_eq!(
-        state.activate_selected_message_action(),
+        state.confirm_message_delete(),
         Some(AppCommand::DeleteMessage {
             channel_id: Id::new(2),
             message_id: Id::new(1),
@@ -2583,8 +2585,10 @@ fn delete_message_action_submits_delete_command_for_own_message() {
     state.open_selected_message_actions();
     assert!(state.select_message_action_row(2));
 
+    assert_eq!(state.activate_selected_message_action(), None);
+    assert!(state.is_message_delete_confirmation_open());
     assert_eq!(
-        state.activate_selected_message_action(),
+        state.confirm_message_delete(),
         Some(AppCommand::DeleteMessage {
             channel_id: Id::new(2),
             message_id: Id::new(1),
@@ -2633,8 +2637,10 @@ fn own_attachment_only_message_can_be_deleted_but_not_edited() {
             .any(|action| action.kind == MessageActionKind::Edit)
     );
     assert!(state.select_message_action_row(1));
+    assert_eq!(state.activate_selected_message_action(), None);
+    assert!(state.is_message_delete_confirmation_open());
     assert_eq!(
-        state.activate_selected_message_action(),
+        state.confirm_message_delete(),
         Some(AppCommand::DeleteMessage {
             channel_id: Id::new(2),
             message_id: Id::new(1),

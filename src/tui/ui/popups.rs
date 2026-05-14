@@ -6,6 +6,7 @@ use ratatui::layout::Position;
 
 mod action_menu;
 mod channel_switcher;
+mod confirmation;
 mod debug_log;
 mod image_viewer;
 mod options;
@@ -20,6 +21,11 @@ pub(super) use action_menu::{render_leader_popup, render_message_action_menu};
 pub(super) use channel_switcher::{channel_switcher_cursor_position, channel_switcher_lines};
 pub(super) use channel_switcher::{
     channel_switcher_item_index_at, channel_switcher_popup_area, render_channel_switcher_popup,
+};
+#[cfg(test)]
+pub(super) use confirmation::{message_delete_confirmation_lines, message_pin_confirmation_lines};
+pub(super) use confirmation::{
+    render_message_delete_confirmation, render_message_pin_confirmation,
 };
 #[cfg(test)]
 pub(super) use debug_log::debug_log_popup_lines;

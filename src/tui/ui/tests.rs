@@ -21,12 +21,13 @@ use super::{
     forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
     inline_image_preview_area, inline_image_preview_row, member_display_label, member_name_style,
     message_action_menu_lines, message_author_style, message_body_custom_emoji_rows,
-    message_item_lines, message_viewport_lines, new_messages_notice_line, options_popup_lines,
-    poll_vote_picker_lines, primary_activity_summary, reaction_users_popup_lines,
-    reaction_users_visible_line_count, render_channels, render_guilds, selected_avatar_x_offset,
-    selected_message_card_width, selected_message_content_x_offset, sync_view_heights,
-    user_profile_popup_has_avatar, user_profile_popup_lines,
-    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
+    message_delete_confirmation_lines, message_item_lines, message_pin_confirmation_lines,
+    message_viewport_lines, new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
+    primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
+    render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
+    selected_message_content_x_offset, sync_view_heights, user_profile_popup_has_avatar,
+    user_profile_popup_lines, user_profile_popup_lines_with_activities,
+    user_profile_popup_text_geometry,
 };
 use crate::tui::message_time::{
     discord_epoch_unix_millis, format_unix_millis_with_offset, message_starts_new_day,
@@ -93,6 +94,32 @@ fn options_popup_lines_show_selected_toggle_state() {
     assert_eq!(lines[1].spans[1].content, "[x] ");
     assert_eq!(lines[2].spans[1].content, "[balanced] ");
     assert_eq!(lines.len(), 3);
+}
+
+#[test]
+fn message_delete_confirmation_lines_show_controls_and_excerpt() {
+    let lines = message_delete_confirmation_lines(
+        "neo",
+        Some("a very important message that should be deleted"),
+        80,
+    );
+
+    assert_eq!(lines[0].spans[0].content, "Delete this message?");
+    assert_eq!(lines[1].spans[0].content, "From: neo");
+    assert!(lines[2].spans[0].content.contains("important message"));
+    assert!(lines[4].spans[0].content.contains("Enter/y"));
+    assert!(lines[4].spans[2].content.contains("Esc/n"));
+}
+
+#[test]
+fn message_pin_confirmation_lines_show_action_and_excerpt() {
+    let pin_lines = message_pin_confirmation_lines(true, "neo", Some("pin this"), 80);
+    assert_eq!(pin_lines[0].spans[0].content, "Pin this message?");
+    assert!(pin_lines[4].spans[1].content.contains("Pin message"));
+
+    let unpin_lines = message_pin_confirmation_lines(false, "neo", Some("unpin this"), 80);
+    assert_eq!(unpin_lines[0].spans[0].content, "Unpin this message?");
+    assert!(unpin_lines[4].spans[1].content.contains("Unpin message"));
 }
 
 #[test]

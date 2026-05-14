@@ -3,7 +3,7 @@ use crate::discord::{AppCommand, MessageState, ReactionEmoji};
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
 use super::{
     DashboardState, FocusPane, MessageActionItem, MessageActionKind, MessageActionMenuState,
-    message_action_shortcut,
+    message_action_shortcut, popups,
 };
 
 impl DashboardState {
@@ -209,18 +209,9 @@ impl DashboardState {
                 None
             }
             MessageActionKind::Delete => {
-                let message = self.selected_message_state()?;
-                if !self.can_delete_message(message) {
-                    self.close_message_action_menu();
-                    return None;
-                }
-                let channel_id = message.channel_id;
-                let message_id = message.id;
+                self.open_selected_message_delete_confirmation();
                 self.close_message_action_menu();
-                Some(AppCommand::DeleteMessage {
-                    channel_id,
-                    message_id,
-                })
+                None
             }
             MessageActionKind::OpenThread => {
                 let channel_id = self
@@ -298,19 +289,9 @@ impl DashboardState {
                 })
             }
             MessageActionKind::SetPinned(pinned) => {
-                let message = self.selected_message_state()?;
-                if !self.can_pin_messages_for_message(message) {
-                    self.close_message_action_menu();
-                    return None;
-                }
-                let channel_id = message.channel_id;
-                let message_id = message.id;
+                self.open_selected_message_pin_confirmation(pinned);
                 self.close_message_action_menu();
-                Some(AppCommand::SetMessagePinned {
-                    channel_id,
-                    message_id,
-                    pinned,
-                })
+                None
             }
             MessageActionKind::OpenPollVotePicker => {
                 self.open_poll_vote_picker();
@@ -415,6 +396,126 @@ impl DashboardState {
         })?;
         self.select_message_action_row(index);
         self.activate_selected_message_action()
+    }
+
+    pub fn direct_copy_selected_message_content(&mut self) {
+        let Some(content) = self
+            .selected_message_state()
+            .and_then(|message| message.content.as_ref())
+        else {
+            return;
+        };
+        self.copy_message_content_requested = Some(content.clone());
+    }
+
+    pub(in crate::tui) fn take_copy_message_content_request(&mut self) -> Option<String> {
+        self.copy_message_content_requested.take()
+    }
+
+    pub fn direct_open_selected_message_reaction_picker(&mut self) {
+        self.open_emoji_reaction_picker();
+    }
+
+    pub fn direct_reply_to_selected_message(&mut self) {
+        self.start_reply_composer();
+    }
+
+    pub fn direct_edit_selected_message(&mut self) {
+        self.start_edit_composer();
+    }
+
+    pub fn direct_open_selected_message_image_viewer(&mut self) {
+        self.open_image_viewer_for_selected_message();
+    }
+
+    pub fn direct_show_selected_message_profile(&mut self) -> Option<AppCommand> {
+        let message = self.selected_message_state()?;
+        self.open_user_profile_popup(message.author_id, message.guild_id)
+    }
+
+    pub fn direct_open_selected_message_pin_confirmation(&mut self) {
+        let Some(message) = self.selected_message_state() else {
+            return;
+        };
+        self.open_selected_message_pin_confirmation(!message.pinned);
+    }
+
+    pub fn open_selected_message_delete_confirmation(&mut self) {
+        let Some(message) = self.selected_message_state() else {
+            return;
+        };
+        if !self.can_delete_message(message) {
+            return;
+        }
+        self.message_delete_confirmation = Some(popups::MessageDeleteConfirmationState {
+            channel_id: message.channel_id,
+            message_id: message.id,
+            author: message.author.clone(),
+            content: message.content.clone(),
+        });
+    }
+
+    pub fn is_message_delete_confirmation_open(&self) -> bool {
+        self.message_delete_confirmation.is_some()
+    }
+
+    pub fn close_message_delete_confirmation(&mut self) {
+        self.message_delete_confirmation = None;
+    }
+
+    pub fn confirm_message_delete(&mut self) -> Option<AppCommand> {
+        let confirmation = self.message_delete_confirmation.take()?;
+        Some(AppCommand::DeleteMessage {
+            channel_id: confirmation.channel_id,
+            message_id: confirmation.message_id,
+        })
+    }
+
+    pub fn message_delete_confirmation_lines(&self) -> Option<(String, Option<String>)> {
+        let confirmation = self.message_delete_confirmation.as_ref()?;
+        Some((confirmation.author.clone(), confirmation.content.clone()))
+    }
+
+    pub fn open_selected_message_pin_confirmation(&mut self, pinned: bool) {
+        let Some(message) = self.selected_message_state() else {
+            return;
+        };
+        if !self.can_pin_messages_for_message(message) {
+            return;
+        }
+        self.message_pin_confirmation = Some(popups::MessagePinConfirmationState {
+            channel_id: message.channel_id,
+            message_id: message.id,
+            pinned,
+            author: message.author.clone(),
+            content: message.content.clone(),
+        });
+    }
+
+    pub fn is_message_pin_confirmation_open(&self) -> bool {
+        self.message_pin_confirmation.is_some()
+    }
+
+    pub fn close_message_pin_confirmation(&mut self) {
+        self.message_pin_confirmation = None;
+    }
+
+    pub fn confirm_message_pin(&mut self) -> Option<AppCommand> {
+        let confirmation = self.message_pin_confirmation.take()?;
+        Some(AppCommand::SetMessagePinned {
+            channel_id: confirmation.channel_id,
+            message_id: confirmation.message_id,
+            pinned: confirmation.pinned,
+        })
+    }
+
+    pub fn message_pin_confirmation_lines(&self) -> Option<(bool, String, Option<String>)> {
+        let confirmation = self.message_pin_confirmation.as_ref()?;
+        Some((
+            confirmation.pinned,
+            confirmation.author.clone(),
+            confirmation.content.clone(),
+        ))
     }
 }
 
