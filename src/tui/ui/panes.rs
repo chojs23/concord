@@ -1431,7 +1431,10 @@ fn activity_priority(kind: ActivityKind) -> u8 {
 
 pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let title = format!(" Concord - v{} ", env!("CARGO_PKG_VERSION"));
-    let mut spans = vec![Span::styled(title, Style::default().fg(state.theme().accent).bold())];
+    let mut spans = vec![Span::styled(
+        title,
+        Style::default().fg(state.theme().accent).bold(),
+    )];
     if let Some(user) = state.current_user() {
         spans.push(Span::styled(
             " Connected as ",
