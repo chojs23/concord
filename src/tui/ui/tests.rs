@@ -1265,6 +1265,11 @@ fn muted_category_and_channel_names_are_dimmed() {
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
+    let header_text = (0..buffer.area.width)
+        .map(|col| buffer[(col, 1)].symbol().to_owned())
+        .collect::<String>();
+    assert!(header_text.contains("guild"));
+
     let mut saw_category = false;
     let mut saw_channel = false;
     for row in 0..buffer.area.height {

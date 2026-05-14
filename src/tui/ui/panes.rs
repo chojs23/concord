@@ -258,24 +258,46 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
     let dashboard = state;
     let focused = state.focus() == FocusPane::Channels;
     let filter_query = state.channel_pane_filter_query();
+    let block = panel_block("Channels", focused);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let (list_area, filter_area) = if filter_query.is_some() && area.height >= 4 {
-        let block = panel_block("Channels", focused);
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-        let list_h = inner.height.saturating_sub(1);
+    let header_area = Rect {
+        height: inner.height.min(1),
+        ..inner
+    };
+    if header_area.height > 0 {
+        let server_name = selected_channel_server_label(state);
+        let label = truncate_display_width(&server_name, header_area.width as usize);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                label,
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ))),
+            header_area,
+        );
+    }
+
+    let channels_area = Rect {
+        y: inner.y.saturating_add(header_area.height),
+        height: inner.height.saturating_sub(header_area.height),
+        ..inner
+    };
+
+    let (list_area, filter_area) = if filter_query.is_some() && channels_area.height >= 2 {
+        let list_h = channels_area.height.saturating_sub(1);
         let list_rect = Rect {
             height: list_h,
-            ..inner
+            ..channels_area
         };
         let filter_rect = Rect {
-            y: inner.y + list_h,
+            y: channels_area.y + list_h,
             height: 1,
-            ..inner
+            ..channels_area
         };
         (list_rect, Some(filter_rect))
     } else {
-        (area, None)
+        (channels_area, None)
     };
 
     let entries = state.visible_channel_pane_entries();
@@ -374,11 +396,6 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
         .collect();
 
     let list = List::new(items).highlight_style(highlight_style());
-    let list = if filter_area.is_none() {
-        list.block(panel_block("Channels", focused))
-    } else {
-        list
-    };
     frame.render_widget(list, list_area);
 
     if let Some(filter_rect) = filter_area {
@@ -395,11 +412,19 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
 
     render_vertical_scrollbar(
         frame,
-        panel_scrollbar_area(area),
+        list_area,
         state.channel_scroll(),
-        panel_content_height(area, "Channels"),
+        list_area.height as usize,
         state.channel_pane_entries().len(),
     );
+}
+
+fn selected_channel_server_label(state: &DashboardState) -> String {
+    state
+        .selected_guild_id()
+        .and_then(|guild_id| state.guild_name(guild_id))
+        .unwrap_or("Direct Messages")
+        .to_owned()
 }
 
 pub(super) fn render_composer(

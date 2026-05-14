@@ -129,6 +129,7 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
             "Channels",
             state.is_pane_visible(FocusPane::Channels),
         )
+        .saturating_sub(usize::from(state.is_pane_visible(FocusPane::Channels)))
         .saturating_sub(channel_filter_row),
     );
     state.set_message_view_height(message_list_area(areas.messages, state).height as usize);

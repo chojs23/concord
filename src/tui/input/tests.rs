@@ -116,6 +116,30 @@ fn enter_toggles_selected_channel_category_and_space_opens_leader() {
 }
 
 #[test]
+fn channel_filter_opens_child_inside_collapsed_category() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Enter));
+    assert_selected_channel_category_collapsed(&state, true);
+
+    handle_key(&mut state, char_key('/'));
+    for value in "random".chars() {
+        handle_key(&mut state, char_key(value));
+    }
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::SubscribeGuildChannel {
+            guild_id: Id::new(1),
+            channel_id: Id::new(12),
+        })
+    );
+    assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
+    assert_selected_channel_category_collapsed(&state, true);
+}
+
+#[test]
 fn movement_waits_for_enter_to_activate_channel() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);

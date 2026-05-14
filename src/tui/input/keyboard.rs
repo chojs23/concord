@@ -593,10 +593,7 @@ fn handle_pane_filter_key(
             }
             Some(None)
         }
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.quit();
-            Some(None)
-        }
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(None),
         KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.move_down();
             Some(None)

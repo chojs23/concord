@@ -18,7 +18,10 @@ impl KeyBinding {
     ///   (b) Char('J') + empty     — legacy no-modifier uppercase
     ///   (c) Char('J') + SHIFT     — uppercase WITH shift still set
     ///
-    /// All three are normalised to form (a): lowercase char + SHIFT.
+    /// All three are normalised to form (a): lowercase char + SHIFT. Some
+    /// enhanced keyboard protocols can also preserve SHIFT on printable
+    /// punctuation like `?`. Those are normalised to the printable character
+    /// without SHIFT because the character already carries the shifted meaning.
     /// `BackTab` (Shift+Tab) is normalised to `Tab + SHIFT`.
     fn from_event(key: KeyEvent) -> Self {
         if key.code == KeyCode::BackTab {
@@ -38,6 +41,12 @@ impl KeyBinding {
                             };
                         }
                     }
+                }
+                if key.modifiers == KeyModifiers::SHIFT && !c.is_alphabetic() {
+                    return Self {
+                        code: KeyCode::Char(c),
+                        modifiers: KeyModifiers::empty(),
+                    };
                 }
             }
         }
@@ -587,8 +596,21 @@ mod tests {
     }
 
     #[test]
+    fn shifted_punctuation_matches_plain_printable_binding() {
+        let b = KeyBinding::parse("?").expect("should parse");
+        assert_eq!(
+            b,
+            KeyBinding::from_event(press(KeyCode::Char('?'), KeyModifiers::SHIFT))
+        );
+    }
+
+    #[test]
     fn default_bindings_look_up_correctly() {
         let kb = ActiveKeyBindings::default();
+        assert_eq!(
+            kb.lookup(press(KeyCode::Char('?'), KeyModifiers::SHIFT)),
+            Some(Action::OpenKeymap)
+        );
         assert_eq!(
             kb.lookup(press(KeyCode::Char('q'), KeyModifiers::empty())),
             Some(Action::Quit)

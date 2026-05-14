@@ -750,7 +750,7 @@ impl DashboardState {
                 self.selected_channel = idx;
             }
             self.channel_keep_selection_visible = true;
-            return self.confirm_selected_channel_command();
+            return self.activate_channel_command(channel_id);
         }
         None
     }
@@ -980,22 +980,28 @@ impl DashboardState {
                 None
             }
             Some(ChannelPaneEntry::Channel { state, .. }) => {
-                let channel_id = state.id;
-                let command = if is_direct_message_channel(state) {
-                    Some(AppCommand::SubscribeDirectMessage { channel_id })
-                } else {
-                    state
-                        .guild_id
-                        .map(|guild_id| AppCommand::SubscribeGuildChannel {
-                            guild_id,
-                            channel_id,
-                        })
-                };
-                self.activate_channel(channel_id);
-                command
+                self.activate_channel_command(state.id)
             }
             None => None,
         }
+    }
+
+    fn activate_channel_command(&mut self, channel_id: Id<ChannelMarker>) -> Option<AppCommand> {
+        let command = {
+            let state = self.discord.channel(channel_id)?;
+            if is_direct_message_channel(state) {
+                Some(AppCommand::SubscribeDirectMessage { channel_id })
+            } else {
+                state
+                    .guild_id
+                    .map(|guild_id| AppCommand::SubscribeGuildChannel {
+                        guild_id,
+                        channel_id,
+                    })
+            }
+        };
+        self.activate_channel(channel_id);
+        command
     }
 
     pub(super) fn record_thread_return_target(&mut self, thread_channel_id: Id<ChannelMarker>) {
