@@ -147,16 +147,14 @@ mod tests {
 
     #[test]
     fn from_theme_uses_parsed_hex() {
-        let mut theme = Theme::default();
-        theme.accent = "#FF6600".to_owned();
+        let theme = Theme { accent: "#FF6600".to_owned(), ..Default::default() };
         let scheme = ColorScheme::from_theme(&theme);
         assert_eq!(scheme.accent, Color::Rgb(255, 102, 0));
     }
 
     #[test]
     fn from_theme_falls_back_on_invalid_hex() {
-        let mut theme = Theme::default();
-        theme.accent = "not-a-color".to_owned();
+        let theme = Theme { accent: "not-a-color".to_owned(), ..Default::default() };
         let scheme = ColorScheme::from_theme(&theme);
         assert_eq!(scheme.accent, ColorScheme::default().accent);
     }
