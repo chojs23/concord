@@ -356,7 +356,7 @@ impl DashboardState {
     /// profile cache when the guild member entry only has fallback data.
     pub fn member_display_name(&self, entry: MemberEntry<'_>) -> String {
         let name = entry.display_name();
-        if entry.username().is_none() && name == "unknown" {
+        if entry.has_fallback_identity() {
             if let Some(guild_id) = self.selected_guild_id() {
                 if let Some(profile) = self.discord.user_profile(entry.user_id(), Some(guild_id)) {
                     return profile.display_name().to_owned();

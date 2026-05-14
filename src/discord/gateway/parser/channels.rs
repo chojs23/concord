@@ -9,7 +9,10 @@ use crate::discord::{
     },
 };
 
-use super::shared::{parse_id, parse_status, raw_user_avatar_url};
+use super::shared::{
+    display_name_from_parts, display_name_from_parts_or_unknown, parse_id, parse_status,
+    raw_user_avatar_url,
+};
 
 pub(crate) fn parse_channel_info(
     value: &Value,
@@ -158,12 +161,12 @@ fn recipient_label(value: &Value) -> Option<String> {
     let names: Vec<String> = recipients
         .iter()
         .filter_map(|recipient| {
-            let global = recipient
+            let global_name = recipient
                 .get("global_name")
                 .and_then(Value::as_str)
                 .filter(|value| !value.is_empty());
             let username = recipient.get("username").and_then(Value::as_str);
-            global.or(username).map(str::to_owned)
+            display_name_from_parts(None, global_name, username).map(str::to_owned)
         })
         .collect();
     if names.is_empty() {
@@ -174,12 +177,9 @@ fn recipient_label(value: &Value) -> Option<String> {
 
 pub(super) fn parse_channel_recipient_info(value: &Value) -> Option<ChannelRecipientInfo> {
     let user_id = parse_id::<UserMarker>(value.get("id")?)?;
-    let global_name = value
-        .get("global_name")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty());
+    let global_name = value.get("global_name").and_then(Value::as_str);
     let username = value.get("username").and_then(Value::as_str);
-    let display_name = global_name.or(username).unwrap_or("unknown").to_owned();
+    let display_name = display_name_from_parts_or_unknown(None, global_name, username);
     let is_bot = value.get("bot").and_then(Value::as_bool).unwrap_or(false);
     let status = value
         .get("status")

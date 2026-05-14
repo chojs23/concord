@@ -7,7 +7,7 @@ use crate::discord::ids::{
 };
 use crate::discord::{ActivityInfo, MemberInfo, PresenceStatus, RoleInfo};
 
-use super::{DiscordState, TYPING_INDICATOR_TTL};
+use super::{DiscordState, TYPING_INDICATOR_TTL, is_fallback_identity};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuildMemberState {
@@ -136,7 +136,7 @@ pub(super) fn upsert_member(
     // When the incoming payload is a bare-minimum fallback (no username resolved,
     // display_name fell through to "unknown"), don't clobber a previously cached
     // complete entry — the complete data came from a profile fetch and is better.
-    let is_fallback = member.username.is_none() && member.display_name == "unknown";
+    let is_fallback = is_fallback_identity(member.username.as_deref(), &member.display_name);
     let existing_complete = is_fallback
         .then(|| map.get(&member.user_id))
         .flatten()

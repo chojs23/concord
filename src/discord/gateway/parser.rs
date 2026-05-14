@@ -1935,6 +1935,28 @@ mod tests {
     }
 
     #[test]
+    fn message_create_parser_does_not_store_empty_mention_nick() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "content": "hello <@40>",
+            "mentions": [{
+                "id": "40",
+                "username": "alpha",
+                "member": { "nick": "" }
+            }],
+            "attachments": []
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { mentions, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(mentions, vec![mention_info(40, "alpha")]);
+    }
+
+    #[test]
     fn message_create_parser_keeps_reply_preview() {
         let event = parse_message_create(&json!({
             "id": "20",

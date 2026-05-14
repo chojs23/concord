@@ -11,7 +11,7 @@ use crate::discord::{
 };
 
 use super::{
-    DiscordState, OLDER_HISTORY_EXTRA_WINDOW_MULTIPLIER,
+    DiscordState, OLDER_HISTORY_EXTRA_WINDOW_MULTIPLIER, is_fallback_identity,
     members::{selected_member_role_color, selected_role_ids_color},
     profiles::UserProfileCacheKey,
 };
@@ -220,7 +220,7 @@ impl DiscordState {
             // Only trust the member entry if it has real name data. When
             // username is None and display_name is "unknown" the entry is a
             // bare fallback — fall through to the profile cache instead.
-            if member.username.is_some() || member.display_name != "unknown" {
+            if !is_fallback_identity(member.username.as_deref(), &member.display_name) {
                 return member.display_name.clone();
             }
         }
@@ -276,7 +276,8 @@ impl DiscordState {
         // If this member payload is a fallback ("unknown", no username), avoid
         // clobbering messages that already have a real name. Try the profile
         // cache for a better name; if nothing is available, skip the refresh.
-        let display_name = if member.username.is_none() && member.display_name == "unknown" {
+        let display_name = if is_fallback_identity(member.username.as_deref(), &member.display_name)
+        {
             match self
                 .user_profiles
                 .get(&UserProfileCacheKey::new(member.user_id, Some(guild_id)))

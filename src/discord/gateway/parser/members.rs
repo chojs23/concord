@@ -11,7 +11,7 @@ use crate::discord::{
 
 use super::{
     presence::{parse_activities, parse_presence_entry},
-    shared::{parse_id, parse_status, raw_user_avatar_url},
+    shared::{display_name_from_parts_or_unknown, parse_id, parse_status, raw_user_avatar_url},
 };
 
 pub(super) fn parse_member_upsert(data: &Value) -> Option<AppEvent> {
@@ -149,22 +149,14 @@ pub(super) fn parse_member_info(value: &Value) -> Option<MemberInfo> {
         .or_else(|| value.get("user_id"))
         .or_else(|| value.get("id"))
         .and_then(parse_id::<UserMarker>)?;
-    let nick = value
-        .get("nick")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty());
+    let nick = value.get("nick").and_then(Value::as_str);
     let global_name = user
         .and_then(|user| user.get("global_name"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty());
+        .and_then(Value::as_str);
     let username = user
         .and_then(|user| user.get("username"))
         .and_then(Value::as_str);
-    let display_name = nick
-        .or(global_name)
-        .or(username)
-        .unwrap_or("unknown")
-        .to_owned();
+    let display_name = display_name_from_parts_or_unknown(nick, global_name, username);
     let is_bot = user
         .and_then(|user| user.get("bot"))
         .and_then(Value::as_bool)

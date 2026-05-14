@@ -38,6 +38,10 @@ use super::{
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
 pub(super) const OLDER_HISTORY_EXTRA_WINDOW_MULTIPLIER: usize = 2;
 
+pub(super) fn is_fallback_identity(username: Option<&str>, display_name: &str) -> bool {
+    username.is_none() && display_name == "unknown"
+}
+
 #[derive(Clone, Debug)]
 pub struct DiscordState {
     guilds: BTreeMap<Id<GuildMarker>, GuildState>,

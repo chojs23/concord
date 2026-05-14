@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::discord::{FriendStatus, RelationshipInfo, events::AppEvent, ids::marker::UserMarker};
 
-use super::shared::parse_id;
+use super::shared::{display_name_from_parts, parse_id};
 
 pub(super) fn parse_relationship_add(data: &Value) -> Option<AppEvent> {
     let relationship = parse_relationship_entry(data)?;
@@ -55,15 +55,11 @@ pub(super) fn parse_relationship_entry(value: &Value) -> Option<RelationshipInfo
         .get("user")
         .and_then(|user| user.get("username"))
         .and_then(Value::as_str);
-    let display_name = value
+    let global_name = value
         .get("user")
-        .and_then(|user| {
-            user.get("global_name")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-                .or(username)
-        })
-        .map(str::to_owned);
+        .and_then(|user| user.get("global_name"))
+        .and_then(Value::as_str);
+    let display_name = display_name_from_parts(None, global_name, username).map(str::to_owned);
     Some(RelationshipInfo {
         user_id,
         status,
