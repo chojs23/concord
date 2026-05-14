@@ -11,7 +11,6 @@ use unicode_width::UnicodeWidthStr;
 use crate::discord::{
     ActivityInfo, ActivityKind, ChannelUnreadState, MessageState, PresenceStatus,
 };
-use crate::tui::keybinding::Action;
 
 use super::super::{
     format::{truncate_display_width, truncate_display_width_from},
@@ -1089,7 +1088,7 @@ pub(super) fn composer_text(state: &DashboardState, width: u16) -> String {
             "group-dm" | "Group" => channel.name.clone(),
             _ => format!("#{}", channel.name),
         };
-        // Tell the user up-front if the keymap won't open the composer here,
+        // Tell the user up-front if the shortcut won't open the composer here,
         // so they don't repeatedly press `i` and wonder why nothing happens.
         if !state.can_send_in_selected_channel() {
             return format!("read-only · cannot send messages in {label}");
@@ -1097,11 +1096,9 @@ pub(super) fn composer_text(state: &DashboardState, width: u16) -> String {
         // SEND is allowed but ATTACH is not. Tell the user uploads will be
         // refused before they try.
         if !state.can_attach_in_selected_channel() {
-            let key = state.key_bindings().label(Action::OpenComposer);
-            return format!("press {key} to write in {label} (attachments disabled)");
+            return format!("press i to write in {label} (attachments disabled)");
         }
-        let key = state.key_bindings().label(Action::OpenComposer);
-        return format!("press {key} to write in {label}");
+        return format!("press i to write in {label}");
     }
 
     "select a channel to write a message".to_owned()
@@ -1410,16 +1407,6 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
     }
     frame.render_widget(
         Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
-        area,
-    );
-
-    // Right-aligned hint so users discover the keybind help popup.
-    let keymap_key = state.key_bindings().label(Action::OpenKeymap);
-    let hint = format!("Press {keymap_key} to see keybinds");
-    frame.render_widget(
-        Paragraph::new(hint)
-            .alignment(Alignment::Right)
-            .style(Style::default()),
         area,
     );
 }

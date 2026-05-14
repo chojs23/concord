@@ -16,7 +16,7 @@ use crate::{
 };
 
 use super::{
-    commands as command_helpers, effects as effect_helpers, events, input, keybinding,
+    commands as command_helpers, effects as effect_helpers, events, input,
     media::{
         AvatarImageCache, EmojiImageCache, ImagePreviewCache, visible_avatar_targets,
         visible_emoji_image_targets, visible_image_preview_targets,
@@ -48,14 +48,6 @@ pub(super) async fn run_dashboard(
         }
     };
     let mut state = DashboardState::new_with_display_options(display_options);
-    let key_bindings = match config::load_key_bindings_config() {
-        Ok(cfg) => keybinding::ActiveKeyBindings::from_config(&cfg),
-        Err(error) => {
-            logging::error("config", format!("failed to load keybindings: {error}"));
-            keybinding::ActiveKeyBindings::default()
-        }
-    };
-    state.set_key_bindings(key_bindings);
     drop(snapshots.borrow_and_update());
     let initial_snapshot = client.current_discord_snapshot();
     let mut current_snapshot_revision = initial_snapshot.revision;

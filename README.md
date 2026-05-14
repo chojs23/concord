@@ -165,7 +165,7 @@ You can toggle image viewing on or off in the configuration file. When image vie
 - On macOS, Concord plays one explicit notification sound so focused terminal
   windows do not silently swallow audible alerts
 
-### Navigation & Keybindings
+### Navigation & Keyboard shortcuts
 
 Concord has a four-pane layout like Discord.
 **Guilds (1)**, **Channels (2)**, **Messages (3)**, **Members (4)**

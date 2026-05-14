@@ -20,18 +20,6 @@ impl DashboardState {
         self.debug_log_popup_open = false;
     }
 
-    pub fn is_keymap_popup_open(&self) -> bool {
-        self.keymap_popup_open
-    }
-
-    pub fn open_keymap_popup(&mut self) {
-        self.keymap_popup_open = true;
-    }
-
-    pub fn close_keymap_popup(&mut self) {
-        self.keymap_popup_open = false;
-    }
-
     pub fn request_open_composer_in_editor(&mut self) {
         self.open_composer_in_editor_requested = true;
     }

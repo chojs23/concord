@@ -114,7 +114,7 @@ impl DashboardState {
         if self.selected_channel_id().is_none() {
             return;
         }
-        // Refusing here keeps the keymap simple: the same key that opens the
+        // Refusing here keeps the shortcut simple: the same key that opens the
         // composer in writable channels just no-ops in read-only ones, so the
         // user never lands in a typing state for a channel that would 403 on
         // submit.
