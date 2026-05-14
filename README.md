@@ -131,7 +131,7 @@ Tokens are saved under Concord's config directory in plain text. See the Securit
 - Inline image previews directly in the terminal
 - Avatar and custom emoji rendering
 - Download attachments to your platform Downloads directory (`XDG_DOWNLOAD_DIR` on Linux)
-- Full-screen image viewer with navigation
+- Large centered image viewer with navigation
 
 Image rendering is powered by [ratatui-image](https://github.com/benjajaja/ratatui-image). On startup, Concord queries the terminal to detect the best available graphics protocol. Supported protocols:
 

@@ -12,17 +12,18 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     ACCENT, DIM, ImagePreview, ImagePreviewState, MENTION_ORANGE, MemberEntry, READ_DIM,
     SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT,
-    channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
-    composer_content_line_count, composer_cursor_position, composer_lines,
-    composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count, composer_text,
-    date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_picker_lines,
-    emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
+    centered_viewer_preview_area, channel_switcher_cursor_position, channel_switcher_lines,
+    channel_unread_decoration, composer_content_line_count, composer_cursor_position,
+    composer_lines, composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count,
+    composer_text, date_separator_line, debug_log_popup_lines, dm_presence_dot_span,
+    emoji_picker_lines, emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
     filtered_emoji_reaction_picker_lines, focus_pane_at, format_message_sent_time,
     forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
-    inline_image_preview_area, inline_image_preview_row, member_display_label, member_name_style,
-    message_action_menu_lines, message_author_style, message_body_custom_emoji_rows,
-    message_delete_confirmation_lines, message_item_lines, message_pin_confirmation_lines,
-    message_viewport_lines, new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
+    image_viewer_image_area, image_viewer_popup, inline_image_preview_area,
+    inline_image_preview_row, member_display_label, member_name_style, message_action_menu_lines,
+    message_author_style, message_body_custom_emoji_rows, message_delete_confirmation_lines,
+    message_item_lines, message_pin_confirmation_lines, message_viewport_lines,
+    new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
     primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
     render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
     selected_message_content_x_offset, sync_view_heights, toast_area, toast_line,
@@ -277,6 +278,26 @@ fn image_viewer_render_shows_download_hint_below_popup() {
     let rendered = dump.join("\n");
 
     assert!(rendered.contains("[d] download image"), "{rendered}");
+}
+
+#[test]
+fn image_viewer_popup_uses_eighty_percent_of_message_area() {
+    let area = Rect::new(10, 5, 100, 40);
+
+    let popup = image_viewer_popup(area);
+    let image_area = image_viewer_image_area(area);
+
+    assert_eq!(popup, Rect::new(20, 9, 80, 32));
+    assert_eq!(image_area, Rect::new(21, 10, 78, 29));
+}
+
+#[test]
+fn image_viewer_preview_area_centers_rendered_image() {
+    let area = Rect::new(21, 10, 78, 29);
+
+    let preview = centered_viewer_preview_area(area, 52, 13);
+
+    assert_eq!(preview, Rect::new(34, 18, 52, 13));
 }
 
 #[test]

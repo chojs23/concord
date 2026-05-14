@@ -586,7 +586,7 @@ mod tests {
     }
 
     #[test]
-    fn image_viewer_target_uses_viewer_layout_dimensions() {
+    fn image_viewer_target_fits_source_image_inside_viewer_layout() {
         let mut state = state_with_image_messages(1, &[1]);
         state.focus_pane(FocusPane::Messages);
         state.open_selected_message_actions();
@@ -599,7 +599,7 @@ mod tests {
             .expect("viewer should create one image target");
 
         assert!(target.viewer);
-        assert_eq!(target.preview_width, 76);
+        assert_eq!(target.preview_width, 52);
         assert_eq!(target.preview_height, 13);
         assert_eq!(target.visible_preview_height, 13);
     }

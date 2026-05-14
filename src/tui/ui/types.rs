@@ -15,8 +15,6 @@ pub(super) const MESSAGE_AVATAR_OFFSET: u16 =
     MESSAGE_SELECTION_PREFIX_WIDTH + MESSAGE_AVATAR_PLACEHOLDER.len() as u16 + 2;
 pub(super) const EMBED_PREVIEW_GUTTER_PREFIX: &str = "  ▎ ";
 pub(super) const MAX_REACTION_USERS_VISIBLE_LINES: usize = 14;
-pub(super) const IMAGE_VIEWER_POPUP_WIDTH: u16 = 78;
-pub(super) const IMAGE_VIEWER_POPUP_HEIGHT: u16 = 16;
 pub(super) const SELECTED_FORUM_POST_BORDER: Color = Color::Green;
 pub(super) const SELECTED_MESSAGE_BORDER: Color = Color::Green;
 

@@ -106,7 +106,7 @@ pub(in crate::tui) fn visible_image_preview_targets(
 
     if let Some((message_id, preview_index, preview)) = state.selected_image_viewer_preview() {
         let quality = state.image_preview_quality();
-        let preview_height = image_preview_height_for_dimensions(
+        let (preview_width, preview_height) = image_preview_size_for_dimensions(
             layout.viewer_preview_width,
             layout.viewer_max_preview_height,
             preview.width,
@@ -121,19 +121,14 @@ pub(in crate::tui) fn visible_image_preview_targets(
             preview_index,
             preview_x_offset_columns: 0,
             preview_y_offset_rows: 0,
-            preview_width: layout.viewer_preview_width,
+            preview_width,
             preview_height,
             preview_overflow_count: 0,
             visible_preview_height: preview_height,
             top_clip_rows: 0,
             accent_color: preview.accent_color,
             message_id,
-            url: preview_request_url(
-                preview,
-                layout.viewer_preview_width,
-                preview_height,
-                quality,
-            ),
+            url: preview_request_url(preview, preview_width, preview_height, quality),
             filename: preview.filename.to_owned(),
         }];
     }
@@ -206,6 +201,40 @@ pub(in crate::tui) fn visible_image_preview_targets(
     }
 
     targets
+}
+
+fn image_preview_size_for_dimensions(
+    max_preview_width: u16,
+    max_preview_height: u16,
+    image_width: Option<u64>,
+    image_height: Option<u64>,
+) -> (u16, u16) {
+    if max_preview_width == 0 || max_preview_height == 0 {
+        return (0, 0);
+    }
+
+    let (Some(image_width), Some(image_height)) = (image_width, image_height) else {
+        return (max_preview_width, max_preview_height);
+    };
+    if image_width == 0 || image_height == 0 {
+        return (max_preview_width, max_preview_height);
+    }
+
+    let source_width_columns = image_width.div_ceil(IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN);
+    let width_for_height =
+        (u128::from(max_preview_height) * u128::from(image_width) * 3) / u128::from(image_height);
+    let preview_width = max_preview_width
+        .min(u16::try_from(source_width_columns).unwrap_or(u16::MAX))
+        .min(u16::try_from(width_for_height.max(1)).unwrap_or(u16::MAX))
+        .max(1);
+    let preview_height = image_preview_height_for_dimensions(
+        preview_width,
+        max_preview_height,
+        Some(image_width),
+        Some(image_height),
+    );
+
+    (preview_width, preview_height)
 }
 
 fn preview_request_url(

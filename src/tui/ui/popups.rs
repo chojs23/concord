@@ -31,6 +31,8 @@ pub(super) use confirmation::{
 #[cfg(test)]
 pub(super) use debug_log::debug_log_popup_lines;
 pub(super) use debug_log::render_debug_log_popup;
+#[cfg(test)]
+pub(super) use image_viewer::centered_viewer_preview_area;
 pub(super) use image_viewer::render_image_viewer;
 #[cfg(test)]
 pub(super) use options::options_popup_lines;

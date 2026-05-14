@@ -101,8 +101,8 @@ use self::{
         selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
     },
     popups::{
-        channel_switcher_cursor_position, channel_switcher_lines, debug_log_popup_lines,
-        emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
+        centered_viewer_preview_area, channel_switcher_cursor_position, channel_switcher_lines,
+        debug_log_popup_lines, emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
         filtered_emoji_reaction_picker_lines, message_action_menu_lines,
         message_delete_confirmation_lines, message_pin_confirmation_lines, options_popup_lines,
         poll_vote_picker_lines, reaction_users_popup_lines, toast_area, toast_line,
