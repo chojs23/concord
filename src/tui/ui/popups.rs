@@ -8,6 +8,7 @@ mod action_menu;
 mod channel_switcher;
 mod debug_log;
 mod image_viewer;
+mod keymap;
 mod options;
 mod polls;
 mod profile;
@@ -25,6 +26,7 @@ pub(super) use channel_switcher::{
 pub(super) use debug_log::debug_log_popup_lines;
 pub(super) use debug_log::render_debug_log_popup;
 pub(super) use image_viewer::render_image_viewer;
+pub(super) use keymap::render_keymap_popup;
 #[cfg(test)]
 pub(super) use options::options_popup_lines;
 pub(super) use options::render_options_popup;

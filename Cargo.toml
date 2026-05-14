@@ -63,6 +63,7 @@ tokio-tungstenite = { version = "0.27", default-features = false, features = [
   "handshake",
   "rustls-tls-webpki-roots",
 ] }
+tempfile = "3"
 toml = "1.1.2"
 unicode-segmentation = "1.12.0"
 unicode-width = "0.2.2"

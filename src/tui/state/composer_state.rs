@@ -128,6 +128,13 @@ impl DashboardState {
         self.focus = FocusPane::Messages;
     }
 
+    pub fn replace_composer_input_from_editor(&mut self, value: String) {
+        self.composer_input = value;
+        self.composer_cursor_byte_index = self.composer_input.len();
+        self.reset_mention_picker_state();
+        self.refresh_active_mention_query();
+    }
+
     pub fn cancel_composer(&mut self) {
         self.composer_active = false;
         self.composer_input.clear();

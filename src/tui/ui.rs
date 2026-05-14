@@ -74,9 +74,9 @@ use self::panes::{
 use self::panes::{render_channels, render_guilds, render_header, render_members};
 use self::popups::{
     render_channel_switcher_popup, render_debug_log_popup, render_emoji_reaction_picker,
-    render_image_viewer, render_leader_popup, render_message_action_menu, render_options_popup,
-    render_poll_vote_picker, render_reaction_users_popup, render_user_profile_popup,
-    user_profile_popup_has_avatar, user_profile_popup_text_geometry,
+    render_image_viewer, render_keymap_popup, render_leader_popup, render_message_action_menu,
+    render_options_popup, render_poll_vote_picker, render_reaction_users_popup,
+    render_user_profile_popup, user_profile_popup_has_avatar, user_profile_popup_text_geometry,
     user_profile_popup_total_lines,
 };
 use self::types::{
@@ -109,16 +109,28 @@ use self::{
 };
 pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
     let areas = dashboard_areas(area, state);
-    state.set_guild_view_height(visible_panel_content_height(
-        areas.guilds,
-        "Servers",
-        state.is_pane_visible(FocusPane::Guilds),
-    ));
-    state.set_channel_view_height(visible_panel_content_height(
-        areas.channels,
-        "Channels",
-        state.is_pane_visible(FocusPane::Channels),
-    ));
+    let guild_filter_row = usize::from(
+        state.is_guild_pane_filter_active() && state.is_pane_visible(FocusPane::Guilds),
+    );
+    state.set_guild_view_height(
+        visible_panel_content_height(
+            areas.guilds,
+            "Servers",
+            state.is_pane_visible(FocusPane::Guilds),
+        )
+        .saturating_sub(guild_filter_row),
+    );
+    let channel_filter_row = usize::from(
+        state.is_channel_pane_filter_active() && state.is_pane_visible(FocusPane::Channels),
+    );
+    state.set_channel_view_height(
+        visible_panel_content_height(
+            areas.channels,
+            "Channels",
+            state.is_pane_visible(FocusPane::Channels),
+        )
+        .saturating_sub(channel_filter_row),
+    );
     state.set_message_view_height(message_list_area(areas.messages, state).height as usize);
     state.set_member_view_height(visible_panel_content_height(
         areas.members,
@@ -205,6 +217,7 @@ pub fn render(
     render_reaction_users_popup(frame, areas.messages, state);
     render_image_viewer(frame, areas.messages, state, viewer_image_preview);
     render_debug_log_popup(frame, areas.messages, state);
+    render_keymap_popup(frame, areas.messages, state);
 }
 
 fn message_content_width(list: Rect) -> usize {

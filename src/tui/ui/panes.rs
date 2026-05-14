@@ -11,6 +11,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::discord::{
     ActivityInfo, ActivityKind, ChannelUnreadState, MessageState, PresenceStatus,
 };
+use crate::tui::keybinding::Action;
 
 use super::super::{
     format::{truncate_display_width, truncate_display_width_from},
@@ -33,8 +34,32 @@ use super::{
 
 pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let dashboard = state;
+    let focused = state.focus() == FocusPane::Guilds;
+    let filter_query = state.guild_pane_filter_query();
+
+    // When the filter is active split off one row at the bottom for the search
+    // bar, rendering the border block separately so we can carve up the inner.
+    let (list_area, filter_area) = if filter_query.is_some() && area.height >= 4 {
+        let block = panel_block("Servers", focused);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let list_h = inner.height.saturating_sub(1);
+        let list_rect = Rect {
+            height: list_h,
+            ..inner
+        };
+        let filter_rect = Rect {
+            y: inner.y + list_h,
+            height: 1,
+            ..inner
+        };
+        (list_rect, Some(filter_rect))
+    } else {
+        (area, None)
+    };
+
     let entries = state.visible_guild_pane_entries();
-    let max_width = area.width.saturating_sub(6) as usize;
+    let max_width = list_area.width.saturating_sub(6) as usize;
     let horizontal_scroll = state.guild_horizontal_scroll();
     let selected = state.focused_guild_selection();
     let items: Vec<ListItem> = entries
@@ -142,11 +167,26 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
         })
         .collect();
 
-    let list = List::new(items)
-        .block(panel_block("Servers", state.focus() == FocusPane::Guilds))
-        .highlight_style(highlight_style());
+    let list = List::new(items).highlight_style(highlight_style());
+    let list = if filter_area.is_none() {
+        list.block(panel_block("Servers", focused))
+    } else {
+        list
+    };
+    frame.render_widget(list, list_area);
 
-    frame.render_widget(list, area);
+    if let Some(filter_rect) = filter_area {
+        let query = filter_query.unwrap_or_default();
+        let cursor = state.guild_pane_filter_cursor().unwrap_or(0);
+        let cursor_x = render_pane_filter_bar(frame, filter_rect, query, cursor, focused);
+        if focused {
+            frame.set_cursor_position(Position {
+                x: filter_rect.x.saturating_add(cursor_x as u16),
+                y: filter_rect.y,
+            });
+        }
+    }
+
     render_vertical_scrollbar(
         frame,
         panel_scrollbar_area(area),
@@ -161,10 +201,85 @@ fn notification_count_badge(unread: ChannelUnreadState) -> Span<'static> {
     badge.expect("numeric unread state always renders a badge")
 }
 
+/// Renders a one-line search bar at `area` and returns the visual column offset
+/// of the cursor within that area (column 0 = leftmost cell of `area`).
+fn render_pane_filter_bar(
+    frame: &mut Frame,
+    area: Rect,
+    query: &str,
+    cursor_byte: usize,
+    focused: bool,
+) -> usize {
+    let prompt = "/ ";
+    let prompt_width = prompt.width();
+    let available = (area.width as usize).saturating_sub(prompt_width).max(1);
+
+    // Scroll the visible window so the cursor is always in view.
+    let cursor_byte = cursor_byte.min(query.len());
+    let mut start = 0usize;
+    while query[start..cursor_byte].width() > available {
+        // Advance start by one char boundary
+        start = query[start..]
+            .char_indices()
+            .nth(1)
+            .map(|(off, _)| start + off)
+            .unwrap_or(query.len());
+    }
+    let mut end = cursor_byte;
+    while end < query.len() {
+        let next = query[end..]
+            .char_indices()
+            .nth(1)
+            .map(|(off, _)| end + off)
+            .unwrap_or(query.len());
+        if query[start..next].width() > available {
+            break;
+        }
+        end = next;
+    }
+    let visible = &query[start..end];
+    let cursor_col = prompt_width + query[start..cursor_byte].width();
+
+    let accent = if focused { ACCENT } else { Color::DarkGray };
+    let shown_query = if query.is_empty() {
+        Span::styled("search...", Style::default().fg(DIM))
+    } else {
+        Span::raw(visible.to_owned())
+    };
+    let line = Line::from(vec![
+        Span::styled(prompt, Style::default().fg(accent)),
+        shown_query,
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
+    cursor_col
+}
+
 pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let dashboard = state;
+    let focused = state.focus() == FocusPane::Channels;
+    let filter_query = state.channel_pane_filter_query();
+
+    let (list_area, filter_area) = if filter_query.is_some() && area.height >= 4 {
+        let block = panel_block("Channels", focused);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let list_h = inner.height.saturating_sub(1);
+        let list_rect = Rect {
+            height: list_h,
+            ..inner
+        };
+        let filter_rect = Rect {
+            y: inner.y + list_h,
+            height: 1,
+            ..inner
+        };
+        (list_rect, Some(filter_rect))
+    } else {
+        (area, None)
+    };
+
     let entries = state.visible_channel_pane_entries();
-    let max_width = area.width.saturating_sub(8) as usize;
+    let max_width = list_area.width.saturating_sub(8) as usize;
     let horizontal_scroll = state.channel_horizontal_scroll();
     let selected = state.focused_channel_selection();
     let items: Vec<ListItem> = entries
@@ -258,14 +373,26 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
         })
         .collect();
 
-    let list = List::new(items)
-        .block(panel_block(
-            "Channels",
-            state.focus() == FocusPane::Channels,
-        ))
-        .highlight_style(highlight_style());
+    let list = List::new(items).highlight_style(highlight_style());
+    let list = if filter_area.is_none() {
+        list.block(panel_block("Channels", focused))
+    } else {
+        list
+    };
+    frame.render_widget(list, list_area);
 
-    frame.render_widget(list, area);
+    if let Some(filter_rect) = filter_area {
+        let query = filter_query.unwrap_or_default();
+        let cursor = state.channel_pane_filter_cursor().unwrap_or(0);
+        let cursor_x = render_pane_filter_bar(frame, filter_rect, query, cursor, focused);
+        if focused {
+            frame.set_cursor_position(Position {
+                x: filter_rect.x.saturating_add(cursor_x as u16),
+                y: filter_rect.y,
+            });
+        }
+    }
+
     render_vertical_scrollbar(
         frame,
         panel_scrollbar_area(area),
@@ -945,9 +1072,11 @@ pub(super) fn composer_text(state: &DashboardState, width: u16) -> String {
         // SEND is allowed but ATTACH is not. Tell the user uploads will be
         // refused before they try.
         if !state.can_attach_in_selected_channel() {
-            return format!("press i to write in {label} (attachments disabled)");
+            let key = state.key_bindings().label(Action::OpenComposer);
+            return format!("press {key} to write in {label} (attachments disabled)");
         }
-        return format!("press i to write in {label}");
+        let key = state.key_bindings().label(Action::OpenComposer);
+        return format!("press {key} to write in {label}");
     }
 
     "select a channel to write a message".to_owned()
@@ -1251,6 +1380,16 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
     }
     frame.render_widget(
         Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
+        area,
+    );
+
+    // Right-aligned hint so users discover the keybind help popup.
+    let keymap_key = state.key_bindings().label(Action::OpenKeymap);
+    let hint = format!("Press {keymap_key} to see keybinds");
+    frame.render_widget(
+        Paragraph::new(hint)
+            .alignment(Alignment::Right)
+            .style(Style::default()),
         area,
     );
 }

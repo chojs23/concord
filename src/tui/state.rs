@@ -20,6 +20,7 @@ use super::format::{
     MentionTarget, RenderedText, TextHighlightKind, render_user_mentions,
     render_user_mentions_with_highlights, replace_custom_emoji_markup,
 };
+use super::keybinding::ActiveKeyBindings;
 mod channel_switcher;
 mod channels;
 mod composer;
@@ -35,6 +36,7 @@ mod message_render;
 mod message_viewport;
 mod model;
 mod options;
+mod pane_filter;
 mod polls;
 mod popups;
 mod presentation;
@@ -46,6 +48,7 @@ mod user;
 use channel_switcher::ChannelSwitcherState;
 use composer::{EmojiCompletion, MentionCompletion};
 use message_render::{add_literal_mention_highlights, normalize_text_highlights};
+use pane_filter::PaneFilterState;
 use popups::{
     ChannelLeaderActionState, GuildLeaderActionState, ImageViewerState, MemberLeaderActionState,
     UserProfilePopupState,
@@ -233,8 +236,13 @@ pub struct DashboardState {
     poll_vote_picker: Option<PollVotePickerState>,
     reaction_users_popup: Option<ReactionUsersPopupState>,
     debug_log_popup_open: bool,
+    keymap_popup_open: bool,
+    open_composer_in_editor_requested: bool,
+    key_bindings: ActiveKeyBindings,
     leader_mode: Option<LeaderMode>,
     channel_switcher: Option<ChannelSwitcherState>,
+    guild_pane_filter: Option<PaneFilterState>,
+    channel_pane_filter: Option<PaneFilterState>,
     guild_pane_visible: bool,
     channel_pane_visible: bool,
     member_pane_visible: bool,
@@ -361,8 +369,13 @@ impl DashboardState {
             poll_vote_picker: None,
             reaction_users_popup: None,
             debug_log_popup_open: false,
+            keymap_popup_open: false,
+            open_composer_in_editor_requested: false,
+            key_bindings: ActiveKeyBindings::default(),
             leader_mode: None,
             channel_switcher: None,
+            guild_pane_filter: None,
+            channel_pane_filter: None,
             guild_pane_visible: true,
             channel_pane_visible: true,
             member_pane_visible: true,
@@ -1460,13 +1473,13 @@ impl DashboardState {
     pub fn move_down(&mut self) {
         match self.focus {
             FocusPane::Guilds => {
-                let len = self.guild_pane_entries().len();
+                let len = self.guild_pane_filtered_entries().len();
                 move_index_down(&mut self.selected_guild, len);
                 self.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
-                let len = self.channel_pane_entries().len();
+                let len = self.channel_pane_filtered_entries().len();
                 move_index_down(&mut self.selected_channel, len);
                 self.channel_keep_selection_visible = true;
                 self.clamp_channel_viewport();
@@ -1542,12 +1555,12 @@ impl DashboardState {
     pub fn jump_bottom(&mut self) {
         match self.focus {
             FocusPane::Guilds => {
-                self.selected_guild = last_index(self.guild_pane_entries().len());
+                self.selected_guild = last_index(self.guild_pane_filtered_entries().len());
                 self.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
-                self.selected_channel = last_index(self.channel_pane_entries().len());
+                self.selected_channel = last_index(self.channel_pane_filtered_entries().len());
                 self.channel_keep_selection_visible = true;
                 self.clamp_channel_viewport();
             }
@@ -1569,14 +1582,14 @@ impl DashboardState {
         match self.focus {
             FocusPane::Guilds => {
                 let distance = pane_content_height(self.guild_view_height) / 2;
-                let len = self.guild_pane_entries().len();
+                let len = self.guild_pane_filtered_entries().len();
                 move_index_down_by(&mut self.selected_guild, len, distance.max(1));
                 self.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 let distance = pane_content_height(self.channel_view_height) / 2;
-                let len = self.channel_pane_entries().len();
+                let len = self.channel_pane_filtered_entries().len();
                 move_index_down_by(&mut self.selected_channel, len, distance.max(1));
                 self.channel_keep_selection_visible = true;
                 self.clamp_channel_viewport();
@@ -1636,13 +1649,13 @@ impl DashboardState {
         match self.focus {
             FocusPane::Guilds => {
                 let height = pane_content_height(self.guild_view_height);
-                let len = self.guild_pane_entries().len();
+                let len = self.guild_pane_filtered_entries().len();
                 self.guild_keep_selection_visible = false;
                 scroll_list_down(&mut self.guild_scroll, height, len);
             }
             FocusPane::Channels => {
                 let height = pane_content_height(self.channel_view_height);
-                let len = self.channel_pane_entries().len();
+                let len = self.channel_pane_filtered_entries().len();
                 self.channel_keep_selection_visible = false;
                 scroll_list_down(&mut self.channel_scroll, height, len);
             }
@@ -1699,7 +1712,7 @@ impl DashboardState {
     }
 
     fn max_guild_horizontal_scroll(&self) -> usize {
-        self.guild_pane_entries()
+        self.guild_pane_filtered_entries()
             .into_iter()
             .map(|entry| entry.label().width().saturating_sub(1))
             .max()
@@ -1707,7 +1720,7 @@ impl DashboardState {
     }
 
     fn max_channel_horizontal_scroll(&self) -> usize {
-        self.channel_pane_entries()
+        self.channel_pane_filtered_entries()
             .into_iter()
             .map(|entry| match entry {
                 ChannelPaneEntry::CategoryHeader { state, .. }
@@ -1799,7 +1812,7 @@ impl DashboardState {
 
     fn select_visible_guild_row(&mut self, row: usize) -> bool {
         let index = self.guild_scroll.saturating_add(row);
-        if index >= self.guild_pane_entries().len() {
+        if index >= self.guild_pane_filtered_entries().len() {
             return false;
         }
         self.selected_guild = index;
@@ -1809,7 +1822,7 @@ impl DashboardState {
 
     fn select_visible_channel_row(&mut self, row: usize) -> bool {
         let index = self.channel_scroll.saturating_add(row);
-        if index >= self.channel_pane_entries().len() {
+        if index >= self.channel_pane_filtered_entries().len() {
             return false;
         }
         self.selected_channel = index;
@@ -1894,7 +1907,7 @@ impl DashboardState {
     }
 
     fn clamp_guild_viewport(&mut self) {
-        let entries_len = self.guild_pane_entries().len();
+        let entries_len = self.guild_pane_filtered_entries().len();
         self.selected_guild = clamp_selected_index(self.selected_guild, entries_len);
         clamp_list_viewport(
             self.selected_guild,
@@ -1906,7 +1919,7 @@ impl DashboardState {
     }
 
     fn clamp_channel_viewport(&mut self) {
-        let entries_len = self.channel_pane_entries().len();
+        let entries_len = self.channel_pane_filtered_entries().len();
         self.selected_channel = clamp_selected_index(self.selected_channel, entries_len);
         clamp_list_viewport(
             self.selected_channel,

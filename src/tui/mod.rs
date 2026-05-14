@@ -4,6 +4,7 @@ mod events;
 mod format;
 mod fuzzy;
 mod input;
+mod keybinding;
 mod login;
 mod media;
 mod message_format;
@@ -23,7 +24,6 @@ use crate::{
     Result,
     discord::{AppCommand, DiscordClient, SequencedAppEvent, SnapshotRevision},
 };
-
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
 }

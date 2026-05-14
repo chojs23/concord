@@ -42,13 +42,24 @@ pub(crate) fn mouse_target_at(
         return Some(target);
     }
     if state.is_pane_visible(FocusPane::Guilds)
-        && let Some(target) = pane_row_mouse_target(areas.guilds, FocusPane::Guilds, column, row)
+        && let Some(target) = pane_row_mouse_target(
+            areas.guilds,
+            FocusPane::Guilds,
+            column,
+            row,
+            state.guild_pane_filter_query().is_some(),
+        )
     {
         return Some(target);
     }
     if state.is_pane_visible(FocusPane::Channels)
-        && let Some(target) =
-            pane_row_mouse_target(areas.channels, FocusPane::Channels, column, row)
+        && let Some(target) = pane_row_mouse_target(
+            areas.channels,
+            FocusPane::Channels,
+            column,
+            row,
+            state.channel_pane_filter_query().is_some(),
+        )
     {
         return Some(target);
     }
@@ -56,7 +67,8 @@ pub(crate) fn mouse_target_at(
         return Some(target);
     }
     if state.is_pane_visible(FocusPane::Members)
-        && let Some(target) = pane_row_mouse_target(areas.members, FocusPane::Members, column, row)
+        && let Some(target) =
+            pane_row_mouse_target(areas.members, FocusPane::Members, column, row, false)
     {
         return Some(target);
     }
@@ -142,12 +154,24 @@ fn pane_row_mouse_target(
     pane: FocusPane,
     column: u16,
     row: u16,
+    filter_active: bool,
 ) -> Option<MouseTarget> {
     if !rect_contains(area, column, row) {
         return None;
     }
     let inner = panel_block("", false).inner(area);
-    if rect_contains(inner, column, row) {
+    // When the filter bar occupies the last row of the inner area, shrink the
+    // list hit region so clicks on that row don't resolve to a list entry.
+    let list_height = if filter_active && inner.height >= 2 {
+        inner.height - 1
+    } else {
+        inner.height
+    };
+    let list_area = Rect {
+        height: list_height,
+        ..inner
+    };
+    if rect_contains(list_area, column, row) {
         return Some(MouseTarget::PaneRow {
             pane,
             row: row.saturating_sub(inner.y) as usize,
