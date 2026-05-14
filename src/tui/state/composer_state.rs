@@ -70,6 +70,16 @@ impl DashboardState {
         &self.pending_composer_attachments
     }
 
+    pub fn composer_title(&self) -> &'static str {
+        if self.edit_target_message.is_some() {
+            " Edit Message "
+        } else if self.reply_target_message_id.is_some() {
+            " Reply "
+        } else {
+            " Message Input "
+        }
+    }
+
     pub fn add_pending_composer_attachments(&mut self, attachments: Vec<MessageAttachmentUpload>) {
         if attachments.is_empty() || !self.composer_accepts_attachments() {
             return;
@@ -146,6 +156,10 @@ impl DashboardState {
     }
 
     pub fn close_composer(&mut self) {
+        if self.reply_target_message_id.is_some() || self.edit_target_message.is_some() {
+            self.cancel_composer();
+            return;
+        }
         self.composer_active = false;
         self.reset_mention_picker_state();
     }

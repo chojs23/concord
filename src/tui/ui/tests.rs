@@ -661,6 +661,35 @@ fn reply_composer_hint_line_is_dim() {
 }
 
 #[test]
+fn composer_border_title_tracks_message_mode() {
+    let mut normal = state_with_message();
+    normal.start_composer();
+    let normal_rendered = render_dashboard_dump(80, 16, &mut normal).join("\n");
+
+    let mut reply = state_with_message();
+    reply.open_selected_message_actions();
+    reply.activate_selected_message_action();
+    let reply_rendered = render_dashboard_dump(80, 16, &mut reply).join("\n");
+
+    let mut edit = state_with_message();
+    edit.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(99)),
+    });
+    edit.open_selected_message_actions();
+    assert!(edit.select_message_action_row(1));
+    edit.activate_selected_message_action();
+    let edit_rendered = render_dashboard_dump(80, 16, &mut edit).join("\n");
+
+    assert!(
+        normal_rendered.contains("Message Input"),
+        "{normal_rendered}"
+    );
+    assert!(reply_rendered.contains("Reply"), "{reply_rendered}");
+    assert!(edit_rendered.contains("Edit Message"), "{edit_rendered}");
+}
+
+#[test]
 fn composer_lines_show_pending_upload_above_input() {
     let mut state = state_with_message();
     state.start_composer();

@@ -446,7 +446,7 @@ pub(super) fn render_composer(
             })
             .block(
                 Block::default()
-                    .title(" Message Input ")
+                    .title(state.composer_title())
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(border_color))

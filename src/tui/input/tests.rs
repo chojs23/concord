@@ -2355,7 +2355,10 @@ fn canceling_reply_composer_clears_reply_target() {
     state.focus_pane(FocusPane::Messages);
     handle_key(&mut state, key(KeyCode::Enter));
     handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('x'));
     handle_key(&mut state, key(KeyCode::Esc));
+
+    assert_eq!(state.composer_input(), "");
 
     handle_key(&mut state, char_key('i'));
     handle_key(&mut state, char_key('n'));
@@ -2370,6 +2373,24 @@ fn canceling_reply_composer_clears_reply_target() {
             attachments: Vec::new(),
         })
     );
+}
+
+#[test]
+fn canceling_edit_composer_clears_edit_draft() {
+    let mut state = state_with_own_message();
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, char_key('e'));
+    handle_key(&mut state, char_key('!'));
+
+    handle_key(&mut state, key(KeyCode::Esc));
+
+    assert!(!state.is_composing());
+    assert_eq!(state.composer_input(), "");
+
+    handle_key(&mut state, char_key('i'));
+
+    assert!(state.is_composing());
+    assert_eq!(state.composer_input(), "");
 }
 
 #[test]
