@@ -6578,6 +6578,18 @@ fn member_scroll_uses_scrolloff() {
 }
 
 #[test]
+fn visible_member_profile_requests_follow_rendered_member_rows() {
+    let mut state = state_with_members(3);
+    state.member_scroll = 1;
+    state.member_view_height = 1;
+
+    assert_eq!(
+        state.missing_visible_member_profile_requests(),
+        vec![(Id::new(1), Some(Id::new(1)))]
+    );
+}
+
+#[test]
 fn viewport_scroll_does_not_move_list_pane_selection() {
     let mut guild_state = state_with_many_guilds(8);
     guild_state.focus_pane(FocusPane::Guilds);

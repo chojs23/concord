@@ -376,11 +376,20 @@ impl DashboardState {
             return Vec::new();
         };
         let members = self.flattened_members();
-        let start = self.member_scroll();
-        let end = (start + self.member_content_height()).min(members.len());
+        let visible_start = self.member_scroll();
+        let visible_end = visible_start.saturating_add(self.member_content_height());
         let mut seen = HashSet::new();
         let mut requests = Vec::new();
-        for entry in &members[start..end] {
+        for (member_index, line_index) in self.member_line_indices() {
+            if line_index < visible_start {
+                continue;
+            }
+            if line_index >= visible_end {
+                break;
+            }
+            let Some(entry) = members.get(member_index) else {
+                continue;
+            };
             if entry.username().is_some() {
                 continue;
             }
