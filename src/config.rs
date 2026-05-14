@@ -29,16 +29,13 @@ pub enum ImagePreviewQualityPreset {
     Balanced,
     High,
     Original,
-    /// Alias for `balanced`; accepted so configs that say `"auto"` still load.
-    #[serde(rename = "auto")]
-    Auto,
 }
 
 impl ImagePreviewQualityPreset {
     pub fn label(self) -> &'static str {
         match self {
             Self::Efficient => "efficient",
-            Self::Balanced | Self::Auto => "balanced",
+            Self::Balanced => "balanced",
             Self::High => "high",
             Self::Original => "original",
         }
@@ -47,7 +44,7 @@ impl ImagePreviewQualityPreset {
     pub fn next(self) -> Self {
         match self {
             Self::Efficient => Self::Balanced,
-            Self::Balanced | Self::Auto => Self::High,
+            Self::Balanced => Self::High,
             Self::High => Self::Original,
             Self::Original => Self::Efficient,
         }
