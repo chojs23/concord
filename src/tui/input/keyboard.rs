@@ -219,10 +219,6 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
             }
             None
         }
-        KeyCode::Char('r') if focus == FocusPane::Messages && is_shortcut_key(key) => {
-            state.open_emoji_reaction_picker();
-            None
-        }
         _ => None,
     }
 }
