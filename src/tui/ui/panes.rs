@@ -13,7 +13,7 @@ use crate::discord::{
 };
 
 use super::super::{
-    format::{truncate_display_width, truncate_display_width_from},
+    format::{sanitize_for_display_width, truncate_display_width, truncate_display_width_from},
     message_format::{EMOJI_REACTION_IMAGE_WIDTH, format_attachment_summary, wrap_text_lines},
     state::{
         ChannelPaneEntry, DashboardState, EmojiPickerEntry, FocusPane, GuildPaneEntry,
@@ -1282,7 +1282,7 @@ pub(super) fn render_members(
 fn member_group_header(group: &MemberGroup<'_>, content_width: usize) -> Line<'static> {
     let count_suffix = format!(" - {}", group.entries.len());
     let label_max = content_width.saturating_sub(count_suffix.width());
-    let label = truncate_display_width(&group.label, label_max);
+    let label = truncate_display_width(&sanitize_for_display_width(&group.label), label_max);
     Line::from(vec![
         Span::styled(
             label,
@@ -1323,8 +1323,9 @@ pub(super) fn member_display_label(
     horizontal_scroll: usize,
     max_width: usize,
 ) -> String {
+    let display_name = sanitize_for_display_width(display_name);
     if !member.is_bot() {
-        return truncate_display_width_from(display_name, horizontal_scroll, max_width);
+        return truncate_display_width_from(&display_name, horizontal_scroll, max_width);
     }
 
     const BOT_SUFFIX: &str = " [bot]";
@@ -1340,7 +1341,7 @@ pub(super) fn member_display_label(
     format!(
         "{}{}",
         truncate_display_width_from(
-            display_name,
+            &display_name,
             horizontal_scroll,
             max_width.saturating_sub(suffix_width),
         ),

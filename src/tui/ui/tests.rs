@@ -1815,6 +1815,28 @@ fn primary_activity_summary_listening_includes_track_and_artist() {
 }
 
 #[test]
+fn primary_activity_summary_sanitizes_custom_status_emoji() {
+    let activities = vec![ActivityInfo {
+        kind: ActivityKind::Custom,
+        name: "Custom Status".to_owned(),
+        details: None,
+        state: Some("curse of rah".to_owned()),
+        url: None,
+        application_id: None,
+        emoji: Some(ActivityEmoji {
+            name: "⚜".to_owned(),
+            id: None,
+            animated: false,
+        }),
+    }];
+
+    assert_eq!(
+        primary_activity_summary(&activities, &[]).map(|render| render.to_display_string()),
+        Some("? curse of rah".to_owned())
+    );
+}
+
+#[test]
 fn user_profile_popup_omits_activity_section_when_empty() {
     let profile = user_profile_info(10, "neo");
     let state = DashboardState::new();
@@ -3989,6 +4011,24 @@ fn member_label_truncates_by_display_width() {
     let label = member_display_label(MemberEntry::Guild(&member), &member.display_name, 0, 12);
 
     assert_eq!(label, "漢字仮名...");
+    assert!(label.width() <= 12);
+}
+
+#[test]
+fn member_label_sanitizes_ambiguous_width_emoji_before_truncating() {
+    let member = GuildMemberState {
+        user_id: Id::new(10),
+        display_name: "user ⚜ status".to_owned(),
+        username: None,
+        is_bot: false,
+        avatar_url: None,
+        role_ids: Vec::new(),
+        status: PresenceStatus::Online,
+    };
+
+    let label = member_display_label(MemberEntry::Guild(&member), &member.display_name, 0, 12);
+
+    assert_eq!(label, "user ? st...");
     assert!(label.width() <= 12);
 }
 
