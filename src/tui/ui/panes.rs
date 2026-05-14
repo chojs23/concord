@@ -1176,8 +1176,13 @@ pub(super) fn render_members(
             let name_style =
                 member_name_style(member, state.member_role_color(member), is_selected);
 
-            let display =
-                member_display_label(member, state.member_horizontal_scroll(), max_name_width);
+            let display_name = state.member_display_name(member);
+            let display = member_display_label(
+                member,
+                &display_name,
+                state.member_horizontal_scroll(),
+                max_name_width,
+            );
             lines.push(Line::from(vec![
                 Span::styled(
                     format!(" {} ", presence_marker(member.status())),
@@ -1317,12 +1322,12 @@ pub(super) fn member_name_style(
 
 pub(super) fn member_display_label(
     member: MemberEntry<'_>,
+    display_name: &str,
     horizontal_scroll: usize,
     max_width: usize,
 ) -> String {
-    let display_name = member.display_name();
     if !member.is_bot() {
-        return truncate_display_width_from(&display_name, horizontal_scroll, max_width);
+        return truncate_display_width_from(display_name, horizontal_scroll, max_width);
     }
 
     const BOT_SUFFIX: &str = " [bot]";
@@ -1338,7 +1343,7 @@ pub(super) fn member_display_label(
     format!(
         "{}{}",
         truncate_display_width_from(
-            &display_name,
+            display_name,
             horizontal_scroll,
             max_width.saturating_sub(suffix_width),
         ),

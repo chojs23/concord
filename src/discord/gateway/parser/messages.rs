@@ -252,6 +252,7 @@ fn parse_reply_info(value: &Value) -> Option<ReplyInfo> {
     }
 
     let author = value.get("author")?;
+    let author_id = author.get("id").and_then(parse_id::<UserMarker>);
     let author_name = message_author_display_name(value, author);
     let content = value
         .get("content")
@@ -262,6 +263,7 @@ fn parse_reply_info(value: &Value) -> Option<ReplyInfo> {
     let mentions = parse_mentions(value.get("mentions"));
 
     Some(ReplyInfo {
+        author_id,
         author: author_name,
         content,
         sticker_names,

@@ -2641,6 +2641,7 @@ fn thread_starter_message_uses_referenced_message_card() {
     let mut message = message_with_content(Some(String::new()));
     message.message_kind = MessageKind::new(21);
     message.reply = Some(ReplyInfo {
+        author_id: None,
         author: "alice".to_owned(),
         content: Some("original topic".to_owned()),
         sticker_names: Vec::new(),
@@ -2690,6 +2691,7 @@ fn reply_message_uses_preview_instead_of_type_label() {
     let mut message = message_with_attachment(Some("message body".to_owned()), image_attachment());
     message.message_kind = MessageKind::new(19);
     message.reply = Some(ReplyInfo {
+        author_id: None,
         author: "casey".to_owned(),
         content: Some("looks good".to_owned()),
         sticker_names: Vec::new(),
@@ -2714,6 +2716,7 @@ fn reply_preview_renders_known_user_mentions() {
     let mut message = message_with_content(Some("asdf".to_owned()));
     message.message_kind = MessageKind::new(19);
     message.reply = Some(ReplyInfo {
+        author_id: None,
         author: "neo".to_owned(),
         content: Some("hello <@10>".to_owned()),
         sticker_names: Vec::new(),
@@ -2731,6 +2734,7 @@ fn reply_preview_renders_mentions_from_reply_metadata() {
     let mut message = message_with_content(Some("asdf".to_owned()));
     message.message_kind = MessageKind::new(19);
     message.reply = Some(ReplyInfo {
+        author_id: None,
         author: "neo".to_owned(),
         content: Some("hello <@10>".to_owned()),
         sticker_names: Vec::new(),
@@ -3982,7 +3986,7 @@ fn member_label_truncates_by_display_width() {
         status: PresenceStatus::Online,
     };
 
-    let label = member_display_label(MemberEntry::Guild(&member), 0, 12);
+    let label = member_display_label(MemberEntry::Guild(&member), &member.display_name, 0, 12);
 
     assert_eq!(label, "漢字仮名...");
     assert!(label.width() <= 12);
@@ -4023,7 +4027,7 @@ fn member_label_uses_horizontal_scroll_offset() {
         status: PresenceStatus::Online,
     };
 
-    let label = member_display_label(MemberEntry::Guild(&member), 5, 8);
+    let label = member_display_label(MemberEntry::Guild(&member), &member.display_name, 5, 8);
 
     assert_eq!(label, "membe...");
 }
