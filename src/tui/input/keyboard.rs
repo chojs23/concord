@@ -856,6 +856,7 @@ fn handle_presence_picker_key(state: &mut DashboardState, key: KeyEvent) -> Opti
     }
     match key.code {
         code if is_confirm_key(code) => return state.activate_presence_picker(),
+        KeyCode::Char(shortcut) => return state.activate_presence_picker_shortcut(shortcut),
         _ => {}
     }
     None

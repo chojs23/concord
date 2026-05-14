@@ -1185,7 +1185,6 @@ impl DiscordState {
         }
     }
 
-
     pub fn self_status(&self) -> PresenceStatus {
         self.self_presence.current
     }
