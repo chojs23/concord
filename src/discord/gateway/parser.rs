@@ -1798,6 +1798,29 @@ mod tests {
     }
 
     #[test]
+    fn message_create_parser_keeps_timestamp_only_embeds() {
+        let event = parse_message_create(&json!({
+            "id": "20",
+            "channel_id": "10",
+            "author": { "id": "30", "username": "neo" },
+            "content": "",
+            "embeds": [{
+                "timestamp": "2026-05-13T15:22:03+00:00"
+            }]
+        }))
+        .expect("message create should parse");
+
+        let AppEvent::MessageCreate { embeds, .. } = event else {
+            panic!("expected message create event");
+        };
+        assert_eq!(embeds.len(), 1);
+        assert_eq!(
+            embeds[0].timestamp.as_deref(),
+            Some("2026-05-13T15:22:03+00:00")
+        );
+    }
+
+    #[test]
     fn message_create_parser_keeps_message_type() {
         let event = parse_message_create(&json!({
             "id": "20",

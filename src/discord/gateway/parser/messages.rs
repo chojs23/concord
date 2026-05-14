@@ -229,6 +229,7 @@ fn embed_has_renderable_content(embed: &EmbedInfo) -> bool {
         || embed.author_name.is_some()
         || embed.title.is_some()
         || embed.description.is_some()
+        || embed.timestamp.is_some()
         || !embed.fields.is_empty()
         || embed.footer_text.is_some()
         || embed.url.is_some()
