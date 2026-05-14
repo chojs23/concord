@@ -15,8 +15,8 @@ pub(in crate::tui::ui) fn render_image_viewer(
     let popup = image_viewer_popup(area);
     let title_width = usize::from(popup.width.saturating_sub(4)).max(1);
     let title = truncate_display_width(&image_viewer_title(&item), title_width);
-    frame.render_widget(Clear, popup);
-    let block = panel_block_owned(title, true);
+    frame.render_widget(bg_clear(state.theme().background), popup);
+    let block = panel_block_owned(title, true, state.theme().accent);
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
     let image_area = Rect {
@@ -36,11 +36,11 @@ pub(in crate::tui::ui) fn render_image_viewer(
     });
 
     if let Some(image_preview) = image_preview {
-        render_image_preview(frame, image_area, image_preview.state);
+        render_image_preview(frame, image_area, image_preview.state, state.theme().dim);
     } else {
         frame.render_widget(
             Paragraph::new(format!("loading {}...", item.filename))
-                .style(Style::default().fg(DIM))
+                .style(Style::default().fg(state.theme().dim))
                 .wrap(Wrap { trim: false }),
             image_area,
         );
@@ -58,7 +58,7 @@ pub(in crate::tui::ui) fn render_image_viewer(
     if let Some(hint_area) = hint_area {
         frame.render_widget(
             Paragraph::new(IMAGE_VIEWER_DOWNLOAD_HINT)
-                .style(Style::default().fg(DIM))
+                .style(Style::default().fg(state.theme().dim))
                 .alignment(Alignment::Center),
             hint_area,
         );

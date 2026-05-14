@@ -14,7 +14,7 @@ pub(in crate::tui::ui) fn render_keymap_popup(
     let width: u16 = 52;
     let height = (lines.len() as u16).saturating_add(2);
     let popup = centered_rect(area, width, height);
-    frame.render_widget(Clear, popup);
+    frame.render_widget(bg_clear(state.theme().background), popup);
     let kb = state.key_bindings();
     let title = format!(
         "Default Keymaps  [{}/{}/Esc to close]",
@@ -23,7 +23,7 @@ pub(in crate::tui::ui) fn render_keymap_popup(
     );
     frame.render_widget(
         Paragraph::new(lines)
-            .block(panel_block_owned(title, true))
+            .block(panel_block_owned(title, true, state.theme().accent))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -47,18 +47,20 @@ pub fn keymap_popup_lines(state: &DashboardState) -> Vec<Line<'static>> {
     let scroll_viewport_up = kb.label(Action::ScrollViewportUp);
     let open_keymap = kb.label(Action::OpenKeymap);
 
-    fn row(key: String, desc: &'static str) -> Line<'static> {
+    let accent = state.theme().accent;
+    let dim = state.theme().dim;
+    let row = |key: String, desc: &'static str| -> Line<'static> {
         Line::from(vec![
-            Span::styled(format!("{key:<18}"), Style::default().fg(ACCENT)),
+            Span::styled(format!("{key:<18}"), Style::default().fg(accent)),
             Span::raw(desc),
         ])
-    }
-    fn section(label: String) -> Line<'static> {
+    };
+    let section = |label: String| -> Line<'static> {
         Line::from(Span::styled(
             label,
-            Style::default().fg(DIM).add_modifier(Modifier::BOLD),
+            Style::default().fg(dim).add_modifier(Modifier::BOLD),
         ))
-    }
+    };
 
     vec![
         section("Navigation".into()),

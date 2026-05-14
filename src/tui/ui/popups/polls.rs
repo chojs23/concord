@@ -14,11 +14,15 @@ pub(in crate::tui::ui) fn render_poll_vote_picker(
 
     let selected = state.selected_poll_vote_picker_index().unwrap_or(0);
     let popup = centered_rect(area, 58, (answers.len() as u16).saturating_add(2));
-    frame.render_widget(Clear, popup);
+    frame.render_widget(bg_clear(state.theme().background), popup);
     frame.render_widget(
-        Paragraph::new(poll_vote_picker_lines(answers, selected))
-            .block(panel_block("Choose poll votes", true))
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(poll_vote_picker_lines(
+            answers,
+            selected,
+            &RenderCtx::new(state.theme()),
+        ))
+        .block(panel_block("Choose poll votes", true, state.theme().accent))
+        .wrap(Wrap { trim: false }),
         popup,
     );
 }
@@ -26,6 +30,7 @@ pub(in crate::tui::ui) fn render_poll_vote_picker(
 pub(in crate::tui::ui) fn poll_vote_picker_lines(
     answers: &[PollVotePickerItem],
     selected: usize,
+    ctx: &RenderCtx<'_>,
 ) -> Vec<Line<'static>> {
     answers
         .iter()
@@ -41,8 +46,8 @@ pub(in crate::tui::ui) fn poll_vote_picker_lines(
                     .add_modifier(Modifier::BOLD);
             }
             Line::from(vec![
-                Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(shortcut, Style::default().fg(DIM)),
+                Span::styled(marker, Style::default().fg(ctx.theme.accent)),
+                Span::styled(shortcut, Style::default().fg(ctx.theme.dim)),
                 Span::styled(format!("{checkbox} {}", answer.label), style),
             ])
         })

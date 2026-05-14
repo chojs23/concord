@@ -23,6 +23,7 @@ struct MessageItemLinesInput<'a> {
     preview_spacers: &'a [InlinePreviewSpacer],
     bottom_gap: bool,
     line_offset: usize,
+    dim: Color,
 }
 
 pub(super) fn render_messages(
@@ -33,9 +34,11 @@ pub(super) fn render_messages(
     avatar_images: Vec<AvatarImage>,
     emoji_images: &[EmojiImage<'_>],
 ) {
+    let ctx = RenderCtx::new(state.theme());
     let block = panel_block_owned(
         state.message_pane_title(),
         state.focus() == FocusPane::Messages,
+        ctx.theme.accent,
     );
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -63,6 +66,9 @@ pub(super) fn render_messages(
                 forum_card_width,
                 is_loading,
                 state.show_custom_emoji(),
+                ctx.theme.accent,
+                ctx.theme.dim,
+                ctx.theme.selection_border,
             )),
             message_areas.list,
         );
@@ -81,6 +87,7 @@ pub(super) fn render_messages(
             state.message_scroll_row_position(content_width, 0, 0),
             forum_viewport_len,
             forum_total_rows,
+            &ctx,
         );
         render_typing_footer(frame, message_areas.typing, state);
         render_composer(frame, message_areas.composer, state, emoji_images);
@@ -190,7 +197,7 @@ pub(super) fn render_messages(
             image_preview.preview_height,
             image_preview.accent_color,
         ) {
-            render_image_preview(frame, preview_area, image_preview.state);
+            render_image_preview(frame, preview_area, image_preview.state, ctx.theme.dim);
             render_image_preview_overflow_marker(
                 frame,
                 preview_area,
@@ -204,6 +211,7 @@ pub(super) fn render_messages(
         state.message_scroll_row_position(content_width, preview_width, max_preview_height),
         message_areas.list.height as usize,
         message_total_rows,
+        &ctx,
     );
     render_new_messages_notice(frame, message_areas.list, state);
     render_typing_footer(frame, message_areas.typing, state);
@@ -232,9 +240,13 @@ fn render_new_messages_notice(frame: &mut Frame, list: Rect, state: &DashboardSt
         height: 1,
     };
 
-    frame.render_widget(Clear, area);
+    frame.render_widget(bg_clear(state.theme().background), area);
     frame.render_widget(
-        Paragraph::new(new_messages_notice_line(count, area.width as usize)),
+        Paragraph::new(new_messages_notice_line(
+            count,
+            area.width as usize,
+            state.theme().accent,
+        )),
         area,
     );
 }
@@ -250,7 +262,10 @@ fn render_typing_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
         return;
     };
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(text, Style::default().fg(DIM)))),
+        Paragraph::new(Line::from(Span::styled(
+            text,
+            Style::default().fg(state.theme().dim),
+        ))),
         area,
     );
 }
@@ -580,11 +595,12 @@ pub(super) fn render_image_preview(
     frame: &mut Frame,
     area: Rect,
     image_preview: ImagePreviewState<'_>,
+    dim: Color,
 ) {
     match image_preview {
         ImagePreviewState::Loading { filename } => frame.render_widget(
             Paragraph::new(format!("loading {filename}..."))
-                .style(Style::default().fg(DIM))
+                .style(Style::default().fg(dim))
                 .wrap(Wrap { trim: false }),
             area,
         ),
@@ -658,7 +674,11 @@ pub(super) fn message_viewport_lines(
         };
         let mut top_lines = Vec::new();
         if has_state_message && state.message_starts_new_day_at(global_index) {
-            top_lines.push(date_separator_line(message.id, layout.list_width));
+            top_lines.push(date_separator_line(
+                message.id,
+                layout.list_width,
+                state.theme().dim,
+            ));
         }
         if has_state_message && state.should_draw_unread_divider_at(global_index) {
             top_lines.push(unread_divider_line(layout.list_width));
@@ -698,6 +718,7 @@ pub(super) fn message_viewport_lines(
             preview_spacers: &preview_spacers,
             bottom_gap,
             line_offset: item_line_offset,
+            dim: state.theme().dim,
         });
         if selected == Some(index) {
             lines.extend(selected_message_lines(
@@ -707,6 +728,8 @@ pub(super) fn message_viewport_lines(
                 body_skip == 0,
                 bottom_gap,
                 show_header,
+                state.theme().dim,
+                state.theme().selection_border,
             ));
         } else {
             lines.extend(item_lines);
@@ -752,6 +775,7 @@ pub(super) fn message_item_lines(
         })
         .into_iter()
         .collect::<Vec<_>>();
+    let scheme = crate::tui::theme::ColorScheme::default();
     message_item_lines_with_previews(MessageItemLinesInput {
         author,
         author_style,
@@ -763,6 +787,7 @@ pub(super) fn message_item_lines(
         preview_spacers: &preview_spacers,
         bottom_gap: true,
         line_offset,
+        dim: scheme.dim,
     })
 }
 
@@ -778,6 +803,7 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
         preview_spacers,
         bottom_gap,
         line_offset,
+        dim,
     } = input;
     let sent_time_width = sent_time.as_str().width();
     let author_width = content_width
@@ -787,17 +813,17 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
     let author = truncate_display_width(&author, author_width);
     let mut lines = if show_header {
         vec![Line::from(vec![
-            message_avatar_span(),
+            message_avatar_span(dim),
             Span::styled(author, author_style),
             Span::raw(" "),
-            Span::styled(sent_time, Style::default().fg(DIM)),
+            Span::styled(sent_time, Style::default().fg(dim)),
         ])]
     } else {
         Vec::new()
     };
     lines.extend(content.into_iter().enumerate().map(|(index, line)| {
         let mut spans = vec![if show_header && index == 0 {
-            message_avatar_span()
+            message_avatar_span(dim)
         } else {
             message_avatar_spacer_span()
         }];
@@ -849,7 +875,7 @@ pub(super) fn message_avatar_area(
     })
 }
 
-fn message_avatar_span() -> Span<'static> {
+fn message_avatar_span(dim: Color) -> Span<'static> {
     let prefix = " ".repeat(MESSAGE_SELECTION_PREFIX_WIDTH as usize);
     let padding = (MESSAGE_AVATAR_OFFSET as usize)
         .saturating_sub(MESSAGE_SELECTION_PREFIX_WIDTH as usize)
@@ -859,7 +885,7 @@ fn message_avatar_span() -> Span<'static> {
             "{prefix}{MESSAGE_AVATAR_PLACEHOLDER}{}",
             " ".repeat(padding)
         ),
-        Style::default().fg(DIM),
+        Style::default().fg(dim),
     )
 }
 
@@ -867,6 +893,7 @@ fn message_avatar_spacer_span() -> Span<'static> {
     Span::raw(" ".repeat(MESSAGE_AVATAR_OFFSET as usize))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn selected_message_lines(
     lines: Vec<Line<'static>>,
     sent_time: &str,
@@ -874,16 +901,21 @@ fn selected_message_lines(
     top_visible: bool,
     has_bottom_gap: bool,
     has_header: bool,
+    dim: Color,
+    selection_border: Color,
 ) -> Vec<Line<'static>> {
     let last_index = lines.len().saturating_sub(1);
     let mut stamped = false;
     let mut selected_lines = Vec::new();
     if top_visible && !has_header {
-        selected_lines.push(selected_message_empty_top_line(card_width));
+        selected_lines.push(selected_message_empty_top_line(
+            card_width,
+            selection_border,
+        ));
     }
     selected_lines.extend(lines.into_iter().enumerate().map(|(index, line)| {
         if has_bottom_gap && index == last_index {
-            selected_message_bottom_line(card_width)
+            selected_message_bottom_line(card_width, selection_border)
         } else {
             let show_time = !stamped && !has_header && line_has_gutter(&line);
             if show_time {
@@ -894,11 +926,13 @@ fn selected_message_lines(
                 card_width,
                 index == 0 && top_visible && has_header,
                 show_time.then_some(sent_time),
+                dim,
+                selection_border,
             )
         }
     }));
     if !has_bottom_gap {
-        selected_lines.push(selected_message_bottom_line(card_width));
+        selected_lines.push(selected_message_bottom_line(card_width, selection_border));
     }
     selected_lines
 }
@@ -909,14 +943,14 @@ fn line_has_gutter(line: &Line<'_>) -> bool {
         .is_some_and(|span| span.content.width() == MESSAGE_AVATAR_OFFSET as usize)
 }
 
-fn selected_time_gutter_span(sent_time: &str) -> Span<'static> {
+fn selected_time_gutter_span(sent_time: &str, dim: Color) -> Span<'static> {
     let gutter_width =
         (MESSAGE_AVATAR_OFFSET as usize).saturating_sub(MESSAGE_SELECTION_PREFIX_WIDTH as usize);
     let time = truncate_display_width(sent_time, gutter_width);
     let padding = gutter_width.saturating_sub(time.width());
     Span::styled(
         format!("{time}{}", " ".repeat(padding)),
-        Style::default().fg(DIM),
+        Style::default().fg(dim),
     )
 }
 
@@ -925,9 +959,17 @@ fn selected_message_content_line(
     card_width: usize,
     top_line: bool,
     sent_time: Option<&str>,
+    dim: Color,
+    selection_border: Color,
 ) -> Line<'static> {
     let mut spans = line.spans;
-    replace_selection_prefix(&mut spans, if top_line { "╭─" } else { "│ " }, sent_time);
+    replace_selection_prefix(
+        &mut spans,
+        if top_line { "╭─" } else { "│ " },
+        sent_time,
+        dim,
+        selection_border,
+    );
     let used_width = spans.iter().map(|span| span.content.width()).sum::<usize>();
     let right_border = if top_line { "╮" } else { " │" };
     let fill_char = if top_line { '─' } else { ' ' };
@@ -937,26 +979,26 @@ fn selected_message_content_line(
         .saturating_sub(right_border_width);
     spans.push(Span::styled(
         fill_char.to_string().repeat(padding),
-        selected_message_border_style(),
+        selected_message_border_style(selection_border),
     ));
     spans.push(Span::styled(
         right_border.to_owned(),
-        selected_message_border_style(),
+        selected_message_border_style(selection_border),
     ));
     Line::from(spans)
 }
 
-fn selected_message_empty_top_line(card_width: usize) -> Line<'static> {
+fn selected_message_empty_top_line(card_width: usize, selection_border: Color) -> Line<'static> {
     Line::from(Span::styled(
         format!("╭{}╮", "─".repeat(card_width.saturating_sub(2))),
-        selected_message_border_style(),
+        selected_message_border_style(selection_border),
     ))
 }
 
-fn selected_message_bottom_line(card_width: usize) -> Line<'static> {
+fn selected_message_bottom_line(card_width: usize, selection_border: Color) -> Line<'static> {
     Line::from(Span::styled(
         format!("╰{}╯", "─".repeat(card_width.saturating_sub(2))),
-        selected_message_border_style(),
+        selected_message_border_style(selection_border),
     ))
 }
 
@@ -964,6 +1006,8 @@ fn replace_selection_prefix(
     spans: &mut Vec<Span<'static>>,
     replacement: &str,
     sent_time: Option<&str>,
+    dim: Color,
+    selection_border: Color,
 ) {
     if spans.first().is_some_and(|span| {
         span.content.width() >= MESSAGE_SELECTION_PREFIX_WIDTH as usize
@@ -975,7 +1019,7 @@ fn replace_selection_prefix(
     }) {
         let original = spans.remove(0);
         let remaining = if let Some(time) = sent_time {
-            selected_time_gutter_span(time)
+            selected_time_gutter_span(time, dim)
         } else {
             Span::styled(
                 original
@@ -990,13 +1034,16 @@ fn replace_selection_prefix(
     }
     spans.insert(
         0,
-        Span::styled(replacement.to_owned(), selected_message_border_style()),
+        Span::styled(
+            replacement.to_owned(),
+            selected_message_border_style(selection_border),
+        ),
     );
 }
 
-fn selected_message_border_style() -> Style {
+fn selected_message_border_style(selection_border: Color) -> Style {
     Style::default()
-        .fg(SELECTED_MESSAGE_BORDER)
+        .fg(selection_border)
         .add_modifier(Modifier::BOLD)
 }
 
@@ -1057,10 +1104,14 @@ pub(super) fn format_message_sent_time(message_id: Id<MessageMarker>) -> String 
     format_message_local_time(message_id)
 }
 
-pub(super) fn date_separator_line(message_id: Id<MessageMarker>, width: usize) -> Line<'static> {
+pub(super) fn date_separator_line(
+    message_id: Id<MessageMarker>,
+    width: usize,
+    dim: Color,
+) -> Line<'static> {
     let date = message_local_date(message_id);
     let label = format!(" {} ", date.format("%Y-%m-%d"));
-    separator_line(&label, width, Style::default().fg(DIM))
+    separator_line(&label, width, Style::default().fg(dim))
 }
 
 pub(super) fn unread_divider_line(width: usize) -> Line<'static> {
@@ -1084,7 +1135,7 @@ pub(super) fn unread_divider_line(width: usize) -> Line<'static> {
     ])
 }
 
-pub(super) fn new_messages_notice_line(count: usize, width: usize) -> Line<'static> {
+pub(super) fn new_messages_notice_line(count: usize, width: usize, accent: Color) -> Line<'static> {
     let label = new_messages_notice_label(count);
     let text = if label.as_str().width() > width {
         truncate_display_width(&label, width)
@@ -1094,7 +1145,7 @@ pub(super) fn new_messages_notice_line(count: usize, width: usize) -> Line<'stat
         let right = padding.saturating_sub(left);
         format!("{}{}{}", " ".repeat(left), label, " ".repeat(right))
     };
-    Line::from(Span::styled(text, Style::default().fg(ACCENT).bold()))
+    Line::from(Span::styled(text, Style::default().fg(accent).bold()))
 }
 
 fn new_messages_notice_label(count: usize) -> String {

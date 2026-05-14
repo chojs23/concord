@@ -15,13 +15,17 @@ pub(in crate::tui::ui) fn render_leader_popup(
 
     let lines = leader_popup_lines(state, area.height.saturating_sub(2) as usize);
     let popup = leader_popup_area(area, lines.len() as u16);
-    frame.render_widget(Clear, popup);
+    frame.render_widget(bg_clear(state.theme().background), popup);
     frame.render_widget(
         Paragraph::new(truncate_leader_lines(
             lines,
             popup.width.saturating_sub(2) as usize,
         ))
-        .block(panel_block_owned(leader_popup_title(state), true))
+        .block(panel_block_owned(
+            leader_popup_title(state),
+            true,
+            state.theme().accent,
+        ))
         .wrap(Wrap { trim: false }),
         popup,
     );
@@ -57,16 +61,17 @@ fn leader_popup_title(state: &DashboardState) -> String {
 }
 
 fn leader_popup_lines(state: &DashboardState, max_lines: usize) -> Vec<Line<'static>> {
+    let dim = state.theme().dim;
     let lines = if state.is_leader_action_mode() {
-        leader_action_lines(state)
+        leader_action_lines(state, dim)
     } else {
         vec![
-            leader_shortcut_line('1', "toggle Servers", true),
-            leader_shortcut_line('2', "toggle Channels", true),
-            leader_shortcut_line('4', "toggle Members", true),
-            leader_shortcut_line('a', "Actions", true),
-            leader_shortcut_line('o', "Options", true),
-            leader_shortcut_text_line("Space", "Switch channels", true),
+            leader_shortcut_line('1', "toggle Servers", true, dim),
+            leader_shortcut_line('2', "toggle Channels", true, dim),
+            leader_shortcut_line('4', "toggle Members", true, dim),
+            leader_shortcut_line('a', "Actions", true, dim),
+            leader_shortcut_line('o', "Options", true, dim),
+            leader_shortcut_text_line("Space", "Switch channels", true, dim),
         ]
     };
     leader_shortcut_grid_lines(lines, max_lines)
@@ -112,7 +117,7 @@ fn leader_line_width(line: &Line<'_>) -> usize {
     line.spans.iter().map(|span| span.content.width()).sum()
 }
 
-fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
+fn leader_action_lines(state: &DashboardState, dim: Color) -> Vec<Line<'static>> {
     if state.is_message_action_menu_open() {
         let actions = state.selected_message_action_items();
         return actions
@@ -123,6 +128,7 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
                     message_action_shortcut(&actions, index).unwrap_or(' '),
                     &action.label,
                     action.enabled,
+                    dim,
                 )
             })
             .collect();
@@ -134,7 +140,12 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
                 .iter()
                 .enumerate()
                 .map(|(index, item)| {
-                    leader_shortcut_line(indexed_shortcut(index).unwrap_or(' '), item.label, true)
+                    leader_shortcut_line(
+                        indexed_shortcut(index).unwrap_or(' '),
+                        item.label,
+                        true,
+                        dim,
+                    )
                 })
                 .collect();
         }
@@ -147,6 +158,7 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
                     guild_action_shortcut(&actions, index).unwrap_or(' '),
                     &action.label,
                     action.enabled,
+                    dim,
                 )
             })
             .collect();
@@ -157,7 +169,12 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .into_iter()
             .enumerate()
             .map(|(index, thread)| {
-                leader_shortcut_line(indexed_shortcut(index).unwrap_or(' '), &thread.label, true)
+                leader_shortcut_line(
+                    indexed_shortcut(index).unwrap_or(' '),
+                    &thread.label,
+                    true,
+                    dim,
+                )
             })
             .collect();
     }
@@ -168,7 +185,12 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
                 .iter()
                 .enumerate()
                 .map(|(index, item)| {
-                    leader_shortcut_line(indexed_shortcut(index).unwrap_or(' '), item.label, true)
+                    leader_shortcut_line(
+                        indexed_shortcut(index).unwrap_or(' '),
+                        item.label,
+                        true,
+                        dim,
+                    )
                 })
                 .collect();
         }
@@ -181,6 +203,7 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
                     channel_action_shortcut(&actions, index).unwrap_or(' '),
                     &action.label,
                     action.enabled,
+                    dim,
                 )
             })
             .collect();
@@ -195,28 +218,29 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
                     member_action_shortcut(&actions, index).unwrap_or(' '),
                     &action.label,
                     action.enabled,
+                    dim,
                 )
             })
             .collect();
     }
     vec![Line::from(Span::styled(
         "No actions available",
-        Style::default().fg(DIM),
+        Style::default().fg(dim),
     ))]
 }
 
-fn leader_shortcut_line(key: char, label: &str, enabled: bool) -> Line<'static> {
-    leader_shortcut_text_line(&key.to_string(), label, enabled)
+fn leader_shortcut_line(key: char, label: &str, enabled: bool, dim: Color) -> Line<'static> {
+    leader_shortcut_text_line(&key.to_string(), label, enabled, dim)
 }
 
-fn leader_shortcut_text_line(key: &str, label: &str, enabled: bool) -> Line<'static> {
+fn leader_shortcut_text_line(key: &str, label: &str, enabled: bool, dim: Color) -> Line<'static> {
     let style = if enabled {
         Style::default()
     } else {
-        Style::default().fg(DIM)
+        Style::default().fg(dim)
     };
     Line::from(vec![
-        Span::styled(format!("[{key}] "), Style::default().fg(DIM)),
+        Span::styled(format!("[{key}] "), Style::default().fg(dim)),
         Span::raw(" "),
         Span::styled(label.to_owned(), style),
     ])
@@ -244,10 +268,11 @@ pub(in crate::tui::ui) fn render_message_action_menu(
 
     let selected = state.selected_message_action_index().unwrap_or(0);
     let popup = centered_rect(area, 54, (actions.len() as u16).saturating_add(2));
-    frame.render_widget(Clear, popup);
+    frame.render_widget(bg_clear(state.theme().background), popup);
+    let ctx = RenderCtx::new(state.theme());
     frame.render_widget(
-        Paragraph::new(message_action_menu_lines(&actions, selected))
-            .block(panel_block("Message actions", true))
+        Paragraph::new(message_action_menu_lines(&actions, selected, &ctx))
+            .block(panel_block("Message actions", true, state.theme().accent))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -256,6 +281,7 @@ pub(in crate::tui::ui) fn render_message_action_menu(
 pub(in crate::tui::ui) fn message_action_menu_lines(
     actions: &[MessageActionItem],
     selected: usize,
+    ctx: &RenderCtx<'_>,
 ) -> Vec<Line<'static>> {
     actions
         .iter()
@@ -271,7 +297,7 @@ pub(in crate::tui::ui) fn message_action_menu_lines(
             let mut style = if action.enabled {
                 Style::default()
             } else {
-                Style::default().fg(DIM)
+                Style::default().fg(ctx.theme.dim)
             };
             if index == selected {
                 style = style
@@ -279,8 +305,8 @@ pub(in crate::tui::ui) fn message_action_menu_lines(
                     .add_modifier(Modifier::BOLD);
             }
             Line::from(vec![
-                Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(shortcut, Style::default().fg(DIM)),
+                Span::styled(marker, Style::default().fg(ctx.theme.accent)),
+                Span::styled(shortcut, Style::default().fg(ctx.theme.dim)),
                 Span::styled(label, style),
             ])
         })

@@ -2,10 +2,21 @@ use ratatui::{layout::Rect, style::Color, text::Line};
 use ratatui_image::protocol::{Protocol, StatefulProtocol};
 
 use super::super::state::FocusPane;
+use super::super::theme::ColorScheme;
+
+pub(super) struct RenderCtx<'a> {
+    pub(super) theme: &'a ColorScheme,
+}
+
+impl<'a> RenderCtx<'a> {
+    pub(super) fn new(theme: &'a ColorScheme) -> Self {
+        Self { theme }
+    }
+}
 
 pub(super) const ACCENT: Color = Color::Cyan;
+#[allow(dead_code)]
 pub(super) const DIM: Color = Color::DarkGray;
-pub(super) const SCROLLBAR_THUMB: Color = Color::Rgb(170, 170, 170);
 pub(super) const MIN_MESSAGE_INPUT_HEIGHT: u16 = 3;
 pub(super) const IMAGE_PREVIEW_HEIGHT: u16 = 10;
 pub(super) const IMAGE_PREVIEW_WIDTH: u16 = 72;
@@ -17,8 +28,6 @@ pub(super) const EMBED_PREVIEW_GUTTER_PREFIX: &str = "  ▎ ";
 pub(super) const MAX_REACTION_USERS_VISIBLE_LINES: usize = 14;
 pub(super) const IMAGE_VIEWER_POPUP_WIDTH: u16 = 78;
 pub(super) const IMAGE_VIEWER_POPUP_HEIGHT: u16 = 16;
-pub(super) const SELECTED_FORUM_POST_BORDER: Color = Color::Green;
-pub(super) const SELECTED_MESSAGE_BORDER: Color = Color::Green;
 
 pub struct ImagePreview<'a> {
     pub viewer: bool,

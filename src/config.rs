@@ -105,11 +105,71 @@ impl DisplayOptions {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct KeyBindingsConfig(pub HashMap<String, String>);
 
+/// Hex color overrides for the UI color scheme. All values default to the
+/// built-in colors when absent. Each value must be a 6-digit hex string with
+/// an optional leading `#`, e.g. `"#00FFFF"` or `"00FFFF"`. Invalid values
+/// fall back silently to the built-in default for that color.
+///
+/// Example `~/.config/concord/config.toml`:
+/// ```toml
+/// [theme]
+/// accent = "#FF6600"
+/// dim    = "#666666"
+/// ```
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Theme {
+    pub background: String,
+    pub accent: String,
+    pub dim: String,
+    pub scrollbar_thumb: String,
+    pub selection_border: String,
+    pub mention_badge: String,
+    pub channel_read: String,
+    pub channel_unread: String,
+    pub self_reaction: String,
+    pub self_mention_bg: String,
+    pub self_mention_fg: String,
+    pub other_mention_bg: String,
+    pub other_mention_fg: String,
+    pub presence_online: String,
+    pub presence_idle: String,
+    pub presence_dnd: String,
+    pub presence_offline: String,
+    pub folder_default: String,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            background: String::new(),
+            accent: "#00FFFF".to_owned(),
+            dim: "#808080".to_owned(),
+            scrollbar_thumb: "#AAAAAA".to_owned(),
+            selection_border: "#00FF00".to_owned(),
+            mention_badge: "#FFA500".to_owned(),
+            channel_read: "#828282".to_owned(),
+            channel_unread: "#FFFFFF".to_owned(),
+            self_reaction: "#FFFF00".to_owned(),
+            self_mention_bg: "#4C4C23".to_owned(),
+            self_mention_fg: "#FFFF00".to_owned(),
+            other_mention_bg: "#28325C".to_owned(),
+            other_mention_fg: "#C1CEF7".to_owned(),
+            presence_online: "#00FF00".to_owned(),
+            presence_idle: "#B48C00".to_owned(),
+            presence_dnd: "#FF0000".to_owned(),
+            presence_offline: "#808080".to_owned(),
+            folder_default: "#00FFFF".to_owned(),
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct AppConfig {
     display: DisplayOptions,
     keybindings: KeyBindingsConfig,
+    theme: Theme,
 }
 
 pub fn load_display_options() -> Result<DisplayOptions> {
@@ -127,6 +187,15 @@ pub fn load_key_bindings_config() -> Result<KeyBindingsConfig> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Ok(KeyBindingsConfig::default())
         }
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub fn load_theme() -> Result<Theme> {
+    let path = config_path()?;
+    match std::fs::read_to_string(&path) {
+        Ok(content) => Ok(section_from_toml::<Theme>(&content, "theme")?),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Theme::default()),
         Err(error) => Err(error.into()),
     }
 }

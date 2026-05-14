@@ -35,13 +35,13 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
         .iter()
         .map(|image| image.url.clone())
         .collect::<Vec<_>>();
-    let block = panel_block("Choose reaction", true);
+    let block = panel_block("Choose reaction", true, state.theme().accent);
     let content = block.inner(popup);
     let filter_lines = u16::from(filter.is_some());
     let visible_items =
         usize::from(content.height.saturating_sub(filter_lines)).min(desired_visible_items);
     let visible_range = selection::visible_item_range(reactions.len(), selected, visible_items);
-    frame.render_widget(Clear, popup);
+    frame.render_widget(bg_clear(state.theme().background), popup);
     frame.render_widget(
         Paragraph::new(emoji_reaction_picker_lines_with_custom_emoji_images(
             reactions,
@@ -51,6 +51,7 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
             state.show_custom_emoji(),
             filter,
             usize::from(content.width),
+            &RenderCtx::new(state.theme()),
         ))
         .block(block)
         .wrap(Wrap { trim: false }),
@@ -66,6 +67,7 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
             emoji_images,
         );
     }
+    let ctx = RenderCtx::new(state.theme());
     render_vertical_scrollbar(
         frame,
         Rect {
@@ -75,6 +77,7 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
         visible_range.start,
         visible_items,
         reactions.len(),
+        &ctx,
     );
 }
 
@@ -95,6 +98,7 @@ pub(in crate::tui::ui) fn render_reaction_users_popup(
     let popup_width = POPUP_TARGET_WIDTH.min(area.width.saturating_sub(2)).max(1);
     let inner_width = usize::from(popup_width.saturating_sub(2));
 
+    let ctx = RenderCtx::new(state.theme());
     let max_visible_lines = reaction_users_visible_line_count(area);
     let lines = reaction_users_popup_lines_with_custom_emoji_images(
         popup_state.reactions(),
@@ -102,15 +106,16 @@ pub(in crate::tui::ui) fn render_reaction_users_popup(
         max_visible_lines,
         inner_width,
         state.show_custom_emoji(),
+        &ctx,
     );
     let popup = centered_rect(
         area,
         POPUP_TARGET_WIDTH,
         (lines.len() as u16).saturating_add(2),
     );
-    frame.render_widget(Clear, popup);
+    frame.render_widget(bg_clear(state.theme().background), popup);
     frame.render_widget(
-        Paragraph::new(lines).block(panel_block("Reacted users", true)),
+        Paragraph::new(lines).block(panel_block("Reacted users", true, state.theme().accent)),
         popup,
     );
     render_vertical_scrollbar(
@@ -122,6 +127,7 @@ pub(in crate::tui::ui) fn render_reaction_users_popup(
         popup_state.scroll(),
         max_visible_lines,
         popup_state.data_line_count(),
+        &ctx,
     );
 }
 
@@ -132,12 +138,15 @@ pub(in crate::tui::ui) fn reaction_users_popup_lines(
     max_visible_lines: usize,
     inner_width: usize,
 ) -> Vec<Line<'static>> {
+    let scheme = crate::tui::theme::ColorScheme::default();
+    let ctx = RenderCtx::new(&scheme);
     reaction_users_popup_lines_with_custom_emoji_images(
         reactions,
         scroll,
         max_visible_lines,
         inner_width,
         true,
+        &ctx,
     )
 }
 
@@ -147,8 +156,9 @@ fn reaction_users_popup_lines_with_custom_emoji_images(
     max_visible_lines: usize,
     inner_width: usize,
     show_custom_emoji: bool,
+    ctx: &RenderCtx<'_>,
 ) -> Vec<Line<'static>> {
-    let data_lines = reaction_users_popup_data_lines(reactions, show_custom_emoji);
+    let data_lines = reaction_users_popup_data_lines(reactions, show_custom_emoji, ctx);
     let visible_lines = max_visible_lines.min(data_lines.len());
     let scroll = scroll.min(data_lines.len().saturating_sub(visible_lines));
     data_lines
@@ -162,12 +172,13 @@ fn reaction_users_popup_lines_with_custom_emoji_images(
 fn reaction_users_popup_data_lines(
     reactions: &[ReactionUsersInfo],
     show_custom_emoji: bool,
+    ctx: &RenderCtx<'_>,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if reactions.is_empty() {
         lines.push(Line::from(Span::styled(
             "No reactions found",
-            Style::default().fg(DIM),
+            Style::default().fg(ctx.theme.dim),
         )));
     }
 
@@ -179,12 +190,14 @@ fn reaction_users_popup_data_lines(
                 "{} · {count} {user_label}",
                 reaction_emoji_label(&reaction.emoji, show_custom_emoji)
             ),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(ctx.theme.accent)
+                .add_modifier(Modifier::BOLD),
         )));
         if reaction.users.is_empty() {
             lines.push(Line::from(Span::styled(
                 "  no users found",
-                Style::default().fg(DIM),
+                Style::default().fg(ctx.theme.dim),
             )));
         } else {
             lines.extend(
@@ -214,6 +227,8 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines(
     max_visible_items: usize,
     thumbnail_urls: &[String],
 ) -> Vec<Line<'static>> {
+    let scheme = crate::tui::theme::ColorScheme::default();
+    let ctx = RenderCtx::new(&scheme);
     emoji_reaction_picker_lines_with_custom_emoji_images(
         reactions,
         selected,
@@ -222,6 +237,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines(
         true,
         None,
         usize::MAX,
+        &ctx,
     )
 }
 
@@ -233,6 +249,8 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_for_width(
     thumbnail_urls: &[String],
     width: usize,
 ) -> Vec<Line<'static>> {
+    let scheme = crate::tui::theme::ColorScheme::default();
+    let ctx = RenderCtx::new(&scheme);
     emoji_reaction_picker_lines_with_custom_emoji_images(
         reactions,
         selected,
@@ -241,6 +259,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_for_width(
         true,
         None,
         width,
+        &ctx,
     )
 }
 
@@ -252,6 +271,8 @@ pub(in crate::tui::ui) fn filtered_emoji_reaction_picker_lines(
     thumbnail_urls: &[String],
     filter: &str,
 ) -> Vec<Line<'static>> {
+    let scheme = crate::tui::theme::ColorScheme::default();
+    let ctx = RenderCtx::new(&scheme);
     emoji_reaction_picker_lines_with_custom_emoji_images(
         reactions,
         selected,
@@ -260,9 +281,11 @@ pub(in crate::tui::ui) fn filtered_emoji_reaction_picker_lines(
         true,
         Some(filter),
         usize::MAX,
+        &ctx,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emoji_reaction_picker_lines_with_custom_emoji_images(
     reactions: &[EmojiReactionItem],
     selected: usize,
@@ -271,6 +294,7 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
     show_custom_emoji: bool,
     filter: Option<&str>,
     max_width: usize,
+    ctx: &RenderCtx<'_>,
 ) -> Vec<Line<'static>> {
     let selected = selected.min(reactions.len().saturating_sub(1));
     let visible_items = max_visible_items.max(1).min(reactions.len().max(1));
@@ -294,8 +318,8 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
                     .custom_image_url()
                     .is_some_and(|url| thumbnail_urls.iter().any(|ready| ready == &url));
             Line::from(vec![
-                Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(shortcut, Style::default().fg(DIM)),
+                Span::styled(marker, Style::default().fg(ctx.theme.accent)),
+                Span::styled(shortcut, Style::default().fg(ctx.theme.dim)),
                 Span::styled(
                     format_emoji_reaction_item(reaction, thumbnail_ready, show_custom_emoji),
                     style,
@@ -307,16 +331,18 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
     if reactions.is_empty() {
         lines.push(Line::from(Span::styled(
             "  no matching reactions",
-            Style::default().fg(DIM),
+            Style::default().fg(ctx.theme.dim),
         )));
     }
 
     if let Some(filter) = filter {
         lines.push(Line::from(vec![
-            Span::styled("Filter ", Style::default().fg(DIM)),
+            Span::styled("Filter ", Style::default().fg(ctx.theme.dim)),
             Span::styled(
                 format!("/{filter}"),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(ctx.theme.accent)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
     }

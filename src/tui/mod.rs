@@ -16,6 +16,7 @@ mod runtime;
 mod selection;
 mod state;
 mod terminal;
+pub(crate) mod theme;
 mod ui;
 
 use tokio::sync::{mpsc, watch};

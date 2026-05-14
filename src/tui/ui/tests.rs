@@ -11,12 +11,11 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{
     ACCENT, DIM, ImagePreview, ImagePreviewState, MENTION_ORANGE, MemberEntry, READ_DIM,
-    SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT,
-    channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
-    composer_content_line_count, composer_cursor_position, composer_lines,
-    composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count, composer_text,
-    date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_picker_lines,
-    emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
+    UNREAD_BRIGHT, channel_switcher_cursor_position, channel_switcher_lines,
+    channel_unread_decoration, composer_content_line_count, composer_cursor_position,
+    composer_lines, composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count,
+    composer_text, date_separator_line, debug_log_popup_lines, dm_presence_dot_span,
+    emoji_picker_lines, emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
     filtered_emoji_reaction_picker_lines, focus_pane_at, format_message_sent_time,
     forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
     inline_image_preview_area, inline_image_preview_row, member_display_label, member_name_style,
@@ -32,6 +31,8 @@ use crate::tui::message_time::{
     discord_epoch_unix_millis, format_unix_millis_with_offset, message_starts_new_day,
     test_message_id_for_unix_millis,
 };
+use crate::tui::theme::ColorScheme;
+use crate::tui::ui::types::RenderCtx;
 use crate::{
     config::DisplayOptions,
     discord::{
@@ -86,7 +87,13 @@ fn options_popup_lines_show_selected_toggle_state() {
         },
     ];
 
-    let lines = options_popup_lines(&items, 1, items.len(), 120);
+    let lines = options_popup_lines(
+        &items,
+        1,
+        items.len(),
+        120,
+        &RenderCtx::new(&ColorScheme::default()),
+    );
 
     assert_eq!(lines[0].spans[1].content, "[ ] ");
     assert_eq!(lines[1].spans[0].content, "› ");
@@ -128,7 +135,7 @@ fn options_popup_lines_keep_selected_item_visible_when_clipped() {
         },
     ];
 
-    let lines = options_popup_lines(&items, 3, 2, 120);
+    let lines = options_popup_lines(&items, 3, 2, 120, &RenderCtx::new(&ColorScheme::default()));
     let rendered = line_texts_from_ratatui(&lines).join("\n");
 
     assert!(!rendered.contains("Option 1"), "{rendered}");
@@ -258,7 +265,15 @@ fn channel_switcher_lines_show_search_and_grouped_selection() {
         },
     ];
 
-    let lines = channel_switcher_lines(&items, 1, "gen", "gen".len(), 10, 40);
+    let lines = channel_switcher_lines(
+        &items,
+        1,
+        "gen",
+        "gen".len(),
+        10,
+        40,
+        &RenderCtx::new(&ColorScheme::default()),
+    );
 
     assert_eq!(lines[0].spans[0].content, "🔎 ");
     assert_eq!(lines[0].spans[1].content, "gen");
@@ -298,7 +313,15 @@ fn channel_switcher_lines_show_unread_badges_like_channel_pane() {
         original_index: 0,
     }];
 
-    let lines = channel_switcher_lines(&items, 0, "", 0, 10, 40);
+    let lines = channel_switcher_lines(
+        &items,
+        0,
+        "",
+        0,
+        10,
+        40,
+        &RenderCtx::new(&ColorScheme::default()),
+    );
 
     assert!(
         lines
@@ -324,7 +347,15 @@ fn selected_channel_switcher_unread_row_keeps_highlight() {
         original_index: 0,
     }];
 
-    let lines = channel_switcher_lines(&items, 0, "", 0, 10, 40);
+    let lines = channel_switcher_lines(
+        &items,
+        0,
+        "",
+        0,
+        10,
+        40,
+        &RenderCtx::new(&ColorScheme::default()),
+    );
     let item_line = lines
         .iter()
         .find(|line| line.to_string().contains("#alerts"))
@@ -357,7 +388,15 @@ fn channel_switcher_cursor_position_tracks_query_cursor() {
 fn channel_switcher_search_line_windows_long_query_around_cursor() {
     let query = "abcdefghijklmnopqrstuvwxyz";
 
-    let lines = channel_switcher_lines(&[], 0, query, query.len(), 10, 12);
+    let lines = channel_switcher_lines(
+        &[],
+        0,
+        query,
+        query.len(),
+        10,
+        12,
+        &RenderCtx::new(&ColorScheme::default()),
+    );
     let rendered = lines[0].to_string();
 
     assert!(rendered.contains("uvwxyz"));
@@ -756,6 +795,7 @@ fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
             "https://cdn.discordapp.com/emojis/50.png".to_owned(),
         ],
         true,
+        &RenderCtx::new(&ColorScheme::default()),
     );
 
     assert!(
@@ -860,7 +900,8 @@ fn dashboard_renders_scrollbar_for_overflowing_composer_pickers() {
 fn one_to_one_dm_carries_presence_in_dot() {
     let channel = channel_with_recipients("dm", &[PresenceStatus::DoNotDisturb]);
 
-    let dot = dm_presence_dot_span(&channel).expect("1-on-1 DM should produce a presence dot");
+    let dot = dm_presence_dot_span(&channel, &RenderCtx::new(&ColorScheme::default()))
+        .expect("1-on-1 DM should produce a presence dot");
     assert_eq!(dot.content.as_ref(), "● ");
     assert_eq!(dot.style.fg, Some(Color::Red));
 }
@@ -886,7 +927,12 @@ fn channel_unread_decoration_matches_unread_state() {
     ];
 
     for (unread, expected_badge, expected_fg, expect_bold) in cases {
-        let (badge, style) = channel_unread_decoration(unread, base, false);
+        let (badge, style) = channel_unread_decoration(
+            unread,
+            base,
+            false,
+            &RenderCtx::new(&ColorScheme::default()),
+        );
         match expected_badge {
             Some((content, color)) => {
                 let badge = badge.expect("unread state should include a count badge");
@@ -906,8 +952,12 @@ fn channel_unread_decoration_matches_unread_state() {
     let active_base = Style::default()
         .fg(Color::Green)
         .add_modifier(Modifier::BOLD);
-    let (badge, style) =
-        channel_unread_decoration(ChannelUnreadState::Mentioned(2), active_base, true);
+    let (badge, style) = channel_unread_decoration(
+        ChannelUnreadState::Mentioned(2),
+        active_base,
+        true,
+        &RenderCtx::new(&ColorScheme::default()),
+    );
     assert!(badge.is_none());
     assert_eq!(style, active_base);
 }
@@ -1488,8 +1538,14 @@ fn forum_post_lines_render_title_author_and_preview() {
     assert_eq!(lines[4].spans[2].style.fg, Some(Color::White));
     assert_eq!(lines[4].spans[4].style.fg, Some(Color::Yellow));
     assert_eq!(lines[4].spans[6].style.fg, Some(Color::White));
-    assert_eq!(lines[1].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
-    assert_eq!(lines[2].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
+    assert_eq!(
+        lines[1].spans[1].style.fg,
+        Some(ColorScheme::default().selection_border)
+    );
+    assert_eq!(
+        lines[2].spans[1].style.fg,
+        Some(ColorScheme::default().selection_border)
+    );
     assert!(
         lines
             .iter()
@@ -1850,7 +1906,8 @@ fn offline_like_dm_status_uses_empty_dim_presence_marker() {
     for status in [PresenceStatus::Offline, PresenceStatus::Unknown] {
         let channel = channel_with_recipients("dm", &[status]);
 
-        let dot = dm_presence_dot_span(&channel).expect("DM should still produce a dot");
+        let dot = dm_presence_dot_span(&channel, &RenderCtx::new(&ColorScheme::default()))
+            .expect("DM should still produce a dot");
         assert_eq!(dot.content.as_ref(), "○ ");
         assert_eq!(dot.style.fg, Some(Color::DarkGray));
     }
@@ -1863,7 +1920,7 @@ fn group_dm_has_no_presence_dot() {
         &[PresenceStatus::Online, PresenceStatus::DoNotDisturb],
     );
 
-    assert!(dm_presence_dot_span(&channel).is_none());
+    assert!(dm_presence_dot_span(&channel, &RenderCtx::new(&ColorScheme::default())).is_none());
 }
 
 #[test]
@@ -2641,6 +2698,7 @@ fn thread_starter_message_uses_referenced_message_card() {
     let mut message = message_with_content(Some(String::new()));
     message.message_kind = MessageKind::new(21);
     message.reply = Some(ReplyInfo {
+        author_id: None,
         author: "alice".to_owned(),
         content: Some("original topic".to_owned()),
         sticker_names: Vec::new(),
@@ -2690,6 +2748,7 @@ fn reply_message_uses_preview_instead_of_type_label() {
     let mut message = message_with_attachment(Some("message body".to_owned()), image_attachment());
     message.message_kind = MessageKind::new(19);
     message.reply = Some(ReplyInfo {
+        author_id: None,
         author: "casey".to_owned(),
         content: Some("looks good".to_owned()),
         sticker_names: Vec::new(),
@@ -2714,6 +2773,7 @@ fn reply_preview_renders_known_user_mentions() {
     let mut message = message_with_content(Some("asdf".to_owned()));
     message.message_kind = MessageKind::new(19);
     message.reply = Some(ReplyInfo {
+        author_id: None,
         author: "neo".to_owned(),
         content: Some("hello <@10>".to_owned()),
         sticker_names: Vec::new(),
@@ -2731,6 +2791,7 @@ fn reply_preview_renders_mentions_from_reply_metadata() {
     let mut message = message_with_content(Some("asdf".to_owned()));
     message.message_kind = MessageKind::new(19);
     message.reply = Some(ReplyInfo {
+        author_id: None,
         author: "neo".to_owned(),
         content: Some("hello <@10>".to_owned()),
         sticker_names: Vec::new(),
@@ -2942,7 +3003,7 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
         },
     ];
 
-    let lines = message_action_menu_lines(&actions, 1);
+    let lines = message_action_menu_lines(&actions, 1, &RenderCtx::new(&ColorScheme::default()));
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
@@ -2965,7 +3026,7 @@ fn message_action_menu_uses_numbered_shortcuts_for_duplicate_preferred_keys() {
         },
     ];
 
-    let lines = message_action_menu_lines(&actions, 0);
+    let lines = message_action_menu_lines(&actions, 0, &RenderCtx::new(&ColorScheme::default()));
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
@@ -3013,7 +3074,7 @@ fn poll_vote_picker_marks_selected_and_checked_answers() {
         },
     ];
 
-    let lines = poll_vote_picker_lines(&answers, 1);
+    let lines = poll_vote_picker_lines(&answers, 1, &RenderCtx::new(&ColorScheme::default()));
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
@@ -3447,6 +3508,7 @@ fn debug_log_popup_shows_recent_errors() {
         },
         1,
         80,
+        &RenderCtx::new(&ColorScheme::default()),
     );
 
     assert_eq!(
@@ -3461,7 +3523,13 @@ fn debug_log_popup_shows_recent_errors() {
 
 #[test]
 fn debug_log_popup_has_empty_state() {
-    let lines = debug_log_popup_lines(Vec::new(), ChannelVisibilityStats::default(), 5, 80);
+    let lines = debug_log_popup_lines(
+        Vec::new(),
+        ChannelVisibilityStats::default(),
+        5,
+        80,
+        &RenderCtx::new(&ColorScheme::default()),
+    );
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
@@ -3480,6 +3548,7 @@ fn debug_log_popup_wraps_long_detail_lines() {
             ChannelVisibilityStats::default(),
             4,
             44,
+            &RenderCtx::new(&ColorScheme::default()),
         );
     let texts = line_texts_from_ratatui(&lines);
     let joined = texts.join("");
@@ -3982,7 +4051,7 @@ fn member_label_truncates_by_display_width() {
         status: PresenceStatus::Online,
     };
 
-    let label = member_display_label(MemberEntry::Guild(&member), 0, 12);
+    let label = member_display_label(MemberEntry::Guild(&member), &member.display_name, 0, 12);
 
     assert_eq!(label, "漢字仮名...");
     assert!(label.width() <= 12);
@@ -4023,7 +4092,7 @@ fn member_label_uses_horizontal_scroll_offset() {
         status: PresenceStatus::Online,
     };
 
-    let label = member_display_label(MemberEntry::Guild(&member), 5, 8);
+    let label = member_display_label(MemberEntry::Guild(&member), &member.display_name, 5, 8);
 
     assert_eq!(label, "membe...");
 }
@@ -4156,7 +4225,7 @@ fn date_separator_appears_when_local_date_changes() {
 #[test]
 fn date_separator_line_centers_label_within_full_width() {
     let id = test_message_id_for_unix_millis(1_743_508_800_000); // arbitrary timestamp
-    let line = date_separator_line(id, 30);
+    let line = date_separator_line(id, 30, ColorScheme::default().dim);
     let text = line
         .spans
         .iter()
@@ -4173,7 +4242,7 @@ fn date_separator_line_centers_label_within_full_width() {
 
 #[test]
 fn new_messages_notice_line_centers_count_within_full_width() {
-    let line = new_messages_notice_line(3, 30);
+    let line = new_messages_notice_line(3, 30, ColorScheme::default().accent);
     let text = line
         .spans
         .iter()
@@ -4324,8 +4393,14 @@ fn selected_author_group_keeps_avatar_body_inside_border() {
     assert!(texts[1].ends_with(" │"));
     assert!(texts[2].starts_with("╰"));
     assert!(texts[2].ends_with("╯"));
-    assert_eq!(lines[0].spans[0].style.fg, Some(SELECTED_MESSAGE_BORDER));
-    assert_eq!(lines[1].spans[0].style.fg, Some(SELECTED_MESSAGE_BORDER));
+    assert_eq!(
+        lines[0].spans[0].style.fg,
+        Some(ColorScheme::default().selection_border)
+    );
+    assert_eq!(
+        lines[1].spans[0].style.fg,
+        Some(ColorScheme::default().selection_border)
+    );
     assert!(
         lines[1].spans[0]
             .style

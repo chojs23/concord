@@ -56,6 +56,14 @@ pub(super) async fn run_dashboard(
         }
     };
     state.set_key_bindings(key_bindings);
+    let color_scheme = match config::load_theme() {
+        Ok(theme) => crate::tui::theme::ColorScheme::from_theme(&theme),
+        Err(error) => {
+            logging::error("config", format!("failed to load theme: {error}"));
+            crate::tui::theme::ColorScheme::default()
+        }
+    };
+    state.set_theme(color_scheme);
     drop(snapshots.borrow_and_update());
     let initial_snapshot = client.current_discord_snapshot();
     let mut current_snapshot_revision = initial_snapshot.revision;
@@ -72,7 +80,8 @@ pub(super) async fn run_dashboard(
     let mut member_requests = MemberRequests::default();
     let mut thread_preview_requests = ThreadPreviewRequests::default();
     let mut last_member_subscription: Option<(Id<GuildMarker>, Id<ChannelMarker>, u32)> = None;
-    let mut requested_author_profiles: HashSet<(Id<UserMarker>, Id<GuildMarker>)> = HashSet::new();
+    let mut requested_author_profiles: HashSet<(Id<UserMarker>, Option<Id<GuildMarker>>)> =
+        HashSet::new();
     let mut image_targets = Vec::new();
     let mut avatar_targets = Vec::new();
     let mut emoji_targets = Vec::new();
@@ -522,15 +531,16 @@ pub(super) async fn run_dashboard(
             }
         }
 
-        for (user_id, guild_id) in state.missing_message_author_profile_requests() {
+        let profile_requests = state
+            .missing_message_author_profile_requests()
+            .into_iter()
+            .chain(state.missing_visible_member_profile_requests());
+        for (user_id, guild_id) in profile_requests {
             if !requested_author_profiles.insert((user_id, guild_id)) {
                 continue;
             }
             if commands
-                .send(AppCommand::LoadUserProfile {
-                    user_id,
-                    guild_id: Some(guild_id),
-                })
+                .send(AppCommand::LoadUserProfile { user_id, guild_id })
                 .await
                 .is_err()
             {

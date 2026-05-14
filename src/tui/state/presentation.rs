@@ -5,13 +5,6 @@ use crate::discord::{
     ChannelRecipientState, ChannelState, GuildMemberState, PresenceStatus, RoleState,
 };
 
-/// Convert a Discord folder color (24-bit RGB integer) to a ratatui color.
-/// Falls back to a neutral cyan when the color is missing or zero so
-/// uncolored folders still read as folder headers.
-pub fn folder_color(color: Option<u32>) -> Color {
-    discord_color(color, Color::Cyan)
-}
-
 pub fn discord_color(color: Option<u32>, fallback: Color) -> Color {
     match color {
         Some(value) if value != 0 => {
@@ -21,16 +14,6 @@ pub fn discord_color(color: Option<u32>, fallback: Color) -> Color {
             Color::Rgb(r, g, b)
         }
         _ => fallback,
-    }
-}
-
-pub fn presence_color(status: PresenceStatus) -> Color {
-    match status {
-        PresenceStatus::Online => Color::Green,
-        PresenceStatus::Idle => Color::Rgb(180, 140, 0),
-        PresenceStatus::DoNotDisturb => Color::Red,
-        PresenceStatus::Offline => Color::DarkGray,
-        PresenceStatus::Unknown => Color::DarkGray,
     }
 }
 

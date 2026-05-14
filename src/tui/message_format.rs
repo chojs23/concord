@@ -18,12 +18,14 @@ use super::{
     },
     message_time,
     state::{DashboardState, ThreadSummary, discord_color},
+    theme::ColorScheme,
 };
 use crate::discord::{
     AttachmentInfo, EmbedInfo, MessageKind, MessageSnapshotInfo, MessageState, PollInfo,
     ReactionEmoji, ReactionInfo, ReplyInfo,
 };
 
+#[cfg(test)]
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
 const SELF_REACTION: Color = Color::Yellow;
@@ -38,6 +40,8 @@ pub(super) struct MessageContentLine {
     mention_highlights: Vec<TextHighlight>,
     styled_prefixes: Vec<StyledPrefix>,
     pub(super) image_slots: Vec<MessageContentImageSlot>,
+    self_mention_style: Style,
+    other_mention_style: Style,
 }
 
 #[derive(Clone, Copy)]
@@ -67,6 +71,8 @@ impl MessageContentLine {
             mention_highlights: Vec::new(),
             styled_prefixes: Vec::new(),
             image_slots: Vec::new(),
+            self_mention_style: mention_highlight_style(TextHighlightKind::SelfMention),
+            other_mention_style: mention_highlight_style(TextHighlightKind::OtherMention),
         }
     }
 
@@ -77,27 +83,39 @@ impl MessageContentLine {
             mention_highlights,
             styled_prefixes: Vec::new(),
             image_slots: Vec::new(),
+            self_mention_style: mention_highlight_style(TextHighlightKind::SelfMention),
+            other_mention_style: mention_highlight_style(TextHighlightKind::OtherMention),
         }
     }
 
-    fn dim(text: String) -> Self {
+    fn dim(text: String, color: Color) -> Self {
         Self {
             text,
-            style: Style::default().fg(DIM),
+            style: Style::default().fg(color),
             mention_highlights: Vec::new(),
             styled_prefixes: Vec::new(),
             image_slots: Vec::new(),
+            self_mention_style: mention_highlight_style(TextHighlightKind::SelfMention),
+            other_mention_style: mention_highlight_style(TextHighlightKind::OtherMention),
         }
     }
 
-    fn accent(text: String) -> Self {
+    fn accent(text: String, color: Color) -> Self {
         Self {
             text,
-            style: Style::default().fg(ACCENT),
+            style: Style::default().fg(color),
             mention_highlights: Vec::new(),
             styled_prefixes: Vec::new(),
             image_slots: Vec::new(),
+            self_mention_style: mention_highlight_style(TextHighlightKind::SelfMention),
+            other_mention_style: mention_highlight_style(TextHighlightKind::OtherMention),
         }
+    }
+
+    fn with_mention_styles(mut self, self_style: Style, other_style: Style) -> Self {
+        self.self_mention_style = self_style;
+        self.other_mention_style = other_style;
+        self
     }
 
     fn with_image_slots(mut self, slots: Vec<MessageContentImageSlot>) -> Self {
@@ -172,7 +190,11 @@ impl MessageContentLine {
             .iter()
             .find(|highlight| highlight.start <= start && end <= highlight.end)
         {
-            style = style.patch(mention_highlight_style(highlight.kind));
+            let mention_style = match highlight.kind {
+                TextHighlightKind::SelfMention => self.self_mention_style,
+                TextHighlightKind::OtherMention => self.other_mention_style,
+            };
+            style = style.patch(mention_style);
         }
 
         style
@@ -304,8 +326,9 @@ pub(super) fn format_message_content_sections_with_loaded_custom_emoji_urls(
             content,
             width,
             loaded_custom_emoji_urls,
+            state.theme(),
         ));
-    } else if let Some(line) = format_message_kind_line(message.message_kind) {
+    } else if let Some(line) = format_message_kind_line(message.message_kind, state.theme().dim) {
         lines.push(line);
     }
 
@@ -320,6 +343,8 @@ pub(super) fn format_message_content_sections_with_loaded_custom_emoji_urls(
             width,
             Style::default(),
             loaded_custom_emoji_urls,
+            state.theme().self_mention_style(),
+            state.theme().other_mention_style(),
         ));
     }
     lines.extend(format_embed_lines(
@@ -328,12 +353,13 @@ pub(super) fn format_message_content_sections_with_loaded_custom_emoji_urls(
         state.show_custom_emoji(),
         width,
         loaded_custom_emoji_urls,
+        state.theme().dim,
     ));
     for attachment in attachment_summary_lines {
-        lines.push(MessageContentLine::accent(truncate_text(
-            &attachment,
-            width,
-        )));
+        lines.push(MessageContentLine::accent(
+            truncate_text(&attachment, width),
+            state.theme().accent,
+        ));
     }
     if let Some(snapshot) = message.forwarded_snapshots.first() {
         lines.extend(format_forwarded_snapshot(
@@ -352,16 +378,21 @@ pub(super) fn format_message_content_sections_with_loaded_custom_emoji_urls(
     }
 
     if message.edited_timestamp.is_some() {
-        append_edited_marker(&mut lines, width);
+        append_edited_marker(&mut lines, width, state.theme().dim);
     }
 
-    let reaction_lines =
-        format_message_reaction_lines(&message.reactions, width, state.show_custom_emoji());
+    let reaction_lines = format_message_reaction_lines(
+        &message.reactions,
+        width,
+        state.show_custom_emoji(),
+        state.theme().accent,
+        state.theme().self_reaction,
+    );
     (lines, reaction_lines)
 }
 
-fn append_edited_marker(lines: &mut Vec<MessageContentLine>, width: usize) {
-    let marker_style = Style::default().fg(DIM).add_modifier(Modifier::ITALIC);
+fn append_edited_marker(lines: &mut Vec<MessageContentLine>, width: usize, dim: Color) {
+    let marker_style = Style::default().fg(dim).add_modifier(Modifier::ITALIC);
     let marker_width = EDITED_MARKER.width();
     if let Some(line) = lines.last_mut()
         && line.text.width().saturating_add(marker_width) <= width
@@ -382,6 +413,7 @@ fn format_embed_lines(
     show_custom_emoji: bool,
     width: usize,
     loaded_custom_emoji_urls: &[String],
+    dim: Color,
 ) -> Vec<MessageContentLine> {
     embeds
         .iter()
@@ -392,6 +424,7 @@ fn format_embed_lines(
                 show_custom_emoji,
                 width,
                 loaded_custom_emoji_urls,
+                dim,
             )
         })
         .collect()
@@ -403,6 +436,7 @@ fn format_embed(
     show_custom_emoji: bool,
     width: usize,
     loaded_custom_emoji_urls: &[String],
+    dim: Color,
 ) -> Vec<MessageContentLine> {
     const PREFIX: &str = "  ▎ ";
     let inner_width = width.saturating_sub(PREFIX.width()).max(1);
@@ -413,7 +447,7 @@ fn format_embed(
         embed.provider_name.as_deref(),
         show_custom_emoji,
         inner_width,
-        embed_provider_style(),
+        embed_provider_style(dim),
         loaded_custom_emoji_urls,
     );
     push_embed_text(
@@ -455,7 +489,7 @@ fn format_embed(
         embed.footer_text.as_deref(),
         show_custom_emoji,
         inner_width,
-        embed_footer_style(),
+        embed_footer_style(dim),
         loaded_custom_emoji_urls,
     );
     for url in [&embed.url]
@@ -505,11 +539,13 @@ fn push_embed_text(
         width,
         style,
         loaded_custom_emoji_urls,
+        mention_highlight_style(TextHighlightKind::SelfMention),
+        mention_highlight_style(TextHighlightKind::OtherMention),
     ));
 }
 
-fn embed_provider_style() -> Style {
-    Style::default().fg(DIM).add_modifier(Modifier::ITALIC)
+fn embed_provider_style(dim: Color) -> Style {
+    Style::default().fg(dim).add_modifier(Modifier::ITALIC)
 }
 
 fn embed_author_style() -> Style {
@@ -528,8 +564,8 @@ fn embed_field_name_style() -> Style {
         .add_modifier(Modifier::UNDERLINED)
 }
 
-fn embed_footer_style() -> Style {
-    Style::default().fg(DIM).add_modifier(Modifier::ITALIC)
+fn embed_footer_style(dim: Color) -> Style {
+    Style::default().fg(dim).add_modifier(Modifier::ITALIC)
 }
 
 fn embed_url_style() -> Style {
@@ -558,6 +594,8 @@ pub(super) fn format_message_reaction_lines(
     reactions: &[ReactionInfo],
     width: usize,
     show_custom_emoji: bool,
+    accent: Color,
+    self_reaction: Color,
 ) -> Vec<MessageContentLine> {
     let layout =
         lay_out_reaction_chips_with_custom_emoji_images(reactions, width, show_custom_emoji);
@@ -568,12 +606,12 @@ pub(super) fn format_message_reaction_lines(
         .into_iter()
         .enumerate()
         .map(|(line_index, text)| {
-            let mut line = MessageContentLine::accent(text);
+            let mut line = MessageContentLine::accent(text, accent);
             for range in self_ranges
                 .iter()
                 .filter(|range| range.line as usize == line_index)
             {
-                line.styled_range(range.start, range.len, Style::default().fg(SELF_REACTION));
+                line.styled_range(range.start, range.len, Style::default().fg(self_reaction));
             }
             line
         })
@@ -739,6 +777,8 @@ fn wrap_rendered_text_lines_with_loaded_custom_emoji_urls(
     width: usize,
     style: Style,
     loaded_custom_emoji_urls: &[String],
+    self_mention_style: Style,
+    other_mention_style: Style,
 ) -> Vec<MessageContentLine> {
     let rendered =
         rendered_text_with_loaded_custom_emoji_placeholders(rendered, loaded_custom_emoji_urls);
@@ -752,6 +792,7 @@ fn wrap_rendered_text_lines_with_loaded_custom_emoji_urls(
     .map(|(text, mention_highlights, image_slots)| {
         MessageContentLine::styled_text(text, style, mention_highlights)
             .with_image_slots(image_slots)
+            .with_mention_styles(self_mention_style, other_mention_style)
     })
     .collect()
 }
@@ -1107,6 +1148,7 @@ fn format_poll_lines(
     content: Option<RenderedText>,
     width: usize,
     loaded_custom_emoji_urls: &[String],
+    theme: &ColorScheme,
 ) -> Vec<MessageContentLine> {
     let inner_width = poll_card_inner_width(width);
     let helper = if poll.allow_multiselect {
@@ -1114,7 +1156,10 @@ fn format_poll_lines(
     } else {
         "Select one answer"
     };
-    let mut lines = vec![MessageContentLine::accent(poll_box_border('╭', '╮', width))];
+    let mut lines = vec![MessageContentLine::accent(
+        poll_box_border('╭', '╮', width),
+        theme.accent,
+    )];
     lines.push(poll_box_line(
         MessageContentLine::plain(truncate_display_width(&poll.question, inner_width)),
         inner_width,
@@ -1126,13 +1171,15 @@ fn format_poll_lines(
                 inner_width,
                 Style::default(),
                 loaded_custom_emoji_urls,
+                theme.self_mention_style(),
+                theme.other_mention_style(),
             )
             .into_iter()
             .map(|line| poll_box_line(line, inner_width)),
         );
     }
     lines.push(poll_box_line(
-        MessageContentLine::dim(truncate_display_width(helper, inner_width)),
+        MessageContentLine::dim(truncate_display_width(helper, inner_width), theme.dim),
         inner_width,
     ));
     let counted_votes = poll
@@ -1151,13 +1198,16 @@ fn format_poll_lines(
         )
     }));
     lines.push(poll_box_line(
-        MessageContentLine::dim(truncate_display_width(
-            &format_poll_footer(poll, total_votes),
-            inner_width,
-        )),
+        MessageContentLine::dim(
+            truncate_display_width(&format_poll_footer(poll, total_votes), inner_width),
+            theme.dim,
+        ),
         inner_width,
     ));
-    lines.push(MessageContentLine::accent(poll_box_border('╰', '╯', width)));
+    lines.push(MessageContentLine::accent(
+        poll_box_border('╰', '╯', width),
+        theme.accent,
+    ));
     lines
 }
 
@@ -1187,15 +1237,20 @@ fn poll_box_line(mut line: MessageContentLine, inner_width: usize) -> MessageCon
     line
 }
 
-fn format_poll_result_lines(poll: Option<&PollInfo>, width: usize) -> Vec<MessageContentLine> {
+fn format_poll_result_lines(
+    poll: Option<&PollInfo>,
+    width: usize,
+    accent: Color,
+    dim: Color,
+) -> Vec<MessageContentLine> {
     let Some(poll) = poll else {
         return vec![
-            MessageContentLine::accent(truncate_text("Poll results", width)),
-            MessageContentLine::dim(truncate_text("Result details unavailable", width)),
+            MessageContentLine::accent(truncate_text("Poll results", width), accent),
+            MessageContentLine::dim(truncate_text("Result details unavailable", width), dim),
         ];
     };
     let mut lines = vec![
-        MessageContentLine::accent(truncate_text("Poll results", width)),
+        MessageContentLine::accent(truncate_text("Poll results", width), accent),
         MessageContentLine::plain(truncate_text(&poll.question, width)),
     ];
     if let Some(winner) = poll.answers.first() {
@@ -1208,10 +1263,10 @@ fn format_poll_result_lines(poll: Option<&PollInfo>, width: usize) -> Vec<Messag
             width,
         )));
     } else {
-        lines.push(MessageContentLine::dim(truncate_text(
-            "No winning answer recorded",
-            width,
-        )));
+        lines.push(MessageContentLine::dim(
+            truncate_text("No winning answer recorded", width),
+            dim,
+        ));
     }
     let counted_votes = poll
         .answers
@@ -1223,10 +1278,13 @@ fn format_poll_result_lines(poll: Option<&PollInfo>, width: usize) -> Vec<Messag
         .or_else(|| (counted_votes > 0).then_some(counted_votes));
     if let Some(total_votes) = total_votes {
         let vote_label = if total_votes == 1 { "vote" } else { "votes" };
-        lines.push(MessageContentLine::dim(truncate_text(
-            &format!("{total_votes} total {vote_label} · Final results"),
-            width,
-        )));
+        lines.push(MessageContentLine::dim(
+            truncate_text(
+                &format!("{total_votes} total {vote_label} · Final results"),
+                width,
+            ),
+            dim,
+        ));
     }
     lines
 }
@@ -1296,7 +1354,7 @@ fn sticker_display_text(sticker_names: &[String]) -> Option<String> {
     })
 }
 
-fn format_message_kind_line(message_kind: MessageKind) -> Option<MessageContentLine> {
+fn format_message_kind_line(message_kind: MessageKind, dim: Color) -> Option<MessageContentLine> {
     if message_kind.is_regular() {
         return None;
     }
@@ -1309,7 +1367,7 @@ fn format_message_kind_line(message_kind: MessageKind) -> Option<MessageContentL
             .unwrap_or("<unsupported message type>"),
     };
 
-    Some(MessageContentLine::dim(label.to_owned()))
+    Some(MessageContentLine::dim(label.to_owned(), dim))
 }
 
 fn format_system_message_lines(
@@ -1317,21 +1375,31 @@ fn format_system_message_lines(
     state: &DashboardState,
     width: usize,
 ) -> Option<Vec<MessageContentLine>> {
+    let accent = state.theme().accent;
+    let dim = state.theme().dim;
     match message.message_kind.code() {
-        8 => Some(vec![MessageContentLine::accent(truncate_text(
-            &format!("{} boosted the server", message.author),
-            width,
-        ))]),
+        8 => Some(vec![MessageContentLine::accent(
+            truncate_text(&format!("{} boosted the server", message.author), width),
+            accent,
+        )]),
         9..=11 => {
             let tier = message.message_kind.code() - 8;
-            Some(vec![MessageContentLine::accent(truncate_text(
-                &format!("{} boosted the server to Level {tier}", message.author),
-                width,
-            ))])
+            Some(vec![MessageContentLine::accent(
+                truncate_text(
+                    &format!("{} boosted the server to Level {tier}", message.author),
+                    width,
+                ),
+                accent,
+            )])
         }
         18 => Some(format_thread_created_lines(message, state, width)),
         21 => Some(format_thread_starter_lines(message, state, width)),
-        46 => Some(format_poll_result_lines(message.poll.as_ref(), width)),
+        46 => Some(format_poll_result_lines(
+            message.poll.as_ref(),
+            width,
+            accent,
+            dim,
+        )),
         _ => None,
     }
 }
@@ -1358,6 +1426,8 @@ fn format_thread_created_lines(
         summary.as_ref(),
         message.id,
         width,
+        state.theme().accent,
+        state.theme().dim,
     ));
     lines
 }
@@ -1374,7 +1444,7 @@ fn format_thread_created_starter_line(
             Color::White,
         ))
         .bold();
-    let thread_style = Style::default().fg(ACCENT).bold();
+    let thread_style = Style::default().fg(state.theme().accent).bold();
     let base_style = Style::default().fg(Color::White);
 
     let author = message.author.as_str();
@@ -1402,23 +1472,28 @@ fn format_thread_card_lines(
     summary: Option<&ThreadSummary>,
     message_id: Id<MessageMarker>,
     width: usize,
+    accent: Color,
+    dim: Color,
 ) -> Vec<MessageContentLine> {
     let card_width = thread_card_width(width);
     let inner_width = thread_card_inner_width(width);
     vec![
-        MessageContentLine::accent(thread_card_border('╭', '╮', width)),
+        MessageContentLine::accent(thread_card_border('╭', '╮', width), accent),
         thread_card_line(
-            format_thread_card_title_line(thread_name, summary, inner_width),
+            format_thread_card_title_line(thread_name, summary, inner_width, accent),
             inner_width,
         ),
         thread_card_line(
-            format_thread_latest_line(summary, message_id, inner_width),
+            format_thread_latest_line(summary, message_id, inner_width, dim),
             inner_width,
         ),
-        MessageContentLine::accent(format!(
-            "{THREAD_CARD_INDENT}╰{}╯",
-            "─".repeat(card_width.saturating_sub(2))
-        )),
+        MessageContentLine::accent(
+            format!(
+                "{THREAD_CARD_INDENT}╰{}╯",
+                "─".repeat(card_width.saturating_sub(2))
+            ),
+            accent,
+        ),
     ]
 }
 
@@ -1426,14 +1501,15 @@ fn format_thread_card_title_line(
     thread_name: &str,
     summary: Option<&ThreadSummary>,
     width: usize,
+    accent: Color,
 ) -> MessageContentLine {
     let Some(count_label) = summary.and_then(thread_message_count_label) else {
-        return MessageContentLine::accent(truncate_display_width(thread_name, width));
+        return MessageContentLine::accent(truncate_display_width(thread_name, width), accent);
     };
 
     let count_width = count_label.width();
     if count_width.saturating_add(2) >= width {
-        return MessageContentLine::accent(truncate_display_width(thread_name, width));
+        return MessageContentLine::accent(truncate_display_width(thread_name, width), accent);
     }
 
     let name_width = width.saturating_sub(count_width).saturating_sub(2);
@@ -1441,7 +1517,10 @@ fn format_thread_card_title_line(
     let padding = width
         .saturating_sub(name.width())
         .saturating_sub(count_width);
-    MessageContentLine::accent(format!("{name}{}{count_label}", " ".repeat(padding)))
+    MessageContentLine::accent(
+        format!("{name}{}{count_label}", " ".repeat(padding)),
+        accent,
+    )
 }
 
 fn thread_message_count_label(summary: &ThreadSummary) -> Option<String> {
@@ -1484,6 +1563,7 @@ fn format_thread_latest_line(
     summary: Option<&ThreadSummary>,
     message_id: Id<MessageMarker>,
     width: usize,
+    dim: Color,
 ) -> MessageContentLine {
     let mut metadata = Vec::new();
     if let Some(summary) = summary {
@@ -1502,12 +1582,10 @@ fn format_thread_latest_line(
             format!("{age} · {}", statuses.join(" · "))
         };
         if let Some(preview) = summary.latest_message_preview.as_ref() {
-            return MessageContentLine::dim(format_latest_message_preview(
-                &preview.author,
-                &preview.content,
-                &suffix,
-                width,
-            ));
+            return MessageContentLine::dim(
+                format_latest_message_preview(&preview.author, &preview.content, &suffix, width),
+                dim,
+            );
         }
         metadata.push(suffix);
     } else {
@@ -1515,7 +1593,7 @@ fn format_thread_latest_line(
         metadata.push("Thread details unavailable".to_owned());
     }
 
-    MessageContentLine::dim(truncate_display_width(&metadata.join(" · "), width))
+    MessageContentLine::dim(truncate_display_width(&metadata.join(" · "), width), dim)
 }
 
 fn format_latest_message_preview(
@@ -1586,17 +1664,17 @@ fn format_thread_starter_lines(
     state: &DashboardState,
     width: usize,
 ) -> Vec<MessageContentLine> {
-    let mut lines = vec![MessageContentLine::accent(truncate_text(
-        "Thread starter message",
-        width,
-    ))];
+    let mut lines = vec![MessageContentLine::accent(
+        truncate_text("Thread starter message", width),
+        state.theme().accent,
+    )];
     if let Some(reply) = message.reply.as_ref() {
         lines.push(format_reply_line(reply, message.guild_id, state, width));
     } else {
-        lines.push(MessageContentLine::dim(truncate_text(
-            "Started from an unavailable message",
-            width,
-        )));
+        lines.push(MessageContentLine::dim(
+            truncate_text("Started from an unavailable message", width),
+            state.theme().dim,
+        ));
     }
     lines
 }
@@ -1628,16 +1706,18 @@ fn format_forwarded_snapshot(
                 content_width,
                 Style::default(),
                 loaded_custom_emoji_urls,
+                state.theme().self_mention_style(),
+                state.theme().other_mention_style(),
             )
             .into_iter()
             .map(|line| prefix_message_content_line_without_underline("│ ", line)),
         );
     }
     for attachment in attachment_summary_lines {
-        lines.push(MessageContentLine::accent(truncate_text(
-            &format!("│ {attachment}"),
-            width,
-        )));
+        lines.push(MessageContentLine::accent(
+            truncate_text(&format!("│ {attachment}"), width),
+            state.theme().accent,
+        ));
     }
     lines.extend(
         format_embed_lines(
@@ -1646,6 +1726,7 @@ fn format_forwarded_snapshot(
             state.show_custom_emoji(),
             width.saturating_sub(2).max(1),
             loaded_custom_emoji_urls,
+            state.theme().dim,
         )
         .into_iter()
         .map(|line| prefix_message_content_line_without_underline("│ ", line)),
@@ -1661,10 +1742,10 @@ fn format_forwarded_snapshot(
         metadata.push(format_forwarded_time(timestamp));
     }
     if !metadata.is_empty() {
-        lines.push(MessageContentLine::dim(truncate_text(
-            &format!("│ {}", metadata.join(" · ")),
-            width,
-        )));
+        lines.push(MessageContentLine::dim(
+            truncate_text(&format!("│ {}", metadata.join(" · ")), width),
+            state.theme().dim,
+        ));
     }
 
     lines
@@ -1736,6 +1817,8 @@ mod tests {
                 style: Style::default().fg(Color::Red),
             }],
             image_slots: Vec::new(),
+            self_mention_style: mention_highlight_style(TextHighlightKind::SelfMention),
+            other_mention_style: mention_highlight_style(TextHighlightKind::OtherMention),
         };
 
         let spans = line.spans();

@@ -84,6 +84,9 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
 
     if let Some(action) = action {
         dispatch_action(state, action, focus)
+    } else if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        state.quit();
+        None
     } else {
         None
     }

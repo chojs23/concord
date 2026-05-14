@@ -7,7 +7,7 @@ use super::{
     popups::{
         channel_switcher_item_index_at, channel_switcher_popup_area, user_profile_popup_area,
     },
-    types::{ActionMenuTarget, MouseTarget},
+    types::{ACCENT, ActionMenuTarget, MouseTarget},
 };
 
 pub(crate) fn focus_pane_at(
@@ -134,7 +134,7 @@ fn action_menu_row_target(
     if !rect_contains(popup, column, row) {
         return Some(MouseTarget::ModalBackdrop);
     }
-    let inner = panel_block("", false).inner(popup);
+    let inner = panel_block("", false, ACCENT).inner(popup);
     if rect_contains(inner, column, row) {
         let row = row.saturating_sub(inner.y) as usize;
         if row < item_count {
@@ -159,7 +159,7 @@ fn pane_row_mouse_target(
     if !rect_contains(area, column, row) {
         return None;
     }
-    let inner = panel_block("", false).inner(area);
+    let inner = panel_block("", false, ACCENT).inner(area);
     // When the filter bar occupies the last row of the inner area, shrink the
     // list hit region so clicks on that row don't resolve to a list entry.
     let list_height = if filter_active && inner.height >= 2 {
@@ -189,7 +189,7 @@ fn message_mouse_target(
     if !rect_contains(area, column, row) {
         return None;
     }
-    let inner = panel_block_owned(String::new(), false).inner(area);
+    let inner = panel_block_owned(String::new(), false, ACCENT).inner(area);
     let message_areas = message_areas(inner, state);
     if rect_contains(message_areas.composer, column, row) {
         return Some(MouseTarget::Composer);

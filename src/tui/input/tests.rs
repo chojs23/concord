@@ -1218,12 +1218,12 @@ fn ctrl_c_clears_composer_without_quitting() {
 }
 
 #[test]
-fn ctrl_c_does_not_quit_dashboard() {
+fn ctrl_c_quits_dashboard() {
     let mut state = state_with_channel_tree();
 
     handle_key(&mut state, ctrl_key('c'));
 
-    assert!(!state.should_quit());
+    assert!(state.should_quit());
 }
 
 #[test]

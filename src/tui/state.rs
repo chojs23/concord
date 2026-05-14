@@ -14,6 +14,7 @@ use crate::discord::{
     ForumPostArchiveState, MentionInfo, MessageAttachmentUpload, MessageInfo, MessageSnapshotInfo,
     MessageState, MuteDuration, PresenceStatus,
 };
+use crate::tui::theme::ColorScheme;
 use unicode_width::UnicodeWidthStr;
 
 use super::format::{
@@ -76,7 +77,7 @@ pub use options::DisplayOptionItem;
 pub use popups::{
     EmojiReactionPickerState, MessageActionMenuState, PollVotePickerState, ReactionUsersPopupState,
 };
-pub use presentation::{discord_color, folder_color, presence_color, presence_marker};
+pub use presentation::{discord_color, presence_marker};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OlderHistoryRequestState {
@@ -261,6 +262,7 @@ pub struct DashboardState {
     collapsed_channel_categories: HashSet<Id<ChannelMarker>>,
     pending_read_acks: HashMap<Id<ChannelMarker>, PendingReadAck>,
     pending_commands: VecDeque<AppCommand>,
+    theme: ColorScheme,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -392,6 +394,7 @@ impl DashboardState {
             collapsed_channel_categories: HashSet::new(),
             pending_read_acks: HashMap::new(),
             pending_commands: VecDeque::new(),
+            theme: ColorScheme::default(),
         }
     }
 

@@ -31,7 +31,7 @@ use messages::{
 };
 use presence::{parse_presence_update, parse_typing_start};
 use ready::{parse_ready, parse_ready_supplemental};
-use relationships::{parse_relationship_add, parse_relationship_remove};
+use relationships::{parse_relationship_add, parse_relationship_remove, parse_relationship_update};
 
 /// Best-effort fallback that rebuilds the dashboard's domain events directly
 /// from the raw gateway payload. We only extract the fields the UI consumes,
@@ -85,6 +85,7 @@ pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         "GUILD_MEMBER_LIST_UPDATE" => parse_member_list_update(data),
         "GUILD_MEMBERS_CHUNK" => parse_member_chunk(data),
         "RELATIONSHIP_ADD" => parse_relationship_add(data).into_iter().collect(),
+        "RELATIONSHIP_UPDATE" => parse_relationship_update(data).into_iter().collect(),
         "RELATIONSHIP_REMOVE" => parse_relationship_remove(data).into_iter().collect(),
         "GUILD_MEMBER_REMOVE" => parse_member_remove(data).into_iter().collect(),
         "PRESENCE_UPDATE" => parse_presence_update(data),
@@ -273,7 +274,12 @@ mod tests {
                 "d": {
                     "id": "20",
                     "type": 1,
-                    "user": {"id": "20", "username": "alice"}
+                    "nickname": "Bestie",
+                    "user": {
+                        "id": "20",
+                        "global_name": "Alice Global",
+                        "username": "alice"
+                    }
                 }
             })
             .to_string(),
@@ -281,8 +287,37 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(matches!(
             &events[0],
-            AppEvent::RelationshipUpsert { user_id, status }
-                if *user_id == Id::new(20) && *status == FriendStatus::Friend
+            AppEvent::RelationshipUpsert { relationship }
+                if relationship.user_id == Id::new(20)
+                    && relationship.status == FriendStatus::Friend
+                    && relationship.nickname.as_deref() == Some("Bestie")
+                    && relationship.display_name.as_deref() == Some("Alice Global")
+                    && relationship.username.as_deref() == Some("alice")
+        ));
+    }
+
+    #[test]
+    fn relationship_update_emits_friend_upsert() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "RELATIONSHIP_UPDATE",
+                "d": {
+                    "id": "20",
+                    "type": 1,
+                    "nickname": "Bestie"
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AppEvent::RelationshipUpsert { relationship }
+                if relationship.user_id == Id::new(20)
+                    && relationship.status == FriendStatus::Friend
+                    && relationship.nickname.as_deref() == Some("Bestie")
+                    && relationship.display_name.is_none()
+                    && relationship.username.is_none()
         ));
     }
 
@@ -1924,6 +1959,7 @@ mod tests {
         assert_eq!(
             reply,
             Some(ReplyInfo {
+                author_id: Some(Id::new(31)),
                 author: "Alex".to_owned(),
                 content: Some("잘되는군".to_owned()),
                 sticker_names: Vec::new(),

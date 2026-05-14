@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::ui::types::{ACCENT, RenderCtx};
 
 const CHANNEL_SWITCHER_POPUP_WIDTH: u16 = 74;
 
@@ -19,7 +20,8 @@ pub(in crate::tui::ui) fn render_channel_switcher_popup(
     let selected = state.selected_channel_switcher_index().unwrap_or(0);
     let popup = channel_switcher_popup_area(area);
     let max_result_lines = usize::from(popup.height.saturating_sub(4)).max(1);
-    frame.render_widget(Clear, popup);
+    frame.render_widget(bg_clear(state.theme().background), popup);
+    let ctx = RenderCtx::new(state.theme());
     frame.render_widget(
         Paragraph::new(channel_switcher_lines(
             &items,
@@ -28,8 +30,9 @@ pub(in crate::tui::ui) fn render_channel_switcher_popup(
             query_cursor,
             max_result_lines,
             popup.width.saturating_sub(2) as usize,
+            &ctx,
         ))
-        .block(panel_block("Channel Switcher", true))
+        .block(panel_block("Channel Switcher", true, ctx.theme.accent))
         .wrap(Wrap { trim: false }),
         popup,
     );
@@ -53,7 +56,7 @@ pub(in crate::tui::ui) fn channel_switcher_item_index_at(
         return None;
     }
     let popup = channel_switcher_popup_area(area);
-    let inner = panel_block("", false).inner(popup);
+    let inner = panel_block("", false, ACCENT).inner(popup);
     if column < inner.x
         || column >= inner.x.saturating_add(inner.width)
         || row < inner.y
@@ -104,39 +107,46 @@ pub(in crate::tui::ui) fn channel_switcher_lines(
     query_cursor: usize,
     max_result_lines: usize,
     width: usize,
+    ctx: &RenderCtx<'_>,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![
-        channel_switcher_search_line(query, query_cursor, width),
+        channel_switcher_search_line(query, query_cursor, width, ctx),
         Line::from(Span::styled(
             "─".repeat(width.max(1)),
-            Style::default().fg(DIM),
+            Style::default().fg(ctx.theme.dim),
         )),
     ];
 
     if items.is_empty() {
         lines.push(Line::from(Span::styled(
             "No channels found",
-            Style::default().fg(DIM),
+            Style::default().fg(ctx.theme.dim),
         )));
     } else {
         lines.extend(channel_switcher_result_lines(
             items,
             selected,
             max_result_lines,
+            ctx,
         ));
     }
 
     lines
 }
 
-fn channel_switcher_search_line(query: &str, query_cursor: usize, width: usize) -> Line<'static> {
+fn channel_switcher_search_line(
+    query: &str,
+    query_cursor: usize,
+    width: usize,
+    ctx: &RenderCtx<'_>,
+) -> Line<'static> {
     let shown_query = if query.is_empty() {
-        Span::styled("search channels", Style::default().fg(DIM))
+        Span::styled("search channels", Style::default().fg(ctx.theme.dim))
     } else {
         Span::raw(visible_channel_switcher_query(query, query_cursor, width).0)
     };
     Line::from(vec![
-        Span::styled("🔎 ", Style::default().fg(ACCENT)),
+        Span::styled("🔎 ", Style::default().fg(ctx.theme.accent)),
         shown_query,
     ])
 }
@@ -186,17 +196,20 @@ fn channel_switcher_result_lines(
     items: &[ChannelSwitcherItem],
     selected: usize,
     max_result_lines: usize,
+    ctx: &RenderCtx<'_>,
 ) -> Vec<Line<'static>> {
     let selected = selected.min(items.len().saturating_sub(1));
     let rows = channel_switcher_visible_result_rows(items, selected, max_result_lines);
     rows.into_iter()
         .map(|row| match row {
             ChannelSwitcherResultRow::Item(index) => {
-                channel_switcher_item_line(&items[index], index == selected)
+                channel_switcher_item_line(&items[index], index == selected, ctx)
             }
             ChannelSwitcherResultRow::Group(label) => Line::from(Span::styled(
                 label,
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(ctx.theme.accent)
+                    .add_modifier(Modifier::BOLD),
             )),
         })
         .collect()
@@ -239,14 +252,18 @@ fn channel_switcher_visible_start(
     selected.saturating_sub(max_result_lines / 2)
 }
 
-fn channel_switcher_item_line(item: &ChannelSwitcherItem, selected: bool) -> Line<'static> {
+fn channel_switcher_item_line(
+    item: &ChannelSwitcherItem,
+    selected: bool,
+    ctx: &RenderCtx<'_>,
+) -> Line<'static> {
     let style = if selected {
         highlight_style()
     } else {
         Style::default()
     };
-    let badge = channel_switcher_unread_badge(item);
-    let (_, name_style) = channel_unread_decoration(item.unread, style, false);
+    let badge = channel_switcher_unread_badge(item, ctx);
+    let (_, name_style) = channel_unread_decoration(item.unread, style, false, ctx);
     let marker = if selected { "› " } else { "  " };
     let indent = "  ".repeat(item.depth.saturating_add(1));
     let parent = item
@@ -255,9 +272,9 @@ fn channel_switcher_item_line(item: &ChannelSwitcherItem, selected: bool) -> Lin
         .map(|label| format!("{label} / "))
         .unwrap_or_default();
     let mut spans = vec![
-        Span::styled(marker, Style::default().fg(ACCENT)),
+        Span::styled(marker, Style::default().fg(ctx.theme.accent)),
         Span::raw(indent),
-        Span::styled(parent, Style::default().fg(DIM)),
+        Span::styled(parent, Style::default().fg(ctx.theme.dim)),
     ];
     if let Some(badge) = badge {
         spans.push(badge);
@@ -266,8 +283,11 @@ fn channel_switcher_item_line(item: &ChannelSwitcherItem, selected: bool) -> Lin
     Line::from(spans)
 }
 
-fn channel_switcher_unread_badge(item: &ChannelSwitcherItem) -> Option<Span<'static>> {
-    let (badge, _) = channel_unread_decoration(item.unread, Style::default(), false);
+fn channel_switcher_unread_badge(
+    item: &ChannelSwitcherItem,
+    ctx: &RenderCtx<'_>,
+) -> Option<Span<'static>> {
+    let (badge, _) = channel_unread_decoration(item.unread, Style::default(), false, ctx);
     if item.guild_id.is_none() && item.unread != ChannelUnreadState::Seen {
         if item.unread_message_count > 0 {
             let count = u32::try_from(item.unread_message_count).unwrap_or(u32::MAX);
@@ -275,6 +295,7 @@ fn channel_switcher_unread_badge(item: &ChannelSwitcherItem) -> Option<Span<'sta
                 ChannelUnreadState::Notified(count),
                 Style::default(),
                 false,
+                ctx,
             )
             .0;
         }
@@ -283,6 +304,7 @@ fn channel_switcher_unread_badge(item: &ChannelSwitcherItem) -> Option<Span<'sta
                 ChannelUnreadState::Notified(1),
                 Style::default(),
                 false,
+                ctx,
             )
             .0;
         }

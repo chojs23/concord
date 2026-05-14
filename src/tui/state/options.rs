@@ -1,5 +1,6 @@
 use crate::config::{DisplayOptions, ImagePreviewQualityPreset};
 use crate::tui::keybinding::ActiveKeyBindings;
+use crate::tui::theme::ColorScheme;
 
 use super::{DashboardState, FocusPane, popups::OptionsPopupState};
 
@@ -22,6 +23,14 @@ impl DashboardState {
             display_options,
             ..Self::new()
         }
+    }
+
+    pub fn set_theme(&mut self, theme: ColorScheme) {
+        self.theme = theme;
+    }
+
+    pub fn theme(&self) -> &ColorScheme {
+        &self.theme
     }
 
     pub fn set_key_bindings(&mut self, key_bindings: ActiveKeyBindings) {

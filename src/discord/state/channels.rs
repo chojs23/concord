@@ -61,14 +61,15 @@ pub struct ChannelRecipientState {
 }
 
 impl ChannelRecipientState {
-    fn from_info(
+    pub(super) fn from_info(
         recipient: &ChannelRecipientInfo,
         previous_status: Option<PresenceStatus>,
         known_status: Option<PresenceStatus>,
+        display_name: String,
     ) -> Self {
         Self {
             user_id: recipient.user_id,
-            display_name: recipient.display_name.clone(),
+            display_name,
             username: recipient.username.clone(),
             is_bot: recipient.is_bot,
             avatar_url: recipient.avatar_url.clone(),
@@ -170,12 +171,58 @@ impl DiscordState {
                             })
                             .map(|recipient| recipient.status);
                         let known_status = self.user_presences.get(&recipient.user_id).copied();
-                        ChannelRecipientState::from_info(recipient, previous_status, known_status)
+                        let display_name = self.private_user_display_name(
+                            recipient.user_id,
+                            Some(recipient.display_name.as_str()),
+                            recipient.username.as_deref(),
+                        );
+                        ChannelRecipientState::from_info(
+                            recipient,
+                            previous_status,
+                            known_status,
+                            display_name,
+                        )
                     })
                     .collect()
             })
             .or_else(|| existing.map(|existing| existing.recipients.clone()))
             .unwrap_or_default();
+
+        let incoming_recipient_names: Vec<String> = channel
+            .recipients
+            .as_ref()
+            .map(|recipients| {
+                recipients
+                    .iter()
+                    .map(|recipient| recipient.display_name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let existing_name_follows_recipients = existing.is_some_and(|existing| {
+            private_channel_name_follows_recipients(
+                &existing.kind,
+                &existing.name,
+                existing.id,
+                &existing
+                    .recipients
+                    .iter()
+                    .map(|recipient| recipient.display_name.clone())
+                    .collect::<Vec<_>>(),
+            )
+        });
+        let name = if channel.guild_id.is_none()
+            && !recipients.is_empty()
+            && (private_channel_name_follows_recipients(
+                &channel.kind,
+                &channel.name,
+                channel.channel_id,
+                &incoming_recipient_names,
+            ) || existing_name_follows_recipients)
+        {
+            joined_recipient_display_names(&recipients)
+        } else {
+            channel.name.clone()
+        };
 
         // Threads do not own channel-level overwrites. `permitted` is decided
         // by the parent. For everything else, take the newest payload as
@@ -196,7 +243,7 @@ impl DiscordState {
                 parent_id: channel.parent_id,
                 position: channel.position,
                 last_message_id,
-                name: channel.name.clone(),
+                name,
                 kind: channel.kind.clone(),
                 message_count: channel.message_count,
                 total_message_sent: channel.total_message_sent,
@@ -207,6 +254,41 @@ impl DiscordState {
                 permission_overwrites,
             },
         );
+    }
+
+    pub(super) fn refresh_dm_channel_info_from_profile(
+        &mut self,
+        user_id: Id<UserMarker>,
+        display_name: &str,
+        username: Option<&str>,
+        avatar_url: Option<&str>,
+    ) {
+        for channel in self.channels.values_mut() {
+            if channel.guild_id.is_some() {
+                continue;
+            }
+            let previous_names: Vec<String> = channel
+                .recipients
+                .iter()
+                .map(|recipient| recipient.display_name.clone())
+                .collect();
+            let mut updated = false;
+            for recipient in &mut channel.recipients {
+                if recipient.user_id == user_id {
+                    recipient.display_name = display_name.to_owned();
+                    if let Some(username) = username {
+                        recipient.username = Some(username.to_owned());
+                    }
+                    if avatar_url.is_some() || recipient.avatar_url.is_none() {
+                        recipient.avatar_url = avatar_url.map(str::to_owned);
+                    }
+                    updated = true;
+                }
+            }
+            if updated {
+                refresh_private_channel_name_from_recipients(channel, &previous_names);
+            }
+        }
     }
 
     pub(super) fn update_channel_recipient_presence(
@@ -248,5 +330,45 @@ impl DiscordState {
         if let Some(count) = channel.total_message_sent.as_mut() {
             *count = count.saturating_add(1);
         }
+    }
+}
+
+pub(super) fn joined_recipient_display_names(recipients: &[ChannelRecipientState]) -> String {
+    recipients
+        .iter()
+        .map(|recipient| recipient.display_name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub(super) fn private_channel_name_follows_recipients(
+    kind: &str,
+    current_name: &str,
+    channel_id: Id<ChannelMarker>,
+    recipient_names: &[String],
+) -> bool {
+    matches!(kind, "dm" | "Private")
+        || current_name == format!("dm-{}", channel_id.get())
+        || current_name == recipient_names.join(", ")
+}
+
+pub(super) fn refresh_private_channel_name_from_recipients(
+    channel: &mut ChannelState,
+    previous_names: &[String],
+) {
+    if channel.guild_id.is_some() {
+        return;
+    }
+    if !private_channel_name_follows_recipients(
+        &channel.kind,
+        &channel.name,
+        channel.id,
+        previous_names,
+    ) {
+        return;
+    }
+    let new_name = joined_recipient_display_names(&channel.recipients);
+    if !new_name.is_empty() {
+        channel.name = new_name;
     }
 }

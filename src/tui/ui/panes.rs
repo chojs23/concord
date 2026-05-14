@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
 };
 use ratatui_image::Image as RatatuiImage;
 use unicode_width::UnicodeWidthStr;
@@ -19,28 +19,29 @@ use super::super::{
     state::{
         ChannelPaneEntry, DashboardState, EmojiPickerEntry, FocusPane, GuildPaneEntry,
         MAX_MENTION_PICKER_VISIBLE, MemberEntry, MemberGroup, MentionPickerEntry, discord_color,
-        folder_color, presence_color, presence_marker,
+        presence_marker,
     },
 };
 use super::{
     active_text_style,
     activity::{ActivityLeading, ActivityRender, build_activity_render},
-    channel_prefix, channel_unread_decoration, dm_presence_dot_span, highlight_style,
+    bg_clear, channel_prefix, channel_unread_decoration, dm_presence_dot_span, highlight_style,
     layout::{composer_inner_width, panel_scrollbar_area, prefixed_composer_input},
     panel_block, panel_block_line, panel_content_height, render_vertical_scrollbar,
     selection_marker, styled_list_item,
-    types::{ACCENT, DIM, EmojiImage, MessageAreas},
+    types::{EmojiImage, MessageAreas, RenderCtx},
 };
 
 pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let dashboard = state;
+    let ctx = RenderCtx::new(dashboard.theme());
     let focused = state.focus() == FocusPane::Guilds;
     let filter_query = state.guild_pane_filter_query();
 
     // When the filter is active split off one row at the bottom for the search
     // bar, rendering the border block separately so we can carve up the inner.
     let (list_area, filter_area) = if filter_query.is_some() && area.height >= 4 {
-        let block = panel_block("Servers", focused);
+        let block = panel_block("Servers", focused, dashboard.theme().accent);
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let list_h = inner.height.saturating_sub(1);
@@ -79,14 +80,18 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                         );
                         let unread_count = state.direct_message_unread_count();
                         let badge = (unread_count > 0).then(|| {
-                            notification_count_badge(ChannelUnreadState::Notified(
-                                u32::try_from(unread_count).unwrap_or(u32::MAX),
-                            ))
+                            notification_count_badge(
+                                ChannelUnreadState::Notified(
+                                    u32::try_from(unread_count).unwrap_or(u32::MAX),
+                                ),
+                                &ctx,
+                            )
                         });
                         let badge_width =
                             badge.as_ref().map(|span| span.content.width()).unwrap_or(0);
                         let label_width = max_width.saturating_sub(badge_width);
-                        let mut spans = vec![selection_marker(is_selected)];
+                        let mut spans =
+                            vec![selection_marker(is_selected, dashboard.theme().accent)];
                         if let Some(badge) = badge {
                             spans.push(badge);
                         }
@@ -103,7 +108,7 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                     GuildPaneEntry::FolderHeader { folder, collapsed } => {
                         let arrow = if *collapsed { "▶ " } else { "▼ " };
                         let icon = if *collapsed { "📁" } else { "📂" };
-                        let color = folder_color(folder.color);
+                        let color = dashboard.theme().folder_color(folder.color);
                         let label = folder.name.as_deref().unwrap_or_default();
                         let title = if label.is_empty() {
                             icon.to_owned()
@@ -112,7 +117,7 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                         };
                         let label_width = max_width.saturating_sub(arrow.width());
                         ListItem::new(Line::from(vec![
-                            selection_marker(is_selected),
+                            selection_marker(is_selected, dashboard.theme().accent),
                             Span::styled(arrow, Style::default().fg(color)),
                             Span::styled(
                                 truncate_display_width_from(&title, horizontal_scroll, label_width),
@@ -129,12 +134,13 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                         let is_muted = dashboard.guild_notification_muted(guild.id);
                         let unread = dashboard.sidebar_guild_unread(guild.id);
                         let (badge, mut name_style) = if is_active {
-                            let (badge, _) = channel_unread_decoration(unread, base_style, false);
+                            let (badge, _) =
+                                channel_unread_decoration(unread, base_style, false, &ctx);
                             (badge, base_style)
                         } else if unread == ChannelUnreadState::Seen {
                             (None, base_style)
                         } else {
-                            channel_unread_decoration(unread, base_style, false)
+                            channel_unread_decoration(unread, base_style, false, &ctx)
                         };
                         if is_muted {
                             name_style = name_style.add_modifier(Modifier::DIM);
@@ -145,8 +151,8 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
                             .saturating_sub(prefix.width())
                             .saturating_sub(badge_width);
                         let mut spans = vec![
-                            selection_marker(is_selected),
-                            Span::styled(prefix, Style::default().fg(DIM)),
+                            selection_marker(is_selected, dashboard.theme().accent),
+                            Span::styled(prefix, Style::default().fg(dashboard.theme().dim)),
                         ];
                         if let Some(badge) = badge {
                             spans.push(badge);
@@ -169,7 +175,7 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
 
     let list = List::new(items).highlight_style(highlight_style());
     let list = if filter_area.is_none() {
-        list.block(panel_block("Servers", focused))
+        list.block(panel_block("Servers", focused, dashboard.theme().accent))
     } else {
         list
     };
@@ -178,7 +184,7 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
     if let Some(filter_rect) = filter_area {
         let query = filter_query.unwrap_or_default();
         let cursor = state.guild_pane_filter_cursor().unwrap_or(0);
-        let cursor_x = render_pane_filter_bar(frame, filter_rect, query, cursor, focused);
+        let cursor_x = render_pane_filter_bar(frame, filter_rect, query, cursor, focused, &ctx);
         if focused {
             frame.set_cursor_position(Position {
                 x: filter_rect.x.saturating_add(cursor_x as u16),
@@ -193,11 +199,12 @@ pub(super) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardStat
         state.guild_scroll(),
         panel_content_height(area, "Servers"),
         state.guild_pane_entries().len(),
+        &ctx,
     );
 }
 
-fn notification_count_badge(unread: ChannelUnreadState) -> Span<'static> {
-    let (badge, _) = channel_unread_decoration(unread, Style::default(), false);
+fn notification_count_badge(unread: ChannelUnreadState, ctx: &RenderCtx<'_>) -> Span<'static> {
+    let (badge, _) = channel_unread_decoration(unread, Style::default(), false, ctx);
     badge.expect("numeric unread state always renders a badge")
 }
 
@@ -209,6 +216,7 @@ fn render_pane_filter_bar(
     query: &str,
     cursor_byte: usize,
     focused: bool,
+    ctx: &RenderCtx<'_>,
 ) -> usize {
     let prompt = "/ ";
     let prompt_width = prompt.width();
@@ -240,9 +248,13 @@ fn render_pane_filter_bar(
     let visible = &query[start..end];
     let cursor_col = prompt_width + query[start..cursor_byte].width();
 
-    let accent = if focused { ACCENT } else { Color::DarkGray };
+    let accent = if focused {
+        ctx.theme.accent
+    } else {
+        ctx.theme.dim
+    };
     let shown_query = if query.is_empty() {
-        Span::styled("search...", Style::default().fg(DIM))
+        Span::styled("search...", Style::default().fg(ctx.theme.dim))
     } else {
         Span::raw(visible.to_owned())
     };
@@ -256,9 +268,10 @@ fn render_pane_filter_bar(
 
 pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let dashboard = state;
+    let ctx = RenderCtx::new(dashboard.theme());
     let focused = state.focus() == FocusPane::Channels;
     let filter_query = state.channel_pane_filter_query();
-    let block = panel_block("Channels", focused);
+    let block = panel_block("Channels", focused, ctx.theme.accent);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -272,7 +285,9 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 label,
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(ctx.theme.accent)
+                    .add_modifier(Modifier::BOLD),
             ))),
             header_area,
         );
@@ -315,14 +330,15 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                     ChannelPaneEntry::CategoryHeader { state, collapsed } => {
                         let arrow = if *collapsed { "▶ " } else { "▼ " };
                         let label_width = max_width.saturating_sub(arrow.width());
-                        let mut label_style =
-                            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD);
+                        let mut label_style = Style::default()
+                            .fg(dashboard.theme().accent)
+                            .add_modifier(Modifier::BOLD);
                         if dashboard.channel_notification_muted(state.id) {
                             label_style = label_style.add_modifier(Modifier::DIM);
                         }
                         ListItem::new(Line::from(vec![
-                            selection_marker(is_selected),
-                            Span::styled(arrow, Style::default().fg(ACCENT)),
+                            selection_marker(is_selected, dashboard.theme().accent),
+                            Span::styled(arrow, Style::default().fg(dashboard.theme().accent)),
                             Span::styled(
                                 truncate_display_width_from(
                                     &state.name,
@@ -335,15 +351,18 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                     }
                     ChannelPaneEntry::Channel { state, branch } => {
                         let branch_prefix = branch.prefix();
-                        let prefix_span = dm_presence_dot_span(state).unwrap_or_else(|| {
-                            Span::styled(channel_prefix(&state.kind), Style::default().fg(DIM))
+                        let prefix_span = dm_presence_dot_span(state, &ctx).unwrap_or_else(|| {
+                            Span::styled(
+                                channel_prefix(&state.kind),
+                                Style::default().fg(ctx.theme.dim),
+                            )
                         });
                         let prefix_width = prefix_span.content.width();
                         let base_style = active_text_style(is_active, Style::default());
                         let is_muted = dashboard.channel_notification_muted(state.id);
                         let unread = dashboard.sidebar_channel_unread(state.id);
                         let (badge, mut name_style) =
-                            channel_unread_decoration(unread, base_style, is_active);
+                            channel_unread_decoration(unread, base_style, is_active, &ctx);
                         if is_muted {
                             name_style = name_style.add_modifier(Modifier::DIM);
                         }
@@ -354,11 +373,15 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                             let message_count = dashboard.channel_unread_message_count(state.id);
                             if message_count > 0 {
                                 let count = u32::try_from(message_count).unwrap_or(u32::MAX);
-                                Some(notification_count_badge(ChannelUnreadState::Notified(
-                                    count,
-                                )))
+                                Some(notification_count_badge(
+                                    ChannelUnreadState::Notified(count),
+                                    &ctx,
+                                ))
                             } else if unread == ChannelUnreadState::Unread {
-                                Some(notification_count_badge(ChannelUnreadState::Notified(1)))
+                                Some(notification_count_badge(
+                                    ChannelUnreadState::Notified(1),
+                                    &ctx,
+                                ))
                             } else {
                                 badge
                             }
@@ -372,8 +395,8 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                             .saturating_sub(prefix_width)
                             .saturating_sub(badge_width);
                         let mut spans = vec![
-                            selection_marker(is_selected),
-                            Span::styled(branch_prefix, Style::default().fg(DIM)),
+                            selection_marker(is_selected, ctx.theme.accent),
+                            Span::styled(branch_prefix, Style::default().fg(ctx.theme.dim)),
                         ];
                         if let Some(badge) = badge {
                             spans.push(badge);
@@ -401,7 +424,7 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
     if let Some(filter_rect) = filter_area {
         let query = filter_query.unwrap_or_default();
         let cursor = state.channel_pane_filter_cursor().unwrap_or(0);
-        let cursor_x = render_pane_filter_bar(frame, filter_rect, query, cursor, focused);
+        let cursor_x = render_pane_filter_bar(frame, filter_rect, query, cursor, focused, &ctx);
         if focused {
             frame.set_cursor_position(Position {
                 x: filter_rect.x.saturating_add(cursor_x as u16),
@@ -416,6 +439,7 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
         state.channel_scroll(),
         list_area.height as usize,
         state.channel_pane_entries().len(),
+        &ctx,
     );
 }
 
@@ -433,17 +457,22 @@ pub(super) fn render_composer(
     state: &DashboardState,
     emoji_images: &[EmojiImage<'_>],
 ) {
+    let ctx = RenderCtx::new(state.theme());
     let inner_width = composer_inner_width(area.width);
     let ready_urls = ready_custom_emoji_urls(emoji_images);
     let prompt = composer_lines_with_loaded_custom_emoji_urls(state, inner_width, &ready_urls);
-    let border_color = if state.is_composing() { ACCENT } else { DIM };
+    let border_color = if state.is_composing() {
+        ctx.theme.accent
+    } else {
+        ctx.theme.dim
+    };
 
     frame.render_widget(
         Paragraph::new(prompt)
             .style(if state.is_composing() {
                 Style::default().fg(Color::White)
             } else {
-                Style::default().fg(DIM)
+                Style::default().fg(ctx.theme.dim)
             })
             .block(
                 Block::default()
@@ -537,22 +566,24 @@ pub(super) fn render_composer_mention_picker(
     let Some(area) = mention_picker_area(message_areas, candidates.len()) else {
         return;
     };
-    frame.render_widget(Clear, area);
+    frame.render_widget(bg_clear(state.theme().background), area);
     let visible_count = picker_visible_count(area, candidates.len());
     let selected = state.composer_mention_selected().min(candidates.len() - 1);
     let window_start = picker_window_start(candidates.len(), selected, visible_count);
     let visible_candidates = &candidates[window_start..window_start + visible_count];
     let shows_scrollbar = candidates.len() > visible_count;
     let inner_width = picker_inner_width(area, shows_scrollbar);
+    let ctx = RenderCtx::new(state.theme());
     let lines = mention_picker_lines(
         visible_candidates,
         selected.saturating_sub(window_start),
         inner_width,
+        &ctx,
     );
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(DIM))
+        .border_style(Style::default().fg(ctx.theme.dim))
         .title(" mention ")
         .title_style(Style::default().fg(Color::White).bold());
     frame.render_widget(Paragraph::new(lines).block(block), area);
@@ -562,6 +593,7 @@ pub(super) fn render_composer_mention_picker(
         window_start,
         visible_count,
         candidates.len(),
+        &ctx,
     );
 }
 
@@ -581,7 +613,7 @@ pub(super) fn render_composer_emoji_picker(
     let Some(area) = mention_picker_area(message_areas, candidates.len()) else {
         return;
     };
-    frame.render_widget(Clear, area);
+    frame.render_widget(bg_clear(state.theme().background), area);
     let visible_count = picker_visible_count(area, candidates.len());
     let selected = state.composer_emoji_selected().min(candidates.len() - 1);
     let window_start = picker_window_start(candidates.len(), selected, visible_count);
@@ -592,17 +624,19 @@ pub(super) fn render_composer_emoji_picker(
         .iter()
         .map(|image| image.url.clone())
         .collect::<Vec<_>>();
+    let ctx = RenderCtx::new(state.theme());
     let lines = emoji_picker_lines(
         visible_candidates,
         selected.saturating_sub(window_start),
         inner_width,
         &ready_urls,
         state.show_custom_emoji(),
+        &ctx,
     );
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(DIM))
+        .border_style(Style::default().fg(ctx.theme.dim))
         .title(" emoji ")
         .title_style(Style::default().fg(Color::White).bold());
     frame.render_widget(Paragraph::new(lines).block(block), area);
@@ -615,6 +649,7 @@ pub(super) fn render_composer_emoji_picker(
         window_start,
         visible_count,
         candidates.len(),
+        &ctx,
     );
 }
 
@@ -671,6 +706,7 @@ fn mention_picker_lines(
     candidates: &[MentionPickerEntry],
     selected: usize,
     width: usize,
+    ctx: &RenderCtx<'_>,
 ) -> Vec<Line<'static>> {
     let max_label_width = width.saturating_sub(4).max(1);
     candidates
@@ -690,14 +726,14 @@ fn mention_picker_lines(
                 .unwrap_or_default();
             let label = format!("{}{bot_marker}{username_hint}", entry.display_name);
             let label = truncate_display_width(&label, max_label_width);
-            let mut row_style = Style::default().fg(presence_color(entry.status));
+            let mut row_style = Style::default().fg(ctx.theme.presence_color(entry.status));
             if index == selected {
                 row_style = row_style
                     .bg(Color::Rgb(40, 45, 90))
                     .add_modifier(Modifier::BOLD);
             }
             Line::from(vec![
-                Span::styled(cursor, Style::default().fg(ACCENT)),
+                Span::styled(cursor, Style::default().fg(ctx.theme.accent)),
                 Span::styled(presence_marker(entry.status).to_string(), row_style),
                 Span::styled(" ", row_style),
                 Span::styled(label, row_style),
@@ -712,6 +748,7 @@ pub(super) fn emoji_picker_lines(
     width: usize,
     ready_custom_emoji_urls: &[String],
     show_custom_emoji: bool,
+    ctx: &RenderCtx<'_>,
 ) -> Vec<Line<'static>> {
     candidates
         .iter()
@@ -730,14 +767,16 @@ pub(super) fn emoji_picker_lines(
             let mut row_style = if entry.available {
                 Style::default().fg(Color::White)
             } else {
-                Style::default().fg(DIM).add_modifier(Modifier::CROSSED_OUT)
+                Style::default()
+                    .fg(ctx.theme.dim)
+                    .add_modifier(Modifier::CROSSED_OUT)
             };
             if index == selected {
                 row_style = row_style
                     .bg(Color::Rgb(40, 45, 90))
                     .add_modifier(Modifier::BOLD);
             }
-            let mut spans = vec![Span::styled(cursor, Style::default().fg(ACCENT))];
+            let mut spans = vec![Span::styled(cursor, Style::default().fg(ctx.theme.accent))];
             spans.extend(emoji_picker_entry_prefix(
                 entry,
                 custom_image_ready,
@@ -839,7 +878,7 @@ pub(super) fn composer_lines_with_loaded_custom_emoji_urls(
         {
             lines.push(Line::from(Span::styled(
                 reply_target_hint(message, state, width),
-                Style::default().fg(DIM),
+                Style::default().fg(state.theme().dim),
             )));
         }
         let prefixed_input = prefixed_composer_input(&display_input.input);
@@ -1032,9 +1071,10 @@ fn composer_custom_emoji_image_position(
 }
 
 fn pending_upload_lines(state: &DashboardState, width: u16) -> Vec<Line<'static>> {
+    let accent = state.theme().accent;
     pending_upload_texts(state, width)
         .into_iter()
-        .map(|label| Line::from(Span::styled(label, Style::default().fg(ACCENT))))
+        .map(|label| Line::from(Span::styled(label, Style::default().fg(accent))))
         .collect()
 }
 
@@ -1143,6 +1183,7 @@ pub(super) fn render_members(
     state: &DashboardState,
     emoji_images: &[EmojiImage<'_>],
 ) {
+    let ctx = RenderCtx::new(state.theme());
     let groups = state.members_grouped();
     let mut lines: Vec<Line<'static>> = Vec::new();
     // (absolute_line_index, cdn_url) for activity rows that have a loaded emoji image.
@@ -1158,7 +1199,7 @@ pub(super) fn render_members(
     if groups.is_empty() {
         lines.push(Line::from(Span::styled(
             "No members loaded yet.",
-            Style::default().fg(DIM),
+            Style::default().fg(ctx.theme.dim),
         )));
     }
 
@@ -1167,17 +1208,22 @@ pub(super) fn render_members(
             lines.push(Line::from(""));
             line_index += 1;
         }
-        lines.push(member_group_header(group, content_width));
+        lines.push(member_group_header(group, content_width, ctx.theme.dim));
         line_index += 1;
         for member in &group.entries {
             let member = *member;
             let is_selected = focused && selected_line == Some(line_index);
-            let marker_style = Style::default().fg(presence_color(member.status()));
+            let marker_style = Style::default().fg(ctx.theme.presence_color(member.status()));
             let name_style =
                 member_name_style(member, state.member_role_color(member), is_selected);
 
-            let display =
-                member_display_label(member, state.member_horizontal_scroll(), max_name_width);
+            let display_name = state.member_display_name(member);
+            let display = member_display_label(
+                member,
+                &display_name,
+                state.member_horizontal_scroll(),
+                max_name_width,
+            );
             lines.push(Line::from(vec![
                 Span::styled(
                     format!(" {} ", presence_marker(member.status())),
@@ -1204,7 +1250,7 @@ pub(super) fn render_members(
                             emoji_line_urls.push((line_index, url));
                             Line::from(vec![
                                 Span::raw("     "),
-                                Span::styled(body, Style::default().fg(DIM)),
+                                Span::styled(body, Style::default().fg(ctx.theme.dim)),
                             ])
                         }
                         ActivityLeading::Icon(icon) => {
@@ -1217,7 +1263,7 @@ pub(super) fn render_members(
                                 Span::raw("   "),
                                 Span::styled(icon.to_string(), Style::default().fg(Color::Green)),
                                 Span::raw(" "),
-                                Span::styled(body, Style::default().fg(DIM)),
+                                Span::styled(body, Style::default().fg(ctx.theme.dim)),
                             ])
                         }
                         ActivityLeading::None => {
@@ -1225,7 +1271,7 @@ pub(super) fn render_members(
                                 truncate_display_width_from(&render.body, h_scroll, max_name_width);
                             Line::from(vec![
                                 Span::raw("   "),
-                                Span::styled(body, Style::default().fg(DIM)),
+                                Span::styled(body, Style::default().fg(ctx.theme.dim)),
                             ])
                         }
                     };
@@ -1244,7 +1290,7 @@ pub(super) fn render_members(
         .take(content_height)
         .collect();
 
-    let block = panel_block_line(state.member_panel_title(), focused);
+    let block = panel_block_line(state.member_panel_title(), focused, ctx.theme.accent);
     let content_area = block.inner(area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
 
@@ -1274,10 +1320,11 @@ pub(super) fn render_members(
         scroll,
         content_height,
         state.member_line_count(),
+        &ctx,
     );
 }
 
-fn member_group_header(group: &MemberGroup<'_>, content_width: usize) -> Line<'static> {
+fn member_group_header(group: &MemberGroup<'_>, content_width: usize, dim: Color) -> Line<'static> {
     let count_suffix = format!(" - {}", group.entries.len());
     let label_max = content_width.saturating_sub(count_suffix.width());
     let label = truncate_display_width(&group.label, label_max);
@@ -1285,10 +1332,10 @@ fn member_group_header(group: &MemberGroup<'_>, content_width: usize) -> Line<'s
         Span::styled(
             label,
             Style::default()
-                .fg(discord_color(group.color, DIM))
+                .fg(discord_color(group.color, dim))
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(count_suffix, Style::default().fg(DIM)),
+        Span::styled(count_suffix, Style::default().fg(dim)),
     ])
 }
 
@@ -1317,12 +1364,12 @@ pub(super) fn member_name_style(
 
 pub(super) fn member_display_label(
     member: MemberEntry<'_>,
+    display_name: &str,
     horizontal_scroll: usize,
     max_width: usize,
 ) -> String {
-    let display_name = member.display_name();
     if !member.is_bot() {
-        return truncate_display_width_from(&display_name, horizontal_scroll, max_width);
+        return truncate_display_width_from(display_name, horizontal_scroll, max_width);
     }
 
     const BOT_SUFFIX: &str = " [bot]";
@@ -1338,7 +1385,7 @@ pub(super) fn member_display_label(
     format!(
         "{}{}",
         truncate_display_width_from(
-            &display_name,
+            display_name,
             horizontal_scroll,
             max_width.saturating_sub(suffix_width),
         ),
@@ -1384,9 +1431,12 @@ fn activity_priority(kind: ActivityKind) -> u8 {
 
 pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let title = format!(" Concord - v{} ", env!("CARGO_PKG_VERSION"));
-    let mut spans = vec![Span::styled(title, Style::default().fg(Color::Cyan).bold())];
+    let mut spans = vec![Span::styled(title, Style::default().fg(state.theme().accent).bold())];
     if let Some(user) = state.current_user() {
-        spans.push(Span::styled(" Connected as ", Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            " Connected as ",
+            Style::default().fg(state.theme().dim),
+        ));
         spans.push(Span::styled(
             format!("{user} "),
             Style::default().fg(Color::Green).bold(),

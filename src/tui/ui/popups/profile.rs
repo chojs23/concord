@@ -13,9 +13,9 @@ pub(in crate::tui::ui) fn render_user_profile_popup(
 
     const AVATAR_CELL_HEIGHT: u16 = 4;
     let popup = user_profile_popup_area(area);
-    frame.render_widget(Clear, popup);
+    frame.render_widget(bg_clear(state.theme().background), popup);
 
-    let block = panel_block("Profile", true);
+    let block = panel_block("Profile", true, state.theme().accent);
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -39,8 +39,16 @@ pub(in crate::tui::ui) fn render_user_profile_popup(
         .skip(scroll_position)
         .take(viewport)
         .collect::<Vec<_>>();
+    let ctx = RenderCtx::new(state.theme());
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), text_area);
-    render_vertical_scrollbar(frame, text_area, scroll_position, viewport, total_lines);
+    render_vertical_scrollbar(
+        frame,
+        text_area,
+        scroll_position,
+        viewport,
+        total_lines,
+        &ctx,
+    );
 
     if state.show_custom_emoji() {
         for (line_idx, url) in &popup_text.emoji_overlays {
@@ -91,7 +99,7 @@ pub(in crate::tui::ui) fn user_profile_popup_area(area: Rect) -> Rect {
 
 pub(in crate::tui::ui) fn user_profile_popup_has_avatar(area: Rect, has_avatar_url: bool) -> bool {
     let popup = user_profile_popup_area(area);
-    let inner = panel_block("Profile", true).inner(popup);
+    let inner = panel_block("Profile", true, ACCENT).inner(popup);
     user_profile_popup_has_avatar_inside(inner, has_avatar_url)
 }
 
@@ -120,7 +128,7 @@ pub(in crate::tui::ui) fn user_profile_popup_text_geometry(
     has_avatar: bool,
 ) -> (u16, u16) {
     let popup = user_profile_popup_area(area);
-    let inner = panel_block("Profile", true).inner(popup);
+    let inner = panel_block("Profile", true, ACCENT).inner(popup);
     let text_area = user_profile_popup_text_area_inside(inner, has_avatar);
     (text_area.width, text_area.height)
 }
@@ -151,7 +159,7 @@ fn user_profile_popup_text_for_render(
         UserProfilePopupText {
             lines: vec![Line::from(Span::styled(
                 "Loading profile...",
-                Style::default().fg(DIM),
+                Style::default().fg(state.theme().dim),
             ))],
             emoji_overlays: Vec::new(),
         }
@@ -199,6 +207,8 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
     activities: &[ActivityInfo],
     emoji_images: &[EmojiImage<'_>],
 ) -> UserProfilePopupText {
+    let accent = state.theme().accent;
+    let dim = state.theme().dim;
     let is_self = state.current_user_id() == Some(profile.user_id);
 
     let inner_width = usize::from(width.max(8));
@@ -207,22 +217,22 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
     let display_name = profile.display_name().to_owned();
     lines.push(Line::from(Span::styled(
         truncate_display_width(&display_name, inner_width),
-        user_profile_display_name_style(status),
+        user_profile_display_name_style(state.theme().presence_color(status)),
     )));
     lines.push(Line::from(Span::styled(
         truncate_display_width(&format!("@{}", profile.username), inner_width),
-        Style::default().fg(DIM),
+        Style::default().fg(dim),
     )));
 
     if let Some(pronouns) = profile.pronouns.as_deref() {
         lines.push(Line::from(Span::styled(
             truncate_display_width(pronouns, inner_width),
-            Style::default().fg(DIM),
+            Style::default().fg(dim),
         )));
     }
 
     if !is_self {
-        let (badge_label, badge_color) = friend_status_badge(profile.friend_status);
+        let (badge_label, badge_color) = friend_status_badge(profile.friend_status, dim);
         lines.push(Line::from(Span::styled(
             badge_label,
             Style::default()
@@ -234,7 +244,7 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
     let mut emoji_overlays: Vec<(usize, String)> = Vec::new();
     if !activities.is_empty() {
         lines.push(Line::from(Span::raw(String::new())));
-        push_section_header(&mut lines, "ACTIVITY");
+        push_section_header(&mut lines, "ACTIVITY", accent);
         let mut sorted_activities: Vec<&ActivityInfo> = activities.iter().collect();
         sorted_activities.sort_by_key(|a| activity_priority(a.kind));
         let mut first = true;
@@ -249,12 +259,13 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
                 activity,
                 inner_width,
                 emoji_images,
+                dim,
             );
         }
     }
 
     lines.push(Line::from(Span::raw(String::new())));
-    push_section_header(&mut lines, "ABOUT ME");
+    push_section_header(&mut lines, "ABOUT ME", accent);
     push_wrapped_paragraph(
         &mut lines,
         profile
@@ -266,7 +277,7 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
     );
 
     lines.push(Line::from(Span::raw(String::new())));
-    push_section_header(&mut lines, "NOTE");
+    push_section_header(&mut lines, "NOTE", accent);
     push_wrapped_paragraph(
         &mut lines,
         profile
@@ -282,11 +293,12 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
         push_section_header(
             &mut lines,
             &format!("MUTUAL SERVERS ({})", profile.mutual_guilds.len()),
+            accent,
         );
         if profile.mutual_guilds.is_empty() {
             lines.push(Line::from(Span::styled(
                 "  (none)".to_owned(),
-                Style::default().fg(DIM),
+                Style::default().fg(dim),
             )));
         } else {
             for entry in &profile.mutual_guilds {
@@ -299,7 +311,7 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
                     None => format!("• {name}"),
                 };
                 lines.push(Line::from(vec![
-                    Span::styled("  ".to_owned(), Style::default().fg(ACCENT)),
+                    Span::styled("  ".to_owned(), Style::default().fg(accent)),
                     Span::styled(
                         truncate_display_width(&body, inner_width.saturating_sub(2)),
                         Style::default(),
@@ -314,6 +326,7 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
         push_section_header(
             &mut lines,
             &format!("MUTUAL FRIENDS ({})", profile.mutual_friends_count),
+            accent,
         );
     }
 
@@ -323,26 +336,24 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
     }
 }
 
-pub(in crate::tui::ui) fn user_profile_display_name_style(status: PresenceStatus) -> Style {
-    Style::default()
-        .fg(presence_color(status))
-        .add_modifier(Modifier::BOLD)
+pub(in crate::tui::ui) fn user_profile_display_name_style(color: Color) -> Style {
+    Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
-fn friend_status_badge(status: FriendStatus) -> (String, Color) {
+fn friend_status_badge(status: FriendStatus, dim: Color) -> (String, Color) {
     match status {
         FriendStatus::Friend => ("● Friend".to_owned(), Color::Green),
         FriendStatus::IncomingRequest => ("● Incoming friend request".to_owned(), Color::Yellow),
         FriendStatus::OutgoingRequest => ("● Outgoing friend request".to_owned(), Color::Yellow),
         FriendStatus::Blocked => ("● Blocked".to_owned(), Color::Red),
-        FriendStatus::None => ("● Not friends".to_owned(), DIM),
+        FriendStatus::None => ("● Not friends".to_owned(), dim),
     }
 }
 
-fn push_section_header(lines: &mut Vec<Line<'static>>, label: &str) {
+fn push_section_header(lines: &mut Vec<Line<'static>>, label: &str, accent: Color) {
     lines.push(Line::from(Span::styled(
         label.to_owned(),
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        Style::default().fg(accent).add_modifier(Modifier::BOLD),
     )));
 }
 
@@ -352,6 +363,7 @@ fn push_activity_lines(
     activity: &ActivityInfo,
     width: usize,
     emoji_images: &[EmojiImage<'_>],
+    dim: Color,
 ) {
     let render = build_activity_render(activity, emoji_images, false);
     if !render.is_empty() {
@@ -365,7 +377,7 @@ fn push_activity_lines(
                     Span::raw("  "),
                     Span::styled(
                         truncate_display_width(&render.body, width.saturating_sub(2)),
-                        Style::default().fg(DIM),
+                        Style::default().fg(dim),
                     ),
                 ])
             }
@@ -374,12 +386,12 @@ fn push_activity_lines(
                 Span::raw(" "),
                 Span::styled(
                     truncate_display_width(&render.body, width.saturating_sub(2)),
-                    Style::default().fg(DIM),
+                    Style::default().fg(dim),
                 ),
             ]),
             ActivityLeading::None => Line::from(Span::styled(
                 truncate_display_width(&render.body, width),
-                Style::default().fg(DIM),
+                Style::default().fg(dim),
             )),
         };
         lines.push(line);
@@ -387,13 +399,13 @@ fn push_activity_lines(
     if let Some(secondary) = activity_secondary_line(activity) {
         lines.push(Line::from(Span::styled(
             truncate_display_width(&secondary, width),
-            Style::default().fg(DIM),
+            Style::default().fg(dim),
         )));
     }
     if let Some(tertiary) = activity_tertiary_line(activity) {
         lines.push(Line::from(Span::styled(
             truncate_display_width(&tertiary, width),
-            Style::default().fg(DIM),
+            Style::default().fg(dim),
         )));
     }
 }

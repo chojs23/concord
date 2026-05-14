@@ -17,16 +17,17 @@ pub(in crate::tui::ui) fn render_debug_log_popup(
         state.debug_channel_visibility(),
         visible_log_lines,
         usize::from(popup_width.saturating_sub(2)),
+        &RenderCtx::new(state.theme()),
     );
     let popup = centered_rect(
         area,
         POPUP_TARGET_WIDTH,
         (lines.len() as u16).saturating_add(2),
     );
-    frame.render_widget(Clear, popup);
+    frame.render_widget(bg_clear(state.theme().background), popup);
     frame.render_widget(
         Paragraph::new(lines)
-            .block(panel_block("Debug logs", true))
+            .block(panel_block("Debug logs", true, state.theme().accent))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -37,6 +38,7 @@ pub(in crate::tui::ui) fn debug_log_popup_lines(
     channel_visibility: ChannelVisibilityStats,
     visible_log_lines: usize,
     width: usize,
+    ctx: &RenderCtx<'_>,
 ) -> Vec<Line<'static>> {
     let width = width.max(1);
     let visible_log_lines = visible_log_lines.max(1);
@@ -51,14 +53,14 @@ pub(in crate::tui::ui) fn debug_log_popup_lines(
     );
     lines.push(Line::from(Span::styled(
         visibility_text,
-        Style::default().fg(ACCENT),
+        Style::default().fg(ctx.theme.accent),
     )));
     lines.push(Line::from(Span::raw(String::new())));
 
     if entries.is_empty() {
         lines.push(Line::from(Span::styled(
             "No errors recorded in this process.",
-            Style::default().fg(DIM),
+            Style::default().fg(ctx.theme.dim),
         )));
     } else {
         let wrapped = entries

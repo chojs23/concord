@@ -5,7 +5,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
+        Block, BorderType, Borders, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
         ScrollbarState, Wrap,
     },
 };
@@ -26,8 +26,7 @@ use super::{
         ChannelSwitcherItem, ChannelThreadItem, DashboardState, DisplayOptionItem,
         EmojiReactionItem, FORUM_POST_CARD_HEIGHT, FocusPane, ImageViewerItem, MessageActionItem,
         PollVotePickerItem, channel_action_shortcut, discord_color, guild_action_shortcut,
-        indexed_shortcut, member_action_shortcut, message_action_shortcut, presence_color,
-        presence_marker,
+        indexed_shortcut, member_action_shortcut, message_action_shortcut, presence_marker,
     },
 };
 use crate::discord::{
@@ -36,14 +35,17 @@ use crate::discord::{
 };
 
 /// Discord's "you were mentioned" orange, `#FFA500`.
+#[cfg(test)]
 const MENTION_ORANGE: Color = Color::Rgb(255, 165, 0);
 
 /// Explicit RGB instead of `Modifier::DIM` so CJK wide characters dim
 /// uniformly with ASCII (most terminals ignore SGR dim on wide glyphs).
+#[cfg(test)]
 const READ_DIM: Color = Color::Rgb(130, 130, 130);
 
 /// Explicit RGB instead of relying on `Modifier::BOLD` alone, which most
 /// monospace fonts can't apply to CJK glyphs.
+#[cfg(test)]
 const UNREAD_BRIGHT: Color = Color::Rgb(255, 255, 255);
 
 mod activity;
@@ -79,10 +81,11 @@ use self::popups::{
     render_user_profile_popup, user_profile_popup_has_avatar, user_profile_popup_text_geometry,
     user_profile_popup_total_lines,
 };
+#[cfg(test)]
+use self::types::DIM;
 use self::types::{
-    ACCENT, DIM, EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET, MESSAGE_AVATAR_PLACEHOLDER,
-    MESSAGE_SELECTION_PREFIX_WIDTH, MessageViewportLayout, SCROLLBAR_THUMB,
-    SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UserProfilePopupText,
+    ACCENT, EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET, MESSAGE_AVATAR_PLACEHOLDER,
+    MESSAGE_SELECTION_PREFIX_WIDTH, MessageViewportLayout, RenderCtx, UserProfilePopupText,
 };
 pub(crate) use self::types::{ActionMenuTarget, MouseTarget};
 pub use self::types::{
@@ -177,6 +180,11 @@ pub fn render(
     emoji_images: Vec<EmojiImage<'_>>,
     profile_avatar: Option<AvatarImage>,
 ) {
+    let ctx = RenderCtx::new(state.theme());
+    frame.render_widget(
+        Block::default().style(Style::default().bg(ctx.theme.background)),
+        frame.area(),
+    );
     let areas = dashboard_areas(frame.area(), state);
     let mut inline_image_previews = Vec::new();
     let mut viewer_image_preview = None;
@@ -237,11 +245,11 @@ fn styled_list_item<'a>(item: ListItem<'a>, selected: bool) -> ListItem<'a> {
     }
 }
 
-fn selection_marker(selected: bool) -> Span<'static> {
+fn selection_marker(selected: bool, accent: Color) -> Span<'static> {
     if selected {
         Span::styled(
             "▸ ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         )
     } else {
         Span::raw("  ")
@@ -257,7 +265,7 @@ fn active_text_style(active: bool, style: Style) -> Style {
 }
 
 fn panel_content_height(area: Rect, title: &'static str) -> usize {
-    panel_block(title, false).inner(area).height.max(1) as usize
+    panel_block(title, false, ACCENT).inner(area).height.max(1) as usize
 }
 
 fn visible_panel_content_height(area: Rect, title: &'static str, visible: bool) -> usize {
@@ -274,6 +282,7 @@ fn render_vertical_scrollbar(
     position: usize,
     viewport_len: usize,
     content_len: usize,
+    ctx: &RenderCtx<'_>,
 ) {
     if !vertical_scrollbar_visible(area, viewport_len, content_len) {
         return;
@@ -290,8 +299,8 @@ fn render_vertical_scrollbar(
         .end_symbol(None)
         .track_symbol(Some("│"))
         .thumb_symbol("┃")
-        .thumb_style(Style::default().fg(SCROLLBAR_THUMB))
-        .track_style(Style::default().fg(DIM));
+        .thumb_style(Style::default().fg(ctx.theme.scrollbar_thumb))
+        .track_style(Style::default().fg(ctx.theme.dim));
 
     frame.render_stateful_widget(scrollbar, area, &mut state);
 }
@@ -318,11 +327,11 @@ fn channel_prefix(kind: &str) -> &'static str {
     }
 }
 
-fn dm_presence_dot_span(channel: &ChannelState) -> Option<Span<'static>> {
+fn dm_presence_dot_span(channel: &ChannelState, ctx: &RenderCtx<'_>) -> Option<Span<'static>> {
     let status = one_to_one_dm_recipient_status(channel)?;
     Some(Span::styled(
         format!("{} ", presence_marker(status)),
-        Style::default().fg(presence_color(status)),
+        Style::default().fg(ctx.theme.presence_color(status)),
     ))
 }
 
@@ -332,21 +341,30 @@ fn channel_unread_decoration(
     unread: ChannelUnreadState,
     base: Style,
     active: bool,
+    ctx: &RenderCtx<'_>,
 ) -> (Option<Span<'static>>, Style) {
     if active {
         return (None, base);
     }
     match unread {
         ChannelUnreadState::Mentioned(count) => {
-            let style = base.fg(MENTION_ORANGE).add_modifier(Modifier::BOLD);
+            let style = base
+                .fg(ctx.theme.mention_badge)
+                .add_modifier(Modifier::BOLD);
             (Some(Span::styled(format!("({count}) "), style)), style)
         }
         ChannelUnreadState::Notified(count) => {
-            let style = base.fg(UNREAD_BRIGHT).add_modifier(Modifier::BOLD);
+            let style = base
+                .fg(ctx.theme.channel_unread)
+                .add_modifier(Modifier::BOLD);
             (Some(Span::styled(format!("({count}) "), style)), style)
         }
-        ChannelUnreadState::Unread => (None, base.fg(UNREAD_BRIGHT).add_modifier(Modifier::BOLD)),
-        ChannelUnreadState::Seen => (None, base.fg(READ_DIM)),
+        ChannelUnreadState::Unread => (
+            None,
+            base.fg(ctx.theme.channel_unread)
+                .add_modifier(Modifier::BOLD),
+        ),
+        ChannelUnreadState::Seen => (None, base.fg(ctx.theme.channel_read)),
     }
 }
 
@@ -358,6 +376,23 @@ fn one_to_one_dm_recipient_status(channel: &ChannelState) -> Option<PresenceStat
     channel.recipients.first().map(|recipient| recipient.status)
 }
 
+pub(super) struct BgClear(Color);
+
+impl ratatui::widgets::Widget for BgClear {
+    fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        for x in area.left()..area.right() {
+            for y in area.top()..area.bottom() {
+                buf[(x, y)].reset();
+                buf[(x, y)].set_bg(self.0);
+            }
+        }
+    }
+}
+
+pub(super) fn bg_clear(bg: Color) -> BgClear {
+    BgClear(bg)
+}
+
 fn highlight_style() -> Style {
     Style::default()
         .bg(Color::Rgb(24, 54, 65))
@@ -365,12 +400,12 @@ fn highlight_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
-fn panel_block(title: &'static str, focused: bool) -> Block<'static> {
-    panel_block_owned(title.to_owned(), focused)
+fn panel_block(title: &'static str, focused: bool, accent: Color) -> Block<'static> {
+    panel_block_owned(title.to_owned(), focused, accent)
 }
 
-fn panel_block_owned(title: String, focused: bool) -> Block<'static> {
-    let border = if focused { ACCENT } else { Color::DarkGray };
+fn panel_block_owned(title: String, focused: bool, accent: Color) -> Block<'static> {
+    let border = if focused { accent } else { Color::DarkGray };
 
     Block::default()
         .title(format!(" {title} "))
@@ -380,8 +415,12 @@ fn panel_block_owned(title: String, focused: bool) -> Block<'static> {
         .title_style(Style::default().fg(Color::White).bold())
 }
 
-pub(super) fn panel_block_line(title: Line<'static>, focused: bool) -> Block<'static> {
-    let border = if focused { ACCENT } else { Color::DarkGray };
+pub(super) fn panel_block_line(
+    title: Line<'static>,
+    focused: bool,
+    accent: Color,
+) -> Block<'static> {
+    let border = if focused { accent } else { Color::DarkGray };
 
     Block::default()
         .title(title)

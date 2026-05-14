@@ -8,15 +8,29 @@ pub(super) fn forum_post_viewport_lines(
     width: usize,
     is_loading: bool,
 ) -> Vec<Line<'static>> {
-    forum_post_viewport_lines_with_custom_emoji_images(posts, selected, width, is_loading, true)
+    let scheme = crate::tui::theme::ColorScheme::default();
+    forum_post_viewport_lines_with_custom_emoji_images(
+        posts,
+        selected,
+        width,
+        is_loading,
+        true,
+        scheme.accent,
+        scheme.dim,
+        scheme.selection_border,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn forum_post_viewport_lines_with_custom_emoji_images(
     posts: &[ChannelThreadItem],
     selected: Option<usize>,
     width: usize,
     is_loading: bool,
     show_custom_emoji: bool,
+    accent: Color,
+    dim: Color,
+    selection_border: Color,
 ) -> Vec<Line<'static>> {
     let width = width.max(1);
     if posts.is_empty() {
@@ -25,7 +39,7 @@ pub(super) fn forum_post_viewport_lines_with_custom_emoji_images(
         } else {
             "No forum posts."
         };
-        return vec![Line::from(Span::styled(message, Style::default().fg(DIM)))];
+        return vec![Line::from(Span::styled(message, Style::default().fg(dim)))];
     }
 
     let mut lines = Vec::new();
@@ -38,6 +52,9 @@ pub(super) fn forum_post_viewport_lines_with_custom_emoji_images(
             selected == Some(index),
             width,
             show_custom_emoji,
+            accent,
+            dim,
+            selection_border,
         ));
     }
     lines
@@ -52,15 +69,21 @@ fn forum_post_card_lines(
     selected: bool,
     width: usize,
     show_custom_emoji: bool,
+    accent: Color,
+    dim: Color,
+    selection_border: Color,
 ) -> [Line<'static>; FORUM_POST_CARD_HEIGHT] {
     let marker = if selected { "› " } else { "  " };
     let card_width = width.saturating_sub(marker.width()).max(4);
     let inner_width = card_width.saturating_sub(4).max(1);
-    let border_style = forum_post_border_style(selected);
+    let border_style = forum_post_border_style(selected, accent, selection_border);
 
     [
         Line::from(vec![
-            Span::styled(marker, forum_post_marker_style(selected)),
+            Span::styled(
+                marker,
+                forum_post_marker_style(selected, accent, selection_border),
+            ),
             Span::styled(
                 format!("╭{}╮", "─".repeat(card_width.saturating_sub(2))),
                 border_style,
@@ -71,18 +94,24 @@ fn forum_post_card_lines(
             forum_post_title_spans(post, inner_width),
             inner_width,
             selected,
+            accent,
+            selection_border,
         ),
         forum_post_inner_line(
             "  ",
-            forum_post_preview_spans(post, inner_width),
+            forum_post_preview_spans(post, inner_width, dim),
             inner_width,
             selected,
+            accent,
+            selection_border,
         ),
         forum_post_inner_line(
             "  ",
-            forum_post_metadata_spans(post, inner_width, show_custom_emoji),
+            forum_post_metadata_spans(post, inner_width, show_custom_emoji, accent, dim),
             inner_width,
             selected,
+            accent,
+            selection_border,
         ),
         Line::from(vec![
             Span::raw("  "),
@@ -126,18 +155,22 @@ fn forum_post_title_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<S
     ]
 }
 
-fn forum_post_preview_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Span<'static>> {
+fn forum_post_preview_spans(
+    post: &ChannelThreadItem,
+    inner_width: usize,
+    dim: Color,
+) -> Vec<Span<'static>> {
     let preview_style = Style::default().fg(Color::White);
     let Some(author) = post.preview_author.as_deref() else {
         return vec![Span::styled(
             "Preview unavailable",
-            Style::default().fg(DIM),
+            Style::default().fg(dim),
         )];
     };
     let Some(content) = post.preview_content.as_deref() else {
         return vec![Span::styled(
             "Preview unavailable",
-            Style::default().fg(DIM),
+            Style::default().fg(dim),
         )];
     };
 
@@ -161,10 +194,12 @@ fn forum_post_metadata_spans(
     post: &ChannelThreadItem,
     width: usize,
     show_custom_emoji: bool,
+    accent: Color,
+    dim: Color,
 ) -> Vec<Span<'static>> {
     let primary_style = Style::default().fg(Color::White);
-    let reaction_style = Style::default().fg(ACCENT);
-    let muted_style = Style::default().fg(DIM);
+    let reaction_style = Style::default().fg(accent);
+    let muted_style = Style::default().fg(dim);
     let mut spans = Vec::new();
     let mut used_width = 0usize;
 
@@ -176,6 +211,7 @@ fn forum_post_metadata_spans(
             width,
             format!("{count} {label}"),
             primary_style,
+            dim,
         );
     }
     if let Some(layout) =
@@ -187,6 +223,7 @@ fn forum_post_metadata_spans(
             width,
             reaction_style,
             layout,
+            dim,
         );
     }
     if let Some(message_id) = post.last_activity_message_id {
@@ -196,6 +233,7 @@ fn forum_post_metadata_spans(
             width,
             format_message_relative_age(message_id),
             primary_style,
+            dim,
         );
     }
     if post.archived {
@@ -205,6 +243,7 @@ fn forum_post_metadata_spans(
             width,
             "archived".to_owned(),
             muted_style,
+            dim,
         );
     }
     if post.locked {
@@ -214,6 +253,7 @@ fn forum_post_metadata_spans(
             width,
             "locked".to_owned(),
             muted_style,
+            dim,
         );
     }
 
@@ -230,6 +270,7 @@ fn push_forum_metadata_part(
     max_width: usize,
     text: String,
     style: Style,
+    dim: Color,
 ) {
     if *used_width >= max_width {
         return;
@@ -242,7 +283,7 @@ fn push_forum_metadata_part(
         }
         let separator = truncate_display_width(separator, remaining);
         *used_width = used_width.saturating_add(separator.width());
-        spans.push(Span::styled(separator, Style::default().fg(DIM)));
+        spans.push(Span::styled(separator, Style::default().fg(dim)));
     }
 
     let remaining = max_width.saturating_sub(*used_width);
@@ -260,6 +301,7 @@ fn push_forum_metadata_reaction_part(
     max_width: usize,
     style: Style,
     layout: ReactionLayout,
+    dim: Color,
 ) {
     let Some(line) = layout.lines.first() else {
         return;
@@ -276,7 +318,7 @@ fn push_forum_metadata_reaction_part(
         }
         let separator = truncate_display_width(separator, remaining);
         *used_width = used_width.saturating_add(separator.width());
-        spans.push(Span::styled(separator, Style::default().fg(DIM)));
+        spans.push(Span::styled(separator, Style::default().fg(dim)));
     }
 
     let remaining = max_width.saturating_sub(*used_width);
@@ -417,13 +459,15 @@ fn forum_post_inner_line(
     mut content: Vec<Span<'static>>,
     inner_width: usize,
     selected: bool,
+    accent: Color,
+    selection_border: Color,
 ) -> Line<'static> {
     let content_width = content
         .iter()
         .map(|span| span.content.width())
         .sum::<usize>();
     let padding = inner_width.saturating_sub(content_width);
-    let border_style = forum_post_border_style(selected);
+    let border_style = forum_post_border_style(selected, accent, selection_border);
     let fill_style = Style::default();
     let mut spans = vec![
         Span::raw(marker.to_owned()),
@@ -435,22 +479,22 @@ fn forum_post_inner_line(
     Line::from(spans)
 }
 
-fn forum_post_border_style(selected: bool) -> Style {
+fn forum_post_border_style(selected: bool, accent: Color, selection_border: Color) -> Style {
     if selected {
         Style::default()
-            .fg(SELECTED_FORUM_POST_BORDER)
+            .fg(selection_border)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(ACCENT)
+        Style::default().fg(accent)
     }
 }
 
-fn forum_post_marker_style(selected: bool) -> Style {
+fn forum_post_marker_style(selected: bool, accent: Color, selection_border: Color) -> Style {
     if selected {
         Style::default()
-            .fg(SELECTED_FORUM_POST_BORDER)
+            .fg(selection_border)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(ACCENT)
+        Style::default().fg(accent)
     }
 }
