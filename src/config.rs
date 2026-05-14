@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -85,50 +84,15 @@ impl DisplayOptions {
     }
 }
 
-/// Raw key-binding overrides from the config file, as a map of action name →
-/// key spec string (e.g. `"ctrl+e"`).  Only entries that differ from the
-/// built-in defaults need to be present; absent entries use the defaults
-/// defined in `Action::default_binding`.
-///
-/// Each value accepts a key spec of the form `[modifier+]key` where modifier
-/// is one of `ctrl`, `alt`, `shift` and key is a single character, `space`,
-/// or a special name (`enter`, `esc`, `tab`, `backtab`, `f1`–`f12`, …).
-/// Unrecognised specs silently fall back to the built-in default.
-///
-/// Example `~/.config/concord/config.toml`:
-/// ```toml
-/// [keybindings]
-/// move_down     = "ctrl+n"
-/// move_up       = "ctrl+p"
-/// open_composer = "a"
-/// ```
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct KeyBindingsConfig(pub HashMap<String, String>);
-
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct AppConfig {
     display: DisplayOptions,
-    keybindings: KeyBindingsConfig,
 }
 
 pub fn load_display_options() -> Result<DisplayOptions> {
     let path = config_path()?;
     load_display_options_from_path(&path)
-}
-
-pub fn load_key_bindings_config() -> Result<KeyBindingsConfig> {
-    let path = config_path()?;
-    match std::fs::read_to_string(&path) {
-        Ok(content) => Ok(section_from_toml::<KeyBindingsConfig>(
-            &content,
-            "keybindings",
-        )?),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(KeyBindingsConfig::default())
-        }
-        Err(error) => Err(error.into()),
-    }
 }
 
 /// User-facing description of where config lives, e.g. for help text. Falls
@@ -143,25 +107,9 @@ pub fn config_path_display() -> String {
 
 fn load_display_options_from_path(path: &Path) -> Result<DisplayOptions> {
     match fs::read_to_string(path) {
-        Ok(content) => Ok(section_from_toml::<DisplayOptions>(&content, "display")?),
+        Ok(content) => Ok(toml::from_str::<AppConfig>(&content)?.display),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(DisplayOptions::default()),
         Err(error) => Err(error.into()),
-    }
-}
-
-/// Parse a named top-level section from a TOML string, returning the section's
-/// value deserialized as `T`. If the section is absent, the `Default` is used.
-/// Parsing only the requested section means a bad value in another section
-/// (e.g. an unknown enum variant in `[display]`) won't prevent `[keybindings]`
-/// from loading, and vice versa.
-fn section_from_toml<T>(content: &str, section: &str) -> Result<T>
-where
-    T: Default + serde::de::DeserializeOwned,
-{
-    let mut table: toml::Table = toml::from_str(content)?;
-    match table.remove(section) {
-        Some(value) => Ok(T::deserialize(value)?),
-        None => Ok(T::default()),
     }
 }
 
@@ -176,13 +124,7 @@ fn save_display_options_to_path(path: &Path, options: &DisplayOptions) -> Result
         set_private_dir_permissions(parent)?;
     }
 
-    // Load the existing config so other sections (e.g. [keybindings]) are
-    // preserved. Fall back to defaults when the file is missing or unparseable.
-    let mut config = match fs::read_to_string(path) {
-        Ok(content) => toml::from_str::<AppConfig>(&content).unwrap_or_default(),
-        Err(_) => AppConfig::default(),
-    };
-    config.display = *options;
+    let config = AppConfig { display: *options };
     write_private_file(path, &toml::to_string_pretty(&config)?)
 }
 
@@ -246,8 +188,8 @@ mod tests {
     };
 
     use super::{
-        AppConfig, DisplayOptions, ImagePreviewQualityPreset, KeyBindingsConfig,
-        load_display_options_from_path, save_display_options_to_path,
+        AppConfig, DisplayOptions, ImagePreviewQualityPreset, load_display_options_from_path,
+        save_display_options_to_path,
     };
 
     #[test]
@@ -330,68 +272,6 @@ mod tests {
         let loaded = load_display_options_from_path(&path).expect("config should load");
 
         assert_eq!(loaded, options);
-        let _ = fs::remove_file(&path);
-        if let Some(parent) = path.parent() {
-            let _ = fs::remove_dir_all(parent);
-        }
-    }
-
-    #[test]
-    fn keybindings_default_is_empty_map() {
-        // Default config has no overrides; defaults come from Action::default_binding.
-        let config = KeyBindingsConfig::default();
-        assert!(config.0.is_empty());
-    }
-
-    #[test]
-    fn keybindings_config_parses_from_toml() {
-        let toml = "[keybindings]\nopen_in_editor = \"ctrl+o\"\n";
-        let config: AppConfig = toml::from_str(toml).expect("should parse");
-        assert_eq!(
-            config
-                .keybindings
-                .0
-                .get("open_in_editor")
-                .map(String::as_str),
-            Some("ctrl+o")
-        );
-    }
-
-    #[test]
-    fn keybindings_config_empty_when_section_absent() {
-        let toml = "[display]\ndisable_image_preview = true\n";
-        let config: AppConfig = toml::from_str(toml).expect("should parse");
-        // No overrides present — defaults handled by ActiveKeyBindings::from_config.
-        assert!(config.keybindings.0.is_empty());
-    }
-
-    #[test]
-    fn save_display_options_preserves_keybindings() {
-        let path = test_config_path();
-
-        // Write a config that has a custom keybinding.
-        let initial = "[keybindings]\nopen_in_editor = \"alt+e\"\n";
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).expect("should create dir");
-        }
-        fs::write(&path, initial).expect("should write initial config");
-
-        // Save display options — must not clobber the keybinding.
-        let options = DisplayOptions::default();
-        save_display_options_to_path(&path, &options).expect("should save");
-
-        let content = fs::read_to_string(&path).expect("should read back");
-        let config: AppConfig = toml::from_str(&content).expect("should parse back");
-        assert_eq!(
-            config
-                .keybindings
-                .0
-                .get("open_in_editor")
-                .map(String::as_str),
-            Some("alt+e"),
-            "keybinding should survive a display-options save"
-        );
-
         let _ = fs::remove_file(&path);
         if let Some(parent) = path.parent() {
             let _ = fs::remove_dir_all(parent);

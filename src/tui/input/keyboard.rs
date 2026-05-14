@@ -4,16 +4,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::discord::{AppCommand, MessageAttachmentUpload};
 
-use super::super::keybinding::Action;
 use super::super::state::{DashboardState, FocusPane};
 
 pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     if key.kind != KeyEventKind::Press {
         return None;
-    }
-
-    if state.is_keymap_popup_open() {
-        return handle_keymap_popup_key(state, key);
     }
 
     if state.is_debug_log_popup_open() {
@@ -32,11 +27,9 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_composer_key(state, key);
     }
 
-    let action = state.key_bindings().lookup(key);
-
-    // ToggleDebugLog fires before any modal or filter — accessible from anywhere
-    // except while composing or with a popup already open.
-    if action == Some(Action::ToggleDebugLog) {
+    // The debug log is intentionally available from regular dashboard modes,
+    // but popups and the composer get first chance to handle their own keys.
+    if key.code == KeyCode::Char('`') {
         state.toggle_debug_log_popup();
         return None;
     }
@@ -72,8 +65,8 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     let focus = state.focus();
 
     // Only intercept filter input when the pane that owns the filter is still
-    // focused. Moving the mouse to another pane should let normal keybinds
-    // work (e.g. pressing the open_composer key after clicking Messages).
+    // focused. Moving the mouse to another pane should let normal shortcuts
+    // work (e.g. pressing `i` after clicking Messages).
     if (state.is_guild_pane_filter_active() && focus == FocusPane::Guilds)
         || (state.is_channel_pane_filter_active() && focus == FocusPane::Channels)
     {
@@ -82,71 +75,54 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         }
     }
 
-    if let Some(action) = action {
-        dispatch_action(state, action, focus)
-    } else {
-        None
-    }
-}
-
-fn dispatch_action(
-    state: &mut DashboardState,
-    action: Action,
-    focus: FocusPane,
-) -> Option<AppCommand> {
-    match action {
-        Action::Quit => {
-            state.quit();
-            None
-        }
-        Action::Return => {
+    match key.code {
+        KeyCode::Esc => {
             if !state.return_from_pinned_message_view() {
                 state.return_from_opened_thread();
             }
             None
         }
-        Action::ToggleDebugLog => {
-            state.toggle_debug_log_popup();
+        KeyCode::Char('q') => {
+            state.quit();
             None
         }
-        Action::FocusGuilds => {
-            state.show_and_focus_pane(FocusPane::Guilds);
-            None
-        }
-        Action::FocusChannels => {
-            state.show_and_focus_pane(FocusPane::Channels);
-            None
-        }
-        Action::FocusMessages => {
-            state.show_and_focus_pane(FocusPane::Messages);
-            None
-        }
-        Action::FocusMembers => {
-            state.show_and_focus_pane(FocusPane::Members);
-            None
-        }
-        Action::CycleFocusForward => {
-            state.cycle_focus();
-            None
-        }
-        Action::CycleFocusBackward => {
-            state.cycle_focus_backward();
-            None
-        }
-        Action::OpenComposer => {
+        KeyCode::Char('i') => {
             state.start_composer();
             None
         }
-        Action::OpenInEditor => None, // only valid inside the composer context
-        Action::OpenKeymap => {
-            state.open_keymap_popup();
-            None
-        }
-        Action::OpenLeader => {
+        KeyCode::Char(' ') if is_shortcut_key(key) => {
             state.open_leader();
             None
         }
-        Action::PaneSearch => {
+        KeyCode::Char('1') => {
+            state.show_and_focus_pane(FocusPane::Guilds);
+            None
+        }
+        KeyCode::Char('2') => {
+            state.show_and_focus_pane(FocusPane::Channels);
+            None
+        }
+        KeyCode::Char('3') => {
+            state.show_and_focus_pane(FocusPane::Messages);
+            None
+        }
+        KeyCode::Char('4') => {
+            state.show_and_focus_pane(FocusPane::Members);
+            None
+        }
+        KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            state.cycle_focus_backward();
+            None
+        }
+        KeyCode::BackTab => {
+            state.cycle_focus_backward();
+            None
+        }
+        KeyCode::Tab => {
+            state.cycle_focus();
+            None
+        }
+        KeyCode::Char('/') if is_shortcut_key(key) => {
             match focus {
                 FocusPane::Guilds => state.open_guild_pane_filter(),
                 FocusPane::Channels => state.open_channel_pane_filter(),
@@ -154,75 +130,71 @@ fn dispatch_action(
             }
             None
         }
-        Action::MoveDown => {
+        KeyCode::Char('h') | KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
+            state.adjust_focused_pane_width(-1);
+            None
+        }
+        KeyCode::Char('l') | KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
+            state.adjust_focused_pane_width(1);
+            None
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
             state.move_down();
             None
         }
-        Action::MoveUp => {
+        KeyCode::Char('k') | KeyCode::Up => {
             state.move_up();
             state.next_older_history_command()
         }
-        Action::HalfPageDown => {
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.half_page_down();
             None
         }
-        Action::HalfPageUp => {
+        KeyCode::PageDown => {
+            state.half_page_down();
+            None
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.half_page_up();
             state.next_older_history_command()
         }
-        Action::JumpTop => {
-            state.jump_top();
-            None
+        KeyCode::PageUp => {
+            state.half_page_up();
+            state.next_older_history_command()
         }
-        Action::JumpBottom => {
-            state.jump_bottom();
-            None
-        }
-        Action::ScrollTop => {
-            if focus == FocusPane::Messages {
+        KeyCode::Char('g') | KeyCode::Home => {
+            if focus == FocusPane::Messages && matches!(key.code, KeyCode::Home) {
                 state.scroll_message_viewport_top();
             } else {
                 state.jump_top();
             }
             None
         }
-        Action::ScrollBottom => {
-            if focus == FocusPane::Messages {
+        KeyCode::Char('G') | KeyCode::End => {
+            if focus == FocusPane::Messages && matches!(key.code, KeyCode::End) {
                 state.scroll_message_viewport_bottom();
             } else {
                 state.jump_bottom();
             }
             None
         }
-        Action::ScrollViewportDown => {
-            if focus == FocusPane::Messages {
-                state.scroll_message_viewport_down();
-            }
+        KeyCode::Char('J') if focus == FocusPane::Messages => {
+            state.scroll_message_viewport_down();
             None
         }
-        Action::ScrollViewportUp => {
-            if focus == FocusPane::Messages {
-                state.scroll_message_viewport_up();
-            }
+        KeyCode::Char('K') if focus == FocusPane::Messages => {
+            state.scroll_message_viewport_up();
             None
         }
-        Action::ScrollPaneLeft => {
+        KeyCode::Char('H') => {
             state.scroll_focused_pane_horizontal_left();
             None
         }
-        Action::ScrollPaneRight => {
+        KeyCode::Char('L') => {
             state.scroll_focused_pane_horizontal_right();
             None
         }
-        Action::NarrowPane => {
-            state.adjust_focused_pane_width(-1);
-            None
-        }
-        Action::WidenPane => {
-            state.adjust_focused_pane_width(1);
-            None
-        }
-        Action::Confirm => match focus {
+        KeyCode::Enter => match focus {
             FocusPane::Guilds => {
                 state.confirm_selected_guild();
                 None
@@ -231,7 +203,7 @@ fn dispatch_action(
             FocusPane::Members => state.show_selected_member_profile(),
             FocusPane::Messages => state.activate_selected_message_pane_item(),
         },
-        Action::ExpandRight => {
+        KeyCode::Char('l') | KeyCode::Right => {
             match focus {
                 FocusPane::Guilds => state.open_selected_folder(),
                 FocusPane::Channels => state.open_selected_channel_category(),
@@ -239,7 +211,7 @@ fn dispatch_action(
             }
             None
         }
-        Action::CollapseLeft => {
+        KeyCode::Char('h') | KeyCode::Left => {
             match focus {
                 FocusPane::Guilds => state.close_selected_folder(),
                 FocusPane::Channels => state.close_selected_channel_category(),
@@ -247,12 +219,11 @@ fn dispatch_action(
             }
             None
         }
-        Action::React => {
-            if focus == FocusPane::Messages {
-                state.open_emoji_reaction_picker();
-            }
+        KeyCode::Char('r') if focus == FocusPane::Messages && is_shortcut_key(key) => {
+            state.open_emoji_reaction_picker();
             None
         }
+        _ => None,
     }
 }
 
@@ -679,14 +650,6 @@ fn handle_reaction_users_popup_key(
     None
 }
 
-fn handle_keymap_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match key.code {
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => state.close_keymap_popup(),
-        _ => {}
-    }
-    None
-}
-
 fn handle_debug_log_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match key.code {
         KeyCode::Esc | KeyCode::Char('`') => state.close_debug_log_popup(),
@@ -750,8 +713,7 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
         return command;
     }
 
-    // Check configurable bindings before the fixed-key match below.
-    if state.key_bindings().lookup(key) == Some(Action::OpenInEditor) {
+    if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
         state.request_open_composer_in_editor();
         return None;
     }

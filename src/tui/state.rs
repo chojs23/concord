@@ -20,7 +20,6 @@ use super::format::{
     MentionTarget, RenderedText, TextHighlightKind, render_user_mentions,
     render_user_mentions_with_highlights, replace_custom_emoji_markup,
 };
-use super::keybinding::ActiveKeyBindings;
 mod channel_switcher;
 mod channels;
 mod composer;
@@ -236,9 +235,7 @@ pub struct DashboardState {
     poll_vote_picker: Option<PollVotePickerState>,
     reaction_users_popup: Option<ReactionUsersPopupState>,
     debug_log_popup_open: bool,
-    keymap_popup_open: bool,
     open_composer_in_editor_requested: bool,
-    key_bindings: ActiveKeyBindings,
     leader_mode: Option<LeaderMode>,
     channel_switcher: Option<ChannelSwitcherState>,
     guild_pane_filter: Option<PaneFilterState>,
@@ -369,9 +366,7 @@ impl DashboardState {
             poll_vote_picker: None,
             reaction_users_popup: None,
             debug_log_popup_open: false,
-            keymap_popup_open: false,
             open_composer_in_editor_requested: false,
-            key_bindings: ActiveKeyBindings::default(),
             leader_mode: None,
             channel_switcher: None,
             guild_pane_filter: None,
