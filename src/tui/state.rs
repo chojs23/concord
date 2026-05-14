@@ -42,6 +42,7 @@ mod presentation;
 mod reactions;
 mod scroll;
 mod subscriptions;
+mod toast;
 mod user;
 
 use channel_switcher::ChannelSwitcherState;
@@ -78,6 +79,18 @@ pub use popups::{
 pub use presentation::{discord_color, folder_color, presence_color, presence_marker};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ToastKind {
+    Success,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ToastView<'a> {
+    pub text: &'a str,
+    pub kind: ToastKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OlderHistoryRequestState {
     Requested { before: Id<MessageMarker> },
     Exhausted { before: Id<MessageMarker> },
@@ -95,6 +108,13 @@ const READ_ACK_DEBOUNCE: Duration = Duration::from_millis(1000);
 struct PendingReadAck {
     message_id: Id<MessageMarker>,
     deadline: Instant,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ToastMessage {
+    text: String,
+    kind: ToastKind,
+    expires_at: Instant,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -237,6 +257,7 @@ pub struct DashboardState {
     poll_vote_picker: Option<PollVotePickerState>,
     reaction_users_popup: Option<ReactionUsersPopupState>,
     debug_log_popup_open: bool,
+    toast_message: Option<ToastMessage>,
     open_composer_in_editor_requested: bool,
     copy_message_content_requested: Option<String>,
     leader_mode: Option<LeaderMode>,
@@ -371,6 +392,7 @@ impl DashboardState {
             poll_vote_picker: None,
             reaction_users_popup: None,
             debug_log_popup_open: false,
+            toast_message: None,
             open_composer_in_editor_requested: false,
             copy_message_content_requested: None,
             leader_mode: None,

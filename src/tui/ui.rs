@@ -76,7 +76,7 @@ use self::popups::{
     render_channel_switcher_popup, render_debug_log_popup, render_emoji_reaction_picker,
     render_image_viewer, render_leader_popup, render_message_action_menu,
     render_message_delete_confirmation, render_message_pin_confirmation, render_options_popup,
-    render_poll_vote_picker, render_reaction_users_popup, render_user_profile_popup,
+    render_poll_vote_picker, render_reaction_users_popup, render_toast, render_user_profile_popup,
     user_profile_popup_has_avatar, user_profile_popup_text_geometry,
     user_profile_popup_total_lines,
 };
@@ -105,8 +105,8 @@ use self::{
         emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
         filtered_emoji_reaction_picker_lines, message_action_menu_lines,
         message_delete_confirmation_lines, message_pin_confirmation_lines, options_popup_lines,
-        poll_vote_picker_lines, reaction_users_popup_lines, user_profile_popup_lines,
-        user_profile_popup_lines_with_activities,
+        poll_vote_picker_lines, reaction_users_popup_lines, toast_area, toast_line,
+        user_profile_popup_lines, user_profile_popup_lines_with_activities,
     },
 };
 pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
@@ -222,6 +222,7 @@ pub fn render(
     render_reaction_users_popup(frame, areas.messages, state);
     render_image_viewer(frame, areas.messages, state, viewer_image_preview);
     render_debug_log_popup(frame, areas.messages, state);
+    render_toast(frame, frame.area(), state);
 }
 
 fn message_content_width(list: Rect) -> usize {

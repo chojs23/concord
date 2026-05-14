@@ -241,6 +241,7 @@ pub(super) async fn run_dashboard(
         }
 
         let pending_read_ack_deadline = state.next_read_ack_deadline();
+        let pending_toast_deadline = state.next_toast_deadline();
 
         tokio::select! {
             maybe_event = terminal_events.next() => {
@@ -258,10 +259,16 @@ pub(super) async fn run_dashboard(
                                 logging::error("tui", format!("editor failed: {error}"));
                             }
                         }
-                        if let Some(content) = state.take_copy_message_content_request()
-                            && let Err(error) = copy_to_clipboard(&content)
-                        {
-                            logging::error("tui", format!("copy message failed: {error}"));
+                        if let Some(content) = state.take_copy_message_content_request() {
+                            let now = std::time::Instant::now();
+                            match copy_to_clipboard(&content) {
+                                Ok(()) => state.show_success_toast("Message copied", now),
+                                Err(error) => {
+                                    logging::error("tui", format!("copy message failed: {error}"));
+                                    state.show_error_toast("Failed to copy message", now);
+                                }
+                            }
+                            dirty = true;
                         }
                         if let Some(command) = outcome.command
                             && commands.send(command).await.is_err()
@@ -440,6 +447,19 @@ pub(super) async fn run_dashboard(
             } => {
                 state.flush_due_read_acks(std::time::Instant::now());
                 dirty = true;
+            }
+            _ = async {
+                match pending_toast_deadline {
+                    Some(deadline) => tokio::time::sleep_until(
+                        tokio::time::Instant::from_std(deadline),
+                    )
+                    .await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                if state.clear_expired_toast(std::time::Instant::now()) {
+                    dirty = true;
+                }
             }
         }
 

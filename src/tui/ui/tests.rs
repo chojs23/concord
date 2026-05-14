@@ -25,9 +25,9 @@ use super::{
     message_viewport_lines, new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
     primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
     render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
-    selected_message_content_x_offset, sync_view_heights, user_profile_popup_has_avatar,
-    user_profile_popup_lines, user_profile_popup_lines_with_activities,
-    user_profile_popup_text_geometry,
+    selected_message_content_x_offset, sync_view_heights, toast_area, toast_line,
+    user_profile_popup_has_avatar, user_profile_popup_lines,
+    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
 };
 use crate::tui::message_time::{
     discord_epoch_unix_millis, format_unix_millis_with_offset, message_starts_new_day,
@@ -120,6 +120,33 @@ fn message_pin_confirmation_lines_show_action_and_excerpt() {
     let unpin_lines = message_pin_confirmation_lines(false, "neo", Some("unpin this"), 80);
     assert_eq!(unpin_lines[0].spans[0].content, "Unpin this message?");
     assert!(unpin_lines[4].spans[1].content.contains("Unpin message"));
+}
+
+#[test]
+fn toast_area_anchors_to_terminal_bottom_left() {
+    let area = toast_area(Rect::new(5, 2, 40, 12), "Message copied");
+
+    assert_eq!(area, Rect::new(5, 11, 16, 3));
+}
+
+#[test]
+fn toast_line_truncates_to_available_width() {
+    let line = toast_line("Message copied", 7);
+
+    assert_eq!(line.spans[0].content, "Mess...");
+}
+
+#[test]
+fn dashboard_renders_toast_at_bottom_left() {
+    let mut state = DashboardState::new();
+    state.show_success_toast("Message copied", std::time::Instant::now());
+
+    let dump = render_dashboard_dump(40, 10, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(dump[7].starts_with("┌"), "{rendered}");
+    assert!(dump[8].starts_with("│Message copied│"), "{rendered}");
+    assert!(dump[9].starts_with("└"), "{rendered}");
 }
 
 #[test]

@@ -13,6 +13,7 @@ mod options;
 mod polls;
 mod profile;
 mod reactions;
+mod toast;
 
 #[cfg(test)]
 pub(super) use action_menu::message_action_menu_lines;
@@ -49,6 +50,9 @@ pub(super) use reactions::{
     filtered_emoji_reaction_picker_lines, reaction_users_popup_lines,
 };
 pub(super) use reactions::{render_emoji_reaction_picker, render_reaction_users_popup};
+pub(super) use toast::render_toast;
+#[cfg(test)]
+pub(super) use toast::{toast_area, toast_line};
 
 fn truncate_line_to_display_width(line: Line<'static>, max_width: usize) -> Line<'static> {
     if max_width == 0 {
