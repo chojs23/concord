@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] - 2026-05-14
+
+### Bug Fixes
+
+- Update channel pane search and server header behavior
+- Use XDG_CONFIG_HOME env for mac
+- Usernames (#60)
+- Fix visible member profile requests to follow rendered member rows
+- Fix member pane emoji width overflow
+- Keep timestamp-only embeds
+- Preserve embed markdown details
+- Remove r key reaction shortcut
+- Modify image viewer size and allign image centered
+- Clarify composer edit and reply modes
+- Fix channel pane mouse row offset after guild header
+- Align message action menu shortcuts with message pane shortcuts
+
+### Documentation
+
+- Update readme for message shortcut
+
+### Features
+
+- Expanding support for embedded content (#65)
+- Add toast alarm
+
+### Refactor
+
+- Centralize display-name
+- Remove configurable keybindings (#71)
+- Remove redundant preview preset
+- Refactor keyboard shortcuts
+
 ## [1.3.3] - 2026-05-13
 
 ### Bug Fixes
