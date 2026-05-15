@@ -9,7 +9,7 @@ use super::emoji::{
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
 use super::{
     DashboardState, EmojiReactionItem, EmojiReactionPickerState, ReactionUsersPopupState,
-    indexed_shortcut,
+    emoji_reaction_shortcut,
 };
 
 impl DashboardState {
@@ -77,6 +77,13 @@ impl DashboardState {
         self.emoji_reaction_picker
             .as_ref()
             .and_then(|picker| picker.filter.as_deref())
+    }
+
+    pub fn existing_emoji_reactions(&self) -> &[crate::discord::ReactionEmoji] {
+        self.emoji_reaction_picker
+            .as_ref()
+            .map(|picker| picker.existing_reactions.as_slice())
+            .unwrap_or(&[])
     }
 
     pub fn is_filtering_emoji_reactions(&self) -> bool {
@@ -188,11 +195,15 @@ impl DashboardState {
 
     pub fn activate_emoji_reaction_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
         let shortcut = shortcut.to_ascii_lowercase();
-        let index = self
-            .filtered_emoji_reaction_items()
+        let picker = self.emoji_reaction_picker.as_ref()?;
+        let index = picker
+            .filtered_items
             .iter()
             .enumerate()
-            .position(|(index, _)| indexed_shortcut(index) == Some(shortcut))?;
+            .position(|(index, _)| {
+                emoji_reaction_shortcut(&picker.filtered_items, &picker.existing_reactions, index)
+                    == Some(shortcut)
+            })?;
         if let Some(picker) = &mut self.emoji_reaction_picker {
             picker.selected = index;
         }
@@ -235,8 +246,16 @@ impl DashboardState {
             let guild_id = message
                 .guild_id
                 .or_else(|| self.selected_channel_guild_id());
+            let existing_reactions = message
+                .reactions
+                .iter()
+                .map(|reaction| reaction.emoji.clone())
+                .collect::<Vec<_>>();
             let items = if self.can_add_new_reaction_for_message(message) {
-                self.emoji_reaction_items_for_guild(guild_id)
+                prioritize_existing_reactions(
+                    self.emoji_reaction_items_for_guild(guild_id),
+                    &existing_reactions,
+                )
             } else {
                 message
                     .reactions
@@ -252,6 +271,7 @@ impl DashboardState {
                 filter: None,
                 filtered_items: items.clone(),
                 items,
+                existing_reactions,
                 guild_id,
                 channel_id: message.channel_id,
                 message_id: message.id,
@@ -276,6 +296,33 @@ fn filter_emoji_reaction_items(
     filter: &str,
 ) -> Vec<EmojiReactionItem> {
     filter_emoji_reaction_items_from_slice(&items, filter)
+}
+
+fn prioritize_existing_reactions(
+    items: Vec<EmojiReactionItem>,
+    existing_reactions: &[crate::discord::ReactionEmoji],
+) -> Vec<EmojiReactionItem> {
+    if existing_reactions.is_empty() {
+        return items;
+    }
+
+    let mut prioritized = Vec::with_capacity(items.len());
+    for existing in existing_reactions {
+        if let Some(item) = items.iter().find(|item| &item.emoji == existing) {
+            prioritized.push(item.clone());
+        } else {
+            prioritized.push(EmojiReactionItem {
+                emoji: existing.clone(),
+                label: existing.status_label(),
+            });
+        }
+    }
+    prioritized.extend(
+        items
+            .into_iter()
+            .filter(|item| !existing_reactions.contains(&item.emoji)),
+    );
+    prioritized
 }
 
 fn filter_emoji_reaction_items_from_slice(

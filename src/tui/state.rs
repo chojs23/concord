@@ -68,7 +68,8 @@ pub use model::{
     FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, ImageViewerItem,
     MemberActionItem, MessageActionItem, MessageActionKind, MuteActionDurationItem,
     PollVotePickerItem, ThreadMessagePreview, ThreadSummary, channel_action_shortcut,
-    guild_action_shortcut, indexed_shortcut, member_action_shortcut, message_action_shortcut,
+    emoji_reaction_shortcut, guild_action_shortcut, indexed_shortcut, member_action_shortcut,
+    message_action_shortcut,
 };
 #[allow(unused_imports)]
 pub use model::{ChannelActionKind, ChannelBranch, GuildActionKind, GuildBranch, MemberActionKind};
