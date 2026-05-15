@@ -72,6 +72,13 @@ pub fn sanitize_for_display_width(value: &str) -> String {
     out
 }
 
+pub(crate) fn detected_urls(value: &str) -> Vec<String> {
+    detected_url_ranges(value)
+        .into_iter()
+        .map(|(start, end)| value[start..end].to_owned())
+        .collect()
+}
+
 pub(crate) fn detected_url_ranges(value: &str) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut cursor = 0usize;

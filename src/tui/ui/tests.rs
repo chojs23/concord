@@ -2943,6 +2943,23 @@ fn message_content_highlights_detected_urls() {
 }
 
 #[test]
+fn message_content_highlights_markdown_link_urls() {
+    let message = message_with_content(Some(
+        "[Tweet](<https://x.com/i/status/2055068765671305537>)".to_owned(),
+    ));
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+    let spans = lines[0].spans();
+
+    let url_span = spans
+        .iter()
+        .find(|span| span.content.as_ref() == "https://x.com/i/status/2055068765671305537")
+        .expect("markdown link URL is rendered as its own span");
+
+    assert!(url_span.style.add_modifier.contains(Modifier::UNDERLINED));
+}
+
+#[test]
 fn message_content_highlights_everyone_mentions_for_current_user() {
     let message = message_with_content(Some("ping @everyone".to_owned()));
     let mut state = DashboardState::new();

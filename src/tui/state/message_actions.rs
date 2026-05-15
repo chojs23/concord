@@ -1,4 +1,5 @@
-use crate::discord::{AppCommand, MessageState, ReactionEmoji};
+use crate::discord::{AppCommand, EmbedInfo, MessageState, ReactionEmoji};
+use crate::tui::format::detected_urls;
 
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
 use super::{
@@ -224,7 +225,6 @@ impl DashboardState {
 
     pub fn selected_message_url_items(&self) -> Vec<MessageUrlItem> {
         self.selected_message_state()
-            .and_then(|message| message.content.as_deref())
             .map(message_url_items)
             .unwrap_or_default()
     }
@@ -618,8 +618,8 @@ impl DashboardState {
     }
 }
 
-fn message_url_items(content: &str) -> Vec<MessageUrlItem> {
-    extract_message_urls(content)
+fn message_url_items(message: &MessageState) -> Vec<MessageUrlItem> {
+    message_urls(message)
         .into_iter()
         .map(|url| MessageUrlItem {
             label: url.clone(),
@@ -628,17 +628,57 @@ fn message_url_items(content: &str) -> Vec<MessageUrlItem> {
         .collect()
 }
 
-fn extract_message_urls(content: &str) -> Vec<String> {
-    content
-        .split_whitespace()
-        .filter_map(|word| {
-            let trimmed = word.trim_start_matches(['<', '(', '[', '{', '"', '\'']);
-            let trimmed = trimmed
-                .trim_end_matches(['>', ')', ']', '}', '"', '\'', '.', ',', '!', '?', ':', ';']);
-            (trimmed.starts_with("https://") || trimmed.starts_with("http://"))
-                .then(|| trimmed.to_owned())
-        })
-        .collect()
+fn message_urls(message: &MessageState) -> Vec<String> {
+    let mut urls = Vec::new();
+    if let Some(content) = &message.content {
+        urls.extend(detected_urls(content));
+    }
+    for embed in &message.embeds {
+        urls.extend(embed_urls(embed));
+    }
+    dedupe_urls(urls)
+}
+
+fn embed_urls(embed: &EmbedInfo) -> Vec<String> {
+    let mut urls = Vec::new();
+    for value in [
+        embed.provider_name.as_deref(),
+        embed.author_name.as_deref(),
+        embed.title.as_deref(),
+        embed.description.as_deref(),
+        embed.footer_text.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        urls.extend(detected_urls(value));
+    }
+    for field in &embed.fields {
+        urls.extend(detected_urls(&field.name));
+        urls.extend(detected_urls(&field.value));
+    }
+    urls.extend(
+        [
+            embed.url.as_deref(),
+            embed.thumbnail_url.as_deref(),
+            embed.image_url.as_deref(),
+            embed.video_url.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(str::to_owned),
+    );
+    urls
+}
+
+fn dedupe_urls(urls: Vec<String>) -> Vec<String> {
+    let mut unique = Vec::new();
+    for url in urls {
+        if !unique.contains(&url) {
+            unique.push(url);
+        }
+    }
+    unique
 }
 
 fn action_reaction_label(emoji: &ReactionEmoji, show_custom_emoji: bool) -> String {
