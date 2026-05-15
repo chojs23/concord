@@ -39,6 +39,7 @@ pub enum MessageActionKind {
     Delete,
     OpenThread,
     ViewImage,
+    OpenUrl,
     DownloadAttachment(usize),
     AddReaction,
     RemoveReaction(usize),
@@ -57,6 +58,18 @@ pub struct MessageActionItem {
     pub enabled: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessageActionMenuPhase {
+    Actions,
+    Urls,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageUrlItem {
+    pub url: String,
+    pub label: String,
+}
+
 impl MessageActionKind {
     fn preferred_shortcut(&self) -> Option<char> {
         match self {
@@ -65,6 +78,7 @@ impl MessageActionKind {
             MessageActionKind::Delete => Some('d'),
             MessageActionKind::OpenThread => Some('t'),
             MessageActionKind::ViewImage => Some('v'),
+            MessageActionKind::OpenUrl => Some('o'),
             MessageActionKind::DownloadAttachment(_) => Some('f'),
             MessageActionKind::AddReaction => Some('r'),
             MessageActionKind::RemoveReaction(_) => Some('x'),

@@ -262,6 +262,9 @@ fn activate_action_menu(
     menu: ui::ActionMenuTarget,
 ) -> Option<AppCommand> {
     match menu {
+        ui::ActionMenuTarget::Message if state.is_message_url_picker_open() => {
+            state.activate_selected_message_url()
+        }
         ui::ActionMenuTarget::Message => state.activate_selected_message_action(),
     }
 }

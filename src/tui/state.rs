@@ -74,6 +74,7 @@ pub use model::{
 };
 #[allow(unused_imports)]
 pub use model::{ChannelActionKind, ChannelBranch, GuildActionKind, GuildBranch, MemberActionKind};
+pub use model::{MessageActionMenuPhase, MessageUrlItem};
 pub use options::DisplayOptionItem;
 pub use popups::{
     EmojiReactionPickerState, MessageActionMenuState, PollVotePickerState, ReactionUsersPopupState,
@@ -867,6 +868,18 @@ impl DashboardState {
     ) -> (bool, Option<AppCommand>) {
         let shortcut = shortcut.to_ascii_lowercase();
         if self.message_action_menu.is_some() {
+            if self.is_message_url_picker_open() {
+                let urls = self.selected_message_url_items();
+                let matched = urls.iter().enumerate().any(|(index, _)| {
+                    indexed_shortcut(index).is_some_and(|candidate| candidate == shortcut)
+                });
+                return (
+                    matched,
+                    matched
+                        .then(|| self.activate_message_action_shortcut(shortcut))
+                        .flatten(),
+                );
+            }
             let actions = self.selected_message_action_items();
             let matched = actions.iter().enumerate().any(|(index, action)| {
                 action.enabled

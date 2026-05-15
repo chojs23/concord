@@ -521,6 +521,10 @@ fn handle_channel_switcher_key(state: &mut DashboardState, key: KeyEvent) -> Opt
 fn handle_leader_action_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match leader_action_menu_action(key) {
         LeaderActionMenuAction::BackOrClose => {
+            if state.is_message_url_picker_open() {
+                state.close_or_back_message_action_menu();
+                return None;
+            }
             if state.back_channel_leader_action() || state.back_guild_leader_action() {
                 return None;
             }
@@ -688,7 +692,7 @@ fn hex_value(value: u8) -> Option<u8> {
 
 fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match message_action_menu_action(key) {
-        Some(MessageActionMenuAction::Close) => state.close_message_action_menu(),
+        Some(MessageActionMenuAction::Close) => state.close_or_back_message_action_menu(),
         Some(MessageActionMenuAction::Select(SelectionAction::Next)) => {
             state.move_message_action_down()
         }
@@ -696,6 +700,9 @@ fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> 
             state.move_message_action_up()
         }
         Some(MessageActionMenuAction::ActivateSelected) => {
+            if state.is_message_url_picker_open() {
+                return state.activate_selected_message_url();
+            }
             return state.activate_selected_message_action();
         }
         Some(MessageActionMenuAction::ActivateShortcut(shortcut)) => {

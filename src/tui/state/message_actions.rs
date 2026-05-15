@@ -2,8 +2,8 @@ use crate::discord::{AppCommand, MessageState, ReactionEmoji};
 
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
 use super::{
-    DashboardState, FocusPane, MessageActionItem, MessageActionKind, MessageActionMenuState,
-    message_action_shortcut, popups,
+    DashboardState, FocusPane, MessageActionItem, MessageActionKind, MessageActionMenuPhase,
+    MessageActionMenuState, MessageUrlItem, indexed_shortcut, message_action_shortcut, popups,
 };
 
 impl DashboardState {
@@ -21,7 +21,10 @@ impl DashboardState {
 
     pub fn open_selected_message_actions(&mut self) {
         if self.focus == FocusPane::Messages && self.selected_message_state().is_some() {
-            self.message_action_menu = Some(MessageActionMenuState { selected: 0 });
+            self.message_action_menu = Some(MessageActionMenuState {
+                selected: 0,
+                phase: MessageActionMenuPhase::Actions,
+            });
         }
     }
 
@@ -29,8 +32,20 @@ impl DashboardState {
         self.message_action_menu = None;
     }
 
+    pub fn close_or_back_message_action_menu(&mut self) {
+        if let Some(menu) = &mut self.message_action_menu
+            && menu.phase == MessageActionMenuPhase::Urls
+        {
+            menu.phase = MessageActionMenuPhase::Actions;
+            menu.selected = 0;
+            return;
+        }
+
+        self.close_message_action_menu();
+    }
+
     pub fn move_message_action_down(&mut self) {
-        let actions_len = self.selected_message_action_items().len();
+        let actions_len = self.current_message_action_menu_len();
         if let Some(menu) = &mut self.message_action_menu {
             move_index_down(&mut menu.selected, actions_len);
         }
@@ -43,7 +58,7 @@ impl DashboardState {
     }
 
     pub fn select_message_action_row(&mut self, row: usize) -> bool {
-        if row >= self.selected_message_action_items().len() {
+        if row >= self.current_message_action_menu_len() {
             return false;
         }
         if let Some(menu) = &mut self.message_action_menu {
@@ -91,6 +106,18 @@ impl DashboardState {
             actions.push(MessageActionItem {
                 kind: MessageActionKind::ViewImage,
                 label: "View image".to_owned(),
+                enabled: true,
+            });
+        }
+        let url_count = self.selected_message_url_items().len();
+        if url_count > 0 {
+            actions.push(MessageActionItem {
+                kind: MessageActionKind::OpenUrl,
+                label: if url_count == 1 {
+                    "Open URL".to_owned()
+                } else {
+                    format!("Open URL ({url_count})")
+                },
                 enabled: true,
             });
         }
@@ -181,9 +208,34 @@ impl DashboardState {
     }
 
     pub fn selected_message_action_index(&self) -> Option<usize> {
-        self.message_action_menu.as_ref().map(|menu| {
-            clamp_selected_index(menu.selected, self.selected_message_action_items().len())
-        })
+        self.message_action_menu
+            .as_ref()
+            .filter(|menu| menu.phase == MessageActionMenuPhase::Actions)
+            .map(|menu| {
+                clamp_selected_index(menu.selected, self.selected_message_action_items().len())
+            })
+    }
+
+    pub fn is_message_url_picker_open(&self) -> bool {
+        self.message_action_menu
+            .as_ref()
+            .is_some_and(|menu| menu.phase == MessageActionMenuPhase::Urls)
+    }
+
+    pub fn selected_message_url_items(&self) -> Vec<MessageUrlItem> {
+        self.selected_message_state()
+            .and_then(|message| message.content.as_deref())
+            .map(message_url_items)
+            .unwrap_or_default()
+    }
+
+    pub fn selected_message_url_index(&self) -> Option<usize> {
+        self.message_action_menu
+            .as_ref()
+            .filter(|menu| menu.phase == MessageActionMenuPhase::Urls)
+            .map(|menu| {
+                clamp_selected_index(menu.selected, self.selected_message_url_items().len())
+            })
     }
 
     pub fn selected_message_action(&self) -> Option<MessageActionItem> {
@@ -228,6 +280,7 @@ impl DashboardState {
                 self.open_image_viewer_for_selected_message();
                 None
             }
+            MessageActionKind::OpenUrl => self.activate_selected_message_url_action(),
             MessageActionKind::DownloadAttachment(index) => {
                 let message = self.selected_message_state()?;
                 let attachment = message.attachments_in_display_order().nth(index)?;
@@ -387,6 +440,10 @@ impl DashboardState {
     }
 
     pub fn activate_message_action_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
+        if self.is_message_url_picker_open() {
+            return self.activate_message_url_shortcut(shortcut);
+        }
+
         let actions = self.selected_message_action_items();
         let index = actions.iter().enumerate().position(|(index, action)| {
             action.enabled
@@ -395,6 +452,49 @@ impl DashboardState {
         })?;
         self.select_message_action_row(index);
         self.activate_selected_message_action()
+    }
+
+    pub fn activate_selected_message_url_action(&mut self) -> Option<AppCommand> {
+        let urls = self.selected_message_url_items();
+        match urls.as_slice() {
+            [] => None,
+            [item] => {
+                let url = item.url.clone();
+                self.close_message_action_menu();
+                Some(AppCommand::OpenUrl { url })
+            }
+            _ => {
+                if let Some(menu) = &mut self.message_action_menu {
+                    menu.phase = MessageActionMenuPhase::Urls;
+                    menu.selected = 0;
+                }
+                None
+            }
+        }
+    }
+
+    pub fn activate_selected_message_url(&mut self) -> Option<AppCommand> {
+        let index = self.selected_message_url_index()?;
+        let url = self.selected_message_url_items().get(index)?.url.clone();
+        self.close_message_action_menu();
+        Some(AppCommand::OpenUrl { url })
+    }
+
+    fn activate_message_url_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
+        let urls = self.selected_message_url_items();
+        let index = urls.iter().enumerate().position(|(index, _)| {
+            indexed_shortcut(index).is_some_and(|candidate| candidate == shortcut)
+        })?;
+        self.select_message_action_row(index);
+        self.activate_selected_message_url()
+    }
+
+    fn current_message_action_menu_len(&self) -> usize {
+        if self.is_message_url_picker_open() {
+            self.selected_message_url_items().len()
+        } else {
+            self.selected_message_action_items().len()
+        }
     }
 
     pub fn direct_copy_selected_message_content(&mut self) {
@@ -516,6 +616,29 @@ impl DashboardState {
             confirmation.content.clone(),
         ))
     }
+}
+
+fn message_url_items(content: &str) -> Vec<MessageUrlItem> {
+    extract_message_urls(content)
+        .into_iter()
+        .map(|url| MessageUrlItem {
+            label: url.clone(),
+            url,
+        })
+        .collect()
+}
+
+fn extract_message_urls(content: &str) -> Vec<String> {
+    content
+        .split_whitespace()
+        .filter_map(|word| {
+            let trimmed = word.trim_start_matches(['<', '(', '[', '{', '"', '\'']);
+            let trimmed = trimmed
+                .trim_end_matches(['>', ')', ']', '}', '"', '\'', '.', ',', '!', '?', ':', ';']);
+            (trimmed.starts_with("https://") || trimmed.starts_with("http://"))
+                .then(|| trimmed.to_owned())
+        })
+        .collect()
 }
 
 fn action_reaction_label(emoji: &ReactionEmoji, show_custom_emoji: bool) -> String {

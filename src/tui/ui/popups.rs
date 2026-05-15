@@ -17,6 +17,8 @@ mod toast;
 
 #[cfg(test)]
 pub(super) use action_menu::message_action_menu_lines;
+#[cfg(test)]
+pub(super) use action_menu::message_url_picker_lines_for_width;
 pub(super) use action_menu::{render_leader_popup, render_message_action_menu};
 #[cfg(test)]
 pub(super) use channel_switcher::{channel_switcher_cursor_position, channel_switcher_lines};

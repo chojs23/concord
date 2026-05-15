@@ -23,12 +23,13 @@ use super::{
     inline_image_preview_area, inline_image_preview_row, member_display_label, member_name_style,
     message_action_menu_lines, message_author_style, message_body_custom_emoji_rows,
     message_delete_confirmation_lines, message_item_lines, message_pin_confirmation_lines,
-    message_viewport_lines, new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
-    primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
-    render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
-    selected_message_content_x_offset, sync_view_heights, toast_area, toast_line,
-    user_profile_popup_has_avatar, user_profile_popup_lines,
-    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
+    message_url_picker_lines_for_width, message_viewport_lines, new_messages_notice_line,
+    options_popup_lines, poll_vote_picker_lines, primary_activity_summary,
+    reaction_users_popup_lines, reaction_users_visible_line_count, render_channels, render_guilds,
+    selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
+    sync_view_heights, toast_area, toast_line, user_profile_popup_has_avatar,
+    user_profile_popup_lines, user_profile_popup_lines_with_activities,
+    user_profile_popup_text_geometry,
 };
 use crate::tui::message_time::{
     discord_epoch_unix_millis, format_unix_millis_with_offset, message_starts_new_day,
@@ -3678,6 +3679,21 @@ fn message_action_menu_uses_numbered_shortcuts_for_duplicate_preferred_keys() {
     assert_eq!(
         line_texts_from_ratatui(&lines),
         vec!["› [1] Delete message", "  [2] Download image"]
+    );
+}
+
+#[test]
+fn message_url_picker_truncates_fragment_urls_to_menu_width() {
+    let urls = vec![super::MessageUrlItem {
+        url: "https://thisis.com/a.test?with=querystrings#page".to_owned(),
+        label: "https://thisis.com/a.test?with=querystrings#page".to_owned(),
+    }];
+
+    let lines = message_url_picker_lines_for_width(&urls, 0, 30);
+
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec!["› [1] https://thisis.com/a...."]
     );
 }
 

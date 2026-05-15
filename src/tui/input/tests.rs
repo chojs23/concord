@@ -2262,6 +2262,52 @@ fn message_action_menu_shortcuts_match_message_pane_shortcuts() {
 }
 
 #[test]
+fn message_action_o_shortcut_opens_url_or_url_picker() {
+    let mut state = state_with_messages(0);
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: crate::discord::MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("first https://one.example second https://two.example".to_owned()),
+        sticker_names: Vec::new(),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+    state.focus_pane(FocusPane::Messages);
+
+    handle_key(&mut state, key(KeyCode::Enter));
+    let command = handle_key(&mut state, char_key('o'));
+
+    assert_eq!(command, None);
+    assert!(state.is_message_url_picker_open());
+
+    handle_key(&mut state, key(KeyCode::Esc));
+    assert!(state.is_message_action_menu_open());
+    assert!(!state.is_message_url_picker_open());
+
+    handle_key(&mut state, char_key('o'));
+    let command = handle_key(&mut state, char_key('2'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::OpenUrl {
+            url: "https://two.example".to_owned(),
+        })
+    );
+    assert!(!state.is_message_action_menu_open());
+}
+
+#[test]
 fn message_pane_copy_shortcut_requests_selected_message_content() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);

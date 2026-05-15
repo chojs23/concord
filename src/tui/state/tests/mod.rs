@@ -2836,6 +2836,68 @@ fn reply_non_image_attachment_action_downloads_with_proxy_url_fallback() {
 }
 
 #[test]
+fn message_action_opens_single_url_from_message_content() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            content: Some("read https://example.com/docs.".to_owned()),
+            ..message_info(Id::new(2), 1)
+        }],
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+
+    let actions = state.selected_message_action_items();
+    assert!(
+        actions.iter().any(|action| {
+            action.kind == MessageActionKind::OpenUrl && action.label == "Open URL"
+        })
+    );
+
+    assert_eq!(
+        state.activate_message_action_shortcut('o'),
+        Some(AppCommand::OpenUrl {
+            url: "https://example.com/docs".to_owned(),
+        })
+    );
+    assert!(!state.is_message_action_menu_open());
+}
+
+#[test]
+fn message_action_opens_url_picker_for_multiple_urls() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            content: Some("one https://one.example two <https://two.example/path>,".to_owned()),
+            ..message_info(Id::new(2), 1)
+        }],
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+
+    let actions = state.selected_message_action_items();
+    assert!(actions.iter().any(|action| {
+        action.kind == MessageActionKind::OpenUrl && action.label == "Open URL (2)"
+    }));
+
+    assert_eq!(state.activate_message_action_shortcut('o'), None);
+    assert!(state.is_message_url_picker_open());
+    assert_eq!(state.selected_message_url_index(), Some(0));
+
+    assert_eq!(
+        state.activate_message_action_shortcut('2'),
+        Some(AppCommand::OpenUrl {
+            url: "https://two.example/path".to_owned(),
+        })
+    );
+    assert!(!state.is_message_action_menu_open());
+}
+
+#[test]
 fn non_regular_message_actions_do_not_include_attachment_downloads() {
     let mut state = state_with_message_ids([]);
     state.push_event(AppEvent::MessageCreate {
