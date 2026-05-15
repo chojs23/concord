@@ -278,6 +278,11 @@ impl DashboardState {
         (!self.selected_channel_is_forum()).then_some(self.selected_channel_id()?)
     }
 
+    pub fn selected_message_history_needs_reload(&self) -> bool {
+        self.selected_message_history_channel_id()
+            .is_some_and(|channel_id| self.discord.channel_message_bodies_are_cold(channel_id))
+    }
+
     pub fn selected_forum_channel(&self) -> Option<(Id<GuildMarker>, Id<ChannelMarker>)> {
         let channel = self
             .selected_channel_state()

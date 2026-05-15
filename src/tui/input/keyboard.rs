@@ -290,77 +290,55 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         }
     }
 
-    match dashboard_action(key, focus) {
-        Some(DashboardAction::Select(SelectionAction::Next)) => {
+    dashboard_action(key, focus).and_then(|action| handle_dashboard_action(state, focus, action))
+}
+
+fn handle_dashboard_action(
+    state: &mut DashboardState,
+    focus: FocusPane,
+    action: DashboardAction,
+) -> Option<AppCommand> {
+    match action {
+        DashboardAction::Select(SelectionAction::Next) => {
             state.move_down();
             None
         }
-        Some(DashboardAction::Select(SelectionAction::Previous)) => {
+        DashboardAction::Select(SelectionAction::Previous) => {
             state.move_up();
             state.next_older_history_command()
         }
-        Some(DashboardAction::MessageShortcut(MessageShortcutAction::CopyContent)) => {
-            state.direct_copy_selected_message_content();
-            None
-        }
-        Some(DashboardAction::MessageShortcut(MessageShortcutAction::OpenReactionPicker)) => {
-            state.direct_open_selected_message_reaction_picker();
-            None
-        }
-        Some(DashboardAction::MessageShortcut(MessageShortcutAction::Reply)) => {
-            state.direct_reply_to_selected_message();
-            None
-        }
-        Some(DashboardAction::MessageShortcut(MessageShortcutAction::OpenDeleteConfirmation)) => {
-            state.open_selected_message_delete_confirmation();
-            None
-        }
-        Some(DashboardAction::MessageShortcut(MessageShortcutAction::Edit)) => {
-            state.direct_edit_selected_message();
-            None
-        }
-        Some(DashboardAction::MessageShortcut(MessageShortcutAction::ViewImage)) => {
-            state.direct_open_selected_message_image_viewer();
-            None
-        }
-        Some(DashboardAction::MessageShortcut(MessageShortcutAction::ShowProfile)) => {
-            state.direct_show_selected_message_profile()
-        }
-        Some(DashboardAction::MessageShortcut(MessageShortcutAction::OpenPinConfirmation)) => {
-            state.direct_open_selected_message_pin_confirmation();
-            None
-        }
-        Some(DashboardAction::Back) => {
+        DashboardAction::MessageShortcut(action) => handle_message_shortcut_action(state, action),
+        DashboardAction::Back => {
             if !state.return_from_pinned_message_view() {
                 state.return_from_opened_thread();
             }
             None
         }
-        Some(DashboardAction::Quit) => {
+        DashboardAction::Quit => {
             state.quit();
             None
         }
-        Some(DashboardAction::StartComposer) => {
+        DashboardAction::StartComposer => {
             state.start_composer();
             None
         }
-        Some(DashboardAction::OpenLeader) => {
+        DashboardAction::OpenLeader => {
             state.open_leader();
             None
         }
-        Some(DashboardAction::FocusPane(pane)) => {
+        DashboardAction::FocusPane(pane) => {
             state.show_and_focus_pane(pane);
             None
         }
-        Some(DashboardAction::CycleFocusBackward) => {
+        DashboardAction::CycleFocusBackward => {
             state.cycle_focus_backward();
             None
         }
-        Some(DashboardAction::CycleFocusForward) => {
+        DashboardAction::CycleFocusForward => {
             state.cycle_focus();
             None
         }
-        Some(DashboardAction::OpenFocusedPaneFilter) => {
+        DashboardAction::OpenFocusedPaneFilter => {
             match focus {
                 FocusPane::Guilds => state.open_guild_pane_filter(),
                 FocusPane::Channels => state.open_channel_pane_filter(),
@@ -368,55 +346,55 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
             }
             None
         }
-        Some(DashboardAction::ResizePaneLeft) => {
+        DashboardAction::ResizePaneLeft => {
             state.adjust_focused_pane_width(-1);
             None
         }
-        Some(DashboardAction::ResizePaneRight) => {
+        DashboardAction::ResizePaneRight => {
             state.adjust_focused_pane_width(1);
             None
         }
-        Some(DashboardAction::HalfPageDown) => {
+        DashboardAction::HalfPageDown => {
             state.half_page_down();
             None
         }
-        Some(DashboardAction::HalfPageUp) => {
+        DashboardAction::HalfPageUp => {
             state.half_page_up();
             state.next_older_history_command()
         }
-        Some(DashboardAction::JumpTop) => {
+        DashboardAction::JumpTop => {
             state.jump_top();
             None
         }
-        Some(DashboardAction::JumpBottom) => {
+        DashboardAction::JumpBottom => {
             state.jump_bottom();
             None
         }
-        Some(DashboardAction::ScrollMessageViewportTop) => {
+        DashboardAction::ScrollMessageViewportTop => {
             state.scroll_message_viewport_top();
             None
         }
-        Some(DashboardAction::ScrollMessageViewportBottom) => {
+        DashboardAction::ScrollMessageViewportBottom => {
             state.scroll_message_viewport_bottom();
             None
         }
-        Some(DashboardAction::ScrollMessageViewportDown) => {
+        DashboardAction::ScrollMessageViewportDown => {
             state.scroll_message_viewport_down();
             None
         }
-        Some(DashboardAction::ScrollMessageViewportUp) => {
+        DashboardAction::ScrollMessageViewportUp => {
             state.scroll_message_viewport_up();
             None
         }
-        Some(DashboardAction::ScrollHorizontalLeft) => {
+        DashboardAction::ScrollHorizontalLeft => {
             state.scroll_focused_pane_horizontal_left();
             None
         }
-        Some(DashboardAction::ScrollHorizontalRight) => {
+        DashboardAction::ScrollHorizontalRight => {
             state.scroll_focused_pane_horizontal_right();
             None
         }
-        Some(DashboardAction::ActivateFocused) => match focus {
+        DashboardAction::ActivateFocused => match focus {
             FocusPane::Guilds => {
                 state.confirm_selected_guild();
                 None
@@ -425,7 +403,7 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
             FocusPane::Members => state.show_selected_member_profile(),
             FocusPane::Messages => state.activate_selected_message_pane_item(),
         },
-        Some(DashboardAction::OpenTreeNode) => {
+        DashboardAction::OpenTreeNode => {
             match focus {
                 FocusPane::Guilds => state.open_selected_folder(),
                 FocusPane::Channels => state.open_selected_channel_category(),
@@ -433,7 +411,7 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
             }
             None
         }
-        Some(DashboardAction::CloseTreeNode) => {
+        DashboardAction::CloseTreeNode => {
             match focus {
                 FocusPane::Guilds => state.close_selected_folder(),
                 FocusPane::Channels => state.close_selected_channel_category(),
@@ -441,7 +419,43 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
             }
             None
         }
-        None => None,
+    }
+}
+
+fn handle_message_shortcut_action(
+    state: &mut DashboardState,
+    action: MessageShortcutAction,
+) -> Option<AppCommand> {
+    match action {
+        MessageShortcutAction::CopyContent => {
+            state.direct_copy_selected_message_content();
+            None
+        }
+        MessageShortcutAction::OpenReactionPicker => {
+            state.direct_open_selected_message_reaction_picker();
+            None
+        }
+        MessageShortcutAction::Reply => {
+            state.direct_reply_to_selected_message();
+            None
+        }
+        MessageShortcutAction::OpenDeleteConfirmation => {
+            state.open_selected_message_delete_confirmation();
+            None
+        }
+        MessageShortcutAction::Edit => {
+            state.direct_edit_selected_message();
+            None
+        }
+        MessageShortcutAction::ViewImage => {
+            state.direct_open_selected_message_image_viewer();
+            None
+        }
+        MessageShortcutAction::ShowProfile => state.direct_show_selected_message_profile(),
+        MessageShortcutAction::OpenPinConfirmation => {
+            state.direct_open_selected_message_pin_confirmation();
+            None
+        }
     }
 }
 

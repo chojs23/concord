@@ -93,7 +93,8 @@ pub struct ChannelVisibilityStats {
 
 impl DiscordState {
     pub fn channels_for_guild(&self, guild_id: Option<Id<GuildMarker>>) -> Vec<&ChannelState> {
-        self.channels
+        self.navigation
+            .channels
             .values()
             .filter(|channel| channel.guild_id == guild_id)
             .collect()
@@ -107,7 +108,8 @@ impl DiscordState {
         &self,
         guild_id: Option<Id<GuildMarker>>,
     ) -> Vec<&ChannelState> {
-        self.channels
+        self.navigation
+            .channels
             .values()
             .filter(|channel| channel.guild_id == guild_id)
             .filter(|channel| self.can_view_channel(channel))
@@ -124,7 +126,7 @@ impl DiscordState {
     ) -> ChannelVisibilityStats {
         let mut visible: usize = 0;
         let mut hidden: usize = 0;
-        for channel in self.channels.values() {
+        for channel in self.navigation.channels.values() {
             if channel.guild_id != guild_id || channel.is_thread() {
                 continue;
             }
@@ -138,20 +140,21 @@ impl DiscordState {
     }
 
     pub fn channel(&self, channel_id: Id<ChannelMarker>) -> Option<&ChannelState> {
-        self.channels.get(&channel_id)
+        self.navigation.channels.get(&channel_id)
     }
 
     pub(super) fn channel_guild_id(
         &self,
         channel_id: Id<ChannelMarker>,
     ) -> Option<Id<GuildMarker>> {
-        self.channels
+        self.navigation
+            .channels
             .get(&channel_id)
             .and_then(|channel| channel.guild_id)
     }
 
     pub(super) fn upsert_channel(&mut self, channel: &ChannelInfo) {
-        let existing = self.channels.get(&channel.channel_id);
+        let existing = self.navigation.channels.get(&channel.channel_id);
         let last_message_id = existing
             .and_then(|existing| existing.last_message_id)
             .max(channel.last_message_id);
@@ -170,7 +173,11 @@ impl DiscordState {
                                     .find(|existing| existing.user_id == recipient.user_id)
                             })
                             .map(|recipient| recipient.status);
-                        let known_status = self.user_presences.get(&recipient.user_id).copied();
+                        let known_status = self
+                            .presence
+                            .user_presences
+                            .get(&recipient.user_id)
+                            .copied();
                         let display_name = self.private_user_display_name(
                             recipient.user_id,
                             Some(recipient.display_name.as_str()),
@@ -235,7 +242,7 @@ impl DiscordState {
             channel.permission_overwrites.clone()
         };
 
-        self.channels.insert(
+        self.navigation.channels.insert(
             channel.channel_id,
             ChannelState {
                 id: channel.channel_id,
@@ -263,7 +270,7 @@ impl DiscordState {
         username: Option<&str>,
         avatar_url: Option<&str>,
     ) {
-        for channel in self.channels.values_mut() {
+        for channel in self.navigation.channels.values_mut() {
             if channel.guild_id.is_some() {
                 continue;
             }
@@ -296,7 +303,7 @@ impl DiscordState {
         user_id: Id<UserMarker>,
         status: PresenceStatus,
     ) {
-        for channel in self.channels.values_mut() {
+        for channel in self.navigation.channels.values_mut() {
             for recipient in &mut channel.recipients {
                 if recipient.user_id == user_id {
                     recipient.status = status;
@@ -310,13 +317,14 @@ impl DiscordState {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
     ) {
-        if let Some(channel) = self.channels.get_mut(&channel_id) {
+        if let Some(channel) = self.navigation.channels.get_mut(&channel_id) {
             channel.last_message_id = channel.last_message_id.max(Some(message_id));
         }
     }
 
     pub(super) fn increment_thread_message_counts(&mut self, channel_id: Id<ChannelMarker>) {
         let Some(channel) = self
+            .navigation
             .channels
             .get_mut(&channel_id)
             .filter(|channel| channel.is_thread())

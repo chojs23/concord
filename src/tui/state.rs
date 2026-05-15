@@ -10,9 +10,10 @@ use crate::discord::ids::{
 
 use crate::config::DisplayOptions;
 use crate::discord::{
-    AppCommand, AppEvent, ChannelUnreadState, DiscordState, DownloadAttachmentSource,
-    ForumPostArchiveState, MentionInfo, MessageAttachmentUpload, MessageInfo, MessageSnapshotInfo,
-    MessageState, MuteDuration, PresenceStatus,
+    AppCommand, AppEvent, ChannelUnreadState, DiscordSnapshot, DiscordState,
+    DownloadAttachmentSource, ForumPostArchiveState, MentionInfo, MessageAttachmentUpload,
+    MessageInfo, MessageSnapshotInfo, MessageState, MuteDuration, PresenceStatus, SnapshotAreas,
+    SnapshotRevision,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -676,6 +677,34 @@ impl DashboardState {
     }
 
     pub fn restore_discord_snapshot(&mut self, discord: DiscordState) {
+        self.restore_discord_snapshot_with(
+            "restore_discord_snapshot",
+            SnapshotAreas::all(),
+            |state| {
+                *state = discord;
+            },
+        );
+    }
+
+    pub fn restore_discord_snapshot_areas(
+        &mut self,
+        snapshot: &DiscordSnapshot,
+        previous_revision: SnapshotRevision,
+    ) {
+        let areas = snapshot.revision.changed_areas_since(previous_revision);
+        self.restore_discord_snapshot_with("restore_discord_snapshot_areas", areas, |state| {
+            state.restore_snapshot_areas(snapshot, previous_revision);
+        });
+    }
+
+    fn restore_discord_snapshot_with(
+        &mut self,
+        operation: &'static str,
+        areas: SnapshotAreas,
+        restore: impl FnOnce(&mut DiscordState),
+    ) {
+        let started = std::time::Instant::now();
+        let log_metrics = crate::logging::debug_logging_enabled();
         let was_auto_follow = self.message_auto_follow;
         let was_at_latest = was_auto_follow || self.is_viewport_at_latest_message();
         let was_cursor_on_last = self.cursor_on_last_message();
@@ -698,7 +727,40 @@ impl DashboardState {
             .flatten();
         let channel_cursor_id = self.selected_channel_cursor_id();
 
-        self.discord = discord;
+        restore(&mut self.discord);
+        if areas.navigation {
+            self.repair_navigation_after_discord_restore(channel_cursor_id);
+        }
+
+        let in_message_view =
+            !self.selected_channel_is_forum() && !self.is_pinned_message_view_active();
+        let should_follow = was_following_cursor && in_message_view;
+        let should_scroll = should_follow || (was_at_latest && in_message_view);
+        if areas.message || areas.navigation {
+            self.repair_message_after_discord_restore(
+                selected_message_id,
+                scroll_message_id,
+                should_follow,
+                should_scroll,
+            );
+        }
+        if log_metrics {
+            let cache_counts = self.discord.cache_counts();
+            crate::logging::debug(
+                "snapshot",
+                format!(
+                    "op={operation} total_ms={:.2} {}",
+                    started.elapsed().as_secs_f64() * 1_000.0,
+                    cache_counts.log_fields(),
+                ),
+            );
+        }
+    }
+
+    fn repair_navigation_after_discord_restore(
+        &mut self,
+        channel_cursor_id: Option<Id<ChannelMarker>>,
+    ) {
         if let Some(user) = self.discord.current_user() {
             self.current_user = Some(user.to_owned());
         }
@@ -709,11 +771,22 @@ impl DashboardState {
 
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);
-        self.clamp_selection_indices();
-        let in_message_view =
-            !self.selected_channel_is_forum() && !self.is_pinned_message_view_active();
-        let should_follow = was_following_cursor && in_message_view;
-        let should_scroll = should_follow || (was_at_latest && in_message_view);
+        self.selected_guild = self.selected_guild();
+        self.selected_channel = self.selected_channel();
+        self.selected_member = self.selected_member();
+        self.clamp_guild_viewport();
+        self.clamp_channel_viewport();
+        self.clamp_member_viewport();
+    }
+
+    fn repair_message_after_discord_restore(
+        &mut self,
+        selected_message_id: Option<Id<MessageMarker>>,
+        scroll_message_id: Option<Id<MessageMarker>>,
+        should_follow: bool,
+        should_scroll: bool,
+    ) {
+        self.selected_message = self.selected_message();
         if should_follow {
             self.follow_latest_message();
         } else {
@@ -722,7 +795,6 @@ impl DashboardState {
         if should_scroll {
             self.message_auto_follow = true;
         }
-        self.clamp_list_viewports();
         self.clamp_message_viewport();
         if !should_scroll {
             self.refresh_message_auto_follow();
@@ -2060,7 +2132,7 @@ impl DashboardState {
         ) {
             return false;
         }
-        !self.discord.user_activities(member.user_id()).is_empty()
+        !self.user_activities(member.user_id()).is_empty()
     }
 
     fn active_channel_message_create(

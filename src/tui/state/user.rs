@@ -193,6 +193,14 @@ impl DashboardState {
             return status;
         }
 
+        if let Some(guild_id) = popup.guild_id
+            && let Some(status) = self
+                .discord
+                .user_presence_for_guild(Some(guild_id), popup.user_id)
+        {
+            return status;
+        }
+
         let recipient_status = self
             .discord
             .channels_for_guild(None)
@@ -218,11 +226,13 @@ impl DashboardState {
         let Some(popup) = self.user_profile_popup.as_ref() else {
             return &[];
         };
-        self.discord.user_activities(popup.user_id)
+        self.discord
+            .user_activities_for_guild(popup.guild_id, popup.user_id)
     }
 
     pub fn user_activities(&self, user_id: Id<UserMarker>) -> &[ActivityInfo] {
-        self.discord.user_activities(user_id)
+        self.discord
+            .user_activities_for_guild(self.selected_guild_id(), user_id)
     }
 
     /// Top-of-viewport row for the popup body. Used by the renderer.

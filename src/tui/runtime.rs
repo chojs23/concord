@@ -53,8 +53,9 @@ pub(super) async fn run_dashboard(
     let mut state = DashboardState::new_with_display_options(display_options);
     drop(snapshots.borrow_and_update());
     let initial_snapshot = client.current_discord_snapshot();
-    let mut current_snapshot_revision = initial_snapshot.revision;
-    state.restore_discord_snapshot(initial_snapshot.state);
+    let mut current_snapshot_revision = initial_snapshot.revision.global;
+    let mut current_snapshot_area_revision = initial_snapshot.revision;
+    state.restore_discord_snapshot(initial_snapshot.to_state());
     let mut image_previews = ImagePreviewCache::new();
     let mut avatar_images = AvatarImageCache::new();
     let mut emoji_images = EmojiImageCache::new();
@@ -67,6 +68,8 @@ pub(super) async fn run_dashboard(
     let mut member_requests = MemberRequests::default();
     let mut thread_preview_requests = ThreadPreviewRequests::default();
     let mut last_member_subscription: Option<(Id<GuildMarker>, Id<ChannelMarker>, u32)> = None;
+    let mut last_reported_active_guild: Option<Id<GuildMarker>> = None;
+    let mut last_reported_message_channel: Option<Id<ChannelMarker>> = None;
     let mut requested_author_profiles: HashSet<(Id<UserMarker>, Option<Id<GuildMarker>>)> =
         HashSet::new();
     let mut image_targets = Vec::new();
@@ -306,8 +309,13 @@ pub(super) async fn run_dashboard(
                         let before_signature = visible_dashboard_signature(&state);
                         drop(snapshots.borrow_and_update());
                         let snapshot = client.current_discord_snapshot();
-                        current_snapshot_revision = snapshot.revision;
-                        state.restore_discord_snapshot(snapshot.state);
+                        let previous_snapshot_area_revision = current_snapshot_area_revision;
+                        current_snapshot_area_revision = snapshot.revision;
+                        current_snapshot_revision = snapshot.revision.global;
+                        state.restore_discord_snapshot_areas(
+                            &snapshot,
+                            previous_snapshot_area_revision,
+                        );
                         let mut ctx = effect_helpers::EffectContext {
                             state: &mut state,
                             image_previews: &mut image_previews,
@@ -463,18 +471,50 @@ pub(super) async fn run_dashboard(
             }
         }
 
-        if let Some(channel_id) = history_requests.next(state.selected_message_history_channel_id())
-            && commands
-                .send(AppCommand::LoadMessageHistory {
-                    channel_id,
-                    before: None,
-                })
-                .await
-                .is_err()
+        if let Some(channel_id) = history_requests.next(
+            state.selected_message_history_channel_id(),
+            state.selected_message_history_needs_reload(),
+        ) && commands
+            .send(AppCommand::LoadMessageHistory {
+                channel_id,
+                before: None,
+            })
+            .await
+            .is_err()
         {
             history_requests.mark_failed(channel_id);
             command_helpers::record_command_channel_closed(&mut state);
             dirty = true;
+        }
+
+        let active_guild = state.selected_guild_id();
+        if active_guild != last_reported_active_guild {
+            last_reported_active_guild = active_guild;
+            if commands
+                .send(AppCommand::SetSelectedGuild {
+                    guild_id: active_guild,
+                })
+                .await
+                .is_err()
+            {
+                command_helpers::record_command_channel_closed(&mut state);
+                dirty = true;
+            }
+        }
+
+        let active_message_channel = state.selected_message_history_channel_id();
+        if active_message_channel != last_reported_message_channel {
+            last_reported_message_channel = active_message_channel;
+            if commands
+                .send(AppCommand::SetSelectedMessageChannel {
+                    channel_id: active_message_channel,
+                })
+                .await
+                .is_err()
+            {
+                command_helpers::record_command_channel_closed(&mut state);
+                dirty = true;
+            }
         }
 
         if let Some(channel_id) =

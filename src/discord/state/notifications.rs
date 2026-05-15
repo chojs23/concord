@@ -67,7 +67,8 @@ impl DiscordState {
     }
 
     pub fn guild_notification_muted(&self, guild_id: Id<GuildMarker>) -> bool {
-        self.notification_settings
+        self.notifications
+            .notification_settings
             .get(&guild_id)
             .is_some_and(|settings| {
                 notification_setting_muted(settings.muted, settings.mute_end_time.as_deref())
@@ -77,12 +78,14 @@ impl DiscordState {
     pub fn channel_notification_muted(&self, channel_id: Id<ChannelMarker>) -> bool {
         match self.channel_guild_id(channel_id) {
             Some(guild_id) => self
+                .notifications
                 .notification_settings
                 .get(&guild_id)
                 .is_some_and(|settings| {
                     self.channel_notification_muted_in_settings(settings, channel_id)
                 }),
             None => self
+                .notifications
                 .private_notification_settings
                 .as_ref()
                 .is_some_and(|settings| {
@@ -96,8 +99,8 @@ impl DiscordState {
         guild_id: Option<Id<GuildMarker>>,
     ) -> GuildNotificationSettingsInfo {
         let settings = match guild_id {
-            Some(guild_id) => self.notification_settings.get(&guild_id),
-            None => self.private_notification_settings.as_ref(),
+            Some(guild_id) => self.notifications.notification_settings.get(&guild_id),
+            None => self.notifications.private_notification_settings.as_ref(),
         };
         GuildNotificationSettingsInfo {
             guild_id,
@@ -112,6 +115,7 @@ impl DiscordState {
 
     pub fn channel_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
         let latest = self
+            .navigation
             .channels
             .get(&channel_id)
             .and_then(|channel| channel.last_message_id);
@@ -119,6 +123,7 @@ impl DiscordState {
             return ChannelUnreadState::Seen;
         };
         let read = self
+            .notifications
             .read_states
             .get(&channel_id)
             .copied()
@@ -207,9 +212,11 @@ impl DiscordState {
             channel_overrides: notification_override_map(&settings.channel_overrides),
         };
         if let Some(guild_id) = settings.guild_id {
-            self.notification_settings.insert(guild_id, state);
+            self.notifications
+                .notification_settings
+                .insert(guild_id, state);
         } else {
-            self.private_notification_settings = Some(state);
+            self.notifications.private_notification_settings = Some(state);
         }
     }
 
@@ -233,10 +240,11 @@ impl DiscordState {
         content: Option<&str>,
         mentions: &[MentionInfo],
     ) -> MessageNotificationKind {
-        if self.current_user_id == Some(author_id) {
+        if self.session.current_user_id == Some(author_id) {
             return MessageNotificationKind::None;
         }
         if self
+            .notifications
             .read_states
             .get(&channel_id)
             .and_then(|state| state.last_acked_message_id)
@@ -256,7 +264,7 @@ impl DiscordState {
                 settings.suppress_roles,
             )
         };
-        let Some(settings) = self.notification_settings.get(&guild_id) else {
+        let Some(settings) = self.notifications.notification_settings.get(&guild_id) else {
             return if self.message_mentions_current_user(guild_id, content, mentions, false, false)
             {
                 MessageNotificationKind::Mention
@@ -291,7 +299,7 @@ impl DiscordState {
         channel_id: Id<ChannelMarker>,
         mentions: &[MentionInfo],
     ) -> MessageNotificationKind {
-        let Some(settings) = self.private_notification_settings.as_ref() else {
+        let Some(settings) = self.notifications.private_notification_settings.as_ref() else {
             return MessageNotificationKind::Notify;
         };
         if notification_setting_muted(settings.muted, settings.mute_end_time.as_deref())
@@ -300,6 +308,7 @@ impl DiscordState {
             return MessageNotificationKind::None;
         }
         let mentions_current_user = self
+            .session
             .current_user_id
             .is_some_and(|self_id| mentions.iter().any(|mention| mention.user_id == self_id));
         match self.channel_notification_level(settings, channel_id) {
@@ -319,10 +328,11 @@ impl DiscordState {
     }
 
     fn loaded_unread_notification_counts(&self, channel_id: Id<ChannelMarker>) -> (usize, usize) {
-        let Some(messages) = self.messages.get(&channel_id) else {
+        let Some(messages) = self.message_cache.messages.get(&channel_id) else {
             return (0, 0);
         };
         let last_acked = self
+            .notifications
             .read_states
             .get(&channel_id)
             .and_then(|state| state.last_acked_message_id);
@@ -355,6 +365,7 @@ impl DiscordState {
             return level;
         }
         if let Some(parent_id) = self
+            .navigation
             .channels
             .get(&channel_id)
             .and_then(|channel| channel.parent_id)
@@ -381,7 +392,8 @@ impl DiscordState {
         if let Some(setting) = settings.channel_overrides.get(&channel_id) {
             return notification_setting_muted(setting.muted, setting.mute_end_time.as_deref());
         }
-        self.channels
+        self.navigation
+            .channels
             .get(&channel_id)
             .and_then(|channel| channel.parent_id)
             .and_then(|parent_id| settings.channel_overrides.get(&parent_id))
@@ -398,7 +410,7 @@ impl DiscordState {
         suppress_everyone: bool,
         suppress_roles: bool,
     ) -> bool {
-        let Some(self_id) = self.current_user_id else {
+        let Some(self_id) = self.session.current_user_id else {
             return false;
         };
         if mentions.iter().any(|mention| mention.user_id == self_id) {
@@ -411,12 +423,9 @@ impl DiscordState {
         if suppress_roles {
             return false;
         }
-        self.members
-            .get(&guild_id)
-            .and_then(|members| members.get(&self_id))
-            .is_some_and(|member| {
-                member
-                    .role_ids
+        self.current_user_role_ids_for_guild(guild_id)
+            .is_some_and(|role_ids| {
+                role_ids
                     .iter()
                     .any(|role_id| content.contains(&format!("<@&{}>", role_id.get())))
             })

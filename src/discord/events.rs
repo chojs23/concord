@@ -543,6 +543,12 @@ pub enum AppEvent {
     GuildDelete {
         guild_id: Id<GuildMarker>,
     },
+    SelectedGuildChanged {
+        guild_id: Option<Id<GuildMarker>>,
+    },
+    SelectedMessageChannelChanged {
+        channel_id: Option<Id<ChannelMarker>>,
+    },
     ChannelUpsert(ChannelInfo),
     ChannelDelete {
         guild_id: Option<Id<GuildMarker>>,

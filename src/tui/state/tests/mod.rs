@@ -24,7 +24,7 @@ use crate::discord::{
     MessageAttachmentUpload, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
     MutualGuildInfo, NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind,
     PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
-    ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+    ReadStateInfo, ReplyInfo, RoleInfo, SnapshotRevision, UserProfileInfo,
 };
 
 fn message_rendered_height(
@@ -1376,6 +1376,54 @@ fn message_scroll_preserves_position_when_not_following() {
     // Cursor moved up but the viewport still showed the latest, so the new
     // event engaged auto-scroll (without moving the cursor).
     assert!(state.message_auto_follow());
+
+    let mut state = state_with_messages(5);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(2);
+    state.move_up();
+    state.move_up();
+    assert!(!state.message_auto_follow());
+
+    let selected_message_id = state.messages()[state.selected_message()].id;
+    let selected_message = state.selected_message();
+    let message_scroll = state.message_scroll();
+    let previous_revision = SnapshotRevision {
+        global: 1,
+        navigation: 1,
+        message: 1,
+        detail: 1,
+    };
+    let mut updated_discord = state.discord.clone();
+    updated_discord.apply_event(&AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            content: Some("new message".to_owned()),
+            ..message_info(Id::new(2), 6)
+        }],
+    });
+    let snapshot = updated_discord.snapshot(SnapshotRevision {
+        global: 2,
+        navigation: 1,
+        message: 2,
+        detail: 1,
+    });
+
+    state.restore_discord_snapshot_areas(&snapshot, previous_revision);
+
+    assert_eq!(
+        state.messages()[state.selected_message()].id,
+        selected_message_id
+    );
+    assert_eq!(state.selected_message(), selected_message);
+    assert_eq!(state.message_scroll(), message_scroll);
+    assert!(!state.message_auto_follow());
+    assert!(
+        state
+            .messages()
+            .iter()
+            .any(|message| message.content.as_deref() == Some("new message"))
+    );
 }
 
 #[test]

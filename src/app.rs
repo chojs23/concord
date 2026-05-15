@@ -323,6 +323,16 @@ fn start_command_loop(
                                 .await;
                         }
                     }
+                    AppCommand::SetSelectedGuild { guild_id } => {
+                        client
+                            .publish_event(AppEvent::SelectedGuildChanged { guild_id })
+                            .await;
+                    }
+                    AppCommand::SetSelectedMessageChannel { channel_id } => {
+                        client
+                            .publish_event(AppEvent::SelectedMessageChannelChanged { channel_id })
+                            .await;
+                    }
                     AppCommand::SubscribeDirectMessage { channel_id } => {
                         if let Err(message) = client.subscribe_direct_message(channel_id) {
                             logging::error("app", &message);
@@ -661,7 +671,10 @@ fn start_command_loop(
                         }
                     },
                     AppCommand::LoadUserProfile { user_id, guild_id } => {
-                        let is_self = client.current_discord_snapshot().state.current_user_id()
+                        let is_self = client
+                            .current_discord_snapshot()
+                            .to_state()
+                            .current_user_id()
                             == Some(user_id);
                         match client.load_user_profile(user_id, guild_id, is_self).await {
                             Ok(profile) => {
@@ -836,7 +849,9 @@ fn guild_notification_settings_update(
     )>,
 ) -> GuildNotificationSettingsInfo {
     let snapshot = client.current_discord_snapshot();
-    let mut settings = snapshot.state.guild_notification_settings_info(guild_id);
+    let mut settings = snapshot
+        .to_state()
+        .guild_notification_settings_info(guild_id);
     if let Some((muted, mute_end_time)) = guild_update {
         settings.muted = muted;
         settings.mute_end_time =

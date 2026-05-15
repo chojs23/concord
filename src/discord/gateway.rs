@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, RwLock, atomic::AtomicU64},
+    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
@@ -99,7 +99,7 @@ struct GatewayPublishContext<'a> {
     effects_tx: &'a mpsc::Sender<SequencedAppEvent>,
     snapshots_tx: &'a watch::Sender<SnapshotRevision>,
     state: &'a Arc<RwLock<DiscordState>>,
-    revision: &'a Arc<AtomicU64>,
+    revision: &'a Arc<RwLock<SnapshotRevision>>,
     publish_lock: &'a Arc<Mutex<()>>,
 }
 
@@ -159,7 +159,7 @@ pub async fn run_gateway(
     snapshots_tx: watch::Sender<SnapshotRevision>,
     mut commands: mpsc::UnboundedReceiver<GatewayCommand>,
     state: Arc<RwLock<DiscordState>>,
-    revision: Arc<AtomicU64>,
+    revision: Arc<RwLock<SnapshotRevision>>,
     publish_lock: Arc<Mutex<()>>,
 ) {
     let mut session = SessionState::default();

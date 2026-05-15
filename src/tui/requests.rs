@@ -48,6 +48,7 @@ impl HistoryRequests {
     pub(super) fn next(
         &mut self,
         channel_id: Option<Id<ChannelMarker>>,
+        force_reload: bool,
     ) -> Option<Id<ChannelMarker>> {
         let Some(channel_id) = channel_id else {
             self.last_channel = None;
@@ -63,6 +64,11 @@ impl HistoryRequests {
                 Some(channel_id)
             }
             Some(HistoryRequestState::Failed) if channel_changed => {
+                self.requests
+                    .insert(channel_id, HistoryRequestState::Requested);
+                Some(channel_id)
+            }
+            Some(HistoryRequestState::Loaded) if force_reload && channel_changed => {
                 self.requests
                     .insert(channel_id, HistoryRequestState::Requested);
                 Some(channel_id)
@@ -411,16 +417,30 @@ mod tests {
         let first = Id::new(1);
         let second = Id::new(2);
 
-        assert_eq!(requests.next(None), None);
-        assert_eq!(requests.next(Some(first)), Some(first));
-        assert_eq!(requests.next(Some(first)), None);
+        assert_eq!(requests.next(None, false), None);
+        assert_eq!(requests.next(Some(first), false), Some(first));
+        assert_eq!(requests.next(Some(first), false), None);
         requests.record_event(&AppEvent::MessageHistoryLoadFailed {
             channel_id: first,
             message: "temporary failure".to_owned(),
         });
-        assert_eq!(requests.next(Some(first)), None);
-        assert_eq!(requests.next(Some(second)), Some(second));
-        assert_eq!(requests.next(Some(first)), Some(first));
+        assert_eq!(requests.next(Some(first), false), None);
+        assert_eq!(requests.next(Some(second), false), Some(second));
+        assert_eq!(requests.next(Some(first), false), Some(first));
+
+        let mut requests = HistoryRequests::default();
+        let first = Id::new(1);
+        let second = Id::new(2);
+
+        assert_eq!(requests.next(Some(first), false), Some(first));
+        requests.record_event(&AppEvent::MessageHistoryLoaded {
+            channel_id: first,
+            before: None,
+            messages: Vec::new(),
+        });
+        assert_eq!(requests.next(Some(first), true), None);
+        assert_eq!(requests.next(Some(second), false), Some(second));
+        assert_eq!(requests.next(Some(first), true), Some(first));
     }
 
     #[test]

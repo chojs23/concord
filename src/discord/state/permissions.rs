@@ -121,25 +121,25 @@ impl DiscordState {
             let Some(parent_id) = channel.parent_id else {
                 return PERMISSIONS_UNKNOWN;
             };
-            let Some(parent) = self.channels.get(&parent_id) else {
+            let Some(parent) = self.navigation.channels.get(&parent_id) else {
                 return PERMISSIONS_UNKNOWN;
             };
             return self.effective_permissions_for_channel(parent);
         }
 
-        let Some(my_id) = self.current_user_id else {
+        let Some(my_id) = self.session.current_user_id else {
             return PERMISSIONS_UNKNOWN;
         };
-        let Some(guild) = self.guilds.get(&guild_id) else {
+        let Some(guild) = self.navigation.guilds.get(&guild_id) else {
             return PERMISSIONS_UNKNOWN;
         };
         if guild.owner_id == Some(my_id) {
             return u64::MAX;
         }
-        let Some(roles) = self.roles.get(&guild_id) else {
+        let Some(roles) = self.guild_details.roles.get(&guild_id) else {
             return PERMISSIONS_UNKNOWN;
         };
-        let Some(member) = self.members.get(&guild_id).and_then(|m| m.get(&my_id)) else {
+        let Some(member_role_ids) = self.current_user_role_ids_for_guild(guild_id) else {
             return PERMISSIONS_UNKNOWN;
         };
 
@@ -148,7 +148,7 @@ impl DiscordState {
             .get(&everyone_role_id)
             .map(|role| role.permissions)
             .unwrap_or(0);
-        for role_id in &member.role_ids {
+        for role_id in member_role_ids {
             if let Some(role) = roles.get(role_id) {
                 base_permissions |= role.permissions;
             }
@@ -172,7 +172,7 @@ impl DiscordState {
 
         let mut role_allow: u64 = 0;
         let mut role_deny: u64 = 0;
-        let member_role_ids: Vec<u64> = member.role_ids.iter().map(|id| id.get()).collect();
+        let member_role_ids: Vec<u64> = member_role_ids.iter().map(|id| id.get()).collect();
         for overwrite in overwrites {
             if matches!(overwrite.kind, PermissionOverwriteKind::Role)
                 && overwrite.id != guild_id_raw
@@ -197,19 +197,19 @@ impl DiscordState {
     }
 
     fn private_thread_permissions_for_channel(&self, guild_id: Id<GuildMarker>) -> u64 {
-        let Some(my_id) = self.current_user_id else {
+        let Some(my_id) = self.session.current_user_id else {
             return 0;
         };
-        let Some(guild) = self.guilds.get(&guild_id) else {
+        let Some(guild) = self.navigation.guilds.get(&guild_id) else {
             return 0;
         };
         if guild.owner_id == Some(my_id) {
             return u64::MAX;
         }
-        let Some(roles) = self.roles.get(&guild_id) else {
+        let Some(roles) = self.guild_details.roles.get(&guild_id) else {
             return 0;
         };
-        let Some(member) = self.members.get(&guild_id).and_then(|m| m.get(&my_id)) else {
+        let Some(member_role_ids) = self.current_user_role_ids_for_guild(guild_id) else {
             return 0;
         };
 
@@ -218,7 +218,7 @@ impl DiscordState {
             .get(&everyone_role_id)
             .map(|role| role.permissions)
             .unwrap_or(0);
-        for role_id in &member.role_ids {
+        for role_id in member_role_ids {
             if let Some(role) = roles.get(role_id) {
                 base_permissions |= role.permissions;
             }
@@ -241,22 +241,23 @@ impl DiscordState {
             let Some(parent_id) = channel.parent_id else {
                 return false;
             };
-            let Some(parent) = self.channels.get(&parent_id) else {
+            let Some(parent) = self.navigation.channels.get(&parent_id) else {
                 return false;
             };
             return self.guild_roles_are_hydrated_but_current_member_is_pending(parent);
         }
-        let Some(my_id) = self.current_user_id else {
+        let Some(my_id) = self.session.current_user_id else {
             return false;
         };
-        if !self.guilds.contains_key(&guild_id) {
+        if !self.navigation.guilds.contains_key(&guild_id) {
             return false;
         }
-        let Some(roles) = self.roles.get(&guild_id) else {
+        let Some(roles) = self.guild_details.roles.get(&guild_id) else {
             return false;
         };
         !roles.is_empty()
             && !self
+                .guild_details
                 .members
                 .get(&guild_id)
                 .is_some_and(|members| members.contains_key(&my_id))

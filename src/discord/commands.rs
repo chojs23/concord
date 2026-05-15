@@ -114,6 +114,12 @@ pub enum AppCommand {
     LoadGuildMembers {
         guild_id: Id<GuildMarker>,
     },
+    SetSelectedGuild {
+        guild_id: Option<Id<GuildMarker>>,
+    },
+    SetSelectedMessageChannel {
+        channel_id: Option<Id<ChannelMarker>>,
+    },
     SubscribeDirectMessage {
         channel_id: Id<ChannelMarker>,
     },

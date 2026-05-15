@@ -20,19 +20,20 @@ pub struct GuildState {
 
 impl DiscordState {
     pub fn guild_folders(&self) -> &[GuildFolder] {
-        &self.guild_folders
+        &self.navigation.guild_folders
     }
 
     pub fn guild(&self, guild_id: Id<GuildMarker>) -> Option<&GuildState> {
-        self.guilds.get(&guild_id)
+        self.navigation.guilds.get(&guild_id)
     }
 
     pub fn guilds(&self) -> Vec<&GuildState> {
-        self.guilds.values().collect()
+        self.navigation.guilds.values().collect()
     }
 
     pub fn custom_emojis_for_guild(&self, guild_id: Id<GuildMarker>) -> &[CustomEmojiInfo] {
-        self.custom_emojis
+        self.navigation
+            .custom_emojis
             .get(&guild_id)
             .map(Vec::as_slice)
             .unwrap_or_default()
@@ -40,6 +41,7 @@ impl DiscordState {
 
     pub(super) fn increment_guild_member_count(&mut self, guild_id: Id<GuildMarker>) {
         if let Some(count) = self
+            .navigation
             .guilds
             .get_mut(&guild_id)
             .and_then(|guild| guild.member_count.as_mut())
@@ -50,6 +52,7 @@ impl DiscordState {
 
     pub(super) fn decrement_guild_member_count(&mut self, guild_id: Id<GuildMarker>) {
         if let Some(count) = self
+            .navigation
             .guilds
             .get_mut(&guild_id)
             .and_then(|guild| guild.member_count.as_mut())

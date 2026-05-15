@@ -14,9 +14,10 @@ pub(super) struct ChannelReadState {
 
 impl DiscordState {
     pub fn channel_ack_target(&self, channel_id: Id<ChannelMarker>) -> Option<Id<MessageMarker>> {
-        let channel = self.channels.get(&channel_id)?;
+        let channel = self.navigation.channels.get(&channel_id)?;
         let latest = channel.last_message_id?;
         let acked = self
+            .notifications
             .read_states
             .get(&channel_id)
             .and_then(|state| state.last_acked_message_id);
@@ -30,7 +31,8 @@ impl DiscordState {
         &self,
         channel_id: Id<ChannelMarker>,
     ) -> Option<Id<MessageMarker>> {
-        self.read_states
+        self.notifications
+            .read_states
             .get(&channel_id)
             .and_then(|state| state.last_acked_message_id)
     }
@@ -40,7 +42,11 @@ impl DiscordState {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
     ) {
-        let entry = self.read_states.entry(channel_id).or_default();
+        let entry = self
+            .notifications
+            .read_states
+            .entry(channel_id)
+            .or_default();
         if entry
             .last_acked_message_id
             .is_none_or(|acked| acked < message_id)

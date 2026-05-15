@@ -101,6 +101,10 @@ impl FileLogger {
     }
 }
 
+pub fn debug_logging_enabled() -> bool {
+    logger().debug_enabled
+}
+
 pub fn debug(target: &str, message: impl AsRef<str>) {
     logger().write(Level::Debug, target, message.as_ref());
 }

@@ -76,6 +76,19 @@ pub struct MessageCapabilities {
 }
 
 impl MessageState {
+    pub(super) fn redact_body(&mut self) {
+        self.reference = None;
+        self.reply = None;
+        self.poll = None;
+        self.content = None;
+        self.sticker_names.clear();
+        self.mentions.clear();
+        self.attachments.clear();
+        self.embeds.clear();
+        self.forwarded_snapshots.clear();
+        self.edited_timestamp = None;
+    }
+
     pub fn attachments_in_display_order(&self) -> impl Iterator<Item = &AttachmentInfo> {
         self.attachments.iter().chain(
             self.forwarded_snapshots
@@ -161,18 +174,126 @@ pub(super) struct MessageUpdateFields {
     pub(super) edited_timestamp: Option<String>,
     pub(super) pinned: Option<bool>,
     pub(super) reactions: Option<Vec<ReactionInfo>>,
+    pub(super) retain_body: bool,
 }
 
 impl DiscordState {
+    pub(super) fn should_retain_live_message_body(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        author_id: Id<UserMarker>,
+        mentions: &[MentionInfo],
+    ) -> bool {
+        self.session.current_user_id == Some(author_id)
+            || self
+                .session
+                .current_user_id
+                .is_some_and(|user_id| mentions.iter().any(|mention| mention.user_id == user_id))
+            || self.should_retain_channel_message_body(channel_id)
+    }
+
+    pub(super) fn retained_live_message_warms_channel(
+        &self,
+        channel_id: Id<ChannelMarker>,
+    ) -> bool {
+        self.should_retain_channel_message_body(channel_id)
+    }
+
+    pub fn channel_message_bodies_are_cold(&self, channel_id: Id<ChannelMarker>) -> bool {
+        self.message_cache
+            .cold_message_channels
+            .contains(&channel_id)
+    }
+
+    fn channel_message_bodies_are_warm(&self, channel_id: Id<ChannelMarker>) -> bool {
+        self.message_cache
+            .warm_message_channels
+            .contains(&channel_id)
+    }
+
+    pub(super) fn should_retain_channel_message_body(&self, channel_id: Id<ChannelMarker>) -> bool {
+        !self.session.selected_message_channel_known
+            || self.session.selected_message_channel_id == Some(channel_id)
+            || self.channel_message_bodies_are_warm(channel_id)
+    }
+
+    pub(super) fn should_retain_message_update_body(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    ) -> bool {
+        self.should_retain_channel_message_body(channel_id)
+            || self
+                .message_cache
+                .pinned_messages
+                .get(&channel_id)
+                .is_some_and(|messages| messages.iter().any(|message| message.id == message_id))
+    }
+
     pub fn messages_for_channel(&self, channel_id: Id<ChannelMarker>) -> Vec<&MessageState> {
-        self.messages
+        self.message_cache
+            .messages
             .get(&channel_id)
             .map(|messages| messages.iter().collect())
             .unwrap_or_default()
     }
 
+    pub(super) fn redact_channel_message_bodies(&mut self, channel_id: Id<ChannelMarker>) {
+        let Some(messages) = self.message_cache.messages.get_mut(&channel_id) else {
+            return;
+        };
+        for message in messages {
+            message.redact_body();
+        }
+    }
+
+    pub(super) fn touch_warm_message_channel(&mut self, channel_id: Id<ChannelMarker>) {
+        self.message_cache
+            .warm_message_channels
+            .retain(|warm_channel_id| *warm_channel_id != channel_id);
+        self.message_cache
+            .warm_message_channels
+            .push_back(channel_id);
+        self.message_cache.cold_message_channels.remove(&channel_id);
+        self.evict_warm_message_channels_if_needed();
+    }
+
+    fn evict_warm_message_channels_if_needed(&mut self) {
+        let max_warm_channels = self.message_cache.max_warm_message_channels.max(1);
+        while self.message_cache.warm_message_channels.len() > max_warm_channels {
+            let Some(evicted_index) =
+                self.message_cache
+                    .warm_message_channels
+                    .iter()
+                    .position(|channel_id| {
+                        Some(*channel_id) != self.session.selected_message_channel_id
+                    })
+            else {
+                break;
+            };
+            let Some(evicted_channel_id) = self
+                .message_cache
+                .warm_message_channels
+                .remove(evicted_index)
+            else {
+                break;
+            };
+            self.redact_channel_message_bodies(evicted_channel_id);
+            if self
+                .message_cache
+                .messages
+                .contains_key(&evicted_channel_id)
+            {
+                self.message_cache
+                    .cold_message_channels
+                    .insert(evicted_channel_id);
+            }
+        }
+    }
+
     pub fn pinned_messages_for_channel(&self, channel_id: Id<ChannelMarker>) -> Vec<&MessageState> {
-        self.pinned_messages
+        self.message_cache
+            .pinned_messages
             .get(&channel_id)
             .map(|messages| messages.iter().rev().collect())
             .unwrap_or_default()
@@ -185,8 +306,9 @@ impl DiscordState {
         message_id: Id<MessageMarker>,
         user_id: Id<UserMarker>,
     ) -> Option<u32> {
-        let roles = self.roles.get(&guild_id)?;
+        let roles = self.guild_details.roles.get(&guild_id)?;
         if let Some(member) = self
+            .guild_details
             .members
             .get(&guild_id)
             .and_then(|members| members.get(&user_id))
@@ -194,11 +316,12 @@ impl DiscordState {
             return selected_member_role_color(member, roles);
         }
 
-        if let Some(role_ids) = self.profile_role_ids.get(&(guild_id, user_id)) {
+        if let Some(role_ids) = self.profiles.profile_role_ids.get(&(guild_id, user_id)) {
             return selected_role_ids_color(role_ids, roles);
         }
 
         let role_ids = self
+            .message_cache
             .message_author_role_ids
             .get(&(channel_id, message_id))?;
         selected_role_ids_color(role_ids, roles)
@@ -214,7 +337,7 @@ impl DiscordState {
             return self.private_user_display_name(author_id, Some(fallback), None);
         }
         if let Some(member) = guild_id
-            .and_then(|guild_id| self.members.get(&guild_id))
+            .and_then(|guild_id| self.guild_details.members.get(&guild_id))
             .and_then(|members| members.get(&author_id))
         {
             // Only trust the member entry if it has real name data. When
@@ -224,7 +347,8 @@ impl DiscordState {
                 return member.display_name.clone();
             }
         }
-        self.user_profiles
+        self.profiles
+            .user_profiles
             .get(&UserProfileCacheKey::new(author_id, guild_id))
             .map(|profile| profile.display_name().to_owned())
             .unwrap_or_else(|| fallback.to_owned())
@@ -237,7 +361,7 @@ impl DiscordState {
         fallback: &Option<String>,
     ) -> Option<String> {
         guild_id
-            .and_then(|guild_id| self.members.get(&guild_id))
+            .and_then(|guild_id| self.guild_details.members.get(&guild_id))
             .and_then(|members| members.get(&author_id))
             .and_then(|member| member.avatar_url.clone())
             .or_else(|| fallback.clone())
@@ -245,9 +369,10 @@ impl DiscordState {
 
     fn for_each_cached_message_mut(&mut self, mut update: impl FnMut(&mut MessageState)) {
         for messages in self
+            .message_cache
             .messages
             .values_mut()
-            .chain(self.pinned_messages.values_mut())
+            .chain(self.message_cache.pinned_messages.values_mut())
         {
             for message in messages {
                 update(message);
@@ -260,10 +385,10 @@ impl DiscordState {
         channel_id: Id<ChannelMarker>,
         mut update: impl FnMut(&mut VecDeque<MessageState>),
     ) {
-        if let Some(messages) = self.messages.get_mut(&channel_id) {
+        if let Some(messages) = self.message_cache.messages.get_mut(&channel_id) {
             update(messages);
         }
-        if let Some(messages) = self.pinned_messages.get_mut(&channel_id) {
+        if let Some(messages) = self.message_cache.pinned_messages.get_mut(&channel_id) {
             update(messages);
         }
     }
@@ -279,6 +404,7 @@ impl DiscordState {
         let display_name = if is_fallback_identity(member.username.as_deref(), &member.display_name)
         {
             match self
+                .profiles
                 .user_profiles
                 .get(&UserProfileCacheKey::new(member.user_id, Some(guild_id)))
             {
@@ -291,9 +417,10 @@ impl DiscordState {
         let avatar_url = member.avatar_url.clone();
 
         for messages in self
+            .message_cache
             .messages
             .values_mut()
-            .chain(self.pinned_messages.values_mut())
+            .chain(self.message_cache.pinned_messages.values_mut())
         {
             for message in messages.iter_mut().filter(|m| m.guild_id == Some(guild_id)) {
                 if message.author_id == member.user_id {
@@ -343,7 +470,11 @@ impl DiscordState {
         message.guild_id = message
             .guild_id
             .or_else(|| self.channel_guild_id(channel_id));
-        let messages = self.messages.entry(message.channel_id).or_default();
+        let messages = self
+            .message_cache
+            .messages
+            .entry(message.channel_id)
+            .or_default();
         let inserted = if let Some(existing) =
             messages.iter_mut().find(|item| item.id == message.id)
         {
@@ -384,8 +515,14 @@ impl DiscordState {
             true
         };
 
-        while messages.len() > self.max_messages_per_channel {
-            messages.pop_front();
+        let mut evicted_message_ids = Vec::new();
+        while messages.len() > self.message_cache.max_messages_per_channel {
+            if let Some(evicted) = messages.pop_front() {
+                evicted_message_ids.push(evicted.id);
+            }
+        }
+        for evicted_message_id in evicted_message_ids {
+            self.prune_message_author_role_ids_if_unreferenced(channel_id, evicted_message_id);
         }
         self.record_channel_message_id(channel_id, message_id);
         if inserted {
@@ -422,7 +559,7 @@ impl DiscordState {
         user_id: Id<UserMarker>,
         emoji: ReactionEmoji,
     ) {
-        let is_current_user = self.current_user_id == Some(user_id);
+        let is_current_user = self.session.current_user_id == Some(user_id);
         self.update_cached_messages_in_channel(channel_id, |messages| {
             add_gateway_reaction_in(messages, message_id, is_current_user, emoji.clone());
         });
@@ -435,7 +572,7 @@ impl DiscordState {
         user_id: Id<UserMarker>,
         emoji: &ReactionEmoji,
     ) {
-        let is_current_user = self.current_user_id == Some(user_id);
+        let is_current_user = self.session.current_user_id == Some(user_id);
         self.update_cached_messages_in_channel(channel_id, |messages| {
             remove_gateway_reaction_in(messages, message_id, is_current_user, emoji);
         });
@@ -498,7 +635,7 @@ impl DiscordState {
         {
             self.record_message_author_role_ids(message);
         }
-        let messages = self.messages.entry(channel_id).or_default();
+        let messages = self.message_cache.messages.entry(channel_id).or_default();
         let mut by_id: BTreeMap<Id<MessageMarker>, MessageState> = messages
             .drain(..)
             .map(|message| (message.id, message))
@@ -512,22 +649,32 @@ impl DiscordState {
         }
 
         *messages = by_id.into_values().collect();
+        let mut evicted_message_ids = Vec::new();
         if before.is_none() {
-            while messages.len() > self.max_messages_per_channel {
-                messages.pop_front();
+            while messages.len() > self.message_cache.max_messages_per_channel {
+                if let Some(evicted) = messages.pop_front() {
+                    evicted_message_ids.push(evicted.id);
+                }
             }
         } else {
             while messages.len() > older_history_message_limit {
-                messages.pop_back();
+                if let Some(evicted) = messages.pop_back() {
+                    evicted_message_ids.push(evicted.id);
+                }
             }
         }
-        if let Some(last_message_id) = messages.back().map(|message| message.id) {
+        let last_message_id = messages.back().map(|message| message.id);
+        for evicted_message_id in evicted_message_ids {
+            self.prune_message_author_role_ids_if_unreferenced(channel_id, evicted_message_id);
+        }
+        if let Some(last_message_id) = last_message_id {
             self.record_channel_message_id(channel_id, last_message_id);
         }
     }
 
     fn older_history_message_limit(&self) -> usize {
-        self.max_messages_per_channel
+        self.message_cache
+            .max_messages_per_channel
             .saturating_mul(OLDER_HISTORY_EXTRA_WINDOW_MULTIPLIER)
     }
 
@@ -537,6 +684,17 @@ impl DiscordState {
         pins: &[MessageInfo],
     ) {
         let channel_guild_id = self.channel_guild_id(channel_id);
+        let previous_pin_ids = self
+            .message_cache
+            .pinned_messages
+            .get(&channel_id)
+            .map(|messages| {
+                messages
+                    .iter()
+                    .map(|message| message.id)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let mut by_id = BTreeMap::new();
         for pin in pins
             .iter()
@@ -546,6 +704,7 @@ impl DiscordState {
             let mut pinned = self.message_state_from_info(channel_guild_id, pin);
             pinned.pinned = true;
             if let Some(existing) = self
+                .message_cache
                 .messages
                 .get_mut(&channel_id)
                 .and_then(|messages| messages.iter_mut().find(|message| message.id == pinned.id))
@@ -555,8 +714,12 @@ impl DiscordState {
             by_id.insert(pinned.id, pinned);
         }
 
-        self.pinned_messages
+        self.message_cache
+            .pinned_messages
             .insert(channel_id, by_id.into_values().collect());
+        for previous_pin_id in previous_pin_ids {
+            self.prune_message_author_role_ids_if_unreferenced(channel_id, previous_pin_id);
+        }
     }
 
     fn message_state_from_info(
@@ -597,7 +760,8 @@ impl DiscordState {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
     ) -> bool {
-        self.pinned_messages
+        self.message_cache
+            .pinned_messages
             .get(&channel_id)
             .is_some_and(|messages| messages.iter().any(|message| message.id == message_id))
     }
@@ -619,23 +783,44 @@ impl DiscordState {
         message_id: Id<MessageMarker>,
         pinned: bool,
     ) {
-        let normal_message = self.messages.get_mut(&channel_id).and_then(|messages| {
-            messages
-                .iter_mut()
-                .find(|message| message.id == message_id)
-                .map(|message| {
-                    message.pinned = pinned;
-                    message.clone()
-                })
-        });
+        let normal_message =
+            self.message_cache
+                .messages
+                .get_mut(&channel_id)
+                .and_then(|messages| {
+                    messages
+                        .iter_mut()
+                        .find(|message| message.id == message_id)
+                        .map(|message| {
+                            message.pinned = pinned;
+                            message.clone()
+                        })
+                });
 
         if pinned {
             if let Some(mut message) = normal_message {
                 message.pinned = true;
-                upsert_sorted_message(self.pinned_messages.entry(channel_id).or_default(), message);
+                upsert_sorted_message(
+                    self.message_cache
+                        .pinned_messages
+                        .entry(channel_id)
+                        .or_default(),
+                    message,
+                );
             }
-        } else if let Some(messages) = self.pinned_messages.get_mut(&channel_id) {
-            messages.retain(|message| message.id != message_id);
+        } else {
+            let removed_from_pins = self
+                .message_cache
+                .pinned_messages
+                .get_mut(&channel_id)
+                .is_some_and(|messages| {
+                    let before = messages.len();
+                    messages.retain(|message| message.id != message_id);
+                    messages.len() != before
+                });
+            if removed_from_pins {
+                self.prune_message_author_role_ids_if_unreferenced(channel_id, message_id);
+            }
         }
     }
 
@@ -647,7 +832,8 @@ impl DiscordState {
         self.update_cached_messages_in_channel(channel_id, |messages| {
             messages.retain(|message| message.id != message_id);
         });
-        self.message_author_role_ids
+        self.message_cache
+            .message_author_role_ids
             .remove(&(channel_id, message_id));
     }
 
@@ -667,12 +853,35 @@ impl DiscordState {
     ) {
         let key = (channel_id, message_id);
         if author_role_ids.is_empty() {
-            self.message_author_role_ids.remove(&key);
+            self.message_cache.message_author_role_ids.remove(&key);
             return;
         }
 
-        self.message_author_role_ids
+        self.message_cache
+            .message_author_role_ids
             .insert(key, author_role_ids.to_vec());
+    }
+
+    fn prune_message_author_role_ids_if_unreferenced(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    ) {
+        let is_still_cached = self
+            .message_cache
+            .messages
+            .get(&channel_id)
+            .is_some_and(|messages| messages.iter().any(|message| message.id == message_id))
+            || self
+                .message_cache
+                .pinned_messages
+                .get(&channel_id)
+                .is_some_and(|messages| messages.iter().any(|message| message.id == message_id));
+        if !is_still_cached {
+            self.message_cache
+                .message_author_role_ids
+                .remove(&(channel_id, message_id));
+        }
     }
 }
 
@@ -739,24 +948,26 @@ fn update_message_in(
     if let Some(reactions) = &update.reactions {
         existing.reactions = reactions.clone();
     }
-    if let Some(content) = &update.content {
-        existing.content = Some(content.clone());
-    }
-    if let Some(sticker_names) = &update.sticker_names {
-        existing.sticker_names = sticker_names.clone();
-    }
-    if let Some(mentions) = &update.mentions {
-        existing.mentions = mentions.clone();
-    }
-    if let Some(embeds) = &update.embeds {
-        existing.embeds = embeds.clone();
-    }
-    if let Some(edited_timestamp) = &update.edited_timestamp {
-        existing.edited_timestamp = Some(edited_timestamp.clone());
-    }
-    match &update.attachments {
-        AttachmentUpdate::Replace(attachments) => existing.attachments = attachments.clone(),
-        AttachmentUpdate::Unchanged => {}
+    if update.retain_body {
+        if let Some(content) = &update.content {
+            existing.content = Some(content.clone());
+        }
+        if let Some(sticker_names) = &update.sticker_names {
+            existing.sticker_names = sticker_names.clone();
+        }
+        if let Some(mentions) = &update.mentions {
+            existing.mentions = mentions.clone();
+        }
+        if let Some(embeds) = &update.embeds {
+            existing.embeds = embeds.clone();
+        }
+        if let Some(edited_timestamp) = &update.edited_timestamp {
+            existing.edited_timestamp = Some(edited_timestamp.clone());
+        }
+        match &update.attachments {
+            AttachmentUpdate::Replace(attachments) => existing.attachments = attachments.clone(),
+            AttachmentUpdate::Unchanged => {}
+        }
     }
 }
 
