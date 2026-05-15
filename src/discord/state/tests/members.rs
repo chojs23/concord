@@ -62,6 +62,209 @@ fn tracks_members_and_presences() {
 }
 
 #[test]
+fn tracks_voice_participants_join_move_and_leave() {
+    let guild_id = Id::new(1);
+    let first_voice = Id::new(10);
+    let second_voice = Id::new(11);
+    let alice = Id::new(20);
+    let mut state = DiscordState::default();
+
+    state.apply_event(&AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: Some(1),
+        channels: vec![
+            ChannelInfo {
+                kind: "GuildVoice".to_owned(),
+                channel_id: first_voice,
+                guild_id: Some(guild_id),
+                parent_id: None,
+                position: Some(0),
+                last_message_id: None,
+                name: "Lobby".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+            ChannelInfo {
+                kind: "GuildVoice".to_owned(),
+                channel_id: second_voice,
+                guild_id: Some(guild_id),
+                parent_id: None,
+                position: Some(1),
+                last_message_id: None,
+                name: "Raid".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+        ],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+
+    let alice_member = MemberInfo {
+        user_id: alice,
+        display_name: "Alice".to_owned(),
+        username: Some("alice".to_owned()),
+        is_bot: false,
+        avatar_url: None,
+        role_ids: Vec::new(),
+    };
+    state.apply_event(&AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id,
+            channel_id: Some(first_voice),
+            user_id: alice,
+            member: Some(alice_member),
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: true,
+        },
+    });
+    assert_eq!(
+        state.voice_participants_for_channel(guild_id, first_voice)[0].display_name,
+        "Alice"
+    );
+
+    state.apply_event(&AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id,
+            channel_id: Some(second_voice),
+            user_id: alice,
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+        },
+    });
+    assert!(
+        state
+            .voice_participants_for_channel(guild_id, first_voice)
+            .is_empty()
+    );
+    assert_eq!(
+        state.voice_participants_for_channel(guild_id, second_voice)[0].user_id,
+        alice
+    );
+
+    state.apply_event(&AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id,
+            channel_id: None,
+            user_id: alice,
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+        },
+    });
+    assert!(
+        state
+            .voice_participants_for_channel(guild_id, second_voice)
+            .is_empty()
+    );
+}
+
+#[test]
+fn guild_create_replaces_cached_voice_state_snapshot() {
+    let guild_id = Id::new(1);
+    let voice = Id::new(10);
+    let alice = Id::new(20);
+    let mut state = DiscordState::default();
+
+    state.apply_event(&AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: Some(1),
+        channels: vec![ChannelInfo {
+            kind: "GuildVoice".to_owned(),
+            channel_id: voice,
+            guild_id: Some(guild_id),
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "Lobby".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.apply_event(&AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id,
+            channel_id: Some(voice),
+            user_id: alice,
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+        },
+    });
+    assert_eq!(
+        state.voice_participants_for_channel(guild_id, voice)[0].user_id,
+        alice
+    );
+
+    state.apply_event(&AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: Some(1),
+        channels: vec![ChannelInfo {
+            kind: "GuildVoice".to_owned(),
+            channel_id: voice,
+            guild_id: Some(guild_id),
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "Lobby".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+
+    assert!(
+        state
+            .voice_participants_for_channel(guild_id, voice)
+            .is_empty()
+    );
+}
+
+#[test]
 fn presence_update_does_not_create_fallback_member() {
     let guild_id = Id::new(1);
     let user_id = Id::new(20);

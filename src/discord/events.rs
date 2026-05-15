@@ -156,6 +156,18 @@ pub struct MemberInfo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VoiceStateInfo {
+    pub guild_id: Id<GuildMarker>,
+    pub channel_id: Option<Id<ChannelMarker>>,
+    pub user_id: Id<UserMarker>,
+    pub member: Option<MemberInfo>,
+    pub deaf: bool,
+    pub mute: bool,
+    pub self_deaf: bool,
+    pub self_mute: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoleInfo {
     pub id: Id<RoleMarker>,
     pub name: String,
@@ -648,6 +660,9 @@ pub enum AppEvent {
         user_id: Id<UserMarker>,
         status: PresenceStatus,
         activities: Vec<ActivityInfo>,
+    },
+    VoiceStateUpdate {
+        state: VoiceStateInfo,
     },
     /// Discord's TYPING_START dispatch: emitted ~10s before the typing
     /// indicator should expire. The dashboard tracks the latest timestamp

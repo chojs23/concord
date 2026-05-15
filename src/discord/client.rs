@@ -504,6 +504,7 @@ fn app_event_metric_name(event: &AppEvent) -> &'static str {
         AppEvent::GuildMemberRemove { .. } => "GuildMemberRemove",
         AppEvent::PresenceUpdate { .. } => "PresenceUpdate",
         AppEvent::UserPresenceUpdate { .. } => "UserPresenceUpdate",
+        AppEvent::VoiceStateUpdate { .. } => "VoiceStateUpdate",
         AppEvent::TypingStart { .. } => "TypingStart",
         AppEvent::CurrentUserReactionAdd { .. } => "CurrentUserReactionAdd",
         AppEvent::CurrentUserReactionRemove { .. } => "CurrentUserReactionRemove",

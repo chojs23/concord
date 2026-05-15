@@ -11,7 +11,7 @@ use crate::discord::{
     MessageReferenceInfo, MessageSnapshotInfo, MessageState, MutualGuildInfo, NotificationLevel,
     PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus,
     ReactionEmoji, ReactionInfo, ReadStateInfo, RelationshipInfo, ReplyInfo, RoleInfo,
-    UserProfileInfo,
+    UserProfileInfo, VoiceStateInfo,
 };
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {

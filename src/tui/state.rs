@@ -1617,10 +1617,7 @@ impl DashboardState {
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
-                let len = self.channel_pane_filtered_entries().len();
-                move_index_down(&mut self.selected_channel, len);
-                self.channel_keep_selection_visible = true;
-                self.clamp_channel_viewport();
+                self.move_channel_selection_down();
             }
             FocusPane::Messages => {
                 let len = self.message_pane_item_count();
@@ -1646,9 +1643,7 @@ impl DashboardState {
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
-                move_index_up(&mut self.selected_channel);
-                self.channel_keep_selection_visible = true;
-                self.clamp_channel_viewport();
+                self.move_channel_selection_up();
             }
             FocusPane::Messages => {
                 move_index_up(&mut self.selected_message);
@@ -1672,9 +1667,7 @@ impl DashboardState {
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
-                self.selected_channel = 0;
-                self.channel_keep_selection_visible = true;
-                self.clamp_channel_viewport();
+                self.jump_channel_selection_top();
             }
             FocusPane::Messages => {
                 self.selected_message = 0;
@@ -1698,9 +1691,7 @@ impl DashboardState {
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
-                self.selected_channel = last_index(self.channel_pane_filtered_entries().len());
-                self.channel_keep_selection_visible = true;
-                self.clamp_channel_viewport();
+                self.jump_channel_selection_bottom();
             }
             FocusPane::Messages => {
                 self.selected_message = last_index(self.message_pane_item_count());
@@ -1727,10 +1718,7 @@ impl DashboardState {
             }
             FocusPane::Channels => {
                 let distance = pane_content_height(self.channel_view_height) / 2;
-                let len = self.channel_pane_filtered_entries().len();
-                move_index_down_by(&mut self.selected_channel, len, distance.max(1));
-                self.channel_keep_selection_visible = true;
-                self.clamp_channel_viewport();
+                self.move_channel_selection_down_by(distance.max(1));
             }
             FocusPane::Messages => {
                 let distance = self.message_content_height() / 2;
@@ -1761,9 +1749,7 @@ impl DashboardState {
             }
             FocusPane::Channels => {
                 let distance = pane_content_height(self.channel_view_height) / 2;
-                move_index_up_by(&mut self.selected_channel, distance.max(1));
-                self.channel_keep_selection_visible = true;
-                self.clamp_channel_viewport();
+                self.move_channel_selection_up_by(distance.max(1));
             }
             FocusPane::Messages => {
                 let distance = self.message_content_height() / 2;
@@ -1863,6 +1849,9 @@ impl DashboardState {
             .map(|entry| match entry {
                 ChannelPaneEntry::CategoryHeader { state, .. }
                 | ChannelPaneEntry::Channel { state, .. } => state.name.width().saturating_sub(1),
+                ChannelPaneEntry::VoiceParticipant { participant, .. } => {
+                    participant.display_name.width().saturating_sub(1)
+                }
             })
             .max()
             .unwrap_or_default()
@@ -1960,7 +1949,11 @@ impl DashboardState {
 
     fn select_visible_channel_row(&mut self, row: usize) -> bool {
         let index = self.channel_scroll.saturating_add(row);
-        if index >= self.channel_pane_filtered_entries().len() {
+        let entries = self.channel_pane_filtered_entries();
+        if !entries
+            .get(index)
+            .is_some_and(ChannelPaneEntry::is_selectable)
+        {
             return false;
         }
         self.selected_channel = index;

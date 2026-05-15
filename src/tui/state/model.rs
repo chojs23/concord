@@ -5,7 +5,7 @@ use crate::discord::ids::{
 
 use crate::discord::{
     ChannelState, ChannelUnreadState, GuildFolder, GuildState, MuteDuration, ReactionEmoji,
-    ReactionInfo,
+    ReactionInfo, VoiceParticipantState,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -334,7 +334,7 @@ pub struct ThreadMessagePreview {
     pub content: String,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum ChannelPaneEntry<'a> {
     CategoryHeader {
         state: &'a ChannelState,
@@ -344,6 +344,16 @@ pub enum ChannelPaneEntry<'a> {
         state: &'a ChannelState,
         branch: ChannelBranch,
     },
+    VoiceParticipant {
+        participant: VoiceParticipantState,
+        parent_branch: ChannelBranch,
+    },
+}
+
+impl ChannelPaneEntry<'_> {
+    pub(super) fn is_selectable(&self) -> bool {
+        matches!(self, Self::CategoryHeader { .. } | Self::Channel { .. })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -359,6 +369,14 @@ impl ChannelBranch {
             Self::None => "",
             Self::Middle => "├ ",
             Self::Last => "└ ",
+        }
+    }
+
+    pub fn participant_prefix(self) -> &'static str {
+        match self {
+            Self::None => "  ",
+            Self::Middle => "│ ",
+            Self::Last => "  ",
         }
     }
 

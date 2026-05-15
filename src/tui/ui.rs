@@ -315,7 +315,7 @@ fn channel_prefix(kind: &str) -> &'static str {
     match kind {
         "dm" | "Private" => "@ ",
         "group-dm" | "Group" => "● ",
-        "voice" | "GuildVoice" => "🔊 ",
+        "voice" | "GuildVoice" => "🔈 ",
         "category" | "GuildCategory" => "▾ ",
         "forum" | "GuildForum" => "💬 ",
         "thread" | "GuildPublicThread" | "GuildPrivateThread" | "GuildNewsThread" => "» ",

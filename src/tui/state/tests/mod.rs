@@ -24,7 +24,7 @@ use crate::discord::{
     MessageAttachmentUpload, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
     MutualGuildInfo, NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind,
     PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
-    ReadStateInfo, ReplyInfo, RoleInfo, SnapshotRevision, UserProfileInfo,
+    ReadStateInfo, ReplyInfo, RoleInfo, SnapshotRevision, UserProfileInfo, VoiceStateInfo,
 };
 
 fn message_rendered_height(
@@ -4671,7 +4671,9 @@ fn channel_pane_excludes_threads() {
         .iter()
         .filter_map(|entry| match entry {
             ChannelPaneEntry::Channel { state, .. } => Some(state.id),
-            ChannelPaneEntry::CategoryHeader { .. } => None,
+            ChannelPaneEntry::CategoryHeader { .. } | ChannelPaneEntry::VoiceParticipant { .. } => {
+                None
+            }
         })
         .collect();
     assert!(channel_ids.contains(&Id::new(2)));
@@ -7797,26 +7799,61 @@ fn channel_tree_groups_category_children() {
     let entries = state.channel_pane_entries();
 
     assert!(matches!(
-        entries[0],
+        &entries[0],
         ChannelPaneEntry::CategoryHeader {
             collapsed: false,
             ..
         }
     ));
     assert!(matches!(
-        entries[1],
+        &entries[1],
         ChannelPaneEntry::Channel {
             branch: ChannelBranch::Middle,
             ..
         }
     ));
     assert!(matches!(
-        entries[2],
+        &entries[2],
         ChannelPaneEntry::Channel {
             branch: ChannelBranch::Last,
             ..
         }
     ));
+}
+
+#[test]
+fn voice_channel_participants_render_as_child_rows_and_are_skipped_by_selection() {
+    let mut state = state_with_voice_channel_participant();
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(10);
+    let entries = state.channel_pane_entries();
+
+    assert!(matches!(
+        &entries[1],
+        ChannelPaneEntry::Channel {
+            branch: ChannelBranch::Middle,
+            ..
+        }
+    ));
+    assert!(matches!(
+        &entries[2],
+        ChannelPaneEntry::VoiceParticipant { participant, .. }
+            if participant.display_name == "Alice"
+    ));
+    assert!(matches!(
+        &entries[3],
+        ChannelPaneEntry::Channel {
+            branch: ChannelBranch::Last,
+            ..
+        }
+    ));
+
+    state.move_down();
+    assert_eq!(state.selected_channel, 1);
+    assert!(!state.select_visible_pane_row(FocusPane::Channels, 2));
+    assert_eq!(state.selected_channel, 1);
+    state.move_down();
+    assert_eq!(state.selected_channel, 3);
 }
 
 #[test]
@@ -7830,7 +7867,7 @@ fn selected_channel_category_can_be_closed_and_opened() {
     let closed_entries = state.channel_pane_entries();
     assert_eq!(closed_entries.len(), 1);
     assert!(matches!(
-        closed_entries[0],
+        &closed_entries[0],
         ChannelPaneEntry::CategoryHeader {
             collapsed: true,
             ..
@@ -7850,7 +7887,7 @@ fn selected_channel_child_can_close_parent_category() {
     let entries = state.channel_pane_entries();
     assert_eq!(entries.len(), 1);
     assert!(matches!(
-        entries[0],
+        &entries[0],
         ChannelPaneEntry::CategoryHeader {
             collapsed: true,
             ..
@@ -8047,7 +8084,100 @@ fn channel_entry_names(state: &DashboardState) -> Vec<&str> {
         .into_iter()
         .filter_map(|entry| match entry {
             ChannelPaneEntry::Channel { state, .. } => Some(state.name.as_str()),
-            ChannelPaneEntry::CategoryHeader { .. } => None,
+            ChannelPaneEntry::CategoryHeader { .. } | ChannelPaneEntry::VoiceParticipant { .. } => {
+                None
+            }
         })
         .collect()
+}
+
+fn state_with_voice_channel_participant() -> DashboardState {
+    let guild_id = Id::new(1);
+    let category_id = Id::new(10);
+    let voice_id = Id::new(11);
+    let text_id = Id::new(12);
+    let alice = Id::new(20);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: category_id,
+                parent_id: None,
+                position: Some(0),
+                last_message_id: None,
+                name: "Channels".to_owned(),
+                kind: "category".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: voice_id,
+                parent_id: Some(category_id),
+                position: Some(0),
+                last_message_id: None,
+                name: "Lobby".to_owned(),
+                kind: "GuildVoice".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: text_id,
+                parent_id: Some(category_id),
+                position: Some(1),
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "text".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+        ],
+        members: vec![MemberInfo {
+            user_id: alice,
+            display_name: "Alice".to_owned(),
+            username: Some("alice".to_owned()),
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+        }],
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id,
+            channel_id: Some(voice_id),
+            user_id: alice,
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+        },
+    });
+    state.confirm_selected_guild();
+    state
 }

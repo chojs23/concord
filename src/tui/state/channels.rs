@@ -648,10 +648,7 @@ impl DashboardState {
         let mut entries = Vec::new();
         for root in roots {
             if !root.is_category() {
-                entries.push(ChannelPaneEntry::Channel {
-                    state: root,
-                    branch: ChannelBranch::None,
-                });
+                self.push_channel_pane_channel_entry(&mut entries, root, ChannelBranch::None);
                 continue;
             }
 
@@ -677,14 +674,35 @@ impl DashboardState {
                 } else {
                     ChannelBranch::Middle
                 };
-                entries.push(ChannelPaneEntry::Channel {
-                    state: child,
-                    branch,
-                });
+                self.push_channel_pane_channel_entry(&mut entries, child, branch);
             }
         }
 
         entries
+    }
+
+    fn push_channel_pane_channel_entry<'a>(
+        &'a self,
+        entries: &mut Vec<ChannelPaneEntry<'a>>,
+        state: &'a ChannelState,
+        branch: ChannelBranch,
+    ) {
+        entries.push(ChannelPaneEntry::Channel { state, branch });
+        let Some(guild_id) = state.guild_id else {
+            return;
+        };
+        if !state.is_voice() {
+            return;
+        }
+        entries.extend(
+            self.discord
+                .voice_participants_for_channel(guild_id, state.id)
+                .into_iter()
+                .map(|participant| ChannelPaneEntry::VoiceParticipant {
+                    participant,
+                    parent_branch: branch,
+                }),
+        );
     }
 
     /// Returns channel pane entries filtered by the active pane filter query,
@@ -794,16 +812,67 @@ impl DashboardState {
     }
 
     pub fn selected_channel(&self) -> usize {
-        clamp_selected_index(
-            self.selected_channel,
-            self.channel_pane_filtered_entries().len(),
-        )
+        let entries = self.channel_pane_filtered_entries();
+        selectable_channel_index_near(&entries, self.selected_channel, false).unwrap_or(0)
+    }
+
+    pub(super) fn move_channel_selection_down(&mut self) {
+        let selected = self.selected_channel();
+        self.select_channel_entry_near(selected.saturating_add(1), true);
+        self.channel_keep_selection_visible = true;
+        self.clamp_channel_viewport();
+    }
+
+    pub(super) fn move_channel_selection_up(&mut self) {
+        let selected = self.selected_channel();
+        self.select_channel_entry_near(selected.saturating_sub(1), false);
+        self.channel_keep_selection_visible = true;
+        self.clamp_channel_viewport();
+    }
+
+    pub(super) fn move_channel_selection_down_by(&mut self, distance: usize) {
+        let selected = self.selected_channel();
+        self.select_channel_entry_near(selected.saturating_add(distance), true);
+        self.channel_keep_selection_visible = true;
+        self.clamp_channel_viewport();
+    }
+
+    pub(super) fn move_channel_selection_up_by(&mut self, distance: usize) {
+        let selected = self.selected_channel();
+        self.select_channel_entry_near(selected.saturating_sub(distance), false);
+        self.channel_keep_selection_visible = true;
+        self.clamp_channel_viewport();
+    }
+
+    pub(super) fn jump_channel_selection_top(&mut self) {
+        self.select_channel_entry_near(0, true);
+        self.channel_keep_selection_visible = true;
+        self.clamp_channel_viewport();
+    }
+
+    pub(super) fn jump_channel_selection_bottom(&mut self) {
+        let entries = self.channel_pane_filtered_entries();
+        self.selected_channel = entries
+            .iter()
+            .rposition(ChannelPaneEntry::is_selectable)
+            .unwrap_or(0);
+        self.channel_keep_selection_visible = true;
+        self.clamp_channel_viewport();
+    }
+
+    fn select_channel_entry_near(&mut self, index: usize, prefer_forward: bool) {
+        let entries = self.channel_pane_filtered_entries();
+        self.selected_channel =
+            selectable_channel_index_near(&entries, index, prefer_forward).unwrap_or(0);
     }
 
     pub(super) fn selected_channel_cursor_id(&self) -> Option<Id<ChannelMarker>> {
         match self.channel_pane_entries().get(self.selected_channel()) {
             Some(ChannelPaneEntry::Channel { state, .. }) => Some(state.id),
-            Some(ChannelPaneEntry::CategoryHeader { .. }) | None => None,
+            Some(
+                ChannelPaneEntry::CategoryHeader { .. } | ChannelPaneEntry::VoiceParticipant { .. },
+            )
+            | None => None,
         }
     }
 
@@ -992,6 +1061,7 @@ impl DashboardState {
             Some(ChannelPaneEntry::Channel { state, .. }) => {
                 self.activate_channel_command(state.id)
             }
+            Some(ChannelPaneEntry::VoiceParticipant { .. }) => None,
             None => None,
         }
     }
@@ -1240,6 +1310,18 @@ impl DashboardState {
                     ChannelPaneEntry::CategoryHeader { state, .. } => Some(state.id),
                     _ => None,
                 }),
+            Some(ChannelPaneEntry::VoiceParticipant { parent_branch, .. })
+                if parent_branch.is_category_child() =>
+            {
+                entries
+                    .get(..selected)?
+                    .iter()
+                    .rev()
+                    .find_map(|entry| match entry {
+                        ChannelPaneEntry::CategoryHeader { state, .. } => Some(state.id),
+                        _ => None,
+                    })
+            }
             _ => None,
         }
     }
@@ -1248,8 +1330,52 @@ impl DashboardState {
         match self.channel_pane_entries().get(self.selected_channel()) {
             Some(ChannelPaneEntry::CategoryHeader { state, .. }) => Some(state.id),
             Some(ChannelPaneEntry::Channel { state, .. }) => Some(state.id),
+            Some(ChannelPaneEntry::VoiceParticipant { .. }) => None,
             None => None,
         }
+    }
+}
+
+fn selectable_channel_index_near(
+    entries: &[ChannelPaneEntry<'_>],
+    index: usize,
+    prefer_forward: bool,
+) -> Option<usize> {
+    if entries.is_empty() {
+        return None;
+    }
+    let index = index.min(entries.len() - 1);
+    if entries[index].is_selectable() {
+        return Some(index);
+    }
+    if prefer_forward {
+        entries
+            .iter()
+            .enumerate()
+            .skip(index.saturating_add(1))
+            .find_map(|(index, entry)| entry.is_selectable().then_some(index))
+            .or_else(|| {
+                entries
+                    .iter()
+                    .enumerate()
+                    .take(index)
+                    .rev()
+                    .find_map(|(index, entry)| entry.is_selectable().then_some(index))
+            })
+    } else {
+        entries
+            .iter()
+            .enumerate()
+            .take(index)
+            .rev()
+            .find_map(|(index, entry)| entry.is_selectable().then_some(index))
+            .or_else(|| {
+                entries
+                    .iter()
+                    .enumerate()
+                    .skip(index.saturating_add(1))
+                    .find_map(|(index, entry)| entry.is_selectable().then_some(index))
+            })
     }
 }
 

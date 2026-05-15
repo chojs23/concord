@@ -44,6 +44,7 @@ use crate::{
         MessageInfo, MessageKind, MessageSnapshotInfo, MessageState, MutualGuildInfo,
         NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
         ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+        VoiceStateInfo,
     },
     tui::{
         format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
@@ -1291,6 +1292,251 @@ fn dm_channel_pane_shows_loaded_unread_message_count_badge() {
 
     assert!(channel_rows.iter().any(|row| row.contains("(5) @ new")));
     assert!(!channel_rows.iter().any(|row| row.contains("(1) @ new")));
+}
+
+#[test]
+fn channel_pane_shows_voice_participants_under_voice_channel() {
+    let guild_id = Id::new(1);
+    let text_id = Id::new(9);
+    let voice_id = Id::new(10);
+    let empty_voice_id = Id::new(11);
+    let alice = Id::new(20);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: text_id,
+                parent_id: None,
+                position: Some(0),
+                last_message_id: None,
+                name: "general".to_owned(),
+                kind: "GuildText".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: voice_id,
+                parent_id: None,
+                position: Some(2),
+                last_message_id: None,
+                name: "Lobby".to_owned(),
+                kind: "GuildVoice".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                channel_id: empty_voice_id,
+                parent_id: None,
+                position: Some(1),
+                last_message_id: None,
+                name: "Empty".to_owned(),
+                kind: "GuildVoice".to_owned(),
+                message_count: None,
+                total_message_sent: None,
+                thread_archived: None,
+                thread_locked: None,
+                thread_pinned: None,
+                recipients: None,
+                permission_overwrites: Vec::new(),
+            },
+        ],
+        members: vec![MemberInfo {
+            user_id: alice,
+            display_name: "Alice".to_owned(),
+            username: Some("alice".to_owned()),
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+        }],
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id,
+            channel_id: Some(voice_id),
+            user_id: alice,
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+        },
+    });
+    state.confirm_selected_guild();
+    state.set_channel_view_height(10);
+
+    let backend = TestBackend::new(40, 9);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .expect("draw should succeed");
+
+    let buffer = terminal.backend().buffer();
+    let channel_rows = (0..buffer.area.height)
+        .map(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, row)].symbol().to_owned())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    let lobby_row = (0..buffer.area.height)
+        .find(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, *row)].symbol().to_owned())
+                .collect::<String>()
+                .contains("Lobby")
+        })
+        .expect("populated voice row should render");
+    let lobby_icon_col = (0..buffer.area.width)
+        .find(|col| buffer[(*col, lobby_row)].symbol() == "🔊")
+        .expect("populated voice row should use loud speaker icon");
+    assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Cyan);
+
+    let empty_row = (0..buffer.area.height)
+        .find(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, *row)].symbol().to_owned())
+                .collect::<String>()
+                .contains("Empty")
+        })
+        .expect("empty voice row should render");
+    let empty_icon_col = (0..buffer.area.width)
+        .find(|col| buffer[(*col, empty_row)].symbol() == "🔈")
+        .expect("empty voice row should use quiet speaker icon");
+    assert_eq!(buffer[(empty_icon_col, empty_row)].fg, DIM);
+
+    assert!(
+        channel_rows.iter().any(|row| row.contains("Alice")),
+        "{}",
+        channel_rows.join("\n")
+    );
+
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(1);
+    state.scroll_focused_pane_viewport_down();
+    state.scroll_focused_pane_viewport_down();
+    let backend = TestBackend::new(40, 4);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .expect("draw should succeed");
+
+    let buffer = terminal.backend().buffer();
+    let channel_rows = (0..buffer.area.height)
+        .map(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, row)].symbol().to_owned())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !channel_rows.iter().any(|row| row.contains("Alice")),
+        "{}",
+        channel_rows.join("\n")
+    );
+    let lobby_row = (0..buffer.area.height)
+        .find(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, *row)].symbol().to_owned())
+                .collect::<String>()
+                .contains("Lobby")
+        })
+        .expect("voice row should be visible");
+    let lobby_icon_col = (0..buffer.area.width)
+        .find(|col| buffer[(*col, lobby_row)].symbol() == "🔊")
+        .expect("populated voice row should keep loud speaker icon");
+    assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Cyan);
+}
+
+#[test]
+fn channel_pane_filter_width_uses_filtered_entry_count() {
+    let guild_id = Id::new(1);
+    let matching_name = "abcdefghijklmnopqrstuvwxzy";
+    let channels = (0..12)
+        .map(|index| ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id: Id::new(10 + index),
+            parent_id: None,
+            position: Some(i32::try_from(index).expect("test index should fit i32")),
+            last_message_id: None,
+            name: if index == 0 {
+                matching_name.to_owned()
+            } else {
+                format!("other-{index}")
+            },
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        })
+        .collect();
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels,
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+    state.open_channel_pane_filter();
+    for value in matching_name.chars() {
+        state.push_channel_pane_filter_char(value);
+    }
+    state.set_channel_view_height(10);
+
+    let backend = TestBackend::new(32, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .expect("draw should succeed");
+
+    let buffer = terminal.backend().buffer();
+    let channel_rows = (0..buffer.area.height)
+        .map(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, row)].symbol().to_owned())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        channel_rows.iter().any(|row| row.contains(matching_name)),
+        "{}",
+        channel_rows.join("\n")
+    );
+    assert!(
+        !channel_rows.iter().any(|row| row.contains("┃")),
+        "{}",
+        channel_rows.join("\n")
+    );
 }
 
 #[test]

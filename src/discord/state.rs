@@ -9,6 +9,7 @@ mod notifications;
 mod permissions;
 mod profiles;
 mod reads;
+mod voice;
 
 /// Typing indicators stay visible for this long after the latest TYPING_START
 /// from a given user. This matches Discord's documented 10-second window so the
@@ -29,6 +30,7 @@ pub use notifications::ChannelUnreadState;
 use notifications::{GuildNotificationSettingsState, MessageNotificationKind};
 use profiles::{ProfileRoleIds, UserProfileCacheKey};
 use reads::ChannelReadState;
+pub use voice::VoiceParticipantState;
 
 use super::{
     ActivityInfo, AppEvent, CustomEmojiInfo, FriendStatus, GuildFolder, PresenceStatus,
@@ -59,6 +61,7 @@ pub struct DiscordState {
     guild_details: GuildDetailCache,
     profiles: ProfileCache,
     presence: PresenceCache,
+    voice: VoiceStateCache,
     session: SessionState,
     notifications: NotificationCache,
 }
@@ -139,6 +142,11 @@ struct PresenceCache {
 }
 
 #[derive(Clone, Debug, Default)]
+struct VoiceStateCache {
+    states: BTreeMap<(Id<GuildMarker>, Id<UserMarker>), voice::VoiceState>,
+}
+
+#[derive(Clone, Debug, Default)]
 struct SessionState {
     /// Snowflake of the authenticated user. Captured from the READY payload
     /// and consulted by `can_view_channel` to look up our own roles and
@@ -185,6 +193,7 @@ pub struct NavigationSnapshot {
     guild_details: GuildDetailCache,
     profiles: ProfileCache,
     presence: PresenceCache,
+    voice: VoiceStateCache,
     session: SessionState,
     notification_settings: BTreeMap<Id<GuildMarker>, GuildNotificationSettingsState>,
     private_notification_settings: Option<GuildNotificationSettingsState>,
@@ -273,6 +282,7 @@ impl DiscordSnapshot {
         state.guild_details = self.navigation.guild_details.clone();
         state.profiles = self.navigation.profiles.clone();
         state.presence = self.navigation.presence.clone();
+        state.voice = self.navigation.voice.clone();
         state.session = self.navigation.session.clone();
         state.message_cache = self.message.message_cache.clone();
         state.notifications = NotificationCache {
@@ -311,6 +321,7 @@ pub struct DiscordStateCacheCounts {
     pub user_activities: usize,
     pub typing_users: usize,
     pub typing_channels: usize,
+    pub voice_states: usize,
     pub read_states: usize,
     pub notification_settings: usize,
     pub has_private_notification_settings: bool,
@@ -326,7 +337,7 @@ impl DiscordStateCacheCounts {
              custom_emojis={} custom_emoji_guilds={} guild_folders={} user_profiles={} \
              fetched_notes={} relationships={} guild_user_presences={} \
              guild_user_activities={} user_presences={} user_activities={} typing_users={} \
-             typing_channels={} read_states={} notification_settings={} \
+             typing_channels={} voice_states={} read_states={} notification_settings={} \
              has_private_notification_settings={}",
             self.guilds,
             self.channels,
@@ -353,6 +364,7 @@ impl DiscordStateCacheCounts {
             self.user_activities,
             self.typing_users,
             self.typing_channels,
+            self.voice_states,
             self.read_states,
             self.notification_settings,
             self.has_private_notification_settings,
@@ -374,6 +386,7 @@ impl DiscordState {
             guild_details: GuildDetailCache::default(),
             profiles: ProfileCache::default(),
             presence: PresenceCache::default(),
+            voice: VoiceStateCache::default(),
             session: SessionState::default(),
             notifications: NotificationCache::default(),
         }
@@ -416,6 +429,7 @@ impl DiscordState {
             user_activities: self.presence.user_activities.len(),
             typing_users: self.presence.typing.values().map(BTreeMap::len).sum(),
             typing_channels: self.presence.typing.len(),
+            voice_states: self.voice.states.len(),
             read_states: self.notifications.read_states.len(),
             notification_settings: self.notifications.notification_settings.len(),
             has_private_notification_settings: self
@@ -433,6 +447,7 @@ impl DiscordState {
                 guild_details: self.guild_details.clone(),
                 profiles: self.profiles.clone(),
                 presence: self.presence.clone(),
+                voice: self.voice.clone(),
                 session: self.session.clone(),
                 notification_settings: self.notifications.notification_settings.clone(),
                 private_notification_settings: self
@@ -460,6 +475,7 @@ impl DiscordState {
             self.guild_details = snapshot.navigation.guild_details.clone();
             self.profiles = snapshot.navigation.profiles.clone();
             self.presence = snapshot.navigation.presence.clone();
+            self.voice = snapshot.navigation.voice.clone();
             self.session = snapshot.navigation.session.clone();
             self.notifications.notification_settings =
                 snapshot.navigation.notification_settings.clone();
@@ -522,6 +538,7 @@ impl DiscordState {
             | AppEvent::GuildMemberRemove { .. }
             | AppEvent::PresenceUpdate { .. }
             | AppEvent::UserPresenceUpdate { .. }
+            | AppEvent::VoiceStateUpdate { .. }
             | AppEvent::TypingStart { .. }
             | AppEvent::GuildFoldersUpdate { .. }
             | AppEvent::UserNoteLoaded { .. }
@@ -564,6 +581,7 @@ impl DiscordState {
                 roles,
                 emojis,
             } => {
+                self.remove_voice_states_for_guild(*guild_id);
                 self.navigation.guilds.insert(
                     *guild_id,
                     GuildState {
@@ -656,6 +674,7 @@ impl DiscordState {
                 self.presence
                     .guild_user_activities
                     .retain(|(presence_guild_id, _), _| presence_guild_id != guild_id);
+                self.remove_voice_states_for_guild(*guild_id);
                 self.profiles
                     .profile_role_ids
                     .retain(|(profile_guild_id, _), _| profile_guild_id != guild_id);
@@ -700,6 +719,7 @@ impl DiscordState {
                 self.message_cache
                     .message_author_role_ids
                     .retain(|(message_channel_id, _), _| message_channel_id != channel_id);
+                self.remove_voice_states_for_channel(*channel_id);
             }
             AppEvent::MessageCreate {
                 guild_id,
@@ -910,6 +930,7 @@ impl DiscordState {
                     entry.remove(user_id);
                 }
                 self.decrement_guild_member_count(*guild_id);
+                self.remove_voice_state(*guild_id, *user_id);
             }
             AppEvent::PresenceUpdate {
                 guild_id,
@@ -937,6 +958,13 @@ impl DiscordState {
                 self.presence.user_presences.insert(*user_id, *status);
                 self.update_user_activities(*user_id, activities);
                 self.update_channel_recipient_presence(*user_id, *status);
+            }
+            AppEvent::VoiceStateUpdate { state } => {
+                if let Some(member) = state.member.as_ref() {
+                    self.upsert_guild_member(state.guild_id, member);
+                    self.refresh_message_author_display_name(state.guild_id, member);
+                }
+                self.update_voice_state(state);
             }
             AppEvent::TypingStart {
                 channel_id,

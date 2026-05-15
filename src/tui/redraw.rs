@@ -175,6 +175,7 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
                     state.channel_unread(channel.id),
                     state.channel_unread_message_count(channel.id)
                 ),
+                state::ChannelPaneEntry::VoiceParticipant { .. } => format!("{entry:?}"),
                 state::ChannelPaneEntry::CategoryHeader { .. } => format!("{entry:?}"),
             })
             .collect(),

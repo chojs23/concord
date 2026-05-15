@@ -43,6 +43,10 @@ impl ChannelState {
         matches!(self.kind.as_str(), "forum" | "GuildForum")
     }
 
+    pub fn is_voice(&self) -> bool {
+        matches!(self.kind.as_str(), "voice" | "GuildVoice")
+    }
+
     pub fn is_private_thread(&self) -> bool {
         matches!(self.kind.as_str(), "GuildPrivateThread" | "private-thread")
     }

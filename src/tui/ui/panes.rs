@@ -25,7 +25,10 @@ use super::{
     active_text_style,
     activity::{ActivityLeading, ActivityRender, build_activity_render},
     channel_prefix, channel_unread_decoration, dm_presence_dot_span, highlight_style,
-    layout::{composer_inner_width, panel_scrollbar_area, prefixed_composer_input},
+    layout::{
+        composer_inner_width, panel_scrollbar_area, prefixed_composer_input,
+        vertical_scrollbar_visible,
+    },
     panel_block, panel_block_line, panel_content_height, render_vertical_scrollbar,
     selection_marker, styled_list_item,
     types::{ACCENT, DIM, EmojiImage, MessageAreas},
@@ -299,8 +302,17 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
         (channels_area, None)
     };
 
+    let channel_entry_count = state.channel_pane_filtered_entries().len();
+    let all_channel_entries = state.channel_pane_entries();
     let entries = state.visible_channel_pane_entries();
-    let max_width = list_area.width.saturating_sub(8) as usize;
+    let scrollbar_width = usize::from(vertical_scrollbar_visible(
+        list_area,
+        list_area.height as usize,
+        channel_entry_count,
+    ));
+    let max_width = (list_area.width as usize)
+        .saturating_sub(selection_marker(false).content.width())
+        .saturating_sub(scrollbar_width);
     let horizontal_scroll = state.channel_horizontal_scroll();
     let selected = state.focused_channel_selection();
     let items: Vec<ListItem> = entries
@@ -334,10 +346,21 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                     }
                     ChannelPaneEntry::Channel { state, branch } => {
                         let branch_prefix = branch.prefix();
-                        let prefix_span = dm_presence_dot_span(state).unwrap_or_else(|| {
-                            Span::styled(channel_prefix(&state.kind), Style::default().fg(DIM))
-                        });
-                        let prefix_width = prefix_span.content.width();
+                        let dm_prefix_span = dm_presence_dot_span(state);
+                        let channel_prefix = channel_prefix(&state.kind);
+                        let prefix_width = dm_prefix_span
+                            .as_ref()
+                            .map_or_else(|| channel_prefix.width(), |span| span.content.width());
+                        let populated_voice_channel = state.is_voice()
+                            && all_channel_entries.windows(2).any(|window| {
+                                matches!(
+                                    (&window[0], &window[1]),
+                                    (
+                                        ChannelPaneEntry::Channel { state: channel, .. },
+                                        ChannelPaneEntry::VoiceParticipant { .. }
+                                    ) if channel.id == state.id
+                                )
+                            });
                         let base_style = active_text_style(is_active, Style::default());
                         let is_muted = dashboard.channel_notification_muted(state.id);
                         let unread = dashboard.sidebar_channel_unread(state.id);
@@ -377,7 +400,14 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                         if let Some(badge) = badge {
                             spans.push(badge);
                         }
-                        spans.push(prefix_span);
+                        if let Some(prefix_span) = dm_prefix_span {
+                            spans.push(prefix_span);
+                        } else if populated_voice_channel {
+                            spans.push(Span::styled("🔊", Style::default().fg(Color::Cyan)));
+                            spans.push(Span::styled(" ", Style::default().fg(DIM)));
+                        } else {
+                            spans.push(Span::styled(channel_prefix, Style::default().fg(DIM)));
+                        }
                         spans.push(Span::styled(
                             truncate_display_width_from(
                                 &state.name,
@@ -387,6 +417,33 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                             name_style,
                         ));
                         ListItem::new(Line::from(spans))
+                    }
+                    ChannelPaneEntry::VoiceParticipant {
+                        participant,
+                        parent_branch,
+                        ..
+                    } => {
+                        let branch_prefix = parent_branch.participant_prefix();
+                        let mut label = participant.display_name.clone();
+                        if participant.mute || participant.self_mute {
+                            label.push_str(" 🔇");
+                        }
+                        if participant.deaf || participant.self_deaf {
+                            label.push_str(" 🎧");
+                        }
+                        let prefix = "  • ";
+                        let label_width = max_width
+                            .saturating_sub(branch_prefix.width())
+                            .saturating_sub(prefix.width());
+                        ListItem::new(Line::from(vec![
+                            selection_marker(false),
+                            Span::styled(branch_prefix, Style::default().fg(DIM)),
+                            Span::styled(prefix, Style::default().fg(DIM)),
+                            Span::styled(
+                                truncate_display_width_from(&label, horizontal_scroll, label_width),
+                                Style::default().fg(DIM),
+                            ),
+                        ]))
                     }
                 },
                 is_selected,
@@ -414,7 +471,7 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
         list_area,
         state.channel_scroll(),
         list_area.height as usize,
-        state.channel_pane_entries().len(),
+        channel_entry_count,
     );
 }
 

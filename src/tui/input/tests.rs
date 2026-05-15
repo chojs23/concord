@@ -2878,8 +2878,8 @@ fn assert_selected_folder_collapsed(state: &DashboardState, expected: bool) {
 fn assert_selected_channel_category_collapsed(state: &DashboardState, expected: bool) {
     let entries = state.channel_pane_entries();
     assert!(matches!(
-        entries[0],
-        ChannelPaneEntry::CategoryHeader { collapsed, .. } if collapsed == expected
+        &entries[0],
+        ChannelPaneEntry::CategoryHeader { collapsed, .. } if *collapsed == expected
     ));
 }
 

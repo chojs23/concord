@@ -28,6 +28,7 @@ use super::{
     presence::parse_presence_entry,
     relationships::parse_relationship_entry,
     shared::{display_name_from_parts_or_unknown, parse_id, parse_status},
+    voice::parse_guild_voice_states,
 };
 
 /// User-account READY embeds the full guild list under `d.guilds`. Bots get a
@@ -89,6 +90,7 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
             if let Some(event) = parse_guild_create(guild) {
                 events.push(event);
             }
+            events.extend(parse_guild_voice_states(guild));
         }
     }
     events.extend(parse_merged_member_events(data));
@@ -289,6 +291,7 @@ fn parse_supplemental_guild_events(data: &Value) -> Vec<AppEvent> {
                 },
             ));
         }
+        events.extend(parse_guild_voice_states(guild));
     }
     events
 }
