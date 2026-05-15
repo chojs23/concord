@@ -2915,6 +2915,34 @@ fn message_content_highlights_other_user_mentions_with_softer_color() {
 }
 
 #[test]
+fn message_content_highlights_detected_urls() {
+    let message = message_with_content(Some(
+        "open https://thisis.com/a.test?with=querystrings#page now".to_owned(),
+    ));
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+    assert_eq!(
+        line_texts(&lines),
+        vec!["open https://thisis.com/a.test?with=querystrings#page now"]
+    );
+    assert_eq!(
+        lines[0].spans()[1].content.as_ref(),
+        "https://thisis.com/a.test?with=querystrings#page"
+    );
+    assert_eq!(
+        lines[0].spans()[1].style.fg,
+        mention_highlight_style(TextHighlightKind::Url).fg
+    );
+    assert!(
+        lines[0].spans()[1]
+            .style
+            .add_modifier
+            .contains(Modifier::UNDERLINED)
+    );
+}
+
+#[test]
 fn message_content_highlights_everyone_mentions_for_current_user() {
     let message = message_with_content(Some("ping @everyone".to_owned()));
     let mut state = DashboardState::new();
