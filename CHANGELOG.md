@@ -2,39 +2,73 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.1] - 2026-05-15
+
+### Bug Fixes
+
+- Hydrate new forum post previews and make forum unread/read behavior match normal channels by @chojs23
+
+### Documentation
+
+- Update readme by @chojs23
+- Add markdown example image by @chojs23
+
+### Features
+
+- Add already reacted emojis to top of picker list (attempt #2) (#64) in [#64](https://github.com/chojs23/concord/pull/64) by @nexxai
+- Minimal markdown support by @chojs23
+- Render voice channel participations by @chojs23
+- Show live indicator for streaming voice participants by @chojs23
+
+### Miscellaneous Tasks
+
+- Add some comment for constants by @chojs23
+
+### Performance
+
+- Bound discord caches and split snapshot into selective areas by @chojs23
+
+### Refactor
+
+- Split DiscordState tests by @chojs23
+
 ## [1.4.0] - 2026-05-14
 
 ### Bug Fixes
 
-- Update channel pane search and server header behavior
-- Use XDG_CONFIG_HOME env for mac
-- Usernames (#60)
-- Fix visible member profile requests to follow rendered member rows
-- Fix member pane emoji width overflow
-- Keep timestamp-only embeds
-- Preserve embed markdown details
-- Remove r key reaction shortcut
-- Modify image viewer size and allign image centered
-- Clarify composer edit and reply modes
-- Fix channel pane mouse row offset after guild header
-- Align message action menu shortcuts with message pane shortcuts
+- Update channel pane search and server header behavior by @chojs23
+- Use XDG_CONFIG_HOME env for mac by @chojs23
+- Usernames (#60) in [#60](https://github.com/chojs23/concord/pull/60) by @lisk77
+- Fix visible member profile requests to follow rendered member rows by @chojs23
+- Fix member pane emoji width overflow by @chojs23
+- Keep timestamp-only embeds by @chojs23
+- Preserve embed markdown details by @chojs23
+- Remove r key reaction shortcut by @chojs23
+- Modify image viewer size and allign image centered by @chojs23
+- Clarify composer edit and reply modes by @chojs23
+- Fix channel pane mouse row offset after guild header by @chojs23
+- Align message action menu shortcuts with message pane shortcuts by @chojs23
 
 ### Documentation
 
-- Update readme for message shortcut
+- Update readme for message shortcut by @chojs23
 
 ### Features
 
-- Expanding support for embedded content (#65)
-- Add toast alarm
+- Expanding support for embedded content (#65) in [#65](https://github.com/chojs23/concord/pull/65) by @nexxai
+- Add toast alarm by @chojs23
 
 ### Refactor
 
-- Centralize display-name
-- Remove configurable keybindings (#71)
-- Remove redundant preview preset
-- Refactor keyboard shortcuts
+- Centralize display-name by @chojs23
+- Remove configurable keybindings (#71) in [#71](https://github.com/chojs23/concord/pull/71) by @chojs23
+- Remove redundant preview preset by @chojs23
+- Refactor keyboard shortcuts by @chojs23
 
+
+### New Contributors
+
+- @SeniorMars made their first contribution in [#57](https://github.com/chojs23/concord/pull/57)
 ## [1.3.3] - 2026-05-13
 
 ### Bug Fixes
