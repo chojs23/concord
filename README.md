@@ -209,16 +209,16 @@ shortcuts:
 
 Message shortcuts:
 
-| Shortcut | Action       | Description                                               |
-| -------- | ------------ | --------------------------------------------------------- |
-| `y`      | Copy         | Copy the selected message text and show a short toast      |
-| `r`      | React        | Open the reaction picker for the selected message          |
-| `R`      | Reply        | Start a reply to the selected message                     |
-| `d`      | Delete       | Open a delete confirmation before deleting the message     |
-| `e`      | Edit         | Start editing the selected message when editing is allowed |
-| `v`      | View image   | Open the selected message's image viewer                   |
-| `p`      | Profile      | Open the selected message author's profile                 |
-| `P`      | Pin / unpin  | Open a pin or unpin confirmation for the selected message  |
+| Shortcut | Action      | Description                                                |
+| -------- | ----------- | ---------------------------------------------------------- |
+| `y`      | Copy        | Copy the selected message text and show a short toast      |
+| `r`      | React       | Open the reaction picker for the selected message          |
+| `R`      | Reply       | Start a reply to the selected message                      |
+| `d`      | Delete      | Open a delete confirmation before deleting the message     |
+| `e`      | Edit        | Start editing the selected message when editing is allowed |
+| `v`      | View image  | Open the selected message's image viewer                   |
+| `p`      | Profile     | Open the selected message author's profile                 |
+| `P`      | Pin / unpin | Open a pin or unpin confirmation for the selected message  |
 
 Server actions:
 
@@ -242,11 +242,14 @@ number key directly shows and focuses it again.
 #### Composer
 
 You can paste copied files into the composer to attach them. Pending uploads
-are shown above the input before sending, and `Ctrl+Backspace` removes the last
-pending attachment.
+are shown above the input before sending.
 
-Use `Ctrl+Left` / `Ctrl+Right` to jump the cursor by word.
-Use `Ctrl+c` to clear the current draft.
+| Shortcut                  | Action            | Description                                        |
+| ------------------------- | ----------------- | -------------------------------------------------- |
+| `Ctrl+e`                  | open $EDITOR      | Open $EDITOR on the current draft for long editing |
+| `Ctrl+c`                  | clear             | Clear current draft                                |
+| `Ctrl+Left`/ `Ctrl+Right` | Jump word         | Jump the cursor by word                            |
+| `Ctrl+Backspace`          | Detach attachment | Removes the last pending attachment                |
 
 #### Mention picker
 
