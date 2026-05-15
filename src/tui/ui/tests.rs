@@ -1375,10 +1375,11 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
             channel_id: Some(voice_id),
             user_id: alice,
             member: None,
-            deaf: false,
-            mute: false,
+            deaf: true,
+            mute: true,
             self_deaf: false,
             self_mute: false,
+            self_stream: true,
         },
     });
     state.confirm_selected_guild();
@@ -1428,6 +1429,25 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         channel_rows.iter().any(|row| row.contains("Alice")),
         "{}",
         channel_rows.join("\n")
+    );
+    assert!(
+        channel_rows.iter().any(|row| row.contains("LIVE")),
+        "{}",
+        channel_rows.join("\n")
+    );
+    assert!(
+        channel_rows.iter().any(|row| row.contains("Alice")
+            && row.contains("LIVE")
+            && row.contains("🔇")
+            && row.contains("🎧")
+            && row.find("LIVE") < row.find("🔇")
+            && row.find("🔇") < row.find("🎧")),
+        "{}",
+        channel_rows.join("\n")
+    );
+    assert!(
+        (0..buffer.area.height)
+            .any(|row| (0..buffer.area.width).any(|col| buffer[(col, row)].symbol() == "🔴"))
     );
 
     state.focus_pane(FocusPane::Channels);

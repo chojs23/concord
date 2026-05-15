@@ -425,6 +425,9 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                     } => {
                         let branch_prefix = parent_branch.participant_prefix();
                         let mut label = participant.display_name.clone();
+                        if participant.self_stream {
+                            label.push_str(" 🔴 LIVE");
+                        }
                         if participant.mute || participant.self_mute {
                             label.push_str(" 🔇");
                         }

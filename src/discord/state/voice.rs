@@ -14,6 +14,7 @@ pub struct VoiceParticipantState {
     pub mute: bool,
     pub self_deaf: bool,
     pub self_mute: bool,
+    pub self_stream: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -24,6 +25,7 @@ pub(super) struct VoiceState {
     mute: bool,
     self_deaf: bool,
     self_mute: bool,
+    self_stream: bool,
 }
 
 impl DiscordState {
@@ -49,6 +51,7 @@ impl DiscordState {
                 mute: state.mute,
                 self_deaf: state.self_deaf,
                 self_mute: state.self_mute,
+                self_stream: state.self_stream,
             })
             .collect();
         participants.sort_by(|left, right| {
@@ -72,6 +75,7 @@ impl DiscordState {
                     mute: state.mute,
                     self_deaf: state.self_deaf,
                     self_mute: state.self_mute,
+                    self_stream: state.self_stream,
                 },
             );
         } else {

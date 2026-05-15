@@ -165,6 +165,7 @@ pub struct VoiceStateInfo {
     pub mute: bool,
     pub self_deaf: bool,
     pub self_mute: bool,
+    pub self_stream: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -59,5 +59,9 @@ fn parse_voice_state_info(
             .get("self_mute")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        self_stream: value
+            .get("self_stream")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }

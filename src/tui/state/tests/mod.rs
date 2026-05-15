@@ -8176,6 +8176,7 @@ fn state_with_voice_channel_participant() -> DashboardState {
             mute: false,
             self_deaf: false,
             self_mute: false,
+            self_stream: false,
         },
     });
     state.confirm_selected_guild();

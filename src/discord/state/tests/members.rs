@@ -132,12 +132,12 @@ fn tracks_voice_participants_join_move_and_leave() {
             mute: false,
             self_deaf: false,
             self_mute: true,
+            self_stream: true,
         },
     });
-    assert_eq!(
-        state.voice_participants_for_channel(guild_id, first_voice)[0].display_name,
-        "Alice"
-    );
+    let first_voice_participants = state.voice_participants_for_channel(guild_id, first_voice);
+    assert_eq!(first_voice_participants[0].display_name, "Alice");
+    assert!(first_voice_participants[0].self_stream);
 
     state.apply_event(&AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo {
@@ -149,6 +149,7 @@ fn tracks_voice_participants_join_move_and_leave() {
             mute: false,
             self_deaf: false,
             self_mute: false,
+            self_stream: false,
         },
     });
     assert!(
@@ -171,6 +172,7 @@ fn tracks_voice_participants_join_move_and_leave() {
             mute: false,
             self_deaf: false,
             self_mute: false,
+            self_stream: false,
         },
     });
     assert!(
@@ -223,6 +225,7 @@ fn guild_create_replaces_cached_voice_state_snapshot() {
             mute: false,
             self_deaf: false,
             self_mute: false,
+            self_stream: false,
         },
     });
     assert_eq!(

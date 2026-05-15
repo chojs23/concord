@@ -171,6 +171,7 @@ mod tests {
                     "mute": true,
                     "self_deaf": false,
                     "self_mute": true,
+                    "self_stream": true,
                     "member": {
                         "user": {
                             "id": "20",
@@ -193,6 +194,7 @@ mod tests {
                     && state.user_id == Id::new(20)
                     && state.mute
                     && state.self_mute
+                    && state.self_stream
                     && state.member.as_ref().is_some_and(|member|
                         member.display_name == "Alice Nick" && member.role_ids == vec![Id::new(40)]
                     )
@@ -233,7 +235,8 @@ mod tests {
                     "channels": [],
                     "voice_states": [{
                         "channel_id": "30",
-                        "user_id": "20"
+                        "user_id": "20",
+                        "self_stream": true
                     }]
                 }
             })
@@ -250,6 +253,7 @@ mod tests {
                 if state.guild_id == Id::new(10)
                     && state.channel_id == Some(Id::new(30))
                     && state.user_id == Id::new(20)
+                    && state.self_stream
         )));
     }
 
