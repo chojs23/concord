@@ -39,6 +39,7 @@ mod options;
 mod pane_filter;
 mod polls;
 mod popups;
+pub mod presence_picker;
 mod presentation;
 mod reactions;
 mod scroll;
@@ -52,7 +53,7 @@ use message_render::{add_literal_mention_highlights, normalize_text_highlights};
 use pane_filter::PaneFilterState;
 use popups::{
     ChannelLeaderActionState, GuildLeaderActionState, ImageViewerState, MemberLeaderActionState,
-    UserProfilePopupState,
+    PresencePickerState, UserProfilePopupState,
 };
 #[cfg(test)]
 use scroll::clamp_list_scroll;
@@ -262,6 +263,8 @@ pub struct DashboardState {
     toast_message: Option<ToastMessage>,
     open_composer_in_editor_requested: bool,
     copy_message_content_requested: Option<String>,
+    presence_picker: Option<PresencePickerState>,
+    user_presence_override: Option<PresenceStatus>,
     leader_mode: Option<LeaderMode>,
     channel_switcher: Option<ChannelSwitcherState>,
     guild_pane_filter: Option<PaneFilterState>,
@@ -397,6 +400,8 @@ impl DashboardState {
             toast_message: None,
             open_composer_in_editor_requested: false,
             copy_message_content_requested: None,
+            presence_picker: None,
+            user_presence_override: None,
             leader_mode: None,
             channel_switcher: None,
             guild_pane_filter: None,

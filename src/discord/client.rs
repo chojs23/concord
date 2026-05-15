@@ -191,6 +191,12 @@ impl DiscordClient {
             .map_err(|_| "gateway command channel closed".to_owned())
     }
 
+    pub fn update_presence(&self, status: &'static str) -> std::result::Result<(), String> {
+        self.gateway_commands_tx
+            .send(GatewayCommand::UpdatePresence { status })
+            .map_err(|_| "gateway command channel closed".to_owned())
+    }
+
     pub fn update_member_list_subscription(
         &self,
         guild_id: Id<GuildMarker>,
@@ -285,6 +291,10 @@ impl DiscordClient {
         targets: &[(Id<ChannelMarker>, Id<MessageMarker>)],
     ) -> Result<()> {
         self.rest.ack_channels(targets).await
+    }
+
+    pub async fn set_presence(&self, status: &str) -> Result<()> {
+        self.rest.set_presence(status).await
     }
 
     pub async fn load_message_history(
@@ -536,6 +546,7 @@ fn app_event_metric_name(event: &AppEvent) -> &'static str {
         AppEvent::ReadStateInit { .. } => "ReadStateInit",
         AppEvent::MessageAck { .. } => "MessageAck",
         AppEvent::GatewayClosed => "GatewayClosed",
+        AppEvent::SelfPresenceUpdate { .. } => "SelfPresenceUpdate",
     }
 }
 

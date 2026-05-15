@@ -1766,7 +1766,7 @@ fn user_profile_popup_styles_name_by_status() {
 
     let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Idle);
 
-    assert_eq!(lines[0].spans[0].style.fg, Some(Color::Rgb(180, 140, 0)));
+    assert_eq!(lines[0].spans[0].style.fg, Some(Color::Yellow));
     assert!(
         lines[0].spans[0]
             .style
@@ -3598,9 +3598,9 @@ fn leader_popup_renders_as_bottom_window() {
     assert!(rendered.contains("[2]"), "{rendered}");
     assert!(rendered.contains("[4]"), "{rendered}");
     assert!(rendered.contains("[a]"), "{rendered}");
-    assert!(rendered.contains("toggle Servers"), "{rendered}");
-    assert!(rendered.contains("toggle Channels"), "{rendered}");
-    assert!(rendered.contains("toggle Members"), "{rendered}");
+    assert!(rendered.contains("Toggle servers"), "{rendered}");
+    assert!(rendered.contains("Toggle channels"), "{rendered}");
+    assert!(rendered.contains("Toggle members"), "{rendered}");
     assert!(rendered.contains("Actions"), "{rendered}");
 }
 

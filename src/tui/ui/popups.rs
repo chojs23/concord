@@ -11,6 +11,7 @@ mod debug_log;
 mod image_viewer;
 mod options;
 mod polls;
+mod presence_picker;
 mod profile;
 mod reactions;
 mod toast;
@@ -40,6 +41,7 @@ pub(super) use options::render_options_popup;
 #[cfg(test)]
 pub(super) use polls::poll_vote_picker_lines;
 pub(super) use polls::render_poll_vote_picker;
+pub(super) use presence_picker::render_presence_picker;
 pub(super) use profile::{
     render_user_profile_popup, user_profile_popup_area, user_profile_popup_has_avatar,
     user_profile_popup_text_geometry, user_profile_popup_total_lines,

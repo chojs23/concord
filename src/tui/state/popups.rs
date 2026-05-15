@@ -153,3 +153,8 @@ impl ReactionUsersPopupState {
         self.scroll = self.scroll.min(self.max_scroll());
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PresencePickerState {
+    pub(super) selected: usize,
+}

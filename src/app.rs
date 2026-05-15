@@ -803,6 +803,21 @@ fn start_command_loop(
                             log_app_error("ack channels failed", &error);
                         }
                     }
+                    AppCommand::SetPresence { status } => {
+                        let value = match status {
+                            crate::discord::PresenceStatus::Online => "online",
+                            crate::discord::PresenceStatus::Idle => "idle",
+                            crate::discord::PresenceStatus::DoNotDisturb => "dnd",
+                            crate::discord::PresenceStatus::Offline => "invisible",
+                            crate::discord::PresenceStatus::Unknown => "online",
+                        };
+                        if let Err(error) = client.update_presence(value) {
+                            logging::error("app", &error);
+                        }
+                        if let Err(error) = client.set_presence(value).await {
+                            log_app_error("set presence (settings) failed", &error);
+                        }
+                    }
                 }
             });
         }

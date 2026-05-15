@@ -61,11 +61,12 @@ fn leader_popup_lines(state: &DashboardState, max_lines: usize) -> Vec<Line<'sta
         leader_action_lines(state)
     } else {
         vec![
-            leader_shortcut_line('1', "toggle Servers", true),
-            leader_shortcut_line('2', "toggle Channels", true),
-            leader_shortcut_line('4', "toggle Members", true),
+            leader_shortcut_line('1', "Toggle servers", true),
+            leader_shortcut_line('2', "Toggle channels", true),
+            leader_shortcut_line('4', "Toggle members", true),
             leader_shortcut_line('a', "Actions", true),
             leader_shortcut_line('o', "Options", true),
+            leader_shortcut_line('p', "Change presence", true),
             leader_shortcut_text_line("Space", "Switch channels", true),
         ]
     };

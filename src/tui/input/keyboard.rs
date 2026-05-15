@@ -75,6 +75,7 @@ enum LeaderAction {
     TogglePane(FocusPane),
     OpenActions,
     OpenOptions,
+    OpenPresencePicker,
     OpenChannelSwitcher,
     Close,
 }
@@ -271,6 +272,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
 
     if state.is_image_viewer_open() {
         return handle_image_viewer_key(state, key);
+    }
+
+    if state.is_presence_picker_open() {
+        return handle_presence_picker_key(state, key);
     }
 
     if state.is_user_profile_popup_open() {
@@ -472,6 +477,10 @@ fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCom
         LeaderAction::OpenActions => state.open_leader_actions_for_focused_target(),
         LeaderAction::OpenOptions => {
             state.open_options_popup();
+            state.close_leader();
+        }
+        LeaderAction::OpenPresencePicker => {
+            state.open_presence_picker();
             state.close_leader();
         }
         LeaderAction::OpenChannelSwitcher => state.open_channel_switcher(),
@@ -833,6 +842,26 @@ fn handle_pane_filter_key(
     }
 }
 
+fn handle_presence_picker_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    if matches!(key.code, KeyCode::Esc) {
+        state.close_presence_picker();
+        return None;
+    }
+    if let Some(action) = selection_action(key, SelectionKeySet::Navigation) {
+        match action {
+            SelectionAction::Next => state.move_presence_picker_down(),
+            SelectionAction::Previous => state.move_presence_picker_up(),
+        }
+        return None;
+    }
+    match key.code {
+        code if is_confirm_key(code) => return state.activate_presence_picker(),
+        KeyCode::Char(shortcut) => return state.activate_presence_picker_shortcut(shortcut),
+        _ => {}
+    }
+    None
+}
+
 fn handle_emoji_reaction_picker_key(
     state: &mut DashboardState,
     key: KeyEvent,
@@ -1031,6 +1060,7 @@ fn leader_action(key: KeyEvent) -> LeaderAction {
         KeyCode::Char('4') if is_shortcut_key(key) => LeaderAction::TogglePane(FocusPane::Members),
         KeyCode::Char('a') if is_shortcut_key(key) => LeaderAction::OpenActions,
         KeyCode::Char('o') if is_shortcut_key(key) => LeaderAction::OpenOptions,
+        KeyCode::Char('p') if is_shortcut_key(key) => LeaderAction::OpenPresencePicker,
         KeyCode::Char(' ') if is_shortcut_key(key) => LeaderAction::OpenChannelSwitcher,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => LeaderAction::Close,
         KeyCode::Esc => LeaderAction::Close,

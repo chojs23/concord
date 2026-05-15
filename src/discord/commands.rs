@@ -215,6 +215,9 @@ pub enum AppCommand {
     AckChannels {
         targets: Vec<(Id<ChannelMarker>, Id<MessageMarker>)>,
     },
+    SetPresence {
+        status: crate::discord::PresenceStatus,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

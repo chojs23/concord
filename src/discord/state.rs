@@ -7,6 +7,7 @@ mod members;
 mod messages;
 mod notifications;
 mod permissions;
+mod presence;
 mod profiles;
 mod reads;
 
@@ -59,6 +60,7 @@ pub struct DiscordState {
     guild_details: GuildDetailCache,
     profiles: ProfileCache,
     presence: PresenceCache,
+    self_presence: presence::PresenceState,
     session: SessionState,
     notifications: NotificationCache,
 }
@@ -374,6 +376,7 @@ impl DiscordState {
             guild_details: GuildDetailCache::default(),
             profiles: ProfileCache::default(),
             presence: PresenceCache::default(),
+            self_presence: presence::PresenceState::new(),
             session: SessionState::default(),
             notifications: NotificationCache::default(),
         }
@@ -522,6 +525,7 @@ impl DiscordState {
             | AppEvent::GuildMemberRemove { .. }
             | AppEvent::PresenceUpdate { .. }
             | AppEvent::UserPresenceUpdate { .. }
+            | AppEvent::SelfPresenceUpdate { .. }
             | AppEvent::TypingStart { .. }
             | AppEvent::GuildFoldersUpdate { .. }
             | AppEvent::UserNoteLoaded { .. }
@@ -1124,6 +1128,11 @@ impl DiscordState {
                     self.refresh_current_user_role_cache();
                 }
             }
+            AppEvent::SelfPresenceUpdate { status } => {
+                if self.self_presence.current == PresenceStatus::Unknown {
+                    self.self_presence.current = *status;
+                }
+            }
             AppEvent::CurrentUserCapabilities { .. } => {}
             AppEvent::ReadStateInit { entries } => {
                 self.notifications.read_states.clear();
@@ -1174,6 +1183,14 @@ impl DiscordState {
             | AppEvent::ActivateChannel { .. }
             | AppEvent::GatewayClosed => {}
         }
+    }
+
+    pub fn self_status(&self) -> PresenceStatus {
+        self.self_presence.current
+    }
+
+    pub fn set_self_status(&mut self, status: PresenceStatus) {
+        self.self_presence.current = status;
     }
 
     fn private_user_display_name(

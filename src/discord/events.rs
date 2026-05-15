@@ -509,6 +509,9 @@ pub enum AppEvent {
         user: String,
         user_id: Option<Id<UserMarker>>,
     },
+    SelfPresenceUpdate {
+        status: PresenceStatus,
+    },
     CurrentUserCapabilities {
         can_use_animated_custom_emojis: bool,
     },

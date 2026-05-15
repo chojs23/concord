@@ -265,6 +265,21 @@ impl DiscordRest {
         Ok(())
     }
 
+    pub async fn set_presence(&self, status: &str) -> Result<()> {
+        self.raw_http
+            .patch("https://discord.com/api/v9/users/@me/settings")
+            .header(AUTHORIZATION, &self.token)
+            .json(&json!({ "status": status }))
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("set presence request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| AppError::DiscordRequest(format!("set presence failed: {error}")))?;
+        Ok(())
+    }
+
     pub async fn ack_channels(
         &self,
         targets: &[(Id<ChannelMarker>, Id<MessageMarker>)],
