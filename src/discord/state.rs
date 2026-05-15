@@ -35,11 +35,17 @@ use super::{
     RelationshipInfo, UserProfileInfo, display_name::display_name_from_parts_or_unknown,
 };
 
+/// Maximum number of recent messages kept per channel in the normal message cache.
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL: usize = 200;
-const DEFAULT_MAX_WARM_MESSAGE_CHANNELS: usize = 3;
+/// Number of recently opened channels whose message bodies stay fully hydrated.
+const DEFAULT_MAX_WARM_MESSAGE_CHANNELS: usize = 10;
+/// Extra older-history window retained while the user scrolls above the newest messages.
 pub(super) const OLDER_HISTORY_EXTRA_WINDOW_MULTIPLIER: usize = 2;
+/// Maximum cached profile payloads kept for quick profile popup reopening.
 pub(super) const MAX_USER_PROFILE_CACHE_ENTRIES: usize = 256;
+/// Maximum cached user-note fetch results, including users with no note.
 pub(super) const MAX_FETCHED_NOTE_CACHE_ENTRIES: usize = 256;
+/// Number of recently selected guilds whose member lists stay fully cached.
 pub(super) const MAX_RECENT_MEMBER_GUILDS: usize = 3;
 
 pub(super) fn is_fallback_identity(username: Option<&str>, display_name: &str) -> bool {
