@@ -585,6 +585,9 @@ impl DashboardState {
                     channel_cursor_id = Some(channel_id);
                 }
             }
+            AppEvent::ChannelUpsert(channel) => {
+                self.record_thread_channel_upserted(channel);
+            }
             _ => {}
         }
         if apply_discord {
@@ -1306,6 +1309,31 @@ impl DashboardState {
         }
     }
 
+    fn record_thread_channel_upserted(&mut self, channel: &crate::discord::ChannelInfo) {
+        let is_thread = matches!(
+            channel.kind.as_str(),
+            "thread" | "GuildPublicThread" | "GuildPrivateThread" | "GuildNewsThread"
+        );
+        if !is_thread {
+            return;
+        }
+        let Some(parent_id) = channel.parent_id else {
+            return;
+        };
+        let Some(list) = self.forum_post_lists.get_mut(&parent_id) else {
+            return;
+        };
+        let id = channel.channel_id;
+        if list.active_post_ids.contains(&id) || list.archived_post_ids.contains(&id) {
+            return;
+        }
+        if channel.thread_archived == Some(true) {
+            list.archived_post_ids.insert(0, id);
+        } else {
+            list.active_post_ids.insert(0, id);
+        }
+    }
+
     fn record_forum_posts_loaded(
         &mut self,
         channel_id: Id<ChannelMarker>,
@@ -1496,6 +1524,7 @@ impl DashboardState {
     pub fn missing_thread_preview_load_requests(
         &self,
     ) -> Vec<(Id<ChannelMarker>, Id<MessageMarker>)> {
+        let mut seen = HashSet::new();
         self.visible_messages()
             .into_iter()
             .filter_map(|message| {
@@ -1506,6 +1535,19 @@ impl DashboardState {
                     .is_none()
                     .then_some((summary.channel_id, latest_message_id))
             })
+            .chain(
+                self.visible_forum_post_items()
+                    .into_iter()
+                    .filter_map(|post| {
+                        let latest_message_id = post.last_activity_message_id?;
+                        let missing_preview = post.preview_author.is_none()
+                            || post.preview_content.is_none()
+                            || post.preview_content.as_deref()
+                                == Some("<message content unavailable>");
+                        missing_preview.then_some((post.channel_id, latest_message_id))
+                    }),
+            )
+            .filter(|key| seen.insert(*key))
             .collect()
     }
 

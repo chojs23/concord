@@ -27,6 +27,34 @@ impl DiscordState {
         }
     }
 
+    pub fn forum_child_ack_targets(
+        &self,
+        forum_id: Id<ChannelMarker>,
+    ) -> Vec<(Id<ChannelMarker>, Id<MessageMarker>)> {
+        if !self
+            .navigation
+            .channels
+            .get(&forum_id)
+            .is_some_and(|channel| channel.is_forum())
+        {
+            return Vec::new();
+        }
+
+        self.navigation
+            .channels
+            .values()
+            .filter(|channel| {
+                channel.is_thread()
+                    && channel.parent_id == Some(forum_id)
+                    && self.can_view_channel(channel)
+            })
+            .filter_map(|channel| {
+                self.channel_ack_target(channel.id)
+                    .map(|message_id| (channel.id, message_id))
+            })
+            .collect()
+    }
+
     pub fn channel_last_acked_message_id(
         &self,
         channel_id: Id<ChannelMarker>,

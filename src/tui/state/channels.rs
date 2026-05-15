@@ -106,7 +106,8 @@ impl DashboardState {
         let active_channel_has_unread_snapshot = self.active_channel_id == Some(channel_id)
             && (self.unread_divider_last_acked_id.is_some() || self.pending_unread_anchor_scroll);
         let mark_as_read_enabled = active_channel_has_unread_snapshot
-            || self.discord.channel_ack_target(channel_id).is_some();
+            || self.discord.channel_ack_target(channel_id).is_some()
+            || (channel.is_forum() && !self.discord.forum_child_ack_targets(channel_id).is_empty());
         vec![
             ChannelActionItem {
                 kind: ChannelActionKind::LoadPinnedMessages,
@@ -352,7 +353,11 @@ impl DashboardState {
         let (mut pinned, mut rest): (Vec<_>, Vec<_>) = post_ids
             .iter()
             .filter_map(|post_id| self.discord.channel(*post_id))
-            .filter(|post| post.is_thread() && post.parent_id == Some(forum_channel_id))
+            .filter(|post| {
+                post.is_thread()
+                    && post.parent_id == Some(forum_channel_id)
+                    && self.discord.can_view_channel(post)
+            })
             .partition(|post| post.thread_pinned.unwrap_or(false));
         let by_last_message = |post: &&ChannelState| {
             std::cmp::Reverse(post.last_message_id.map(|id| id.get()).unwrap_or(0))
@@ -1130,7 +1135,11 @@ impl DashboardState {
         self.try_apply_unread_anchor_scroll();
 
         self.clamp_message_viewport();
-        self.queue_channel_ack(channel_id);
+        if is_forum {
+            self.queue_forum_acks(channel_id);
+        } else {
+            self.queue_channel_ack(channel_id);
+        }
 
         self.refresh_composer_emoji_candidates_for_current_query();
     }
@@ -1141,12 +1150,42 @@ impl DashboardState {
     /// "Mark as read" because activation already runs `queue_channel_ack` on its
     /// own.
     pub fn mark_channel_as_read(&mut self, channel_id: Id<ChannelMarker>) {
-        self.queue_channel_ack(channel_id);
+        if self
+            .discord
+            .channel(channel_id)
+            .is_some_and(|channel| channel.is_forum())
+        {
+            self.queue_forum_acks(channel_id);
+        } else {
+            self.queue_channel_ack(channel_id);
+        }
         if self.active_channel_id == Some(channel_id) {
             self.unread_divider_last_acked_id = None;
             self.pending_unread_anchor_scroll = false;
             self.clear_new_messages_marker();
         }
+    }
+
+    fn queue_forum_acks(&mut self, forum_id: Id<ChannelMarker>) {
+        let mut targets = Vec::new();
+        if let Some(message_id) = self.discord.channel_ack_target(forum_id) {
+            targets.push((forum_id, message_id));
+        }
+        targets.extend(self.discord.forum_child_ack_targets(forum_id));
+        if targets.is_empty() {
+            return;
+        }
+
+        for (channel_id, message_id) in targets.iter().copied() {
+            self.pending_read_acks.remove(&channel_id);
+            self.discord.apply_event(&AppEvent::MessageAck {
+                channel_id,
+                message_id,
+                mention_count: 0,
+            });
+        }
+        self.pending_commands
+            .push_back(AppCommand::AckChannels { targets });
     }
 
     /// Optimistic local ack + queued REST POST so the unread badge clears

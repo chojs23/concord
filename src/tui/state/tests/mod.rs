@@ -3530,6 +3530,53 @@ fn missing_thread_preview_requests_exact_latest_message_until_loaded() {
 }
 
 #[test]
+fn missing_thread_preview_requests_include_visible_forum_posts_with_unavailable_content() {
+    let mut state = state_with_forum_channel_posts();
+    state.push_event(AppEvent::SelectedMessageChannelChanged { channel_id: None });
+    state.push_event(AppEvent::ChannelUpsert(forum_thread_info(
+        Id::new(1),
+        Id::new(20),
+        30,
+        "welcome",
+        Some(300),
+        false,
+    )));
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(30),
+        message_id: Id::new(300),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("starter preview".to_owned()),
+        sticker_names: Vec::new(),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+
+    let post = state
+        .selected_forum_post_items()
+        .into_iter()
+        .find(|post| post.channel_id == Id::new(30))
+        .expect("forum post should be visible");
+    assert_eq!(
+        post.preview_content.as_deref(),
+        Some("<message content unavailable>")
+    );
+    assert_eq!(
+        state.missing_thread_preview_load_requests(),
+        vec![(Id::new(30), Id::new(300))]
+    );
+}
+
+#[test]
 fn thread_summary_suppresses_preview_when_channel_latest_is_newer_than_cache() {
     let mut state = state_with_thread_created_message();
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
@@ -5755,6 +5802,341 @@ fn forum_pinned_posts_float_to_top_preserving_relative_order() {
             ("middle", false),
             ("older", false),
         ]
+    );
+}
+
+#[test]
+fn forum_channel_upsert_inserts_new_thread_at_top_of_active_list() {
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![forum_channel_info(guild_id, forum_id)],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+
+    state.push_event(AppEvent::ForumPostsLoaded {
+        channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
+        offset: 0,
+        next_offset: 1,
+        posts: vec![forum_thread_info(
+            guild_id, forum_id, 30, "welcome", None, false,
+        )],
+        preview_messages: Vec::new(),
+        has_more: false,
+    });
+
+    state.push_event(AppEvent::ChannelUpsert(forum_thread_info(
+        guild_id,
+        forum_id,
+        31,
+        "brand-new",
+        None,
+        false,
+    )));
+
+    assert_eq!(
+        state
+            .selected_forum_post_items()
+            .iter()
+            .map(|post| post.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["brand-new", "welcome"]
+    );
+
+    // Re-emitting the same thread (e.g. via THREAD_LIST_SYNC) must not duplicate.
+    state.push_event(AppEvent::ChannelUpsert(forum_thread_info(
+        guild_id,
+        forum_id,
+        31,
+        "brand-new",
+        None,
+        false,
+    )));
+    assert_eq!(state.selected_forum_post_items().len(), 2);
+}
+
+#[test]
+fn forum_sidebar_unread_aggregates_unread_child_posts() {
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let thread_id = Id::new(31);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![
+            forum_channel_info(guild_id, forum_id),
+            forum_thread_info(
+                guild_id,
+                forum_id,
+                thread_id.get(),
+                "new post",
+                Some(300),
+                false,
+            ),
+        ],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![ReadStateInfo {
+            channel_id: thread_id,
+            last_acked_message_id: Some(Id::new(299)),
+            mention_count: 0,
+        }],
+    });
+
+    assert_eq!(
+        state.sidebar_channel_unread(forum_id),
+        ChannelUnreadState::Unread
+    );
+}
+
+#[test]
+fn forum_sidebar_unread_aggregates_child_notification_count() {
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let thread_id = Id::new(31);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![
+            forum_channel_info(guild_id, forum_id),
+            forum_thread_info(
+                guild_id,
+                forum_id,
+                thread_id.get(),
+                "new post",
+                Some(299),
+                false,
+            ),
+        ],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
+        settings: vec![GuildNotificationSettingsInfo {
+            guild_id: Some(guild_id),
+            message_notifications: Some(NotificationLevel::AllMessages),
+            muted: false,
+            mute_end_time: None,
+            suppress_everyone: false,
+            suppress_roles: false,
+            channel_overrides: Vec::new(),
+        }],
+    });
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![ReadStateInfo {
+            channel_id: thread_id,
+            last_acked_message_id: Some(Id::new(299)),
+            mention_count: 0,
+        }],
+    });
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(guild_id),
+        channel_id: thread_id,
+        message_id: Id::new(300),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("new post body".to_owned()),
+        sticker_names: Vec::new(),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+
+    assert_eq!(
+        state.sidebar_channel_unread(forum_id),
+        ChannelUnreadState::Notified(1)
+    );
+    assert_eq!(
+        state.sidebar_guild_unread(guild_id),
+        ChannelUnreadState::Notified(1)
+    );
+}
+
+#[test]
+fn opening_forum_channel_marks_unread_child_posts_as_read() {
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let thread_id = Id::new(31);
+    let mut state = DashboardState::new();
+    let mut forum = forum_channel_info(guild_id, forum_id);
+    forum.last_message_id = Some(Id::new(200));
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![
+            forum,
+            forum_thread_info(
+                guild_id,
+                forum_id,
+                thread_id.get(),
+                "new post",
+                Some(300),
+                false,
+            ),
+        ],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![
+            ReadStateInfo {
+                channel_id: forum_id,
+                last_acked_message_id: Some(Id::new(199)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: thread_id,
+                last_acked_message_id: Some(Id::new(299)),
+                mention_count: 0,
+            },
+        ],
+    });
+    state.confirm_selected_guild();
+
+    assert_eq!(
+        state.sidebar_channel_unread(forum_id),
+        ChannelUnreadState::Unread
+    );
+    state.confirm_selected_channel();
+
+    assert_eq!(
+        state.sidebar_channel_unread(forum_id),
+        ChannelUnreadState::Seen
+    );
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::AckChannels {
+            targets: vec![(forum_id, Id::new(200)), (thread_id, Id::new(300))]
+        }]
+    );
+}
+
+#[test]
+fn hidden_forum_child_posts_are_not_listed_or_acked() {
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let public_thread_id = Id::new(31);
+    let private_thread_id = Id::new(32);
+    let mut private_thread = forum_thread_info(
+        guild_id,
+        forum_id,
+        private_thread_id.get(),
+        "private post",
+        Some(400),
+        false,
+    );
+    private_thread.kind = "GuildPrivateThread".to_owned();
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![
+            forum_channel_info(guild_id, forum_id),
+            forum_thread_info(
+                guild_id,
+                forum_id,
+                public_thread_id.get(),
+                "public post",
+                Some(300),
+                false,
+            ),
+            private_thread.clone(),
+        ],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::ForumPostsLoaded {
+        channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
+        offset: 0,
+        next_offset: 2,
+        posts: vec![
+            forum_thread_info(
+                guild_id,
+                forum_id,
+                public_thread_id.get(),
+                "public post",
+                Some(300),
+                false,
+            ),
+            private_thread,
+        ],
+        preview_messages: Vec::new(),
+        has_more: false,
+    });
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![
+            ReadStateInfo {
+                channel_id: public_thread_id,
+                last_acked_message_id: Some(Id::new(299)),
+                mention_count: 0,
+            },
+            ReadStateInfo {
+                channel_id: private_thread_id,
+                last_acked_message_id: Some(Id::new(399)),
+                mention_count: 0,
+            },
+        ],
+    });
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+
+    assert_eq!(
+        state
+            .selected_forum_post_items()
+            .iter()
+            .map(|post| post.channel_id)
+            .collect::<Vec<_>>(),
+        vec![public_thread_id]
+    );
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::AckChannels {
+            targets: vec![(public_thread_id, Id::new(300))]
+        }]
     );
 }
 

@@ -814,6 +814,7 @@ impl AppEvent {
         matches!(
             self,
             AppEvent::MessageCreate { .. }
+                | AppEvent::ChannelUpsert(_)
                 | AppEvent::MessageHistoryLoaded { .. }
                 | AppEvent::MessageHistoryLoadFailed { .. }
                 | AppEvent::ThreadPreviewLoaded { .. }

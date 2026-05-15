@@ -49,6 +49,25 @@ impl DiscordState {
     pub fn channel_sidebar_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
         if self.channel_notification_muted(channel_id) {
             ChannelUnreadState::Seen
+        } else if self
+            .navigation
+            .channels
+            .get(&channel_id)
+            .is_some_and(|channel| channel.is_forum())
+        {
+            aggregate_unread_states(
+                std::iter::once(self.channel_unread(channel_id)).chain(
+                    self.navigation
+                        .channels
+                        .values()
+                        .filter(|channel| {
+                            channel.is_thread()
+                                && channel.parent_id == Some(channel_id)
+                                && self.can_view_channel(channel)
+                        })
+                        .map(|channel| self.channel_sidebar_unread(channel.id)),
+                ),
+            )
         } else {
             self.channel_unread(channel_id)
         }
@@ -61,9 +80,20 @@ impl DiscordState {
             aggregate_unread_states(
                 self.viewable_channels_for_guild(Some(guild_id))
                     .into_iter()
+                    .filter(|channel| !self.channel_is_forum_child_thread(channel.id))
                     .map(|channel| self.channel_sidebar_unread(channel.id)),
             )
         }
+    }
+
+    fn channel_is_forum_child_thread(&self, channel_id: Id<ChannelMarker>) -> bool {
+        self.navigation
+            .channels
+            .get(&channel_id)
+            .filter(|channel| channel.is_thread())
+            .and_then(|channel| channel.parent_id)
+            .and_then(|parent_id| self.navigation.channels.get(&parent_id))
+            .is_some_and(|parent| parent.is_forum())
     }
 
     pub fn guild_notification_muted(&self, guild_id: Id<GuildMarker>) -> bool {

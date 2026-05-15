@@ -547,7 +547,7 @@ pub(crate) fn validate_token_header(token: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::discord::{AppEvent, MessageKind, ids::Id};
+    use crate::discord::{AppEvent, ChannelInfo, MessageKind, ids::Id};
 
     use super::{DiscordClient, validate_token_header};
 
@@ -599,6 +599,27 @@ mod tests {
         assert_eq!(snapshot.detail, 1);
         assert_eq!(effect.revision, 1);
         assert!(matches!(effect.event, AppEvent::MessageCreate { .. }));
+    }
+
+    #[tokio::test]
+    async fn channel_upsert_is_delivered_as_effect_for_tui_derived_state() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let mut effects = client.take_effects();
+        let mut snapshots = client.subscribe_snapshots();
+
+        client.publish_event(channel_upsert_event()).await;
+
+        snapshots.changed().await.expect("snapshot is published");
+        let snapshot = *snapshots.borrow_and_update();
+        let effect = effects.recv().await.expect("effect is published");
+
+        assert_eq!(snapshot.global, 1);
+        assert_eq!(snapshot.navigation, 1);
+        assert_eq!(snapshot.message, 1);
+        assert_eq!(snapshot.detail, 1);
+        assert_eq!(effect.revision, 1);
+        assert!(matches!(effect.event, AppEvent::ChannelUpsert(_)));
     }
 
     #[tokio::test]
@@ -690,5 +711,24 @@ mod tests {
             embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
         }
+    }
+
+    fn channel_upsert_event() -> AppEvent {
+        AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "text".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        })
     }
 }
