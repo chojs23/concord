@@ -120,6 +120,21 @@ Tokens are saved under Concord's config directory in plain text. See the Securit
 - Direct message shortcuts for copy, reply, edit, delete, pin/unpin, reactions,
   image viewing, and profile lookup
 
+Concord renders a practical subset of Discord-style Markdown in message bodies:
+
+- Headings: `# H1`, `## H2`, `### H3`
+- Quotes: `> quoted text`
+- Bullets: `- item` and `* item`
+- Inline styles: `**bold**`, `*italic*`, and `` `inline code` ``
+- Fenced code blocks with optional language labels, rendered as compact boxes
+
+<details>
+<summary>Markdown example and screenshot</summary>
+
+![Markdown rendering example](./docs/markdown-example.png)
+
+</details>
+
 ### Reactions & Polls
 
 - View, add, and remove emoji reactions (Unicode and custom server emoji)

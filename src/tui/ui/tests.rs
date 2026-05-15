@@ -2288,6 +2288,247 @@ fn message_content_preserves_explicit_newlines() {
 }
 
 #[test]
+fn message_content_applies_supported_markdown_formatting() {
+    let message = message_with_content(Some(
+        "# Project Update\n## Highlights\n### Detail\nMessage body\n> Keep the layout calm\n>\nNext paragraph\n- First action\n* Alternate action\nUse **bold**, *italic*, and `code` text\n```rust\nlet answer = 42;\n**not bold in code**\n```\nAfter"
+            .to_owned(),
+    ));
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            "# Project Update",
+            "## Highlights",
+            "### Detail",
+            "Message body",
+            "▎ Keep the layout calm",
+            "▎ ",
+            "Next paragraph",
+            "• First action",
+            "• Alternate action",
+            "Use bold, italic, and code text",
+            "╭─ rust ───────────────╮",
+            "│ let answer = 42;     │",
+            "│ **not bold in code** │",
+            "╰──────────────────────╯",
+            "After",
+        ]
+    );
+
+    assert_eq!(lines[0].style.fg, Some(ACCENT));
+    assert!(lines[0].style.add_modifier.contains(Modifier::BOLD));
+    assert!(lines[1].style.add_modifier.contains(Modifier::BOLD));
+    assert!(lines[1].style.add_modifier.contains(Modifier::UNDERLINED));
+    assert!(lines[2].style.add_modifier.contains(Modifier::BOLD));
+    assert_eq!(lines[4].style.fg, Some(DIM));
+    assert_eq!(lines[14].style, Style::default());
+
+    let h1_spans = lines[0].spans();
+    assert_eq!(h1_spans[0].content.as_ref(), "# ");
+    assert_eq!(h1_spans[0].style.fg, Some(DIM));
+
+    let h2_spans = lines[1].spans();
+    assert_eq!(h2_spans[0].content.as_ref(), "## ");
+    assert_eq!(h2_spans[0].style.fg, Some(DIM));
+
+    let h3_spans = lines[2].spans();
+    assert_eq!(h3_spans[0].content.as_ref(), "### ");
+    assert_eq!(h3_spans[0].style.fg, Some(DIM));
+
+    let quote_spans = lines[4].spans();
+    assert_eq!(quote_spans[0].content.as_ref(), "▎ ");
+    assert_eq!(quote_spans[0].style.fg, Some(DIM));
+
+    for line in [&lines[7], &lines[8]] {
+        let bullet_spans = line.spans();
+        assert_eq!(bullet_spans[0].content.as_ref(), "• ");
+        assert_eq!(bullet_spans[0].style.fg, Some(DIM));
+    }
+
+    let inline_spans = lines[9].spans();
+    let bold = inline_spans
+        .iter()
+        .find(|span| span.content == "bold")
+        .expect("bold span should be present");
+    assert!(bold.style.add_modifier.contains(Modifier::BOLD));
+
+    let italic = inline_spans
+        .iter()
+        .find(|span| span.content == "italic")
+        .expect("italic span should be present");
+    assert!(italic.style.add_modifier.contains(Modifier::ITALIC));
+
+    let code = inline_spans
+        .iter()
+        .find(|span| span.content == "code")
+        .expect("code span should be present");
+    assert_eq!(code.style.fg, Some(Color::Rgb(255, 165, 0)));
+    assert_eq!(code.style.bg, None);
+
+    assert_eq!(lines[10].style.fg, Some(DIM));
+    assert_eq!(lines[13].style.fg, Some(DIM));
+
+    let code_line = lines[11].spans();
+    assert_eq!(code_line[0].content.as_ref(), "│ ");
+    assert_eq!(code_line[0].style.fg, Some(DIM));
+    assert_eq!(code_line[1].content.as_ref(), "let answer = 42;    ");
+    assert_eq!(code_line[1].style.fg, Some(Color::White));
+    assert_eq!(code_line[1].style.bg, None);
+    assert_eq!(code_line[2].content.as_ref(), " │");
+    assert_eq!(code_line[2].style.fg, Some(DIM));
+
+    let literal_code_line = lines[12].spans();
+    assert_eq!(
+        literal_code_line[1].content.as_ref(),
+        "**not bold in code**"
+    );
+    assert!(
+        !literal_code_line[1]
+            .style
+            .add_modifier
+            .contains(Modifier::BOLD)
+    );
+
+    let mut quote = message_with_content(Some("> hello <@10>".to_owned()));
+    quote.mentions = vec![mention_info(10, "alice")];
+    let quote_lines = format_message_content_lines(&quote, &DashboardState::new(), 200);
+    let mention = quote_lines[0]
+        .spans()
+        .into_iter()
+        .find(|span| span.content == "@alice")
+        .expect("mention span should survive quote formatting");
+    assert_eq!(
+        mention.style.bg,
+        mention_highlight_style(TextHighlightKind::OtherMention).bg
+    );
+
+    let emoji = message_with_content(Some("- <:party:99> party".to_owned()));
+    let loaded_urls = vec!["https://cdn.discordapp.com/emojis/99.png".to_owned()];
+    let emoji_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        &emoji,
+        &DashboardState::new(),
+        200,
+        &loaded_urls,
+    );
+    assert_eq!(emoji_lines[0].image_slots[0].col, 2);
+    assert_eq!(emoji_lines[0].image_slots[0].byte_start, "• ".len());
+
+    let wrapped = message_with_content(Some("**abcdef**".to_owned()));
+    let wrapped_lines = format_message_content_lines(&wrapped, &DashboardState::new(), 3);
+    assert_eq!(line_texts(&wrapped_lines), vec!["abc", "def"]);
+    assert!(
+        wrapped_lines
+            .iter()
+            .all(|line| line.spans()[0].style.add_modifier.contains(Modifier::BOLD))
+    );
+
+    let mut mention = message_with_content(Some("**<@10>**".to_owned()));
+    mention.mentions = vec![mention_info(10, "alice")];
+    let mention_lines = format_message_content_lines(&mention, &DashboardState::new(), 200);
+    let mention_span = mention_lines[0]
+        .spans()
+        .into_iter()
+        .find(|span| span.content == "@alice")
+        .expect("mention span should survive inline formatting");
+    assert!(mention_span.style.add_modifier.contains(Modifier::BOLD));
+    assert_eq!(
+        mention_span.style.bg,
+        mention_highlight_style(TextHighlightKind::OtherMention).bg
+    );
+
+    let emoji = message_with_content(Some("**<:party:99>**".to_owned()));
+    let emoji_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        &emoji,
+        &DashboardState::new(),
+        200,
+        &loaded_urls,
+    );
+    assert_eq!(line_texts(&emoji_lines), vec!["  "]);
+    assert_eq!(emoji_lines[0].image_slots[0].col, 0);
+    assert_eq!(emoji_lines[0].image_slots[0].byte_start, 0);
+
+    let quote = message_with_content(Some("> **bold quote**".to_owned()));
+    let quote_lines = format_message_content_lines(&quote, &DashboardState::new(), 200);
+    let quote_span = quote_lines[0]
+        .spans()
+        .into_iter()
+        .find(|span| span.content == "bold quote")
+        .expect("inline bold span should survive quote formatting");
+    assert_eq!(quote_span.style.fg, Some(DIM));
+    assert!(quote_span.style.add_modifier.contains(Modifier::BOLD));
+
+    let lines = format_message_content_lines(
+        &message_with_content(Some("```\nabcdefghijkl\n```".to_owned())),
+        &DashboardState::new(),
+        9,
+    );
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            "╭───────╮",
+            "│ abcde │",
+            "│ fghij │",
+            "│ kl    │",
+            "╰───────╯",
+        ]
+    );
+    assert_eq!(lines[1].spans()[1].style.fg, Some(Color::White));
+
+    let lines = format_message_content_lines(
+        &message_with_content(Some("```".to_owned())),
+        &DashboardState::new(),
+        200,
+    );
+    assert_eq!(line_texts(&lines), vec!["```"]);
+    assert_eq!(lines[0].style, Style::default());
+
+    let lines = format_message_content_lines(
+        &message_with_content(Some("```\none\n\nthree\n```".to_owned())),
+        &DashboardState::new(),
+        200,
+    );
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            "╭───────╮",
+            "│ one   │",
+            "│       │",
+            "│ three │",
+            "╰───────╯",
+        ]
+    );
+
+    let lines = format_message_content_lines(
+        &message_with_content(Some("```\n漢字仮名交じ\n```".to_owned())),
+        &DashboardState::new(),
+        10,
+    );
+    assert_eq!(
+        line_texts(&lines),
+        vec!["╭────────╮", "│ 漢字仮 │", "│ 名交じ │", "╰────────╯",]
+    );
+
+    let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        &message_with_content(Some("```\n- not a bullet\n<:party:99>\n```".to_owned())),
+        &DashboardState::new(),
+        200,
+        &loaded_urls,
+    );
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            "╭────────────────╮",
+            "│ - not a bullet │",
+            "│ :party:        │",
+            "╰────────────────╯",
+        ]
+    );
+    assert!(lines.iter().all(|line| line.image_slots.is_empty()));
+    assert_eq!(lines[1].spans()[1].style.fg, Some(Color::White));
+}
+#[test]
 fn message_content_wraps_long_lines_to_content_width() {
     let message = message_with_content(Some("abcdefghijkl".to_owned()));
 
