@@ -1,5 +1,6 @@
 use crate::discord::AppCommand;
 use crate::discord::ids::{Id, marker::GuildMarker};
+use crate::tui::fuzzy::FuzzyScore;
 
 use super::super::fuzzy::fuzzy_text_score;
 use super::emoji::{
@@ -334,7 +335,7 @@ fn filter_emoji_reaction_items_from_slice(
         return items.to_vec();
     }
 
-    let mut scored: Vec<(usize, usize, usize, EmojiReactionItem)> = items
+    let mut scored: Vec<(usize, FuzzyScore, usize, EmojiReactionItem)> = items
         .iter()
         .enumerate()
         .filter_map(|(index, item)| {
@@ -359,7 +360,7 @@ fn emoji_reaction_is_remaining_unicode(item: &EmojiReactionItem) -> bool {
     matches!(&item.emoji, crate::discord::ReactionEmoji::Unicode(emoji) if !is_quick_unicode_emoji(emoji))
 }
 
-fn emoji_reaction_filter_score(item: &EmojiReactionItem, filter: &str) -> Option<usize> {
+fn emoji_reaction_filter_score(item: &EmojiReactionItem, filter: &str) -> Option<FuzzyScore> {
     let label_score = fuzzy_text_score(&item.label, filter);
     let status_score = fuzzy_text_score(&item.emoji.status_label(), filter);
     match (label_score, status_score) {
