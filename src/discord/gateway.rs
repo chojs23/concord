@@ -49,6 +49,12 @@ pub enum GatewayCommand {
         channel_id: Id<ChannelMarker>,
         ranges: Vec<(u32, u32)>,
     },
+    UpdateVoiceState {
+        guild_id: Id<GuildMarker>,
+        channel_id: Option<Id<ChannelMarker>>,
+        self_mute: bool,
+        self_deaf: bool,
+    },
 }
 
 /// Discord user-account gateway endpoint. We pin to `v=9` because the v9
@@ -570,6 +576,24 @@ async fn dispatch_command(writer: &WriterHandle, command: GatewayCommand) -> Res
             );
             guild_channel_subscribe_payload(guild_id, channel_id, &ranges)
         }
+        GatewayCommand::UpdateVoiceState {
+            guild_id,
+            channel_id,
+            self_mute,
+            self_deaf,
+        } => {
+            logging::debug(
+                "gateway",
+                format!(
+                    "updating voice state: guild={} channel={} self_mute={} self_deaf={}",
+                    guild_id.get(),
+                    channel_id.map(|id| id.get()).unwrap_or_default(),
+                    self_mute,
+                    self_deaf,
+                ),
+            );
+            voice_state_update_payload(guild_id, channel_id, self_mute, self_deaf)
+        }
     };
     send_text(writer, payload).await
 }
@@ -671,6 +695,24 @@ fn guild_channel_subscribe_payload(
     .to_string()
 }
 
+fn voice_state_update_payload(
+    guild_id: Id<GuildMarker>,
+    channel_id: Option<Id<ChannelMarker>>,
+    self_mute: bool,
+    self_deaf: bool,
+) -> String {
+    json!({
+        "op": 4,
+        "d": {
+            "guild_id": guild_id.to_string(),
+            "channel_id": channel_id.map(|channel_id| channel_id.to_string()),
+            "self_mute": self_mute,
+            "self_deaf": self_deaf,
+        },
+    })
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::discord::ids::{
@@ -682,7 +724,7 @@ mod tests {
     use super::{
         GATEWAY_WEBSOCKET_LIMIT, SessionState, USER_ACCOUNT_CAPABILITIES, build_identify_payload,
         build_resume_payload, direct_message_subscribe_payload, gateway_websocket_config,
-        guild_channel_subscribe_payload,
+        guild_channel_subscribe_payload, voice_state_update_payload,
     };
 
     #[test]
@@ -796,5 +838,30 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn voice_state_update_payload_joins_and_leaves_voice_channel() {
+        let join_payload: serde_json::Value = serde_json::from_str(&voice_state_update_payload(
+            Id::<GuildMarker>::new(10),
+            Some(Id::<ChannelMarker>::new(20)),
+            true,
+            false,
+        ))
+        .expect("voice join payload should be valid json");
+        assert_eq!(join_payload["op"].as_u64(), Some(4));
+        assert_eq!(join_payload["d"]["guild_id"].as_str(), Some("10"));
+        assert_eq!(join_payload["d"]["channel_id"].as_str(), Some("20"));
+        assert_eq!(join_payload["d"]["self_mute"].as_bool(), Some(true));
+        assert_eq!(join_payload["d"]["self_deaf"].as_bool(), Some(false));
+
+        let leave_payload: serde_json::Value = serde_json::from_str(&voice_state_update_payload(
+            Id::<GuildMarker>::new(10),
+            None,
+            true,
+            false,
+        ))
+        .expect("voice leave payload should be valid json");
+        assert!(leave_payload["d"]["channel_id"].is_null());
     }
 }

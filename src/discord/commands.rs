@@ -134,6 +134,23 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         ranges: Vec<(u32, u32)>,
     },
+    JoinVoiceChannel {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        self_mute: bool,
+        self_deaf: bool,
+    },
+    UpdateVoiceState {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        self_mute: bool,
+        self_deaf: bool,
+    },
+    LeaveVoiceChannel {
+        guild_id: Id<GuildMarker>,
+        self_mute: bool,
+        self_deaf: bool,
+    },
     LoadAttachmentPreview {
         url: String,
     },

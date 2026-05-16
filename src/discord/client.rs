@@ -169,6 +169,23 @@ impl DiscordClient {
             .map_err(|_| "gateway command channel closed".to_owned())
     }
 
+    pub fn update_voice_state(
+        &self,
+        guild_id: Id<GuildMarker>,
+        channel_id: Option<Id<ChannelMarker>>,
+        self_mute: bool,
+        self_deaf: bool,
+    ) -> std::result::Result<(), String> {
+        self.gateway_commands_tx
+            .send(GatewayCommand::UpdateVoiceState {
+                guild_id,
+                channel_id,
+                self_mute,
+                self_deaf,
+            })
+            .map_err(|_| "gateway command channel closed".to_owned())
+    }
+
     pub async fn prime_rest_pool(&self) -> Result<()> {
         self.rest.prime_connection_pool().await
     }

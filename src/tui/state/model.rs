@@ -96,6 +96,8 @@ pub struct ImageViewerItem {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChannelActionKind {
+    JoinVoice,
+    LeaveVoice,
     LoadPinnedMessages,
     ShowThreads,
     MarkAsRead,
@@ -112,6 +114,8 @@ pub struct ChannelActionItem {
 impl ChannelActionKind {
     fn preferred_shortcut(&self) -> char {
         match self {
+            ChannelActionKind::JoinVoice => 'j',
+            ChannelActionKind::LeaveVoice => 'l',
             ChannelActionKind::LoadPinnedMessages => 'p',
             ChannelActionKind::ShowThreads => 't',
             ChannelActionKind::MarkAsRead => 'm',

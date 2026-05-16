@@ -1374,6 +1374,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
             guild_id,
             channel_id: Some(voice_id),
             user_id: alice,
+            session_id: None,
             member: None,
             deaf: true,
             mute: true,

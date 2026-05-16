@@ -22,6 +22,20 @@ pub struct DisplayOptions {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct VoiceOptions {
+    pub self_mute: bool,
+    pub self_deaf: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct AppOptions {
+    pub display: DisplayOptions,
+    pub voice: VoiceOptions,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ImagePreviewQualityPreset {
     Efficient,
@@ -81,15 +95,9 @@ impl DisplayOptions {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
-#[serde(default)]
-struct AppConfig {
-    display: DisplayOptions,
-}
-
-pub fn load_display_options() -> Result<DisplayOptions> {
+pub fn load_options() -> Result<AppOptions> {
     let path = config_path()?;
-    load_display_options_from_path(&path)
+    load_options_from_path(&path)
 }
 
 /// User-facing description of where config lives, e.g. for help text. Falls
@@ -102,27 +110,26 @@ pub fn config_path_display() -> String {
         .unwrap_or_else(|| "~/.config/concord/config.toml".to_owned())
 }
 
-fn load_display_options_from_path(path: &Path) -> Result<DisplayOptions> {
+fn load_options_from_path(path: &Path) -> Result<AppOptions> {
     match fs::read_to_string(path) {
-        Ok(content) => Ok(toml::from_str::<AppConfig>(&content)?.display),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(DisplayOptions::default()),
+        Ok(content) => Ok(toml::from_str::<AppOptions>(&content)?),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(AppOptions::default()),
         Err(error) => Err(error.into()),
     }
 }
 
-pub fn save_display_options(options: &DisplayOptions) -> Result<()> {
+pub fn save_options(options: &AppOptions) -> Result<()> {
     let path = config_path()?;
-    save_display_options_to_path(&path, options)
+    save_options_to_path(&path, options)
 }
 
-fn save_display_options_to_path(path: &Path, options: &DisplayOptions) -> Result<()> {
+fn save_options_to_path(path: &Path, options: &AppOptions) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
         set_private_dir_permissions(parent)?;
     }
 
-    let config = AppConfig { display: *options };
-    write_private_file(path, &toml::to_string_pretty(&config)?)
+    write_private_file(path, &toml::to_string_pretty(options)?)
 }
 
 fn config_path() -> Result<PathBuf> {
@@ -185,8 +192,8 @@ mod tests {
     };
 
     use super::{
-        AppConfig, DisplayOptions, ImagePreviewQualityPreset, load_display_options_from_path,
-        save_display_options_to_path,
+        AppOptions, DisplayOptions, ImagePreviewQualityPreset, VoiceOptions,
+        load_options_from_path, save_options_to_path,
     };
 
     #[test]
@@ -237,13 +244,15 @@ mod tests {
         ];
 
         for (toml, disable_image_preview, image_preview_quality) in cases {
-            let config: AppConfig = toml::from_str(toml).expect("partial config should parse");
+            let config: AppOptions = toml::from_str(toml).expect("partial config should parse");
             assert_eq!(config.display.disable_image_preview, disable_image_preview);
             assert!(config.display.show_avatars);
             assert!(config.display.show_images);
             assert_eq!(config.display.image_preview_quality, image_preview_quality);
             assert!(config.display.show_custom_emoji);
             assert!(config.display.desktop_notifications);
+            assert!(!config.voice.self_mute);
+            assert!(!config.voice.self_deaf);
             assert_eq!(config.display.server_width, 20);
             assert_eq!(config.display.channel_list_width, 24);
             assert_eq!(config.display.member_list_width, 26);
@@ -251,22 +260,38 @@ mod tests {
     }
 
     #[test]
-    fn display_options_save_and_load_round_trip() {
+    fn voice_config_parses_partial_toml_with_defaults() {
+        let config: AppOptions = toml::from_str("[voice]\nself_mute = true\n")
+            .expect("partial voice config should parse");
+
+        assert!(config.voice.self_mute);
+        assert!(!config.voice.self_deaf);
+        assert_eq!(config.display, DisplayOptions::default());
+    }
+
+    #[test]
+    fn options_save_and_load_round_trip() {
         let path = test_config_path();
-        let options = DisplayOptions {
-            disable_image_preview: true,
-            show_avatars: false,
-            show_images: false,
-            image_preview_quality: ImagePreviewQualityPreset::Original,
-            show_custom_emoji: false,
-            desktop_notifications: false,
-            server_width: 12,
-            channel_list_width: 30,
-            member_list_width: 18,
+        let options = AppOptions {
+            display: DisplayOptions {
+                disable_image_preview: true,
+                show_avatars: false,
+                show_images: false,
+                image_preview_quality: ImagePreviewQualityPreset::Original,
+                show_custom_emoji: false,
+                desktop_notifications: false,
+                server_width: 12,
+                channel_list_width: 30,
+                member_list_width: 18,
+            },
+            voice: VoiceOptions {
+                self_mute: true,
+                self_deaf: true,
+            },
         };
 
-        save_display_options_to_path(&path, &options).expect("config should save");
-        let loaded = load_display_options_from_path(&path).expect("config should load");
+        save_options_to_path(&path, &options).expect("config should save");
+        let loaded = load_options_from_path(&path).expect("config should load");
 
         assert_eq!(loaded, options);
         let _ = fs::remove_file(&path);

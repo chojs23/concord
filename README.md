@@ -86,8 +86,9 @@ target/release/concord
 
 ## Features
 
-Concord does not currently support voice calls, but will be added.
-For now it is focusing ui/ux and conveniency features.
+Concord can request joining and leaving Discord voice channels, but it does not
+play or send voice audio yet. For now it is focusing ui/ux and conveniency
+features.
 
 ### Authentication
 
@@ -106,6 +107,7 @@ Tokens are saved under Concord's config directory in plain text. See the Securit
 - View and filter forum posts (active / archived)
 - Load pinned messages per channel
 - Open channel actions for pinned messages, thread lists, and mark-as-read
+- Join and leave voice channels without audio playback or microphone capture
 - Track unread messages and mention counts per channel
 - Mute and unmute channels and servers
 
@@ -242,6 +244,8 @@ Channel actions:
 
 | Shortcut | Action               | Description                                 |
 | -------- | -------------------- | ------------------------------------------- |
+| `j`      | Join voice           | Join the selected voice channel             |
+| `l`      | Leave voice          | Leave the current voice channel             |
 | `p`      | Show pinned messages | Open the selected channel's pinned messages |
 | `t`      | Show threads         | List threads for the selected channel       |
 | `m`      | Mark as read         | Mark the selected channel read              |
@@ -296,6 +300,7 @@ AppData config directory on Windows.
 - Toggle avatar display
 - Toggle custom emoji rendering
 - Toggle desktop notifications
+- Set your Discord voice mute and deaf state
 
 You can change these from the in-app Options menu, and Concord saves them back
 to the config file.
@@ -310,6 +315,10 @@ show_images = true
 image_preview_quality = "balanced"
 show_custom_emoji = true
 desktop_notifications = true
+
+[voice]
+self_mute = false
+self_deaf = false
 ```
 
 `image_preview_quality` supports these values:
@@ -326,6 +335,10 @@ Avatars and custom emoji keep their separate small-image behavior.
 pass Discord notification settings. On macOS, Concord keeps the visual
 notification and audible alert separate to avoid duplicate sounds while still
 playing a sound when the terminal app is focused.
+
+`self_mute` and `self_deaf` under `[voice]` control the voice state Concord
+sends when joining, leaving, or updating your current Discord voice channel.
+Concord still does not play or send voice audio.
 
 ## Performance
 

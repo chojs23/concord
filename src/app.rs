@@ -19,7 +19,7 @@ use crate::{
     discord::{
         AppCommand, AppEvent, AttachmentUpdate, ChannelNotificationOverrideInfo,
         GuildNotificationSettingsInfo, MessageInfo, MuteDuration, ReactionUsersInfo,
-        validate_token_header,
+        VoiceConnectionStatus, validate_token_header,
     },
     error::AppError,
     logging, token_store, tui, version_check,
@@ -299,6 +299,84 @@ fn start_command_loop(
                             logging::error("app", &message);
                             client
                                 .publish_event(AppEvent::GatewayError { message })
+                                .await;
+                        }
+                    }
+                    AppCommand::JoinVoiceChannel {
+                        guild_id,
+                        channel_id,
+                        self_mute,
+                        self_deaf,
+                    } => {
+                        if let Err(message) = client.update_voice_state(
+                            guild_id,
+                            Some(channel_id),
+                            self_mute,
+                            self_deaf,
+                        ) {
+                            logging::error("app", &message);
+                            client
+                                .publish_event(AppEvent::VoiceConnectionStatusChanged {
+                                    guild_id,
+                                    channel_id: Some(channel_id),
+                                    status: VoiceConnectionStatus::Failed,
+                                    message: Some(message),
+                                })
+                                .await;
+                        } else {
+                            client
+                                .publish_event(AppEvent::VoiceConnectionStatusChanged {
+                                    guild_id,
+                                    channel_id: Some(channel_id),
+                                    status: VoiceConnectionStatus::Connecting,
+                                    message: Some("Voice join requested".to_owned()),
+                                })
+                                .await;
+                        }
+                    }
+                    AppCommand::UpdateVoiceState {
+                        guild_id,
+                        channel_id,
+                        self_mute,
+                        self_deaf,
+                    } => {
+                        if let Err(message) = client.update_voice_state(
+                            guild_id,
+                            Some(channel_id),
+                            self_mute,
+                            self_deaf,
+                        ) {
+                            logging::error("app", &message);
+                            client
+                                .publish_event(AppEvent::GatewayError { message })
+                                .await;
+                        }
+                    }
+                    AppCommand::LeaveVoiceChannel {
+                        guild_id,
+                        self_mute,
+                        self_deaf,
+                    } => {
+                        if let Err(message) =
+                            client.update_voice_state(guild_id, None, self_mute, self_deaf)
+                        {
+                            logging::error("app", &message);
+                            client
+                                .publish_event(AppEvent::VoiceConnectionStatusChanged {
+                                    guild_id,
+                                    channel_id: None,
+                                    status: VoiceConnectionStatus::Failed,
+                                    message: Some(message),
+                                })
+                                .await;
+                        } else {
+                            client
+                                .publish_event(AppEvent::VoiceConnectionStatusChanged {
+                                    guild_id,
+                                    channel_id: None,
+                                    status: VoiceConnectionStatus::Disconnected,
+                                    message: Some("Voice leave requested".to_owned()),
+                                })
                                 .await;
                         }
                     }

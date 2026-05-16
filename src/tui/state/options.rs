@@ -1,8 +1,9 @@
-use crate::config::{DisplayOptions, ImagePreviewQualityPreset};
+use crate::config::{AppOptions, DisplayOptions, ImagePreviewQualityPreset, VoiceOptions};
+use crate::discord::AppCommand;
 
 use super::{DashboardState, FocusPane, popups::OptionsPopupState};
 
-const OPTION_COUNT: usize = 6;
+const OPTION_COUNT: usize = 8;
 const MIN_PANE_WIDTH: u16 = 8;
 const MAX_PANE_WIDTH: u16 = 80;
 
@@ -16,15 +17,31 @@ pub struct DisplayOptionItem {
 }
 
 impl DashboardState {
-    pub fn new_with_display_options(display_options: DisplayOptions) -> Self {
+    pub fn new_with_options(display_options: DisplayOptions, voice_options: VoiceOptions) -> Self {
         Self {
             display_options,
+            voice_options,
             ..Self::new()
         }
     }
 
     pub fn display_options(&self) -> DisplayOptions {
         self.display_options
+    }
+
+    #[cfg(test)]
+    pub fn new_with_display_options(display_options: DisplayOptions) -> Self {
+        Self::new_with_options(display_options, VoiceOptions::default())
+    }
+
+    #[cfg(test)]
+    pub fn new_with_voice_options(voice_options: VoiceOptions) -> Self {
+        Self::new_with_options(DisplayOptions::default(), voice_options)
+    }
+
+    #[cfg(test)]
+    pub fn voice_options(&self) -> VoiceOptions {
+        self.voice_options
     }
 
     pub fn show_avatars(&self) -> bool {
@@ -72,7 +89,7 @@ impl DashboardState {
         let adjusted = adjusted.clamp(MIN_PANE_WIDTH, MAX_PANE_WIDTH);
         if adjusted != *width {
             *width = adjusted;
-            self.display_options_save_pending = true;
+            self.options_save_pending = true;
         }
     }
 
@@ -151,6 +168,20 @@ impl DashboardState {
                 effective: options.desktop_notifications,
                 description: "Show OS notifications for Discord messages that pass notification settings.",
             },
+            DisplayOptionItem {
+                label: "Voice muted",
+                enabled: self.voice_options.self_mute,
+                value: None,
+                effective: true,
+                description: "Set your Discord voice microphone mute state.",
+            },
+            DisplayOptionItem {
+                label: "Voice deafened",
+                enabled: self.voice_options.self_deaf,
+                value: None,
+                effective: true,
+                description: "Set your Discord voice playback deaf state.",
+            },
         ]
     }
 
@@ -158,6 +189,7 @@ impl DashboardState {
         let Some(selected) = self.selected_option_index() else {
             return;
         };
+        let update_current_voice_state = matches!(selected, 6 | 7);
 
         match selected {
             0 => {
@@ -175,20 +207,45 @@ impl DashboardState {
                 self.display_options.desktop_notifications =
                     !self.display_options.desktop_notifications
             }
+            6 => self.voice_options.self_mute = !self.voice_options.self_mute,
+            7 => self.voice_options.self_deaf = !self.voice_options.self_deaf,
             _ => return,
         }
         if !self.show_images() {
             self.close_image_viewer();
         }
         self.clear_message_row_content_metrics_cache();
-        self.display_options_save_pending = true;
+        self.options_save_pending = true;
+        if update_current_voice_state {
+            self.queue_current_voice_state_update();
+        }
     }
 
-    pub(in crate::tui) fn take_display_options_save_request(&mut self) -> Option<DisplayOptions> {
-        if !self.display_options_save_pending {
+    fn queue_current_voice_state_update(&mut self) {
+        let Some(voice) = self.voice_connection else {
+            return;
+        };
+        let Some(channel_id) = voice.channel_id else {
+            return;
+        };
+
+        self.pending_commands
+            .push_back(AppCommand::UpdateVoiceState {
+                guild_id: voice.guild_id,
+                channel_id,
+                self_mute: self.voice_options.self_mute,
+                self_deaf: self.voice_options.self_deaf,
+            });
+    }
+
+    pub(in crate::tui) fn take_options_save_request(&mut self) -> Option<AppOptions> {
+        if !self.options_save_pending {
             return None;
         }
-        self.display_options_save_pending = false;
-        Some(self.display_options)
+        self.options_save_pending = false;
+        Some(AppOptions {
+            display: self.display_options,
+            voice: self.voice_options,
+        })
     }
 }

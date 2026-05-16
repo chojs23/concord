@@ -561,6 +561,8 @@ impl DiscordState {
             | AppEvent::ThreadPreviewLoadFailed { .. }
             | AppEvent::ForumPostsLoadFailed { .. }
             | AppEvent::UserProfileLoadFailed { .. }
+            | AppEvent::VoiceServerUpdate { .. }
+            | AppEvent::VoiceConnectionStatusChanged { .. }
             | AppEvent::ActivateChannel { .. }
             | AppEvent::GatewayClosed => {
                 unreachable!("non-mutating events return before snapshot area classification")
@@ -1199,6 +1201,8 @@ impl DiscordState {
             | AppEvent::ThreadPreviewLoadFailed { .. }
             | AppEvent::ForumPostsLoadFailed { .. }
             | AppEvent::UserProfileLoadFailed { .. }
+            | AppEvent::VoiceServerUpdate { .. }
+            | AppEvent::VoiceConnectionStatusChanged { .. }
             | AppEvent::ActivateChannel { .. }
             | AppEvent::GatewayClosed => {}
         }

@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::discord::ids::{
     Id,
     marker::{
@@ -160,12 +162,37 @@ pub struct VoiceStateInfo {
     pub guild_id: Id<GuildMarker>,
     pub channel_id: Option<Id<ChannelMarker>>,
     pub user_id: Id<UserMarker>,
+    pub session_id: Option<String>,
     pub member: Option<MemberInfo>,
     pub deaf: bool,
     pub mute: bool,
     pub self_deaf: bool,
     pub self_mute: bool,
     pub self_stream: bool,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct VoiceServerInfo {
+    pub guild_id: Id<GuildMarker>,
+    pub endpoint: Option<String>,
+    pub token: String,
+}
+
+impl fmt::Debug for VoiceServerInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VoiceServerInfo")
+            .field("guild_id", &self.guild_id)
+            .field("endpoint", &self.endpoint)
+            .field("token", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VoiceConnectionStatus {
+    Connecting,
+    Disconnected,
+    Failed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -665,6 +692,15 @@ pub enum AppEvent {
     VoiceStateUpdate {
         state: VoiceStateInfo,
     },
+    VoiceServerUpdate {
+        server: VoiceServerInfo,
+    },
+    VoiceConnectionStatusChanged {
+        guild_id: Id<GuildMarker>,
+        channel_id: Option<Id<ChannelMarker>>,
+        status: VoiceConnectionStatus,
+        message: Option<String>,
+    },
     /// Discord's TYPING_START dispatch: emitted ~10s before the typing
     /// indicator should expire. The dashboard tracks the latest timestamp
     /// per (channel, user) and shows "X is typing…" while it's fresh.
@@ -821,6 +857,8 @@ impl AppEvent {
                 | AppEvent::MessageHistoryLoadFailed { .. }
                 | AppEvent::PinnedMessagesLoadFailed { .. }
                 | AppEvent::UserProfileLoadFailed { .. }
+                | AppEvent::VoiceServerUpdate { .. }
+                | AppEvent::VoiceConnectionStatusChanged { .. }
                 | AppEvent::ActivateChannel { .. }
                 | AppEvent::GatewayClosed
         )
@@ -846,6 +884,7 @@ impl AppEvent {
             | AppEvent::ActivateChannel { .. }
             | AppEvent::AttachmentPreviewLoaded { .. }
             | AppEvent::AttachmentPreviewLoadFailed { .. }
+            | AppEvent::VoiceConnectionStatusChanged { .. }
             | AppEvent::UserProfileLoadFailed { .. }
             | AppEvent::GatewayClosed => true,
             _ => false,

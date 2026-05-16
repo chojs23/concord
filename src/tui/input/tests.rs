@@ -10,12 +10,12 @@ use ratatui::layout::Rect;
 
 use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event, handle_paste};
 use crate::{
-    config::ImagePreviewQualityPreset,
+    config::{AppOptions, ImagePreviewQualityPreset},
     discord::{
         AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
         CustomEmojiInfo, DownloadAttachmentSource, GuildFolder, GuildNotificationSettingsInfo,
         MemberInfo, MessageReferenceInfo, NotificationLevel, PollAnswerInfo, PollInfo,
-        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReactionUsersInfo,
+        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReactionUsersInfo, VoiceConnectionStatus,
     },
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };
@@ -499,14 +499,17 @@ fn alt_arrows_adjust_focused_side_pane_width() {
     handle_key(&mut state, alt_key(KeyCode::Left));
     assert_eq!(state.pane_width(FocusPane::Channels), 24);
     assert_eq!(
-        state.take_display_options_save_request(),
-        Some(state.display_options())
+        state.take_options_save_request(),
+        Some(AppOptions {
+            display: state.display_options(),
+            voice: state.voice_options(),
+        })
     );
 
     state.focus_pane(FocusPane::Messages);
     handle_key(&mut state, alt_key(KeyCode::Right));
     assert_eq!(state.pane_width(FocusPane::Channels), 24);
-    assert_eq!(state.take_display_options_save_request(), None);
+    assert_eq!(state.take_options_save_request(), None);
 }
 
 #[test]
@@ -1687,8 +1690,77 @@ fn options_popup_toggles_selected_setting() {
     assert!(state.is_options_popup_open());
     assert!(!state.display_options().show_avatars);
     assert_eq!(
-        state.take_display_options_save_request(),
-        Some(state.display_options())
+        state.take_options_save_request(),
+        Some(AppOptions {
+            display: state.display_options(),
+            voice: state.voice_options(),
+        })
+    );
+}
+
+#[test]
+fn options_popup_toggles_voice_state() {
+    let mut state = state_with_messages(1);
+
+    state.open_options_popup();
+    for _ in 0..6 {
+        handle_key(&mut state, key(KeyCode::Down));
+    }
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    assert!(state.voice_options().self_mute);
+    assert_eq!(
+        state.take_options_save_request(),
+        Some(AppOptions {
+            display: state.display_options(),
+            voice: state.voice_options(),
+        })
+    );
+
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    assert!(state.voice_options().self_deaf);
+    assert_eq!(
+        state.take_options_save_request(),
+        Some(AppOptions {
+            display: state.display_options(),
+            voice: state.voice_options(),
+        })
+    );
+}
+
+#[test]
+fn options_popup_toggles_current_voice_state_when_joined() {
+    let mut state = state_with_messages(1);
+    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
+        guild_id: Id::new(1),
+        channel_id: Some(Id::new(11)),
+        status: VoiceConnectionStatus::Connecting,
+        message: None,
+    });
+
+    state.open_options_popup();
+    for _ in 0..6 {
+        handle_key(&mut state, key(KeyCode::Down));
+    }
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceState {
+            guild_id: Id::new(1),
+            channel_id: Id::new(11),
+            self_mute: true,
+            self_deaf: false,
+        }]
+    );
+    assert_eq!(
+        state.take_options_save_request(),
+        Some(AppOptions {
+            display: state.display_options(),
+            voice: state.voice_options(),
+        })
     );
 }
 
@@ -1707,8 +1779,11 @@ fn options_popup_cycles_image_preview_quality() {
         ImagePreviewQualityPreset::High
     );
     assert_eq!(
-        state.take_display_options_save_request(),
-        Some(state.display_options())
+        state.take_options_save_request(),
+        Some(AppOptions {
+            display: state.display_options(),
+            voice: state.voice_options(),
+        })
     );
 }
 

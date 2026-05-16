@@ -1,11 +1,36 @@
 use serde_json::Value;
 
-use crate::discord::{Id, VoiceStateInfo, events::AppEvent, ids::marker::GuildMarker};
+use crate::discord::{
+    Id, VoiceServerInfo, VoiceStateInfo, events::AppEvent, ids::marker::GuildMarker,
+};
 
 use super::{members::parse_member_info, shared::parse_id};
 
 pub(super) fn parse_voice_state_update(data: &Value) -> Option<AppEvent> {
     parse_voice_state_info(data, None).map(|state| AppEvent::VoiceStateUpdate { state })
+}
+
+pub(super) fn parse_voice_server_update(data: &Value) -> Option<AppEvent> {
+    let guild_id = data.get("guild_id").and_then(parse_id)?;
+    let token = data
+        .get("token")
+        .and_then(Value::as_str)
+        .filter(|token| !token.is_empty())?
+        .to_owned();
+    let endpoint = data
+        .get("endpoint")
+        .filter(|endpoint| !endpoint.is_null())
+        .and_then(Value::as_str)
+        .filter(|endpoint| !endpoint.is_empty())
+        .map(str::to_owned);
+
+    Some(AppEvent::VoiceServerUpdate {
+        server: VoiceServerInfo {
+            guild_id,
+            endpoint,
+            token,
+        },
+    })
 }
 
 pub(super) fn parse_guild_voice_states(data: &Value) -> Vec<AppEvent> {
@@ -48,6 +73,11 @@ fn parse_voice_state_info(
         guild_id,
         channel_id,
         user_id,
+        session_id: value
+            .get("session_id")
+            .and_then(Value::as_str)
+            .filter(|session_id| !session_id.is_empty())
+            .map(str::to_owned),
         member: value.get("member").and_then(parse_member_info),
         deaf: value.get("deaf").and_then(Value::as_bool).unwrap_or(false),
         mute: value.get("mute").and_then(Value::as_bool).unwrap_or(false),
