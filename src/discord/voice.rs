@@ -1,9 +1,12 @@
 use std::{
+    collections::{BTreeSet, HashMap},
     fmt,
+    num::NonZeroU16,
     sync::Arc,
     time::{Duration, Instant},
 };
 
+use davey::{DaveSession, ProposalsOperationType};
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::{
@@ -35,6 +38,28 @@ const RTP_HEADER_EXTENSION_BYTES: usize = 4;
 const RTP_EXTENSION_WORD_BYTES: usize = 4;
 const AEAD_AES256_GCM_RTPSIZE: &str = "aead_aes256_gcm_rtpsize";
 const AEAD_XCHACHA20_POLY1305_RTPSIZE: &str = "aead_xchacha20_poly1305_rtpsize";
+
+const VOICE_OP_READY: u8 = 2;
+const VOICE_OP_SESSION_DESCRIPTION: u8 = 4;
+const VOICE_OP_SPEAKING: u8 = 5;
+const VOICE_OP_HEARTBEAT_ACK: u8 = 6;
+const VOICE_OP_HELLO: u8 = 8;
+const VOICE_OP_CLIENTS_CONNECT: u8 = 11;
+const VOICE_OP_CLIENT_DISCONNECT: u8 = 13;
+const VOICE_OP_MEDIA_SINK_WANTS: u8 = 15;
+const VOICE_OP_CLIENT_FLAGS: u8 = 18;
+const VOICE_OP_CLIENT_PLATFORM: u8 = 20;
+const VOICE_OP_DAVE_PREPARE_TRANSITION: u8 = 21;
+const VOICE_OP_DAVE_EXECUTE_TRANSITION: u8 = 22;
+const VOICE_OP_DAVE_TRANSITION_READY: u8 = 23;
+const VOICE_OP_DAVE_PREPARE_EPOCH: u8 = 24;
+const VOICE_OP_DAVE_MLS_EXTERNAL_SENDER: u8 = 25;
+const VOICE_OP_DAVE_MLS_KEY_PACKAGE: u8 = 26;
+const VOICE_OP_DAVE_MLS_PROPOSALS: u8 = 27;
+const VOICE_OP_DAVE_MLS_COMMIT_WELCOME: u8 = 28;
+const VOICE_OP_DAVE_MLS_ANNOUNCE_COMMIT_TRANSITION: u8 = 29;
+const VOICE_OP_DAVE_MLS_WELCOME: u8 = 30;
+const VOICE_OP_DAVE_MLS_INVALID_COMMIT_WELCOME: u8 = 31;
 
 type VoiceGatewayStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -100,6 +125,30 @@ struct RtpHeader {
     payload_offset: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VoiceSpeakingState {
+    user_id: Option<u64>,
+    ssrc: Option<u32>,
+    speaking: Option<u64>,
+}
+
+struct VoiceDaveState {
+    user_id: u64,
+    channel_id: u64,
+    protocol_version: Option<NonZeroU16>,
+    session: Option<DaveSession>,
+    pending_transitions: HashMap<u16, u16>,
+    known_user_ids: BTreeSet<u64>,
+    ssrc_user_ids: HashMap<u32, u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VoiceBinaryFrame<'a> {
+    sequence: i64,
+    opcode: u8,
+    payload: &'a [u8],
+}
+
 impl fmt::Debug for VoiceGatewaySession {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("VoiceGatewaySession")
@@ -110,6 +159,330 @@ impl fmt::Debug for VoiceGatewaySession {
             .field("endpoint", &self.endpoint)
             .field("token", &"<redacted>")
             .finish()
+    }
+}
+
+impl VoiceDaveState {
+    fn new(session: &VoiceGatewaySession) -> Self {
+        let user_id = session.user_id.get();
+        let mut known_user_ids = BTreeSet::new();
+        known_user_ids.insert(user_id);
+        Self {
+            user_id,
+            channel_id: session.channel_id.get(),
+            protocol_version: None,
+            session: None,
+            pending_transitions: HashMap::new(),
+            known_user_ids,
+            ssrc_user_ids: HashMap::new(),
+        }
+    }
+
+    async fn handle_json_op(
+        &mut self,
+        writer: &VoiceWriter,
+        opcode: u8,
+        value: &Value,
+    ) -> Result<(), String> {
+        match opcode {
+            VOICE_OP_SPEAKING => {
+                let speaking = parse_voice_speaking(value);
+                if let (Some(ssrc), Some(user_id)) = (speaking.ssrc, speaking.user_id) {
+                    self.ssrc_user_ids.insert(ssrc, user_id);
+                    self.known_user_ids.insert(user_id);
+                }
+                logging::debug(
+                    "voice",
+                    format!(
+                        "voice speaking received: user_id={:?} ssrc={:?} speaking={:?} known_ssrcs={}",
+                        speaking.user_id,
+                        speaking.ssrc,
+                        speaking.speaking,
+                        self.ssrc_user_ids.len()
+                    ),
+                );
+            }
+            VOICE_OP_CLIENTS_CONNECT => {
+                for user_id in voice_user_ids(value) {
+                    self.known_user_ids.insert(user_id);
+                }
+                logging::debug(
+                    "voice",
+                    format!(
+                        "voice clients connected: known_users={}",
+                        self.known_user_ids.len()
+                    ),
+                );
+            }
+            VOICE_OP_CLIENT_DISCONNECT => {
+                if let Some(user_id) = voice_user_id(value) {
+                    self.known_user_ids.remove(&user_id);
+                    self.ssrc_user_ids.retain(|_, mapped_user_id| *mapped_user_id != user_id);
+                    logging::debug(
+                        "voice",
+                        format!(
+                            "voice client disconnected: user_id={} known_users={} known_ssrcs={}",
+                            user_id,
+                            self.known_user_ids.len(),
+                            self.ssrc_user_ids.len()
+                        ),
+                    );
+                }
+            }
+            VOICE_OP_MEDIA_SINK_WANTS => {
+                logging::debug(
+                    "voice",
+                    format!(
+                        "voice media sink wants received: field_count={}",
+                        voice_data_field_count(value)
+                    ),
+                );
+            }
+            VOICE_OP_CLIENT_FLAGS => {
+                logging::debug(
+                    "voice",
+                    format!(
+                        "voice client flags received: user_id={:?} flags={:?}",
+                        voice_user_id(value),
+                        voice_data_u64(value, "flags")
+                    ),
+                );
+            }
+            VOICE_OP_CLIENT_PLATFORM => {
+                logging::debug(
+                    "voice",
+                    format!(
+                        "voice client platform received: user_id={:?} platform={:?}",
+                        voice_user_id(value),
+                        voice_data_string(value, "platform")
+                    ),
+                );
+            }
+            VOICE_OP_DAVE_PREPARE_TRANSITION => {
+                let data = value
+                    .get("d")
+                    .ok_or_else(|| "DAVE transition missing data".to_owned())?;
+                let transition_id = json_u16(data, "transition_id")?;
+                let protocol_version = json_u16(data, "protocol_version")
+                    .or_else(|_| json_u16(data, "dave_protocol_version"))?;
+                self.pending_transitions
+                    .insert(transition_id, protocol_version);
+                logging::debug(
+                    "voice",
+                    format!(
+                        "DAVE prepare transition received: transition_id={} protocol_version={}",
+                        transition_id, protocol_version
+                    ),
+                );
+                if protocol_version == 0 {
+                    if let Some(session) = self.session.as_mut() {
+                        session.set_passthrough_mode(true, Some(120));
+                    }
+                }
+                if transition_id == 0 {
+                    self.execute_transition(transition_id)?;
+                } else {
+                    send_dave_transition_ready(writer, transition_id).await?;
+                }
+            }
+            VOICE_OP_DAVE_EXECUTE_TRANSITION => {
+                let data = value
+                    .get("d")
+                    .ok_or_else(|| "DAVE execute transition missing data".to_owned())?;
+                let transition_id = json_u16(data, "transition_id")?;
+                self.execute_transition(transition_id)?;
+            }
+            VOICE_OP_DAVE_PREPARE_EPOCH => {
+                let data = value
+                    .get("d")
+                    .ok_or_else(|| "DAVE prepare epoch missing data".to_owned())?;
+                let epoch = json_u64(data, "epoch")?;
+                logging::debug("voice", format!("DAVE prepare epoch received: epoch={epoch}"));
+                if epoch == 1 {
+                    let protocol_version = json_u16(data, "protocol_version")
+                        .or_else(|_| json_u16(data, "dave_protocol_version"))?;
+                    self.reinit(protocol_version)?;
+                    self.send_key_package(writer).await?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn handle_binary_frame(
+        &mut self,
+        writer: &VoiceWriter,
+        frame: VoiceBinaryFrame<'_>,
+    ) -> Result<(), String> {
+        match frame.opcode {
+            VOICE_OP_DAVE_MLS_EXTERNAL_SENDER => {
+                let session = self.session_mut()?;
+                session
+                    .set_external_sender(frame.payload)
+                    .map_err(|error| format!("DAVE external sender failed: {error}"))?;
+                logging::debug("voice", "DAVE external sender processed");
+                self.send_key_package(writer).await?;
+            }
+            VOICE_OP_DAVE_MLS_PROPOSALS => {
+                let Some((&operation, proposals)) = frame.payload.split_first() else {
+                    return Err("DAVE proposals payload is empty".to_owned());
+                };
+                let operation_type = match operation {
+                    0 => ProposalsOperationType::APPEND,
+                    1 => ProposalsOperationType::REVOKE,
+                    other => {
+                        return Err(format!("DAVE proposals operation is unsupported: {other}"));
+                    }
+                };
+                let known_user_ids = self.known_user_ids.iter().copied().collect::<Vec<_>>();
+                let result = self
+                    .session_mut()?
+                    .process_proposals(operation_type, proposals, Some(&known_user_ids))
+                    .map_err(|error| format!("DAVE proposals processing failed: {error}"))?;
+                if let Some(commit_welcome) = result {
+                    send_dave_commit_welcome(writer, commit_welcome).await?;
+                }
+                logging::debug("voice", "DAVE proposals processed");
+            }
+            VOICE_OP_DAVE_MLS_ANNOUNCE_COMMIT_TRANSITION => {
+                let Some((transition_id, commit)) = split_transition_payload(frame.payload) else {
+                    return Err("DAVE commit transition payload is too short".to_owned());
+                };
+                match self.session_mut()?.process_commit(commit) {
+                    Ok(()) => {
+                        logging::debug(
+                            "voice",
+                            format!("DAVE commit processed: transition_id={transition_id}"),
+                        );
+                        if transition_id != 0 {
+                            self.pending_transitions.insert(
+                                transition_id,
+                                self.protocol_version.map(NonZeroU16::get).unwrap_or_default(),
+                            );
+                            send_dave_transition_ready(writer, transition_id).await?;
+                        }
+                    }
+                    Err(error) => {
+                        logging::error("voice", format!("DAVE commit failed: {error}"));
+                        send_dave_invalid_commit_welcome(writer, transition_id).await?;
+                        self.reinit_current()?;
+                        self.send_key_package(writer).await?;
+                    }
+                }
+            }
+            VOICE_OP_DAVE_MLS_WELCOME => {
+                let Some((transition_id, welcome)) = split_transition_payload(frame.payload) else {
+                    return Err("DAVE welcome payload is too short".to_owned());
+                };
+                match self.session_mut()?.process_welcome(welcome) {
+                    Ok(()) => {
+                        logging::debug(
+                            "voice",
+                            format!("DAVE welcome processed: transition_id={transition_id}"),
+                        );
+                        if transition_id != 0 {
+                            self.pending_transitions.insert(
+                                transition_id,
+                                self.protocol_version.map(NonZeroU16::get).unwrap_or_default(),
+                            );
+                            send_dave_transition_ready(writer, transition_id).await?;
+                        }
+                    }
+                    Err(error) => {
+                        logging::error("voice", format!("DAVE welcome failed: {error}"));
+                        send_dave_invalid_commit_welcome(writer, transition_id).await?;
+                        self.reinit_current()?;
+                        self.send_key_package(writer).await?;
+                    }
+                }
+            }
+            other => logging::debug("voice", format!("unhandled voice binary op={other}")),
+        }
+        Ok(())
+    }
+
+    fn reinit(&mut self, protocol_version: u16) -> Result<(), String> {
+        let Some(protocol_version) = NonZeroU16::new(protocol_version) else {
+            self.protocol_version = None;
+            if let Some(session) = self.session.as_mut() {
+                session
+                    .reset()
+                    .map_err(|error| format!("DAVE reset failed: {error}"))?;
+                session.set_passthrough_mode(true, Some(10));
+            }
+            logging::debug("voice", "DAVE disabled by protocol transition");
+            return Ok(());
+        };
+        if let Some(session) = self.session.as_mut() {
+            session
+                .reinit(protocol_version, self.user_id, self.channel_id, None)
+                .map_err(|error| format!("DAVE session reinit failed: {error}"))?;
+        } else {
+            self.session = Some(
+                DaveSession::new(protocol_version, self.user_id, self.channel_id, None)
+                    .map_err(|error| format!("DAVE session init failed: {error}"))?,
+            );
+        }
+        self.protocol_version = Some(protocol_version);
+        logging::debug(
+            "voice",
+            format!("DAVE session initialized: protocol_version={protocol_version}"),
+        );
+        Ok(())
+    }
+
+    fn reinit_current(&mut self) -> Result<(), String> {
+        let protocol_version = self
+            .protocol_version
+            .map(NonZeroU16::get)
+            .ok_or_else(|| "DAVE protocol version is not active".to_owned())?;
+        self.reinit(protocol_version)
+    }
+
+    fn execute_transition(&mut self, transition_id: u16) -> Result<(), String> {
+        let Some(protocol_version) = self.pending_transitions.remove(&transition_id) else {
+            logging::debug(
+                "voice",
+                format!("DAVE execute transition ignored: transition_id={transition_id}"),
+            );
+            return Ok(());
+        };
+        if protocol_version == 0 {
+            if let Some(session) = self.session.as_mut() {
+                session.set_passthrough_mode(true, Some(10));
+            }
+            self.protocol_version = None;
+        } else {
+            self.protocol_version = NonZeroU16::new(protocol_version);
+            if let Some(session) = self.session.as_mut() {
+                session.set_passthrough_mode(true, Some(10));
+            }
+        }
+        logging::debug(
+            "voice",
+            format!(
+                "DAVE transition executed: transition_id={} protocol_version={}",
+                transition_id, protocol_version
+            ),
+        );
+        Ok(())
+    }
+
+    async fn send_key_package(&mut self, writer: &VoiceWriter) -> Result<(), String> {
+        let key_package = self
+            .session_mut()?
+            .create_key_package()
+            .map_err(|error| format!("DAVE key package creation failed: {error}"))?;
+        send_voice_binary(writer, VOICE_OP_DAVE_MLS_KEY_PACKAGE, key_package).await?;
+        logging::debug("voice", "DAVE key package sent");
+        Ok(())
+    }
+
+    fn session_mut(&mut self) -> Result<&mut DaveSession, String> {
+        self.session
+            .as_mut()
+            .ok_or_else(|| "DAVE session is not initialized".to_owned())
     }
 }
 
@@ -306,6 +679,7 @@ async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), Strin
     let mut udp_receive_task: Option<JoinHandle<()>> = None;
     let mut udp_socket: Option<Arc<UdpSocket>> = None;
     let last_sequence = Arc::new(Mutex::new(None));
+    let mut dave_state = VoiceDaveState::new(&session);
 
     send_voice_text(&writer, voice_identify_payload(&session)).await?;
     logging::debug("voice", "voice identify sent");
@@ -320,8 +694,9 @@ async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), Strin
                 if let Some(sequence) = value.get("seq").and_then(Value::as_i64) {
                     *last_sequence.lock().await = Some(sequence);
                 }
-                match value.get("op").and_then(Value::as_u64).unwrap_or_default() {
-                    2 => {
+                let opcode = value.get("op").and_then(Value::as_u64).unwrap_or_default() as u8;
+                match opcode {
+                    VOICE_OP_READY => {
                         let ready = parse_voice_ready_payload(&value)?;
                         logging::debug(
                             "voice",
@@ -348,7 +723,7 @@ async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), Strin
                         udp_socket = Some(socket);
                         logging::debug("voice", "voice UDP discovery completed");
                     }
-                    4 => {
+                    VOICE_OP_SESSION_DESCRIPTION => {
                         let description = parse_voice_session_description(&value)?;
                         logging::debug(
                             "voice",
@@ -356,6 +731,11 @@ async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), Strin
                         );
                         if let Some(task) = udp_receive_task.take() {
                             task.abort();
+                        }
+                        if let Some(dave_protocol_version) = description.dave_protocol_version {
+                            let dave_protocol_version = u16::try_from(dave_protocol_version)
+                                .map_err(|_| "DAVE protocol version does not fit u16".to_owned())?;
+                            dave_state.reinit(dave_protocol_version)?;
                         }
                         if let Some(socket) = udp_socket.as_ref() {
                             logging::debug("voice", "starting voice UDP receive task");
@@ -365,8 +745,8 @@ async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), Strin
                             )));
                         }
                     }
-                    6 => {}
-                    8 => {
+                    VOICE_OP_HEARTBEAT_ACK => {}
+                    VOICE_OP_HELLO => {
                         if let Some(task) = heartbeat_task.take() {
                             logging::debug("voice", "replacing voice heartbeat task");
                             task.abort();
@@ -390,6 +770,17 @@ async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), Strin
                             Arc::clone(&last_sequence),
                         )));
                         logging::debug("voice", "voice heartbeat task started");
+                    }
+                    VOICE_OP_CLIENTS_CONNECT
+                    | VOICE_OP_CLIENT_DISCONNECT
+                    | VOICE_OP_SPEAKING
+                    | VOICE_OP_MEDIA_SINK_WANTS
+                    | VOICE_OP_CLIENT_FLAGS
+                    | VOICE_OP_CLIENT_PLATFORM
+                    | VOICE_OP_DAVE_PREPARE_TRANSITION
+                    | VOICE_OP_DAVE_EXECUTE_TRANSITION
+                    | VOICE_OP_DAVE_PREPARE_EPOCH => {
+                        dave_state.handle_json_op(&writer, opcode, &value).await?;
                     }
                     other => logging::debug("voice", format!("unhandled voice gateway op={other}")),
                 }
@@ -415,7 +806,12 @@ async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), Strin
                 }
                 break;
             }
-            WsMessage::Binary(_) | WsMessage::Pong(_) | WsMessage::Frame(_) => {}
+            WsMessage::Binary(payload) => {
+                let frame = parse_voice_binary_frame(&payload)?;
+                *last_sequence.lock().await = Some(frame.sequence);
+                dave_state.handle_binary_frame(&writer, frame).await?;
+            }
+            WsMessage::Pong(_) | WsMessage::Frame(_) => {}
         }
     }
 
@@ -552,6 +948,78 @@ async fn send_voice_text(writer: &VoiceWriter, payload: String) -> Result<(), St
         .map_err(|error| format!("voice websocket send failed: {error}"))
 }
 
+async fn send_voice_binary(
+    writer: &VoiceWriter,
+    opcode: u8,
+    mut payload: Vec<u8>,
+) -> Result<(), String> {
+    let mut frame = Vec::with_capacity(payload.len() + 1);
+    frame.push(opcode);
+    frame.append(&mut payload);
+    let mut writer = writer.lock().await;
+    writer
+        .send(WsMessage::Binary(frame.into()))
+        .await
+        .map_err(|error| format!("voice websocket binary send failed: {error}"))
+}
+
+async fn send_dave_transition_ready(
+    writer: &VoiceWriter,
+    transition_id: u16,
+) -> Result<(), String> {
+    send_voice_text(
+        writer,
+        json!({
+            "op": VOICE_OP_DAVE_TRANSITION_READY,
+            "d": {
+                "transition_id": transition_id,
+            },
+        })
+        .to_string(),
+    )
+    .await?;
+    logging::debug(
+        "voice",
+        format!("DAVE transition ready sent: transition_id={transition_id}"),
+    );
+    Ok(())
+}
+
+async fn send_dave_commit_welcome(
+    writer: &VoiceWriter,
+    commit_welcome: davey::CommitWelcome,
+) -> Result<(), String> {
+    let mut payload = commit_welcome.commit;
+    if let Some(mut welcome) = commit_welcome.welcome {
+        payload.append(&mut welcome);
+    }
+    send_voice_binary(writer, VOICE_OP_DAVE_MLS_COMMIT_WELCOME, payload).await?;
+    logging::debug("voice", "DAVE commit welcome sent");
+    Ok(())
+}
+
+async fn send_dave_invalid_commit_welcome(
+    writer: &VoiceWriter,
+    transition_id: u16,
+) -> Result<(), String> {
+    send_voice_text(
+        writer,
+        json!({
+            "op": VOICE_OP_DAVE_MLS_INVALID_COMMIT_WELCOME,
+            "d": {
+                "transition_id": transition_id,
+            },
+        })
+        .to_string(),
+    )
+    .await?;
+    logging::debug(
+        "voice",
+        format!("DAVE invalid commit welcome sent: transition_id={transition_id}"),
+    );
+    Ok(())
+}
+
 fn voice_gateway_url(endpoint: &str) -> Result<String, String> {
     let endpoint = endpoint
         .trim()
@@ -575,7 +1043,7 @@ fn voice_identify_payload(session: &VoiceGatewaySession) -> String {
             "channel_id": session.channel_id.to_string(),
             "session_id": session.session_id,
             "token": session.token,
-            "max_dave_protocol_version": 0,
+            "max_dave_protocol_version": davey::DAVE_PROTOCOL_VERSION,
         },
     })
     .to_string()
@@ -726,6 +1194,86 @@ fn parse_voice_session_description(value: &Value) -> Result<VoiceSessionDescript
         secret_key,
         dave_protocol_version,
     })
+}
+
+fn parse_voice_binary_frame(payload: &[u8]) -> Result<VoiceBinaryFrame<'_>, String> {
+    if payload.len() < 3 {
+        return Err("voice binary frame is too short".to_owned());
+    }
+    let sequence = u16::from_be_bytes([payload[0], payload[1]]);
+    Ok(VoiceBinaryFrame {
+        sequence: i64::from(sequence),
+        opcode: payload[2],
+        payload: &payload[3..],
+    })
+}
+
+fn split_transition_payload(payload: &[u8]) -> Option<(u16, &[u8])> {
+    if payload.len() < 2 {
+        return None;
+    }
+    Some((u16::from_be_bytes([payload[0], payload[1]]), &payload[2..]))
+}
+
+fn json_u64(value: &Value, key: &str) -> Result<u64, String> {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("missing numeric field: {key}"))
+}
+
+fn json_u16(value: &Value, key: &str) -> Result<u16, String> {
+    json_u64(value, key).and_then(|value| {
+        u16::try_from(value).map_err(|_| format!("numeric field does not fit u16: {key}"))
+    })
+}
+
+fn voice_user_ids(value: &Value) -> Vec<u64> {
+    voice_data(value)
+        .and_then(|data| data.get("user_ids"))
+        .and_then(Value::as_array)
+        .map(|ids| ids.iter().filter_map(voice_user_id_value).collect())
+        .unwrap_or_default()
+}
+
+fn voice_user_id(value: &Value) -> Option<u64> {
+    voice_data(value)
+        .and_then(|data| data.get("user_id"))
+        .and_then(voice_user_id_value)
+}
+
+fn parse_voice_speaking(value: &Value) -> VoiceSpeakingState {
+    VoiceSpeakingState {
+        user_id: voice_user_id(value),
+        ssrc: voice_data_u32(value, "ssrc"),
+        speaking: voice_data_u64(value, "speaking"),
+    }
+}
+
+fn voice_data(value: &Value) -> Option<&Value> {
+    value.get("d")
+}
+
+fn voice_data_u64(value: &Value, key: &str) -> Option<u64> {
+    voice_data(value).and_then(|data| data.get(key)).and_then(Value::as_u64)
+}
+
+fn voice_data_u32(value: &Value, key: &str) -> Option<u32> {
+    voice_data_u64(value, key).and_then(|value| u32::try_from(value).ok())
+}
+
+fn voice_data_string<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    voice_data(value).and_then(|data| data.get(key)).and_then(Value::as_str)
+}
+
+fn voice_data_field_count(value: &Value) -> usize {
+    voice_data(value).and_then(Value::as_object).map_or(0, serde_json::Map::len)
+}
+
+fn voice_user_id_value(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
 }
 
 fn parse_rtp_header(packet: &[u8]) -> Result<RtpHeader, String> {
@@ -912,7 +1460,10 @@ mod tests {
         assert_eq!(payload["d"]["channel_id"].as_str(), Some("10"));
         assert_eq!(payload["d"]["session_id"].as_str(), Some("voice-session"));
         assert_eq!(payload["d"]["token"].as_str(), Some("voice-token"));
-        assert_eq!(payload["d"]["max_dave_protocol_version"].as_u64(), Some(0));
+        assert_eq!(
+            payload["d"]["max_dave_protocol_version"].as_u64(),
+            Some(u64::from(davey::DAVE_PROTOCOL_VERSION))
+        );
     }
 
     #[test]
