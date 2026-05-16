@@ -55,6 +55,7 @@ pub enum GatewayCommand {
         self_mute: bool,
         self_deaf: bool,
     },
+    Shutdown,
 }
 
 /// Discord user-account gateway endpoint. We pin to `v=9` because the v9
@@ -316,7 +317,13 @@ async fn connect_and_run(
             maybe_command = commands.recv() => {
                 match maybe_command {
                     Some(command) => {
-                        if let Err(error) = dispatch_command(&writer, command).await {
+                        if let GatewayCommand::Shutdown = command {
+                            if let Err(error) = close_websocket(&writer).await {
+                                let message = format!("gateway shutdown failed: {error}");
+                                log_and_publish_gateway_error(publish, message).await;
+                            }
+                            break ConnectionOutcome::Stop;
+                        } else if let Err(error) = dispatch_command(&writer, command).await {
                             let message = format!("command send failed: {error}");
                             log_and_publish_gateway_error(publish, message).await;
                             break ConnectionOutcome::Resume;
@@ -594,8 +601,17 @@ async fn dispatch_command(writer: &WriterHandle, command: GatewayCommand) -> Res
             );
             voice_state_update_payload(guild_id, channel_id, self_mute, self_deaf)
         }
+        GatewayCommand::Shutdown => return Ok(()),
     };
     send_text(writer, payload).await
+}
+
+async fn close_websocket(writer: &WriterHandle) -> Result<(), String> {
+    let mut writer = writer.lock().await;
+    writer
+        .close()
+        .await
+        .map_err(|error| format!("websocket close failed: {error}"))
 }
 
 async fn send_text(writer: &WriterHandle, payload: String) -> Result<(), String> {

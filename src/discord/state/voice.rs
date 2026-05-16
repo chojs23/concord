@@ -19,6 +19,14 @@ pub struct VoiceParticipantState {
     pub self_stream: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CurrentVoiceConnectionState {
+    pub guild_id: Id<GuildMarker>,
+    pub channel_id: Id<ChannelMarker>,
+    pub self_mute: bool,
+    pub self_deaf: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct VoiceState {
     channel_id: Id<ChannelMarker>,
@@ -31,6 +39,21 @@ pub(super) struct VoiceState {
 }
 
 impl DiscordState {
+    pub fn current_user_voice_connection(&self) -> Option<CurrentVoiceConnectionState> {
+        let current_user_id = self.session.current_user_id?;
+        self.voice
+            .states
+            .iter()
+            .find_map(|((guild_id, user_id), state)| {
+                (*user_id == current_user_id).then_some(CurrentVoiceConnectionState {
+                    guild_id: *guild_id,
+                    channel_id: state.channel_id,
+                    self_mute: state.self_mute,
+                    self_deaf: state.self_deaf,
+                })
+            })
+    }
+
     pub fn voice_participants_for_channel(
         &self,
         guild_id: Id<GuildMarker>,

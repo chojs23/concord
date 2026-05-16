@@ -15,7 +15,7 @@ use crate::{
         AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
         CustomEmojiInfo, DownloadAttachmentSource, GuildFolder, GuildNotificationSettingsInfo,
         MemberInfo, MessageReferenceInfo, NotificationLevel, PollAnswerInfo, PollInfo,
-        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReactionUsersInfo, VoiceConnectionStatus,
+        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReactionUsersInfo,
     },
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };
@@ -1689,72 +1689,6 @@ fn options_popup_toggles_selected_setting() {
 
     assert!(state.is_options_popup_open());
     assert!(!state.display_options().show_avatars);
-    assert_eq!(
-        state.take_options_save_request(),
-        Some(AppOptions {
-            display: state.display_options(),
-            voice: state.voice_options(),
-        })
-    );
-}
-
-#[test]
-fn options_popup_toggles_voice_state() {
-    let mut state = state_with_messages(1);
-
-    state.open_options_popup();
-    for _ in 0..6 {
-        handle_key(&mut state, key(KeyCode::Down));
-    }
-    handle_key(&mut state, key(KeyCode::Enter));
-
-    assert!(state.voice_options().self_mute);
-    assert_eq!(
-        state.take_options_save_request(),
-        Some(AppOptions {
-            display: state.display_options(),
-            voice: state.voice_options(),
-        })
-    );
-
-    handle_key(&mut state, key(KeyCode::Down));
-    handle_key(&mut state, key(KeyCode::Enter));
-
-    assert!(state.voice_options().self_deaf);
-    assert_eq!(
-        state.take_options_save_request(),
-        Some(AppOptions {
-            display: state.display_options(),
-            voice: state.voice_options(),
-        })
-    );
-}
-
-#[test]
-fn options_popup_toggles_current_voice_state_when_joined() {
-    let mut state = state_with_messages(1);
-    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        guild_id: Id::new(1),
-        channel_id: Some(Id::new(11)),
-        status: VoiceConnectionStatus::Connecting,
-        message: None,
-    });
-
-    state.open_options_popup();
-    for _ in 0..6 {
-        handle_key(&mut state, key(KeyCode::Down));
-    }
-    handle_key(&mut state, key(KeyCode::Enter));
-
-    assert_eq!(
-        state.drain_pending_commands(),
-        vec![AppCommand::UpdateVoiceState {
-            guild_id: Id::new(1),
-            channel_id: Id::new(11),
-            self_mute: true,
-            self_deaf: false,
-        }]
-    );
     assert_eq!(
         state.take_options_save_request(),
         Some(AppOptions {

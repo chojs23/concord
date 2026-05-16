@@ -30,7 +30,7 @@ pub use notifications::ChannelUnreadState;
 use notifications::{GuildNotificationSettingsState, MessageNotificationKind};
 use profiles::{ProfileRoleIds, UserProfileCacheKey};
 use reads::ChannelReadState;
-pub use voice::VoiceParticipantState;
+pub use voice::{CurrentVoiceConnectionState, VoiceParticipantState};
 
 use super::{
     ActivityInfo, AppEvent, CustomEmojiInfo, FriendStatus, GuildFolder, PresenceStatus,

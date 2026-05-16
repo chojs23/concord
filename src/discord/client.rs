@@ -19,7 +19,7 @@ use super::{
     events::{AppEvent, SequencedAppEvent},
     gateway::{GatewayCommand, run_gateway},
     rest::{DiscordRest, ForumPostPage},
-    state::{DiscordSnapshot, DiscordState, SnapshotRevision},
+    state::{CurrentVoiceConnectionState, DiscordSnapshot, DiscordState, SnapshotRevision},
 };
 
 #[derive(Clone, Debug)]
@@ -30,6 +30,7 @@ pub struct DiscordClient {
     effects_rx: Arc<Mutex<Option<mpsc::Receiver<SequencedAppEvent>>>>,
     snapshots_tx: watch::Sender<SnapshotRevision>,
     state: Arc<RwLock<DiscordState>>,
+    requested_voice: Arc<RwLock<Option<CurrentVoiceConnectionState>>>,
     revision: Arc<RwLock<SnapshotRevision>>,
     publish_lock: Arc<AsyncMutex<()>>,
     gateway_commands_tx: mpsc::UnboundedSender<GatewayCommand>,
@@ -52,6 +53,7 @@ impl DiscordClient {
             effects_rx: Arc::new(Mutex::new(Some(effects_rx))),
             snapshots_tx,
             state: Arc::new(RwLock::new(initial_state)),
+            requested_voice: Arc::new(RwLock::new(None)),
             revision: Arc::new(RwLock::new(SnapshotRevision::default())),
             publish_lock: Arc::new(AsyncMutex::new(())),
             gateway_commands_tx,
@@ -176,13 +178,50 @@ impl DiscordClient {
         self_mute: bool,
         self_deaf: bool,
     ) -> std::result::Result<(), String> {
-        self.gateway_commands_tx
+        let result = self
+            .gateway_commands_tx
             .send(GatewayCommand::UpdateVoiceState {
                 guild_id,
                 channel_id,
                 self_mute,
                 self_deaf,
             })
+            .map_err(|_| "gateway command channel closed".to_owned());
+        if result.is_ok() {
+            let mut requested = self
+                .requested_voice
+                .write()
+                .expect("requested voice lock is not poisoned");
+            if let Some(channel_id) = channel_id {
+                *requested = Some(CurrentVoiceConnectionState {
+                    guild_id,
+                    channel_id,
+                    self_mute,
+                    self_deaf,
+                });
+            } else if requested.is_some_and(|voice| voice.guild_id == guild_id) {
+                *requested = None;
+            }
+        }
+        result
+    }
+
+    pub fn current_or_requested_voice_connection(&self) -> Option<CurrentVoiceConnectionState> {
+        self.state
+            .read()
+            .expect("discord state lock is not poisoned")
+            .current_user_voice_connection()
+            .or_else(|| {
+                *self
+                    .requested_voice
+                    .read()
+                    .expect("requested voice lock is not poisoned")
+            })
+    }
+
+    pub fn shutdown_gateway(&self) -> std::result::Result<(), String> {
+        self.gateway_commands_tx
+            .send(GatewayCommand::Shutdown)
             .map_err(|_| "gateway command channel closed".to_owned())
     }
 
@@ -577,6 +616,30 @@ mod tests {
             assert_eq!(format!("{:?}", effect.event), format!("{event:?}"));
             assert!(!snapshots.has_changed().expect("snapshot stream is open"));
         }
+    }
+
+    #[test]
+    fn requested_voice_state_tracks_shutdown_fallback() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+
+        client
+            .update_voice_state(Id::new(1), Some(Id::new(10)), true, false)
+            .expect("gateway command should queue");
+        let voice = client
+            .current_or_requested_voice_connection()
+            .expect("requested voice state should be tracked");
+
+        assert_eq!(voice.guild_id, Id::new(1));
+        assert_eq!(voice.channel_id, Id::new(10));
+        assert!(voice.self_mute);
+        assert!(!voice.self_deaf);
+
+        client
+            .update_voice_state(Id::new(1), None, false, false)
+            .expect("gateway command should queue");
+
+        assert_eq!(client.current_or_requested_voice_connection(), None);
     }
 
     #[test]

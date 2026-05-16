@@ -44,7 +44,7 @@ use crate::{
         MessageInfo, MessageKind, MessageSnapshotInfo, MessageState, MutualGuildInfo,
         NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
         ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
-        VoiceStateInfo,
+        VoiceConnectionStatus, VoiceStateInfo,
     },
     tui::{
         format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
@@ -242,12 +242,45 @@ fn header_shows_connected_account() {
         user: "muri".to_owned(),
         user_id: Some(Id::new(10)),
     });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "Lobby".to_owned(),
+            kind: "GuildVoice".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
+        guild_id: Id::new(1),
+        channel_id: Some(Id::new(11)),
+        status: VoiceConnectionStatus::Connecting,
+        message: None,
+    });
 
     let dump = render_dashboard_dump(100, 10, &mut state);
     let header = dump.first().expect("dashboard render includes header");
 
     assert!(header.contains("Concord - v"), "{header}");
     assert!(header.contains("Connected as muri"), "{header}");
+    assert!(header.contains("Voice guild - Lobby"), "{header}");
     assert!(!header.contains("Loading..."), "{header}");
 }
 
@@ -1383,6 +1416,12 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
             self_stream: true,
         },
     });
+    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
+        guild_id,
+        channel_id: Some(voice_id),
+        status: VoiceConnectionStatus::Connecting,
+        message: None,
+    });
     state.confirm_selected_guild();
     state.set_channel_view_height(10);
 
@@ -1412,6 +1451,10 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         .find(|col| buffer[(*col, lobby_row)].symbol() == "🔊")
         .expect("populated voice row should use loud speaker icon");
     assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Cyan);
+    let lobby_name_col = (0..buffer.area.width)
+        .find(|col| buffer[(*col, lobby_row)].symbol() == "L")
+        .expect("populated voice row should render channel name");
+    assert_eq!(buffer[(lobby_name_col, lobby_row)].fg, Color::Yellow);
 
     let empty_row = (0..buffer.area.height)
         .find(|row| {

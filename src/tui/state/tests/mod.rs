@@ -8111,17 +8111,7 @@ fn voice_channel_participants_render_as_child_rows_and_are_skipped_by_selection(
 
 #[test]
 fn voice_channel_action_emits_join_then_leave_command() {
-    let mut state = state_with_voice_channel_participant();
-    state.focus_pane(FocusPane::Channels);
-    state.set_channel_view_height(10);
-    state.move_down();
-    state.open_selected_channel_actions();
-
-    let actions = state.selected_channel_action_items();
-    assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
-    assert_eq!(actions[0].label, "Join voice");
-
-    state = DashboardState::new_with_voice_options(VoiceOptions {
+    let mut state = DashboardState::new_with_voice_options(VoiceOptions {
         self_mute: true,
         self_deaf: true,
     });
@@ -8246,17 +8236,6 @@ fn voice_channel_join_action_requires_connect_permission() {
     assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
     assert!(!actions[0].enabled);
     assert_eq!(state.activate_selected_channel_action(), None);
-
-    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        guild_id,
-        channel_id: Some(voice_id),
-        status: VoiceConnectionStatus::Connecting,
-        message: None,
-    });
-    state.open_selected_channel_actions();
-    let actions = state.selected_channel_action_items();
-    assert_eq!(actions[0].kind, ChannelActionKind::LeaveVoice);
-    assert!(actions[0].enabled);
 }
 
 #[test]

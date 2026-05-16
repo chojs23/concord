@@ -388,6 +388,9 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                         let unread = dashboard.sidebar_channel_unread(state.id);
                         let (badge, mut name_style) =
                             channel_unread_decoration(unread, base_style, is_active);
+                        if state.is_voice() && dashboard.is_joined_voice_channel(state.id) {
+                            name_style = name_style.fg(Color::Yellow).add_modifier(Modifier::BOLD);
+                        }
                         if is_muted {
                             name_style = name_style.add_modifier(Modifier::DIM);
                         }
@@ -1485,6 +1488,13 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
     if let Some(version) = state.update_available_version() {
         spans.push(Span::styled(
             format!(" New version available: v{version} "),
+            Style::default().fg(Color::Yellow).bold(),
+        ));
+    }
+    if let Some(label) = state.active_voice_connection_label() {
+        spans.push(Span::styled(" Voice ", Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            format!("{label} "),
             Style::default().fg(Color::Yellow).bold(),
         ));
     }

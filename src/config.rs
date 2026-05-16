@@ -229,21 +229,32 @@ mod tests {
     }
 
     #[test]
-    fn display_config_parses_partial_toml_with_defaults() {
+    fn app_config_parses_partial_toml_with_defaults() {
         let cases = [
             (
                 "[display]\ndisable_image_preview = true\n",
                 true,
                 ImagePreviewQualityPreset::Balanced,
+                false,
+                false,
             ),
             (
                 "[display]\nimage_preview_quality = \"original\"\n",
                 false,
                 ImagePreviewQualityPreset::Original,
+                false,
+                false,
+            ),
+            (
+                "[voice]\nself_mute = true\n",
+                false,
+                ImagePreviewQualityPreset::Balanced,
+                true,
+                false,
             ),
         ];
 
-        for (toml, disable_image_preview, image_preview_quality) in cases {
+        for (toml, disable_image_preview, image_preview_quality, self_mute, self_deaf) in cases {
             let config: AppOptions = toml::from_str(toml).expect("partial config should parse");
             assert_eq!(config.display.disable_image_preview, disable_image_preview);
             assert!(config.display.show_avatars);
@@ -251,22 +262,12 @@ mod tests {
             assert_eq!(config.display.image_preview_quality, image_preview_quality);
             assert!(config.display.show_custom_emoji);
             assert!(config.display.desktop_notifications);
-            assert!(!config.voice.self_mute);
-            assert!(!config.voice.self_deaf);
+            assert_eq!(config.voice.self_mute, self_mute);
+            assert_eq!(config.voice.self_deaf, self_deaf);
             assert_eq!(config.display.server_width, 20);
             assert_eq!(config.display.channel_list_width, 24);
             assert_eq!(config.display.member_list_width, 26);
         }
-    }
-
-    #[test]
-    fn voice_config_parses_partial_toml_with_defaults() {
-        let config: AppOptions = toml::from_str("[voice]\nself_mute = true\n")
-            .expect("partial voice config should parse");
-
-        assert!(config.voice.self_mute);
-        assert!(!config.voice.self_deaf);
-        assert_eq!(config.display, DisplayOptions::default());
     }
 
     #[test]

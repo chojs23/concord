@@ -1046,6 +1046,27 @@ impl DashboardState {
             .unwrap_or_else(|| format!("#channel-{}", channel_id.get()))
     }
 
+    pub fn active_voice_connection_label(&self) -> Option<String> {
+        let voice = self.voice_connection?;
+        let channel_id = voice.channel_id?;
+        let guild = self
+            .guild_name(voice.guild_id)
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("guild-{}", voice.guild_id.get()));
+        let channel = self
+            .discord
+            .channel(channel_id)
+            .map(|channel| channel.name.clone())
+            .unwrap_or_else(|| format!("channel-{}", channel_id.get()));
+        Some(format!("{guild} - {channel}"))
+    }
+
+    pub fn is_joined_voice_channel(&self, channel_id: Id<ChannelMarker>) -> bool {
+        self.voice_connection
+            .and_then(|voice| voice.channel_id)
+            .is_some_and(|voice_channel_id| voice_channel_id == channel_id)
+    }
+
     fn toggle_channel_mute(
         &mut self,
         channel_id: Id<ChannelMarker>,

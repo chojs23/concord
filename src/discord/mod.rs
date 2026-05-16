@@ -32,6 +32,7 @@ pub use ids::{Id, marker};
 pub use rest::ForumPostPage;
 pub use state::{
     ChannelRecipientState, ChannelState, ChannelUnreadState, ChannelVisibilityStats,
-    DiscordSnapshot, DiscordState, GuildMemberState, GuildState, MessageCapabilities, MessageState,
-    RoleState, SnapshotAreas, SnapshotRevision, VoiceParticipantState,
+    CurrentVoiceConnectionState, DiscordSnapshot, DiscordState, GuildMemberState, GuildState,
+    MessageCapabilities, MessageState, RoleState, SnapshotAreas, SnapshotRevision,
+    VoiceParticipantState,
 };
