@@ -20,7 +20,7 @@ use protocol::{
 
 #[cfg(test)]
 use cache::{
-    AvatarImageEntry, EmojiImageEntry, MAX_AVATAR_IMAGE_CACHE_ENTRIES,
+    AvatarImageEntry, AvatarProtocolKey, EmojiImageEntry, MAX_AVATAR_IMAGE_CACHE_ENTRIES,
     MAX_EMOJI_IMAGE_CACHE_ENTRIES,
 };
 #[cfg(test)]
@@ -694,6 +694,7 @@ mod tests {
         let mut cache = AvatarImageCache {
             picker: None,
             entries: HashMap::new(),
+            active_popup_avatar_url: None,
             tick: 0,
         };
         for id in 0..MAX_AVATAR_IMAGE_CACHE_ENTRIES {
@@ -736,10 +737,35 @@ mod tests {
     }
 
     #[test]
+    fn avatar_protocol_key_tracks_render_clipping() {
+        let full = AvatarTarget {
+            row: 0,
+            visible_height: AVATAR_PREVIEW_HEIGHT,
+            top_clip_rows: 0,
+            url: "https://cdn.discordapp.com/avatars/1.png".to_owned(),
+        };
+        let clipped = AvatarTarget {
+            visible_height: 1,
+            top_clip_rows: 1,
+            ..full.clone()
+        };
+
+        assert_ne!(
+            AvatarProtocolKey::message_avatar(&full),
+            AvatarProtocolKey::message_avatar(&clipped)
+        );
+        assert_ne!(
+            AvatarProtocolKey::message_avatar(&full),
+            AvatarProtocolKey::profile_popup()
+        );
+    }
+
+    #[test]
     fn avatar_popup_request_prunes_cache_to_limit() {
         let mut cache = AvatarImageCache {
             picker: None,
             entries: HashMap::new(),
+            active_popup_avatar_url: None,
             tick: 0,
         };
         for id in 0..MAX_AVATAR_IMAGE_CACHE_ENTRIES {
@@ -765,6 +791,48 @@ mod tests {
                 .entries
                 .contains_key("https://cdn.discordapp.com/avatars/new.png?size=128")
         );
+    }
+
+    #[test]
+    fn avatar_cache_pruning_preserves_active_popup_avatar() {
+        let popup_url = "https://cdn.discordapp.com/avatars/popup.png?size=128";
+        let mut cache = AvatarImageCache {
+            picker: None,
+            entries: HashMap::new(),
+            active_popup_avatar_url: Some(popup_url.to_owned()),
+            tick: 0,
+        };
+        for id in 0..MAX_AVATAR_IMAGE_CACHE_ENTRIES {
+            let url = avatar_preview_url(
+                &format!("https://cdn.discordapp.com/avatars/{id}.png"),
+                AVATAR_PREVIEW_WIDTH,
+                AVATAR_PREVIEW_HEIGHT,
+            );
+            cache.entries.insert(
+                url,
+                AvatarImageEntry::Failed {
+                    last_used: id as u64,
+                },
+            );
+        }
+        cache.entries.insert(
+            popup_url.to_owned(),
+            AvatarImageEntry::Failed { last_used: 0 },
+        );
+
+        let targets = (0..MAX_AVATAR_IMAGE_CACHE_ENTRIES)
+            .map(|id| AvatarTarget {
+                row: 0,
+                visible_height: 1,
+                top_clip_rows: 0,
+                url: format!("https://cdn.discordapp.com/avatars/{id}.png"),
+            })
+            .collect::<Vec<_>>();
+
+        cache.prune_to_limit(&targets);
+
+        assert_eq!(cache.entries.len(), MAX_AVATAR_IMAGE_CACHE_ENTRIES + 1);
+        assert!(cache.entries.contains_key(popup_url));
     }
 
     #[test]

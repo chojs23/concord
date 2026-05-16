@@ -30,7 +30,7 @@ pub(super) fn render_messages(
     area: Rect,
     state: &DashboardState,
     image_previews: Vec<ImagePreview<'_>>,
-    avatar_images: Vec<AvatarImage>,
+    avatar_images: Vec<AvatarImage<'_>>,
     emoji_images: &[EmojiImage<'_>],
 ) {
     let block = panel_block_owned(
@@ -143,7 +143,7 @@ pub(super) fn render_messages(
             avatar.visible_height,
             selected_avatar_x_offset(selected_avatar_body_top, avatar.row),
         ) {
-            frame.render_widget(RatatuiImage::new(&avatar.protocol), area);
+            frame.render_widget(RatatuiImage::new(avatar.protocol), area);
         }
     }
     render_inline_reaction_emojis(

@@ -157,16 +157,13 @@ pub(super) async fn run_dashboard(
                 avatar_targets = visible_avatar_targets(&state, preview_layout);
                 emoji_targets = visible_emoji_image_targets(&state);
                 let image_previews = image_previews.render_state(&image_targets);
-                let rendered_avatars = avatar_images.render_state(&avatar_targets);
                 let rendered_emojis = emoji_images.render_state(&emoji_targets);
-                let popup_avatar = state
+                let popup_avatar_url = state
                     .show_avatars()
-                    .then(|| {
-                        state
-                            .user_profile_popup_avatar_url()
-                            .and_then(|url| avatar_images.popup_avatar_image(url))
-                    })
+                    .then(|| state.user_profile_popup_avatar_url())
                     .flatten();
+                let (rendered_avatars, popup_avatar) =
+                    avatar_images.render_state_with_popup(&avatar_targets, popup_avatar_url);
                 ui::render(
                     frame,
                     &state,

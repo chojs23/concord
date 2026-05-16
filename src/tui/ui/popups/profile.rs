@@ -68,7 +68,7 @@ pub(in crate::tui::ui) fn render_user_profile_popup(
             width: USER_PROFILE_POPUP_AVATAR_CELL_WIDTH.min(inner.width),
             height: AVATAR_CELL_HEIGHT.min(inner.height),
         };
-        frame.render_widget(RatatuiImage::new(&avatar.protocol), avatar_area);
+        frame.render_widget(RatatuiImage::new(avatar.protocol), avatar_area);
     }
 }
 

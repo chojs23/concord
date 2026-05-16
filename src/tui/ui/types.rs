@@ -30,10 +30,10 @@ pub struct ImagePreview<'a> {
     pub state: ImagePreviewState<'a>,
 }
 
-pub struct AvatarImage {
+pub struct AvatarImage<'a> {
     pub row: isize,
     pub visible_height: u16,
-    pub protocol: Protocol,
+    pub protocol: &'a Protocol,
 }
 
 pub struct EmojiImage<'a> {
