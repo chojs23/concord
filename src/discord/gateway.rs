@@ -24,6 +24,7 @@ use super::{
     client::publish_app_event,
     events::{AppEvent, SequencedAppEvent},
     state::{DiscordState, SnapshotRevision},
+    voice::{self, VoiceRuntimeEvent},
 };
 use crate::logging;
 
@@ -56,6 +57,16 @@ pub enum GatewayCommand {
         self_deaf: bool,
     },
     Shutdown,
+}
+
+#[derive(Clone)]
+pub(crate) struct GatewayRuntime {
+    pub(crate) effects_tx: mpsc::Sender<SequencedAppEvent>,
+    pub(crate) snapshots_tx: watch::Sender<SnapshotRevision>,
+    pub(crate) state: Arc<RwLock<DiscordState>>,
+    pub(crate) revision: Arc<RwLock<SnapshotRevision>>,
+    pub(crate) publish_lock: Arc<Mutex<()>>,
+    pub(crate) voice_events_tx: mpsc::UnboundedSender<VoiceRuntimeEvent>,
 }
 
 /// Discord user-account gateway endpoint. We pin to `v=9` because the v9
@@ -108,6 +119,7 @@ struct GatewayPublishContext<'a> {
     state: &'a Arc<RwLock<DiscordState>>,
     revision: &'a Arc<RwLock<SnapshotRevision>>,
     publish_lock: &'a Arc<Mutex<()>>,
+    voice_events_tx: &'a mpsc::UnboundedSender<VoiceRuntimeEvent>,
 }
 
 #[derive(Clone, Copy)]
@@ -162,23 +174,20 @@ impl SessionState {
 
 pub async fn run_gateway(
     token: String,
-    effects_tx: mpsc::Sender<SequencedAppEvent>,
-    snapshots_tx: watch::Sender<SnapshotRevision>,
     mut commands: mpsc::UnboundedReceiver<GatewayCommand>,
-    state: Arc<RwLock<DiscordState>>,
-    revision: Arc<RwLock<SnapshotRevision>>,
-    publish_lock: Arc<Mutex<()>>,
+    runtime: GatewayRuntime,
 ) {
     let mut session = SessionState::default();
     let mut backoff = RECONNECT_BASE_DELAY;
 
     loop {
         let publish = GatewayPublishContext {
-            effects_tx: &effects_tx,
-            snapshots_tx: &snapshots_tx,
-            state: &state,
-            revision: &revision,
-            publish_lock: &publish_lock,
+            effects_tx: &runtime.effects_tx,
+            snapshots_tx: &runtime.snapshots_tx,
+            state: &runtime.state,
+            revision: &runtime.revision,
+            publish_lock: &runtime.publish_lock,
+            voice_events_tx: &runtime.voice_events_tx,
         };
         let outcome = match connect_and_run(&token, &mut commands, &mut session, publish).await {
             Ok(outcome) => outcome,
@@ -218,11 +227,12 @@ pub async fn run_gateway(
     }
 
     let publish = GatewayPublishContext {
-        effects_tx: &effects_tx,
-        snapshots_tx: &snapshots_tx,
-        state: &state,
-        revision: &revision,
-        publish_lock: &publish_lock,
+        effects_tx: &runtime.effects_tx,
+        snapshots_tx: &runtime.snapshots_tx,
+        state: &runtime.state,
+        revision: &runtime.revision,
+        publish_lock: &runtime.publish_lock,
+        voice_events_tx: &runtime.voice_events_tx,
     };
     publish_gateway_event(publish, AppEvent::GatewayClosed).await;
 }
@@ -495,6 +505,7 @@ async fn publish_gateway_event(context: GatewayPublishContext<'_>, event: AppEve
         &event,
     )
     .await;
+    voice::forward_app_event(context.voice_events_tx, &event);
 }
 
 async fn log_and_publish_gateway_error(context: GatewayPublishContext<'_>, message: String) {

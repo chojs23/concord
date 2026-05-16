@@ -17,9 +17,10 @@ use super::{
     MessageAttachmentUpload, MessageInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
     commands::ForumPostArchiveState,
     events::{AppEvent, SequencedAppEvent},
-    gateway::{GatewayCommand, run_gateway},
+    gateway::{GatewayCommand, GatewayRuntime, run_gateway},
     rest::{DiscordRest, ForumPostPage},
     state::{CurrentVoiceConnectionState, DiscordSnapshot, DiscordState, SnapshotRevision},
+    voice::{self, VoiceRuntimeEvent},
 };
 
 #[derive(Clone, Debug)]
@@ -35,6 +36,8 @@ pub struct DiscordClient {
     publish_lock: Arc<AsyncMutex<()>>,
     gateway_commands_tx: mpsc::UnboundedSender<GatewayCommand>,
     gateway_commands_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<GatewayCommand>>>>,
+    voice_events_tx: mpsc::UnboundedSender<VoiceRuntimeEvent>,
+    voice_events_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<VoiceRuntimeEvent>>>>,
 }
 
 impl DiscordClient {
@@ -45,6 +48,7 @@ impl DiscordClient {
         let (effects_tx, effects_rx) = mpsc::channel(4096);
         let (snapshots_tx, _) = watch::channel(SnapshotRevision::default());
         let (gateway_commands_tx, gateway_commands_rx) = mpsc::unbounded_channel();
+        let (voice_events_tx, voice_events_rx) = mpsc::unbounded_channel();
 
         Ok(Self {
             token,
@@ -58,6 +62,8 @@ impl DiscordClient {
             publish_lock: Arc::new(AsyncMutex::new(())),
             gateway_commands_tx,
             gateway_commands_rx: Arc::new(Mutex::new(Some(gateway_commands_rx))),
+            voice_events_tx,
+            voice_events_rx: Arc::new(Mutex::new(Some(voice_events_rx))),
         })
     }
 
@@ -95,6 +101,7 @@ impl DiscordClient {
             &event,
         )
         .await;
+        voice::forward_app_event(&self.voice_events_tx, &event);
     }
 
     pub fn start_gateway(&self) -> JoinHandle<()> {
@@ -110,18 +117,26 @@ impl DiscordClient {
             .expect("gateway command receiver mutex is not poisoned")
             .take()
             .expect("gateway can only be started once");
+        let voice_events_tx = self.voice_events_tx.clone();
+        if let Some(voice_events) = self
+            .voice_events_rx
+            .lock()
+            .expect("voice event receiver mutex is not poisoned")
+            .take()
+        {
+            tokio::spawn(voice::run_voice_runtime(voice_events));
+        }
 
         tokio::spawn(async move {
-            run_gateway(
-                token,
+            let runtime = GatewayRuntime {
                 effects_tx,
                 snapshots_tx,
-                gateway_commands,
                 state,
                 revision,
                 publish_lock,
-            )
-            .await;
+                voice_events_tx,
+            };
+            run_gateway(token, gateway_commands, runtime).await;
         })
     }
 
@@ -193,14 +208,21 @@ impl DiscordClient {
                 .write()
                 .expect("requested voice lock is not poisoned");
             if let Some(channel_id) = channel_id {
-                *requested = Some(CurrentVoiceConnectionState {
+                let voice = CurrentVoiceConnectionState {
                     guild_id,
                     channel_id,
                     self_mute,
                     self_deaf,
-                });
+                };
+                *requested = Some(voice);
+                let _ = self
+                    .voice_events_tx
+                    .send(VoiceRuntimeEvent::Requested(Some(voice)));
             } else if requested.is_some_and(|voice| voice.guild_id == guild_id) {
                 *requested = None;
+                let _ = self
+                    .voice_events_tx
+                    .send(VoiceRuntimeEvent::Requested(None));
             }
         }
         result
@@ -227,6 +249,7 @@ impl DiscordClient {
     }
 
     pub fn shutdown_gateway(&self) -> std::result::Result<(), String> {
+        let _ = self.voice_events_tx.send(VoiceRuntimeEvent::Shutdown);
         self.gateway_commands_tx
             .send(GatewayCommand::Shutdown)
             .map_err(|_| "gateway command channel closed".to_owned())

@@ -157,7 +157,7 @@ pub struct MemberInfo {
     pub role_ids: Vec<Id<RoleMarker>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct VoiceStateInfo {
     pub guild_id: Id<GuildMarker>,
     pub channel_id: Option<Id<ChannelMarker>>,
@@ -169,6 +169,26 @@ pub struct VoiceStateInfo {
     pub self_deaf: bool,
     pub self_mute: bool,
     pub self_stream: bool,
+}
+
+impl fmt::Debug for VoiceStateInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VoiceStateInfo")
+            .field("guild_id", &self.guild_id)
+            .field("channel_id", &self.channel_id)
+            .field("user_id", &self.user_id)
+            .field(
+                "session_id",
+                &self.session_id.as_ref().map(|_| "<redacted>"),
+            )
+            .field("member", &self.member)
+            .field("deaf", &self.deaf)
+            .field("mute", &self.mute)
+            .field("self_deaf", &self.self_deaf)
+            .field("self_mute", &self.self_mute)
+            .field("self_stream", &self.self_stream)
+            .finish()
+    }
 }
 
 #[derive(Clone, Eq, PartialEq)]

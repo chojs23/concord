@@ -10,6 +10,7 @@ pub mod password_auth;
 pub mod qr_auth;
 mod rest;
 mod state;
+mod voice;
 
 pub use client::DiscordClient;
 pub(crate) use client::validate_token_header;
