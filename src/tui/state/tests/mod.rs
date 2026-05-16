@@ -6002,6 +6002,69 @@ fn forum_channel_upsert_inserts_new_thread_at_top_of_active_list() {
 }
 
 #[test]
+fn forum_channel_upsert_effect_inserts_new_thread_after_snapshot_restore() {
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let welcome_thread = forum_thread_info(guild_id, forum_id, 30, "welcome", None, false);
+    let new_thread = forum_thread_info(guild_id, forum_id, 31, "brand-new", None, false);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![forum_channel_info(guild_id, forum_id)],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    state.push_event(AppEvent::ForumPostsLoaded {
+        channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
+        offset: 0,
+        next_offset: 1,
+        posts: vec![welcome_thread.clone()],
+        preview_messages: Vec::new(),
+        has_more: false,
+    });
+
+    let mut snapshot_state = DiscordState::default();
+    snapshot_state.apply_event(&AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![
+            forum_channel_info(guild_id, forum_id),
+            welcome_thread,
+            new_thread.clone(),
+        ],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.restore_discord_snapshot(snapshot_state);
+    state.push_effect(AppEvent::ChannelUpsert(new_thread.clone()));
+
+    assert_eq!(
+        state
+            .selected_forum_post_items()
+            .iter()
+            .map(|post| post.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["brand-new", "welcome"]
+    );
+
+    state.push_effect(AppEvent::ChannelUpsert(new_thread));
+    assert_eq!(state.selected_forum_post_items().len(), 2);
+}
+
+#[test]
 fn forum_sidebar_unread_aggregates_unread_child_posts() {
     let guild_id = Id::new(1);
     let forum_id = Id::new(20);
@@ -7214,7 +7277,7 @@ fn viewport_scroll_does_not_move_list_pane_selection() {
     channel_state.scroll_focused_pane_viewport_down();
     assert_eq!(channel_state.selected_channel(), selected_channel);
     assert_eq!(channel_state.channel_scroll(), channel_scroll + 1);
-    assert_eq!(channel_state.focused_channel_selection(), None);
+    assert!(channel_state.selected_channel() < channel_state.channel_scroll());
 
     let mut member_state = state_with_members(8);
     member_state.focus_pane(FocusPane::Members);
