@@ -43,7 +43,9 @@ fn leader_popup_title(state: &DashboardState) -> String {
         return "Leader".to_owned();
     }
 
-    if state.is_message_action_menu_open() {
+    if state.is_message_url_picker_open() {
+        "Open URL".to_owned()
+    } else if state.is_message_action_menu_open() {
         "Message Actions".to_owned()
     } else if state.is_channel_leader_action_active() {
         "Channel Actions".to_owned()
@@ -113,6 +115,16 @@ fn leader_line_width(line: &Line<'_>) -> usize {
 }
 
 fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
+    if state.is_message_url_picker_open() {
+        return state
+            .selected_message_url_items()
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                leader_shortcut_line(indexed_shortcut(index).unwrap_or(' '), &item.label, true)
+            })
+            .collect();
+    }
     if state.is_message_action_menu_open() {
         let actions = state.selected_message_action_items();
         return actions
@@ -237,17 +249,36 @@ pub(in crate::tui::ui) fn render_message_action_menu(
         return;
     }
 
-    let actions = state.selected_message_action_items();
-    if actions.is_empty() {
-        return;
-    }
+    let (title, lines, len) = if state.is_message_url_picker_open() {
+        let urls = state.selected_message_url_items();
+        if urls.is_empty() {
+            return;
+        }
+        let selected = state.selected_message_url_index().unwrap_or(0);
+        (
+            "Open URL",
+            message_url_picker_lines(&urls, selected),
+            urls.len(),
+        )
+    } else {
+        let actions = state.selected_message_action_items();
+        if actions.is_empty() {
+            return;
+        }
+        let selected = state.selected_message_action_index().unwrap_or(0);
+        (
+            "Message actions",
+            message_action_menu_lines(&actions, selected),
+            actions.len(),
+        )
+    };
 
-    let selected = state.selected_message_action_index().unwrap_or(0);
-    let popup = centered_rect(area, 54, (actions.len() as u16).saturating_add(2));
+    let popup = centered_rect(area, 54, (len as u16).saturating_add(2));
+    let lines = truncate_action_menu_lines(lines, popup.width.saturating_sub(2) as usize);
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(message_action_menu_lines(&actions, selected))
-            .block(panel_block("Message actions", true))
+        Paragraph::new(lines)
+            .block(panel_block(title, true))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -284,5 +315,45 @@ pub(in crate::tui::ui) fn message_action_menu_lines(
                 Span::styled(label, style),
             ])
         })
+        .collect()
+}
+
+pub(in crate::tui::ui) fn message_url_picker_lines(
+    urls: &[MessageUrlItem],
+    selected: usize,
+) -> Vec<Line<'static>> {
+    urls.iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let marker = if index == selected { "› " } else { "  " };
+            let shortcut = shortcut_prefix(indexed_shortcut(index));
+            let mut style = Style::default();
+            if index == selected {
+                style = style
+                    .bg(Color::Rgb(40, 45, 90))
+                    .add_modifier(Modifier::BOLD);
+            }
+            Line::from(vec![
+                Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(shortcut, Style::default().fg(DIM)),
+                Span::styled(item.label.to_owned(), style),
+            ])
+        })
+        .collect()
+}
+
+#[cfg(test)]
+pub(in crate::tui::ui) fn message_url_picker_lines_for_width(
+    urls: &[MessageUrlItem],
+    selected: usize,
+    width: usize,
+) -> Vec<Line<'static>> {
+    truncate_action_menu_lines(message_url_picker_lines(urls, selected), width)
+}
+
+fn truncate_action_menu_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .map(|line| truncate_line_to_display_width(line, width.max(1)))
         .collect()
 }

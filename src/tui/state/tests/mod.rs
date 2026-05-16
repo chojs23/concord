@@ -20,11 +20,12 @@ use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo, AttachmentUpdate,
     ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
     ChannelVisibilityStats, CustomEmojiInfo, DiscordState, DownloadAttachmentSource,
-    ForumPostArchiveState, FriendStatus, GuildNotificationSettingsInfo, MemberInfo,
-    MessageAttachmentUpload, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    MutualGuildInfo, NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind,
-    PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
-    ReadStateInfo, ReplyInfo, RoleInfo, SnapshotRevision, UserProfileInfo, VoiceStateInfo,
+    EmbedFieldInfo, EmbedInfo, ForumPostArchiveState, FriendStatus, GuildNotificationSettingsInfo,
+    MemberInfo, MessageAttachmentUpload, MessageInfo, MessageKind, MessageReferenceInfo,
+    MessageSnapshotInfo, MutualGuildInfo, NotificationLevel, PermissionOverwriteInfo,
+    PermissionOverwriteKind, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo,
+    ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, SnapshotRevision, UserProfileInfo,
+    VoiceStateInfo,
 };
 
 fn message_rendered_height(
@@ -2964,6 +2965,146 @@ fn reply_non_image_attachment_action_downloads_with_proxy_url_fallback() {
             filename: "clip-1.mp4".to_owned(),
             source: DownloadAttachmentSource::MessageAction,
         })
+    );
+}
+
+#[test]
+fn message_action_opens_single_url_from_message_content() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            content: Some("read https://example.com/docs.".to_owned()),
+            ..message_info(Id::new(2), 1)
+        }],
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+
+    let actions = state.selected_message_action_items();
+    assert!(
+        actions.iter().any(|action| {
+            action.kind == MessageActionKind::OpenUrl && action.label == "Open URL"
+        })
+    );
+
+    assert_eq!(
+        state.activate_message_action_shortcut('o'),
+        Some(AppCommand::OpenUrl {
+            url: "https://example.com/docs".to_owned(),
+        })
+    );
+    assert!(!state.is_message_action_menu_open());
+}
+
+#[test]
+fn message_action_opens_url_picker_for_multiple_urls() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            content: Some("one https://one.example two <https://two.example/path>,".to_owned()),
+            ..message_info(Id::new(2), 1)
+        }],
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+
+    let actions = state.selected_message_action_items();
+    assert!(actions.iter().any(|action| {
+        action.kind == MessageActionKind::OpenUrl && action.label == "Open URL (2)"
+    }));
+
+    assert_eq!(state.activate_message_action_shortcut('o'), None);
+    assert!(state.is_message_url_picker_open());
+    assert_eq!(state.selected_message_url_index(), Some(0));
+
+    assert_eq!(
+        state.activate_message_action_shortcut('2'),
+        Some(AppCommand::OpenUrl {
+            url: "https://two.example/path".to_owned(),
+        })
+    );
+    assert!(!state.is_message_action_menu_open());
+}
+
+#[test]
+fn message_action_detects_markdown_link_urls() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            content: Some(
+                "[Tweet](<https://x.com/i/status/2055068765671305537>) • [@steelers](<https://x.com/steelers>) • [FxTwitter](https://fxtwitter.com/i/status/2055068765671305537)"
+                    .to_owned(),
+            ),
+            ..message_info(Id::new(2), 1)
+        }],
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+
+    let urls = state.selected_message_url_items();
+
+    assert_eq!(
+        urls.into_iter().map(|item| item.url).collect::<Vec<_>>(),
+        vec![
+            "https://x.com/i/status/2055068765671305537",
+            "https://x.com/steelers",
+            "https://fxtwitter.com/i/status/2055068765671305537",
+        ]
+    );
+}
+
+#[test]
+fn message_action_detects_embed_urls() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            content: Some("embed below".to_owned()),
+            embeds: vec![EmbedInfo {
+                color: None,
+                provider_name: None,
+                author_name: None,
+                title: Some("Release notes".to_owned()),
+                description: Some("Read [docs](<https://docs.example/release>)".to_owned()),
+                timestamp: None,
+                fields: vec![EmbedFieldInfo {
+                    name: "Links".to_owned(),
+                    value: "Status https://status.example".to_owned(),
+                }],
+                footer_text: None,
+                url: Some("https://app.example/releases/1".to_owned()),
+                thumbnail_url: None,
+                thumbnail_proxy_url: None,
+                thumbnail_width: None,
+                thumbnail_height: None,
+                image_url: None,
+                image_proxy_url: None,
+                image_width: None,
+                image_height: None,
+                video_url: None,
+            }],
+            ..message_info(Id::new(2), 1)
+        }],
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+
+    let urls = state.selected_message_url_items();
+
+    assert_eq!(
+        urls.into_iter().map(|item| item.url).collect::<Vec<_>>(),
+        vec![
+            "https://docs.example/release",
+            "https://status.example",
+            "https://app.example/releases/1",
+        ]
     );
 }
 
