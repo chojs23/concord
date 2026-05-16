@@ -505,6 +505,10 @@ impl DashboardState {
     }
 
     pub fn push_effect(&mut self, event: AppEvent) {
+        if let AppEvent::ChannelUpsert(channel) = &event {
+            self.record_thread_channel_upserted(channel);
+            return;
+        }
         self.push_event_inner(event, false);
     }
 

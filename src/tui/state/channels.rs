@@ -1,10 +1,10 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
-use crate::discord::{AppCommand, AppEvent, ChannelState};
+use crate::discord::{AppCommand, AppEvent, ChannelState, VoiceParticipantState};
 
 use super::{
     ActiveGuildScope, DashboardState, PaneFilterState, PendingReadAck, READ_ACK_DEBOUNCE,
@@ -627,6 +627,13 @@ impl DashboardState {
                 .collect();
         }
 
+        let voice_participants_by_channel = match self.active_guild {
+            ActiveGuildScope::Guild(guild_id) => self
+                .discord
+                .voice_participants_by_channel_for_guild(guild_id),
+            ActiveGuildScope::Unset | ActiveGuildScope::DirectMessages => BTreeMap::new(),
+        };
+
         let category_ids: HashSet<Id<ChannelMarker>> = channels
             .iter()
             .filter(|channel| channel.is_category())
@@ -648,7 +655,12 @@ impl DashboardState {
         let mut entries = Vec::new();
         for root in roots {
             if !root.is_category() {
-                self.push_channel_pane_channel_entry(&mut entries, root, ChannelBranch::None);
+                self.push_channel_pane_channel_entry(
+                    &mut entries,
+                    root,
+                    ChannelBranch::None,
+                    &voice_participants_by_channel,
+                );
                 continue;
             }
 
@@ -674,7 +686,12 @@ impl DashboardState {
                 } else {
                     ChannelBranch::Middle
                 };
-                self.push_channel_pane_channel_entry(&mut entries, child, branch);
+                self.push_channel_pane_channel_entry(
+                    &mut entries,
+                    child,
+                    branch,
+                    &voice_participants_by_channel,
+                );
             }
         }
 
@@ -686,23 +703,21 @@ impl DashboardState {
         entries: &mut Vec<ChannelPaneEntry<'a>>,
         state: &'a ChannelState,
         branch: ChannelBranch,
+        voice_participants_by_channel: &BTreeMap<Id<ChannelMarker>, Vec<VoiceParticipantState>>,
     ) {
         entries.push(ChannelPaneEntry::Channel { state, branch });
-        let Some(guild_id) = state.guild_id else {
-            return;
-        };
         if !state.is_voice() {
             return;
         }
-        entries.extend(
-            self.discord
-                .voice_participants_for_channel(guild_id, state.id)
-                .into_iter()
-                .map(|participant| ChannelPaneEntry::VoiceParticipant {
-                    participant,
-                    parent_branch: branch,
-                }),
-        );
+        let Some(participants) = voice_participants_by_channel.get(&state.id) else {
+            return;
+        };
+        entries.extend(participants.iter().cloned().map(|participant| {
+            ChannelPaneEntry::VoiceParticipant {
+                participant,
+                parent_branch: branch,
+            }
+        }));
     }
 
     /// Returns channel pane entries filtered by the active pane filter query,
@@ -813,7 +828,14 @@ impl DashboardState {
 
     pub fn selected_channel(&self) -> usize {
         let entries = self.channel_pane_filtered_entries();
-        selectable_channel_index_near(&entries, self.selected_channel, false).unwrap_or(0)
+        self.selected_channel_from_entries(&entries)
+    }
+
+    pub(in crate::tui) fn selected_channel_from_entries(
+        &self,
+        entries: &[ChannelPaneEntry<'_>],
+    ) -> usize {
+        selectable_channel_index_near(entries, self.selected_channel, false).unwrap_or(0)
     }
 
     pub(super) fn move_channel_selection_down(&mut self) {
@@ -886,20 +908,6 @@ impl DashboardState {
             .skip(self.channel_scroll)
             .take(pane_content_height(self.channel_view_height))
             .collect()
-    }
-
-    pub fn focused_channel_selection(&self) -> Option<usize> {
-        if self.focus == FocusPane::Channels && !self.channel_pane_filtered_entries().is_empty() {
-            let selected = self.selected_channel();
-            let visible_len = self.visible_channel_pane_entries().len();
-            if selected >= self.channel_scroll && selected < self.channel_scroll + visible_len {
-                Some(selected - self.channel_scroll)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
     }
 
     pub fn set_channel_view_height(&mut self, height: usize) {

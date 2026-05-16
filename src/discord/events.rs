@@ -827,30 +827,38 @@ impl AppEvent {
     }
 
     pub fn needs_effect_delivery(&self) -> bool {
-        matches!(
-            self,
+        match self {
+            AppEvent::ChannelUpsert(channel) => channel_upsert_needs_effect_delivery(channel),
             AppEvent::MessageCreate { .. }
-                | AppEvent::ChannelUpsert(_)
-                | AppEvent::MessageHistoryLoaded { .. }
-                | AppEvent::MessageHistoryLoadFailed { .. }
-                | AppEvent::ThreadPreviewLoaded { .. }
-                | AppEvent::ThreadPreviewLoadFailed { .. }
-                | AppEvent::ForumPostsLoaded { .. }
-                | AppEvent::ForumPostsLoadFailed { .. }
-                | AppEvent::PinnedMessagesLoaded { .. }
-                | AppEvent::PinnedMessagesLoadFailed { .. }
-                | AppEvent::ReactionUsersLoaded { .. }
-                | AppEvent::GatewayError { .. }
-                | AppEvent::CurrentUserCapabilities { .. }
-                | AppEvent::AttachmentDownloadCompleted { .. }
-                | AppEvent::UpdateAvailable { .. }
-                | AppEvent::ActivateChannel { .. }
-                | AppEvent::AttachmentPreviewLoaded { .. }
-                | AppEvent::AttachmentPreviewLoadFailed { .. }
-                | AppEvent::UserProfileLoadFailed { .. }
-                | AppEvent::GatewayClosed
-        )
+            | AppEvent::MessageHistoryLoaded { .. }
+            | AppEvent::MessageHistoryLoadFailed { .. }
+            | AppEvent::ThreadPreviewLoaded { .. }
+            | AppEvent::ThreadPreviewLoadFailed { .. }
+            | AppEvent::ForumPostsLoaded { .. }
+            | AppEvent::ForumPostsLoadFailed { .. }
+            | AppEvent::PinnedMessagesLoaded { .. }
+            | AppEvent::PinnedMessagesLoadFailed { .. }
+            | AppEvent::ReactionUsersLoaded { .. }
+            | AppEvent::GatewayError { .. }
+            | AppEvent::CurrentUserCapabilities { .. }
+            | AppEvent::AttachmentDownloadCompleted { .. }
+            | AppEvent::UpdateAvailable { .. }
+            | AppEvent::ActivateChannel { .. }
+            | AppEvent::AttachmentPreviewLoaded { .. }
+            | AppEvent::AttachmentPreviewLoadFailed { .. }
+            | AppEvent::UserProfileLoadFailed { .. }
+            | AppEvent::GatewayClosed => true,
+            _ => false,
+        }
     }
+}
+
+fn channel_upsert_needs_effect_delivery(channel: &ChannelInfo) -> bool {
+    channel.parent_id.is_some()
+        && matches!(
+            channel.kind.as_str(),
+            "thread" | "GuildPublicThread" | "GuildPrivateThread" | "GuildNewsThread"
+        )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]

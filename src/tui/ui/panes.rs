@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use ratatui::{
     Frame,
     layout::{Alignment, Position, Rect},
@@ -302,9 +304,33 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
         (channels_area, None)
     };
 
-    let channel_entry_count = state.channel_pane_filtered_entries().len();
-    let all_channel_entries = state.channel_pane_entries();
-    let entries = state.visible_channel_pane_entries();
+    let channel_entries = state.channel_pane_filtered_entries();
+    let channel_entry_count = channel_entries.len();
+    let all_channel_entries;
+    let populated_channel_entries = if state.channel_pane_filter_query().is_some() {
+        all_channel_entries = state.channel_pane_entries();
+        all_channel_entries.as_slice()
+    } else {
+        channel_entries.as_slice()
+    };
+    let populated_voice_channel_ids: HashSet<_> = populated_channel_entries
+        .windows(2)
+        .filter_map(|window| match (&window[0], &window[1]) {
+            (
+                ChannelPaneEntry::Channel { state: channel, .. },
+                ChannelPaneEntry::VoiceParticipant { .. },
+            ) => Some(channel.id),
+            _ => None,
+        })
+        .collect();
+    let channel_scroll = state.channel_scroll();
+    let selected_channel = (state.focus() == FocusPane::Channels && channel_entry_count > 0)
+        .then(|| state.selected_channel_from_entries(&channel_entries));
+    let entries: Vec<_> = channel_entries
+        .into_iter()
+        .skip(channel_scroll)
+        .take(list_area.height as usize)
+        .collect();
     let scrollbar_width = usize::from(vertical_scrollbar_visible(
         list_area,
         list_area.height as usize,
@@ -314,7 +340,11 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
         .saturating_sub(selection_marker(false).content.width())
         .saturating_sub(scrollbar_width);
     let horizontal_scroll = state.channel_horizontal_scroll();
-    let selected = state.focused_channel_selection();
+    let selected = selected_channel
+        .filter(|selected| {
+            *selected >= channel_scroll && *selected < channel_scroll + entries.len()
+        })
+        .map(|selected| selected - channel_scroll);
     let items: Vec<ListItem> = entries
         .iter()
         .enumerate()
@@ -351,16 +381,8 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                         let prefix_width = dm_prefix_span
                             .as_ref()
                             .map_or_else(|| channel_prefix.width(), |span| span.content.width());
-                        let populated_voice_channel = state.is_voice()
-                            && all_channel_entries.windows(2).any(|window| {
-                                matches!(
-                                    (&window[0], &window[1]),
-                                    (
-                                        ChannelPaneEntry::Channel { state: channel, .. },
-                                        ChannelPaneEntry::VoiceParticipant { .. }
-                                    ) if channel.id == state.id
-                                )
-                            });
+                        let populated_voice_channel =
+                            state.is_voice() && populated_voice_channel_ids.contains(&state.id);
                         let base_style = active_text_style(is_active, Style::default());
                         let is_muted = dashboard.channel_notification_muted(state.id);
                         let unread = dashboard.sidebar_channel_unread(state.id);
