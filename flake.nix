@@ -41,7 +41,9 @@
           # Networking uses rustls + webpki-roots, so we do not need openssl
           # or a system CA bundle here. Only Darwin needs Security/CoreFoundation
           # frameworks because some indirect crates link against them.
-          buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
+          buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+            pkgs.alsa-lib
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             pkgs.darwin.apple_sdk.frameworks.Security
             pkgs.darwin.apple_sdk.frameworks.CoreFoundation
             pkgs.darwin.apple_sdk.frameworks.SystemConfiguration

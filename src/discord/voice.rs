@@ -11,10 +11,14 @@ use aes_gcm::{
     aead::{Aead, KeyInit, Payload},
 };
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+#[cfg(feature = "voice-playback")]
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use davey::{DaveSession, MediaType, ProposalsOperationType};
 use futures::{SinkExt, StreamExt};
 use opus::{Channels, Decoder as OpusDecoder};
 use serde_json::{Value, json};
+#[cfg(feature = "voice-playback")]
+use std::sync::mpsc::{Receiver as StdReceiver, SyncSender, TryRecvError, sync_channel};
 use tokio::{
     net::UdpSocket,
     sync::{Mutex, Mutex as AsyncMutex, mpsc, watch},
@@ -52,6 +56,8 @@ const DISCORD_VOICE_SAMPLE_RATE: u32 = 48_000;
 const DISCORD_VOICE_CHANNELS: u16 = 2;
 const OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL: usize = 5760;
 const VOICE_PLAYBACK_FRAME_QUEUE: usize = 256;
+#[cfg(feature = "voice-playback")]
+const VOICE_AUDIO_OUTPUT_QUEUE: usize = 64;
 const AEAD_AES256_GCM_RTPSIZE: &str = "aead_aes256_gcm_rtpsize";
 const AEAD_XCHACHA20_POLY1305_RTPSIZE: &str = "aead_xchacha20_poly1305_rtpsize";
 
@@ -273,6 +279,8 @@ struct VoiceChildTasks {
     heartbeat: Option<JoinHandle<()>>,
     udp_receive: Option<JoinHandle<()>>,
     opus_decode: Option<JoinHandle<()>>,
+    #[cfg(feature = "voice-playback")]
+    audio_output: Option<VoiceAudioOutput>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -287,6 +295,19 @@ struct VoicePlaybackFrame {
 struct VoiceOpusDecode {
     frames_tx: mpsc::Sender<VoicePlaybackFrame>,
     task: JoinHandle<()>,
+    #[cfg(feature = "voice-playback")]
+    audio_output: Option<VoiceAudioOutput>,
+}
+
+struct VoiceDecodedAudio {
+    #[cfg(feature = "voice-playback")]
+    samples_tx: Option<SyncSender<Vec<f32>>>,
+}
+
+#[cfg(feature = "voice-playback")]
+struct VoiceAudioOutput {
+    samples_tx: SyncSender<Vec<f32>>,
+    _stream: cpal::Stream,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -688,12 +709,16 @@ impl VoiceChildTasks {
         self.udp_receive = Some(task);
     }
 
-    fn replace_opus_decode(&mut self, task: JoinHandle<()>) {
+    fn replace_opus_decode(&mut self, opus_decode: VoiceOpusDecode) {
         if let Some(task) = self.opus_decode.take() {
             logging::debug("voice", "aborting previous voice Opus decode task");
             task.abort();
         }
-        self.opus_decode = Some(task);
+        #[cfg(feature = "voice-playback")]
+        {
+            self.audio_output = opus_decode.audio_output;
+        }
+        self.opus_decode = Some(opus_decode.task);
     }
 
     fn abort_all(&mut self) {
@@ -709,6 +734,10 @@ impl VoiceChildTasks {
             logging::debug("voice", "aborting voice Opus decode task");
             task.abort();
         }
+        #[cfg(feature = "voice-playback")]
+        {
+            self.audio_output = None;
+        }
     }
 }
 
@@ -719,15 +748,297 @@ impl Drop for VoiceChildTasks {
 }
 
 impl VoiceOpusDecode {
-    fn start_decode_only() -> Self {
+    #[cfg(not(feature = "voice-playback"))]
+    fn start() -> Self {
         let (frames_tx, frames_rx) = mpsc::channel(VOICE_PLAYBACK_FRAME_QUEUE);
-        let task = tokio::spawn(run_voice_playback_decode(frames_rx));
+        let task = tokio::spawn(run_voice_playback_decode(
+            frames_rx,
+            VoiceDecodedAudio::decode_only(),
+        ));
         logging::debug(
             "voice",
             "voice Opus decode worker started without audio output device",
         );
         Self { frames_tx, task }
     }
+
+    #[cfg(feature = "voice-playback")]
+    fn start() -> Self {
+        let (frames_tx, frames_rx) = mpsc::channel(VOICE_PLAYBACK_FRAME_QUEUE);
+        match VoiceAudioOutput::start() {
+            Ok(audio_output) => {
+                let decoded_audio = VoiceDecodedAudio::output(audio_output.samples_tx.clone());
+                let task = tokio::spawn(run_voice_playback_decode(frames_rx, decoded_audio));
+                logging::debug("voice", "voice Opus playback worker started with audio output");
+                Self {
+                    frames_tx,
+                    task,
+                    audio_output: Some(audio_output),
+                }
+            }
+            Err(error) => {
+                logging::error(
+                    "voice",
+                    format!("voice audio output unavailable, falling back to decode-only: {error}"),
+                );
+                let task = tokio::spawn(run_voice_playback_decode(
+                    frames_rx,
+                    VoiceDecodedAudio::decode_only(),
+                ));
+                Self {
+                    frames_tx,
+                    task,
+                    audio_output: None,
+                }
+            }
+        }
+    }
+}
+
+impl VoiceDecodedAudio {
+    fn decode_only() -> Self {
+        Self {
+            #[cfg(feature = "voice-playback")]
+            samples_tx: None,
+        }
+    }
+
+    #[cfg(feature = "voice-playback")]
+    fn output(samples_tx: SyncSender<Vec<f32>>) -> Self {
+        Self {
+            samples_tx: Some(samples_tx),
+        }
+    }
+
+    fn try_send(&self, samples: Vec<f32>) {
+        #[cfg(feature = "voice-playback")]
+        if let Some(samples_tx) = self.samples_tx.as_ref() {
+            let _ = samples_tx.try_send(samples);
+        }
+        #[cfg(not(feature = "voice-playback"))]
+        {
+            let _ = samples;
+        }
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+impl VoiceAudioOutput {
+    fn start() -> Result<Self, String> {
+        let (samples_tx, samples_rx) = sync_channel(VOICE_AUDIO_OUTPUT_QUEUE);
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .ok_or_else(|| "no default audio output device is available".to_owned())?;
+        let supported_config = select_voice_output_config(&device)?;
+        let sample_format = supported_config.sample_format();
+        let stream_config = supported_config.config();
+        let stream = build_voice_output_stream(&device, &stream_config, sample_format, samples_rx)?;
+        stream
+            .play()
+            .map_err(|error| format!("voice audio output stream start failed: {error}"))?;
+        logging::debug(
+            "voice",
+            format!(
+                "voice audio output stream started: sample_rate={} channels={} format={:?}",
+                stream_config.sample_rate, stream_config.channels, sample_format
+            ),
+        );
+        Ok(Self {
+            samples_tx,
+            _stream: stream,
+        })
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+struct VoiceAudioBuffer {
+    samples_rx: StdReceiver<Vec<f32>>,
+    current: Vec<f32>,
+    offset: usize,
+}
+
+#[cfg(feature = "voice-playback")]
+impl VoiceAudioBuffer {
+    fn new(samples_rx: StdReceiver<Vec<f32>>) -> Self {
+        Self {
+            samples_rx,
+            current: Vec::new(),
+            offset: 0,
+        }
+    }
+
+    fn next_stereo_frame(&mut self) -> Option<[f32; 2]> {
+        loop {
+            if self.offset + 1 < self.current.len() {
+                let frame = [self.current[self.offset], self.current[self.offset + 1]];
+                self.offset += usize::from(DISCORD_VOICE_CHANNELS);
+                return Some(frame);
+            }
+            match self.samples_rx.try_recv() {
+                Ok(samples) => {
+                    self.current = samples;
+                    self.offset = 0;
+                }
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => return None,
+            }
+        }
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+fn select_voice_output_config(
+    device: &cpal::Device,
+) -> Result<cpal::SupportedStreamConfig, String> {
+    let sample_rate = DISCORD_VOICE_SAMPLE_RATE;
+    let mut configs = device
+        .supported_output_configs()
+        .map_err(|error| format!("voice audio output config query failed: {error}"))?;
+    if let Some(config) = configs.find(|config| {
+        config.channels() == DISCORD_VOICE_CHANNELS
+            && config.min_sample_rate() <= sample_rate
+            && config.max_sample_rate() >= sample_rate
+    }) {
+        return Ok(config.with_sample_rate(sample_rate));
+    }
+    device
+        .default_output_config()
+        .map_err(|error| format!("voice default audio output config failed: {error}"))
+}
+
+#[cfg(feature = "voice-playback")]
+fn build_voice_output_stream(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    sample_format: cpal::SampleFormat,
+    samples_rx: StdReceiver<Vec<f32>>,
+) -> Result<cpal::Stream, String> {
+    match sample_format {
+        cpal::SampleFormat::F32 => build_voice_output_stream_f32(device, config, samples_rx),
+        cpal::SampleFormat::I16 => build_voice_output_stream_i16(device, config, samples_rx),
+        cpal::SampleFormat::U16 => build_voice_output_stream_u16(device, config, samples_rx),
+        other => Err(format!("unsupported voice audio output sample format: {other:?}")),
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+fn build_voice_output_stream_f32(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    samples_rx: StdReceiver<Vec<f32>>,
+) -> Result<cpal::Stream, String> {
+    let channels = usize::from(config.channels);
+    let mut buffer = VoiceAudioBuffer::new(samples_rx);
+    device
+        .build_output_stream(
+            config,
+            move |output: &mut [f32], _| fill_voice_output_f32(output, channels, &mut buffer),
+            log_voice_output_stream_error,
+            None,
+        )
+        .map_err(|error| format!("voice f32 audio output stream build failed: {error}"))
+}
+
+#[cfg(feature = "voice-playback")]
+fn build_voice_output_stream_i16(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    samples_rx: StdReceiver<Vec<f32>>,
+) -> Result<cpal::Stream, String> {
+    let channels = usize::from(config.channels);
+    let mut buffer = VoiceAudioBuffer::new(samples_rx);
+    device
+        .build_output_stream(
+            config,
+            move |output: &mut [i16], _| fill_voice_output_i16(output, channels, &mut buffer),
+            log_voice_output_stream_error,
+            None,
+        )
+        .map_err(|error| format!("voice i16 audio output stream build failed: {error}"))
+}
+
+#[cfg(feature = "voice-playback")]
+fn build_voice_output_stream_u16(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    samples_rx: StdReceiver<Vec<f32>>,
+) -> Result<cpal::Stream, String> {
+    let channels = usize::from(config.channels);
+    let mut buffer = VoiceAudioBuffer::new(samples_rx);
+    device
+        .build_output_stream(
+            config,
+            move |output: &mut [u16], _| fill_voice_output_u16(output, channels, &mut buffer),
+            log_voice_output_stream_error,
+            None,
+        )
+        .map_err(|error| format!("voice u16 audio output stream build failed: {error}"))
+}
+
+#[cfg(feature = "voice-playback")]
+fn fill_voice_output_f32(output: &mut [f32], channels: usize, buffer: &mut VoiceAudioBuffer) {
+    for frame in output.chunks_mut(channels) {
+        let [left, right] = buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
+        write_voice_output_frame(frame, left, right, clamp_voice_sample);
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+fn fill_voice_output_i16(output: &mut [i16], channels: usize, buffer: &mut VoiceAudioBuffer) {
+    for frame in output.chunks_mut(channels) {
+        let [left, right] = buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
+        write_voice_output_frame(frame, left, right, voice_sample_to_i16);
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+fn fill_voice_output_u16(output: &mut [u16], channels: usize, buffer: &mut VoiceAudioBuffer) {
+    for frame in output.chunks_mut(channels) {
+        let [left, right] = buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
+        write_voice_output_frame(frame, left, right, voice_sample_to_u16);
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+fn write_voice_output_frame<T>(
+    output: &mut [T],
+    left: f32,
+    right: f32,
+    convert: fn(f32) -> T,
+) where
+    T: Default + Copy,
+{
+    match output {
+        [] => {}
+        [mono] => *mono = convert((left + right) * 0.5),
+        [first, second, rest @ ..] => {
+            *first = convert(left);
+            *second = convert(right);
+            for sample in rest {
+                *sample = T::default();
+            }
+        }
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+fn clamp_voice_sample(sample: f32) -> f32 {
+    sample.clamp(-1.0, 1.0)
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_sample_to_i16(sample: f32) -> i16 {
+    (clamp_voice_sample(sample) * f32::from(i16::MAX)).round() as i16
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_sample_to_u16(sample: f32) -> u16 {
+    ((clamp_voice_sample(sample) + 1.0) * 0.5 * f32::from(u16::MAX)).round() as u16
+}
+
+#[cfg(feature = "voice-playback")]
+fn log_voice_output_stream_error(error: cpal::StreamError) {
+    logging::error("voice", format!("voice audio output stream failed: {error}"));
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -1036,9 +1347,9 @@ async fn connect_voice_gateway(
                         }
                         if let Some(socket) = udp_socket.as_ref() {
                             logging::debug("voice", "starting voice UDP receive task");
-                            let opus_decode = VoiceOpusDecode::start_decode_only();
+                            let opus_decode = VoiceOpusDecode::start();
                             let playback_tx = Some(opus_decode.frames_tx.clone());
-                            child_tasks.replace_opus_decode(opus_decode.task);
+                            child_tasks.replace_opus_decode(opus_decode);
                             child_tasks.replace_udp_receive(tokio::spawn(run_voice_udp_receive(
                                 Arc::clone(socket),
                                 description,
@@ -1396,7 +1707,10 @@ impl VoiceRtpDecryptor {
     }
 }
 
-async fn run_voice_playback_decode(mut frames_rx: mpsc::Receiver<VoicePlaybackFrame>) {
+async fn run_voice_playback_decode(
+    mut frames_rx: mpsc::Receiver<VoicePlaybackFrame>,
+    decoded_audio: VoiceDecodedAudio,
+) {
     let mut decoders = HashMap::new();
     let mut decoded_frames = 0u64;
     while let Some(frame) = frames_rx.recv().await {
@@ -1429,6 +1743,7 @@ async fn run_voice_playback_decode(mut frames_rx: mpsc::Receiver<VoicePlaybackFr
         };
         let decoded_len = samples_per_channel * usize::from(DISCORD_VOICE_CHANNELS);
         decoded.truncate(decoded_len);
+        decoded_audio.try_send(decoded.clone());
         decoded_frames = decoded_frames.saturating_add(1);
         if decoded_frames == 1 || decoded_frames % 500 == 0 {
             logging::debug(
