@@ -6,7 +6,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use davey::{DaveSession, ProposalsOperationType};
+use aes_gcm::{
+    Aes256Gcm, Nonce as AesGcmNonce,
+    aead::{Aead, KeyInit, Payload},
+};
+use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+use davey::{DaveSession, MediaType, ProposalsOperationType};
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::{
@@ -35,8 +40,13 @@ const UDP_DISCOVERY_PACKET_LEN: usize = 74;
 const UDP_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const RTP_HEADER_MIN_LEN: usize = 12;
 const RTP_VERSION: u8 = 2;
+const DISCORD_VOICE_PAYLOAD_TYPE: u8 = 0x78;
 const RTP_HEADER_EXTENSION_BYTES: usize = 4;
 const RTP_EXTENSION_WORD_BYTES: usize = 4;
+const RTP_AEAD_TAG_BYTES: usize = 16;
+const RTP_AEAD_NONCE_SUFFIX_BYTES: usize = 4;
+const DAVE_MIN_SUPPLEMENTAL_BYTES: usize = 11;
+const DAVE_MAGIC_MARKER: [u8; 2] = [0xfa, 0xfa];
 const AEAD_AES256_GCM_RTPSIZE: &str = "aead_aes256_gcm_rtpsize";
 const AEAD_XCHACHA20_POLY1305_RTPSIZE: &str = "aead_xchacha20_poly1305_rtpsize";
 
@@ -202,7 +212,38 @@ struct RtpHeader {
     sequence: u16,
     timestamp: u32,
     ssrc: u32,
+    authenticated_header_len: usize,
+    encrypted_extension_body_len: usize,
     payload_offset: usize,
+}
+
+enum VoiceRtpDecryptor {
+    Aes256Gcm(Aes256Gcm),
+    XChaCha20Poly1305(XChaCha20Poly1305),
+}
+
+struct DecryptedRtpPayload {
+    media_payload: Vec<u8>,
+    encrypted_extension_body_len: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum VoiceMediaPayload {
+    Plain(Vec<u8>),
+    DaveMissingUser { payload_len: usize },
+    DaveNotReady { user_id: u64, payload_len: usize },
+    DaveDecryptFailed { user_id: u64, message: String },
+    DaveDecrypted { user_id: u64, opus: Vec<u8> },
+}
+
+impl VoiceMediaPayload {
+    fn pending_reason(&self) -> &'static str {
+        match self {
+            Self::DaveMissingUser { .. } => "missing SSRC user mapping",
+            Self::DaveNotReady { .. } => "DAVE session is not ready",
+            _ => "not pending",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -273,10 +314,7 @@ impl VoiceDaveState {
         match opcode {
             VOICE_OP_SPEAKING => {
                 let speaking = parse_voice_speaking(value);
-                if let (Some(ssrc), Some(user_id)) = (speaking.ssrc, speaking.user_id) {
-                    self.ssrc_user_ids.insert(ssrc, user_id);
-                    self.known_user_ids.insert(user_id);
-                }
+                self.record_speaking_state(speaking);
                 logging::debug(
                     "voice",
                     format!(
@@ -570,6 +608,47 @@ impl VoiceDaveState {
             .as_mut()
             .ok_or_else(|| "DAVE session is not initialized".to_owned())
     }
+
+    fn unwrap_media_payload_for_ssrc(&mut self, ssrc: u32, payload: &[u8]) -> VoiceMediaPayload {
+        if !self.dave_media_active() || !looks_like_dave_media_frame(payload) {
+            return VoiceMediaPayload::Plain(payload.to_vec());
+        }
+        let Some(user_id) = self.ssrc_user_ids.get(&ssrc).copied() else {
+            return VoiceMediaPayload::DaveMissingUser {
+                payload_len: payload.len(),
+            };
+        };
+        let Some(session) = self.session.as_mut() else {
+            return VoiceMediaPayload::DaveNotReady {
+                user_id,
+                payload_len: payload.len(),
+            };
+        };
+        if !session.is_ready() {
+            return VoiceMediaPayload::DaveNotReady {
+                user_id,
+                payload_len: payload.len(),
+            };
+        }
+        match session.decrypt(user_id, MediaType::AUDIO, payload) {
+            Ok(opus) => VoiceMediaPayload::DaveDecrypted { user_id, opus },
+            Err(error) => VoiceMediaPayload::DaveDecryptFailed {
+                user_id,
+                message: error.to_string(),
+            },
+        }
+    }
+
+    fn dave_media_active(&self) -> bool {
+        self.protocol_version.is_some() && self.session.is_some()
+    }
+
+    fn record_speaking_state(&mut self, speaking: VoiceSpeakingState) {
+        if let (Some(ssrc), Some(user_id)) = (speaking.ssrc, speaking.user_id) {
+            self.ssrc_user_ids.insert(ssrc, user_id);
+            self.known_user_ids.insert(user_id);
+        }
+    }
 }
 
 impl VoiceChildTasks {
@@ -856,7 +935,7 @@ async fn connect_voice_gateway(
     let mut child_tasks = VoiceChildTasks::default();
     let mut udp_socket: Option<Arc<UdpSocket>> = None;
     let last_sequence = Arc::new(Mutex::new(None));
-    let mut dave_state = VoiceDaveState::new(&session);
+    let dave_state = Arc::new(Mutex::new(VoiceDaveState::new(session)));
 
     send_voice_text(&writer, voice_identify_payload(&session)).await?;
     logging::debug("voice", "voice identify sent");
@@ -909,13 +988,14 @@ async fn connect_voice_gateway(
                         if let Some(dave_protocol_version) = description.dave_protocol_version {
                             let dave_protocol_version = u16::try_from(dave_protocol_version)
                                 .map_err(|_| "DAVE protocol version does not fit u16".to_owned())?;
-                            dave_state.reinit(dave_protocol_version)?;
+                            dave_state.lock().await.reinit(dave_protocol_version)?;
                         }
                         if let Some(socket) = udp_socket.as_ref() {
                             logging::debug("voice", "starting voice UDP receive task");
                             child_tasks.replace_udp_receive(tokio::spawn(run_voice_udp_receive(
                                 Arc::clone(socket),
-                                description.mode,
+                                description,
+                                Arc::clone(&dave_state),
                             )));
                         }
                     }
@@ -950,7 +1030,11 @@ async fn connect_voice_gateway(
                     | VOICE_OP_DAVE_PREPARE_TRANSITION
                     | VOICE_OP_DAVE_EXECUTE_TRANSITION
                     | VOICE_OP_DAVE_PREPARE_EPOCH => {
-                        dave_state.handle_json_op(&writer, opcode, &value).await?;
+                        dave_state
+                            .lock()
+                            .await
+                            .handle_json_op(&writer, opcode, &value)
+                            .await?;
                     }
                     other => logging::debug("voice", format!("unhandled voice gateway op={other}")),
                 }
@@ -979,7 +1063,11 @@ async fn connect_voice_gateway(
             WsMessage::Binary(payload) => {
                 let frame = parse_voice_binary_frame(&payload)?;
                 *last_sequence.lock().await = Some(frame.sequence);
-                dave_state.handle_binary_frame(&writer, frame).await?;
+                dave_state
+                    .lock()
+                    .await
+                    .handle_binary_frame(&writer, frame)
+                    .await?;
             }
             WsMessage::Pong(_) | WsMessage::Frame(_) => {}
         }
@@ -1040,32 +1128,126 @@ async fn discover_voice_udp_address(
     Ok((Arc::new(socket), discovered))
 }
 
-async fn run_voice_udp_receive(socket: Arc<UdpSocket>, mode: String) {
+async fn run_voice_udp_receive(
+    socket: Arc<UdpSocket>,
+    description: VoiceSessionDescription,
+    dave_state: Arc<Mutex<VoiceDaveState>>,
+) {
+    let mode = description.mode.clone();
+    let decryptor = match VoiceRtpDecryptor::new(&description.mode, &description.secret_key) {
+        Ok(decryptor) => decryptor,
+        Err(error) => {
+            logging::error("voice", format!("voice RTP decrypt setup failed: {error}"));
+            return;
+        }
+    };
     logging::debug(
         "voice",
-        format!("voice UDP receive skeleton active: mode={mode}"),
+        format!("voice UDP receive decrypt active: mode={mode}"),
     );
     let mut packet = vec![0u8; 2048];
     let mut rtp_packets = 0u64;
+    let mut decrypted_packets = 0u64;
+    let mut dave_decrypted_packets = 0u64;
+    let mut dave_pending_packets = 0u64;
+    let mut decrypt_failures = 0u64;
     let mut malformed_packets = 0u64;
     loop {
         match socket.recv(&mut packet).await {
             Ok(len) => match parse_rtp_header(&packet[..len]) {
                 Ok(header) => {
                     rtp_packets = rtp_packets.saturating_add(1);
-                    if rtp_packets == 1 || rtp_packets % 500 == 0 {
-                        logging::debug(
-                            "voice",
-                            format!(
-                                "received RTP packet: count={} ssrc={} seq={} timestamp={} payload_type={} payload_offset={}",
-                                rtp_packets,
-                                header.ssrc,
-                                header.sequence,
-                                header.timestamp,
-                                header.payload_type,
-                                header.payload_offset
-                            ),
-                        );
+                    match decryptor.decrypt_packet(&packet[..len], &header) {
+                        Ok(payload) => {
+                            decrypted_packets = decrypted_packets.saturating_add(1);
+                            let media = dave_state
+                                .lock()
+                                .await
+                                .unwrap_media_payload_for_ssrc(header.ssrc, &payload.media_payload);
+                            let media_payload_len = match &media {
+                                VoiceMediaPayload::Plain(payload) => payload.len(),
+                                VoiceMediaPayload::DaveMissingUser { payload_len }
+                                | VoiceMediaPayload::DaveNotReady { payload_len, .. } => {
+                                    dave_pending_packets = dave_pending_packets.saturating_add(1);
+                                    if dave_pending_packets == 1 || dave_pending_packets % 100 == 0 {
+                                        logging::debug(
+                                            "voice",
+                                            format!(
+                                                "DAVE media decrypt pending: count={} ssrc={} seq={} reason={}",
+                                                dave_pending_packets,
+                                                header.ssrc,
+                                                header.sequence,
+                                                media.pending_reason()
+                                            ),
+                                        );
+                                    }
+                                    *payload_len
+                                }
+                                VoiceMediaPayload::DaveDecryptFailed { message, .. } => {
+                                    decrypt_failures = decrypt_failures.saturating_add(1);
+                                    if decrypt_failures == 1 || decrypt_failures % 100 == 0 {
+                                        logging::debug(
+                                            "voice",
+                                            format!(
+                                                "DAVE media decrypt failed: count={} ssrc={} seq={} error={}",
+                                                decrypt_failures, header.ssrc, header.sequence, message
+                                            ),
+                                        );
+                                    }
+                                    payload.media_payload.len()
+                                }
+                                VoiceMediaPayload::DaveDecrypted { opus, .. } => {
+                                    dave_decrypted_packets = dave_decrypted_packets.saturating_add(1);
+                                    opus.len()
+                                }
+                            };
+                            if dave_decrypted_packets == 1 || dave_decrypted_packets % 500 == 0 {
+                                if let VoiceMediaPayload::DaveDecrypted { user_id, .. } = &media {
+                                    logging::debug(
+                                        "voice",
+                                        format!(
+                                            "DAVE media decrypted: count={} user_id={} ssrc={} seq={} opus_len={}",
+                                            dave_decrypted_packets,
+                                            user_id,
+                                            header.ssrc,
+                                            header.sequence,
+                                            media_payload_len
+                                        ),
+                                    );
+                                }
+                            }
+                            if decrypted_packets == 1 || decrypted_packets % 500 == 0 {
+                                logging::debug(
+                                    "voice",
+                                    format!(
+                                        "decrypted RTP packet: count={} ssrc={} seq={} timestamp={} payload_type={} payload_len={} extension_body_len={}",
+                                        decrypted_packets,
+                                        header.ssrc,
+                                        header.sequence,
+                                        header.timestamp,
+                                        header.payload_type,
+                                        media_payload_len,
+                                        payload.encrypted_extension_body_len
+                                    ),
+                                );
+                            }
+                        }
+                        Err(error) => {
+                            decrypt_failures = decrypt_failures.saturating_add(1);
+                            if decrypt_failures == 1 || decrypt_failures % 100 == 0 {
+                                logging::debug(
+                                    "voice",
+                                    format!(
+                                        "RTP decrypt failed: count={} ssrc={} seq={} timestamp={} error={}",
+                                        decrypt_failures,
+                                        header.ssrc,
+                                        header.sequence,
+                                        header.timestamp,
+                                        error
+                                    ),
+                                );
+                            }
+                        }
                     }
                 }
                 Err(error) => {
@@ -1085,6 +1267,78 @@ async fn run_voice_udp_receive(socket: Arc<UdpSocket>, mode: String) {
                 break;
             }
         }
+    }
+}
+
+impl VoiceRtpDecryptor {
+    fn new(mode: &str, secret_key: &[u8]) -> Result<Self, String> {
+        match mode {
+            AEAD_AES256_GCM_RTPSIZE => Aes256Gcm::new_from_slice(secret_key)
+                .map(Self::Aes256Gcm)
+                .map_err(|_| "voice AES-GCM key is invalid".to_owned()),
+            AEAD_XCHACHA20_POLY1305_RTPSIZE => XChaCha20Poly1305::new_from_slice(secret_key)
+                .map(Self::XChaCha20Poly1305)
+                .map_err(|_| "voice XChaCha20-Poly1305 key is invalid".to_owned()),
+            other => Err(format!("unsupported voice RTP decrypt mode: {other}")),
+        }
+    }
+
+    fn decrypt_packet(
+        &self,
+        packet: &[u8],
+        header: &RtpHeader,
+    ) -> Result<DecryptedRtpPayload, String> {
+        if header.payload_type != DISCORD_VOICE_PAYLOAD_TYPE {
+            return Err(format!(
+                "RTP packet has unsupported payload type: {}",
+                header.payload_type
+            ));
+        }
+        let sealed_end = packet
+            .len()
+            .checked_sub(RTP_AEAD_NONCE_SUFFIX_BYTES)
+            .ok_or_else(|| "RTP packet is missing nonce suffix".to_owned())?;
+        if sealed_end < header.authenticated_header_len + RTP_AEAD_TAG_BYTES {
+            return Err("RTP packet is too short for encrypted payload".to_owned());
+        }
+        let nonce_suffix = &packet[sealed_end..];
+        let sealed_payload = &packet[header.authenticated_header_len..sealed_end];
+        let aad = &packet[..header.authenticated_header_len];
+        let decrypted = match self {
+            Self::Aes256Gcm(cipher) => {
+                let mut nonce = [0u8; 12];
+                nonce[..RTP_AEAD_NONCE_SUFFIX_BYTES].copy_from_slice(nonce_suffix);
+                cipher
+                    .decrypt(
+                        AesGcmNonce::from_slice(&nonce),
+                        Payload {
+                            msg: sealed_payload,
+                            aad,
+                        },
+                    )
+                    .map_err(|_| "RTP AES-GCM decrypt failed".to_owned())?
+            }
+            Self::XChaCha20Poly1305(cipher) => {
+                let mut nonce = [0u8; 24];
+                nonce[..RTP_AEAD_NONCE_SUFFIX_BYTES].copy_from_slice(nonce_suffix);
+                cipher
+                    .decrypt(
+                        XNonce::from_slice(&nonce),
+                        Payload {
+                            msg: sealed_payload,
+                            aad,
+                        },
+                    )
+                    .map_err(|_| "RTP XChaCha20-Poly1305 decrypt failed".to_owned())?
+            }
+        };
+        if decrypted.len() < header.encrypted_extension_body_len {
+            return Err("decrypted RTP payload is shorter than extension body".to_owned());
+        }
+        Ok(DecryptedRtpPayload {
+            media_payload: decrypted[header.encrypted_extension_body_len..].to_vec(),
+            encrypted_extension_body_len: header.encrypted_extension_body_len,
+        })
     }
 }
 
@@ -1439,6 +1693,11 @@ fn voice_user_id_value(value: &Value) -> Option<u64> {
         .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
 }
 
+fn looks_like_dave_media_frame(payload: &[u8]) -> bool {
+    payload.len() >= DAVE_MIN_SUPPLEMENTAL_BYTES
+        && payload[payload.len() - DAVE_MAGIC_MARKER.len()..] == DAVE_MAGIC_MARKER
+}
+
 fn parse_rtp_header(packet: &[u8]) -> Result<RtpHeader, String> {
     if packet.len() < RTP_HEADER_MIN_LEN {
         return Err("RTP packet is too short".to_owned());
@@ -1449,28 +1708,32 @@ fn parse_rtp_header(packet: &[u8]) -> Result<RtpHeader, String> {
     }
     let has_extension = packet[0] & 0x10 != 0;
     let csrc_count = usize::from(packet[0] & 0x0f);
-    let mut payload_offset = RTP_HEADER_MIN_LEN + csrc_count * 4;
-    if packet.len() < payload_offset {
+    let mut authenticated_header_len = RTP_HEADER_MIN_LEN + csrc_count * 4;
+    if packet.len() < authenticated_header_len {
         return Err("RTP packet is shorter than CSRC list".to_owned());
     }
+    let mut encrypted_extension_body_len = 0;
     if has_extension {
-        if packet.len() < payload_offset + RTP_HEADER_EXTENSION_BYTES {
+        if packet.len() < authenticated_header_len + RTP_HEADER_EXTENSION_BYTES {
             return Err("RTP packet is shorter than extension header".to_owned());
         }
         let extension_words =
-            u16::from_be_bytes([packet[payload_offset + 2], packet[payload_offset + 3]]);
-        payload_offset +=
-            RTP_HEADER_EXTENSION_BYTES + usize::from(extension_words) * RTP_EXTENSION_WORD_BYTES;
+            u16::from_be_bytes([packet[authenticated_header_len + 2], packet[authenticated_header_len + 3]]);
+        authenticated_header_len += RTP_HEADER_EXTENSION_BYTES;
+        encrypted_extension_body_len = usize::from(extension_words) * RTP_EXTENSION_WORD_BYTES;
+    }
+    let payload_offset = authenticated_header_len + encrypted_extension_body_len;
         if packet.len() < payload_offset {
             return Err("RTP packet is shorter than extension body".to_owned());
         }
-    }
 
     Ok(RtpHeader {
         payload_type: packet[1] & 0x7f,
         sequence: u16::from_be_bytes([packet[2], packet[3]]),
         timestamp: u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]),
         ssrc: u32::from_be_bytes([packet[8], packet[9], packet[10], packet[11]]),
+        authenticated_header_len,
+        encrypted_extension_body_len,
         payload_offset,
     })
 }
@@ -1602,6 +1865,39 @@ mod tests {
 
         assert!(debug.contains("<redacted>"));
         assert!(!debug.contains("voice-session"));
+    }
+
+    #[test]
+    fn voice_dave_state_tracks_speaking_ssrc_mapping() {
+        let session = VoiceGatewaySession {
+            guild_id: Id::new(1),
+            channel_id: Id::new(10),
+            user_id: Id::new(20),
+            session_id: "voice-session".to_owned(),
+            endpoint: "voice.example.com".to_owned(),
+            token: "voice-token".to_owned(),
+        };
+        let mut state = VoiceDaveState::new(&session);
+
+        state.record_speaking_state(VoiceSpeakingState {
+            user_id: Some(30),
+            ssrc: Some(1234),
+            speaking: Some(1),
+        });
+
+        assert_eq!(state.ssrc_user_ids.get(&1234), Some(&30));
+        assert!(state.known_user_ids.contains(&30));
+    }
+
+    #[test]
+    fn dave_media_detection_requires_magic_marker() {
+        assert!(!looks_like_dave_media_frame(b"opus-frame"));
+
+        let mut payload = vec![0u8; DAVE_MIN_SUPPLEMENTAL_BYTES];
+        let marker_start = payload.len() - DAVE_MAGIC_MARKER.len();
+        payload[marker_start..].copy_from_slice(&DAVE_MAGIC_MARKER);
+
+        assert!(looks_like_dave_media_frame(&payload));
     }
 
     #[test]
@@ -1759,6 +2055,8 @@ mod tests {
                 sequence: 0x1234,
                 timestamp: 0x01020304,
                 ssrc: 0x05060708,
+                authenticated_header_len: 12,
+                encrypted_extension_body_len: 0,
                 payload_offset: 12,
             }
         );
@@ -1771,7 +2069,34 @@ mod tests {
 
         let header = parse_rtp_header(&extended).expect("extended RTP header should parse");
 
+        assert_eq!(header.authenticated_header_len, 20);
+        assert_eq!(header.encrypted_extension_body_len, 4);
         assert_eq!(header.payload_offset, 24);
+    }
+
+    #[test]
+    fn rtp_decrypts_aead_rtpsize_modes_and_strips_extension_body() {
+        let key = [7u8; 32];
+        let nonce_suffix = [1, 2, 3, 4];
+        let mut header = vec![0x90, 0x78, 0, 7, 0, 0, 0, 8, 0, 0, 0, 9];
+        header.extend_from_slice(&0x1000u16.to_be_bytes());
+        header.extend_from_slice(&1u16.to_be_bytes());
+        let plaintext = [b"ext!".as_slice(), b"opus-frame".as_slice()].concat();
+
+        for mode in [AEAD_AES256_GCM_RTPSIZE, AEAD_XCHACHA20_POLY1305_RTPSIZE] {
+            let mut packet = header.clone();
+            packet.extend(encrypt_test_rtp_payload(mode, &key, &header, &plaintext, nonce_suffix));
+            packet.extend_from_slice(&nonce_suffix);
+            let rtp_header = parse_rtp_header(&packet).expect("RTP header should parse");
+            let decryptor = VoiceRtpDecryptor::new(mode, &key).expect("decryptor should build");
+
+            let decrypted = decryptor
+                .decrypt_packet(&packet, &rtp_header)
+                .expect("RTP payload should decrypt");
+
+            assert_eq!(decrypted.encrypted_extension_body_len, 4);
+            assert_eq!(decrypted.media_payload, b"opus-frame");
+        }
     }
 
     #[test]
@@ -1787,5 +2112,45 @@ mod tests {
             parse_rtp_header(&packet).expect_err("wrong version should fail"),
             "RTP packet has unsupported version"
         );
+    }
+
+    fn encrypt_test_rtp_payload(
+        mode: &str,
+        key: &[u8],
+        aad: &[u8],
+        plaintext: &[u8],
+        nonce_suffix: [u8; RTP_AEAD_NONCE_SUFFIX_BYTES],
+    ) -> Vec<u8> {
+        match mode {
+            AEAD_AES256_GCM_RTPSIZE => {
+                let cipher = Aes256Gcm::new_from_slice(key).expect("test key is valid");
+                let mut nonce = [0u8; 12];
+                nonce[..RTP_AEAD_NONCE_SUFFIX_BYTES].copy_from_slice(&nonce_suffix);
+                cipher
+                    .encrypt(
+                        AesGcmNonce::from_slice(&nonce),
+                        Payload {
+                            msg: plaintext,
+                            aad,
+                        },
+                    )
+                    .expect("test payload encrypts")
+            }
+            AEAD_XCHACHA20_POLY1305_RTPSIZE => {
+                let cipher = XChaCha20Poly1305::new_from_slice(key).expect("test key is valid");
+                let mut nonce = [0u8; 24];
+                nonce[..RTP_AEAD_NONCE_SUFFIX_BYTES].copy_from_slice(&nonce_suffix);
+                cipher
+                    .encrypt(
+                        XNonce::from_slice(&nonce),
+                        Payload {
+                            msg: plaintext,
+                            aad,
+                        },
+                    )
+                    .expect("test payload encrypts")
+            }
+            other => panic!("unsupported test mode: {other}"),
+        }
     }
 }
