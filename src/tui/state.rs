@@ -451,13 +451,11 @@ impl DashboardState {
             AppEvent::TypingStart { .. }
                 | AppEvent::PresenceUpdate { .. }
                 | AppEvent::UserPresenceUpdate { .. }
-                | AppEvent::VoiceStateUpdate { .. }
                 | AppEvent::GuildMemberListCounts { .. }
                 | AppEvent::GuildFoldersUpdate { .. }
                 | AppEvent::UserNoteLoaded { .. }
                 | AppEvent::UserGuildNotificationSettingsInit { .. }
                 | AppEvent::UserGuildNotificationSettingsUpdate { .. }
-                | AppEvent::UserProfileLoaded { .. }
                 | AppEvent::RelationshipsLoaded { .. }
                 | AppEvent::RelationshipUpsert { .. }
                 | AppEvent::RelationshipRemove { .. }

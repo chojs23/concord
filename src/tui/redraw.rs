@@ -11,26 +11,6 @@ use crate::discord::ids::{
 
 use super::state::DashboardState;
 
-#[derive(Default)]
-pub(super) struct RedrawDiagnostics {
-    pub(super) key_presses: u32,
-    pub(super) mouse_events: u32,
-    pub(super) resizes: u32,
-    pub(super) terminal_closed: u32,
-    pub(super) preview_decodes: u32,
-    pub(super) snapshot_events: u32,
-    pub(super) effect_events: u32,
-    pub(super) redraw_timer_fires: u32,
-    pub(super) media_requests: u32,
-    pub(super) request_failures: u32,
-    pub(super) visible_image_previews_max: usize,
-    pub(super) snapshot_message_changes: u32,
-    pub(super) snapshot_member_changes: u32,
-    pub(super) snapshot_channel_changes: u32,
-    pub(super) snapshot_guild_changes: u32,
-    pub(super) snapshot_popup_changes: u32,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct VisibleDashboardSignature {
     focus: state::FocusPane,
@@ -194,68 +174,6 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
                 status: entry.status(),
             })
             .collect(),
-    }
-}
-
-pub(super) fn record_visible_signature_change(
-    diagnostics: &mut RedrawDiagnostics,
-    before: &VisibleDashboardSignature,
-    after: &VisibleDashboardSignature,
-) {
-    if before.selected_channel_id != after.selected_channel_id
-        || before.message_pane_title != after.message_pane_title
-        || before.selected_message != after.selected_message
-        || before.message_scroll != after.message_scroll
-        || before.message_line_scroll != after.message_line_scroll
-        || before.new_messages_count != after.new_messages_count
-        || before.typing_footer != after.typing_footer
-        || before.visible_messages != after.visible_messages
-        || before.visible_forum_posts != after.visible_forum_posts
-    {
-        diagnostics.snapshot_message_changes =
-            diagnostics.snapshot_message_changes.saturating_add(1);
-    }
-
-    if before.selected_member != after.selected_member
-        || before.member_scroll != after.member_scroll
-        || before.member_horizontal_scroll != after.member_horizontal_scroll
-        || before.visible_members != after.visible_members
-    {
-        diagnostics.snapshot_member_changes = diagnostics.snapshot_member_changes.saturating_add(1);
-    }
-
-    if before.selected_channel_id != after.selected_channel_id
-        || before.channel_horizontal_scroll != after.channel_horizontal_scroll
-        || before.visible_channels != after.visible_channels
-    {
-        diagnostics.snapshot_channel_changes =
-            diagnostics.snapshot_channel_changes.saturating_add(1);
-    }
-
-    if before.selected_guild_id != after.selected_guild_id
-        || before.guild_horizontal_scroll != after.guild_horizontal_scroll
-        || before.visible_guilds != after.visible_guilds
-    {
-        diagnostics.snapshot_guild_changes = diagnostics.snapshot_guild_changes.saturating_add(1);
-    }
-
-    if before.focus != after.focus
-        || before.leader_active != after.leader_active
-        || before.leader_action_mode != after.leader_action_mode
-        || before.channel_switcher_open != after.channel_switcher_open
-        || before.channel_switcher_query != after.channel_switcher_query
-        || before.channel_switcher_query_cursor != after.channel_switcher_query_cursor
-        || before.channel_switcher_selected != after.channel_switcher_selected
-        || before.channel_switcher_result_count != after.channel_switcher_result_count
-        || before.channel_switcher_items != after.channel_switcher_items
-        || before.guild_pane_visible != after.guild_pane_visible
-        || before.channel_pane_visible != after.channel_pane_visible
-        || before.member_pane_visible != after.member_pane_visible
-        || before.current_user != after.current_user
-        || before.popups != after.popups
-        || before.channel_action_threads_phase != after.channel_action_threads_phase
-    {
-        diagnostics.snapshot_popup_changes = diagnostics.snapshot_popup_changes.saturating_add(1);
     }
 }
 
