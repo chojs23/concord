@@ -1654,6 +1654,44 @@ fn message_row_content_metrics_cache_clears_on_discord_event() {
     });
 
     assert_eq!(state.message_row_content_metrics_cache_len(), 0);
+
+    let message = state.messages()[0];
+    let _ = state.message_row_metrics_at_with_selected_bottom(0, message, 5, 16, 3, true);
+    assert_eq!(state.message_row_content_metrics_cache_len(), 1);
+
+    state.push_event(AppEvent::UserProfileLoaded {
+        guild_id: Some(Id::new(1)),
+        profile: profile_info(99, Some("profile nickname")),
+    });
+
+    assert_eq!(state.message_row_content_metrics_cache_len(), 0);
+
+    let message = state.messages()[0];
+    let _ = state.message_row_metrics_at_with_selected_bottom(0, message, 5, 16, 3, true);
+    assert_eq!(state.message_row_content_metrics_cache_len(), 1);
+
+    state.push_event(AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id: Id::new(1),
+            channel_id: None,
+            user_id: Id::new(99),
+            member: Some(MemberInfo {
+                user_id: Id::new(99),
+                display_name: "voice nickname".to_owned(),
+                username: Some("voice-user".to_owned()),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            }),
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+            self_stream: false,
+        },
+    });
+
+    assert_eq!(state.message_row_content_metrics_cache_len(), 0);
 }
 
 #[test]
@@ -1678,10 +1716,6 @@ fn message_row_content_metrics_cache_survives_noisy_discord_events() {
         channel_id: Id::new(2),
         message_id: Id::new(1),
         mention_count: 0,
-    });
-    state.push_event(AppEvent::UserProfileLoaded {
-        guild_id: Some(Id::new(1)),
-        profile: profile_info(99, Some("neo")),
     });
     state.push_event(AppEvent::RelationshipUpsert {
         relationship: crate::discord::RelationshipInfo {

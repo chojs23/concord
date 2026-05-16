@@ -6,7 +6,7 @@ use crate::{
     discord::{AppCommand, AppEvent},
 };
 
-use super::{input, redraw::RedrawDiagnostics, state::DashboardState};
+use super::{input, state::DashboardState};
 
 pub(super) struct TerminalEventOutcome {
     pub(super) dirty: bool,
@@ -18,7 +18,6 @@ pub(super) fn handle_terminal_event(
     event: TerminalEvent,
     last_frame_area: &mut Rect,
     mouse_clicks: &mut input::MouseClickTracker,
-    redraw_diagnostics: &mut RedrawDiagnostics,
 ) -> Result<TerminalEventOutcome> {
     let mut outcome = TerminalEventOutcome {
         dirty: false,
@@ -30,7 +29,6 @@ pub(super) fn handle_terminal_event(
             outcome.command = input::handle_key(state, key);
             if key.kind == KeyEventKind::Press {
                 save_display_options_if_needed(state);
-                redraw_diagnostics.key_presses = redraw_diagnostics.key_presses.saturating_add(1);
                 outcome.dirty = true;
             }
         }
@@ -39,13 +37,11 @@ pub(super) fn handle_terminal_event(
                 input::handle_mouse_event(state, mouse, *last_frame_area, mouse_clicks);
             outcome.command = mouse_outcome.command;
             if mouse_outcome.handled {
-                redraw_diagnostics.mouse_events = redraw_diagnostics.mouse_events.saturating_add(1);
                 outcome.dirty = true;
             }
         }
         TerminalEvent::Resize(width, height) => {
             *last_frame_area = Rect::new(0, 0, width, height);
-            redraw_diagnostics.resizes = redraw_diagnostics.resizes.saturating_add(1);
             outcome.dirty = true;
         }
         TerminalEvent::Paste(text) if input::handle_paste(state, &text) => {

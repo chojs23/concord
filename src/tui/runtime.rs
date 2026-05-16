@@ -25,8 +25,8 @@ use super::{
         visible_emoji_image_targets, visible_image_preview_targets,
     },
     redraw::{
-        RedrawDiagnostics, image_surfaces_visible, record_visible_signature_change,
-        should_redraw_after_visible_signature_change, visible_dashboard_signature,
+        image_surfaces_visible, should_redraw_after_visible_signature_change,
+        visible_dashboard_signature,
     },
     requests::{
         ForumPostRequestTarget, ForumPostRequests, HistoryRequests, MemberRequests,
@@ -78,15 +78,6 @@ pub(super) async fn run_dashboard(
     let mut deferred_effects = VecDeque::new();
     let mut last_frame_area = Rect::default();
     let mut dirty = true;
-    // Diagnostic: count redraws and snapshot-change wakeups per second so we
-    // can confirm whether the Discord backend snapshot stream is what's
-    // saturating ConPTY with OSC 1337 traffic. Removed once the lag fix lands.
-    let mut frames_drawn: u32 = 0;
-    let mut snapshot_changes: u32 = 0;
-    let mut total_draw_ms: u64 = 0;
-    let mut max_draw_ms: u64 = 0;
-    let mut redraw_diagnostics = RedrawDiagnostics::default();
-    let mut redraw_window_start = std::time::Instant::now();
     // Snapshot/effect-driven redraws are coalesced into the next pending
     // deadline so bursts of background Discord events (presence, typing,
     // off-screen messages) do not each trigger a fresh OSC 1337 emission for
@@ -96,45 +87,7 @@ pub(super) async fn run_dashboard(
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
 
     while !state.should_quit() {
-        if redraw_window_start.elapsed() >= std::time::Duration::from_secs(1) {
-            logging::debug(
-                "tui",
-                format!(
-                    "redraws/sec={frames_drawn} snapshot_changes/sec={snapshot_changes} \
-                     total_draw_ms={total_draw_ms} max_draw_ms={max_draw_ms} \
-                     dirty_key={} dirty_mouse={} dirty_resize={} dirty_terminal_closed={} \
-                     preview_decodes={} snapshot_events={} effect_events={} redraw_timer={} \
-                     media_requests={} request_failures={} visible_image_previews_max={} \
-                     snapshot_msg={} snapshot_member={} snapshot_channel={} snapshot_guild={} \
-                     snapshot_popup={}",
-                    redraw_diagnostics.key_presses,
-                    redraw_diagnostics.mouse_events,
-                    redraw_diagnostics.resizes,
-                    redraw_diagnostics.terminal_closed,
-                    redraw_diagnostics.preview_decodes,
-                    redraw_diagnostics.snapshot_events,
-                    redraw_diagnostics.effect_events,
-                    redraw_diagnostics.redraw_timer_fires,
-                    redraw_diagnostics.media_requests,
-                    redraw_diagnostics.request_failures,
-                    redraw_diagnostics.visible_image_previews_max,
-                    redraw_diagnostics.snapshot_message_changes,
-                    redraw_diagnostics.snapshot_member_changes,
-                    redraw_diagnostics.snapshot_channel_changes,
-                    redraw_diagnostics.snapshot_guild_changes,
-                    redraw_diagnostics.snapshot_popup_changes,
-                ),
-            );
-            frames_drawn = 0;
-            snapshot_changes = 0;
-            total_draw_ms = 0;
-            max_draw_ms = 0;
-            redraw_diagnostics = RedrawDiagnostics::default();
-            redraw_window_start = std::time::Instant::now();
-        }
-
         if dirty {
-            let draw_start = std::time::Instant::now();
             terminal.draw(|frame| {
                 last_frame_area = frame.area();
                 ui::sync_view_heights(frame.area(), &mut state);
@@ -151,9 +104,6 @@ pub(super) async fn run_dashboard(
                     preview_layout.max_preview_height,
                 );
                 image_targets = visible_image_preview_targets(&state, preview_layout);
-                redraw_diagnostics.visible_image_previews_max = redraw_diagnostics
-                    .visible_image_previews_max
-                    .max(image_targets.len());
                 avatar_targets = visible_avatar_targets(&state, preview_layout);
                 emoji_targets = visible_emoji_image_targets(&state);
                 let image_previews = image_previews.render_state(&image_targets);
@@ -174,10 +124,6 @@ pub(super) async fn run_dashboard(
                 );
             })?;
             dirty = false;
-            let draw_ms = draw_start.elapsed().as_millis() as u64;
-            frames_drawn = frames_drawn.saturating_add(1);
-            total_draw_ms = total_draw_ms.saturating_add(draw_ms);
-            max_draw_ms = max_draw_ms.max(draw_ms);
 
             for command in state.drain_pending_commands() {
                 if commands.send(command).await.is_err() {
@@ -187,11 +133,7 @@ pub(super) async fn run_dashboard(
                 }
             }
             for command in image_previews.next_requests(&image_targets) {
-                redraw_diagnostics.media_requests =
-                    redraw_diagnostics.media_requests.saturating_add(1);
                 if commands.send(command).await.is_err() {
-                    redraw_diagnostics.request_failures =
-                        redraw_diagnostics.request_failures.saturating_add(1);
                     command_helpers::record_command_channel_closed(&mut state);
                     dirty = true;
                     break;
@@ -199,11 +141,7 @@ pub(super) async fn run_dashboard(
                 dirty = true;
             }
             for command in avatar_images.next_requests(&avatar_targets) {
-                redraw_diagnostics.media_requests =
-                    redraw_diagnostics.media_requests.saturating_add(1);
                 if commands.send(command).await.is_err() {
-                    redraw_diagnostics.request_failures =
-                        redraw_diagnostics.request_failures.saturating_add(1);
                     command_helpers::record_command_channel_closed(&mut state);
                     dirty = true;
                     break;
@@ -216,22 +154,13 @@ pub(super) async fn run_dashboard(
             if state.show_avatars()
                 && let Some(url) = state.user_profile_popup_avatar_url().map(str::to_owned)
                 && let Some(command) = avatar_images.next_request_for_url(&url)
+                && commands.send(command).await.is_err()
             {
-                redraw_diagnostics.media_requests =
-                    redraw_diagnostics.media_requests.saturating_add(1);
-                if commands.send(command).await.is_err() {
-                    redraw_diagnostics.request_failures =
-                        redraw_diagnostics.request_failures.saturating_add(1);
-                    command_helpers::record_command_channel_closed(&mut state);
-                    dirty = true;
-                }
+                command_helpers::record_command_channel_closed(&mut state);
+                dirty = true;
             }
             for command in emoji_images.next_requests(&emoji_targets) {
-                redraw_diagnostics.media_requests =
-                    redraw_diagnostics.media_requests.saturating_add(1);
                 if commands.send(command).await.is_err() {
-                    redraw_diagnostics.request_failures =
-                        redraw_diagnostics.request_failures.saturating_add(1);
                     command_helpers::record_command_channel_closed(&mut state);
                     dirty = true;
                     break;
@@ -252,7 +181,6 @@ pub(super) async fn run_dashboard(
                             event,
                             &mut last_frame_area,
                             &mut mouse_clicks,
-                            &mut redraw_diagnostics,
                         )?;
                         if state.take_open_composer_in_editor_request() {
                             if let Err(error) = open_composer_in_editor(terminal, &mut state) {
@@ -282,15 +210,11 @@ pub(super) async fn run_dashboard(
                     Some(Err(error)) => return Err(error.into()),
                     None => {
                         state.quit();
-                        redraw_diagnostics.terminal_closed =
-                            redraw_diagnostics.terminal_closed.saturating_add(1);
                         dirty = true;
                     }
                 }
             }
             Some(result) = preview_decode_rx.recv() => {
-                redraw_diagnostics.preview_decodes =
-                    redraw_diagnostics.preview_decodes.saturating_add(1);
                 image_previews.store_decoded(result);
                 if pending_redraw_deadline.is_none() {
                     pending_redraw_deadline =
@@ -298,9 +222,6 @@ pub(super) async fn run_dashboard(
                 }
             }
             snapshot_changed = snapshots.changed() => {
-                redraw_diagnostics.snapshot_events =
-                    redraw_diagnostics.snapshot_events.saturating_add(1);
-                snapshot_changes = snapshot_changes.saturating_add(1);
                 let should_redraw_for_snapshot = match snapshot_changed {
                     Ok(()) => {
                         let before_signature = visible_dashboard_signature(&state);
@@ -330,14 +251,6 @@ pub(super) async fn run_dashboard(
                             &mut ctx,
                         );
                         let after_signature = visible_dashboard_signature(&state);
-                        let signature_changed = before_signature != after_signature;
-                        if signature_changed {
-                            record_visible_signature_change(
-                                &mut redraw_diagnostics,
-                                &before_signature,
-                                &after_signature,
-                            );
-                        }
                         let images_visible = image_surfaces_visible(
                             &state,
                             !image_targets.is_empty(),
@@ -365,8 +278,6 @@ pub(super) async fn run_dashboard(
             maybe_effect = effects.recv() => {
                 match maybe_effect {
                     Some(effect) => {
-                        redraw_diagnostics.effect_events =
-                            redraw_diagnostics.effect_events.saturating_add(1);
                         let before_signature = visible_dashboard_signature(&state);
                         let mut effect_outcome = effect_helpers::EffectProcessingOutcome::default();
                         let mut ctx = effect_helpers::EffectContext {
@@ -437,8 +348,6 @@ pub(super) async fn run_dashboard(
                 }
             } => {
                 pending_redraw_deadline = None;
-                redraw_diagnostics.redraw_timer_fires =
-                    redraw_diagnostics.redraw_timer_fires.saturating_add(1);
                 dirty = true;
             }
             _ = async {
