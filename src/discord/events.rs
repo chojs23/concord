@@ -211,6 +211,7 @@ impl fmt::Debug for VoiceServerInfo {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VoiceConnectionStatus {
     Connecting,
+    Connected,
     Disconnected,
     Failed,
 }

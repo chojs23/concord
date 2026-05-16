@@ -665,6 +665,16 @@ impl DashboardState {
                         Instant::now(),
                     );
                 }
+                VoiceConnectionStatus::Connected => {
+                    self.voice_connection = Some(VoiceConnectionUiState {
+                        guild_id: *guild_id,
+                        channel_id: *channel_id,
+                    });
+                    self.show_success_toast(
+                        message.as_deref().unwrap_or("Voice connected"),
+                        Instant::now(),
+                    );
+                }
                 VoiceConnectionStatus::Disconnected => {
                     if self
                         .voice_connection

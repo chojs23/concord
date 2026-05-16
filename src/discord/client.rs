@@ -118,13 +118,24 @@ impl DiscordClient {
             .take()
             .expect("gateway can only be started once");
         let voice_events_tx = self.voice_events_tx.clone();
+        let voice_status_publisher = voice::VoiceStatusPublisher::new(
+            self.effects_tx.clone(),
+            self.snapshots_tx.clone(),
+            Arc::clone(&self.state),
+            Arc::clone(&self.revision),
+            Arc::clone(&self.publish_lock),
+        );
         if let Some(voice_events) = self
             .voice_events_rx
             .lock()
             .expect("voice event receiver mutex is not poisoned")
             .take()
         {
-            tokio::spawn(voice::run_voice_runtime(voice_events));
+            tokio::spawn(voice::run_voice_runtime(
+                voice_events,
+                voice_events_tx.clone(),
+                voice_status_publisher,
+            ));
         }
 
         tokio::spawn(async move {

@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     fmt,
     num::NonZeroU16,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
@@ -11,14 +11,15 @@ use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::{
     net::UdpSocket,
-    sync::{Mutex, mpsc},
+    sync::{Mutex, Mutex as AsyncMutex, mpsc, watch},
     task::JoinHandle,
     time::{sleep, timeout},
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use crate::discord::{
-    CurrentVoiceConnectionState, VoiceServerInfo, VoiceStateInfo,
+    CurrentVoiceConnectionState, DiscordState, SequencedAppEvent, SnapshotRevision,
+    VoiceConnectionStatus, VoiceServerInfo, VoiceStateInfo,
     ids::{
         Id,
         marker::{ChannelMarker, GuildMarker, UserMarker},
@@ -26,7 +27,7 @@ use crate::discord::{
 };
 use crate::logging;
 
-use super::events::AppEvent;
+use super::{client::publish_app_event, events::AppEvent};
 
 const VOICE_GATEWAY_VERSION: u8 = 9;
 const VOICE_WEBSOCKET_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -71,7 +72,22 @@ pub(crate) enum VoiceRuntimeEvent {
     CurrentUserReady(Option<Id<UserMarker>>),
     VoiceState(VoiceStateInfo),
     VoiceServer(VoiceServerInfo),
+    ConnectionEnded {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        session_id: String,
+        endpoint: String,
+    },
     Shutdown,
+}
+
+#[derive(Clone)]
+pub(crate) struct VoiceStatusPublisher {
+    effects_tx: mpsc::Sender<SequencedAppEvent>,
+    snapshots_tx: watch::Sender<SnapshotRevision>,
+    state: Arc<RwLock<DiscordState>>,
+    revision: Arc<RwLock<SnapshotRevision>>,
+    publish_lock: Arc<AsyncMutex<()>>,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -82,6 +98,70 @@ struct VoiceGatewaySession {
     session_id: String,
     endpoint: String,
     token: String,
+}
+
+impl VoiceStatusPublisher {
+    pub(crate) fn new(
+        effects_tx: mpsc::Sender<SequencedAppEvent>,
+        snapshots_tx: watch::Sender<SnapshotRevision>,
+        state: Arc<RwLock<DiscordState>>,
+        revision: Arc<RwLock<SnapshotRevision>>,
+        publish_lock: Arc<AsyncMutex<()>>,
+    ) -> Self {
+        Self {
+            effects_tx,
+            snapshots_tx,
+            state,
+            revision,
+            publish_lock,
+        }
+    }
+
+    async fn publish(
+        &self,
+        session: &VoiceGatewaySession,
+        status: VoiceConnectionStatus,
+        message: impl Into<String>,
+    ) {
+        publish_app_event(
+            &self.effects_tx,
+            &self.snapshots_tx,
+            &self.state,
+            &self.revision,
+            &self.publish_lock,
+            &AppEvent::VoiceConnectionStatusChanged {
+                guild_id: session.guild_id,
+                channel_id: Some(session.channel_id),
+                status,
+                message: Some(message.into()),
+            },
+        )
+        .await;
+    }
+}
+
+impl VoiceGatewaySession {
+    fn matches_connection_end(
+        &self,
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        session_id: &str,
+        endpoint: &str,
+    ) -> bool {
+        self.guild_id == guild_id
+            && self.channel_id == channel_id
+            && self.session_id == session_id
+            && self.endpoint == endpoint
+    }
+
+    fn connection_ended_event(&self) -> VoiceRuntimeEvent {
+        VoiceRuntimeEvent::ConnectionEnded {
+            guild_id: self.guild_id,
+            channel_id: self.channel_id,
+            session_id: self.session_id.clone(),
+            endpoint: self.endpoint.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -140,6 +220,12 @@ struct VoiceDaveState {
     pending_transitions: HashMap<u16, u16>,
     known_user_ids: BTreeSet<u64>,
     ssrc_user_ids: HashMap<u32, u64>,
+}
+
+#[derive(Default)]
+struct VoiceChildTasks {
+    heartbeat: Option<JoinHandle<()>>,
+    udp_receive: Option<JoinHandle<()>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -486,6 +572,41 @@ impl VoiceDaveState {
     }
 }
 
+impl VoiceChildTasks {
+    fn replace_heartbeat(&mut self, task: JoinHandle<()>) {
+        if let Some(task) = self.heartbeat.take() {
+            logging::debug("voice", "aborting previous voice heartbeat task");
+            task.abort();
+        }
+        self.heartbeat = Some(task);
+    }
+
+    fn replace_udp_receive(&mut self, task: JoinHandle<()>) {
+        if let Some(task) = self.udp_receive.take() {
+            logging::debug("voice", "aborting previous voice UDP receive task");
+            task.abort();
+        }
+        self.udp_receive = Some(task);
+    }
+
+    fn abort_all(&mut self) {
+        if let Some(task) = self.heartbeat.take() {
+            logging::debug("voice", "aborting voice heartbeat task");
+            task.abort();
+        }
+        if let Some(task) = self.udp_receive.take() {
+            logging::debug("voice", "aborting voice UDP receive task");
+            task.abort();
+        }
+    }
+}
+
+impl Drop for VoiceChildTasks {
+    fn drop(&mut self) {
+        self.abort_all();
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 enum VoiceRuntimeAction {
     Connect(VoiceGatewaySession),
@@ -512,6 +633,13 @@ impl VoiceRuntimeState {
     fn apply(&mut self, event: VoiceRuntimeEvent) -> Option<VoiceRuntimeAction> {
         match event {
             VoiceRuntimeEvent::Requested(requested) => {
+                if let Some(next) = requested
+                    && self.requested.is_some_and(|current| {
+                        current.guild_id != next.guild_id || current.channel_id != next.channel_id
+                    })
+                {
+                    self.server = None;
+                }
                 self.requested = requested;
                 if self.requested.is_none() {
                     self.current_voice = None;
@@ -533,6 +661,19 @@ impl VoiceRuntimeState {
                     return self.close_active();
                 }
                 self.server = Some(server);
+            }
+            VoiceRuntimeEvent::ConnectionEnded {
+                guild_id,
+                channel_id,
+                session_id,
+                endpoint,
+            } => {
+                if self.active.as_ref().is_some_and(|active| {
+                    active.matches_connection_end(guild_id, channel_id, &session_id, &endpoint)
+                }) {
+                    self.active = None;
+                }
+                return None;
             }
             VoiceRuntimeEvent::Shutdown => return self.close_active(),
         }
@@ -611,7 +752,11 @@ pub(crate) fn forward_app_event(
     let _ = sender.send(runtime_event);
 }
 
-pub(crate) async fn run_voice_runtime(mut events: mpsc::UnboundedReceiver<VoiceRuntimeEvent>) {
+pub(crate) async fn run_voice_runtime(
+    mut events: mpsc::UnboundedReceiver<VoiceRuntimeEvent>,
+    events_tx: mpsc::UnboundedSender<VoiceRuntimeEvent>,
+    status_publisher: VoiceStatusPublisher,
+) {
     let mut state = VoiceRuntimeState::default();
     let mut connection_task: Option<JoinHandle<()>> = None;
 
@@ -627,7 +772,11 @@ pub(crate) async fn run_voice_runtime(mut events: mpsc::UnboundedReceiver<VoiceR
                         );
                         task.abort();
                     }
-                    connection_task = Some(tokio::spawn(run_voice_gateway_session(session)));
+                    connection_task = Some(tokio::spawn(run_voice_gateway_session(
+                        session,
+                        events_tx.clone(),
+                        status_publisher.clone(),
+                    )));
                 }
                 VoiceRuntimeAction::Close => {
                     if let Some(task) = connection_task.take() {
@@ -651,13 +800,35 @@ pub(crate) async fn run_voice_runtime(mut events: mpsc::UnboundedReceiver<VoiceR
     }
 }
 
-async fn run_voice_gateway_session(session: VoiceGatewaySession) {
-    if let Err(error) = connect_voice_gateway(session).await {
-        logging::error("voice", error);
+async fn run_voice_gateway_session(
+    session: VoiceGatewaySession,
+    events_tx: mpsc::UnboundedSender<VoiceRuntimeEvent>,
+    status_publisher: VoiceStatusPublisher,
+) {
+    match connect_voice_gateway(&session, &status_publisher).await {
+        Ok(()) => {
+            status_publisher
+                .publish(
+                    &session,
+                    VoiceConnectionStatus::Disconnected,
+                    "Voice gateway disconnected",
+                )
+                .await;
+        }
+        Err(error) => {
+            logging::error("voice", &error);
+            status_publisher
+                .publish(&session, VoiceConnectionStatus::Failed, error)
+                .await;
+        }
     }
+    let _ = events_tx.send(session.connection_ended_event());
 }
 
-async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), String> {
+async fn connect_voice_gateway(
+    session: &VoiceGatewaySession,
+    status_publisher: &VoiceStatusPublisher,
+) -> Result<(), String> {
     let url = voice_gateway_url(&session.endpoint)?;
     logging::debug("voice", format!("connecting voice websocket: {url}"));
     let connect_started = Instant::now();
@@ -673,10 +844,16 @@ async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), Strin
             connect_started.elapsed().as_millis()
         ),
     );
+    status_publisher
+        .publish(
+            session,
+            VoiceConnectionStatus::Connected,
+            "Voice gateway connected",
+        )
+        .await;
     let (writer, mut reader) = ws.split();
     let writer = Arc::new(Mutex::new(writer));
-    let mut heartbeat_task: Option<JoinHandle<()>> = None;
-    let mut udp_receive_task: Option<JoinHandle<()>> = None;
+    let mut child_tasks = VoiceChildTasks::default();
     let mut udp_socket: Option<Arc<UdpSocket>> = None;
     let last_sequence = Arc::new(Mutex::new(None));
     let mut dave_state = VoiceDaveState::new(&session);
@@ -729,9 +906,6 @@ async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), Strin
                             "voice",
                             format!("voice session description received: {description:?}"),
                         );
-                        if let Some(task) = udp_receive_task.take() {
-                            task.abort();
-                        }
                         if let Some(dave_protocol_version) = description.dave_protocol_version {
                             let dave_protocol_version = u16::try_from(dave_protocol_version)
                                 .map_err(|_| "DAVE protocol version does not fit u16".to_owned())?;
@@ -739,7 +913,7 @@ async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), Strin
                         }
                         if let Some(socket) = udp_socket.as_ref() {
                             logging::debug("voice", "starting voice UDP receive task");
-                            udp_receive_task = Some(tokio::spawn(run_voice_udp_receive(
+                            child_tasks.replace_udp_receive(tokio::spawn(run_voice_udp_receive(
                                 Arc::clone(socket),
                                 description.mode,
                             )));
@@ -747,10 +921,6 @@ async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), Strin
                     }
                     VOICE_OP_HEARTBEAT_ACK => {}
                     VOICE_OP_HELLO => {
-                        if let Some(task) = heartbeat_task.take() {
-                            logging::debug("voice", "replacing voice heartbeat task");
-                            task.abort();
-                        }
                         let interval = value
                             .get("d")
                             .and_then(|data| data.get("heartbeat_interval"))
@@ -764,7 +934,7 @@ async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), Strin
                                 interval.as_millis()
                             ),
                         );
-                        heartbeat_task = Some(tokio::spawn(run_voice_heartbeat(
+                        child_tasks.replace_heartbeat(tokio::spawn(run_voice_heartbeat(
                             Arc::clone(&writer),
                             interval,
                             Arc::clone(&last_sequence),
@@ -815,14 +985,7 @@ async fn connect_voice_gateway(session: VoiceGatewaySession) -> Result<(), Strin
         }
     }
 
-    if let Some(task) = heartbeat_task {
-        logging::debug("voice", "aborting voice heartbeat task");
-        task.abort();
-    }
-    if let Some(task) = udp_receive_task {
-        logging::debug("voice", "aborting voice UDP receive task");
-        task.abort();
-    }
+    child_tasks.abort_all();
     Ok(())
 }
 
