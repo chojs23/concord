@@ -285,6 +285,63 @@ fn header_shows_connected_account() {
 }
 
 #[test]
+fn header_labels_other_client_voice_connection() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "muri".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "Lobby".to_owned(),
+            kind: "GuildVoice".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id: Id::new(1),
+            channel_id: Some(Id::new(11)),
+            user_id: Id::new(10),
+            session_id: Some("other-client-voice-session".to_owned()),
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+            self_stream: false,
+        },
+    });
+
+    let dump = render_dashboard_dump(120, 10, &mut state);
+    let header = dump.first().expect("dashboard render includes header");
+
+    assert!(
+        header.contains("Voice guild - Lobby (other client)"),
+        "{header}"
+    );
+}
+
+#[test]
 fn image_viewer_render_shows_download_hint_below_popup() {
     let mut state = state_with_message();
     state.push_event(AppEvent::MessageCreate {

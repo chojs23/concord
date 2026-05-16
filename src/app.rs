@@ -1165,7 +1165,7 @@ fn login_notice_for_token_warnings(warnings: &[String]) -> Option<String> {
 }
 
 fn leave_current_voice_channel_on_shutdown(client: &DiscordClient) {
-    let Some(voice) = client.current_or_requested_voice_connection() else {
+    let Some(voice) = client.requested_voice_connection() else {
         return;
     };
     if let Err(message) =

@@ -8177,6 +8177,77 @@ fn voice_channel_action_emits_join_then_leave_command() {
 }
 
 #[test]
+fn other_client_voice_state_shows_header_only() {
+    let mut state = DashboardState::new_with_voice_options(VoiceOptions {
+        self_mute: true,
+        self_deaf: true,
+    });
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "Lobby".to_owned(),
+            kind: "GuildVoice".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id: Id::new(1),
+            channel_id: Some(Id::new(11)),
+            user_id: Id::new(10),
+            session_id: Some("other-client-voice-session".to_owned()),
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: true,
+            self_mute: true,
+            self_stream: false,
+        },
+    });
+
+    assert_eq!(
+        state.active_voice_connection_label().as_deref(),
+        Some("guild - Lobby (other client)")
+    );
+    assert!(!state.is_joined_voice_channel(Id::new(11)));
+
+    state.activate_guild(super::ActiveGuildScope::Guild(Id::new(1)));
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+    let actions = state.selected_channel_action_items();
+    assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
+
+    state.open_options_popup();
+    for _ in 0..6 {
+        state.move_option_down();
+    }
+    state.toggle_selected_display_option();
+    assert!(state.drain_pending_commands().is_empty());
+}
+
+#[test]
 fn voice_channel_join_action_requires_connect_permission() {
     let me = Id::new(10);
     let owner = Id::new(11);

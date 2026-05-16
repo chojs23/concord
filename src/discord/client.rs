@@ -219,6 +219,13 @@ impl DiscordClient {
             })
     }
 
+    pub fn requested_voice_connection(&self) -> Option<CurrentVoiceConnectionState> {
+        *self
+            .requested_voice
+            .read()
+            .expect("requested voice lock is not poisoned")
+    }
+
     pub fn shutdown_gateway(&self) -> std::result::Result<(), String> {
         self.gateway_commands_tx
             .send(GatewayCommand::Shutdown)
@@ -459,7 +466,7 @@ pub(crate) fn validate_token_header(token: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::discord::{AppEvent, ChannelInfo, MessageKind, ids::Id};
+    use crate::discord::{AppEvent, ChannelInfo, MessageKind, VoiceStateInfo, ids::Id};
 
     use super::{DiscordClient, validate_token_header};
 
@@ -627,7 +634,7 @@ mod tests {
             .update_voice_state(Id::new(1), Some(Id::new(10)), true, false)
             .expect("gateway command should queue");
         let voice = client
-            .current_or_requested_voice_connection()
+            .requested_voice_connection()
             .expect("requested voice state should be tracked");
 
         assert_eq!(voice.guild_id, Id::new(1));
@@ -639,7 +646,39 @@ mod tests {
             .update_voice_state(Id::new(1), None, false, false)
             .expect("gateway command should queue");
 
-        assert_eq!(client.current_or_requested_voice_connection(), None);
+        assert_eq!(client.requested_voice_connection(), None);
+    }
+
+    #[tokio::test]
+    async fn requested_voice_state_ignores_observed_other_client_voice() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+
+        client
+            .publish_event(AppEvent::Ready {
+                user: "me".to_owned(),
+                user_id: Some(Id::new(10)),
+            })
+            .await;
+        client
+            .publish_event(AppEvent::VoiceStateUpdate {
+                state: VoiceStateInfo {
+                    guild_id: Id::new(1),
+                    channel_id: Some(Id::new(10)),
+                    user_id: Id::new(10),
+                    session_id: Some("other-client-voice-session".to_owned()),
+                    member: None,
+                    deaf: false,
+                    mute: false,
+                    self_deaf: false,
+                    self_mute: false,
+                    self_stream: false,
+                },
+            })
+            .await;
+
+        assert_eq!(client.requested_voice_connection(), None);
+        assert!(client.current_or_requested_voice_connection().is_some());
     }
 
     #[test]

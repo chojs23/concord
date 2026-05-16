@@ -1047,18 +1047,23 @@ impl DashboardState {
     }
 
     pub fn active_voice_connection_label(&self) -> Option<String> {
-        let voice = self.voice_connection?;
-        let channel_id = voice.channel_id?;
+        let (guild_id, channel_id, other_client) = if let Some(voice) = self.voice_connection {
+            (voice.guild_id, voice.channel_id?, false)
+        } else {
+            let voice = self.discord.current_user_voice_connection()?;
+            (voice.guild_id, voice.channel_id, true)
+        };
         let guild = self
-            .guild_name(voice.guild_id)
+            .guild_name(guild_id)
             .map(str::to_owned)
-            .unwrap_or_else(|| format!("guild-{}", voice.guild_id.get()));
+            .unwrap_or_else(|| format!("guild-{}", guild_id.get()));
         let channel = self
             .discord
             .channel(channel_id)
             .map(|channel| channel.name.clone())
             .unwrap_or_else(|| format!("channel-{}", channel_id.get()));
-        Some(format!("{guild} - {channel}"))
+        let suffix = if other_client { " (other client)" } else { "" };
+        Some(format!("{guild} - {channel}{suffix}"))
     }
 
     pub fn is_joined_voice_channel(&self, channel_id: Id<ChannelMarker>) -> bool {
