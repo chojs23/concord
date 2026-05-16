@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::discord::MessageState;
 
-use super::*;
+use super::{MessageRowContentMetrics, MessageRowContentMetricsCacheKey, *};
 use crate::tui::{media, message_format, message_rows::MessageRowMetrics, message_time};
 
 const AUTHOR_GROUP_MAX_GAP: Duration = Duration::from_secs(5 * 60);
@@ -134,23 +134,93 @@ impl DashboardState {
         max_preview_height: u16,
         selected_for_bottom: bool,
     ) -> MessageRowMetrics {
-        let (body_lines, reaction_lines) =
-            message_format::format_message_content_sections(message, self, content_width);
-        let previews = message.inline_previews();
-        let album = media::image_preview_album_layout(&previews, preview_width, max_preview_height);
+        let content_metrics = self.message_row_content_metrics(
+            index,
+            message,
+            content_width,
+            preview_width,
+            max_preview_height,
+        );
         MessageRowMetrics {
             top_rows: self.message_extra_top_lines(index),
             header_rows: self.message_header_line_count_at(index),
-            content_rows: body_lines.len(),
-            reaction_rows: reaction_lines.len(),
-            preview_rows: album
-                .height
-                .saturating_add(usize::from(album.overflow_count > 0)),
+            content_rows: content_metrics.content_rows,
+            reaction_rows: content_metrics.reaction_rows,
+            preview_rows: content_metrics.preview_rows,
             selected_extra_top_rows: self.selected_message_extra_top_line_at(index),
             selected_extra_bottom_rows: usize::from(
                 selected_for_bottom && !self.message_has_bottom_gap_after(index),
             ),
             bottom_gap_rows: self.message_bottom_gap_after(index),
+        }
+    }
+
+    fn message_row_content_metrics(
+        &self,
+        index: usize,
+        message: &MessageState,
+        content_width: usize,
+        preview_width: u16,
+        max_preview_height: u16,
+    ) -> MessageRowContentMetrics {
+        let messages = self.messages();
+        let Some(state_message) = messages.get(index) else {
+            return self.compute_message_row_content_metrics(
+                message,
+                content_width,
+                preview_width,
+                max_preview_height,
+            );
+        };
+        if state_message.id != message.id {
+            return self.compute_message_row_content_metrics(
+                message,
+                content_width,
+                preview_width,
+                max_preview_height,
+            );
+        }
+
+        let key = MessageRowContentMetricsCacheKey {
+            message_id: message.id.get(),
+            content_width,
+            preview_width,
+            max_preview_height,
+            show_custom_emoji: self.show_custom_emoji(),
+        };
+        if let Some(metrics) = self.message_row_content_metrics_cache.borrow().get(&key) {
+            return *metrics;
+        }
+
+        let metrics = self.compute_message_row_content_metrics(
+            message,
+            content_width,
+            preview_width,
+            max_preview_height,
+        );
+        self.message_row_content_metrics_cache
+            .borrow_mut()
+            .insert(key, metrics);
+        metrics
+    }
+
+    fn compute_message_row_content_metrics(
+        &self,
+        message: &MessageState,
+        content_width: usize,
+        preview_width: u16,
+        max_preview_height: u16,
+    ) -> MessageRowContentMetrics {
+        let (body_lines, reaction_lines) =
+            message_format::format_message_content_sections(message, self, content_width);
+        let previews = message.inline_previews();
+        let album = media::image_preview_album_layout(&previews, preview_width, max_preview_height);
+        MessageRowContentMetrics {
+            content_rows: body_lines.len(),
+            reaction_rows: reaction_lines.len(),
+            preview_rows: album
+                .height
+                .saturating_add(usize::from(album.overflow_count > 0)),
         }
     }
 

@@ -17,8 +17,8 @@ use super::{
     GuildBranch, GuildPaneEntry, MessageActionKind, MessageState,
 };
 use crate::discord::{
-    ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo, ChannelInfo,
-    ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
+    ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo, AttachmentUpdate,
+    ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
     ChannelVisibilityStats, CustomEmojiInfo, DiscordState, DownloadAttachmentSource,
     EmbedFieldInfo, EmbedInfo, ForumPostArchiveState, FriendStatus, GuildNotificationSettingsInfo,
     MemberInfo, MessageAttachmentUpload, MessageInfo, MessageKind, MessageReferenceInfo,
@@ -1597,6 +1597,104 @@ fn wrapped_content_increases_message_rendered_height() {
     };
 
     assert_eq!(message_rendered_height(&message, 5, 16, 3), 5);
+}
+
+#[test]
+fn message_row_content_metrics_cache_reuses_width_specific_rows() {
+    let state = state_with_single_message_content("abcdefghijkl");
+    let message = state.messages()[0];
+
+    assert_eq!(state.message_row_content_metrics_cache_len(), 0);
+    let first = state.message_row_metrics_at_with_selected_bottom(0, message, 5, 16, 3, true);
+    let second = state.message_row_metrics_at_with_selected_bottom(0, message, 5, 16, 3, true);
+
+    assert_eq!(first, second);
+    assert_eq!(state.message_row_content_metrics_cache_len(), 1);
+
+    let _ = state.message_row_metrics_at_with_selected_bottom(0, message, 4, 16, 3, true);
+
+    assert_eq!(state.message_row_content_metrics_cache_len(), 2);
+}
+
+#[test]
+fn message_row_content_metrics_cache_clears_on_display_option_toggle() {
+    let mut state = state_with_single_message_content("<:party:1234>");
+    let message = state.messages()[0];
+
+    let _ = state.message_row_metrics_at_with_selected_bottom(0, message, 5, 16, 3, true);
+    assert_eq!(state.message_row_content_metrics_cache_len(), 1);
+
+    state.open_options_popup();
+    for _ in 0..4 {
+        state.move_option_down();
+    }
+    state.toggle_selected_display_option();
+
+    assert_eq!(state.message_row_content_metrics_cache_len(), 0);
+}
+
+#[test]
+fn message_row_content_metrics_cache_clears_on_discord_event() {
+    let mut state = state_with_single_message_content("abcdefghijkl");
+    let message = state.messages()[0];
+
+    let _ = state.message_row_metrics_at_with_selected_bottom(0, message, 5, 16, 3, true);
+    assert_eq!(state.message_row_content_metrics_cache_len(), 1);
+
+    state.push_event(AppEvent::MessageUpdate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        poll: None,
+        content: Some("updated".to_owned()),
+        sticker_names: None,
+        mentions: None,
+        attachments: AttachmentUpdate::Unchanged,
+        embeds: None,
+        edited_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),
+    });
+
+    assert_eq!(state.message_row_content_metrics_cache_len(), 0);
+}
+
+#[test]
+fn message_row_content_metrics_cache_survives_noisy_discord_events() {
+    let mut state = state_with_single_message_content("abcdefghijkl");
+    let message = state.messages()[0];
+
+    let _ = state.message_row_metrics_at_with_selected_bottom(0, message, 5, 16, 3, true);
+    assert_eq!(state.message_row_content_metrics_cache_len(), 1);
+
+    state.push_event(AppEvent::TypingStart {
+        channel_id: Id::new(2),
+        user_id: Id::new(99),
+    });
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: Id::new(1),
+        user_id: Id::new(99),
+        status: PresenceStatus::Online,
+        activities: Vec::new(),
+    });
+    state.push_event(AppEvent::MessageAck {
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        mention_count: 0,
+    });
+    state.push_event(AppEvent::UserProfileLoaded {
+        guild_id: Some(Id::new(1)),
+        profile: profile_info(99, Some("neo")),
+    });
+    state.push_event(AppEvent::RelationshipUpsert {
+        relationship: crate::discord::RelationshipInfo {
+            user_id: Id::new(99),
+            status: FriendStatus::Friend,
+            nickname: None,
+            display_name: Some("neo".to_owned()),
+            username: Some("neo".to_owned()),
+        },
+    });
+
+    assert_eq!(state.message_row_content_metrics_cache_len(), 1);
 }
 
 #[test]

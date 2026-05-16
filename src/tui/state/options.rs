@@ -180,6 +180,7 @@ impl DashboardState {
         if !self.show_images() {
             self.close_image_viewer();
         }
+        self.clear_message_row_content_metrics_cache();
         self.display_options_save_pending = true;
     }
 
