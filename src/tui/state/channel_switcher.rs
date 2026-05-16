@@ -1,10 +1,13 @@
 use std::collections::HashSet;
 
-use crate::discord::ids::{
-    Id,
-    marker::{ChannelMarker, GuildMarker},
-};
 use crate::discord::{AppCommand, ChannelState, ChannelUnreadState};
+use crate::{
+    discord::ids::{
+        Id,
+        marker::{ChannelMarker, GuildMarker},
+    },
+    tui::fuzzy::FuzzyScore,
+};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::fuzzy::fuzzy_text_score;
@@ -74,7 +77,7 @@ impl DashboardState {
             return items;
         }
 
-        let mut scored: Vec<(usize, ChannelSwitcherItem)> = items
+        let mut scored: Vec<(FuzzyScore, ChannelSwitcherItem)> = items
             .into_iter()
             .filter_map(|item| {
                 channel_switcher_match_score(&item, query).map(|score| (score, item))
@@ -373,24 +376,15 @@ fn push_channel_switcher_item(
         channel_label: channel_switcher_channel_label(channel),
         unread,
         unread_message_count,
-        search_name: channel.name.clone(),
+        search_name: format!("{} / {}", group_label, channel.name),
         depth,
         group_order,
         original_index,
     });
 }
 
-fn channel_switcher_match_score(item: &ChannelSwitcherItem, query: &str) -> Option<usize> {
-    let name_score = fuzzy_text_score(&item.search_name, query);
-    let guild_score = item
-        .guild_name
-        .as_deref()
-        .and_then(|guild_name| fuzzy_text_score(guild_name, query));
-    match (name_score, guild_score) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (Some(score), None) | (None, Some(score)) => Some(score),
-        (None, None) => None,
-    }
+fn channel_switcher_match_score(item: &ChannelSwitcherItem, query: &str) -> Option<FuzzyScore> {
+    fuzzy_text_score(&item.search_name, query)
 }
 
 fn channel_switcher_channel_label(channel: &ChannelState) -> String {
