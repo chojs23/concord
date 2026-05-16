@@ -77,7 +77,10 @@ uuid = { version = "1.23.1", features = ["v4"] }
 
 [features]
 default = []
-voice-playback = ["dep:cpal"]
+voice-playback = ["dep:cpal", "dep:alsa"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+alsa = { version = "0.11", optional = true }
 
 [profile.dist]
 inherits = "release"

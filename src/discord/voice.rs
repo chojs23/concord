@@ -825,6 +825,19 @@ impl VoiceDecodedAudio {
 #[cfg(feature = "voice-playback")]
 impl VoiceAudioOutput {
     fn start() -> Result<Self, String> {
+        #[cfg(target_os = "linux")]
+        let alsa_error_output = alsa::Output::local_error_handler().ok();
+
+        let result = Self::start_with_cpal();
+
+        #[cfg(target_os = "linux")]
+        log_captured_alsa_errors(&alsa_error_output);
+
+        result
+    }
+
+    fn start_with_cpal() -> Result<Self, String> {
+
         let (samples_tx, samples_rx) = sync_channel(VOICE_AUDIO_OUTPUT_QUEUE);
         let host = cpal::default_host();
         let device = host
@@ -849,6 +862,23 @@ impl VoiceAudioOutput {
             _stream: stream,
         })
     }
+}
+
+#[cfg(all(feature = "voice-playback", target_os = "linux"))]
+fn log_captured_alsa_errors(
+    alsa_error_output: &Option<std::rc::Rc<std::cell::RefCell<alsa::Output>>>,
+) {
+    let Some(output) = alsa_error_output else {
+        return;
+    };
+    let message = output.borrow().buffer_string(|bytes| {
+        String::from_utf8_lossy(bytes).replace('\0', "")
+    });
+    let message = message.trim();
+    if message.is_empty() {
+        return;
+    }
+    logging::error("voice", format!("captured ALSA diagnostics: {message}"));
 }
 
 #[cfg(feature = "voice-playback")]
