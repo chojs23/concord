@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.2] - 2026-05-16
+
+### Bug Fixes
+
+- _(search)_ Improve fuzzy search logic (#74) in [#74](https://github.com/chojs23/concord/pull/74) by @80avin
+
+### Miscellaneous Tasks
+
+- Remove temp diagnostic by @chojs23
+
+### Performance
+
+- Cache avatar render protocols by clipping and size to avoid per-frame re-encoding by @chojs23
+- Cache message content row metrics to reduce repeated per-frame formatting by @chojs23
+- Reduce channel upsert UI repair work by @chojs23
+
+### New Contributors
+
+- @80avin made their first contribution in [#74](https://github.com/chojs23/concord/pull/74)
+
 ## [1.4.1] - 2026-05-15
 
 ### Bug Fixes
@@ -65,10 +85,10 @@ All notable changes to this project will be documented in this file.
 - Remove redundant preview preset by @chojs23
 - Refactor keyboard shortcuts by @chojs23
 
-
 ### New Contributors
 
 - @SeniorMars made their first contribution in [#57](https://github.com/chojs23/concord/pull/57)
+
 ## [1.3.3] - 2026-05-13
 
 ### Bug Fixes
@@ -93,10 +113,10 @@ All notable changes to this project will be documented in this file.
 - Split tui modules by @chojs23
 - Gateway parser and TUI popup modules by @chojs23
 
-
 ### New Contributors
 
 - @AnalogCyan made their first contribution in [#50](https://github.com/chojs23/concord/pull/50)
+
 ## [1.3.2] - 2026-05-12
 
 ### Bug Fixes
@@ -123,7 +143,7 @@ All notable changes to this project will be documented in this file.
 
 ### Refactor
 
-- *(tui)* Remove footer and popup hints (#43) in [#43](https://github.com/chojs23/concord/pull/43) by @chojs23
+- _(tui)_ Remove footer and popup hints (#43) in [#43](https://github.com/chojs23/concord/pull/43) by @chojs23
 - Refactor activity rendering with typed ActivityRender struct (#44) in [#44](https://github.com/chojs23/concord/pull/44) by @chojs23
 - Change broken dash by @chojs23
 
@@ -131,11 +151,11 @@ All notable changes to this project will be documented in this file.
 
 - Rename leader action state and add context-specific action titles by @chojs23
 
-
 ### New Contributors
 
 - @amiralimollaei made their first contribution in [#49](https://github.com/chojs23/concord/pull/49)
 - @kimjune01 made their first contribution in [#45](https://github.com/chojs23/concord/pull/45)
+
 ## [1.3.1] - 2026-05-11
 
 ### Bug Fixes
@@ -180,22 +200,22 @@ All notable changes to this project will be documented in this file.
 ### Features
 
 - Support resizing panes (#18) in [#18](https://github.com/chojs23/concord/pull/18) by @nexxai
-- *(composer)* Add CTRL+Left, CTRL+Right word skip (#15) in [#15](https://github.com/chojs23/concord/pull/15) by @TobyBridle
+- _(composer)_ Add CTRL+Left, CTRL+Right word skip (#15) in [#15](https://github.com/chojs23/concord/pull/15) by @TobyBridle
 - Add search to reaction picker + allow toggling of reactions (#19) in [#19](https://github.com/chojs23/concord/pull/19) by @nexxai
 - Add fuzzy score helper (#21) in [#21](https://github.com/chojs23/concord/pull/21) by @chojs23
 - Typo tolerant fuzzy (#22) in [#22](https://github.com/chojs23/concord/pull/22) by @chojs23
 
 ### Refactor
 
-- *(composer)* Use char-safe word boundary helpers (#20) in [#20](https://github.com/chojs23/concord/pull/20) by @chojs23
+- _(composer)_ Use char-safe word boundary helpers (#20) in [#20](https://github.com/chojs23/concord/pull/20) by @chojs23
 - Store app files under $XDG_CONFIG_HOME/concord (#23) in [#23](https://github.com/chojs23/concord/pull/23) by @chojs23
-
 
 ### New Contributors
 
 - @lisk77 made their first contribution in [#14](https://github.com/chojs23/concord/pull/14)
 - @nexxai made their first contribution in [#19](https://github.com/chojs23/concord/pull/19)
 - @TobyBridle made their first contribution in [#15](https://github.com/chojs23/concord/pull/15)
+
 ## [1.2.0] - 2026-05-09
 
 ### Documentation
@@ -255,7 +275,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-- *(flake)* Use crane (#4) in [#4](https://github.com/chojs23/concord/pull/4) by @M4jor-Tom
+- _(flake)_ Use crane (#4) in [#4](https://github.com/chojs23/concord/pull/4) by @M4jor-Tom
 
 ### Documentation
 
@@ -271,10 +291,10 @@ All notable changes to this project will be documented in this file.
 
 - Enable generated github release notes by @chojs23
 
-
 ### New Contributors
 
 - @M4jor-Tom made their first contribution in [#4](https://github.com/chojs23/concord/pull/4)
+
 ## [1.0.3] - 2026-05-08
 
 ### Bug Fixes
@@ -600,9 +620,7 @@ All notable changes to this project will be documented in this file.
 
 - Add TUI and keychain dependencies by @chojs23
 
-
 ### New Contributors
 
 - @chojs23 made their first contribution
 - @vncsalencar made their first contribution
-
