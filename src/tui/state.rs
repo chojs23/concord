@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     time::{Duration, Instant},
 };
@@ -172,6 +173,22 @@ struct ForumPostListState {
     has_more: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct MessageRowContentMetricsCacheKey {
+    message_id: u64,
+    content_width: usize,
+    preview_width: u16,
+    max_preview_height: u16,
+    show_custom_emoji: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MessageRowContentMetrics {
+    content_rows: usize,
+    reaction_rows: usize,
+    preview_rows: usize,
+}
+
 #[derive(Debug)]
 pub struct DashboardState {
     discord: DiscordState,
@@ -284,6 +301,8 @@ pub struct DashboardState {
     collapsed_channel_categories: HashSet<Id<ChannelMarker>>,
     pending_read_acks: HashMap<Id<ChannelMarker>, PendingReadAck>,
     pending_commands: VecDeque<AppCommand>,
+    message_row_content_metrics_cache:
+        RefCell<HashMap<MessageRowContentMetricsCacheKey, MessageRowContentMetrics>>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -417,7 +436,38 @@ impl DashboardState {
             collapsed_channel_categories: HashSet::new(),
             pending_read_acks: HashMap::new(),
             pending_commands: VecDeque::new(),
+            message_row_content_metrics_cache: RefCell::new(HashMap::new()),
         }
+    }
+
+    fn clear_message_row_content_metrics_cache(&mut self) {
+        self.message_row_content_metrics_cache.get_mut().clear();
+    }
+
+    fn event_affects_message_row_content_metrics(event: &AppEvent) -> bool {
+        !matches!(
+            event,
+            AppEvent::TypingStart { .. }
+                | AppEvent::PresenceUpdate { .. }
+                | AppEvent::UserPresenceUpdate { .. }
+                | AppEvent::VoiceStateUpdate { .. }
+                | AppEvent::GuildMemberListCounts { .. }
+                | AppEvent::GuildFoldersUpdate { .. }
+                | AppEvent::UserNoteLoaded { .. }
+                | AppEvent::UserGuildNotificationSettingsInit { .. }
+                | AppEvent::UserGuildNotificationSettingsUpdate { .. }
+                | AppEvent::UserProfileLoaded { .. }
+                | AppEvent::RelationshipsLoaded { .. }
+                | AppEvent::RelationshipUpsert { .. }
+                | AppEvent::RelationshipRemove { .. }
+                | AppEvent::ReadStateInit { .. }
+                | AppEvent::MessageAck { .. }
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn message_row_content_metrics_cache_len(&self) -> usize {
+        self.message_row_content_metrics_cache.borrow().len()
     }
 
     pub fn next_read_ack_deadline(&self) -> Option<Instant> {
@@ -593,6 +643,9 @@ impl DashboardState {
         if apply_discord {
             let discord_event = self.discord_event_for_apply(&event);
             self.discord.apply_event(&discord_event);
+            if Self::event_affects_message_row_content_metrics(&discord_event) {
+                self.clear_message_row_content_metrics_cache();
+            }
         }
         if matches!(
             &event,
@@ -731,6 +784,7 @@ impl DashboardState {
         let channel_cursor_id = self.selected_channel_cursor_id();
 
         restore(&mut self.discord);
+        self.clear_message_row_content_metrics_cache();
         if areas.navigation {
             self.repair_navigation_after_discord_restore(channel_cursor_id);
         }
