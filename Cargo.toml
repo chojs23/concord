@@ -25,6 +25,7 @@ futures = "0.3.32"
 image = "0.25.10"
 mime_guess = "2.0"
 notify-rust = "4"
+opus = "0.3.1"
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 ratatui = "0.30.0"

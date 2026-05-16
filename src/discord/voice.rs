@@ -13,6 +13,7 @@ use aes_gcm::{
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use davey::{DaveSession, MediaType, ProposalsOperationType};
 use futures::{SinkExt, StreamExt};
+use opus::{Channels, Decoder as OpusDecoder};
 use serde_json::{Value, json};
 use tokio::{
     net::UdpSocket,
@@ -47,6 +48,10 @@ const RTP_AEAD_TAG_BYTES: usize = 16;
 const RTP_AEAD_NONCE_SUFFIX_BYTES: usize = 4;
 const DAVE_MIN_SUPPLEMENTAL_BYTES: usize = 11;
 const DAVE_MAGIC_MARKER: [u8; 2] = [0xfa, 0xfa];
+const DISCORD_VOICE_SAMPLE_RATE: u32 = 48_000;
+const DISCORD_VOICE_CHANNELS: u16 = 2;
+const OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL: usize = 5760;
+const VOICE_PLAYBACK_FRAME_QUEUE: usize = 256;
 const AEAD_AES256_GCM_RTPSIZE: &str = "aead_aes256_gcm_rtpsize";
 const AEAD_XCHACHA20_POLY1305_RTPSIZE: &str = "aead_xchacha20_poly1305_rtpsize";
 
@@ -267,6 +272,21 @@ struct VoiceDaveState {
 struct VoiceChildTasks {
     heartbeat: Option<JoinHandle<()>>,
     udp_receive: Option<JoinHandle<()>>,
+    opus_decode: Option<JoinHandle<()>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VoicePlaybackFrame {
+    ssrc: u32,
+    user_id: Option<u64>,
+    sequence: u16,
+    timestamp: u32,
+    opus: Vec<u8>,
+}
+
+struct VoiceOpusDecode {
+    frames_tx: mpsc::Sender<VoicePlaybackFrame>,
+    task: JoinHandle<()>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -668,6 +688,14 @@ impl VoiceChildTasks {
         self.udp_receive = Some(task);
     }
 
+    fn replace_opus_decode(&mut self, task: JoinHandle<()>) {
+        if let Some(task) = self.opus_decode.take() {
+            logging::debug("voice", "aborting previous voice Opus decode task");
+            task.abort();
+        }
+        self.opus_decode = Some(task);
+    }
+
     fn abort_all(&mut self) {
         if let Some(task) = self.heartbeat.take() {
             logging::debug("voice", "aborting voice heartbeat task");
@@ -677,12 +705,28 @@ impl VoiceChildTasks {
             logging::debug("voice", "aborting voice UDP receive task");
             task.abort();
         }
+        if let Some(task) = self.opus_decode.take() {
+            logging::debug("voice", "aborting voice Opus decode task");
+            task.abort();
+        }
     }
 }
 
 impl Drop for VoiceChildTasks {
     fn drop(&mut self) {
         self.abort_all();
+    }
+}
+
+impl VoiceOpusDecode {
+    fn start_decode_only() -> Self {
+        let (frames_tx, frames_rx) = mpsc::channel(VOICE_PLAYBACK_FRAME_QUEUE);
+        let task = tokio::spawn(run_voice_playback_decode(frames_rx));
+        logging::debug(
+            "voice",
+            "voice Opus decode worker started without audio output device",
+        );
+        Self { frames_tx, task }
     }
 }
 
@@ -992,10 +1036,14 @@ async fn connect_voice_gateway(
                         }
                         if let Some(socket) = udp_socket.as_ref() {
                             logging::debug("voice", "starting voice UDP receive task");
+                            let opus_decode = VoiceOpusDecode::start_decode_only();
+                            let playback_tx = Some(opus_decode.frames_tx.clone());
+                            child_tasks.replace_opus_decode(opus_decode.task);
                             child_tasks.replace_udp_receive(tokio::spawn(run_voice_udp_receive(
                                 Arc::clone(socket),
                                 description,
                                 Arc::clone(&dave_state),
+                                playback_tx,
                             )));
                         }
                     }
@@ -1132,6 +1180,7 @@ async fn run_voice_udp_receive(
     socket: Arc<UdpSocket>,
     description: VoiceSessionDescription,
     dave_state: Arc<Mutex<VoiceDaveState>>,
+    playback_tx: Option<mpsc::Sender<VoicePlaybackFrame>>,
 ) {
     let mode = description.mode.clone();
     let decryptor = match VoiceRtpDecryptor::new(&description.mode, &description.secret_key) {
@@ -1215,6 +1264,11 @@ async fn run_voice_udp_receive(
                                         ),
                                     );
                                 }
+                            }
+                            if let Some(frame) = voice_playback_frame(&media, &header)
+                                && let Some(tx) = playback_tx.as_ref()
+                            {
+                                let _ = tx.try_send(frame);
                             }
                             if decrypted_packets == 1 || decrypted_packets % 500 == 0 {
                                 logging::debug(
@@ -1339,6 +1393,57 @@ impl VoiceRtpDecryptor {
             media_payload: decrypted[header.encrypted_extension_body_len..].to_vec(),
             encrypted_extension_body_len: header.encrypted_extension_body_len,
         })
+    }
+}
+
+async fn run_voice_playback_decode(mut frames_rx: mpsc::Receiver<VoicePlaybackFrame>) {
+    let mut decoders = HashMap::new();
+    let mut decoded_frames = 0u64;
+    while let Some(frame) = frames_rx.recv().await {
+        let decoder = match decoders.entry(frame.ssrc) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => match OpusDecoder::new(
+                DISCORD_VOICE_SAMPLE_RATE,
+                Channels::Stereo,
+            ) {
+                Ok(decoder) => entry.insert(decoder),
+                Err(error) => {
+                    logging::error("voice", format!("voice Opus decoder init failed: {error}"));
+                    continue;
+                }
+            },
+        };
+        let mut decoded = vec![0.0f32; OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL * usize::from(DISCORD_VOICE_CHANNELS)];
+        let samples_per_channel = match decoder.decode_float(&frame.opus, &mut decoded, false) {
+            Ok(samples) => samples,
+            Err(error) => {
+                logging::debug(
+                    "voice",
+                    format!(
+                        "voice Opus decode failed: ssrc={} seq={} error={}",
+                        frame.ssrc, frame.sequence, error
+                    ),
+                );
+                continue;
+            }
+        };
+        let decoded_len = samples_per_channel * usize::from(DISCORD_VOICE_CHANNELS);
+        decoded.truncate(decoded_len);
+        decoded_frames = decoded_frames.saturating_add(1);
+        if decoded_frames == 1 || decoded_frames % 500 == 0 {
+            logging::debug(
+                "voice",
+                format!(
+                    "voice Opus decoded: count={} ssrc={} user_id={:?} seq={} samples_per_channel={} pcm_samples={}",
+                    decoded_frames,
+                    frame.ssrc,
+                    frame.user_id,
+                    frame.sequence,
+                    samples_per_channel,
+                    decoded.len()
+                ),
+            );
+        }
     }
 }
 
@@ -1698,6 +1803,23 @@ fn looks_like_dave_media_frame(payload: &[u8]) -> bool {
         && payload[payload.len() - DAVE_MAGIC_MARKER.len()..] == DAVE_MAGIC_MARKER
 }
 
+fn voice_playback_frame(media: &VoiceMediaPayload, header: &RtpHeader) -> Option<VoicePlaybackFrame> {
+    let (user_id, opus) = match media {
+        VoiceMediaPayload::Plain(opus) => (None, opus.clone()),
+        VoiceMediaPayload::DaveDecrypted { user_id, opus } => (Some(*user_id), opus.clone()),
+        VoiceMediaPayload::DaveMissingUser { .. }
+        | VoiceMediaPayload::DaveNotReady { .. }
+        | VoiceMediaPayload::DaveDecryptFailed { .. } => return None,
+    };
+    Some(VoicePlaybackFrame {
+        ssrc: header.ssrc,
+        user_id,
+        sequence: header.sequence,
+        timestamp: header.timestamp,
+        opus,
+    })
+}
+
 fn parse_rtp_header(packet: &[u8]) -> Result<RtpHeader, String> {
     if packet.len() < RTP_HEADER_MIN_LEN {
         return Err("RTP packet is too short".to_owned());
@@ -1898,6 +2020,53 @@ mod tests {
         payload[marker_start..].copy_from_slice(&DAVE_MAGIC_MARKER);
 
         assert!(looks_like_dave_media_frame(&payload));
+    }
+
+    #[test]
+    fn voice_playback_frame_uses_only_playable_media_payloads() {
+        let header = RtpHeader {
+            payload_type: DISCORD_VOICE_PAYLOAD_TYPE,
+            sequence: 7,
+            timestamp: 8,
+            ssrc: 9,
+            authenticated_header_len: 12,
+            encrypted_extension_body_len: 0,
+            payload_offset: 12,
+        };
+
+        assert_eq!(
+            voice_playback_frame(&VoiceMediaPayload::Plain(b"opus".to_vec()), &header),
+            Some(VoicePlaybackFrame {
+                ssrc: 9,
+                user_id: None,
+                sequence: 7,
+                timestamp: 8,
+                opus: b"opus".to_vec(),
+            })
+        );
+        assert_eq!(
+            voice_playback_frame(
+                &VoiceMediaPayload::DaveDecrypted {
+                    user_id: 42,
+                    opus: b"dave-opus".to_vec(),
+                },
+                &header,
+            ),
+            Some(VoicePlaybackFrame {
+                ssrc: 9,
+                user_id: Some(42),
+                sequence: 7,
+                timestamp: 8,
+                opus: b"dave-opus".to_vec(),
+            })
+        );
+        assert_eq!(
+            voice_playback_frame(
+                &VoiceMediaPayload::DaveMissingUser { payload_len: 4 },
+                &header,
+            ),
+            None
+        );
     }
 
     #[test]
