@@ -403,7 +403,6 @@ impl DiscordRest {
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
             }
-            let started = std::time::Instant::now();
             match self
                 .request_forum_post_search_page(
                     guild_id,
@@ -414,20 +413,7 @@ impl DiscordRest {
                 )
                 .await
             {
-                Ok(page) => {
-                    crate::logging::error(
-                        "history",
-                        format!(
-                            "TIMING op=forum_search archive_state={} sort={} channel_id={} offset={} duration={:.0}ms",
-                            archive_state.as_log_label(),
-                            sort_by.as_str(),
-                            channel_id.get(),
-                            offset,
-                            started.elapsed().as_secs_f64() * 1_000.0,
-                        ),
-                    );
-                    return Ok(page);
-                }
+                Ok(page) => return Ok(page),
                 Err(error) if is_search_index_warming(&error) => {
                     last_error = Some(error);
                 }

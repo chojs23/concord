@@ -3,7 +3,7 @@ use std::{
     env,
     path::PathBuf,
     sync::{Mutex, OnceLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 #[cfg(not(test))]
 use std::{fs::OpenOptions, io::Write};
@@ -39,7 +39,6 @@ impl ErrorLogEntry {
 enum Level {
     Debug,
     Error,
-    Timing,
 }
 
 impl Level {
@@ -47,7 +46,6 @@ impl Level {
         match self {
             Self::Debug => "DEBUG",
             Self::Error => "ERROR",
-            Self::Timing => "TIMING",
         }
     }
 }
@@ -96,7 +94,7 @@ impl FileLogger {
     fn should_write(&self, level: Level) -> bool {
         match level {
             Level::Error => true,
-            Level::Debug | Level::Timing => self.debug_enabled,
+            Level::Debug => self.debug_enabled,
         }
     }
 }
@@ -120,18 +118,6 @@ pub fn error_entries() -> Vec<ErrorLogEntry> {
         .lock()
         .map(|entries| entries.iter().cloned().collect())
         .unwrap_or_default()
-}
-
-pub fn timing(target: &str, message: impl AsRef<str>, duration: Duration) {
-    logger().write(
-        Level::Timing,
-        target,
-        &format!(
-            "{} duration={:.2}ms",
-            message.as_ref(),
-            duration.as_secs_f64() * 1_000.0
-        ),
-    );
 }
 
 fn logger() -> &'static FileLogger {

@@ -735,13 +735,9 @@ impl DashboardState {
     }
 
     pub fn restore_discord_snapshot(&mut self, discord: DiscordState) {
-        self.restore_discord_snapshot_with(
-            "restore_discord_snapshot",
-            SnapshotAreas::all(),
-            |state| {
-                *state = discord;
-            },
-        );
+        self.restore_discord_snapshot_with(SnapshotAreas::all(), |state| {
+            *state = discord;
+        });
     }
 
     pub fn restore_discord_snapshot_areas(
@@ -750,19 +746,16 @@ impl DashboardState {
         previous_revision: SnapshotRevision,
     ) {
         let areas = snapshot.revision.changed_areas_since(previous_revision);
-        self.restore_discord_snapshot_with("restore_discord_snapshot_areas", areas, |state| {
+        self.restore_discord_snapshot_with(areas, |state| {
             state.restore_snapshot_areas(snapshot, previous_revision);
         });
     }
 
     fn restore_discord_snapshot_with(
         &mut self,
-        operation: &'static str,
         areas: SnapshotAreas,
         restore: impl FnOnce(&mut DiscordState),
     ) {
-        let started = std::time::Instant::now();
-        let log_metrics = crate::logging::debug_logging_enabled();
         let was_auto_follow = self.message_auto_follow;
         let was_at_latest = was_auto_follow || self.is_viewport_at_latest_message();
         let was_cursor_on_last = self.cursor_on_last_message();
@@ -801,17 +794,6 @@ impl DashboardState {
                 scroll_message_id,
                 should_follow,
                 should_scroll,
-            );
-        }
-        if log_metrics {
-            let cache_counts = self.discord.cache_counts();
-            crate::logging::debug(
-                "snapshot",
-                format!(
-                    "op={operation} total_ms={:.2} {}",
-                    started.elapsed().as_secs_f64() * 1_000.0,
-                    cache_counts.log_fields(),
-                ),
             );
         }
     }

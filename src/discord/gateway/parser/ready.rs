@@ -1,21 +1,15 @@
-use std::{
-    collections::BTreeMap,
-    time::{Duration, Instant},
-};
+use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use crate::{
-    discord::{
-        ActivityInfo, ChannelInfo, ChannelRecipientInfo, GuildFolder, PresenceStatus,
-        ReadStateInfo, RelationshipInfo, RoleInfo,
-        events::AppEvent,
-        ids::{
-            Id,
-            marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
-        },
+use crate::discord::{
+    ActivityInfo, ChannelInfo, ChannelRecipientInfo, GuildFolder, PresenceStatus, ReadStateInfo,
+    RelationshipInfo, RoleInfo,
+    events::AppEvent,
+    ids::{
+        Id,
+        marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
     },
-    logging,
 };
 
 use super::{
@@ -36,14 +30,11 @@ use super::{
 /// but user accounts never send standalone GUILD_CREATEs, so we emit a
 /// synthetic GuildCreate for each entry inline.
 pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
-    let total_started = Instant::now();
     let mut events = Vec::new();
-    let mut stats = ReadyTimingStats::default();
     let mut current_user = None;
     let mut current_user_id = None;
     let mut current_user_status = None;
 
-    let user_started = Instant::now();
     if let Some(user) = data.get("user") {
         let user_id = user.get("id").and_then(parse_id::<UserMarker>);
         let name = display_name_from_parts_or_unknown(
@@ -69,24 +60,9 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
             user.status = Some(status);
         }
     }
-    stats.user = user_started.elapsed();
 
-    let guilds_started = Instant::now();
     if let Some(guilds) = data.get("guilds").and_then(Value::as_array) {
-        stats.guilds = guilds.len();
         for guild in guilds {
-            stats.guild_channels += channel_array_len(guild, "channels");
-            stats.guild_channels += channel_array_len(guild, "threads");
-            stats.guild_members += guild
-                .get("members")
-                .and_then(Value::as_array)
-                .map(Vec::len)
-                .unwrap_or_default();
-            stats.guild_presences += guild
-                .get("presences")
-                .and_then(Value::as_array)
-                .map(Vec::len)
-                .unwrap_or_default();
             if let Some(event) = parse_guild_create(guild) {
                 events.push(event);
             }
@@ -94,7 +70,6 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
         }
     }
     events.extend(parse_merged_member_events(data));
-    stats.guilds_duration = guilds_started.elapsed();
 
     let mut merged_presences = parse_merged_presences(data);
     if let Some(presences) = data.get("presences").and_then(Value::as_array) {
@@ -128,9 +103,7 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
     // User-account READY also lists DM and group-DM channels under
     // `private_channels`. They have no `guild_id` and never come through
     // `GUILD_CREATE`, so we surface them as standalone channel upserts.
-    let private_channels_started = Instant::now();
     if let Some(privates) = data.get("private_channels").and_then(Value::as_array) {
-        stats.private_channels = privates.len();
         for channel in privates {
             if let Some(mut info) = parse_channel_info(channel, None) {
                 hydrate_dm_recipients_from_ids(&mut info, channel, &users_by_id);
@@ -140,7 +113,6 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
             }
         }
     }
-    stats.private_channels_duration = private_channels_started.elapsed();
 
     if let (Some(user_id), Some(status)) = (current_user_id, current_user_status) {
         events.push(AppEvent::UserPresenceUpdate {
@@ -187,22 +159,16 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
     // payload. The modern `user_settings_proto` blob is base64+protobuf and is
     // skipped for now. When present, every guild appears in some folder, either
     // an explicit one or a single-guild "container" with `id == null`.
-    let folders_started = Instant::now();
     if let Some(folders) = data
         .get("user_settings")
         .and_then(|settings| settings.get("guild_folders"))
         .and_then(Value::as_array)
     {
         let folders: Vec<GuildFolder> = folders.iter().filter_map(parse_guild_folder).collect();
-        stats.folders = folders.len();
         if !folders.is_empty() {
             events.push(AppEvent::GuildFoldersUpdate { folders });
         }
     }
-    stats.folders_duration = folders_started.elapsed();
-    stats.total = total_started.elapsed();
-
-    log_ready_stats(&stats);
 
     events
 }
@@ -302,45 +268,6 @@ fn guild_member_upsert_events(guild_id: Id<GuildMarker>, members: &[Value]) -> V
         .filter_map(parse_member_info)
         .map(|member| AppEvent::GuildMemberUpsert { guild_id, member })
         .collect()
-}
-
-#[derive(Default)]
-struct ReadyTimingStats {
-    guilds: usize,
-    guild_channels: usize,
-    guild_members: usize,
-    guild_presences: usize,
-    private_channels: usize,
-    folders: usize,
-    user: Duration,
-    guilds_duration: Duration,
-    private_channels_duration: Duration,
-    folders_duration: Duration,
-    total: Duration,
-}
-
-fn log_ready_stats(stats: &ReadyTimingStats) {
-    logging::timing(
-        "gateway",
-        format!(
-            "ready user={:.2}ms guilds={:.2}ms private_channels={:.2}ms folders={:.2}ms counts guilds={} channels={} members={} presences={} private_channels={} folders={}",
-            ms(stats.user),
-            ms(stats.guilds_duration),
-            ms(stats.private_channels_duration),
-            ms(stats.folders_duration),
-            stats.guilds,
-            stats.guild_channels,
-            stats.guild_members,
-            stats.guild_presences,
-            stats.private_channels,
-            stats.folders,
-        ),
-        stats.total,
-    );
-}
-
-fn ms(duration: Duration) -> f64 {
-    duration.as_secs_f64() * 1_000.0
 }
 
 fn parse_guild_folder(value: &Value) -> Option<GuildFolder> {
@@ -491,14 +418,6 @@ fn add_current_user_to_group_dm(
         return;
     }
     recipients.push(current_user.clone());
-}
-
-fn channel_array_len(value: &Value, field: &str) -> usize {
-    value
-        .get(field)
-        .and_then(Value::as_array)
-        .map(Vec::len)
-        .unwrap_or_default()
 }
 
 fn parse_read_state_entry(value: &Value) -> Option<ReadStateInfo> {

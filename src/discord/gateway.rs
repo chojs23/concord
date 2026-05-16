@@ -1,6 +1,6 @@
 use std::{
     sync::{Arc, RwLock},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use crate::discord::ids::{
@@ -429,9 +429,7 @@ async fn handle_frame(
                     .and_then(Value::as_str)
                     .map(str::to_owned);
             }
-            let started = Instant::now();
             let events = parse_user_account_event(raw);
-            logging::timing("gateway", "dispatch parse", started.elapsed());
             for app_event in events {
                 publish_gateway_event(context.publish, app_event).await;
             }

@@ -1,5 +1,4 @@
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant};
 
 use crate::discord::ids::{
     Id,
@@ -12,7 +11,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{AppError, Result, logging};
+use crate::{AppError, Result};
 
 use super::{
     MessageAttachmentUpload, MessageInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
@@ -73,51 +72,15 @@ impl DiscordClient {
     }
 
     pub fn current_discord_snapshot(&self) -> DiscordSnapshot {
-        let started = Instant::now();
-        if logging::debug_logging_enabled() {
-            let state = self
-                .state
-                .read()
-                .expect("discord state lock is not poisoned");
-            let lock_duration = started.elapsed();
-            let revision = *self
-                .revision
-                .read()
-                .expect("snapshot revision lock is not poisoned");
-            let counts = state.cache_counts();
-            let clone_started = Instant::now();
-            let snapshot = state.snapshot(revision);
-            let clone_duration = clone_started.elapsed();
-            let total_duration = started.elapsed();
-            drop(state);
-            logging::debug(
-                "snapshot",
-                format!(
-                    "op=current_discord_snapshot revision={} navigation_revision={} \
-                     message_revision={} detail_revision={} lock_ms={:.2} \
-                     clone_ms={:.2} total_ms={:.2} {}",
-                    revision.global,
-                    revision.navigation,
-                    revision.message,
-                    revision.detail,
-                    lock_duration.as_secs_f64() * 1_000.0,
-                    clone_duration.as_secs_f64() * 1_000.0,
-                    total_duration.as_secs_f64() * 1_000.0,
-                    counts.log_fields(),
-                ),
-            );
-            snapshot
-        } else {
-            let state = self
-                .state
-                .read()
-                .expect("discord state lock is not poisoned");
-            let revision = *self
-                .revision
-                .read()
-                .expect("snapshot revision lock is not poisoned");
-            state.snapshot(revision)
-        }
+        let state = self
+            .state
+            .read()
+            .expect("discord state lock is not poisoned");
+        let revision = *self
+            .revision
+            .read()
+            .expect("snapshot revision lock is not poisoned");
+        state.snapshot(revision)
     }
 
     pub async fn publish_event(&self, event: AppEvent) {
@@ -394,33 +357,17 @@ pub(super) async fn publish_app_event(
     publish_lock: &Arc<AsyncMutex<()>>,
     event: &AppEvent,
 ) {
-    let started = Instant::now();
-    let log_metrics = logging::debug_logging_enabled();
-    let event_name = log_metrics.then(|| app_event_metric_name(event));
     let mutates_state = event.mutates_discord_state();
     let needs_effect_delivery = event.needs_effect_delivery();
-    let mut state_lock_duration = Duration::ZERO;
-    let mut state_mutation_duration = Duration::ZERO;
-    let mut cache_counts = None;
 
-    let publish_lock_started = Instant::now();
     let event_revision: SnapshotRevision;
-    let publish_lock_duration;
     {
         let _publish_guard = publish_lock.lock().await;
-        publish_lock_duration = publish_lock_started.elapsed();
 
         event_revision = if mutates_state {
-            let state_lock_started = Instant::now();
             let next_revision = {
                 let mut state = state.write().expect("discord state lock is not poisoned");
-                state_lock_duration = state_lock_started.elapsed();
-                let mutation_started = Instant::now();
                 state.apply_event(event);
-                state_mutation_duration = mutation_started.elapsed();
-                if log_metrics {
-                    cache_counts = Some(state.cache_counts());
-                }
                 let mut revision = revision
                     .write()
                     .expect("snapshot revision lock is not poisoned");
@@ -445,98 +392,6 @@ pub(super) async fn publish_app_event(
                 })
                 .await;
         }
-    }
-
-    if let Some(event_name) = event_name {
-        let cache_counts = cache_counts
-            .map(|counts| format!(" {}", counts.log_fields()))
-            .unwrap_or_default();
-        logging::debug(
-            "snapshot",
-            format!(
-                "op=publish_app_event event={event_name} revision={} \
-                 navigation_revision={} message_revision={} detail_revision={} \
-                 mutates={mutates_state} effect={needs_effect_delivery} \
-                 publish_lock_ms={:.2} state_lock_ms={:.2} mutate_ms={:.2} \
-                 total_ms={:.2}{cache_counts}",
-                event_revision.global,
-                event_revision.navigation,
-                event_revision.message,
-                event_revision.detail,
-                duration_ms(publish_lock_duration),
-                duration_ms(state_lock_duration),
-                duration_ms(state_mutation_duration),
-                duration_ms(started.elapsed()),
-            ),
-        );
-    }
-}
-
-fn duration_ms(duration: Duration) -> f64 {
-    duration.as_secs_f64() * 1_000.0
-}
-
-fn app_event_metric_name(event: &AppEvent) -> &'static str {
-    match event {
-        AppEvent::Ready { .. } => "Ready",
-        AppEvent::CurrentUserCapabilities { .. } => "CurrentUserCapabilities",
-        AppEvent::GuildCreate { .. } => "GuildCreate",
-        AppEvent::GuildUpdate { .. } => "GuildUpdate",
-        AppEvent::GuildRolesUpdate { .. } => "GuildRolesUpdate",
-        AppEvent::GuildEmojisUpdate { .. } => "GuildEmojisUpdate",
-        AppEvent::GuildDelete { .. } => "GuildDelete",
-        AppEvent::SelectedGuildChanged { .. } => "SelectedGuildChanged",
-        AppEvent::SelectedMessageChannelChanged { .. } => "SelectedMessageChannelChanged",
-        AppEvent::ChannelUpsert(_) => "ChannelUpsert",
-        AppEvent::ChannelDelete { .. } => "ChannelDelete",
-        AppEvent::MessageCreate { .. } => "MessageCreate",
-        AppEvent::MessageHistoryLoaded { .. } => "MessageHistoryLoaded",
-        AppEvent::ThreadPreviewLoaded { .. } => "ThreadPreviewLoaded",
-        AppEvent::ThreadPreviewLoadFailed { .. } => "ThreadPreviewLoadFailed",
-        AppEvent::ForumPostsLoaded { .. } => "ForumPostsLoaded",
-        AppEvent::ForumPostsLoadFailed { .. } => "ForumPostsLoadFailed",
-        AppEvent::MessageHistoryLoadFailed { .. } => "MessageHistoryLoadFailed",
-        AppEvent::MessageUpdate { .. } => "MessageUpdate",
-        AppEvent::MessageDelete { .. } => "MessageDelete",
-        AppEvent::GuildMemberListCounts { .. } => "GuildMemberListCounts",
-        AppEvent::GuildMemberUpsert { .. } => "GuildMemberUpsert",
-        AppEvent::GuildMemberAdd { .. } => "GuildMemberAdd",
-        AppEvent::GuildMemberRemove { .. } => "GuildMemberRemove",
-        AppEvent::PresenceUpdate { .. } => "PresenceUpdate",
-        AppEvent::UserPresenceUpdate { .. } => "UserPresenceUpdate",
-        AppEvent::VoiceStateUpdate { .. } => "VoiceStateUpdate",
-        AppEvent::TypingStart { .. } => "TypingStart",
-        AppEvent::CurrentUserReactionAdd { .. } => "CurrentUserReactionAdd",
-        AppEvent::CurrentUserReactionRemove { .. } => "CurrentUserReactionRemove",
-        AppEvent::MessageReactionAdd { .. } => "MessageReactionAdd",
-        AppEvent::MessageReactionRemove { .. } => "MessageReactionRemove",
-        AppEvent::MessageReactionRemoveAll { .. } => "MessageReactionRemoveAll",
-        AppEvent::MessageReactionRemoveEmoji { .. } => "MessageReactionRemoveEmoji",
-        AppEvent::MessagePinnedUpdate { .. } => "MessagePinnedUpdate",
-        AppEvent::PinnedMessagesLoaded { .. } => "PinnedMessagesLoaded",
-        AppEvent::PinnedMessagesLoadFailed { .. } => "PinnedMessagesLoadFailed",
-        AppEvent::CurrentUserPollVoteUpdate { .. } => "CurrentUserPollVoteUpdate",
-        AppEvent::ReactionUsersLoaded { .. } => "ReactionUsersLoaded",
-        AppEvent::GuildFoldersUpdate { .. } => "GuildFoldersUpdate",
-        AppEvent::UserGuildNotificationSettingsInit { .. } => "UserGuildNotificationSettingsInit",
-        AppEvent::UserGuildNotificationSettingsUpdate { .. } => {
-            "UserGuildNotificationSettingsUpdate"
-        }
-        AppEvent::GatewayError { .. } => "GatewayError",
-        AppEvent::AttachmentDownloadCompleted { .. } => "AttachmentDownloadCompleted",
-        AppEvent::UpdateAvailable { .. } => "UpdateAvailable",
-        AppEvent::AttachmentPreviewLoaded { .. } => "AttachmentPreviewLoaded",
-        AppEvent::AttachmentPreviewLoadFailed { .. } => "AttachmentPreviewLoadFailed",
-        AppEvent::UserProfileLoaded { .. } => "UserProfileLoaded",
-        AppEvent::UserProfileLoadFailed { .. } => "UserProfileLoadFailed",
-        AppEvent::UserNoteLoaded { .. } => "UserNoteLoaded",
-        AppEvent::RelationshipsLoaded { .. } => "RelationshipsLoaded",
-        AppEvent::RelationshipUpsert { .. } => "RelationshipUpsert",
-        AppEvent::RelationshipRemove { .. } => "RelationshipRemove",
-        AppEvent::ActivateChannel { .. } => "ActivateChannel",
-        AppEvent::ReadStateInit { .. } => "ReadStateInit",
-        AppEvent::MessageAck { .. } => "MessageAck",
-        AppEvent::GatewayClosed => "GatewayClosed",
     }
 }
 

@@ -1,8 +1,6 @@
-use std::time::Instant;
-
 use serde_json::Value;
 
-use crate::{discord::events::AppEvent, logging};
+use crate::discord::events::AppEvent;
 
 mod channels;
 mod guilds;
@@ -54,10 +52,8 @@ pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         "READY" => parse_ready(data),
         "READY_SUPPLEMENTAL" => parse_ready_supplemental(data),
         "GUILD_CREATE" => {
-            let started = Instant::now();
             let mut result: Vec<AppEvent> = parse_guild_create(data).into_iter().collect();
             result.extend(parse_guild_voice_states(data));
-            logging::timing("gateway", "fallback guild_create parse", started.elapsed());
             result
         }
         "GUILD_UPDATE" => parse_guild_update(data).into_iter().collect(),

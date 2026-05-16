@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::Arc,
-    time::Instant,
 };
 
 use crate::discord::ids::{
@@ -56,16 +55,8 @@ impl App {
         // TCP, TLS, and HTTP/2 setup cost.
         let prime_client = client.clone();
         tokio::spawn(async move {
-            let started = Instant::now();
-            match prime_client.prime_rest_pool().await {
-                Ok(()) => logging::error(
-                    "app",
-                    format!(
-                        "TIMING op=prime_rest_pool duration={:.0}ms",
-                        started.elapsed().as_secs_f64() * 1_000.0,
-                    ),
-                ),
-                Err(error) => logging::error("app", format!("rest pool warmup failed: {error}")),
+            if let Err(error) = prime_client.prime_rest_pool().await {
+                logging::error("app", format!("rest pool warmup failed: {error}"));
             }
         });
 
@@ -117,7 +108,6 @@ fn start_command_loop(
             tokio::spawn(async move {
                 match command {
                     AppCommand::LoadMessageHistory { channel_id, before } => {
-                        let started = Instant::now();
                         let endpoint = format_message_history_endpoint(
                             channel_id,
                             before,
@@ -128,17 +118,6 @@ fn start_command_loop(
                             .await
                         {
                             Ok(messages) => {
-                                logging::timing(
-                                    "history",
-                                    format!(
-                                        "op=load_message_history channel_id={} before={} limit={} messages={}",
-                                        channel_id.get(),
-                                        before.map(|id| id.get()).unwrap_or_default(),
-                                        MESSAGE_HISTORY_LIMIT,
-                                        messages.len()
-                                    ),
-                                    started.elapsed(),
-                                );
                                 client
                                     .publish_event(AppEvent::MessageHistoryLoaded {
                                         channel_id,
@@ -150,16 +129,6 @@ fn start_command_loop(
                             Err(error) => {
                                 let message = format!("load message history failed: {error}");
                                 let detail = error.log_detail();
-                                logging::timing(
-                                    "history",
-                                    format!(
-                                        "op=load_message_history channel_id={} before={} limit={} messages=0",
-                                        channel_id.get(),
-                                        before.map(|id| id.get()).unwrap_or_default(),
-                                        MESSAGE_HISTORY_LIMIT,
-                                    ),
-                                    started.elapsed(),
-                                );
                                 logging::error(
                                     "history",
                                     format!(
@@ -182,23 +151,11 @@ fn start_command_loop(
                         channel_id,
                         message_id,
                     } => {
-                        let started = Instant::now();
                         match client
                             .load_message_history(channel_id, None, THREAD_PREVIEW_LIMIT)
                             .await
                         {
                             Ok(messages) => {
-                                logging::timing(
-                                    "history",
-                                    format!(
-                                        "op=load_thread_preview channel_id={} message_id={} limit={} messages={}",
-                                        channel_id.get(),
-                                        message_id.get(),
-                                        THREAD_PREVIEW_LIMIT,
-                                        messages.len(),
-                                    ),
-                                    started.elapsed(),
-                                );
                                 if let Some(message) = messages
                                     .into_iter()
                                     .next()
@@ -230,16 +187,14 @@ fn start_command_loop(
                             Err(error) => {
                                 let message = format!("load thread preview failed: {error}");
                                 let detail = error.log_detail();
-                                logging::timing(
+                                logging::error(
                                     "history",
                                     format!(
-                                        "op=load_thread_preview channel_id={} message_id={} messages=0 {message}; detail={detail}",
+                                        "op=load_thread_preview channel_id={} message_id={} {message}; detail={detail}",
                                         channel_id.get(),
                                         message_id.get(),
                                     ),
-                                    started.elapsed(),
                                 );
-                                logging::error("history", &message);
                                 client
                                     .publish_event(AppEvent::ThreadPreviewLoadFailed {
                                         channel_id,
@@ -255,28 +210,11 @@ fn start_command_loop(
                         archive_state,
                         offset,
                     } => {
-                        let started = Instant::now();
                         match client
                             .load_forum_posts(guild_id, channel_id, archive_state, offset)
                             .await
                         {
                             Ok(page) => {
-                                let elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0;
-                                // Keep forum-load timings in the normal log so
-                                // first forum-open latency can be diagnosed
-                                // without enabling debug logging first.
-                                logging::error(
-                                    "history",
-                                    format!(
-                                        "TIMING op=load_forum_posts channel_id={} archive_state={} offset={} posts={} has_more={} duration={:.0}ms",
-                                        channel_id.get(),
-                                        archive_state.as_log_label(),
-                                        offset,
-                                        page.posts.len(),
-                                        page.has_more,
-                                        elapsed_ms,
-                                    ),
-                                );
                                 client
                                     .publish_event(AppEvent::ForumPostsLoaded {
                                         channel_id,
@@ -292,18 +230,16 @@ fn start_command_loop(
                             Err(error) => {
                                 let message = format!("load forum posts failed: {error}");
                                 let detail = error.log_detail();
-                                logging::timing(
+                                logging::error(
                                     "history",
                                     format!(
-                                        "op=load_forum_posts guild_id={} channel_id={} archive_state={} offset={} posts=0 {message}; detail={detail}",
+                                        "op=load_forum_posts guild_id={} channel_id={} archive_state={} offset={} {message}; detail={detail}",
                                         guild_id.get(),
                                         channel_id.get(),
                                         archive_state.as_log_label(),
                                         offset,
                                     ),
-                                    started.elapsed(),
                                 );
-                                logging::error("history", &message);
                                 client
                                     .publish_event(AppEvent::ForumPostsLoadFailed {
                                         channel_id,
