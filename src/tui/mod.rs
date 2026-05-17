@@ -1,3 +1,4 @@
+mod clipboard;
 mod commands;
 mod effects;
 mod events;

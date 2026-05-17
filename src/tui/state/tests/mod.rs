@@ -4236,11 +4236,11 @@ fn cancel_composer_clears_pending_attachments() {
     state.focus_pane(FocusPane::Channels);
     state.confirm_selected_channel();
     state.start_composer();
-    state.add_pending_composer_attachments(vec![MessageAttachmentUpload {
-        path: "/tmp/cat.png".into(),
-        filename: "cat.png".to_owned(),
-        size_bytes: 2_048,
-    }]);
+    state.add_pending_composer_attachments(vec![MessageAttachmentUpload::from_path(
+        "/tmp/cat.png".into(),
+        "cat.png".to_owned(),
+        2_048,
+    )]);
 
     state.cancel_composer();
 
@@ -4254,10 +4254,12 @@ fn pending_attachments_are_capped_at_upload_limit() {
     state.confirm_selected_channel();
     state.start_composer();
     let attachments = (0..crate::discord::MAX_UPLOAD_ATTACHMENT_COUNT + 2)
-        .map(|index| MessageAttachmentUpload {
-            path: format!("/tmp/{index}.txt").into(),
-            filename: format!("{index}.txt"),
-            size_bytes: 1,
+        .map(|index| {
+            MessageAttachmentUpload::from_path(
+                format!("/tmp/{index}.txt").into(),
+                format!("{index}.txt"),
+                1,
+            )
         })
         .collect();
 

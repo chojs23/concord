@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::discord::ids::{
     Id,
@@ -11,9 +11,47 @@ pub const MAX_UPLOAD_ATTACHMENT_COUNT: usize = 10;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageAttachmentUpload {
-    pub path: PathBuf,
+    source: MessageAttachmentSource,
     pub filename: String,
     pub size_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MessageAttachmentSource {
+    File(PathBuf),
+    Bytes(Vec<u8>),
+}
+
+impl MessageAttachmentUpload {
+    pub fn from_path(path: PathBuf, filename: String, size_bytes: u64) -> Self {
+        Self {
+            source: MessageAttachmentSource::File(path),
+            filename,
+            size_bytes,
+        }
+    }
+
+    pub fn from_bytes(filename: String, bytes: Vec<u8>) -> Self {
+        Self {
+            size_bytes: bytes.len() as u64,
+            source: MessageAttachmentSource::Bytes(bytes),
+            filename,
+        }
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        match &self.source {
+            MessageAttachmentSource::File(path) => Some(path),
+            MessageAttachmentSource::Bytes(_) => None,
+        }
+    }
+
+    pub fn bytes(&self) -> Option<&[u8]> {
+        match &self.source {
+            MessageAttachmentSource::File(_) => None,
+            MessageAttachmentSource::Bytes(bytes) => Some(bytes),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

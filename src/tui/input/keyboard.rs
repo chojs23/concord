@@ -587,15 +587,16 @@ fn pasted_file_attachments(text: &str) -> Option<Vec<MessageAttachmentUpload>> {
                 return None;
             }
             let metadata = path.metadata().ok()?;
-            attachments.push(MessageAttachmentUpload {
-                filename: path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("attachment")
-                    .to_owned(),
+            let filename = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("attachment")
+                .to_owned();
+            attachments.push(MessageAttachmentUpload::from_path(
                 path,
-                size_bytes: metadata.len(),
-            });
+                filename,
+                metadata.len(),
+            ));
         }
     }
     (!attachments.is_empty()).then_some(attachments)

@@ -1,13 +1,10 @@
-use std::{
-    collections::{HashSet, VecDeque},
-    io::stdout,
-};
+use std::collections::{HashSet, VecDeque};
 
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
-use crossterm::{clipboard::CopyToClipboard, event::EventStream};
+use crossterm::event::EventStream;
 use futures::StreamExt;
 use ratatui::layout::Rect;
 use tokio::sync::{mpsc, watch};
@@ -19,6 +16,7 @@ use crate::{
 };
 
 use super::{
+    clipboard::ClipboardService,
     commands as command_helpers, effects as effect_helpers, events, input,
     media::{
         AvatarImageCache, EmojiImageCache, ImagePreviewCache, visible_avatar_targets,
@@ -77,6 +75,7 @@ pub(super) async fn run_dashboard(
     let mut avatar_targets = Vec::new();
     let mut emoji_targets = Vec::new();
     let mut deferred_effects = VecDeque::new();
+    let mut clipboard = ClipboardService::default();
     let mut last_frame_area = Rect::default();
     let mut dirty = true;
     // Snapshot/effect-driven redraws are coalesced into the next pending
@@ -179,6 +178,7 @@ pub(super) async fn run_dashboard(
                     Some(Ok(event)) => {
                         let outcome = events::handle_terminal_event(
                             &mut state,
+                            &mut clipboard,
                             event,
                             &mut last_frame_area,
                             &mut mouse_clicks,
@@ -190,8 +190,8 @@ pub(super) async fn run_dashboard(
                         }
                         if let Some(content) = state.take_copy_message_content_request() {
                             let now = std::time::Instant::now();
-                            match copy_to_clipboard(&content) {
-                                Ok(()) => state.show_success_toast("Message copied", now),
+                            match clipboard.copy_text(&content) {
+                                Ok(_) => state.show_success_toast("Message copied", now),
                                 Err(error) => {
                                     logging::error("tui", format!("copy message failed: {error}"));
                                     state.show_error_toast("Failed to copy message", now);
@@ -557,10 +557,6 @@ pub(super) async fn run_dashboard(
     }
 
     Ok(())
-}
-
-fn copy_to_clipboard(content: &str) -> std::io::Result<()> {
-    crossterm::execute!(stdout(), CopyToClipboard::to_clipboard_from(content))
 }
 
 fn open_composer_in_editor(
