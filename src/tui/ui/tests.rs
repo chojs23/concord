@@ -4,6 +4,7 @@ use crate::discord::ids::{Id, marker::MessageMarker};
 use ratatui::{
     Terminal,
     backend::TestBackend,
+    buffer::Buffer,
     layout::{Position, Rect},
     style::{Color, Modifier, Style},
 };
@@ -25,7 +26,7 @@ use super::{
     message_delete_confirmation_lines, message_item_lines, message_pin_confirmation_lines,
     message_viewport_lines, new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
     primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
-    render_channels, render_guilds, render_header, selected_avatar_x_offset,
+    render_channels, render_guilds, render_header, render_members, selected_avatar_x_offset,
     selected_message_card_width, selected_message_content_x_offset, sync_view_heights, toast_area,
     toast_line,
     user_profile_popup_has_avatar, user_profile_popup_lines,
@@ -1658,6 +1659,113 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         .find(|col| buffer[(*col, lobby_row)].symbol() == "🔊")
         .expect("populated voice row should keep loud speaker icon");
     assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Cyan);
+}
+
+#[test]
+fn member_pane_highlights_only_speaking_voice_members() {
+    let guild_id = Id::new(1);
+    let voice_id = Id::new(10);
+    let alice = Id::new(20);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id: voice_id,
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "Lobby".to_owned(),
+            kind: "GuildVoice".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: vec![MemberInfo {
+            user_id: alice,
+            display_name: "Alice".to_owned(),
+            username: Some("alice".to_owned()),
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+        }],
+        presences: vec![(alice, PresenceStatus::Online)],
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+    state.push_event(AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id,
+            channel_id: Some(voice_id),
+            user_id: alice,
+            session_id: None,
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+            self_stream: false,
+        },
+    });
+
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_members(frame, frame.area(), &state, &[]))
+        .expect("draw should succeed");
+    let buffer = terminal.backend().buffer();
+    let alice_cell = find_cell(buffer, "Alice").expect("member should render");
+    assert_eq!(buffer[alice_cell].fg, Color::White);
+
+    state.push_event(AppEvent::VoiceSpeakingUpdate {
+        guild_id,
+        channel_id: voice_id,
+        user_id: alice,
+        speaking: true,
+    });
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_members(frame, frame.area(), &state, &[]))
+        .expect("draw should succeed");
+    let buffer = terminal.backend().buffer();
+    let alice_cell = find_cell(buffer, "Alice").expect("member should render");
+    assert_eq!(buffer[alice_cell].fg, Color::Green);
+
+    state.push_event(AppEvent::VoiceSpeakingUpdate {
+        guild_id,
+        channel_id: voice_id,
+        user_id: alice,
+        speaking: false,
+    });
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_members(frame, frame.area(), &state, &[]))
+        .expect("draw should succeed");
+    let buffer = terminal.backend().buffer();
+    let alice_cell = find_cell(buffer, "Alice").expect("member should render");
+    assert_eq!(buffer[alice_cell].fg, Color::White);
+}
+
+fn find_cell(buffer: &Buffer, text: &str) -> Option<(u16, u16)> {
+    for row in 0..buffer.area.height {
+        let line = (0..buffer.area.width)
+            .map(|col| buffer[(col, row)].symbol().to_owned())
+            .collect::<String>();
+        if let Some(col) = line.find(text) {
+            return Some((col as u16, row));
+        }
+    }
+    None
 }
 
 #[test]

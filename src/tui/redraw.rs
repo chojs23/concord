@@ -78,6 +78,7 @@ struct MemberEntrySignature {
     username: Option<String>,
     is_bot: bool,
     status: PresenceStatus,
+    speaking: bool,
 }
 
 pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDashboardSignature {
@@ -174,6 +175,7 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
                 username: entry.username(),
                 is_bot: entry.is_bot(),
                 status: entry.status(),
+                speaking: state.user_voice_speaking(entry.user_id()),
             })
             .collect(),
     }
@@ -261,6 +263,23 @@ fn only_new_message_notice_changed(
         && before.new_messages_count != after.new_messages_count
 }
 
+fn visible_member_speaking_changed(
+    before: &VisibleDashboardSignature,
+    after: &VisibleDashboardSignature,
+) -> bool {
+    before.visible_members.len() == after.visible_members.len()
+        && before
+            .visible_members
+            .iter()
+            .zip(after.visible_members.iter())
+            .all(|(before, after)| before.user_id == after.user_id)
+        && before
+            .visible_members
+            .iter()
+            .zip(after.visible_members.iter())
+            .any(|(before, after)| before.speaking != after.speaking)
+}
+
 fn channel_switcher_item_signature(state: &DashboardState) -> Vec<String> {
     if !state.is_channel_switcher_open() {
         return Vec::new();
@@ -290,7 +309,8 @@ pub(super) fn should_suppress_image_redraw_for_signature_change(
 ) -> bool {
     image_surfaces_visible
         && ((after.focus != state::FocusPane::Members
-            && only_visible_member_signature_changed(before, after))
+            && only_visible_member_signature_changed(before, after)
+            && !visible_member_speaking_changed(before, after))
             || (after.focus != state::FocusPane::Channels
                 && only_new_message_notice_changed(before, after)))
 }

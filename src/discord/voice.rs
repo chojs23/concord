@@ -83,6 +83,8 @@ const VOICE_PLAYBACK_FRAME_QUEUE: usize = 256;
 const VOICE_AUDIO_OUTPUT_QUEUE: usize = 64;
 const AEAD_AES256_GCM_RTPSIZE: &str = "aead_aes256_gcm_rtpsize";
 const AEAD_XCHACHA20_POLY1305_RTPSIZE: &str = "aead_xchacha20_poly1305_rtpsize";
+const VOICE_REMOTE_SPEAKING_TTL: Duration = Duration::from_millis(500);
+const VOICE_REMOTE_SPEAKING_SWEEP_INTERVAL: Duration = Duration::from_millis(250);
 
 const VOICE_OP_READY: u8 = 2;
 const VOICE_OP_SESSION_DESCRIPTION: u8 = 4;
@@ -230,6 +232,59 @@ impl VoiceGatewaySession {
     }
 }
 
+impl VoiceSpeakingTracker {
+    fn record_remote(
+        &mut self,
+        user_id: Id<UserMarker>,
+        speaking: bool,
+        now: Instant,
+    ) -> Option<bool> {
+        if speaking {
+            let was_active = self.remote_deadlines.contains_key(&user_id);
+            self.remote_deadlines
+                .insert(user_id, now + VOICE_REMOTE_SPEAKING_TTL);
+            return (!was_active).then_some(true);
+        }
+        if self.remote_deadlines.remove(&user_id).is_some() {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    fn record_local(&mut self, speaking: bool) -> Option<bool> {
+        if self.local_speaking == speaking {
+            return None;
+        }
+        self.local_speaking = speaking;
+        Some(speaking)
+    }
+
+    fn expire_remote(&mut self, now: Instant) -> Vec<Id<UserMarker>> {
+        let expired = self
+            .remote_deadlines
+            .iter()
+            .filter_map(|(user_id, deadline)| (*deadline <= now).then_some(*user_id))
+            .collect::<Vec<_>>();
+        for user_id in &expired {
+            self.remote_deadlines.remove(user_id);
+        }
+        expired
+    }
+
+    fn clear_all(&mut self, local_user_id: Id<UserMarker>) -> Vec<Id<UserMarker>> {
+        let mut cleared = self.remote_deadlines.keys().copied().collect::<Vec<_>>();
+        self.remote_deadlines.clear();
+        if self.local_speaking {
+            self.local_speaking = false;
+            if !cleared.contains(&local_user_id) {
+                cleared.push(local_user_id);
+            }
+        }
+        cleared
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct VoiceTransportSession {
     ssrc: u32,
@@ -371,6 +426,12 @@ struct VoiceSpeakingState {
     user_id: Option<u64>,
     ssrc: Option<u32>,
     speaking: Option<u64>,
+}
+
+#[derive(Default)]
+struct VoiceSpeakingTracker {
+    remote_deadlines: HashMap<Id<UserMarker>, Instant>,
+    local_speaking: bool,
 }
 
 struct VoiceDaveState {
@@ -835,6 +896,13 @@ impl VoiceDaveState {
                 message: error.to_string(),
             },
         }
+    }
+
+    fn user_id_for_ssrc(&self, ssrc: u32) -> Option<Id<UserMarker>> {
+        self.ssrc_user_ids
+            .get(&ssrc)
+            .copied()
+            .and_then(Id::<UserMarker>::new_checked)
     }
 
     #[allow(dead_code)]
@@ -2139,6 +2207,11 @@ async fn connect_voice_gateway(
     let (writer, mut reader) = ws.split();
     let writer = Arc::new(Mutex::new(writer));
     let mut child_tasks = VoiceChildTasks::default();
+    let mut speaking_tracker = VoiceSpeakingTracker::default();
+    let mut speaking_sweep = tokio::time::interval(VOICE_REMOTE_SPEAKING_SWEEP_INTERVAL);
+    #[cfg_attr(not(feature = "voice-playback"), allow(unused_variables))]
+    let (local_speaking_tx, mut local_speaking_rx) = mpsc::unbounded_channel();
+    let (remote_speaking_tx, mut remote_speaking_rx) = mpsc::unbounded_channel();
     #[cfg_attr(not(feature = "voice-playback"), allow(unused_mut, unused_variables, unused_assignments))]
     let mut current_capture_gate = initial_capture_gate;
     let mut current_playback_gate = initial_playback_gate;
@@ -2182,6 +2255,32 @@ async fn connect_voice_gateway(
                         break;
                     }
                 }
+            }
+            local_speaking = local_speaking_rx.recv() => {
+                let Some(local_speaking) = local_speaking else {
+                    break;
+                };
+                if let Some(speaking) = speaking_tracker.record_local(local_speaking) {
+                    status_publisher
+                        .publish_speaking(session, session.user_id, speaking)
+                        .await;
+                }
+                continue;
+            }
+            remote_speaking = remote_speaking_rx.recv() => {
+                let Some(user_id) = remote_speaking else {
+                    break;
+                };
+                if let Some(speaking) = speaking_tracker.record_remote(user_id, true, Instant::now()) {
+                    status_publisher.publish_speaking(session, user_id, speaking).await;
+                }
+                continue;
+            }
+            _ = speaking_sweep.tick() => {
+                for user_id in speaking_tracker.expire_remote(Instant::now()) {
+                    status_publisher.publish_speaking(session, user_id, false).await;
+                }
+                continue;
             }
             frame = reader.next() => frame,
         };
@@ -2253,6 +2352,7 @@ async fn connect_voice_gateway(
                                 description,
                                 Arc::clone(&dave_state),
                                 playback_tx,
+                                remote_speaking_tx.clone(),
                             )));
                             #[cfg(feature = "voice-playback")]
                             if let Some(ready) = voice_ready.as_ref() {
@@ -2267,6 +2367,7 @@ async fn connect_voice_gateway(
                                         ready.ssrc,
                                         Arc::clone(&dave_state),
                                         gate_rx,
+                                        local_speaking_tx.clone(),
                                     )),
                                     gate_tx,
                                     pcm_tx,
@@ -2317,9 +2418,15 @@ async fn connect_voice_gateway(
                             speaking.user_id.and_then(Id::<UserMarker>::new_checked),
                             speaking.speaking,
                         ) {
-                            status_publisher
-                                .publish_speaking(session, user_id, speaking != 0)
-                                .await;
+                            if let Some(speaking) = speaking_tracker.record_remote(
+                                user_id,
+                                voice_speaking_microphone_active(speaking),
+                                Instant::now(),
+                            ) {
+                                status_publisher
+                                    .publish_speaking(session, user_id, speaking)
+                                    .await;
+                            }
                         }
                     }
                     other => logging::debug("voice", format!("unhandled voice gateway op={other}")),
@@ -2360,6 +2467,9 @@ async fn connect_voice_gateway(
     }
 
     child_tasks.abort_all();
+    for user_id in speaking_tracker.clear_all(session.user_id) {
+        status_publisher.publish_speaking(session, user_id, false).await;
+    }
     Ok(())
 }
 
@@ -2419,6 +2529,7 @@ async fn run_voice_udp_receive(
     description: VoiceSessionDescription,
     dave_state: Arc<Mutex<VoiceDaveState>>,
     playback_tx: Option<mpsc::Sender<VoicePlaybackFrame>>,
+    remote_speaking_tx: mpsc::UnboundedSender<Id<UserMarker>>,
 ) {
     let mode = description.mode.clone();
     let decryptor = match VoiceRtpDecryptor::new(&description.mode, &description.secret_key) {
@@ -2447,10 +2558,16 @@ async fn run_voice_udp_receive(
                     match decryptor.decrypt_packet(&packet[..len], &header) {
                         Ok(payload) => {
                             decrypted_packets = decrypted_packets.saturating_add(1);
-                            let media = dave_state
-                                .lock()
-                                .await
-                                .unwrap_media_payload_for_ssrc(header.ssrc, &payload.media_payload);
+                            let (remote_user_id, media) = {
+                                let mut dave_state = dave_state.lock().await;
+                                let remote_user_id = dave_state.user_id_for_ssrc(header.ssrc);
+                                let media = dave_state
+                                    .unwrap_media_payload_for_ssrc(header.ssrc, &payload.media_payload);
+                                (remote_user_id, media)
+                            };
+                            if let Some(user_id) = remote_user_id {
+                                let _ = remote_speaking_tx.send(user_id);
+                            }
                             let media_payload_len = match &media {
                                 VoiceMediaPayload::Plain(payload) => payload.len(),
                                 VoiceMediaPayload::DaveMissingUser { payload_len }
@@ -2866,32 +2983,36 @@ impl VoiceFakeOutboundSendState {
             return Ok(VoiceFakeSendOutcome::Noop);
         }
         if !self.capture_gate_enabled() {
-            return Ok(VoiceFakeSendOutcome::Noop);
+            return Ok(self.queue_speaking_off());
         }
         if self.dave_active {
-            return Ok(VoiceFakeSendOutcome::Blocked(
-                VoiceFakeSendBlockReason::DaveOutboundUnsupported,
-            ));
+            return Ok(self.queue_speaking_off());
         }
-        self.ensure_nonce_capacity(DISCORD_TRAILING_SILENCE_FRAMES)?;
+        if self.ensure_nonce_capacity(DISCORD_TRAILING_SILENCE_FRAMES).is_err() {
+            return Ok(self.queue_speaking_off());
+        }
 
         for _ in 0..DISCORD_TRAILING_SILENCE_FRAMES {
             let opus_payload = match next_silence() {
                 VoiceDaveOutboundPayload::Plain(opus) | VoiceDaveOutboundPayload::Encrypted(opus) => opus,
-                VoiceDaveOutboundPayload::Blocked(reason) => {
-                    return Ok(VoiceFakeSendOutcome::Blocked(reason));
+                VoiceDaveOutboundPayload::Blocked(_) => {
+                    return Ok(self.queue_speaking_off());
                 }
             };
             let encrypted = self.encrypt_current_packet(&opus_payload)?;
             self.events.push(VoiceFakeOutboundEvent::Packet { bytes: encrypted });
             self.advance_packet_state();
         }
+        Ok(self.queue_speaking_off())
+    }
+
+    fn queue_speaking_off(&mut self) -> VoiceFakeSendOutcome {
         self.events.push(VoiceFakeOutboundEvent::Speaking {
             speaking: false,
             ssrc: self.rtp.ssrc,
         });
         self.speaking = false;
-        Ok(VoiceFakeSendOutcome::Sent)
+        VoiceFakeSendOutcome::Sent
     }
 
     fn capture_gate_enabled(&self) -> bool {
@@ -2998,6 +3119,7 @@ async fn run_voice_udp_transmit(
     ssrc: u32,
     dave_state: Arc<Mutex<VoiceDaveState>>,
     mut gate_rx: watch::Receiver<bool>,
+    local_speaking_tx: mpsc::UnboundedSender<bool>,
 ) {
     let rtp = VoiceOutboundRtpState {
         sequence: 0,
@@ -3034,9 +3156,11 @@ async fn run_voice_udp_transmit(
                         &writer,
                         sender.stop_speaking_with_dave(&mut *dave_state.lock().await),
                         &mut sender,
+                        &local_speaking_tx,
                     ).await {
                         logging::error("voice", error);
                     }
+                    let _ = local_speaking_tx.send(false);
                     sender.set_capture_gate(false, false);
                     break;
                 }
@@ -3047,9 +3171,13 @@ async fn run_voice_udp_transmit(
                         &writer,
                         sender.stop_speaking_with_dave(&mut *dave_state.lock().await),
                         &mut sender,
+                        &local_speaking_tx,
                     ).await
                 {
                     logging::error("voice", error);
+                }
+                if !enabled {
+                    let _ = local_speaking_tx.send(false);
                 }
                 sender.set_capture_gate(enabled, false);
             }
@@ -3072,6 +3200,7 @@ async fn run_voice_udp_transmit(
                             &writer,
                             outcome,
                             &mut sender,
+                            &local_speaking_tx,
                         ).await {
                             logging::error("voice", error);
                             break;
@@ -3084,9 +3213,11 @@ async fn run_voice_udp_transmit(
                             &writer,
                             sender.stop_speaking_with_dave(&mut *dave_state.lock().await),
                             &mut sender,
+                            &local_speaking_tx,
                         ).await {
                             logging::error("voice", error);
                         }
+                        let _ = local_speaking_tx.send(false);
                         sender.set_capture_gate(false, false);
                         break;
                     }
@@ -3102,6 +3233,7 @@ async fn flush_voice_outbound_events(
     writer: &VoiceWriter,
     outcome: Result<VoiceFakeSendOutcome, String>,
     sender: &mut VoiceFakeOutboundSendState,
+    local_speaking_tx: &mpsc::UnboundedSender<bool>,
 ) -> Result<(), String> {
     match outcome? {
         VoiceFakeSendOutcome::Sent => {
@@ -3109,6 +3241,7 @@ async fn flush_voice_outbound_events(
                 match event {
                     VoiceFakeOutboundEvent::Speaking { speaking, ssrc } => {
                         send_voice_text(writer, voice_speaking_payload(ssrc, speaking)).await?;
+                        let _ = local_speaking_tx.send(speaking);
                     }
                     VoiceFakeOutboundEvent::Packet { bytes } => {
                         udp_socket
@@ -3475,6 +3608,10 @@ fn parse_voice_speaking(value: &Value) -> VoiceSpeakingState {
     }
 }
 
+fn voice_speaking_microphone_active(speaking: u64) -> bool {
+    speaking & 1 != 0
+}
+
 fn voice_data(value: &Value) -> Option<&Value> {
     value.get("d")
 }
@@ -3797,7 +3934,43 @@ mod tests {
         });
 
         assert_eq!(state.ssrc_user_ids.get(&1234), Some(&30));
+        assert_eq!(state.user_id_for_ssrc(1234), Some(Id::new(30)));
+        assert_eq!(state.user_id_for_ssrc(9999), None);
         assert!(state.known_user_ids.contains(&30));
+    }
+
+    #[test]
+    fn voice_speaking_uses_microphone_bit_only() {
+        assert!(!voice_speaking_microphone_active(0));
+        assert!(voice_speaking_microphone_active(1));
+        assert!(!voice_speaking_microphone_active(2));
+        assert!(voice_speaking_microphone_active(5));
+    }
+
+    #[test]
+    fn voice_speaking_tracker_expires_remote_speakers_and_tracks_local_edges() {
+        let mut tracker = VoiceSpeakingTracker::default();
+        let remote_user = Id::new(30);
+        let local_user = Id::new(20);
+        let now = Instant::now();
+
+        assert_eq!(tracker.record_remote(remote_user, true, now), Some(true));
+        assert_eq!(
+            tracker.record_remote(remote_user, true, now + VOICE_REMOTE_SPEAKING_TTL / 2),
+            None
+        );
+        assert!(tracker.expire_remote(now + VOICE_REMOTE_SPEAKING_TTL).is_empty());
+        assert_eq!(
+            tracker.expire_remote(now + VOICE_REMOTE_SPEAKING_TTL + VOICE_REMOTE_SPEAKING_TTL / 2),
+            vec![remote_user]
+        );
+        assert_eq!(tracker.record_remote(remote_user, false, now), None);
+        assert_eq!(tracker.record_remote(remote_user, true, now), Some(true));
+        assert_eq!(tracker.record_remote(remote_user, false, now), Some(false));
+
+        assert_eq!(tracker.record_local(true), Some(true));
+        assert_eq!(tracker.record_local(true), None);
+        assert_eq!(tracker.clear_all(local_user), vec![local_user]);
     }
 
     #[test]
@@ -4377,7 +4550,7 @@ mod tests {
     }
 
     #[test]
-    fn fake_outbound_stop_noops_when_capture_gate_closes() {
+    fn fake_outbound_stop_sends_speaking_off_when_capture_gate_closes() {
         let mut state = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, 20);
         state.set_capture_gate(true, false);
         assert_eq!(
@@ -4390,19 +4563,34 @@ mod tests {
 
         state.set_capture_gate(true, true);
         assert_eq!(
-            state.stop_speaking().expect("muted stop should no-op"),
-            VoiceFakeSendOutcome::Noop
+            state.stop_speaking().expect("muted stop should send speaking off"),
+            VoiceFakeSendOutcome::Sent
         );
-        assert_eq!(state.events().len(), event_count);
+        assert_eq!(state.events().len(), event_count + 1);
+        assert_eq!(
+            state.events()[event_count],
+            VoiceFakeOutboundEvent::Speaking {
+                speaking: false,
+                ssrc: 42,
+            }
+        );
         assert_eq!(state.rtp, rtp);
         assert_eq!(state.nonce_suffix, nonce_suffix);
 
+        state.speaking = true;
         state.set_capture_gate(false, false);
         assert_eq!(
-            state.stop_speaking().expect("disallowed stop should no-op"),
-            VoiceFakeSendOutcome::Noop
+            state.stop_speaking().expect("disallowed stop should send speaking off"),
+            VoiceFakeSendOutcome::Sent
         );
-        assert_eq!(state.events().len(), event_count);
+        assert_eq!(state.events().len(), event_count + 2);
+        assert_eq!(
+            state.events()[event_count + 1],
+            VoiceFakeOutboundEvent::Speaking {
+                speaking: false,
+                ssrc: 42,
+            }
+        );
         assert_eq!(state.rtp, rtp);
         assert_eq!(state.nonce_suffix, nonce_suffix);
     }
@@ -4419,12 +4607,19 @@ mod tests {
         assert_eq!(
             state
                 .stop_speaking_with_dave(&mut dave)
-                .expect("DAVE not-ready silence should block"),
-            VoiceFakeSendOutcome::Blocked(VoiceFakeSendBlockReason::DaveOutboundNotReady)
+                .expect("DAVE not-ready silence should still send speaking off"),
+            VoiceFakeSendOutcome::Sent
         );
-        assert!(state.events().is_empty());
+        assert_eq!(
+            state.events(),
+            &[VoiceFakeOutboundEvent::Speaking {
+                speaking: false,
+                ssrc: 42,
+            }]
+        );
         assert_eq!(state.rtp, rtp);
         assert_eq!(state.nonce_suffix, 20);
+        assert!(!state.speaking);
     }
 
     #[test]
@@ -4446,12 +4641,19 @@ mod tests {
         stopping.speaking = true;
         let rtp = stopping.rtp;
         assert_eq!(
-            stopping.stop_speaking().expect_err("insufficient silence nonces should fail"),
-            "voice RTP nonce suffix exhausted"
+            stopping.stop_speaking().expect("stop should still clear speaking"),
+            VoiceFakeSendOutcome::Sent
         );
-        assert!(stopping.events().is_empty());
+        assert_eq!(
+            stopping.events(),
+            &[VoiceFakeOutboundEvent::Speaking {
+                speaking: false,
+                ssrc: 42,
+            }]
+        );
         assert_eq!(stopping.rtp, rtp);
         assert_eq!(stopping.nonce_suffix, u32::MAX - 2);
+        assert!(!stopping.speaking);
     }
 
     #[test]

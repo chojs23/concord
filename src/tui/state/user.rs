@@ -235,6 +235,13 @@ impl DashboardState {
             .user_activities_for_guild(self.selected_guild_id(), user_id)
     }
 
+    pub fn user_voice_speaking(&self, user_id: Id<UserMarker>) -> bool {
+        let Some(guild_id) = self.selected_guild_id() else {
+            return false;
+        };
+        self.discord.user_voice_speaking_in_guild(guild_id, user_id)
+    }
+
     /// Top-of-viewport row for the popup body. Used by the renderer.
     pub fn user_profile_popup_scroll(&self) -> usize {
         self.user_profile_popup

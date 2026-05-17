@@ -164,6 +164,8 @@ fn tracks_voice_participants_join_move_and_leave() {
     });
     assert!(state.voice_participants_for_channel(guild_id, first_voice)[0].speaking);
     assert!(state.current_user_voice_speaking());
+    assert!(state.user_voice_speaking_in_guild(guild_id, alice));
+    assert!(!state.user_voice_speaking_in_guild(Id::new(999), alice));
 
     state.apply_event(&AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo {

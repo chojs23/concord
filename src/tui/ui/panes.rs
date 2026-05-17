@@ -1260,8 +1260,11 @@ pub(super) fn render_members(
             let member = *member;
             let is_selected = focused && selected_line == Some(line_index);
             let marker_style = Style::default().fg(presence_color(member.status()));
-            let name_style =
-                member_name_style(member, state.member_role_color(member), is_selected);
+            let name_style = if state.user_voice_speaking(member.user_id()) {
+                Style::default().fg(Color::Green).bold()
+            } else {
+                member_name_style(member, state.member_role_color(member), is_selected)
+            };
 
             let display_name = state.member_display_name(member);
             let display = member_display_label(

@@ -77,11 +77,27 @@ impl DiscordState {
         let Some(current_user_id) = self.session.current_user_id else {
             return false;
         };
+        self.user_voice_speaking(current_user_id)
+    }
+
+    pub fn user_voice_speaking_in_guild(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> bool {
+        self.voice
+            .states
+            .get(&(guild_id, user_id))
+            .map(|state| state.speaking)
+            .unwrap_or(false)
+    }
+
+    fn user_voice_speaking(&self, user_id: Id<UserMarker>) -> bool {
         self.voice
             .states
             .iter()
-            .find_map(|((_, user_id), state)| {
-                (*user_id == current_user_id).then_some(state.speaking)
+            .find_map(|((_, state_user_id), state)| {
+                (*state_user_id == user_id).then_some(state.speaking)
             })
             .unwrap_or(false)
     }
