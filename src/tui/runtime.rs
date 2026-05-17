@@ -178,6 +178,7 @@ pub(super) async fn run_dashboard(
                     Some(Ok(event)) => {
                         let outcome = events::handle_terminal_event(
                             &mut state,
+                            &mut clipboard,
                             event,
                             &mut last_frame_area,
                             &mut mouse_clicks,
@@ -194,23 +195,6 @@ pub(super) async fn run_dashboard(
                                 Err(error) => {
                                     logging::error("tui", format!("copy message failed: {error}"));
                                     state.show_error_toast("Failed to copy message", now);
-                                }
-                            }
-                            dirty = true;
-                        }
-                        if state.take_clipboard_image_upload_request() {
-                            let now = std::time::Instant::now();
-                            match clipboard.clipboard_image_upload() {
-                                Ok(attachment) => {
-                                    state.add_pending_composer_attachments(vec![attachment]);
-                                    state.show_success_toast("Clipboard image attached", now);
-                                }
-                                Err(error) => {
-                                    logging::error(
-                                        "tui",
-                                        format!("clipboard image upload failed: {error}"),
-                                    );
-                                    state.show_error_toast("No clipboard image", now);
                                 }
                             }
                             dirty = true;

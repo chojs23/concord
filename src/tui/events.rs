@@ -4,9 +4,10 @@ use ratatui::layout::Rect;
 use crate::{
     Result, config,
     discord::{AppCommand, AppEvent},
+    logging,
 };
 
-use super::{input, state::DashboardState};
+use super::{clipboard::ClipboardService, input, state::DashboardState};
 
 pub(super) struct TerminalEventOutcome {
     pub(super) dirty: bool,
@@ -15,6 +16,7 @@ pub(super) struct TerminalEventOutcome {
 
 pub(super) fn handle_terminal_event(
     state: &mut DashboardState,
+    clipboard: &mut ClipboardService,
     event: TerminalEvent,
     last_frame_area: &mut Rect,
     mouse_clicks: &mut input::MouseClickTracker,
@@ -44,13 +46,41 @@ pub(super) fn handle_terminal_event(
             *last_frame_area = Rect::new(0, 0, width, height);
             outcome.dirty = true;
         }
-        TerminalEvent::Paste(text) if input::handle_paste(state, &text) => {
-            outcome.dirty = true;
+        TerminalEvent::Paste(text) => {
+            if text.is_empty() {
+                if handle_clipboard_image_paste(state, clipboard) {
+                    outcome.dirty = true;
+                }
+            } else if input::handle_paste(state, &text) {
+                outcome.dirty = true;
+            }
         }
         _ => {}
     }
 
     Ok(outcome)
+}
+
+fn handle_clipboard_image_paste(
+    state: &mut DashboardState,
+    clipboard: &mut ClipboardService,
+) -> bool {
+    if !state.is_composing() || !state.composer_accepts_attachments() {
+        return false;
+    }
+
+    match clipboard.clipboard_image_upload() {
+        Ok(attachment) => {
+            state.add_pending_composer_attachments(vec![attachment]);
+            state.show_success_toast("Clipboard image attached", std::time::Instant::now());
+            true
+        }
+        Err(error) => {
+            logging::error("tui", format!("clipboard image paste failed: {error}"));
+            state.show_error_toast("No clipboard image", std::time::Instant::now());
+            true
+        }
+    }
 }
 
 fn save_options_if_needed(state: &mut DashboardState) {

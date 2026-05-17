@@ -1,6 +1,6 @@
 use std::{env, fmt, io::Cursor, io::stdout};
 
-use crate::discord::MessageAttachmentUpload;
+use crate::discord::{MAX_UPLOAD_FILE_BYTES, MessageAttachmentUpload};
 use crossterm::clipboard::CopyToClipboard;
 
 #[derive(Default)]
@@ -116,6 +116,12 @@ fn png_attachment_from_rgba(
     image::DynamicImage::ImageRgba8(image)
         .write_to(&mut encoded, image::ImageFormat::Png)
         .map_err(|error| format!("encode clipboard image failed: {error}"))?;
+    if encoded.get_ref().len() as u64 > MAX_UPLOAD_FILE_BYTES {
+        return Err(format!(
+            "clipboard image exceeds Discord's 10 MiB upload limit: {} bytes",
+            encoded.get_ref().len()
+        ));
+    }
     Ok(MessageAttachmentUpload::from_bytes(
         "clipboard-image.png".to_owned(),
         encoded.into_inner(),

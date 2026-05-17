@@ -304,7 +304,6 @@ are shown above the input before sending.
 | ------------------------- | ----------------- | -------------------------------------------------- |
 | `Ctrl+e`                  | open $EDITOR      | Open $EDITOR on the current draft for long editing |
 | `Ctrl+c`                  | clear             | Clear current draft                                |
-| `Ctrl+v`                  | attach clipboard  | Attach an image currently stored in the clipboard  |
 | `Ctrl+Left`/ `Ctrl+Right` | Jump word         | Jump the cursor by word                            |
 | `Ctrl+Backspace`          | Detach attachment | Removes the last pending attachment                |
 

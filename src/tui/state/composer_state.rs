@@ -94,16 +94,6 @@ impl DashboardState {
         self.pending_composer_attachments.pop();
     }
 
-    pub fn request_clipboard_image_upload(&mut self) {
-        if self.composer_accepts_attachments() {
-            self.clipboard_image_upload_requested = true;
-        }
-    }
-
-    pub fn take_clipboard_image_upload_request(&mut self) -> bool {
-        std::mem::take(&mut self.clipboard_image_upload_requested)
-    }
-
     pub fn composer_accepts_attachments(&self) -> bool {
         self.edit_target_message.is_none() && self.can_attach_in_selected_channel()
     }

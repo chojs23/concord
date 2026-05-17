@@ -1316,6 +1316,19 @@ mod tests {
     }
 
     #[test]
+    fn rejects_oversized_memory_backed_attachment() {
+        let attachment = MessageAttachmentUpload::from_bytes(
+            "clipboard-image.png".to_owned(),
+            vec![0_u8; (MAX_UPLOAD_FILE_BYTES + 1) as usize],
+        );
+
+        let error = validate_message_payload("", &[attachment])
+            .expect_err("oversized memory-backed attachment must fail");
+
+        assert!(matches!(error, AppError::AttachmentTooLarge { .. }));
+    }
+
+    #[test]
     fn upload_content_type_uses_common_media_types() {
         assert_eq!(upload_content_type("clip.MP4"), "video/mp4");
         assert_eq!(upload_content_type("song.mp3"), "audio/mpeg");

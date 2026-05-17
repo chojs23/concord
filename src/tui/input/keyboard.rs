@@ -195,7 +195,6 @@ enum ComposerAction {
     Submit,
     Close,
     ClearInput,
-    AttachClipboardImage,
     RemoveLastAttachment,
     DeletePreviousChar,
     DeleteNextChar,
@@ -1282,9 +1281,6 @@ fn composer_action(key: KeyEvent) -> ComposerAction {
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             ComposerAction::ClearInput
         }
-        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            ComposerAction::AttachClipboardImage
-        }
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::CONTROL) => {
             ComposerAction::RemoveLastAttachment
         }
@@ -1388,10 +1384,6 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
         }
         ComposerAction::ClearInput => {
             state.clear_composer_input();
-            None
-        }
-        ComposerAction::AttachClipboardImage => {
-            state.request_clipboard_image_upload();
             None
         }
         ComposerAction::RemoveLastAttachment => {
