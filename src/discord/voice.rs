@@ -23,6 +23,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex as StdMutex;
 #[cfg(feature = "voice-playback")]
 use std::sync::mpsc::{Receiver as StdReceiver, SyncSender, TryRecvError, sync_channel};
+#[cfg(feature = "voice-playback")]
+use tokio::time::MissedTickBehavior;
 use tokio::{
     net::UdpSocket,
     sync::{Mutex, Mutex as AsyncMutex, mpsc, watch},
@@ -77,7 +79,7 @@ const DISCORD_TRAILING_SILENCE_FRAMES: usize = 5;
 #[allow(dead_code)]
 const OPUS_MAX_ENCODED_FRAME_BYTES: usize = 4000;
 #[cfg(feature = "voice-playback")]
-const VOICE_MIC_PCM_FRAME_QUEUE: usize = 32;
+const VOICE_MIC_PCM_FRAME_QUEUE: usize = 4;
 const OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL: usize = 5760;
 const VOICE_PLAYBACK_FRAME_QUEUE: usize = 256;
 #[cfg(feature = "voice-playback")]
@@ -523,6 +525,14 @@ struct VoiceMicrophonePcmFrames {
 struct VoiceMicrophoneCaptureStats {
     chunks: AtomicU64,
     frames: AtomicU64,
+}
+
+#[cfg(feature = "voice-playback")]
+#[derive(Debug, Eq, PartialEq)]
+enum VoiceMicrophonePcmRead {
+    Frame(Vec<i16>),
+    Empty,
+    Disconnected,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3161,11 +3171,14 @@ async fn run_voice_udp_transmit(
             return;
         }
     };
+    let mut transmit_tick = tokio::time::interval(Duration::from_millis(20));
+    transmit_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     loop {
         tokio::select! {
             changed = gate_rx.changed() => {
                 if changed.is_err() {
+                    drain_voice_microphone_pcm_queue(&pcm_rx);
                     if let Err(error) = flush_voice_outbound_events(
                         &udp_socket,
                         &writer,
@@ -3180,6 +3193,10 @@ async fn run_voice_udp_transmit(
                     break;
                 }
                 let gate = *gate_rx.borrow();
+                let was_enabled = sender.capture_gate_enabled();
+                if !gate.enabled || !was_enabled && gate.enabled {
+                    drain_voice_microphone_pcm_queue(&pcm_rx);
+                }
                 if !gate.enabled
                     && let Err(error) = flush_voice_outbound_events(
                         &udp_socket,
@@ -3196,13 +3213,14 @@ async fn run_voice_udp_transmit(
                 }
                 sender.set_capture_gate(gate.enabled, false);
             }
-            _ = sleep(Duration::from_millis(20)) => {
+            _ = transmit_tick.tick() => {
                 let gate = *gate_rx.borrow();
                 if !gate.enabled {
+                    drain_voice_microphone_pcm_queue(&pcm_rx);
                     continue;
                 }
-                match pcm_rx.try_recv() {
-                    Ok(frame) => {
+                match latest_voice_microphone_pcm_frame(&pcm_rx) {
+                    VoiceMicrophonePcmRead::Frame(frame) => {
                         if !voice_pcm_frame_reaches_sensitivity(&frame, gate.microphone_sensitivity) {
                             if let Err(error) = flush_voice_outbound_events(
                                 &udp_socket,
@@ -3234,8 +3252,8 @@ async fn run_voice_udp_transmit(
                             break;
                         }
                     }
-                    Err(TryRecvError::Empty) => {}
-                    Err(TryRecvError::Disconnected) => {
+                    VoiceMicrophonePcmRead::Empty => {}
+                    VoiceMicrophonePcmRead::Disconnected => {
                         if let Err(error) = flush_voice_outbound_events(
                             &udp_socket,
                             &writer,
@@ -3253,6 +3271,30 @@ async fn run_voice_udp_transmit(
             }
         }
     }
+}
+
+#[cfg(feature = "voice-playback")]
+fn latest_voice_microphone_pcm_frame(pcm_rx: &StdReceiver<Vec<i16>>) -> VoiceMicrophonePcmRead {
+    let mut latest = None;
+    loop {
+        match pcm_rx.try_recv() {
+            Ok(frame) => latest = Some(frame),
+            Err(TryRecvError::Empty) => {
+                return latest.map_or(VoiceMicrophonePcmRead::Empty, VoiceMicrophonePcmRead::Frame);
+            }
+            Err(TryRecvError::Disconnected) => {
+                return latest.map_or(
+                    VoiceMicrophonePcmRead::Disconnected,
+                    VoiceMicrophonePcmRead::Frame,
+                );
+            }
+        }
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+fn drain_voice_microphone_pcm_queue(pcm_rx: &StdReceiver<Vec<i16>>) {
+    while pcm_rx.try_recv().is_ok() {}
 }
 
 #[cfg(feature = "voice-playback")]
@@ -4523,6 +4565,40 @@ mod tests {
         assert!(frame[frame.len() - 2] > 870);
         assert!(frame[frame.len() - 1] < -870);
         assert!(rx.try_recv().is_err());
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn microphone_pcm_read_keeps_newest_queued_frame() {
+        let (tx, rx) = sync_channel(VOICE_MIC_PCM_FRAME_QUEUE);
+
+        tx.try_send(vec![1]).expect("first frame should queue");
+        tx.try_send(vec![2]).expect("second frame should queue");
+        tx.try_send(vec![3]).expect("third frame should queue");
+
+        assert_eq!(
+            latest_voice_microphone_pcm_frame(&rx),
+            VoiceMicrophonePcmRead::Frame(vec![3])
+        );
+        assert_eq!(latest_voice_microphone_pcm_frame(&rx), VoiceMicrophonePcmRead::Empty);
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn microphone_pcm_drain_clears_backlog_before_reenable() {
+        let (tx, rx) = sync_channel(VOICE_MIC_PCM_FRAME_QUEUE);
+
+        tx.try_send(vec![10]).expect("first frame should queue");
+        tx.try_send(vec![20]).expect("second frame should queue");
+
+        drain_voice_microphone_pcm_queue(&rx);
+
+        assert_eq!(latest_voice_microphone_pcm_frame(&rx), VoiceMicrophonePcmRead::Empty);
+        drop(tx);
+        assert_eq!(
+            latest_voice_microphone_pcm_frame(&rx),
+            VoiceMicrophonePcmRead::Disconnected
+        );
     }
 
     #[cfg(feature = "voice-playback")]
