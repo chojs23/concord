@@ -25,13 +25,11 @@ use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 #[cfg(feature = "voice-playback")]
 use std::sync::mpsc::{Receiver as StdReceiver, SyncSender, TryRecvError, sync_channel};
-#[cfg(feature = "voice-playback")]
-use tokio::time::MissedTickBehavior;
 use tokio::{
     net::UdpSocket,
     sync::{Mutex, Mutex as AsyncMutex, mpsc, watch},
     task::JoinHandle,
-    time::{sleep, timeout},
+    time::{MissedTickBehavior, interval, sleep, timeout},
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
@@ -59,6 +57,9 @@ const RTP_HEADER_EXTENSION_BYTES: usize = 4;
 const RTP_EXTENSION_WORD_BYTES: usize = 4;
 const RTP_AEAD_TAG_BYTES: usize = 16;
 const RTP_AEAD_NONCE_SUFFIX_BYTES: usize = 4;
+const RTCP_MIN_PACKET_BYTES: usize = 4;
+const RTCP_SENDER_SSRC_OFFSET: usize = 4;
+const RTCP_SENDER_SSRC_BYTES: usize = 4;
 const DAVE_MIN_SUPPLEMENTAL_BYTES: usize = 11;
 const DAVE_MAGIC_MARKER: [u8; 2] = [0xfa, 0xfa];
 const DISCORD_VOICE_SAMPLE_RATE: u32 = 48_000;
@@ -84,6 +85,13 @@ const OPUS_MAX_ENCODED_FRAME_BYTES: usize = 4000;
 const VOICE_MIC_PCM_FRAME_QUEUE: usize = 4;
 const OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL: usize = 5760;
 const VOICE_PLAYBACK_FRAME_QUEUE: usize = 256;
+const VOICE_PLAYBACK_FRAME_DURATION: Duration = Duration::from_millis(20);
+const VOICE_PLAYBACK_JITTER_BUFFER_FRAMES: usize = 3;
+const VOICE_PLAYBACK_JITTER_BUFFER_DELAY: Duration = Duration::from_millis(60);
+const VOICE_PLAYBACK_MAX_BUFFERED_FRAMES_PER_SSRC: usize = 32;
+const VOICE_PLAYBACK_MAX_CONSECUTIVE_PLC_FRAMES: usize = 5;
+const VOICE_OUTPUT_UNDERRUN_FADE_MILLIS: u32 = 5;
+const VOICE_OUTPUT_LOW_PASS_CUTOFF_HZ: f32 = 8_000.0;
 #[cfg(feature = "voice-playback")]
 const VOICE_AUDIO_OUTPUT_QUEUE: usize = 64;
 const AEAD_AES256_GCM_RTPSIZE: &str = "aead_aes256_gcm_rtpsize";
@@ -411,6 +419,7 @@ enum VoiceDaveOutboundPayload {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum VoiceMediaPayload {
     Plain(Vec<u8>),
+    DaveUnexpectedPlain { payload_len: usize },
     DaveMissingUser { payload_len: usize },
     DaveNotReady { user_id: u64, payload_len: usize },
     DaveDecryptFailed { user_id: u64, message: String },
@@ -420,6 +429,7 @@ enum VoiceMediaPayload {
 impl VoiceMediaPayload {
     fn pending_reason(&self) -> &'static str {
         match self {
+            Self::DaveUnexpectedPlain { .. } => "DAVE active non-DAVE payload",
             Self::DaveMissingUser { .. } => "missing SSRC user mapping",
             Self::DaveNotReady { .. } => "DAVE session is not ready",
             _ => "not pending",
@@ -478,6 +488,44 @@ struct VoicePlaybackFrame {
     sequence: u16,
     timestamp: u32,
     opus: Vec<u8>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum VoicePlayoutFrame {
+    Audio(VoicePlaybackFrame),
+    PacketLoss {
+        ssrc: u32,
+        user_id: Option<u64>,
+        sequence: u16,
+    },
+}
+
+#[derive(Clone, Copy)]
+struct VoicePlaybackPostProcess {
+    low_pass: VoiceStereoLowPass,
+}
+
+#[derive(Clone, Copy)]
+struct VoiceStereoLowPass {
+    alpha: f32,
+    previous: [f32; 2],
+    initialized: bool,
+}
+
+#[derive(Default)]
+struct VoicePlaybackPlayoutBuffers {
+    buffers: HashMap<u32, VoicePlaybackPlayoutBuffer>,
+}
+
+#[derive(Default)]
+struct VoicePlaybackPlayoutBuffer {
+    ssrc: Option<u32>,
+    frames: Vec<VoicePlaybackFrame>,
+    next_sequence: Option<u16>,
+    first_buffered_at: Option<Instant>,
+    started: bool,
+    last_user_id: Option<u64>,
+    consecutive_missing: usize,
 }
 
 struct VoiceOpusDecode {
@@ -908,8 +956,13 @@ impl VoiceDaveState {
     }
 
     fn unwrap_media_payload_for_ssrc(&mut self, ssrc: u32, payload: &[u8]) -> VoiceMediaPayload {
-        if !self.dave_media_active() || !looks_like_dave_media_frame(payload) {
+        if !self.dave_media_active() {
             return VoiceMediaPayload::Plain(payload.to_vec());
+        }
+        if !looks_like_dave_media_frame(payload) {
+            return VoiceMediaPayload::DaveUnexpectedPlain {
+                payload_len: payload.len(),
+            };
         }
         let Some(user_id) = self.ssrc_user_ids.get(&ssrc).copied() else {
             return VoiceMediaPayload::DaveMissingUser {
@@ -1217,6 +1270,245 @@ impl VoiceDecodedAudio {
             let _ = samples;
         }
     }
+}
+
+impl VoicePlayoutFrame {
+    fn ssrc(&self) -> u32 {
+        match self {
+            Self::Audio(frame) => frame.ssrc,
+            Self::PacketLoss { ssrc, .. } => *ssrc,
+        }
+    }
+
+    fn user_id(&self) -> Option<u64> {
+        match self {
+            Self::Audio(frame) => frame.user_id,
+            Self::PacketLoss { user_id, .. } => *user_id,
+        }
+    }
+
+    fn sequence(&self) -> u16 {
+        match self {
+            Self::Audio(frame) => frame.sequence,
+            Self::PacketLoss { sequence, .. } => *sequence,
+        }
+    }
+
+    fn opus(&self) -> &[u8] {
+        match self {
+            Self::Audio(frame) => &frame.opus,
+            Self::PacketLoss { .. } => &[],
+        }
+    }
+
+    fn is_packet_loss(&self) -> bool {
+        matches!(self, Self::PacketLoss { .. })
+    }
+}
+
+impl Default for VoicePlaybackPostProcess {
+    fn default() -> Self {
+        Self {
+            low_pass: VoiceStereoLowPass::new(
+                VOICE_OUTPUT_LOW_PASS_CUTOFF_HZ,
+                DISCORD_VOICE_SAMPLE_RATE,
+            ),
+        }
+    }
+}
+
+impl VoicePlaybackPostProcess {
+    fn process(&mut self, samples: &mut [f32]) {
+        for frame in samples.chunks_exact_mut(usize::from(DISCORD_VOICE_CHANNELS)) {
+            let filtered = self.low_pass.process([frame[0], frame[1]]);
+            frame[0] = filtered[0];
+            frame[1] = filtered[1];
+        }
+    }
+}
+
+impl VoiceStereoLowPass {
+    fn new(cutoff_hz: f32, sample_rate: u32) -> Self {
+        let sample_rate = sample_rate.max(1) as f32;
+        let rc = 1.0 / (2.0 * std::f32::consts::PI * cutoff_hz.max(1.0));
+        let dt = 1.0 / sample_rate;
+        Self {
+            alpha: dt / (rc + dt),
+            previous: [0.0, 0.0],
+            initialized: false,
+        }
+    }
+
+    fn process(&mut self, frame: [f32; 2]) -> [f32; 2] {
+        if !self.initialized {
+            self.previous = frame;
+            self.initialized = true;
+            return frame;
+        }
+        self.previous[0] += self.alpha * (frame[0] - self.previous[0]);
+        self.previous[1] += self.alpha * (frame[1] - self.previous[1]);
+        self.previous
+    }
+}
+
+impl VoicePlaybackPlayoutBuffers {
+    fn push(&mut self, frame: VoicePlaybackFrame, now: Instant) {
+        self.buffers.entry(frame.ssrc).or_default().push(frame, now);
+    }
+
+    fn next_frames(&mut self, now: Instant) -> Vec<VoicePlayoutFrame> {
+        let mut frames = Vec::new();
+        for buffer in self.buffers.values_mut() {
+            if let Some(frame) = buffer.next_frame(now) {
+                frames.push(frame);
+            }
+        }
+        self.buffers.retain(|_, buffer| !buffer.is_idle());
+        frames
+    }
+}
+
+impl VoicePlaybackPlayoutBuffer {
+    fn push(&mut self, frame: VoicePlaybackFrame, now: Instant) -> bool {
+        self.ssrc = Some(frame.ssrc);
+        if let Some(next_sequence) = self.next_sequence {
+            if voice_sequence_before(frame.sequence, next_sequence) {
+                if self.started {
+                    return false;
+                }
+                self.next_sequence = Some(frame.sequence);
+            }
+        } else {
+            self.next_sequence = Some(frame.sequence);
+            self.first_buffered_at = Some(now);
+        }
+
+        self.last_user_id = frame.user_id;
+        if self
+            .frames
+            .iter()
+            .any(|queued| queued.sequence == frame.sequence)
+        {
+            return false;
+        }
+
+        self.frames.push(frame);
+        if self.frames.len() > VOICE_PLAYBACK_MAX_BUFFERED_FRAMES_PER_SSRC {
+            self.drop_farthest_buffered_frame();
+        }
+        true
+    }
+
+    fn next_frame(&mut self, now: Instant) -> Option<VoicePlayoutFrame> {
+        let next_sequence = self.next_sequence?;
+        if !self.started {
+            let aged_enough = self.first_buffered_at.is_some_and(|started_at| {
+                now.duration_since(started_at) >= VOICE_PLAYBACK_JITTER_BUFFER_DELAY
+            });
+            if self.frames.len() < VOICE_PLAYBACK_JITTER_BUFFER_FRAMES && !aged_enough {
+                return None;
+            }
+            self.started = true;
+        }
+
+        self.drop_stale_frames(next_sequence);
+
+        if let Some(position) = self
+            .frames
+            .iter()
+            .position(|frame| frame.sequence == next_sequence)
+        {
+            let frame = self.frames.remove(position);
+            self.advance_after_audio(frame.sequence);
+            return Some(VoicePlayoutFrame::Audio(frame));
+        }
+
+        if self.frames.is_empty() {
+            return self.next_packet_loss_frame_or_stop(next_sequence);
+        }
+
+        if self.consecutive_missing < VOICE_PLAYBACK_MAX_CONSECUTIVE_PLC_FRAMES {
+            return Some(self.packet_loss_frame(next_sequence));
+        }
+
+        self.skip_to_next_buffered_frame(next_sequence)
+    }
+
+    fn drop_stale_frames(&mut self, next_sequence: u16) {
+        self.frames
+            .retain(|frame| !voice_sequence_before(frame.sequence, next_sequence));
+    }
+
+    fn drop_farthest_buffered_frame(&mut self) {
+        let Some(next_sequence) = self.next_sequence else {
+            let _ = self.frames.pop();
+            return;
+        };
+        if let Some((position, _)) = self
+            .frames
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, frame)| voice_sequence_distance(next_sequence, frame.sequence))
+        {
+            let _ = self.frames.remove(position);
+        }
+    }
+
+    fn next_packet_loss_frame_or_stop(&mut self, next_sequence: u16) -> Option<VoicePlayoutFrame> {
+        if self.consecutive_missing < VOICE_PLAYBACK_MAX_CONSECUTIVE_PLC_FRAMES {
+            return Some(self.packet_loss_frame(next_sequence));
+        }
+        self.reset_idle();
+        None
+    }
+
+    fn packet_loss_frame(&mut self, sequence: u16) -> VoicePlayoutFrame {
+        self.consecutive_missing += 1;
+        self.next_sequence = Some(sequence.wrapping_add(1));
+        VoicePlayoutFrame::PacketLoss {
+            ssrc: self.ssrc.unwrap_or_default(),
+            user_id: self.last_user_id,
+            sequence,
+        }
+    }
+
+    fn skip_to_next_buffered_frame(&mut self, next_sequence: u16) -> Option<VoicePlayoutFrame> {
+        let position = self
+            .frames
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, frame)| voice_sequence_distance(next_sequence, frame.sequence))
+            .map(|(position, _)| position)?;
+        let frame = self.frames.remove(position);
+        self.advance_after_audio(frame.sequence);
+        Some(VoicePlayoutFrame::Audio(frame))
+    }
+
+    fn advance_after_audio(&mut self, sequence: u16) {
+        self.next_sequence = Some(sequence.wrapping_add(1));
+        self.consecutive_missing = 0;
+        self.first_buffered_at = None;
+    }
+
+    fn reset_idle(&mut self) {
+        self.next_sequence = None;
+        self.first_buffered_at = None;
+        self.started = false;
+        self.consecutive_missing = 0;
+    }
+
+    fn is_idle(&self) -> bool {
+        self.frames.is_empty() && self.next_sequence.is_none()
+    }
+}
+
+fn voice_sequence_before(sequence: u16, reference: u16) -> bool {
+    let distance = reference.wrapping_sub(sequence);
+    distance != 0 && distance < 0x8000
+}
+
+fn voice_sequence_distance(from: u16, to: u16) -> u16 {
+    to.wrapping_sub(from)
 }
 
 #[cfg(feature = "voice-playback")]
@@ -1664,40 +1956,132 @@ struct VoiceAudioBuffer {
     samples_rx: StdReceiver<Vec<f32>>,
     current: Vec<f32>,
     offset: usize,
+    output_sample_rate: u32,
+    source_position: f64,
+    last_frame: [f32; 2],
+    fade_remaining_frames: usize,
+    fade_total_frames: usize,
 }
 
 #[cfg(feature = "voice-playback")]
 impl VoiceAudioBuffer {
-    fn new(samples_rx: StdReceiver<Vec<f32>>) -> Self {
+    fn new(samples_rx: StdReceiver<Vec<f32>>, output_sample_rate: u32) -> Self {
         Self {
             samples_rx,
             current: Vec::new(),
             offset: 0,
+            output_sample_rate,
+            source_position: 0.0,
+            last_frame: [0.0, 0.0],
+            fade_remaining_frames: 0,
+            fade_total_frames: voice_output_underrun_fade_frames(output_sample_rate),
         }
     }
 
     fn next_stereo_frame(&mut self) -> Option<[f32; 2]> {
+        let frame = if self.output_sample_rate == DISCORD_VOICE_SAMPLE_RATE {
+            self.next_native_stereo_frame()
+        } else {
+            self.next_resampled_stereo_frame()
+        };
+        match frame {
+            Some(frame) => {
+                self.last_frame = frame;
+                self.fade_remaining_frames = self.fade_total_frames;
+                Some(frame)
+            }
+            None => self.next_fade_stereo_frame(),
+        }
+    }
+
+    fn next_native_stereo_frame(&mut self) -> Option<[f32; 2]> {
         loop {
             if self.offset + 1 < self.current.len() {
                 let frame = [self.current[self.offset], self.current[self.offset + 1]];
                 self.offset += usize::from(DISCORD_VOICE_CHANNELS);
                 return Some(frame);
             }
-            match self.samples_rx.try_recv() {
-                Ok(samples) => {
-                    self.current = samples;
-                    self.offset = 0;
-                }
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => return None,
+            if !self.receive_next_samples() {
+                return None;
             }
         }
+    }
+
+    fn next_resampled_stereo_frame(&mut self) -> Option<[f32; 2]> {
+        loop {
+            let frame_count = self.current.len() / usize::from(DISCORD_VOICE_CHANNELS);
+            if frame_count == 0 || self.source_position >= frame_count as f64 {
+                self.source_position -= frame_count as f64;
+                if self.source_position < 0.0 {
+                    self.source_position = 0.0;
+                }
+                if !self.receive_next_samples() {
+                    return None;
+                }
+                continue;
+            }
+
+            let base_frame = self.source_position.floor() as usize;
+            let next_frame = (base_frame + 1).min(frame_count - 1);
+            let fraction = (self.source_position - base_frame as f64) as f32;
+            let frame = interpolate_voice_stereo_frame(
+                voice_stereo_frame_at(&self.current, base_frame),
+                voice_stereo_frame_at(&self.current, next_frame),
+                fraction,
+            );
+            self.source_position +=
+                f64::from(DISCORD_VOICE_SAMPLE_RATE) / f64::from(self.output_sample_rate.max(1));
+            return Some(frame);
+        }
+    }
+
+    fn receive_next_samples(&mut self) -> bool {
+        match self.samples_rx.try_recv() {
+            Ok(samples) => {
+                self.current = samples;
+                self.offset = 0;
+                true
+            }
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => false,
+        }
+    }
+
+    fn next_fade_stereo_frame(&mut self) -> Option<[f32; 2]> {
+        if self.fade_remaining_frames == 0 || self.fade_total_frames == 0 {
+            return None;
+        }
+        let gain = self.fade_remaining_frames as f32 / (self.fade_total_frames + 1) as f32;
+        self.fade_remaining_frames -= 1;
+        Some([self.last_frame[0] * gain, self.last_frame[1] * gain])
     }
 
     fn clear_pending(&mut self) {
         self.current.clear();
         self.offset = 0;
+        self.source_position = 0.0;
+        self.last_frame = [0.0, 0.0];
+        self.fade_remaining_frames = 0;
         while self.samples_rx.try_recv().is_ok() {}
     }
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_output_underrun_fade_frames(output_sample_rate: u32) -> usize {
+    ((output_sample_rate.max(1) * VOICE_OUTPUT_UNDERRUN_FADE_MILLIS) / 1_000).max(1) as usize
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_stereo_frame_at(samples: &[f32], frame: usize) -> [f32; 2] {
+    let offset = frame * usize::from(DISCORD_VOICE_CHANNELS);
+    [samples[offset], samples[offset + 1]]
+}
+
+#[cfg(feature = "voice-playback")]
+fn interpolate_voice_stereo_frame(left: [f32; 2], right: [f32; 2], fraction: f32) -> [f32; 2] {
+    [
+        left[0] + (right[0] - left[0]) * fraction,
+        left[1] + (right[1] - left[1]) * fraction,
+    ]
 }
 
 #[cfg(feature = "voice-playback")]
@@ -1705,19 +2089,33 @@ fn select_voice_output_config(
     device: &cpal::Device,
 ) -> Result<cpal::SupportedStreamConfig, String> {
     let sample_rate = DISCORD_VOICE_SAMPLE_RATE;
-    let mut configs = device
+    let configs = device
         .supported_output_configs()
         .map_err(|error| format!("voice audio output config query failed: {error}"))?;
-    if let Some(config) = configs.find(|config| {
-        config.channels() == DISCORD_VOICE_CHANNELS
-            && config.min_sample_rate() <= sample_rate
-            && config.max_sample_rate() >= sample_rate
-    }) {
+    if let Some(config) = configs
+        .filter(|config| {
+            config.channels() == DISCORD_VOICE_CHANNELS
+                && config.min_sample_rate() <= sample_rate
+                && config.max_sample_rate() >= sample_rate
+        })
+        .min_by_key(|config| voice_output_sample_format_rank(config.sample_format()))
+    {
         return Ok(config.with_sample_rate(sample_rate));
     }
     device
         .default_output_config()
         .map_err(|error| format!("voice default audio output config failed: {error}"))
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_output_sample_format_rank(format: cpal::SampleFormat) -> u8 {
+    match format {
+        cpal::SampleFormat::F32 => 0,
+        cpal::SampleFormat::I16 => 1,
+        cpal::SampleFormat::U16 => 2,
+        cpal::SampleFormat::U8 => 3,
+        _ => 4,
+    }
 }
 
 #[cfg(feature = "voice-playback")]
@@ -1773,7 +2171,7 @@ fn build_voice_output_stream_f32(
     playback_volume: Arc<AtomicU8>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
-    let mut buffer = VoiceAudioBuffer::new(samples_rx);
+    let mut buffer = VoiceAudioBuffer::new(samples_rx, config.sample_rate);
     device
         .build_output_stream(
             config,
@@ -1801,7 +2199,7 @@ fn build_voice_output_stream_u8(
     playback_volume: Arc<AtomicU8>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
-    let mut buffer = VoiceAudioBuffer::new(samples_rx);
+    let mut buffer = VoiceAudioBuffer::new(samples_rx, config.sample_rate);
     device
         .build_output_stream(
             config,
@@ -1829,7 +2227,7 @@ fn build_voice_output_stream_i16(
     playback_volume: Arc<AtomicU8>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
-    let mut buffer = VoiceAudioBuffer::new(samples_rx);
+    let mut buffer = VoiceAudioBuffer::new(samples_rx, config.sample_rate);
     device
         .build_output_stream(
             config,
@@ -1857,7 +2255,7 @@ fn build_voice_output_stream_u16(
     playback_volume: Arc<AtomicU8>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
-    let mut buffer = VoiceAudioBuffer::new(samples_rx);
+    let mut buffer = VoiceAudioBuffer::new(samples_rx, config.sample_rate);
     device
         .build_output_stream(
             config,
@@ -1978,13 +2376,12 @@ where
             *first = convert(left);
             *second = convert(right);
             for sample in rest {
-                *sample = T::default();
+                *sample = convert(0.0);
             }
         }
     }
 }
 
-#[cfg(feature = "voice-playback")]
 fn clamp_voice_sample(sample: f32) -> f32 {
     sample.clamp(-1.0, 1.0)
 }
@@ -2697,137 +3094,179 @@ async fn run_voice_udp_receive(
     let mut dave_decrypted_packets = 0u64;
     let mut dave_pending_packets = 0u64;
     let mut decrypt_failures = 0u64;
+    let mut non_audio_packets = 0u64;
+    let mut rtcp_packets = 0u64;
     let mut malformed_packets = 0u64;
     loop {
         match socket.recv(&mut packet).await {
-            Ok(len) => match parse_rtp_header(&packet[..len]) {
-                Ok(header) => {
-                    rtp_packets = rtp_packets.saturating_add(1);
-                    match decryptor.decrypt_packet(&packet[..len], &header) {
-                        Ok(payload) => {
-                            decrypted_packets = decrypted_packets.saturating_add(1);
-                            let (remote_user_id, media) = {
-                                let mut dave_state = dave_state.lock().await;
-                                let remote_user_id = dave_state.user_id_for_ssrc(header.ssrc);
-                                let media = dave_state.unwrap_media_payload_for_ssrc(
-                                    header.ssrc,
-                                    &payload.media_payload,
+            Ok(len) => {
+                if looks_like_rtcp_packet(&packet[..len]) {
+                    rtcp_packets = rtcp_packets.saturating_add(1);
+                    if rtcp_packets == 1 || rtcp_packets % 100 == 0 {
+                        logging::debug(
+                            "voice",
+                            format!(
+                                "ignoring RTCP UDP packet: count={} packet_type={} length={} sender_ssrc={:?}",
+                                rtcp_packets,
+                                packet[1],
+                                len,
+                                rtcp_sender_ssrc(&packet[..len])
+                            ),
+                        );
+                    }
+                    continue;
+                }
+                match parse_rtp_header(&packet[..len]) {
+                    Ok(header) => {
+                        rtp_packets = rtp_packets.saturating_add(1);
+                        if header.payload_type != DISCORD_VOICE_PAYLOAD_TYPE {
+                            non_audio_packets = non_audio_packets.saturating_add(1);
+                            if non_audio_packets == 1 || non_audio_packets % 100 == 0 {
+                                logging::debug(
+                                    "voice",
+                                    format!(
+                                        "ignoring non-audio RTP packet: count={} payload_type={} ssrc={} seq={} timestamp={}",
+                                        non_audio_packets,
+                                        header.payload_type,
+                                        header.ssrc,
+                                        header.sequence,
+                                        header.timestamp
+                                    ),
                                 );
-                                (remote_user_id, media)
-                            };
-                            let media_payload_len = match &media {
-                                VoiceMediaPayload::Plain(payload) => payload.len(),
-                                VoiceMediaPayload::DaveMissingUser { payload_len }
-                                | VoiceMediaPayload::DaveNotReady { payload_len, .. } => {
-                                    dave_pending_packets = dave_pending_packets.saturating_add(1);
-                                    if dave_pending_packets == 1 || dave_pending_packets % 100 == 0
+                            }
+                            continue;
+                        }
+                        match decryptor.decrypt_packet(&packet[..len], &header) {
+                            Ok(payload) => {
+                                decrypted_packets = decrypted_packets.saturating_add(1);
+                                let (remote_user_id, media) = {
+                                    let mut dave_state = dave_state.lock().await;
+                                    let remote_user_id = dave_state.user_id_for_ssrc(header.ssrc);
+                                    let media = dave_state.unwrap_media_payload_for_ssrc(
+                                        header.ssrc,
+                                        &payload.media_payload,
+                                    );
+                                    (remote_user_id, media)
+                                };
+                                let media_payload_len = match &media {
+                                    VoiceMediaPayload::Plain(payload) => payload.len(),
+                                    VoiceMediaPayload::DaveUnexpectedPlain { payload_len }
+                                    | VoiceMediaPayload::DaveMissingUser { payload_len }
+                                    | VoiceMediaPayload::DaveNotReady { payload_len, .. } => {
+                                        dave_pending_packets =
+                                            dave_pending_packets.saturating_add(1);
+                                        if dave_pending_packets == 1
+                                            || dave_pending_packets % 100 == 0
+                                        {
+                                            logging::debug(
+                                                "voice",
+                                                format!(
+                                                    "DAVE media decrypt pending: count={} ssrc={} seq={} reason={}",
+                                                    dave_pending_packets,
+                                                    header.ssrc,
+                                                    header.sequence,
+                                                    media.pending_reason()
+                                                ),
+                                            );
+                                        }
+                                        *payload_len
+                                    }
+                                    VoiceMediaPayload::DaveDecryptFailed { message, .. } => {
+                                        decrypt_failures = decrypt_failures.saturating_add(1);
+                                        if decrypt_failures == 1 || decrypt_failures % 100 == 0 {
+                                            logging::debug(
+                                                "voice",
+                                                format!(
+                                                    "DAVE media decrypt failed: count={} ssrc={} seq={} error={}",
+                                                    decrypt_failures,
+                                                    header.ssrc,
+                                                    header.sequence,
+                                                    message
+                                                ),
+                                            );
+                                        }
+                                        payload.media_payload.len()
+                                    }
+                                    VoiceMediaPayload::DaveDecrypted { opus, .. } => {
+                                        dave_decrypted_packets =
+                                            dave_decrypted_packets.saturating_add(1);
+                                        opus.len()
+                                    }
+                                };
+                                if dave_decrypted_packets == 1 || dave_decrypted_packets % 500 == 0
+                                {
+                                    if let VoiceMediaPayload::DaveDecrypted { user_id, .. } = &media
                                     {
                                         logging::debug(
                                             "voice",
                                             format!(
-                                                "DAVE media decrypt pending: count={} ssrc={} seq={} reason={}",
-                                                dave_pending_packets,
+                                                "DAVE media decrypted: count={} user_id={} ssrc={} seq={} opus_len={}",
+                                                dave_decrypted_packets,
+                                                user_id,
                                                 header.ssrc,
                                                 header.sequence,
-                                                media.pending_reason()
+                                                media_payload_len
                                             ),
                                         );
                                     }
-                                    *payload_len
                                 }
-                                VoiceMediaPayload::DaveDecryptFailed { message, .. } => {
-                                    decrypt_failures = decrypt_failures.saturating_add(1);
-                                    if decrypt_failures == 1 || decrypt_failures % 100 == 0 {
-                                        logging::debug(
-                                            "voice",
-                                            format!(
-                                                "DAVE media decrypt failed: count={} ssrc={} seq={} error={}",
-                                                decrypt_failures,
-                                                header.ssrc,
-                                                header.sequence,
-                                                message
-                                            ),
-                                        );
-                                    }
-                                    payload.media_payload.len()
+                                if let Some(frame) = voice_playback_frame(&media, &header)
+                                    && let Some(tx) = playback_tx.as_ref()
+                                {
+                                    let _ = tx.try_send(frame);
                                 }
-                                VoiceMediaPayload::DaveDecrypted { opus, .. } => {
-                                    dave_decrypted_packets =
-                                        dave_decrypted_packets.saturating_add(1);
-                                    opus.len()
+                                if let Some(user_id) = remote_user_id
+                                    && voice_media_payload_counts_as_remote_activity(&media)
+                                {
+                                    let _ = remote_speaking_tx.send(user_id);
                                 }
-                            };
-                            if dave_decrypted_packets == 1 || dave_decrypted_packets % 500 == 0 {
-                                if let VoiceMediaPayload::DaveDecrypted { user_id, .. } = &media {
+                                if decrypted_packets == 1 || decrypted_packets % 500 == 0 {
                                     logging::debug(
                                         "voice",
                                         format!(
-                                            "DAVE media decrypted: count={} user_id={} ssrc={} seq={} opus_len={}",
-                                            dave_decrypted_packets,
-                                            user_id,
+                                            "decrypted RTP packet: count={} ssrc={} seq={} timestamp={} payload_type={} payload_len={} extension_body_len={}",
+                                            decrypted_packets,
                                             header.ssrc,
                                             header.sequence,
-                                            media_payload_len
+                                            header.timestamp,
+                                            header.payload_type,
+                                            media_payload_len,
+                                            payload.encrypted_extension_body_len
                                         ),
                                     );
                                 }
                             }
-                            if let Some(frame) = voice_playback_frame(&media, &header)
-                                && let Some(tx) = playback_tx.as_ref()
-                            {
-                                let _ = tx.try_send(frame);
-                            }
-                            if let Some(user_id) = remote_user_id
-                                && voice_media_payload_counts_as_remote_activity(&media)
-                            {
-                                let _ = remote_speaking_tx.send(user_id);
-                            }
-                            if decrypted_packets == 1 || decrypted_packets % 500 == 0 {
-                                logging::debug(
-                                    "voice",
-                                    format!(
-                                        "decrypted RTP packet: count={} ssrc={} seq={} timestamp={} payload_type={} payload_len={} extension_body_len={}",
-                                        decrypted_packets,
-                                        header.ssrc,
-                                        header.sequence,
-                                        header.timestamp,
-                                        header.payload_type,
-                                        media_payload_len,
-                                        payload.encrypted_extension_body_len
-                                    ),
-                                );
-                            }
-                        }
-                        Err(error) => {
-                            decrypt_failures = decrypt_failures.saturating_add(1);
-                            if decrypt_failures == 1 || decrypt_failures % 100 == 0 {
-                                logging::debug(
-                                    "voice",
-                                    format!(
-                                        "RTP decrypt failed: count={} ssrc={} seq={} timestamp={} error={}",
-                                        decrypt_failures,
-                                        header.ssrc,
-                                        header.sequence,
-                                        header.timestamp,
-                                        error
-                                    ),
-                                );
+                            Err(error) => {
+                                decrypt_failures = decrypt_failures.saturating_add(1);
+                                if decrypt_failures == 1 || decrypt_failures % 100 == 0 {
+                                    logging::debug(
+                                        "voice",
+                                        format!(
+                                            "RTP decrypt failed: count={} ssrc={} seq={} timestamp={} error={}",
+                                            decrypt_failures,
+                                            header.ssrc,
+                                            header.sequence,
+                                            header.timestamp,
+                                            error
+                                        ),
+                                    );
+                                }
                             }
                         }
                     }
-                }
-                Err(error) => {
-                    malformed_packets = malformed_packets.saturating_add(1);
-                    if malformed_packets == 1 || malformed_packets % 100 == 0 {
-                        logging::debug(
-                            "voice",
-                            format!(
-                                "ignoring non-RTP UDP packet: count={malformed_packets} error={error}"
-                            ),
-                        );
+                    Err(error) => {
+                        malformed_packets = malformed_packets.saturating_add(1);
+                        if malformed_packets == 1 || malformed_packets % 100 == 0 {
+                            logging::debug(
+                                "voice",
+                                format!(
+                                    "ignoring non-RTP UDP packet: count={malformed_packets} error={error}"
+                                ),
+                            );
+                        }
                     }
                 }
-            },
+            }
             Err(error) => {
                 logging::error("voice", format!("voice UDP receive failed: {error}"));
                 break;
@@ -3223,53 +3662,141 @@ async fn run_voice_playback_decode(
     decoded_audio: VoiceDecodedAudio,
 ) {
     let mut decoders = HashMap::new();
+    let mut playout_buffers = VoicePlaybackPlayoutBuffers::default();
+    let mut post_process = VoicePlaybackPostProcess::default();
+    let mut playout_tick = interval(VOICE_PLAYBACK_FRAME_DURATION);
+    playout_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut decoded_frames = 0u64;
-    while let Some(frame) = frames_rx.recv().await {
-        let decoder = match decoders.entry(frame.ssrc) {
-            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                match OpusDecoder::new(DISCORD_VOICE_SAMPLE_RATE, Channels::Stereo) {
-                    Ok(decoder) => entry.insert(decoder),
-                    Err(error) => {
-                        logging::error("voice", format!("voice Opus decoder init failed: {error}"));
-                        continue;
+    loop {
+        tokio::select! {
+            frame = frames_rx.recv() => {
+                let Some(frame) = frame else {
+                    break;
+                };
+                playout_buffers.push(frame, Instant::now());
+            }
+            _ = playout_tick.tick() => {
+                let frames = playout_buffers.next_frames(Instant::now());
+                if let Some(mut samples) = decode_voice_playout_frames(frames, &mut decoders) {
+                    post_process.process(&mut samples);
+                    let pcm_samples = samples.len();
+                    decoded_audio.try_send(samples);
+                    decoded_frames = decoded_frames.saturating_add(1);
+                    if decoded_frames == 1 || decoded_frames % 500 == 0 {
+                        logging::debug(
+                            "voice",
+                            format!(
+                                "voice Opus mixed: count={} pcm_samples={}",
+                                decoded_frames, pcm_samples
+                            ),
+                        );
                     }
                 }
             }
-        };
-        let mut decoded =
-            vec![0.0f32; OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL * usize::from(DISCORD_VOICE_CHANNELS)];
-        let samples_per_channel = match decoder.decode_float(&frame.opus, &mut decoded, false) {
-            Ok(samples) => samples,
-            Err(error) => {
-                logging::debug(
-                    "voice",
-                    format!(
-                        "voice Opus decode failed: ssrc={} seq={} error={}",
-                        frame.ssrc, frame.sequence, error
-                    ),
-                );
-                continue;
+        }
+    }
+}
+
+fn decode_voice_playout_frames(
+    frames: Vec<VoicePlayoutFrame>,
+    decoders: &mut HashMap<u32, OpusDecoder>,
+) -> Option<Vec<f32>> {
+    let mut decoded_frames = Vec::new();
+    for frame in frames {
+        if let Some(samples) = decode_voice_playout_frame(frame, decoders) {
+            decoded_frames.push(samples);
+        }
+    }
+    mix_voice_decoded_samples(&decoded_frames)
+}
+
+fn decode_voice_playout_frame(
+    frame: VoicePlayoutFrame,
+    decoders: &mut HashMap<u32, OpusDecoder>,
+) -> Option<Vec<f32>> {
+    let ssrc = frame.ssrc();
+    if frame.is_packet_loss() && !decoders.contains_key(&ssrc) {
+        return Some(vec![0.0f32; DISCORD_OPUS_20MS_STEREO_SAMPLES]);
+    }
+    if let std::collections::hash_map::Entry::Vacant(entry) = decoders.entry(ssrc) {
+        match OpusDecoder::new(DISCORD_VOICE_SAMPLE_RATE, Channels::Stereo) {
+            Ok(decoder) => {
+                entry.insert(decoder);
             }
-        };
-        let decoded_len = samples_per_channel * usize::from(DISCORD_VOICE_CHANNELS);
-        decoded.truncate(decoded_len);
-        decoded_audio.try_send(decoded.clone());
-        decoded_frames = decoded_frames.saturating_add(1);
-        if decoded_frames == 1 || decoded_frames % 500 == 0 {
+            Err(error) => {
+                logging::error("voice", format!("voice Opus decoder init failed: {error}"));
+                return None;
+            }
+        }
+    }
+    let decoder = decoders
+        .get_mut(&ssrc)
+        .expect("Opus decoder should exist after insertion");
+    let decode_sample_capacity = if frame.opus().is_empty() {
+        DISCORD_OPUS_20MS_STEREO_SAMPLES
+    } else {
+        OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL * usize::from(DISCORD_VOICE_CHANNELS)
+    };
+    let mut decoded = vec![0.0f32; decode_sample_capacity];
+    let samples_per_channel = match decoder.decode_float(frame.opus(), &mut decoded, false) {
+        Ok(samples) => samples,
+        Err(error) => {
             logging::debug(
                 "voice",
                 format!(
-                    "voice Opus decoded: count={} ssrc={} user_id={:?} seq={} samples_per_channel={} pcm_samples={}",
-                    decoded_frames,
-                    frame.ssrc,
-                    frame.user_id,
-                    frame.sequence,
-                    samples_per_channel,
-                    decoded.len()
+                    "voice Opus decode failed: ssrc={} seq={} error={}",
+                    frame.ssrc(),
+                    frame.sequence(),
+                    error
                 ),
             );
+            decoders.remove(&ssrc);
+            return Some(vec![0.0f32; DISCORD_OPUS_20MS_STEREO_SAMPLES]);
         }
+    };
+    let decoded_len = samples_per_channel * usize::from(DISCORD_VOICE_CHANNELS);
+    decoded.truncate(decoded_len);
+    if samples_per_channel != DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL {
+        logging::debug(
+            "voice",
+            format!(
+                "voice Opus decoded non-20ms frame: ssrc={} user_id={:?} seq={} samples_per_channel={} pcm_samples={}",
+                frame.ssrc(),
+                frame.user_id(),
+                frame.sequence(),
+                samples_per_channel,
+                decoded_len
+            ),
+        );
+    }
+    Some(decoded)
+}
+
+fn mix_voice_decoded_samples(decoded_frames: &[Vec<f32>]) -> Option<Vec<f32>> {
+    let max_len = decoded_frames.iter().map(Vec::len).max()?;
+    if max_len == 0 {
+        return None;
+    }
+
+    let mut mixed = vec![0.0f32; max_len];
+    for decoded in decoded_frames {
+        for (mixed_sample, decoded_sample) in mixed.iter_mut().zip(decoded) {
+            *mixed_sample += *decoded_sample;
+        }
+    }
+
+    let gain = voice_mix_gain(decoded_frames.len());
+    for sample in &mut mixed {
+        *sample = clamp_voice_sample(*sample * gain);
+    }
+    Some(mixed)
+}
+
+fn voice_mix_gain(frame_count: usize) -> f32 {
+    if frame_count <= 1 {
+        1.0
+    } else {
+        1.0 / (frame_count as f32).sqrt()
     }
 }
 
@@ -3862,7 +4389,8 @@ fn voice_playback_frame(
     let (user_id, opus) = match media {
         VoiceMediaPayload::Plain(opus) => (None, opus.clone()),
         VoiceMediaPayload::DaveDecrypted { user_id, opus } => (Some(*user_id), opus.clone()),
-        VoiceMediaPayload::DaveMissingUser { .. }
+        VoiceMediaPayload::DaveUnexpectedPlain { .. }
+        | VoiceMediaPayload::DaveMissingUser { .. }
         | VoiceMediaPayload::DaveNotReady { .. }
         | VoiceMediaPayload::DaveDecryptFailed { .. } => return None,
     };
@@ -3878,7 +4406,8 @@ fn voice_playback_frame(
 fn voice_media_payload_counts_as_remote_activity(media: &VoiceMediaPayload) -> bool {
     let opus = match media {
         VoiceMediaPayload::Plain(opus) | VoiceMediaPayload::DaveDecrypted { opus, .. } => opus,
-        VoiceMediaPayload::DaveMissingUser { .. }
+        VoiceMediaPayload::DaveUnexpectedPlain { .. }
+        | VoiceMediaPayload::DaveMissingUser { .. }
         | VoiceMediaPayload::DaveNotReady { .. }
         | VoiceMediaPayload::DaveDecryptFailed { .. } => return false,
     };
@@ -3945,6 +4474,9 @@ fn parse_rtp_header(packet: &[u8]) -> Result<RtpHeader, String> {
     if version != RTP_VERSION {
         return Err("RTP packet has unsupported version".to_owned());
     }
+    if looks_like_rtcp_packet(packet) {
+        return Err("RTP parser received RTCP packet".to_owned());
+    }
     let has_extension = packet[0] & 0x10 != 0;
     let csrc_count = usize::from(packet[0] & 0x0f);
     let mut authenticated_header_len = RTP_HEADER_MIN_LEN + csrc_count * 4;
@@ -3976,6 +4508,24 @@ fn parse_rtp_header(packet: &[u8]) -> Result<RtpHeader, String> {
         authenticated_header_len,
         encrypted_extension_body_len,
         payload_offset,
+    })
+}
+
+fn looks_like_rtcp_packet(packet: &[u8]) -> bool {
+    packet.len() >= RTCP_MIN_PACKET_BYTES
+        && packet[0] >> 6 == RTP_VERSION
+        && (192..=223).contains(&packet[1])
+}
+
+fn rtcp_sender_ssrc(packet: &[u8]) -> Option<u32> {
+    let end = RTCP_SENDER_SSRC_OFFSET + RTCP_SENDER_SSRC_BYTES;
+    (packet.len() >= end).then(|| {
+        u32::from_be_bytes([
+            packet[RTCP_SENDER_SSRC_OFFSET],
+            packet[RTCP_SENDER_SSRC_OFFSET + 1],
+            packet[RTCP_SENDER_SSRC_OFFSET + 2],
+            packet[RTCP_SENDER_SSRC_OFFSET + 3],
+        ])
     })
 }
 
@@ -4255,6 +4805,18 @@ mod tests {
     }
 
     #[test]
+    fn voice_dave_active_drops_non_dave_payloads() {
+        let session = test_voice_gateway_session();
+        let mut state = VoiceDaveState::new(&session);
+        state.reinit(1).expect("DAVE session should initialize");
+
+        assert_eq!(
+            state.unwrap_media_payload_for_ssrc(1234, b"plain-opus"),
+            VoiceMediaPayload::DaveUnexpectedPlain { payload_len: 10 }
+        );
+    }
+
+    #[test]
     fn voice_speaking_uses_microphone_bit_only() {
         assert!(!voice_speaking_microphone_active(0));
         assert!(voice_speaking_microphone_active(1));
@@ -4371,11 +4933,230 @@ mod tests {
         );
         assert_eq!(
             voice_playback_frame(
+                &VoiceMediaPayload::DaveUnexpectedPlain { payload_len: 4 },
+                &header,
+            ),
+            None
+        );
+        assert_eq!(
+            voice_playback_frame(
                 &VoiceMediaPayload::DaveMissingUser { payload_len: 4 },
                 &header,
             ),
             None
         );
+    }
+
+    fn test_playback_frame(ssrc: u32, user_id: Option<u64>, sequence: u16) -> VoicePlaybackFrame {
+        VoicePlaybackFrame {
+            ssrc,
+            user_id,
+            sequence,
+            timestamp: u32::from(sequence) * DISCORD_OPUS_TIMESTAMP_INCREMENT,
+            opus: vec![sequence as u8],
+        }
+    }
+
+    #[test]
+    fn voice_playout_buffer_reorders_nearby_packets() {
+        let now = Instant::now();
+        let mut buffer = VoicePlaybackPlayoutBuffer::default();
+
+        assert!(buffer.push(test_playback_frame(9, Some(42), 12), now));
+        assert!(buffer.push(test_playback_frame(9, Some(42), 10), now));
+        assert_eq!(buffer.next_frame(now), None);
+        assert!(buffer.push(test_playback_frame(9, Some(42), 11), now));
+
+        assert_eq!(
+            buffer.next_frame(now),
+            Some(VoicePlayoutFrame::Audio(test_playback_frame(
+                9,
+                Some(42),
+                10
+            )))
+        );
+        assert_eq!(
+            buffer.next_frame(now),
+            Some(VoicePlayoutFrame::Audio(test_playback_frame(
+                9,
+                Some(42),
+                11
+            )))
+        );
+        assert_eq!(
+            buffer.next_frame(now),
+            Some(VoicePlayoutFrame::Audio(test_playback_frame(
+                9,
+                Some(42),
+                12
+            )))
+        );
+    }
+
+    #[test]
+    fn voice_playout_buffer_emits_packet_loss_for_missing_sequence() {
+        let now = Instant::now();
+        let mut buffer = VoicePlaybackPlayoutBuffer::default();
+
+        assert!(buffer.push(test_playback_frame(9, Some(42), 10), now));
+        assert!(buffer.push(test_playback_frame(9, Some(42), 12), now));
+        assert!(buffer.push(test_playback_frame(9, Some(42), 13), now));
+
+        assert_eq!(
+            buffer.next_frame(now),
+            Some(VoicePlayoutFrame::Audio(test_playback_frame(
+                9,
+                Some(42),
+                10
+            )))
+        );
+        assert_eq!(
+            buffer.next_frame(now),
+            Some(VoicePlayoutFrame::PacketLoss {
+                ssrc: 9,
+                user_id: Some(42),
+                sequence: 11,
+            })
+        );
+        assert_eq!(
+            buffer.next_frame(now),
+            Some(VoicePlayoutFrame::Audio(test_playback_frame(
+                9,
+                Some(42),
+                12
+            )))
+        );
+    }
+
+    #[test]
+    fn voice_playout_buffer_drops_stale_packets_after_playout_advances() {
+        let now = Instant::now();
+        let mut buffer = VoicePlaybackPlayoutBuffer::default();
+
+        assert!(buffer.push(test_playback_frame(9, Some(42), 7), now));
+        assert!(buffer.push(test_playback_frame(9, Some(42), 8), now));
+        assert!(buffer.push(test_playback_frame(9, Some(42), 9), now));
+        assert_eq!(
+            buffer.next_frame(now),
+            Some(VoicePlayoutFrame::Audio(test_playback_frame(
+                9,
+                Some(42),
+                7
+            )))
+        );
+        assert_eq!(
+            buffer.next_frame(now),
+            Some(VoicePlayoutFrame::Audio(test_playback_frame(
+                9,
+                Some(42),
+                8
+            )))
+        );
+
+        assert!(!buffer.push(test_playback_frame(9, Some(42), 7), now));
+    }
+
+    #[test]
+    fn voice_decoded_samples_mix_same_tick_frames() {
+        let mixed = mix_voice_decoded_samples(&[
+            vec![0.5, 0.25, -0.5, -0.25],
+            vec![0.5, -0.25, 0.5, -0.75],
+        ])
+        .expect("same-tick decoded frames should mix");
+        let gain = 1.0 / 2.0f32.sqrt();
+
+        assert_voice_sample_near(mixed[0], 1.0 * gain);
+        assert_voice_sample_near(mixed[1], 0.0);
+        assert_voice_sample_near(mixed[2], 0.0);
+        assert_voice_sample_near(mixed[3], -gain);
+    }
+
+    #[test]
+    fn voice_decoded_samples_clamp_mixed_peaks() {
+        let mixed = mix_voice_decoded_samples(&[vec![1.0, 1.0], vec![1.0, 1.0]])
+            .expect("same-tick decoded frames should mix");
+
+        assert_eq!(mixed, vec![1.0, 1.0]);
+    }
+
+    #[test]
+    fn voice_post_process_reduces_alternating_high_frequency_noise() {
+        let mut post_process = VoicePlaybackPostProcess::default();
+        let mut samples = vec![1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0];
+
+        post_process.process(&mut samples);
+
+        assert!(samples[2].abs() < 1.0);
+        assert!(samples[4].abs() < 1.0);
+        assert!(samples[6].abs() < 1.0);
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn extra_output_channels_use_converted_silence() {
+        let mut u8_output = [0u8; 4];
+        write_voice_output_frame(&mut u8_output, 1.0, -1.0, voice_sample_to_u8);
+        assert_eq!(
+            u8_output,
+            [255, 0, voice_sample_to_u8(0.0), voice_sample_to_u8(0.0)]
+        );
+
+        let mut u16_output = [0u16; 4];
+        write_voice_output_frame(&mut u16_output, 1.0, -1.0, voice_sample_to_u16);
+        assert_eq!(
+            u16_output,
+            [
+                u16::MAX,
+                0,
+                voice_sample_to_u16(0.0),
+                voice_sample_to_u16(0.0),
+            ]
+        );
+
+        let mut i16_output = [1i16; 4];
+        write_voice_output_frame(&mut i16_output, 1.0, -1.0, voice_sample_to_i16);
+        assert_eq!(i16_output, [i16::MAX, i16::MIN + 1, 0, 0]);
+    }
+
+    fn assert_voice_sample_near(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.0001,
+            "expected {actual} to be close to {expected}"
+        );
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn voice_audio_buffer_resamples_non_48khz_output_clock() {
+        let (tx, rx) = sync_channel(1);
+        tx.try_send(vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0])
+            .expect("decoded samples should queue");
+        let mut buffer = VoiceAudioBuffer::new(rx, 24_000);
+
+        assert_eq!(buffer.next_stereo_frame(), Some([0.0, 0.0]));
+        assert_eq!(buffer.next_stereo_frame(), Some([2.0, 2.0]));
+        let faded = buffer
+            .next_stereo_frame()
+            .expect("resampled underrun should fade from the last frame");
+        assert!(faded[0] < 2.0 && faded[0] > 0.0);
+        assert_eq!(faded[0], faded[1]);
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn voice_audio_buffer_fades_short_underruns() {
+        let (tx, rx) = sync_channel(1);
+        tx.try_send(vec![1.0, -1.0])
+            .expect("decoded samples should queue");
+        let mut buffer = VoiceAudioBuffer::new(rx, DISCORD_VOICE_SAMPLE_RATE);
+
+        assert_eq!(buffer.next_stereo_frame(), Some([1.0, -1.0]));
+        let faded = buffer
+            .next_stereo_frame()
+            .expect("underrun should produce a short fade tail");
+
+        assert!(faded[0] < 1.0 && faded[0] > 0.0);
+        assert!(faded[1] > -1.0 && faded[1] < 0.0);
     }
 
     #[test]
@@ -4388,6 +5169,9 @@ mod tests {
                 user_id: 42,
                 opus: DISCORD_OPUS_SILENCE_FRAME.to_vec(),
             },
+        ));
+        assert!(!voice_media_payload_counts_as_remote_activity(
+            &VoiceMediaPayload::DaveUnexpectedPlain { payload_len: 4 },
         ));
         assert!(!voice_media_payload_counts_as_remote_activity(
             &VoiceMediaPayload::DaveMissingUser { payload_len: 4 },
@@ -5149,6 +5933,28 @@ mod tests {
         assert_eq!(
             parse_rtp_header(&packet).expect_err("wrong version should fail"),
             "RTP packet has unsupported version"
+        );
+    }
+
+    #[test]
+    fn rtp_header_rejects_rtcp_reports_before_payload_type_masking() {
+        let local_ssrc = 0x0000_f5e7u32;
+        let mut receiver_report = vec![0x80, 0xc9, 0, 7];
+        receiver_report.extend_from_slice(&local_ssrc.to_be_bytes());
+        receiver_report.extend_from_slice(&[0, 0, 0, 0]);
+
+        assert!(looks_like_rtcp_packet(&receiver_report));
+        assert_eq!(rtcp_sender_ssrc(&receiver_report), Some(local_ssrc));
+        assert_eq!(
+            parse_rtp_header(&receiver_report).expect_err("RTCP should not parse as RTP"),
+            "RTP parser received RTCP packet"
+        );
+
+        let sender_report = [0x80, 0xc8, 0, 12, 0, 0, 0xf5, 0xe7, 0, 0, 0, 0];
+        assert!(looks_like_rtcp_packet(&sender_report));
+        assert_eq!(
+            parse_rtp_header(&sender_report).expect_err("RTCP should not parse as RTP"),
+            "RTP parser received RTCP packet"
         );
     }
 
