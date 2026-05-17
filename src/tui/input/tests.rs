@@ -1472,6 +1472,42 @@ fn composer_cursor_edits_in_middle() {
 }
 
 #[test]
+fn composer_up_down_moves_cursor_between_lines() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+    assert!(handle_paste(&mut state, "abc\nde\nfghi"));
+
+    handle_key(&mut state, key(KeyCode::Up));
+    assert_eq!(state.composer_cursor_byte_index(), "abc\nde".len());
+
+    handle_key(&mut state, key(KeyCode::Up));
+    assert_eq!(state.composer_cursor_byte_index(), "ab".len());
+
+    handle_key(&mut state, key(KeyCode::Down));
+    assert_eq!(state.composer_cursor_byte_index(), "abc\nde".len());
+
+    handle_key(&mut state, key(KeyCode::Down));
+    assert_eq!(state.composer_cursor_byte_index(), "abc\nde\nfg".len());
+
+    state.clear_composer_input();
+    assert!(handle_paste(&mut state, "가나\nabc"));
+
+    handle_key(&mut state, key(KeyCode::Home));
+    handle_key(&mut state, key(KeyCode::Right));
+    handle_key(&mut state, key(KeyCode::Down));
+
+    assert_eq!(state.composer_cursor_byte_index(), "가나\na".len());
+    assert!(
+        state
+            .composer_input()
+            .is_char_boundary(state.composer_cursor_byte_index())
+    );
+}
+
+#[test]
 fn paste_inserts_text_while_composing() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);

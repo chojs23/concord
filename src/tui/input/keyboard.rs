@@ -198,6 +198,8 @@ enum ComposerAction {
     RemoveLastAttachment,
     DeletePreviousChar,
     DeleteNextChar,
+    MoveCursorUp,
+    MoveCursorDown,
     MoveCursorWordLeft,
     MoveCursorLeft,
     MoveCursorWordRight,
@@ -1286,6 +1288,8 @@ fn composer_action(key: KeyEvent) -> ComposerAction {
         }
         KeyCode::Backspace => ComposerAction::DeletePreviousChar,
         KeyCode::Delete => ComposerAction::DeleteNextChar,
+        KeyCode::Up => ComposerAction::MoveCursorUp,
+        KeyCode::Down => ComposerAction::MoveCursorDown,
         KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
             ComposerAction::MoveCursorWordLeft
         }
@@ -1396,6 +1400,14 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
         }
         ComposerAction::DeleteNextChar => {
             state.delete_composer_char();
+            None
+        }
+        ComposerAction::MoveCursorUp => {
+            state.move_composer_cursor_up();
+            None
+        }
+        ComposerAction::MoveCursorDown => {
+            state.move_composer_cursor_down();
             None
         }
         ComposerAction::MoveCursorWordLeft => {

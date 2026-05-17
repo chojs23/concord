@@ -215,6 +215,22 @@ impl DashboardState {
         self.refresh_active_mention_query();
     }
 
+    pub fn move_composer_cursor_up(&mut self) {
+        let cursor = self.composer_cursor_byte_index();
+        if let Some(target) = vertical_cursor_target(&self.composer_input, cursor, -1) {
+            self.composer_cursor_byte_index = target;
+            self.refresh_active_mention_query();
+        }
+    }
+
+    pub fn move_composer_cursor_down(&mut self) {
+        let cursor = self.composer_cursor_byte_index();
+        if let Some(target) = vertical_cursor_target(&self.composer_input, cursor, 1) {
+            self.composer_cursor_byte_index = target;
+            self.refresh_active_mention_query();
+        }
+    }
+
     pub fn move_composer_cursor_word_left(&mut self) {
         let cursor = self.composer_cursor_byte_index();
         self.composer_cursor_byte_index = previous_word_boundary(&self.composer_input, cursor);
@@ -675,6 +691,62 @@ fn next_char_boundary(input: &str, index: usize) -> usize {
         next += 1;
     }
     next.min(input.len())
+}
+
+fn vertical_cursor_target(input: &str, cursor: usize, direction: isize) -> Option<usize> {
+    let cursor = clamp_cursor_index(input, cursor);
+    let line_start = line_start_before(input, cursor);
+    let line_end = line_end_after(input, cursor);
+    let column = input[line_start..cursor].chars().count();
+
+    match direction {
+        -1 => {
+            if line_start == 0 {
+                return None;
+            }
+            let target_end = line_start - 1;
+            let target_start = line_start_before(input, target_end);
+            Some(byte_index_for_line_column(
+                input,
+                target_start,
+                target_end,
+                column,
+            ))
+        }
+        1 => {
+            let next_start = line_end.checked_add(1)?;
+            if next_start > input.len() {
+                return None;
+            }
+            let target_end = line_end_after(input, next_start);
+            Some(byte_index_for_line_column(
+                input, next_start, target_end, column,
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn line_start_before(input: &str, index: usize) -> usize {
+    input[..index]
+        .rfind('\n')
+        .map(|offset| offset + '\n'.len_utf8())
+        .unwrap_or(0)
+}
+
+fn line_end_after(input: &str, index: usize) -> usize {
+    input[index..]
+        .find('\n')
+        .map(|offset| index + offset)
+        .unwrap_or(input.len())
+}
+
+fn byte_index_for_line_column(input: &str, start: usize, end: usize, column: usize) -> usize {
+    input[start..end]
+        .char_indices()
+        .nth(column)
+        .map(|(offset, _)| start + offset)
+        .unwrap_or(end)
 }
 
 fn previous_word_boundary(input: &str, index: usize) -> usize {
