@@ -4,7 +4,7 @@ use fixtures::*;
 use ratatui::text::Line;
 
 use crate::{
-    config::{DisplayOptions, ImagePreviewQualityPreset},
+    config::{ImagePreviewQualityPreset, NotificationOptions, VoiceOptions},
     discord::ids::{
         Id,
         marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
@@ -24,7 +24,8 @@ use crate::discord::{
     MessageAttachmentUpload, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
     MutualGuildInfo, NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind,
     PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
-    ReadStateInfo, ReplyInfo, RoleInfo, SnapshotRevision, UserProfileInfo, VoiceStateInfo,
+    ReadStateInfo, ReplyInfo, RoleInfo, SnapshotRevision, UserProfileInfo, VoiceConnectionStatus,
+    VoiceStateInfo,
 };
 
 fn message_rendered_height(
@@ -199,10 +200,9 @@ fn desktop_notification_for_event_suppresses_active_channel() {
 }
 
 #[test]
-fn desktop_notification_for_event_respects_display_opt_out() {
-    let mut state = DashboardState::new_with_display_options(DisplayOptions {
+fn desktop_notification_for_event_respects_notification_opt_out() {
+    let mut state = DashboardState::new_with_notification_options(NotificationOptions {
         desktop_notifications: false,
-        ..DisplayOptions::default()
     });
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
@@ -1675,6 +1675,7 @@ fn message_row_content_metrics_cache_clears_on_discord_event() {
             guild_id: Id::new(1),
             channel_id: None,
             user_id: Id::new(99),
+            session_id: None,
             member: Some(MemberInfo {
                 user_id: Id::new(99),
                 display_name: "voice nickname".to_owned(),
@@ -2298,6 +2299,112 @@ fn image_preview_quality_option_cycles_presets() {
     assert_eq!(
         state.image_preview_quality(),
         ImagePreviewQualityPreset::Efficient
+    );
+}
+
+#[test]
+fn display_option_items_include_voice_state_controls() {
+    let state = DashboardState::new_with_voice_options(VoiceOptions {
+        self_mute: true,
+        self_deaf: true,
+        allow_microphone_transmit: true,
+        microphone_sensitivity: Default::default(),
+        microphone_volume: Default::default(),
+        voice_output_volume: Default::default(),
+    });
+
+    let items = state.display_option_items();
+
+    assert_eq!(items.len(), 12);
+    assert_eq!(items[6].label, "Voice muted");
+    assert!(items[6].enabled);
+    assert!(items[6].effective);
+    assert_eq!(items[7].label, "Voice deafened");
+    assert!(items[7].enabled);
+    assert!(items[7].effective);
+    assert_eq!(items[8].label, "Allow microphone transmit");
+    assert!(items[8].enabled);
+    assert!(items[8].effective);
+    assert_eq!(items[9].label, "Microphone sensitivity");
+    assert_eq!(items[9].value, Some("-30 dB".to_owned()));
+    assert_eq!(items[9].gauge_percent, Some(70));
+    assert!(items[9].effective);
+    assert_eq!(items[10].label, "Microphone volume");
+    assert_eq!(items[10].value, Some("100%".to_owned()));
+    assert_eq!(items[10].gauge_percent, Some(100));
+    assert!(items[10].effective);
+    assert_eq!(items[11].label, "Voice volume");
+    assert_eq!(items[11].value, Some("100%".to_owned()));
+    assert_eq!(items[11].gauge_percent, Some(100));
+    assert!(!items[11].effective);
+}
+
+#[test]
+fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
+    let mut state = DashboardState::new();
+    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
+        guild_id: Id::new(1),
+        channel_id: Some(Id::new(11)),
+        status: VoiceConnectionStatus::Connecting,
+        message: None,
+    });
+    state.open_options_category_picker();
+    state.open_options_category_shortcut('v');
+
+    state.toggle_selected_display_option();
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceState {
+            guild_id: Id::new(1),
+            channel_id: Id::new(11),
+            self_mute: true,
+            self_deaf: false,
+        }]
+    );
+
+    state.move_option_down();
+    state.toggle_selected_display_option();
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceState {
+            guild_id: Id::new(1),
+            channel_id: Id::new(11),
+            self_mute: true,
+            self_deaf: true,
+        }]
+    );
+
+    state.move_option_down();
+    state.toggle_selected_display_option();
+    assert!(state.voice_options().allow_microphone_transmit);
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceCapturePermission {
+            guild_id: Id::new(1),
+            channel_id: Id::new(11),
+            allow_microphone_transmit: true,
+            microphone_sensitivity: Default::default(),
+            microphone_volume: Default::default(),
+            voice_output_volume: Default::default(),
+        }]
+    );
+
+    state.move_option_down();
+    state.adjust_selected_display_option(10);
+    assert_eq!(
+        state.voice_options().microphone_sensitivity.label(),
+        "-20 dB"
+    );
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceCapturePermission {
+            guild_id: Id::new(1),
+            channel_id: Id::new(11),
+            allow_microphone_transmit: true,
+            microphone_sensitivity: state.voice_options().microphone_sensitivity,
+            microphone_volume: Default::default(),
+            voice_output_volume: Default::default(),
+        }]
     );
 }
 
@@ -8052,6 +8159,268 @@ fn voice_channel_participants_render_as_child_rows_and_are_skipped_by_selection(
 }
 
 #[test]
+fn voice_channel_action_emits_join_then_leave_command() {
+    let mut state = DashboardState::new_with_voice_options(VoiceOptions {
+        self_mute: true,
+        self_deaf: true,
+        allow_microphone_transmit: false,
+        microphone_sensitivity: Default::default(),
+        microphone_volume: Default::default(),
+        voice_output_volume: Default::default(),
+    });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "Lobby".to_owned(),
+            kind: "GuildVoice".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.activate_guild(super::ActiveGuildScope::Guild(Id::new(1)));
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+    let command = state.activate_selected_channel_action();
+    assert_eq!(
+        command,
+        Some(AppCommand::JoinVoiceChannel {
+            guild_id: Id::new(1),
+            channel_id: Id::new(11),
+            self_mute: true,
+            self_deaf: true,
+            allow_microphone_transmit: false,
+            microphone_sensitivity: Default::default(),
+            microphone_volume: Default::default(),
+            voice_output_volume: Default::default(),
+        })
+    );
+
+    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
+        guild_id: Id::new(1),
+        channel_id: Some(Id::new(11)),
+        status: VoiceConnectionStatus::Connecting,
+        message: None,
+    });
+    state.open_selected_channel_actions();
+    let actions = state.selected_channel_action_items();
+    assert_eq!(actions[0].kind, ChannelActionKind::LeaveVoice);
+
+    let command = state.activate_selected_channel_action();
+    assert_eq!(
+        command,
+        Some(AppCommand::LeaveVoiceChannel {
+            guild_id: Id::new(1),
+            self_mute: true,
+            self_deaf: true,
+        })
+    );
+}
+
+#[test]
+fn voice_leader_actions_toggle_state_and_leave_current_voice() {
+    let mut state = DashboardState::new();
+    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
+        guild_id: Id::new(1),
+        channel_id: Some(Id::new(11)),
+        status: VoiceConnectionStatus::Connecting,
+        message: None,
+    });
+
+    state.open_voice_actions();
+    let command = state.activate_voice_action_shortcut('m');
+    assert_eq!(command, None);
+    assert!(state.voice_options().self_mute);
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceState {
+            guild_id: Id::new(1),
+            channel_id: Id::new(11),
+            self_mute: true,
+            self_deaf: false,
+        }]
+    );
+
+    state.open_voice_actions();
+    let command = state.activate_voice_action_shortcut('d');
+    assert_eq!(command, None);
+    assert!(state.voice_options().self_deaf);
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceState {
+            guild_id: Id::new(1),
+            channel_id: Id::new(11),
+            self_mute: true,
+            self_deaf: true,
+        }]
+    );
+
+    state.open_voice_actions();
+    let command = state.activate_voice_action_shortcut('l');
+    assert_eq!(
+        command,
+        Some(AppCommand::LeaveVoiceChannel {
+            guild_id: Id::new(1),
+            self_mute: true,
+            self_deaf: true,
+        })
+    );
+}
+
+#[test]
+fn other_client_voice_state_shows_header_only() {
+    let mut state = DashboardState::new_with_voice_options(VoiceOptions {
+        self_mute: true,
+        self_deaf: true,
+        allow_microphone_transmit: false,
+        microphone_sensitivity: Default::default(),
+        microphone_volume: Default::default(),
+        voice_output_volume: Default::default(),
+    });
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "Lobby".to_owned(),
+            kind: "GuildVoice".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id: Id::new(1),
+            channel_id: Some(Id::new(11)),
+            user_id: Id::new(10),
+            session_id: Some("other-client-voice-session".to_owned()),
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: true,
+            self_mute: true,
+            self_stream: false,
+        },
+    });
+
+    assert_eq!(
+        state.active_voice_connection_label().as_deref(),
+        Some("guild - Lobby (other client)")
+    );
+    assert!(!state.is_joined_voice_channel(Id::new(11)));
+
+    state.activate_guild(super::ActiveGuildScope::Guild(Id::new(1)));
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+    let actions = state.selected_channel_action_items();
+    assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
+
+    state.open_options_popup();
+    for _ in 0..6 {
+        state.move_option_down();
+    }
+    state.toggle_selected_display_option();
+    assert!(state.drain_pending_commands().is_empty());
+}
+
+#[test]
+fn voice_channel_join_action_requires_connect_permission() {
+    let me = Id::new(10);
+    let owner = Id::new(11);
+    let guild_id = Id::new(1);
+    let voice_id = Id::new(11);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(me),
+    });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: Some(1),
+        owner_id: Some(owner),
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id: voice_id,
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "Lobby".to_owned(),
+            kind: "GuildVoice".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: vec![MemberInfo {
+            user_id: me,
+            display_name: "me".to_owned(),
+            username: Some("me".to_owned()),
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+        }],
+        presences: Vec::new(),
+        roles: vec![RoleInfo {
+            id: Id::new(guild_id.get()),
+            name: "@everyone".to_owned(),
+            color: None,
+            position: 0,
+            hoist: false,
+            permissions: PERM_VIEW_CHANNEL,
+        }],
+        emojis: Vec::new(),
+    });
+    state.activate_guild(super::ActiveGuildScope::Guild(guild_id));
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+
+    let actions = state.selected_channel_action_items();
+    assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
+    assert!(!actions[0].enabled);
+    assert_eq!(state.activate_selected_channel_action(), None);
+}
+
+#[test]
 fn selected_channel_category_can_be_closed_and_opened() {
     let mut state = state_with_channel_tree();
 
@@ -8366,6 +8735,7 @@ fn state_with_voice_channel_participant() -> DashboardState {
             guild_id,
             channel_id: Some(voice_id),
             user_id: alice,
+            session_id: None,
             member: None,
             deaf: false,
             mute: false,

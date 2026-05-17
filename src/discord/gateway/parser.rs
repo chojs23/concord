@@ -31,7 +31,7 @@ use messages::{
 use presence::{parse_presence_update, parse_typing_start};
 use ready::{parse_ready, parse_ready_supplemental};
 use relationships::{parse_relationship_add, parse_relationship_remove, parse_relationship_update};
-use voice::{parse_guild_voice_states, parse_voice_state_update};
+use voice::{parse_guild_voice_states, parse_voice_server_update, parse_voice_state_update};
 
 /// Best-effort fallback that rebuilds the dashboard's domain events directly
 /// from the raw gateway payload. We only extract the fields the UI consumes,
@@ -89,6 +89,7 @@ pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         "GUILD_MEMBER_REMOVE" => parse_member_remove(data).into_iter().collect(),
         "PRESENCE_UPDATE" => parse_presence_update(data),
         "VOICE_STATE_UPDATE" => parse_voice_state_update(data).into_iter().collect(),
+        "VOICE_SERVER_UPDATE" => parse_voice_server_update(data).into_iter().collect(),
         "TYPING_START" => parse_typing_start(data).into_iter().collect(),
         _ => Vec::new(),
     }
@@ -168,6 +169,7 @@ mod tests {
                     "self_deaf": false,
                     "self_mute": true,
                     "self_stream": true,
+                    "session_id": "voice-session-1",
                     "member": {
                         "user": {
                             "id": "20",
@@ -191,10 +193,39 @@ mod tests {
                     && state.mute
                     && state.self_mute
                     && state.self_stream
+                    && state.session_id.as_deref() == Some("voice-session-1")
                     && state.member.as_ref().is_some_and(|member|
                         member.display_name == "Alice Nick" && member.role_ids == vec![Id::new(40)]
                     )
         )));
+    }
+
+    #[test]
+    fn raw_voice_server_update_extracts_endpoint_without_exposing_token_in_debug() {
+        let events = parse_user_account_event(
+            &json!({
+                "t": "VOICE_SERVER_UPDATE",
+                "d": {
+                    "guild_id": "10",
+                    "endpoint": "voice.example.com",
+                    "token": "secret-voice-token"
+                }
+            })
+            .to_string(),
+        );
+
+        let server = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::VoiceServerUpdate { server } => Some(server),
+                _ => None,
+            })
+            .expect("voice server update should parse");
+
+        assert_eq!(server.guild_id, Id::new(10));
+        assert_eq!(server.endpoint.as_deref(), Some("voice.example.com"));
+        assert_eq!(server.token, "secret-voice-token");
+        assert!(!format!("{server:?}").contains("secret-voice-token"));
     }
 
     #[test]

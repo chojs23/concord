@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 
-use crate::discord::VoiceStateInfo;
+use crate::config::{MicrophoneSensitivityDb, VoiceVolumePercent};
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
+use crate::discord::{VoiceSoundKind, VoiceStateInfo};
 
 use super::DiscordState;
 
@@ -17,6 +18,19 @@ pub struct VoiceParticipantState {
     pub self_deaf: bool,
     pub self_mute: bool,
     pub self_stream: bool,
+    pub speaking: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CurrentVoiceConnectionState {
+    pub guild_id: Id<GuildMarker>,
+    pub channel_id: Id<ChannelMarker>,
+    pub self_mute: bool,
+    pub self_deaf: bool,
+    pub allow_microphone_transmit: bool,
+    pub microphone_sensitivity: MicrophoneSensitivityDb,
+    pub microphone_volume: VoiceVolumePercent,
+    pub voice_output_volume: VoiceVolumePercent,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,9 +42,29 @@ pub(super) struct VoiceState {
     self_deaf: bool,
     self_mute: bool,
     self_stream: bool,
+    speaking: bool,
 }
 
 impl DiscordState {
+    pub fn current_user_voice_connection(&self) -> Option<CurrentVoiceConnectionState> {
+        let current_user_id = self.session.current_user_id?;
+        self.voice
+            .states
+            .iter()
+            .find_map(|((guild_id, user_id), state)| {
+                (*user_id == current_user_id).then_some(CurrentVoiceConnectionState {
+                    guild_id: *guild_id,
+                    channel_id: state.channel_id,
+                    self_mute: state.self_mute,
+                    self_deaf: state.self_deaf,
+                    allow_microphone_transmit: false,
+                    microphone_sensitivity: MicrophoneSensitivityDb::default(),
+                    microphone_volume: VoiceVolumePercent::default(),
+                    voice_output_volume: VoiceVolumePercent::default(),
+                })
+            })
+    }
+
     pub fn voice_participants_for_channel(
         &self,
         guild_id: Id<GuildMarker>,
@@ -44,6 +78,75 @@ impl DiscordState {
         }
         sort_voice_participants(&mut participants);
         participants
+    }
+
+    pub fn current_user_voice_speaking(&self) -> bool {
+        let Some(current_user_id) = self.session.current_user_id else {
+            return false;
+        };
+        self.user_voice_speaking(current_user_id)
+    }
+
+    pub fn user_voice_speaking_in_guild(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> bool {
+        self.voice
+            .states
+            .get(&(guild_id, user_id))
+            .map(|state| state.speaking)
+            .unwrap_or(false)
+    }
+
+    pub fn user_voice_channel_in_guild(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> Option<Id<ChannelMarker>> {
+        self.voice
+            .states
+            .get(&(guild_id, user_id))
+            .map(|state| state.channel_id)
+    }
+
+    pub(crate) fn voice_sound_for_state_update(
+        &self,
+        state: &VoiceStateInfo,
+    ) -> Option<VoiceSoundKind> {
+        let before = self.user_voice_channel_in_guild(state.guild_id, state.user_id);
+        let after = state.channel_id;
+        if before == after {
+            return None;
+        }
+
+        if self.session.current_user_id == Some(state.user_id) {
+            return match (before, after) {
+                (None, Some(_)) | (Some(_), Some(_)) => Some(VoiceSoundKind::Join),
+                (Some(_), None) => Some(VoiceSoundKind::Leave),
+                (None, None) => None,
+            };
+        }
+
+        let active_voice_channel = self.current_user_voice_connection()?.channel_id;
+        match (
+            before == Some(active_voice_channel),
+            after == Some(active_voice_channel),
+        ) {
+            (false, true) => Some(VoiceSoundKind::Join),
+            (true, false) => Some(VoiceSoundKind::Leave),
+            _ => None,
+        }
+    }
+
+    fn user_voice_speaking(&self, user_id: Id<UserMarker>) -> bool {
+        self.voice
+            .states
+            .iter()
+            .find_map(|((_, state_user_id), state)| {
+                (*state_user_id == user_id).then_some(state.speaking)
+            })
+            .unwrap_or(false)
     }
 
     pub fn voice_participants_by_channel_for_guild(
@@ -83,12 +186,18 @@ impl DiscordState {
             self_deaf: state.self_deaf,
             self_mute: state.self_mute,
             self_stream: state.self_stream,
+            speaking: state.speaking,
         }
     }
 
     pub(super) fn update_voice_state(&mut self, state: &VoiceStateInfo) {
         let key = (state.guild_id, state.user_id);
         if let Some(channel_id) = state.channel_id {
+            let speaking = self
+                .voice
+                .states
+                .get(&key)
+                .is_some_and(|current| current.channel_id == channel_id && current.speaking);
             self.voice.states.insert(
                 key,
                 VoiceState {
@@ -99,10 +208,26 @@ impl DiscordState {
                     self_deaf: state.self_deaf,
                     self_mute: state.self_mute,
                     self_stream: state.self_stream,
+                    speaking,
                 },
             );
         } else {
             self.voice.states.remove(&key);
+        }
+    }
+
+    pub(super) fn update_voice_speaking(
+        &mut self,
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        user_id: Id<UserMarker>,
+        speaking: bool,
+    ) {
+        let Some(state) = self.voice.states.get_mut(&(guild_id, user_id)) else {
+            return;
+        };
+        if state.channel_id == channel_id {
+            state.speaking = speaking;
         }
     }
 

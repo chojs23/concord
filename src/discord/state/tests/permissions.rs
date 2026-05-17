@@ -7,6 +7,7 @@ const SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
 const MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
 const ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
 const READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
+const CONNECT: u64 = 0x0000_0000_0010_0000;
 const ADMINISTRATOR: u64 = 0x0000_0000_0000_0008;
 const ADD_REACTIONS: u64 = 0x0000_0000_0000_0040;
 const PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
@@ -750,6 +751,84 @@ fn pin_and_reaction_helpers_use_documented_permission_bits() {
     assert!(state.can_read_message_history_in_channel(ch));
     assert!(state.can_add_reactions_in_channel(ch));
     assert!(state.can_pin_messages_in_channel(ch));
+}
+
+#[test]
+fn voice_connect_requires_view_channel_and_connect_permission() {
+    let me = Id::new(10);
+    let owner = Id::new(11);
+    let guild = Id::new(1);
+    let channel = Id::new(2);
+    let mut state = guild_with_permissions(
+        owner,
+        me,
+        guild,
+        channel,
+        vec![],
+        vec![RoleInfo {
+            id: Id::new(guild.get()),
+            name: "@everyone".to_owned(),
+            color: None,
+            position: 0,
+            hoist: false,
+            permissions: VIEW_CHANNEL,
+        }],
+        Vec::new(),
+    );
+    state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(guild),
+        channel_id: channel,
+        parent_id: None,
+        position: Some(0),
+        last_message_id: None,
+        name: "Lobby".to_owned(),
+        kind: "GuildVoice".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        thread_pinned: None,
+        recipients: None,
+        permission_overwrites: Vec::new(),
+    }));
+    let ch = state.channel(channel).expect("voice channel");
+    assert!(state.can_view_channel(ch));
+    assert!(!state.can_connect_voice_channel(ch));
+
+    let mut state = guild_with_permissions(
+        owner,
+        me,
+        guild,
+        channel,
+        vec![],
+        vec![RoleInfo {
+            id: Id::new(guild.get()),
+            name: "@everyone".to_owned(),
+            color: None,
+            position: 0,
+            hoist: false,
+            permissions: VIEW_CHANNEL | CONNECT,
+        }],
+        Vec::new(),
+    );
+    state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(guild),
+        channel_id: channel,
+        parent_id: None,
+        position: Some(0),
+        last_message_id: None,
+        name: "Lobby".to_owned(),
+        kind: "GuildVoice".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        thread_pinned: None,
+        recipients: None,
+        permission_overwrites: Vec::new(),
+    }));
+    let ch = state.channel(channel).expect("voice channel");
+    assert!(state.can_connect_voice_channel(ch));
 }
 
 #[test]

@@ -9,12 +9,12 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
-use crate::config::DisplayOptions;
+use crate::config::{DisplayOptions, NotificationOptions, VoiceOptions};
 use crate::discord::{
     AppCommand, AppEvent, ChannelUnreadState, DiscordSnapshot, DiscordState,
     DownloadAttachmentSource, ForumPostArchiveState, MentionInfo, MessageAttachmentUpload,
     MessageInfo, MessageSnapshotInfo, MessageState, MuteDuration, PresenceStatus, SnapshotAreas,
-    SnapshotRevision,
+    SnapshotRevision, VoiceConnectionStatus,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -46,6 +46,7 @@ mod scroll;
 mod subscriptions;
 mod toast;
 mod user;
+mod voice_actions;
 
 use channel_switcher::ChannelSwitcherState;
 use composer::{EmojiCompletion, MentionCompletion};
@@ -53,7 +54,7 @@ use message_render::{add_literal_mention_highlights, normalize_text_highlights};
 use pane_filter::PaneFilterState;
 use popups::{
     ChannelLeaderActionState, GuildLeaderActionState, ImageViewerState, MemberLeaderActionState,
-    UserProfilePopupState,
+    UserProfilePopupState, VoiceLeaderActionState,
 };
 #[cfg(test)]
 use scroll::clamp_list_scroll;
@@ -69,12 +70,15 @@ pub use model::{
     ChannelActionItem, ChannelPaneEntry, ChannelSwitcherItem, ChannelThreadItem, EmojiReactionItem,
     FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, ImageViewerItem,
     MemberActionItem, MessageActionItem, MessageActionKind, MuteActionDurationItem,
-    PollVotePickerItem, ThreadMessagePreview, ThreadSummary, channel_action_shortcut,
-    emoji_reaction_shortcut, guild_action_shortcut, indexed_shortcut, member_action_shortcut,
-    message_action_shortcut,
+    PollVotePickerItem, ThreadMessagePreview, ThreadSummary, VoiceActionItem,
+    channel_action_shortcut, emoji_reaction_shortcut, guild_action_shortcut, indexed_shortcut,
+    member_action_shortcut, message_action_shortcut, voice_action_shortcut,
 };
 #[allow(unused_imports)]
-pub use model::{ChannelActionKind, ChannelBranch, GuildActionKind, GuildBranch, MemberActionKind};
+pub use model::{
+    ChannelActionKind, ChannelBranch, GuildActionKind, GuildBranch, MemberActionKind,
+    VoiceActionKind,
+};
 pub use options::DisplayOptionItem;
 pub use popups::{
     EmojiReactionPickerState, MessageActionMenuState, PollVotePickerState, ReactionUsersPopupState,
@@ -118,6 +122,12 @@ struct ToastMessage {
     text: String,
     kind: ToastKind,
     expires_at: Instant,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VoiceConnectionUiState {
+    guild_id: Id<GuildMarker>,
+    channel_id: Option<Id<ChannelMarker>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -271,12 +281,14 @@ pub struct DashboardState {
     guild_leader_action: Option<GuildLeaderActionState>,
     channel_leader_action: Option<ChannelLeaderActionState>,
     member_leader_action: Option<MemberLeaderActionState>,
+    voice_leader_action: Option<VoiceLeaderActionState>,
     user_profile_popup: Option<UserProfilePopupState>,
     emoji_reaction_picker: Option<EmojiReactionPickerState>,
     poll_vote_picker: Option<PollVotePickerState>,
     reaction_users_popup: Option<ReactionUsersPopupState>,
     debug_log_popup_open: bool,
     toast_message: Option<ToastMessage>,
+    voice_connection: Option<VoiceConnectionUiState>,
     open_composer_in_editor_requested: bool,
     copy_message_content_requested: Option<String>,
     leader_mode: Option<LeaderMode>,
@@ -287,7 +299,9 @@ pub struct DashboardState {
     channel_pane_visible: bool,
     member_pane_visible: bool,
     display_options: DisplayOptions,
-    display_options_save_pending: bool,
+    notification_options: NotificationOptions,
+    voice_options: VoiceOptions,
+    options_save_pending: bool,
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
     current_user_can_use_animated_custom_emojis: Option<bool>,
@@ -408,12 +422,14 @@ impl DashboardState {
             guild_leader_action: None,
             channel_leader_action: None,
             member_leader_action: None,
+            voice_leader_action: None,
             user_profile_popup: None,
             emoji_reaction_picker: None,
             poll_vote_picker: None,
             reaction_users_popup: None,
             debug_log_popup_open: false,
             toast_message: None,
+            voice_connection: None,
             open_composer_in_editor_requested: false,
             copy_message_content_requested: None,
             leader_mode: None,
@@ -424,7 +440,9 @@ impl DashboardState {
             channel_pane_visible: true,
             member_pane_visible: true,
             display_options: DisplayOptions::default(),
-            display_options_save_pending: false,
+            notification_options: NotificationOptions::default(),
+            voice_options: VoiceOptions::default(),
+            options_save_pending: false,
             current_user: None,
             current_user_id: None,
             current_user_can_use_animated_custom_emojis: None,
@@ -460,6 +478,8 @@ impl DashboardState {
                 | AppEvent::RelationshipRemove { .. }
                 | AppEvent::ReadStateInit { .. }
                 | AppEvent::MessageAck { .. }
+                | AppEvent::VoiceServerUpdate { .. }
+                | AppEvent::VoiceConnectionStatusChanged { .. }
         )
     }
 
@@ -637,6 +657,57 @@ impl DashboardState {
                     channel_cursor_id = Some(channel_id);
                 }
             }
+            AppEvent::VoiceConnectionStatusChanged {
+                guild_id,
+                channel_id,
+                status,
+                message,
+            } => match status {
+                VoiceConnectionStatus::Connecting => {
+                    self.voice_connection = Some(VoiceConnectionUiState {
+                        guild_id: *guild_id,
+                        channel_id: *channel_id,
+                    });
+                    self.show_success_toast(
+                        message.as_deref().unwrap_or("Voice join requested"),
+                        Instant::now(),
+                    );
+                }
+                VoiceConnectionStatus::Connected => {
+                    self.voice_connection = Some(VoiceConnectionUiState {
+                        guild_id: *guild_id,
+                        channel_id: *channel_id,
+                    });
+                    self.show_success_toast(
+                        message.as_deref().unwrap_or("Voice connected"),
+                        Instant::now(),
+                    );
+                }
+                VoiceConnectionStatus::Disconnected => {
+                    if self
+                        .voice_connection
+                        .is_some_and(|voice| voice.guild_id == *guild_id)
+                    {
+                        self.voice_connection = None;
+                    }
+                    self.show_success_toast(
+                        message.as_deref().unwrap_or("Voice leave requested"),
+                        Instant::now(),
+                    );
+                }
+                VoiceConnectionStatus::Failed => {
+                    if self
+                        .voice_connection
+                        .is_some_and(|voice| voice.guild_id == *guild_id)
+                    {
+                        self.voice_connection = None;
+                    }
+                    self.show_error_toast(
+                        message.as_deref().unwrap_or("Voice request failed"),
+                        Instant::now(),
+                    );
+                }
+            },
             AppEvent::ChannelUpsert(channel) => {
                 self.record_thread_channel_upserted(channel);
             }
@@ -890,6 +961,7 @@ impl DashboardState {
         self.guild_leader_action = None;
         self.channel_leader_action = None;
         self.member_leader_action = None;
+        self.voice_leader_action = None;
     }
 
     pub fn is_any_action_context_active(&self) -> bool {
@@ -897,6 +969,7 @@ impl DashboardState {
             || self.guild_leader_action.is_some()
             || self.channel_leader_action.is_some()
             || self.member_leader_action.is_some()
+            || self.voice_leader_action.is_some()
     }
 
     pub fn activate_leader_action_shortcut(
@@ -978,6 +1051,20 @@ impl DashboardState {
                 matched,
                 matched
                     .then(|| self.activate_member_action_shortcut(shortcut))
+                    .flatten(),
+            );
+        }
+        if self.voice_leader_action.is_some() {
+            let actions = self.selected_voice_action_items();
+            let matched = actions.iter().enumerate().any(|(index, action)| {
+                action.enabled
+                    && voice_action_shortcut(&actions, index)
+                        .is_some_and(|candidate| candidate == shortcut)
+            });
+            return (
+                matched,
+                matched
+                    .then(|| self.activate_voice_action_shortcut(shortcut))
                     .flatten(),
             );
         }

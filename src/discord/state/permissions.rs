@@ -14,6 +14,7 @@ const PERMISSION_SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
 const PERMISSION_MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
 const PERMISSION_ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
 const PERMISSION_READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
+const PERMISSION_CONNECT: u64 = 0x0000_0000_0010_0000;
 const PERMISSION_ADMINISTRATOR: u64 = 0x0000_0000_0000_0008;
 const PERMISSION_ADD_REACTIONS: u64 = 0x0000_0000_0000_0040;
 const PERMISSION_PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
@@ -92,6 +93,19 @@ impl DiscordState {
         permission_set(permissions, PERMISSION_VIEW_CHANNEL)
             && permission_set(permissions, PERMISSION_READ_MESSAGE_HISTORY)
             && permission_set(permissions, PERMISSION_ADD_REACTIONS)
+    }
+
+    /// Whether the user can connect to a guild voice channel. Unknown
+    /// permissions stay optimistic while state hydrates, but an explicit
+    /// missing `CONNECT` bit disables the join affordance to avoid predictable
+    /// Discord-side denials.
+    pub fn can_connect_voice_channel(&self, channel: &ChannelState) -> bool {
+        if !channel.is_voice() {
+            return false;
+        }
+        let permissions = self.effective_permissions_for_channel(channel);
+        permission_set(permissions, PERMISSION_VIEW_CHANNEL)
+            && permission_set(permissions, PERMISSION_CONNECT)
     }
 
     /// Compute the effective Discord permission bitfield for the

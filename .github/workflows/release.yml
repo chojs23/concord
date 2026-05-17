@@ -63,6 +63,10 @@ jobs:
             echo "::error::Tag ${GITHUB_REF_NAME} ($SHA) is not on main. Refusing to release."
             exit 1
           fi
+      - name: install native audio dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt

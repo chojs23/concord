@@ -5,8 +5,8 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Wrap,
+        Block, BorderType, Borders, Clear, Gauge, ListItem, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, Wrap,
     },
 };
 use ratatui_image::{Image as RatatuiImage, Resize, StatefulImage};
@@ -27,7 +27,7 @@ use super::{
         EmojiReactionItem, FORUM_POST_CARD_HEIGHT, FocusPane, ImageViewerItem, MessageActionItem,
         PollVotePickerItem, channel_action_shortcut, discord_color, emoji_reaction_shortcut,
         guild_action_shortcut, indexed_shortcut, member_action_shortcut, message_action_shortcut,
-        presence_color, presence_marker,
+        presence_color, presence_marker, voice_action_shortcut,
     },
 };
 use crate::discord::{

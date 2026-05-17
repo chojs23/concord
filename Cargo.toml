@@ -13,15 +13,20 @@ categories = ["command-line-utilities"]
 exclude = ["docs/", ".github/", "dist-workspace.toml"]
 
 [dependencies]
+aes-gcm = "0.10.3"
 base64 = "0.22"
+chacha20poly1305 = "0.10.1"
 chrono = { version = "0.4.44", default-features = false, features = ["clock"] }
 crossterm = { version = "0.29.0", features = ["event-stream", "osc52"] }
+cpal = { version = "0.17.3", optional = true }
+davey = "0.1.3"
 dirs = "6.0.0"
 emojis = "0.8.2"
 futures = "0.3.32"
 image = "0.25.10"
 mime_guess = "2.0"
 notify-rust = "4"
+opus = "0.3.1"
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 ratatui = "0.30.0"
@@ -55,6 +60,7 @@ tokio = { version = "1.52.1", features = [
   "rt-multi-thread",
   "fs",
   "signal",
+  "net",
   "sync",
   "time",
 ] }
@@ -68,6 +74,13 @@ toml = "1.1.2"
 unicode-segmentation = "1.12.0"
 unicode-width = "0.2.2"
 uuid = { version = "1.23.1", features = ["v4"] }
+
+[features]
+default = []
+voice-playback = ["dep:cpal", "dep:alsa"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+alsa = { version = "0.11", optional = true }
 
 [profile.dist]
 inherits = "release"

@@ -46,6 +46,11 @@ jobs:
             exit 1
           fi
 
+      - name: install native audio dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt

@@ -30,7 +30,7 @@ pub use notifications::ChannelUnreadState;
 use notifications::{GuildNotificationSettingsState, MessageNotificationKind};
 use profiles::{ProfileRoleIds, UserProfileCacheKey};
 use reads::ChannelReadState;
-pub use voice::VoiceParticipantState;
+pub use voice::{CurrentVoiceConnectionState, VoiceParticipantState};
 
 use super::{
     ActivityInfo, AppEvent, CustomEmojiInfo, FriendStatus, GuildFolder, PresenceStatus,
@@ -539,6 +539,7 @@ impl DiscordState {
             | AppEvent::PresenceUpdate { .. }
             | AppEvent::UserPresenceUpdate { .. }
             | AppEvent::VoiceStateUpdate { .. }
+            | AppEvent::VoiceSpeakingUpdate { .. }
             | AppEvent::TypingStart { .. }
             | AppEvent::GuildFoldersUpdate { .. }
             | AppEvent::UserNoteLoaded { .. }
@@ -561,6 +562,9 @@ impl DiscordState {
             | AppEvent::ThreadPreviewLoadFailed { .. }
             | AppEvent::ForumPostsLoadFailed { .. }
             | AppEvent::UserProfileLoadFailed { .. }
+            | AppEvent::VoiceServerUpdate { .. }
+            | AppEvent::VoiceConnectionStatusChanged { .. }
+            | AppEvent::VoiceSound { .. }
             | AppEvent::ActivateChannel { .. }
             | AppEvent::GatewayClosed => {
                 unreachable!("non-mutating events return before snapshot area classification")
@@ -966,6 +970,14 @@ impl DiscordState {
                 }
                 self.update_voice_state(state);
             }
+            AppEvent::VoiceSpeakingUpdate {
+                guild_id,
+                channel_id,
+                user_id,
+                speaking,
+            } => {
+                self.update_voice_speaking(*guild_id, *channel_id, *user_id, *speaking);
+            }
             AppEvent::TypingStart {
                 channel_id,
                 user_id,
@@ -1199,6 +1211,9 @@ impl DiscordState {
             | AppEvent::ThreadPreviewLoadFailed { .. }
             | AppEvent::ForumPostsLoadFailed { .. }
             | AppEvent::UserProfileLoadFailed { .. }
+            | AppEvent::VoiceServerUpdate { .. }
+            | AppEvent::VoiceConnectionStatusChanged { .. }
+            | AppEvent::VoiceSound { .. }
             | AppEvent::ActivateChannel { .. }
             | AppEvent::GatewayClosed => {}
         }

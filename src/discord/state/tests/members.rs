@@ -69,6 +69,11 @@ fn tracks_voice_participants_join_move_and_leave() {
     let alice = Id::new(20);
     let mut state = DiscordState::default();
 
+    state.apply_event(&AppEvent::Ready {
+        user: "Alice".to_owned(),
+        user_id: Some(alice),
+    });
+
     state.apply_event(&AppEvent::GuildCreate {
         guild_id,
         name: "guild".to_owned(),
@@ -127,6 +132,7 @@ fn tracks_voice_participants_join_move_and_leave() {
             guild_id,
             channel_id: Some(first_voice),
             user_id: alice,
+            session_id: None,
             member: Some(alice_member),
             deaf: false,
             mute: false,
@@ -138,12 +144,38 @@ fn tracks_voice_participants_join_move_and_leave() {
     let first_voice_participants = state.voice_participants_for_channel(guild_id, first_voice);
     assert_eq!(first_voice_participants[0].display_name, "Alice");
     assert!(first_voice_participants[0].self_stream);
+    assert!(!first_voice_participants[0].speaking);
+    assert_eq!(
+        state.current_user_voice_connection(),
+        Some(CurrentVoiceConnectionState {
+            guild_id,
+            channel_id: first_voice,
+            self_mute: true,
+            self_deaf: false,
+            allow_microphone_transmit: false,
+            microphone_sensitivity: Default::default(),
+            microphone_volume: Default::default(),
+            voice_output_volume: Default::default(),
+        })
+    );
+
+    state.apply_event(&AppEvent::VoiceSpeakingUpdate {
+        guild_id,
+        channel_id: first_voice,
+        user_id: alice,
+        speaking: true,
+    });
+    assert!(state.voice_participants_for_channel(guild_id, first_voice)[0].speaking);
+    assert!(state.current_user_voice_speaking());
+    assert!(state.user_voice_speaking_in_guild(guild_id, alice));
+    assert!(!state.user_voice_speaking_in_guild(Id::new(999), alice));
 
     state.apply_event(&AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo {
             guild_id,
             channel_id: Some(second_voice),
             user_id: alice,
+            session_id: None,
             member: None,
             deaf: false,
             mute: false,
@@ -161,12 +193,28 @@ fn tracks_voice_participants_join_move_and_leave() {
         state.voice_participants_for_channel(guild_id, second_voice)[0].user_id,
         alice
     );
+    assert!(!state.voice_participants_for_channel(guild_id, second_voice)[0].speaking);
+    assert!(!state.current_user_voice_speaking());
+    assert_eq!(
+        state.current_user_voice_connection(),
+        Some(CurrentVoiceConnectionState {
+            guild_id,
+            channel_id: second_voice,
+            self_mute: false,
+            self_deaf: false,
+            allow_microphone_transmit: false,
+            microphone_sensitivity: Default::default(),
+            microphone_volume: Default::default(),
+            voice_output_volume: Default::default(),
+        })
+    );
 
     state.apply_event(&AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo {
             guild_id,
             channel_id: None,
             user_id: alice,
+            session_id: None,
             member: None,
             deaf: false,
             mute: false,
@@ -180,6 +228,7 @@ fn tracks_voice_participants_join_move_and_leave() {
             .voice_participants_for_channel(guild_id, second_voice)
             .is_empty()
     );
+    assert_eq!(state.current_user_voice_connection(), None);
 }
 
 #[test]
@@ -220,6 +269,7 @@ fn guild_create_replaces_cached_voice_state_snapshot() {
             guild_id,
             channel_id: Some(voice),
             user_id: alice,
+            session_id: None,
             member: None,
             deaf: false,
             mute: false,

@@ -30,9 +30,17 @@ pub struct MessagePinConfirmationState {
     pub(super) content: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OptionsCategory {
+    Display,
+    Notifications,
+    Voice,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct OptionsPopupState {
     pub(super) selected: usize,
+    pub(super) category: Option<OptionsCategory>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,6 +76,11 @@ pub(super) struct UserProfilePopupState {
 pub(super) struct MemberLeaderActionState {
     pub(super) user_id: Id<UserMarker>,
     pub(super) guild_id: Option<Id<GuildMarker>>,
+    pub(super) selected: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct VoiceLeaderActionState {
     pub(super) selected: usize,
 }
 

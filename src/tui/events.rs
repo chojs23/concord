@@ -28,7 +28,7 @@ pub(super) fn handle_terminal_event(
         TerminalEvent::Key(key) => {
             outcome.command = input::handle_key(state, key);
             if key.kind == KeyEventKind::Press {
-                save_display_options_if_needed(state);
+                save_options_if_needed(state);
                 outcome.dirty = true;
             }
         }
@@ -53,12 +53,12 @@ pub(super) fn handle_terminal_event(
     Ok(outcome)
 }
 
-fn save_display_options_if_needed(state: &mut DashboardState) {
-    let Some(options) = state.take_display_options_save_request() else {
+fn save_options_if_needed(state: &mut DashboardState) {
+    let Some(options) = state.take_options_save_request() else {
         return;
     };
 
-    match config::save_display_options(&options) {
+    match config::save_options(&options) {
         Ok(()) => {}
         Err(error) => state.push_effect(AppEvent::GatewayError {
             message: format!("save options failed: {error}"),

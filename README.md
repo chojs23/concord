@@ -84,10 +84,37 @@ The release binary is produced at:
 target/release/concord
 ```
 
+By default, source builds can join voice channels and decode received voice
+audio, but they do not open local audio input or output devices. To build with
+voice playback and gated microphone transmit, enable the optional
+`voice-playback` feature:
+
+```sh
+cargo build --release --features voice-playback
+```
+
+Linux playback uses the system audio stack through `cpal`. You may need ALSA
+development files when building from source:
+
+```sh
+sudo apt install libasound2-dev
+```
+
+On WSLg, audio is usually exposed through PulseAudio instead of a real ALSA
+sound card. If playback does not start, check that PulseAudio and ALSA routing
+work before debugging Discord voice itself:
+
+```sh
+pactl info
+paplay /usr/share/sounds/alsa/Front_Center.wav
+aplay -D pulse /usr/share/sounds/alsa/Front_Center.wav
+```
+
 ## Features
 
-Concord does not currently support voice calls, but will be added.
-For now it is focusing ui/ux and conveniency features.
+Concord can request joining and leaving Discord voice channels. Default builds
+do not open local audio devices, while source builds with `--features
+voice-playback` support voice playback and gated microphone transmit.
 
 ### Authentication
 
@@ -106,6 +133,12 @@ Tokens are saved under Concord's config directory in plain text. See the Securit
 - View and filter forum posts (active / archived)
 - Load pinned messages per channel
 - Open channel actions for pinned messages, thread lists, and mark-as-read
+- Join and leave voice channels
+- Receive voice playback when built with `--features voice-playback`
+- Transmit microphone audio when built with `--features voice-playback`, joined
+  from this Concord session, explicitly allowed, and not self-muted
+- Highlight active voice speakers in channel rows, the member pane, and the
+  current-user header
 - Track unread messages and mention counts per channel
 - Mute and unmute channels and servers
 
@@ -209,7 +242,8 @@ Press `Space` to open the leader shortcut window.
 | `Space`, `2`     | Toggle the Channels pane          |
 | `Space`, `4`     | Toggle the Members pane           |
 | `Space`, `a`     | Open actions for the focused pane |
-| `Space`, `o`     | Open concord options              |
+| `Space`, `o`     | Choose concord option category    |
+| `Space`, `v`     | Open voice actions                |
 | `Space`, `Space` | Open the fuzzy channel switcher   |
 
 #### Action menus
@@ -242,9 +276,19 @@ Channel actions:
 
 | Shortcut | Action               | Description                                 |
 | -------- | -------------------- | ------------------------------------------- |
+| `j`      | Join voice           | Join the selected voice channel             |
+| `l`      | Leave voice          | Leave the current voice channel             |
 | `p`      | Show pinned messages | Open the selected channel's pinned messages |
 | `t`      | Show threads         | List threads for the selected channel       |
 | `m`      | Mark as read         | Mark the selected channel read              |
+
+Voice actions:
+
+| Shortcut | Action       | Description                              |
+| -------- | ------------ | ---------------------------------------- |
+| `d`      | Deafen voice | Toggle Concord's Discord voice deaf state |
+| `m`      | Mute voice   | Toggle Concord's Discord voice mute state |
+| `l`      | Leave voice  | Leave the current Concord voice channel  |
 
 When the image viewer is open, press `d` to download the current image directly.
 
@@ -283,7 +327,7 @@ open or activate items, and use the wheel to scroll panes and popups.
 
 ### Configuration
 
-Display options are stored under Concord's config directory. If
+Concord options are stored under Concord's config directory. If
 `XDG_CONFIG_HOME` is set, Concord uses
 `$XDG_CONFIG_HOME/concord/config.toml`. Otherwise it uses the platform config
 directory. The usual fallback is `~/.config/concord/config.toml` on Linux,
@@ -296,6 +340,10 @@ AppData config directory on Windows.
 - Toggle avatar display
 - Toggle custom emoji rendering
 - Toggle desktop notifications
+- Set your Discord voice mute and deaf state
+- Set microphone and received voice volume from 0 to 100
+- Allow gated microphone transmit while joined from this Concord session and not
+  self-muted
 
 You can change these from the in-app Options menu, and Concord saves them back
 to the config file.
@@ -309,7 +357,17 @@ show_avatars = true
 show_images = true
 image_preview_quality = "balanced"
 show_custom_emoji = true
+
+[notifications]
 desktop_notifications = true
+
+[voice]
+self_mute = false
+self_deaf = false
+allow_microphone_transmit = false
+microphone_sensitivity = -30
+microphone_volume = 100
+voice_output_volume = 100
 ```
 
 `image_preview_quality` supports these values:
@@ -322,10 +380,41 @@ desktop_notifications = true
 This setting only applies to attachment, embed, and image viewer previews.
 Avatars and custom emoji keep their separate small-image behavior.
 
-`desktop_notifications` controls OS notifications for Discord messages that
+`desktop_notifications` under `[notifications]` controls OS notifications for Discord messages that
 pass Discord notification settings. On macOS, Concord keeps the visual
 notification and audible alert separate to avoid duplicate sounds while still
 playing a sound when the terminal app is focused.
+
+`self_mute` and `self_deaf` under `[voice]` control the voice state Concord
+sends when joining, leaving, or updating your current Discord voice channel.
+`self_deaf` also mutes Concord's local playback and clears buffered received
+audio.
+
+`allow_microphone_transmit` is a local safety gate. When built with
+`voice-playback`, turning it on may open microphone input and transmit voice
+only while this Concord session is joined to voice and `self_mute` is false.
+Microphone input is converted to Discord's 48 kHz voice format before Opus
+encoding. Concord sends Discord Speaking on/off around transmitted audio, and
+transmit stops when the gate closes, the app leaves voice, or the voice session
+ends. If Discord DAVE encryption is required but outbound encryption is not
+ready, Concord fails closed instead of sending plaintext audio.
+
+`microphone_sensitivity` controls how loud a 20 ms microphone frame must be
+before Concord transmits it. It accepts an integer dB threshold from `-100` to
+`0`. Lower values transmit quieter input. The default is `-30`, which filters
+small ambient noise so the active speaker indicator does not stay green all the
+time. `microphone_volume` and `voice_output_volume` accept `0` to `100` percent
+and default to `100`, which preserves the normal audio level. Press `Space`,
+`o`, `d` for display options, `Space`, `o`, `n` for notification options, or
+`Space`, `o`, `v` for voice options. In Voice Options, select Microphone
+sensitivity and press `h`/`l` to adjust by 1 dB or `H`/`L` to adjust by 10 dB.
+The microphone and voice volume rows use the same keys to adjust by 1 or 10
+percent.
+
+Voice active speaker styling follows the actual voice path. The current user is
+highlighted only after Concord sends Speaking on. Remote users are highlighted
+from Discord speaking updates and received RTP activity, then clear after a
+short inactivity timeout.
 
 ## Performance
 

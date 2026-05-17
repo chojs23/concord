@@ -12,14 +12,14 @@ use crate::discord::ids::{
 };
 use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use tokio::sync::{Semaphore, mpsc};
-use tokio::time::{Duration, timeout};
+use tokio::time::{Duration, sleep, timeout};
 
 use crate::{
     DiscordClient, Result,
     discord::{
         AppCommand, AppEvent, AttachmentUpdate, ChannelNotificationOverrideInfo,
         GuildNotificationSettingsInfo, MessageInfo, MuteDuration, ReactionUsersInfo,
-        validate_token_header,
+        VoiceConnectionStatus, validate_token_header,
     },
     error::AppError,
     logging, token_store, tui, version_check,
@@ -88,7 +88,8 @@ impl App {
         .await;
 
         command_task.abort();
-        shutdown_gateway(gateway_task).await;
+        leave_current_voice_channel_on_shutdown(&client);
+        shutdown_gateway(&client, gateway_task).await;
         result
     }
 }
@@ -299,6 +300,113 @@ fn start_command_loop(
                             logging::error("app", &message);
                             client
                                 .publish_event(AppEvent::GatewayError { message })
+                                .await;
+                        }
+                    }
+                    AppCommand::JoinVoiceChannel {
+                        guild_id,
+                        channel_id,
+                        self_mute,
+                        self_deaf,
+                        allow_microphone_transmit,
+                        microphone_sensitivity,
+                        microphone_volume,
+                        voice_output_volume,
+                    } => {
+                        if let Err(message) = client.update_voice_state(
+                            guild_id,
+                            Some(channel_id),
+                            self_mute,
+                            self_deaf,
+                        ) {
+                            logging::error("app", &message);
+                            client
+                                .publish_event(AppEvent::VoiceConnectionStatusChanged {
+                                    guild_id,
+                                    channel_id: Some(channel_id),
+                                    status: VoiceConnectionStatus::Failed,
+                                    message: Some(message),
+                                })
+                                .await;
+                        } else {
+                            client.update_voice_capture_permission(
+                                guild_id,
+                                channel_id,
+                                allow_microphone_transmit,
+                                microphone_sensitivity,
+                                microphone_volume,
+                                voice_output_volume,
+                            );
+                            client
+                                .publish_event(AppEvent::VoiceConnectionStatusChanged {
+                                    guild_id,
+                                    channel_id: Some(channel_id),
+                                    status: VoiceConnectionStatus::Connecting,
+                                    message: Some("Voice join requested".to_owned()),
+                                })
+                                .await;
+                        }
+                    }
+                    AppCommand::UpdateVoiceState {
+                        guild_id,
+                        channel_id,
+                        self_mute,
+                        self_deaf,
+                    } => {
+                        if let Err(message) = client.update_voice_state(
+                            guild_id,
+                            Some(channel_id),
+                            self_mute,
+                            self_deaf,
+                        ) {
+                            logging::error("app", &message);
+                            client
+                                .publish_event(AppEvent::GatewayError { message })
+                                .await;
+                        }
+                    }
+                    AppCommand::UpdateVoiceCapturePermission {
+                        guild_id,
+                        channel_id,
+                        allow_microphone_transmit,
+                        microphone_sensitivity,
+                        microphone_volume,
+                        voice_output_volume,
+                    } => {
+                        client.update_voice_capture_permission(
+                            guild_id,
+                            channel_id,
+                            allow_microphone_transmit,
+                            microphone_sensitivity,
+                            microphone_volume,
+                            voice_output_volume,
+                        );
+                    }
+                    AppCommand::LeaveVoiceChannel {
+                        guild_id,
+                        self_mute,
+                        self_deaf,
+                    } => {
+                        if let Err(message) =
+                            client.update_voice_state(guild_id, None, self_mute, self_deaf)
+                        {
+                            logging::error("app", &message);
+                            client
+                                .publish_event(AppEvent::VoiceConnectionStatusChanged {
+                                    guild_id,
+                                    channel_id: None,
+                                    status: VoiceConnectionStatus::Failed,
+                                    message: Some(message),
+                                })
+                                .await;
+                        } else {
+                            client
+                                .publish_event(AppEvent::VoiceConnectionStatusChanged {
+                                    guild_id,
+                                    channel_id: None,
+                                    status: VoiceConnectionStatus::Disconnected,
+                                    message: Some("Voice leave requested".to_owned()),
+                                })
                                 .await;
                         }
                     }
@@ -1085,13 +1193,39 @@ fn login_notice_for_token_warnings(warnings: &[String]) -> Option<String> {
     }
 }
 
-async fn shutdown_gateway(gateway_task: tokio::task::JoinHandle<()>) {
-    gateway_task.abort();
-
-    if let Err(error) = gateway_task.await
-        && !error.is_cancelled()
+fn leave_current_voice_channel_on_shutdown(client: &DiscordClient) {
+    let Some(voice) = client.requested_voice_connection() else {
+        return;
+    };
+    if let Err(message) =
+        client.update_voice_state(voice.guild_id, None, voice.self_mute, voice.self_deaf)
     {
-        logging::error("app", format!("gateway task ended unexpectedly: {error}"));
+        logging::error("app", format!("voice shutdown leave failed: {message}"));
+    }
+}
+
+async fn shutdown_gateway(client: &DiscordClient, mut gateway_task: tokio::task::JoinHandle<()>) {
+    if let Err(message) = client.shutdown_gateway() {
+        logging::error("app", format!("gateway shutdown request failed: {message}"));
+        gateway_task.abort();
+    }
+
+    tokio::select! {
+        result = &mut gateway_task => {
+            if let Err(error) = result
+                && !error.is_cancelled()
+            {
+                logging::error("app", format!("gateway task ended unexpectedly: {error}"));
+            }
+        }
+        () = sleep(Duration::from_secs(2)) => {
+            gateway_task.abort();
+            if let Err(error) = gateway_task.await
+                && !error.is_cancelled()
+            {
+                logging::error("app", format!("gateway task ended unexpectedly: {error}"));
+            }
+        }
     }
 }
 

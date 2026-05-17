@@ -6,8 +6,8 @@ use crate::discord::ids::{
 use crate::discord::{
     ActivityInfo, ActivityKind, AppEvent, AttachmentUpdate, ChannelInfo,
     ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
-    ChannelVisibilityStats, CustomEmojiInfo, DiscordState, FriendStatus,
-    GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, MessageKind,
+    ChannelVisibilityStats, CurrentVoiceConnectionState, CustomEmojiInfo, DiscordState,
+    FriendStatus, GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, MessageKind,
     MessageReferenceInfo, MessageSnapshotInfo, MessageState, MutualGuildInfo, NotificationLevel,
     PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus,
     ReactionEmoji, ReactionInfo, ReadStateInfo, RelationshipInfo, ReplyInfo, RoleInfo,

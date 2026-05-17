@@ -388,6 +388,9 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                         let unread = dashboard.sidebar_channel_unread(state.id);
                         let (badge, mut name_style) =
                             channel_unread_decoration(unread, base_style, is_active);
+                        if state.is_voice() && dashboard.is_joined_voice_channel(state.id) {
+                            name_style = name_style.fg(Color::Yellow).add_modifier(Modifier::BOLD);
+                        }
                         if is_muted {
                             name_style = name_style.add_modifier(Modifier::DIM);
                         }
@@ -456,6 +459,11 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                         if participant.deaf || participant.self_deaf {
                             label.push_str(" 🎧");
                         }
+                        let label_style = if participant.speaking {
+                            Style::default().fg(Color::Green).bold()
+                        } else {
+                            Style::default().fg(DIM)
+                        };
                         let prefix = "  • ";
                         let label_width = max_width
                             .saturating_sub(branch_prefix.width())
@@ -466,7 +474,7 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                             Span::styled(prefix, Style::default().fg(DIM)),
                             Span::styled(
                                 truncate_display_width_from(&label, horizontal_scroll, label_width),
-                                Style::default().fg(DIM),
+                                label_style,
                             ),
                         ]))
                     }
@@ -1252,8 +1260,11 @@ pub(super) fn render_members(
             let member = *member;
             let is_selected = focused && selected_line == Some(line_index);
             let marker_style = Style::default().fg(presence_color(member.status()));
-            let name_style =
-                member_name_style(member, state.member_role_color(member), is_selected);
+            let name_style = if state.user_voice_speaking(member.user_id()) {
+                Style::default().fg(Color::Green).bold()
+            } else {
+                member_name_style(member, state.member_role_color(member), is_selected)
+            };
 
             let display_name = state.member_display_name(member);
             let display = member_display_label(
@@ -1472,10 +1483,12 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
     let mut spans = vec![Span::styled(title, Style::default().fg(Color::Cyan).bold())];
     if let Some(user) = state.current_user() {
         spans.push(Span::styled(" Connected as ", Style::default().fg(DIM)));
-        spans.push(Span::styled(
-            format!("{user} "),
-            Style::default().fg(Color::Green).bold(),
-        ));
+        let user_style = if state.current_user_voice_speaking() {
+            Style::default().fg(Color::Green).bold()
+        } else {
+            Style::default().fg(Color::White).bold()
+        };
+        spans.push(Span::styled(format!("{user} "), user_style));
     } else {
         spans.push(Span::styled(
             " Loading... ",
@@ -1485,6 +1498,13 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
     if let Some(version) = state.update_available_version() {
         spans.push(Span::styled(
             format!(" New version available: v{version} "),
+            Style::default().fg(Color::Yellow).bold(),
+        ));
+    }
+    if let Some(label) = state.active_voice_connection_label() {
+        spans.push(Span::styled(" Voice ", Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            format!("{label} "),
             Style::default().fg(Color::Yellow).bold(),
         ));
     }

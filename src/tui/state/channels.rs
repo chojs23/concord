@@ -108,7 +108,28 @@ impl DashboardState {
         let mark_as_read_enabled = active_channel_has_unread_snapshot
             || self.discord.channel_ack_target(channel_id).is_some()
             || (channel.is_forum() && !self.discord.forum_child_ack_targets(channel_id).is_empty());
-        vec![
+        let mut actions = Vec::new();
+        if channel.is_voice()
+            && let Some(guild_id) = channel.guild_id
+        {
+            let joined_here = self.voice_connection.is_some_and(|voice| {
+                voice.guild_id == guild_id && voice.channel_id == Some(channel_id)
+            });
+            actions.push(ChannelActionItem {
+                kind: if joined_here {
+                    ChannelActionKind::LeaveVoice
+                } else {
+                    ChannelActionKind::JoinVoice
+                },
+                label: if joined_here {
+                    "Leave voice".to_owned()
+                } else {
+                    "Join voice".to_owned()
+                },
+                enabled: joined_here || self.discord.can_connect_voice_channel(channel),
+            });
+        }
+        actions.extend([
             ChannelActionItem {
                 kind: ChannelActionKind::LoadPinnedMessages,
                 label: "Show pinned messages".to_owned(),
@@ -133,7 +154,8 @@ impl DashboardState {
                 },
                 enabled: true,
             },
-        ]
+        ]);
+        actions
     }
 
     pub fn selected_channel_mute_duration_items(&self) -> &'static [super::MuteActionDurationItem] {
@@ -491,6 +513,35 @@ impl DashboardState {
                     return None;
                 }
                 match item.kind {
+                    ChannelActionKind::JoinVoice => {
+                        self.close_channel_leader_action();
+                        self.discord
+                            .channel(channel_id)
+                            .and_then(|channel| channel.guild_id)
+                            .map(|guild_id| AppCommand::JoinVoiceChannel {
+                                guild_id,
+                                channel_id,
+                                self_mute: self.voice_options.self_mute,
+                                self_deaf: self.voice_options.self_deaf,
+                                allow_microphone_transmit: self
+                                    .voice_options
+                                    .allow_microphone_transmit,
+                                microphone_sensitivity: self.voice_options.microphone_sensitivity,
+                                microphone_volume: self.voice_options.microphone_volume,
+                                voice_output_volume: self.voice_options.voice_output_volume,
+                            })
+                    }
+                    ChannelActionKind::LeaveVoice => {
+                        self.close_channel_leader_action();
+                        self.discord
+                            .channel(channel_id)
+                            .and_then(|channel| channel.guild_id)
+                            .map(|guild_id| AppCommand::LeaveVoiceChannel {
+                                guild_id,
+                                self_mute: self.voice_options.self_mute,
+                                self_deaf: self.voice_options.self_deaf,
+                            })
+                    }
                     ChannelActionKind::LoadPinnedMessages => {
                         self.enter_pinned_message_view(channel_id);
                         self.close_channel_leader_action();
@@ -999,6 +1050,36 @@ impl DashboardState {
                 _ => format!("#{}", channel.name),
             })
             .unwrap_or_else(|| format!("#channel-{}", channel_id.get()))
+    }
+
+    pub fn active_voice_connection_label(&self) -> Option<String> {
+        let (guild_id, channel_id, other_client) = if let Some(voice) = self.voice_connection {
+            (voice.guild_id, voice.channel_id?, false)
+        } else {
+            let voice = self.discord.current_user_voice_connection()?;
+            (voice.guild_id, voice.channel_id, true)
+        };
+        let guild = self
+            .guild_name(guild_id)
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("guild-{}", guild_id.get()));
+        let channel = self
+            .discord
+            .channel(channel_id)
+            .map(|channel| channel.name.clone())
+            .unwrap_or_else(|| format!("channel-{}", channel_id.get()));
+        let suffix = if other_client { " (other client)" } else { "" };
+        Some(format!("{guild} - {channel}{suffix}"))
+    }
+
+    pub fn current_user_voice_speaking(&self) -> bool {
+        self.discord.current_user_voice_speaking()
+    }
+
+    pub fn is_joined_voice_channel(&self, channel_id: Id<ChannelMarker>) -> bool {
+        self.voice_connection
+            .and_then(|voice| voice.channel_id)
+            .is_some_and(|voice_channel_id| voice_channel_id == channel_id)
     }
 
     fn toggle_channel_mute(

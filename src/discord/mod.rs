@@ -10,6 +10,7 @@ pub mod password_auth;
 pub mod qr_auth;
 mod rest;
 mod state;
+mod voice;
 
 pub use client::DiscordClient;
 pub(crate) use client::validate_token_header;
@@ -26,12 +27,14 @@ pub use events::{
     MessageSnapshotInfo, MutualGuildInfo, NotificationLevel, PermissionOverwriteInfo,
     PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus, ReactionInfo,
     ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, RelationshipInfo, ReplyInfo, RoleInfo,
-    SequencedAppEvent, UserProfileInfo, VoiceStateInfo,
+    SequencedAppEvent, UserProfileInfo, VoiceConnectionStatus, VoiceServerInfo, VoiceSoundKind,
+    VoiceStateInfo,
 };
 pub use ids::{Id, marker};
 pub use rest::ForumPostPage;
 pub use state::{
     ChannelRecipientState, ChannelState, ChannelUnreadState, ChannelVisibilityStats,
-    DiscordSnapshot, DiscordState, GuildMemberState, GuildState, MessageCapabilities, MessageState,
-    RoleState, SnapshotAreas, SnapshotRevision, VoiceParticipantState,
+    CurrentVoiceConnectionState, DiscordSnapshot, DiscordState, GuildMemberState, GuildState,
+    MessageCapabilities, MessageState, RoleState, SnapshotAreas, SnapshotRevision,
+    VoiceParticipantState,
 };

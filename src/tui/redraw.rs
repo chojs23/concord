@@ -26,6 +26,7 @@ pub(super) struct VisibleDashboardSignature {
     channel_pane_visible: bool,
     member_pane_visible: bool,
     current_user: Option<String>,
+    current_user_voice_speaking: bool,
     update_available_version: Option<String>,
     selected_guild_id: Option<Id<GuildMarker>>,
     selected_channel_id: Option<Id<ChannelMarker>>,
@@ -57,9 +58,13 @@ struct VisiblePopupSignature {
     guild_leader_action_open: bool,
     channel_leader_action_open: bool,
     member_leader_action_open: bool,
+    voice_leader_action_open: bool,
     options_open: bool,
+    options_title: &'static str,
     selected_option: Option<usize>,
     display_options: config::DisplayOptions,
+    notification_options: config::NotificationOptions,
+    voice_options: config::VoiceOptions,
     emoji_picker_open: bool,
     reaction_users_open: bool,
     poll_vote_picker_open: bool,
@@ -77,6 +82,7 @@ struct MemberEntrySignature {
     username: Option<String>,
     is_bot: bool,
     status: PresenceStatus,
+    speaking: bool,
 }
 
 pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDashboardSignature {
@@ -96,6 +102,7 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
         channel_pane_visible: state.is_pane_visible(state::FocusPane::Channels),
         member_pane_visible: state.is_pane_visible(state::FocusPane::Members),
         current_user: state.current_user().map(str::to_owned),
+        current_user_voice_speaking: state.current_user_voice_speaking(),
         update_available_version: state.update_available_version().map(str::to_owned),
         selected_guild_id: state.selected_guild_id(),
         selected_channel_id: state.selected_channel_id(),
@@ -118,9 +125,13 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
             guild_leader_action_open: state.is_guild_leader_action_active(),
             channel_leader_action_open: state.is_channel_leader_action_active(),
             member_leader_action_open: state.is_member_leader_action_active(),
+            voice_leader_action_open: state.is_voice_leader_action_active(),
             options_open: state.is_options_popup_open(),
+            options_title: state.options_popup_title(),
             selected_option: state.selected_option_index(),
             display_options: state.display_options(),
+            notification_options: state.notification_options(),
+            voice_options: state.voice_options(),
             emoji_picker_open: state.is_emoji_reaction_picker_open(),
             reaction_users_open: state.is_reaction_users_popup_open(),
             poll_vote_picker_open: state.is_poll_vote_picker_open(),
@@ -172,6 +183,7 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
                 username: entry.username(),
                 is_bot: entry.is_bot(),
                 status: entry.status(),
+                speaking: state.user_voice_speaking(entry.user_id()),
             })
             .collect(),
     }
@@ -194,6 +206,7 @@ fn only_visible_member_signature_changed(
         && before.channel_pane_visible == after.channel_pane_visible
         && before.member_pane_visible == after.member_pane_visible
         && before.current_user == after.current_user
+        && before.current_user_voice_speaking == after.current_user_voice_speaking
         && before.update_available_version == after.update_available_version
         && before.selected_guild_id == after.selected_guild_id
         && before.selected_channel_id == after.selected_channel_id
@@ -234,6 +247,7 @@ fn only_new_message_notice_changed(
         && before.channel_pane_visible == after.channel_pane_visible
         && before.member_pane_visible == after.member_pane_visible
         && before.current_user == after.current_user
+        && before.current_user_voice_speaking == after.current_user_voice_speaking
         && before.update_available_version == after.update_available_version
         && before.selected_guild_id == after.selected_guild_id
         && before.selected_channel_id == after.selected_channel_id
@@ -255,6 +269,23 @@ fn only_new_message_notice_changed(
         && before.visible_forum_posts == after.visible_forum_posts
         && before.visible_members == after.visible_members
         && before.new_messages_count != after.new_messages_count
+}
+
+fn visible_member_speaking_changed(
+    before: &VisibleDashboardSignature,
+    after: &VisibleDashboardSignature,
+) -> bool {
+    before.visible_members.len() == after.visible_members.len()
+        && before
+            .visible_members
+            .iter()
+            .zip(after.visible_members.iter())
+            .all(|(before, after)| before.user_id == after.user_id)
+        && before
+            .visible_members
+            .iter()
+            .zip(after.visible_members.iter())
+            .any(|(before, after)| before.speaking != after.speaking)
 }
 
 fn channel_switcher_item_signature(state: &DashboardState) -> Vec<String> {
@@ -286,7 +317,8 @@ pub(super) fn should_suppress_image_redraw_for_signature_change(
 ) -> bool {
     image_surfaces_visible
         && ((after.focus != state::FocusPane::Members
-            && only_visible_member_signature_changed(before, after))
+            && only_visible_member_signature_changed(before, after)
+            && !visible_member_speaking_changed(before, after))
             || (after.focus != state::FocusPane::Channels
                 && only_new_message_notice_changed(before, after)))
 }

@@ -4,6 +4,7 @@ use crate::discord::ids::{Id, marker::MessageMarker};
 use ratatui::{
     Terminal,
     backend::TestBackend,
+    buffer::Buffer,
     layout::{Position, Rect},
     style::{Color, Modifier, Style},
 };
@@ -25,9 +26,9 @@ use super::{
     message_delete_confirmation_lines, message_item_lines, message_pin_confirmation_lines,
     message_viewport_lines, new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
     primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
-    render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
-    selected_message_content_x_offset, sync_view_heights, toast_area, toast_line,
-    user_profile_popup_has_avatar, user_profile_popup_lines,
+    render_channels, render_guilds, render_header, render_members, selected_avatar_x_offset,
+    selected_message_card_width, selected_message_content_x_offset, sync_view_heights, toast_area,
+    toast_line, user_profile_popup_has_avatar, user_profile_popup_lines,
     user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
 };
 use crate::tui::message_time::{
@@ -44,7 +45,7 @@ use crate::{
         MessageInfo, MessageKind, MessageSnapshotInfo, MessageState, MutualGuildInfo,
         NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
         ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
-        VoiceStateInfo,
+        VoiceConnectionStatus, VoiceStateInfo,
     },
     tui::{
         format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
@@ -70,6 +71,7 @@ fn options_popup_lines_show_selected_toggle_state() {
             label: "Disable all image previews",
             enabled: false,
             value: None,
+            gauge_percent: None,
             effective: false,
             description: "Master switch.",
         },
@@ -77,13 +79,15 @@ fn options_popup_lines_show_selected_toggle_state() {
             label: "Show avatars",
             enabled: true,
             value: None,
+            gauge_percent: None,
             effective: true,
             description: "Message and profile avatars.",
         },
         DisplayOptionItem {
             label: "Image preview quality",
             enabled: true,
-            value: Some("balanced"),
+            value: Some("balanced".to_owned()),
+            gauge_percent: Some(55),
             effective: true,
             description: "Attachment and embed previews.",
         },
@@ -95,7 +99,9 @@ fn options_popup_lines_show_selected_toggle_state() {
     assert_eq!(lines[1].spans[0].content, "› ");
     assert_eq!(lines[1].spans[1].content, "[x] ");
     assert_eq!(lines[2].spans[1].content, "[balanced] ");
-    assert_eq!(lines.len(), 3);
+    assert!(lines[3].spans[1].content.contains("-100 dB"));
+    assert!(lines[3].spans[3].content.contains("0 dB"));
+    assert_eq!(lines.len(), 4);
 }
 
 #[test]
@@ -158,6 +164,7 @@ fn options_popup_lines_keep_selected_item_visible_when_clipped() {
             label: "Option 1",
             enabled: true,
             value: None,
+            gauge_percent: None,
             effective: true,
             description: "First.",
         },
@@ -165,6 +172,7 @@ fn options_popup_lines_keep_selected_item_visible_when_clipped() {
             label: "Option 2",
             enabled: true,
             value: None,
+            gauge_percent: None,
             effective: true,
             description: "Second.",
         },
@@ -172,6 +180,7 @@ fn options_popup_lines_keep_selected_item_visible_when_clipped() {
             label: "Option 3",
             enabled: true,
             value: None,
+            gauge_percent: None,
             effective: true,
             description: "Third.",
         },
@@ -179,6 +188,7 @@ fn options_popup_lines_keep_selected_item_visible_when_clipped() {
             label: "Option 4",
             enabled: true,
             value: None,
+            gauge_percent: None,
             effective: true,
             description: "Fourth.",
         },
@@ -195,10 +205,8 @@ fn options_popup_lines_keep_selected_item_visible_when_clipped() {
 #[test]
 fn options_popup_render_keeps_selected_row_visible_when_short() {
     let mut state = DashboardState::new();
-    state.open_options_popup();
-    for _ in 0..5 {
-        state.move_option_down();
-    }
+    state.open_options_category_picker();
+    state.open_options_category_shortcut('n');
 
     let dump = render_dashboard_dump(100, 9, &mut state);
     let rendered = dump.join("\n");
@@ -242,13 +250,155 @@ fn header_shows_connected_account() {
         user: "muri".to_owned(),
         user_id: Some(Id::new(10)),
     });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "Lobby".to_owned(),
+            kind: "GuildVoice".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
+        guild_id: Id::new(1),
+        channel_id: Some(Id::new(11)),
+        status: VoiceConnectionStatus::Connecting,
+        message: None,
+    });
 
     let dump = render_dashboard_dump(100, 10, &mut state);
     let header = dump.first().expect("dashboard render includes header");
 
     assert!(header.contains("Concord - v"), "{header}");
     assert!(header.contains("Connected as muri"), "{header}");
+    assert!(header.contains("Voice guild - Lobby"), "{header}");
     assert!(!header.contains("Loading..."), "{header}");
+}
+
+#[test]
+fn header_styles_current_user_white_until_speaking() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "muri".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    let backend = TestBackend::new(80, 1);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_header(frame, frame.area(), &state))
+        .expect("draw should succeed");
+    let buffer = terminal.backend().buffer();
+    let header = (0..buffer.area.width)
+        .map(|col| buffer[(col, 0)].symbol().to_owned())
+        .collect::<String>();
+    let user_col = header.find("muri").expect("header should include user") as u16;
+    assert_eq!(buffer[(user_col, 0)].fg, Color::White);
+
+    state.push_event(AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id: Id::new(1),
+            channel_id: Some(Id::new(11)),
+            user_id: Id::new(10),
+            session_id: None,
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+            self_stream: false,
+        },
+    });
+    state.push_event(AppEvent::VoiceSpeakingUpdate {
+        guild_id: Id::new(1),
+        channel_id: Id::new(11),
+        user_id: Id::new(10),
+        speaking: true,
+    });
+    let backend = TestBackend::new(80, 1);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_header(frame, frame.area(), &state))
+        .expect("draw should succeed");
+    let buffer = terminal.backend().buffer();
+    let header = (0..buffer.area.width)
+        .map(|col| buffer[(col, 0)].symbol().to_owned())
+        .collect::<String>();
+    let user_col = header.find("muri").expect("header should include user") as u16;
+    assert_eq!(buffer[(user_col, 0)].fg, Color::Green);
+}
+
+#[test]
+fn header_labels_other_client_voice_connection() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "muri".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(11),
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "Lobby".to_owned(),
+            kind: "GuildVoice".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.push_event(AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id: Id::new(1),
+            channel_id: Some(Id::new(11)),
+            user_id: Id::new(10),
+            session_id: Some("other-client-voice-session".to_owned()),
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+            self_stream: false,
+        },
+    });
+
+    let dump = render_dashboard_dump(120, 10, &mut state);
+    let header = dump.first().expect("dashboard render includes header");
+
+    assert!(
+        header.contains("Voice guild - Lobby (other client)"),
+        "{header}"
+    );
 }
 
 #[test]
@@ -1374,6 +1524,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
             guild_id,
             channel_id: Some(voice_id),
             user_id: alice,
+            session_id: None,
             member: None,
             deaf: true,
             mute: true,
@@ -1381,6 +1532,18 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
             self_mute: false,
             self_stream: true,
         },
+    });
+    state.push_event(AppEvent::VoiceSpeakingUpdate {
+        guild_id,
+        channel_id: voice_id,
+        user_id: alice,
+        speaking: true,
+    });
+    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
+        guild_id,
+        channel_id: Some(voice_id),
+        status: VoiceConnectionStatus::Connecting,
+        message: None,
     });
     state.confirm_selected_guild();
     state.set_channel_view_height(10);
@@ -1411,6 +1574,10 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         .find(|col| buffer[(*col, lobby_row)].symbol() == "🔊")
         .expect("populated voice row should use loud speaker icon");
     assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Cyan);
+    let lobby_name_col = (0..buffer.area.width)
+        .find(|col| buffer[(*col, lobby_row)].symbol() == "L")
+        .expect("populated voice row should render channel name");
+    assert_eq!(buffer[(lobby_name_col, lobby_row)].fg, Color::Yellow);
 
     let empty_row = (0..buffer.area.height)
         .find(|row| {
@@ -1449,6 +1616,23 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         (0..buffer.area.height)
             .any(|row| (0..buffer.area.width).any(|col| buffer[(col, row)].symbol() == "🔴"))
     );
+    let alice_row = (0..buffer.area.height)
+        .find(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, *row)].symbol().to_owned())
+                .collect::<String>()
+                .contains("Alice")
+        })
+        .expect("participant row should render");
+    let alice_col = (0..buffer.area.width)
+        .find(|col| buffer[(*col, alice_row)].symbol() == "A")
+        .expect("participant name should render");
+    assert_eq!(buffer[(alice_col, alice_row)].fg, Color::Green);
+    assert!(
+        buffer[(alice_col, alice_row)]
+            .modifier
+            .contains(Modifier::BOLD)
+    );
 
     state.focus_pane(FocusPane::Channels);
     state.set_channel_view_height(1);
@@ -1485,6 +1669,113 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         .find(|col| buffer[(*col, lobby_row)].symbol() == "🔊")
         .expect("populated voice row should keep loud speaker icon");
     assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Cyan);
+}
+
+#[test]
+fn member_pane_highlights_only_speaking_voice_members() {
+    let guild_id = Id::new(1);
+    let voice_id = Id::new(10);
+    let alice = Id::new(20);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id: voice_id,
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "Lobby".to_owned(),
+            kind: "GuildVoice".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: vec![MemberInfo {
+            user_id: alice,
+            display_name: "Alice".to_owned(),
+            username: Some("alice".to_owned()),
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+        }],
+        presences: vec![(alice, PresenceStatus::Online)],
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+    state.push_event(AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id,
+            channel_id: Some(voice_id),
+            user_id: alice,
+            session_id: None,
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+            self_stream: false,
+        },
+    });
+
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_members(frame, frame.area(), &state, &[]))
+        .expect("draw should succeed");
+    let buffer = terminal.backend().buffer();
+    let alice_cell = find_cell(buffer, "Alice").expect("member should render");
+    assert_eq!(buffer[alice_cell].fg, Color::White);
+
+    state.push_event(AppEvent::VoiceSpeakingUpdate {
+        guild_id,
+        channel_id: voice_id,
+        user_id: alice,
+        speaking: true,
+    });
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_members(frame, frame.area(), &state, &[]))
+        .expect("draw should succeed");
+    let buffer = terminal.backend().buffer();
+    let alice_cell = find_cell(buffer, "Alice").expect("member should render");
+    assert_eq!(buffer[alice_cell].fg, Color::Green);
+
+    state.push_event(AppEvent::VoiceSpeakingUpdate {
+        guild_id,
+        channel_id: voice_id,
+        user_id: alice,
+        speaking: false,
+    });
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_members(frame, frame.area(), &state, &[]))
+        .expect("draw should succeed");
+    let buffer = terminal.backend().buffer();
+    let alice_cell = find_cell(buffer, "Alice").expect("member should render");
+    assert_eq!(buffer[alice_cell].fg, Color::White);
+}
+
+fn find_cell(buffer: &Buffer, text: &str) -> Option<(u16, u16)> {
+    for row in 0..buffer.area.height {
+        let line = (0..buffer.area.width)
+            .map(|col| buffer[(col, row)].symbol().to_owned())
+            .collect::<String>();
+        if let Some(col) = line.find(text) {
+            return Some((col as u16, row));
+        }
+    }
+    None
 }
 
 #[test]

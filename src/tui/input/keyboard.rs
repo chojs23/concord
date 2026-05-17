@@ -75,6 +75,7 @@ enum LeaderAction {
     TogglePane(FocusPane),
     OpenActions,
     OpenOptions,
+    OpenVoiceActions,
     OpenChannelSwitcher,
     Close,
 }
@@ -181,8 +182,10 @@ enum DebugLogPopupAction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OptionsPopupAction {
     Close,
+    OpenCategory(char),
     Select(SelectionAction),
     ToggleSelected,
+    AdjustSelected(i8),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -471,9 +474,10 @@ fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCom
         }
         LeaderAction::OpenActions => state.open_leader_actions_for_focused_target(),
         LeaderAction::OpenOptions => {
-            state.open_options_popup();
+            state.open_options_category_picker();
             state.close_leader();
         }
+        LeaderAction::OpenVoiceActions => state.open_voice_actions(),
         LeaderAction::OpenChannelSwitcher => state.open_channel_switcher(),
         LeaderAction::Close => state.close_leader(),
     }
@@ -925,11 +929,17 @@ fn handle_debug_log_popup_key(state: &mut DashboardState, key: KeyEvent) -> Opti
 }
 
 fn handle_options_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match options_popup_action(key) {
+    match options_popup_action(key, state.is_options_category_picker_open()) {
         Some(OptionsPopupAction::Close) => state.close_options_popup(),
+        Some(OptionsPopupAction::OpenCategory(shortcut)) => {
+            state.open_options_category_shortcut(shortcut)
+        }
         Some(OptionsPopupAction::Select(SelectionAction::Next)) => state.move_option_down(),
         Some(OptionsPopupAction::Select(SelectionAction::Previous)) => state.move_option_up(),
         Some(OptionsPopupAction::ToggleSelected) => state.toggle_selected_display_option(),
+        Some(OptionsPopupAction::AdjustSelected(delta)) => {
+            state.adjust_selected_display_option(delta)
+        }
         None => {}
     }
 
@@ -1031,6 +1041,7 @@ fn leader_action(key: KeyEvent) -> LeaderAction {
         KeyCode::Char('4') if is_shortcut_key(key) => LeaderAction::TogglePane(FocusPane::Members),
         KeyCode::Char('a') if is_shortcut_key(key) => LeaderAction::OpenActions,
         KeyCode::Char('o') if is_shortcut_key(key) => LeaderAction::OpenOptions,
+        KeyCode::Char('v') if is_shortcut_key(key) => LeaderAction::OpenVoiceActions,
         KeyCode::Char(' ') if is_shortcut_key(key) => LeaderAction::OpenChannelSwitcher,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => LeaderAction::Close,
         KeyCode::Esc => LeaderAction::Close,
@@ -1220,7 +1231,7 @@ fn debug_log_popup_action(key: KeyEvent) -> DebugLogPopupAction {
     }
 }
 
-fn options_popup_action(key: KeyEvent) -> Option<OptionsPopupAction> {
+fn options_popup_action(key: KeyEvent, category_picker_open: bool) -> Option<OptionsPopupAction> {
     if matches!(
         key.code,
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('o')
@@ -1232,6 +1243,25 @@ fn options_popup_action(key: KeyEvent) -> Option<OptionsPopupAction> {
     }
 
     match key.code {
+        KeyCode::Char(shortcut @ ('d' | 'D' | 'n' | 'N' | 'v' | 'V'))
+            if is_shortcut_key(key) && category_picker_open =>
+        {
+            Some(OptionsPopupAction::OpenCategory(shortcut))
+        }
+        KeyCode::Char('h') | KeyCode::Char('H') if is_shortcut_key(key) => Some(
+            OptionsPopupAction::AdjustSelected(if key.code == KeyCode::Char('H') {
+                -10
+            } else {
+                -1
+            }),
+        ),
+        KeyCode::Char('l') | KeyCode::Char('L') if is_shortcut_key(key) => Some(
+            OptionsPopupAction::AdjustSelected(if key.code == KeyCode::Char('L') {
+                10
+            } else {
+                1
+            }),
+        ),
         code if is_confirm_key(code) => Some(OptionsPopupAction::ToggleSelected),
         _ => None,
     }

@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex, RwLock};
 
+use crate::config::{MicrophoneSensitivityDb, VoiceVolumePercent};
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
@@ -17,9 +18,10 @@ use super::{
     MessageAttachmentUpload, MessageInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
     commands::ForumPostArchiveState,
     events::{AppEvent, SequencedAppEvent},
-    gateway::{GatewayCommand, run_gateway},
+    gateway::{GatewayCommand, GatewayRuntime, run_gateway},
     rest::{DiscordRest, ForumPostPage},
-    state::{DiscordSnapshot, DiscordState, SnapshotRevision},
+    state::{CurrentVoiceConnectionState, DiscordSnapshot, DiscordState, SnapshotRevision},
+    voice::{self, VoiceRuntimeEvent},
 };
 
 #[derive(Clone, Debug)]
@@ -30,10 +32,13 @@ pub struct DiscordClient {
     effects_rx: Arc<Mutex<Option<mpsc::Receiver<SequencedAppEvent>>>>,
     snapshots_tx: watch::Sender<SnapshotRevision>,
     state: Arc<RwLock<DiscordState>>,
+    requested_voice: Arc<RwLock<Option<CurrentVoiceConnectionState>>>,
     revision: Arc<RwLock<SnapshotRevision>>,
     publish_lock: Arc<AsyncMutex<()>>,
     gateway_commands_tx: mpsc::UnboundedSender<GatewayCommand>,
     gateway_commands_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<GatewayCommand>>>>,
+    voice_events_tx: mpsc::UnboundedSender<VoiceRuntimeEvent>,
+    voice_events_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<VoiceRuntimeEvent>>>>,
 }
 
 impl DiscordClient {
@@ -44,6 +49,7 @@ impl DiscordClient {
         let (effects_tx, effects_rx) = mpsc::channel(4096);
         let (snapshots_tx, _) = watch::channel(SnapshotRevision::default());
         let (gateway_commands_tx, gateway_commands_rx) = mpsc::unbounded_channel();
+        let (voice_events_tx, voice_events_rx) = mpsc::unbounded_channel();
 
         Ok(Self {
             token,
@@ -52,10 +58,13 @@ impl DiscordClient {
             effects_rx: Arc::new(Mutex::new(Some(effects_rx))),
             snapshots_tx,
             state: Arc::new(RwLock::new(initial_state)),
+            requested_voice: Arc::new(RwLock::new(None)),
             revision: Arc::new(RwLock::new(SnapshotRevision::default())),
             publish_lock: Arc::new(AsyncMutex::new(())),
             gateway_commands_tx,
             gateway_commands_rx: Arc::new(Mutex::new(Some(gateway_commands_rx))),
+            voice_events_tx,
+            voice_events_rx: Arc::new(Mutex::new(Some(voice_events_rx))),
         })
     }
 
@@ -93,6 +102,7 @@ impl DiscordClient {
             &event,
         )
         .await;
+        voice::forward_app_event(&self.voice_events_tx, &event);
     }
 
     pub fn start_gateway(&self) -> JoinHandle<()> {
@@ -108,18 +118,37 @@ impl DiscordClient {
             .expect("gateway command receiver mutex is not poisoned")
             .take()
             .expect("gateway can only be started once");
+        let voice_events_tx = self.voice_events_tx.clone();
+        let voice_status_publisher = voice::VoiceStatusPublisher::new(
+            self.effects_tx.clone(),
+            self.snapshots_tx.clone(),
+            Arc::clone(&self.state),
+            Arc::clone(&self.revision),
+            Arc::clone(&self.publish_lock),
+        );
+        if let Some(voice_events) = self
+            .voice_events_rx
+            .lock()
+            .expect("voice event receiver mutex is not poisoned")
+            .take()
+        {
+            tokio::spawn(voice::run_voice_runtime(
+                voice_events,
+                voice_events_tx.clone(),
+                voice_status_publisher,
+            ));
+        }
 
         tokio::spawn(async move {
-            run_gateway(
-                token,
+            let runtime = GatewayRuntime {
                 effects_tx,
                 snapshots_tx,
-                gateway_commands,
                 state,
                 revision,
                 publish_lock,
-            )
-            .await;
+                voice_events_tx,
+            };
+            run_gateway(token, gateway_commands, runtime).await;
         })
     }
 
@@ -166,6 +195,131 @@ impl DiscordClient {
                 channel_id,
                 ranges,
             })
+            .map_err(|_| "gateway command channel closed".to_owned())
+    }
+
+    pub fn update_voice_state(
+        &self,
+        guild_id: Id<GuildMarker>,
+        channel_id: Option<Id<ChannelMarker>>,
+        self_mute: bool,
+        self_deaf: bool,
+    ) -> std::result::Result<(), String> {
+        let result = self
+            .gateway_commands_tx
+            .send(GatewayCommand::UpdateVoiceState {
+                guild_id,
+                channel_id,
+                self_mute,
+                self_deaf,
+            })
+            .map_err(|_| "gateway command channel closed".to_owned());
+        if result.is_ok() {
+            let mut requested = self
+                .requested_voice
+                .write()
+                .expect("requested voice lock is not poisoned");
+            if let Some(channel_id) = channel_id {
+                let allow_microphone_transmit = requested
+                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .is_some_and(|voice| voice.allow_microphone_transmit);
+                let microphone_sensitivity = requested
+                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .map(|voice| voice.microphone_sensitivity)
+                    .unwrap_or_default();
+                let microphone_volume = requested
+                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .map(|voice| voice.microphone_volume)
+                    .unwrap_or_default();
+                let voice_output_volume = requested
+                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .map(|voice| voice.voice_output_volume)
+                    .unwrap_or_default();
+                let voice = CurrentVoiceConnectionState {
+                    guild_id,
+                    channel_id,
+                    self_mute,
+                    self_deaf,
+                    allow_microphone_transmit,
+                    microphone_sensitivity,
+                    microphone_volume,
+                    voice_output_volume,
+                };
+                *requested = Some(voice);
+                let _ = self
+                    .voice_events_tx
+                    .send(VoiceRuntimeEvent::Requested(Some(voice)));
+            } else if requested.is_some_and(|voice| voice.guild_id == guild_id) {
+                *requested = None;
+                let _ = self
+                    .voice_events_tx
+                    .send(VoiceRuntimeEvent::Requested(None));
+            }
+        }
+        result
+    }
+
+    pub fn update_voice_capture_permission(
+        &self,
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        allow_microphone_transmit: bool,
+        microphone_sensitivity: MicrophoneSensitivityDb,
+        microphone_volume: VoiceVolumePercent,
+        voice_output_volume: VoiceVolumePercent,
+    ) {
+        let mut requested = self
+            .requested_voice
+            .write()
+            .expect("requested voice lock is not poisoned");
+        let Some(mut voice) = *requested else {
+            return;
+        };
+        if voice.guild_id != guild_id || voice.channel_id != channel_id {
+            return;
+        }
+        if voice.allow_microphone_transmit == allow_microphone_transmit
+            && voice.microphone_sensitivity == microphone_sensitivity
+            && voice.microphone_volume == microphone_volume
+            && voice.voice_output_volume == voice_output_volume
+        {
+            return;
+        }
+
+        voice.allow_microphone_transmit = allow_microphone_transmit;
+        voice.microphone_sensitivity = microphone_sensitivity;
+        voice.microphone_volume = microphone_volume;
+        voice.voice_output_volume = voice_output_volume;
+        *requested = Some(voice);
+        let _ = self
+            .voice_events_tx
+            .send(VoiceRuntimeEvent::Requested(Some(voice)));
+    }
+
+    pub fn current_or_requested_voice_connection(&self) -> Option<CurrentVoiceConnectionState> {
+        self.state
+            .read()
+            .expect("discord state lock is not poisoned")
+            .current_user_voice_connection()
+            .or_else(|| {
+                *self
+                    .requested_voice
+                    .read()
+                    .expect("requested voice lock is not poisoned")
+            })
+    }
+
+    pub fn requested_voice_connection(&self) -> Option<CurrentVoiceConnectionState> {
+        *self
+            .requested_voice
+            .read()
+            .expect("requested voice lock is not poisoned")
+    }
+
+    pub fn shutdown_gateway(&self) -> std::result::Result<(), String> {
+        let _ = self.voice_events_tx.send(VoiceRuntimeEvent::Shutdown);
+        self.gateway_commands_tx
+            .send(GatewayCommand::Shutdown)
             .map_err(|_| "gateway command channel closed".to_owned())
     }
 
@@ -359,6 +513,15 @@ pub(super) async fn publish_app_event(
 ) {
     let mutates_state = event.mutates_discord_state();
     let needs_effect_delivery = event.needs_effect_delivery();
+    let voice_sound = {
+        let state = state.read().expect("discord state lock is not poisoned");
+        match event {
+            AppEvent::VoiceStateUpdate { state: voice_state } => {
+                state.voice_sound_for_state_update(voice_state)
+            }
+            _ => None,
+        }
+    };
 
     let event_revision: SnapshotRevision;
     {
@@ -392,6 +555,14 @@ pub(super) async fn publish_app_event(
                 })
                 .await;
         }
+        if let Some(kind) = voice_sound {
+            let _ = effects_tx
+                .send(SequencedAppEvent {
+                    revision: event_revision.global,
+                    event: AppEvent::VoiceSound { kind },
+                })
+                .await;
+        }
     }
 }
 
@@ -403,7 +574,9 @@ pub(crate) fn validate_token_header(token: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::discord::{AppEvent, ChannelInfo, MessageKind, ids::Id};
+    use crate::discord::{
+        AppEvent, ChannelInfo, MessageKind, VoiceSoundKind, VoiceStateInfo, ids::Id,
+    };
 
     use super::{DiscordClient, validate_token_header};
 
@@ -563,6 +736,103 @@ mod tests {
     }
 
     #[test]
+    fn requested_voice_state_tracks_shutdown_fallback() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+
+        client
+            .update_voice_state(Id::new(1), Some(Id::new(10)), true, false)
+            .expect("gateway command should queue");
+        let voice = client
+            .requested_voice_connection()
+            .expect("requested voice state should be tracked");
+
+        assert_eq!(voice.guild_id, Id::new(1));
+        assert_eq!(voice.channel_id, Id::new(10));
+        assert!(voice.self_mute);
+        assert!(!voice.self_deaf);
+
+        client
+            .update_voice_state(Id::new(1), None, false, false)
+            .expect("gateway command should queue");
+
+        assert_eq!(client.requested_voice_connection(), None);
+    }
+
+    #[tokio::test]
+    async fn requested_voice_state_ignores_observed_other_client_voice() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+
+        client
+            .publish_event(AppEvent::Ready {
+                user: "me".to_owned(),
+                user_id: Some(Id::new(10)),
+            })
+            .await;
+        client
+            .publish_event(AppEvent::VoiceStateUpdate {
+                state: VoiceStateInfo {
+                    guild_id: Id::new(1),
+                    channel_id: Some(Id::new(10)),
+                    user_id: Id::new(10),
+                    session_id: Some("other-client-voice-session".to_owned()),
+                    member: None,
+                    deaf: false,
+                    mute: false,
+                    self_deaf: false,
+                    self_mute: false,
+                    self_stream: false,
+                },
+            })
+            .await;
+
+        assert_eq!(client.requested_voice_connection(), None);
+        assert!(client.current_or_requested_voice_connection().is_some());
+    }
+
+    #[tokio::test]
+    async fn voice_state_transitions_publish_join_and_leave_sound_effects() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let mut effects = client.take_effects();
+
+        client
+            .publish_event(AppEvent::Ready {
+                user: "me".to_owned(),
+                user_id: Some(Id::new(10)),
+            })
+            .await;
+        client
+            .publish_event(AppEvent::VoiceStateUpdate {
+                state: voice_state(10, Some(11)),
+            })
+            .await;
+        assert_voice_sound(&mut effects, VoiceSoundKind::Join).await;
+
+        client
+            .publish_event(AppEvent::VoiceStateUpdate {
+                state: voice_state(20, Some(11)),
+            })
+            .await;
+        assert_voice_sound(&mut effects, VoiceSoundKind::Join).await;
+
+        client
+            .publish_event(AppEvent::VoiceStateUpdate {
+                state: voice_state(20, None),
+            })
+            .await;
+        assert_voice_sound(&mut effects, VoiceSoundKind::Leave).await;
+
+        client
+            .publish_event(AppEvent::VoiceStateUpdate {
+                state: voice_state(10, None),
+            })
+            .await;
+        assert_voice_sound(&mut effects, VoiceSoundKind::Leave).await;
+    }
+
+    #[test]
     fn validates_token_header_values() {
         validate_token_header("raw-user-token").expect("raw user token must be accepted");
         validate_token_header("invalid\nuser-token")
@@ -608,6 +878,32 @@ mod tests {
             recipients: None,
             permission_overwrites: Vec::new(),
         })
+    }
+
+    fn voice_state(user_id: u64, channel_id: Option<u64>) -> VoiceStateInfo {
+        VoiceStateInfo {
+            guild_id: Id::new(1),
+            channel_id: channel_id.map(Id::new),
+            user_id: Id::new(user_id),
+            session_id: None,
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+            self_stream: false,
+        }
+    }
+
+    async fn assert_voice_sound(
+        effects: &mut tokio::sync::mpsc::Receiver<crate::discord::SequencedAppEvent>,
+        expected: VoiceSoundKind,
+    ) {
+        let effect = effects
+            .recv()
+            .await
+            .expect("voice sound effect is published");
+        assert!(matches!(effect.event, AppEvent::VoiceSound { kind } if kind == expected));
     }
 
     fn thread_channel_upsert_event() -> AppEvent {

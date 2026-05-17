@@ -24,6 +24,7 @@ use super::{
     client::publish_app_event,
     events::{AppEvent, SequencedAppEvent},
     state::{DiscordState, SnapshotRevision},
+    voice::{self, VoiceRuntimeEvent},
 };
 use crate::logging;
 
@@ -49,6 +50,23 @@ pub enum GatewayCommand {
         channel_id: Id<ChannelMarker>,
         ranges: Vec<(u32, u32)>,
     },
+    UpdateVoiceState {
+        guild_id: Id<GuildMarker>,
+        channel_id: Option<Id<ChannelMarker>>,
+        self_mute: bool,
+        self_deaf: bool,
+    },
+    Shutdown,
+}
+
+#[derive(Clone)]
+pub(crate) struct GatewayRuntime {
+    pub(crate) effects_tx: mpsc::Sender<SequencedAppEvent>,
+    pub(crate) snapshots_tx: watch::Sender<SnapshotRevision>,
+    pub(crate) state: Arc<RwLock<DiscordState>>,
+    pub(crate) revision: Arc<RwLock<SnapshotRevision>>,
+    pub(crate) publish_lock: Arc<Mutex<()>>,
+    pub(crate) voice_events_tx: mpsc::UnboundedSender<VoiceRuntimeEvent>,
 }
 
 /// Discord user-account gateway endpoint. We pin to `v=9` because the v9
@@ -101,6 +119,7 @@ struct GatewayPublishContext<'a> {
     state: &'a Arc<RwLock<DiscordState>>,
     revision: &'a Arc<RwLock<SnapshotRevision>>,
     publish_lock: &'a Arc<Mutex<()>>,
+    voice_events_tx: &'a mpsc::UnboundedSender<VoiceRuntimeEvent>,
 }
 
 #[derive(Clone, Copy)]
@@ -155,23 +174,20 @@ impl SessionState {
 
 pub async fn run_gateway(
     token: String,
-    effects_tx: mpsc::Sender<SequencedAppEvent>,
-    snapshots_tx: watch::Sender<SnapshotRevision>,
     mut commands: mpsc::UnboundedReceiver<GatewayCommand>,
-    state: Arc<RwLock<DiscordState>>,
-    revision: Arc<RwLock<SnapshotRevision>>,
-    publish_lock: Arc<Mutex<()>>,
+    runtime: GatewayRuntime,
 ) {
     let mut session = SessionState::default();
     let mut backoff = RECONNECT_BASE_DELAY;
 
     loop {
         let publish = GatewayPublishContext {
-            effects_tx: &effects_tx,
-            snapshots_tx: &snapshots_tx,
-            state: &state,
-            revision: &revision,
-            publish_lock: &publish_lock,
+            effects_tx: &runtime.effects_tx,
+            snapshots_tx: &runtime.snapshots_tx,
+            state: &runtime.state,
+            revision: &runtime.revision,
+            publish_lock: &runtime.publish_lock,
+            voice_events_tx: &runtime.voice_events_tx,
         };
         let outcome = match connect_and_run(&token, &mut commands, &mut session, publish).await {
             Ok(outcome) => outcome,
@@ -211,11 +227,12 @@ pub async fn run_gateway(
     }
 
     let publish = GatewayPublishContext {
-        effects_tx: &effects_tx,
-        snapshots_tx: &snapshots_tx,
-        state: &state,
-        revision: &revision,
-        publish_lock: &publish_lock,
+        effects_tx: &runtime.effects_tx,
+        snapshots_tx: &runtime.snapshots_tx,
+        state: &runtime.state,
+        revision: &runtime.revision,
+        publish_lock: &runtime.publish_lock,
+        voice_events_tx: &runtime.voice_events_tx,
     };
     publish_gateway_event(publish, AppEvent::GatewayClosed).await;
 }
@@ -310,7 +327,13 @@ async fn connect_and_run(
             maybe_command = commands.recv() => {
                 match maybe_command {
                     Some(command) => {
-                        if let Err(error) = dispatch_command(&writer, command).await {
+                        if let GatewayCommand::Shutdown = command {
+                            if let Err(error) = close_websocket(&writer).await {
+                                let message = format!("gateway shutdown failed: {error}");
+                                log_and_publish_gateway_error(publish, message).await;
+                            }
+                            break ConnectionOutcome::Stop;
+                        } else if let Err(error) = dispatch_command(&writer, command).await {
                             let message = format!("command send failed: {error}");
                             log_and_publish_gateway_error(publish, message).await;
                             break ConnectionOutcome::Resume;
@@ -482,6 +505,7 @@ async fn publish_gateway_event(context: GatewayPublishContext<'_>, event: AppEve
         &event,
     )
     .await;
+    voice::forward_app_event(context.voice_events_tx, &event);
 }
 
 async fn log_and_publish_gateway_error(context: GatewayPublishContext<'_>, message: String) {
@@ -570,8 +594,35 @@ async fn dispatch_command(writer: &WriterHandle, command: GatewayCommand) -> Res
             );
             guild_channel_subscribe_payload(guild_id, channel_id, &ranges)
         }
+        GatewayCommand::UpdateVoiceState {
+            guild_id,
+            channel_id,
+            self_mute,
+            self_deaf,
+        } => {
+            logging::debug(
+                "gateway",
+                format!(
+                    "updating voice state: guild={} channel={} self_mute={} self_deaf={}",
+                    guild_id.get(),
+                    channel_id.map(|id| id.get()).unwrap_or_default(),
+                    self_mute,
+                    self_deaf,
+                ),
+            );
+            voice_state_update_payload(guild_id, channel_id, self_mute, self_deaf)
+        }
+        GatewayCommand::Shutdown => return Ok(()),
     };
     send_text(writer, payload).await
+}
+
+async fn close_websocket(writer: &WriterHandle) -> Result<(), String> {
+    let mut writer = writer.lock().await;
+    writer
+        .close()
+        .await
+        .map_err(|error| format!("websocket close failed: {error}"))
 }
 
 async fn send_text(writer: &WriterHandle, payload: String) -> Result<(), String> {
@@ -671,6 +722,24 @@ fn guild_channel_subscribe_payload(
     .to_string()
 }
 
+fn voice_state_update_payload(
+    guild_id: Id<GuildMarker>,
+    channel_id: Option<Id<ChannelMarker>>,
+    self_mute: bool,
+    self_deaf: bool,
+) -> String {
+    json!({
+        "op": 4,
+        "d": {
+            "guild_id": guild_id.to_string(),
+            "channel_id": channel_id.map(|channel_id| channel_id.to_string()),
+            "self_mute": self_mute,
+            "self_deaf": self_deaf,
+        },
+    })
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::discord::ids::{
@@ -682,7 +751,7 @@ mod tests {
     use super::{
         GATEWAY_WEBSOCKET_LIMIT, SessionState, USER_ACCOUNT_CAPABILITIES, build_identify_payload,
         build_resume_payload, direct_message_subscribe_payload, gateway_websocket_config,
-        guild_channel_subscribe_payload,
+        guild_channel_subscribe_payload, voice_state_update_payload,
     };
 
     #[test]
@@ -796,5 +865,30 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn voice_state_update_payload_joins_and_leaves_voice_channel() {
+        let join_payload: serde_json::Value = serde_json::from_str(&voice_state_update_payload(
+            Id::<GuildMarker>::new(10),
+            Some(Id::<ChannelMarker>::new(20)),
+            true,
+            false,
+        ))
+        .expect("voice join payload should be valid json");
+        assert_eq!(join_payload["op"].as_u64(), Some(4));
+        assert_eq!(join_payload["d"]["guild_id"].as_str(), Some("10"));
+        assert_eq!(join_payload["d"]["channel_id"].as_str(), Some("20"));
+        assert_eq!(join_payload["d"]["self_mute"].as_bool(), Some(true));
+        assert_eq!(join_payload["d"]["self_deaf"].as_bool(), Some(false));
+
+        let leave_payload: serde_json::Value = serde_json::from_str(&voice_state_update_payload(
+            Id::<GuildMarker>::new(10),
+            None,
+            true,
+            false,
+        ))
+        .expect("voice leave payload should be valid json");
+        assert!(leave_payload["d"]["channel_id"].is_null());
     }
 }
