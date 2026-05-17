@@ -33,6 +33,8 @@ pub struct VoiceOptions {
     pub self_deaf: bool,
     pub allow_microphone_transmit: bool,
     pub microphone_sensitivity: MicrophoneSensitivityDb,
+    pub microphone_volume: VoiceVolumePercent,
+    pub voice_output_volume: VoiceVolumePercent,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -57,9 +59,16 @@ pub enum ImagePreviewQualityPreset {
 #[serde(transparent)]
 pub struct MicrophoneSensitivityDb(i8);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct VoiceVolumePercent(u8);
+
 const MIN_MICROPHONE_SENSITIVITY_DB: i8 = -100;
 const MAX_MICROPHONE_SENSITIVITY_DB: i8 = 0;
 const DEFAULT_MICROPHONE_SENSITIVITY_DB: i8 = -30;
+const MIN_VOICE_VOLUME_PERCENT: u8 = 0;
+const MAX_VOICE_VOLUME_PERCENT: u8 = 100;
+const DEFAULT_VOICE_VOLUME_PERCENT: u8 = 100;
 
 impl ImagePreviewQualityPreset {
     pub fn label(self) -> &'static str {
@@ -93,6 +102,21 @@ impl<'de> Deserialize<'de> for MicrophoneSensitivityDb {
 impl Default for MicrophoneSensitivityDb {
     fn default() -> Self {
         Self(DEFAULT_MICROPHONE_SENSITIVITY_DB)
+    }
+}
+
+impl<'de> Deserialize<'de> for VoiceVolumePercent {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self::from_raw_percent(i64::deserialize(deserializer)?))
+    }
+}
+
+impl Default for VoiceVolumePercent {
+    fn default() -> Self {
+        Self(DEFAULT_VOICE_VOLUME_PERCENT)
     }
 }
 
@@ -130,6 +154,41 @@ impl MicrophoneSensitivityDb {
     }
 }
 
+impl VoiceVolumePercent {
+    pub fn new(value: u8) -> Self {
+        Self(value.clamp(MIN_VOICE_VOLUME_PERCENT, MAX_VOICE_VOLUME_PERCENT))
+    }
+
+    fn from_raw_percent(value: i64) -> Self {
+        Self(
+            value.clamp(
+                i64::from(MIN_VOICE_VOLUME_PERCENT),
+                i64::from(MAX_VOICE_VOLUME_PERCENT),
+            ) as u8,
+        )
+    }
+
+    pub fn value(self) -> u8 {
+        self.0
+    }
+
+    pub fn label(self) -> String {
+        format!("{}%", self.0)
+    }
+
+    pub fn adjust(self, delta: i8) -> Self {
+        if delta.is_negative() {
+            Self::new(self.0.saturating_sub(delta.unsigned_abs()))
+        } else {
+            Self::new(self.0.saturating_add(delta as u8))
+        }
+    }
+
+    pub fn gain(self) -> f32 {
+        f32::from(self.0) / 100.0
+    }
+}
+
 impl Default for VoiceOptions {
     fn default() -> Self {
         Self {
@@ -137,6 +196,8 @@ impl Default for VoiceOptions {
             self_deaf: false,
             allow_microphone_transmit: false,
             microphone_sensitivity: MicrophoneSensitivityDb::default(),
+            microphone_volume: VoiceVolumePercent::default(),
+            voice_output_volume: VoiceVolumePercent::default(),
         }
     }
 }
@@ -276,7 +337,7 @@ mod tests {
 
     use super::{
         AppOptions, DisplayOptions, ImagePreviewQualityPreset, MicrophoneSensitivityDb,
-        NotificationOptions, VoiceOptions,
+        NotificationOptions, VoiceOptions, VoiceVolumePercent,
         load_options_from_path, save_options_to_path,
     };
 
@@ -417,10 +478,26 @@ mod tests {
                 allow_microphone_transmit
             );
             assert_eq!(config.voice.microphone_sensitivity, microphone_sensitivity);
+            assert_eq!(config.voice.microphone_volume, VoiceVolumePercent::default());
+            assert_eq!(
+                config.voice.voice_output_volume,
+                VoiceVolumePercent::default()
+            );
             assert_eq!(config.display.server_width, 20);
             assert_eq!(config.display.channel_list_width, 24);
             assert_eq!(config.display.member_list_width, 26);
         }
+    }
+
+    #[test]
+    fn voice_volume_config_values_are_clamped() {
+        let config: AppOptions = toml::from_str(
+            "[voice]\nmicrophone_volume = 150\nvoice_output_volume = -10\n",
+        )
+        .expect("voice volume config should parse");
+
+        assert_eq!(config.voice.microphone_volume, VoiceVolumePercent::new(100));
+        assert_eq!(config.voice.voice_output_volume, VoiceVolumePercent::new(0));
     }
 
     #[test]
@@ -445,6 +522,8 @@ mod tests {
                 self_deaf: true,
                 allow_microphone_transmit: true,
                 microphone_sensitivity: MicrophoneSensitivityDb::new(-50),
+                microphone_volume: VoiceVolumePercent::new(80),
+                voice_output_volume: VoiceVolumePercent::new(60),
             },
         };
 

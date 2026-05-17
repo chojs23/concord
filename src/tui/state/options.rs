@@ -10,7 +10,7 @@ use super::{
 
 const DISPLAY_OPTION_COUNT: usize = 5;
 const NOTIFICATION_OPTION_COUNT: usize = 1;
-const VOICE_OPTION_COUNT: usize = 4;
+const VOICE_OPTION_COUNT: usize = 6;
 const OPTION_CATEGORY_COUNT: usize = 3;
 const MIN_PANE_WIDTH: u16 = 8;
 const MAX_PANE_WIDTH: u16 = 80;
@@ -238,7 +238,7 @@ impl DashboardState {
                 value: Some("v".to_owned()),
                 gauge_percent: None,
                 effective: true,
-                description: "Mute, deaf, microphone transmit, and sensitivity settings.",
+                description: "Mute, deaf, microphone transmit, sensitivity, and volume settings.",
             },
         ]
     }
@@ -336,6 +336,22 @@ impl DashboardState {
                 effective: self.voice_options.allow_microphone_transmit,
                 description: "Lower dB values transmit quieter microphone input.",
             },
+            DisplayOptionItem {
+                label: "Microphone volume",
+                enabled: true,
+                value: Some(self.voice_options.microphone_volume.label()),
+                gauge_percent: Some(u16::from(self.voice_options.microphone_volume.value())),
+                effective: self.voice_options.allow_microphone_transmit,
+                description: "Adjust outgoing microphone audio level.",
+            },
+            DisplayOptionItem {
+                label: "Voice volume",
+                enabled: true,
+                value: Some(self.voice_options.voice_output_volume.label()),
+                gauge_percent: Some(u16::from(self.voice_options.voice_output_volume.value())),
+                effective: !self.voice_options.self_deaf,
+                description: "Adjust received voice playback level.",
+            },
         ]
     }
 
@@ -400,16 +416,30 @@ impl DashboardState {
         };
         if self.options_popup.as_ref().and_then(|popup| popup.category)
             != Some(OptionsCategory::Voice)
-            || selected != 3
         {
             return;
         }
-        let previous = self.voice_options.microphone_sensitivity;
-        self.voice_options.microphone_sensitivity = previous.adjust(delta);
-        if self.voice_options.microphone_sensitivity == previous {
-            return;
+        let changed = match selected {
+            3 => {
+                let previous = self.voice_options.microphone_sensitivity;
+                self.voice_options.microphone_sensitivity = previous.adjust(delta);
+                self.voice_options.microphone_sensitivity != previous
+            }
+            4 => {
+                let previous = self.voice_options.microphone_volume;
+                self.voice_options.microphone_volume = previous.adjust(delta);
+                self.voice_options.microphone_volume != previous
+            }
+            5 => {
+                let previous = self.voice_options.voice_output_volume;
+                self.voice_options.voice_output_volume = previous.adjust(delta);
+                self.voice_options.voice_output_volume != previous
+            }
+            _ => false,
+        };
+        if changed {
+            self.after_display_option_changed(false, true);
         }
-        self.after_display_option_changed(false, true);
     }
 
     pub fn open_options_category_shortcut(&mut self, shortcut: char) {
@@ -448,7 +478,7 @@ impl DashboardState {
         }
     }
 
-    fn queue_current_voice_state_update(&mut self) {
+    pub(in crate::tui::state) fn queue_current_voice_state_update(&mut self) {
         let Some(voice) = self.voice_connection else {
             return;
         };
@@ -479,6 +509,8 @@ impl DashboardState {
                 channel_id,
                 allow_microphone_transmit: self.voice_options.allow_microphone_transmit,
                 microphone_sensitivity: self.voice_options.microphone_sensitivity,
+                microphone_volume: self.voice_options.microphone_volume,
+                voice_output_volume: self.voice_options.voice_output_volume,
             });
     }
 

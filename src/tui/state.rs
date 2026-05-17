@@ -46,6 +46,7 @@ mod scroll;
 mod subscriptions;
 mod toast;
 mod user;
+mod voice_actions;
 
 use channel_switcher::ChannelSwitcherState;
 use composer::{EmojiCompletion, MentionCompletion};
@@ -53,7 +54,7 @@ use message_render::{add_literal_mention_highlights, normalize_text_highlights};
 use pane_filter::PaneFilterState;
 use popups::{
     ChannelLeaderActionState, GuildLeaderActionState, ImageViewerState, MemberLeaderActionState,
-    UserProfilePopupState,
+    UserProfilePopupState, VoiceLeaderActionState,
 };
 #[cfg(test)]
 use scroll::clamp_list_scroll;
@@ -69,12 +70,16 @@ pub use model::{
     ChannelActionItem, ChannelPaneEntry, ChannelSwitcherItem, ChannelThreadItem, EmojiReactionItem,
     FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, ImageViewerItem,
     MemberActionItem, MessageActionItem, MessageActionKind, MuteActionDurationItem,
-    PollVotePickerItem, ThreadMessagePreview, ThreadSummary, channel_action_shortcut,
+    PollVotePickerItem, ThreadMessagePreview, ThreadSummary, VoiceActionItem,
+    channel_action_shortcut,
     emoji_reaction_shortcut, guild_action_shortcut, indexed_shortcut, member_action_shortcut,
-    message_action_shortcut,
+    message_action_shortcut, voice_action_shortcut,
 };
 #[allow(unused_imports)]
-pub use model::{ChannelActionKind, ChannelBranch, GuildActionKind, GuildBranch, MemberActionKind};
+pub use model::{
+    ChannelActionKind, ChannelBranch, GuildActionKind, GuildBranch, MemberActionKind,
+    VoiceActionKind,
+};
 pub use options::DisplayOptionItem;
 pub use popups::{
     EmojiReactionPickerState, MessageActionMenuState, PollVotePickerState, ReactionUsersPopupState,
@@ -277,6 +282,7 @@ pub struct DashboardState {
     guild_leader_action: Option<GuildLeaderActionState>,
     channel_leader_action: Option<ChannelLeaderActionState>,
     member_leader_action: Option<MemberLeaderActionState>,
+    voice_leader_action: Option<VoiceLeaderActionState>,
     user_profile_popup: Option<UserProfilePopupState>,
     emoji_reaction_picker: Option<EmojiReactionPickerState>,
     poll_vote_picker: Option<PollVotePickerState>,
@@ -417,6 +423,7 @@ impl DashboardState {
             guild_leader_action: None,
             channel_leader_action: None,
             member_leader_action: None,
+            voice_leader_action: None,
             user_profile_popup: None,
             emoji_reaction_picker: None,
             poll_vote_picker: None,
@@ -955,6 +962,7 @@ impl DashboardState {
         self.guild_leader_action = None;
         self.channel_leader_action = None;
         self.member_leader_action = None;
+        self.voice_leader_action = None;
     }
 
     pub fn is_any_action_context_active(&self) -> bool {
@@ -962,6 +970,7 @@ impl DashboardState {
             || self.guild_leader_action.is_some()
             || self.channel_leader_action.is_some()
             || self.member_leader_action.is_some()
+            || self.voice_leader_action.is_some()
     }
 
     pub fn activate_leader_action_shortcut(
@@ -1043,6 +1052,20 @@ impl DashboardState {
                 matched,
                 matched
                     .then(|| self.activate_member_action_shortcut(shortcut))
+                    .flatten(),
+            );
+        }
+        if self.voice_leader_action.is_some() {
+            let actions = self.selected_voice_action_items();
+            let matched = actions.iter().enumerate().any(|(index, action)| {
+                action.enabled
+                    && voice_action_shortcut(&actions, index)
+                        .is_some_and(|candidate| candidate == shortcut)
+            });
+            return (
+                matched,
+                matched
+                    .then(|| self.activate_voice_action_shortcut(shortcut))
                     .flatten(),
             );
         }

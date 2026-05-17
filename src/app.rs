@@ -310,6 +310,8 @@ fn start_command_loop(
                         self_deaf,
                         allow_microphone_transmit,
                         microphone_sensitivity,
+                        microphone_volume,
+                        voice_output_volume,
                     } => {
                         if let Err(message) = client.update_voice_state(
                             guild_id,
@@ -332,6 +334,8 @@ fn start_command_loop(
                                 channel_id,
                                 allow_microphone_transmit,
                                 microphone_sensitivity,
+                                microphone_volume,
+                                voice_output_volume,
                             );
                             client
                                 .publish_event(AppEvent::VoiceConnectionStatusChanged {
@@ -366,12 +370,16 @@ fn start_command_loop(
                         channel_id,
                         allow_microphone_transmit,
                         microphone_sensitivity,
+                        microphone_volume,
+                        voice_output_volume,
                     } => {
                         client.update_voice_capture_permission(
                             guild_id,
                             channel_id,
                             allow_microphone_transmit,
                             microphone_sensitivity,
+                            microphone_volume,
+                            voice_output_volume,
                         );
                     }
                     AppCommand::LeaveVoiceChannel {

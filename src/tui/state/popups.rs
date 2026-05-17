@@ -80,6 +80,11 @@ pub(super) struct MemberLeaderActionState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct VoiceLeaderActionState {
+    pub(super) selected: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum ChannelLeaderActionState {
     Actions {
         channel_id: Id<ChannelMarker>,

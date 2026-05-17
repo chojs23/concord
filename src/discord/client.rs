@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, RwLock};
 
-use crate::config::MicrophoneSensitivityDb;
+use crate::config::{MicrophoneSensitivityDb, VoiceVolumePercent};
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
@@ -227,6 +227,14 @@ impl DiscordClient {
                     .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
                     .map(|voice| voice.microphone_sensitivity)
                     .unwrap_or_default();
+                let microphone_volume = requested
+                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .map(|voice| voice.microphone_volume)
+                    .unwrap_or_default();
+                let voice_output_volume = requested
+                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .map(|voice| voice.voice_output_volume)
+                    .unwrap_or_default();
                 let voice = CurrentVoiceConnectionState {
                     guild_id,
                     channel_id,
@@ -234,6 +242,8 @@ impl DiscordClient {
                     self_deaf,
                     allow_microphone_transmit,
                     microphone_sensitivity,
+                    microphone_volume,
+                    voice_output_volume,
                 };
                 *requested = Some(voice);
                 let _ = self
@@ -255,6 +265,8 @@ impl DiscordClient {
         channel_id: Id<ChannelMarker>,
         allow_microphone_transmit: bool,
         microphone_sensitivity: MicrophoneSensitivityDb,
+        microphone_volume: VoiceVolumePercent,
+        voice_output_volume: VoiceVolumePercent,
     ) {
         let mut requested = self
             .requested_voice
@@ -268,12 +280,16 @@ impl DiscordClient {
         }
         if voice.allow_microphone_transmit == allow_microphone_transmit
             && voice.microphone_sensitivity == microphone_sensitivity
+            && voice.microphone_volume == microphone_volume
+            && voice.voice_output_volume == voice_output_volume
         {
             return;
         }
 
         voice.allow_microphone_transmit = allow_microphone_transmit;
         voice.microphone_sensitivity = microphone_sensitivity;
+        voice.microphone_volume = microphone_volume;
+        voice.voice_output_volume = voice_output_volume;
         *requested = Some(voice);
         let _ = self
             .voice_events_tx

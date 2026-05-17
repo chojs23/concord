@@ -243,6 +243,7 @@ Press `Space` to open the leader shortcut window.
 | `Space`, `4`     | Toggle the Members pane           |
 | `Space`, `a`     | Open actions for the focused pane |
 | `Space`, `o`     | Choose concord option category    |
+| `Space`, `v`     | Open voice actions                |
 | `Space`, `Space` | Open the fuzzy channel switcher   |
 
 #### Action menus
@@ -280,6 +281,14 @@ Channel actions:
 | `p`      | Show pinned messages | Open the selected channel's pinned messages |
 | `t`      | Show threads         | List threads for the selected channel       |
 | `m`      | Mark as read         | Mark the selected channel read              |
+
+Voice actions:
+
+| Shortcut | Action       | Description                              |
+| -------- | ------------ | ---------------------------------------- |
+| `d`      | Deafen voice | Toggle Concord's Discord voice deaf state |
+| `m`      | Mute voice   | Toggle Concord's Discord voice mute state |
+| `l`      | Leave voice  | Leave the current Concord voice channel  |
 
 When the image viewer is open, press `d` to download the current image directly.
 
@@ -332,6 +341,7 @@ AppData config directory on Windows.
 - Toggle custom emoji rendering
 - Toggle desktop notifications
 - Set your Discord voice mute and deaf state
+- Set microphone and received voice volume from 0 to 100
 - Allow gated microphone transmit while joined from this Concord session and not
   self-muted
 
@@ -356,6 +366,8 @@ self_mute = false
 self_deaf = false
 allow_microphone_transmit = false
 microphone_sensitivity = -30
+microphone_volume = 100
+voice_output_volume = 100
 ```
 
 `image_preview_quality` supports these values:
@@ -391,10 +403,13 @@ ready, Concord fails closed instead of sending plaintext audio.
 before Concord transmits it. It accepts an integer dB threshold from `-100` to
 `0`. Lower values transmit quieter input. The default is `-30`, which filters
 small ambient noise so the active speaker indicator does not stay green all the
-time. Press `Space`, `o`, `d` for display options, `Space`, `o`, `n` for
-notification options, or `Space`, `o`, `v` for voice options. In Voice Options,
-select Microphone sensitivity and press `h`/`l` to adjust by 1 dB or `H`/`L` to
-adjust by 10 dB.
+time. `microphone_volume` and `voice_output_volume` accept `0` to `100` percent
+and default to `100`, which preserves the normal audio level. Press `Space`,
+`o`, `d` for display options, `Space`, `o`, `n` for notification options, or
+`Space`, `o`, `v` for voice options. In Voice Options, select Microphone
+sensitivity and press `h`/`l` to adjust by 1 dB or `H`/`L` to adjust by 10 dB.
+The microphone and voice volume rows use the same keys to adjust by 1 or 10
+percent.
 
 Voice active speaker styling follows the actual voice path. The current user is
 highlighted only after Concord sends Speaking on. Remote users are highlighted

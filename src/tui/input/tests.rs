@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 
 use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event, handle_paste};
 use crate::{
-    config::{AppOptions, ImagePreviewQualityPreset, MicrophoneSensitivityDb},
+    config::{AppOptions, ImagePreviewQualityPreset, MicrophoneSensitivityDb, VoiceVolumePercent},
     discord::{
         AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
         CustomEmojiInfo, DownloadAttachmentSource, GuildFolder, GuildNotificationSettingsInfo,
@@ -475,6 +475,23 @@ fn leader_o_opens_options_category_picker() {
     assert_eq!(state.display_option_items()[0].label, "Display");
     assert_eq!(state.display_option_items()[1].label, "Notifications");
     assert_eq!(state.display_option_items()[2].label, "Voice");
+}
+
+#[test]
+fn leader_v_opens_voice_actions() {
+    let mut state = DashboardState::new();
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('v'));
+
+    assert!(state.is_leader_active());
+    assert!(state.is_leader_action_mode());
+    assert!(state.is_voice_leader_action_active());
+    let actions = state.selected_voice_action_items();
+    assert_eq!(actions[0].label, "Deafen voice");
+    assert_eq!(actions[1].label, "Mute voice");
+    assert_eq!(actions[2].label, "Leave voice");
+    assert!(!actions[2].enabled);
 }
 
 #[test]
@@ -1815,6 +1832,19 @@ fn options_popup_h_l_adjust_microphone_sensitivity_by_one_or_ten_db() {
         state.voice_options().microphone_sensitivity,
         MicrophoneSensitivityDb::new(-30)
     );
+
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, char_key('H'));
+    assert_eq!(
+        state.voice_options().microphone_volume,
+        VoiceVolumePercent::new(90)
+    );
+    handle_key(&mut state, char_key('l'));
+    assert_eq!(
+        state.voice_options().microphone_volume,
+        VoiceVolumePercent::new(91)
+    );
+
     assert_eq!(
         state.take_options_save_request(),
         Some(AppOptions {

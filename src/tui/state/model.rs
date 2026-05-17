@@ -111,6 +111,20 @@ pub struct ChannelActionItem {
     pub enabled: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VoiceActionKind {
+    QuickDeafen,
+    QuickMute,
+    QuickLeave,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VoiceActionItem {
+    pub kind: VoiceActionKind,
+    pub label: String,
+    pub enabled: bool,
+}
+
 impl ChannelActionKind {
     fn preferred_shortcut(&self) -> char {
         match self {
@@ -131,6 +145,24 @@ pub fn channel_action_shortcut(actions: &[ChannelActionItem], index: usize) -> O
         actions
             .iter()
             .map(|item| Some(item.kind.preferred_shortcut())),
+    )
+    .or_else(|| indexed_shortcut(index))
+}
+
+pub fn voice_action_shortcut(actions: &[VoiceActionItem], index: usize) -> Option<char> {
+    let action = actions.get(index)?;
+    let preferred = match action.kind {
+        VoiceActionKind::QuickDeafen => 'd',
+        VoiceActionKind::QuickMute => 'm',
+        VoiceActionKind::QuickLeave => 'l',
+    };
+    unique_preferred_shortcut(
+        Some(preferred),
+        actions.iter().map(|item| match item.kind {
+            VoiceActionKind::QuickDeafen => Some('d'),
+            VoiceActionKind::QuickMute => Some('m'),
+            VoiceActionKind::QuickLeave => Some('l'),
+        }),
     )
     .or_else(|| indexed_shortcut(index))
 }

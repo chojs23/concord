@@ -18,7 +18,7 @@ use futures::{SinkExt, StreamExt};
 use opus::{Application as OpusApplication, Channels, Decoder as OpusDecoder, Encoder as OpusEncoder};
 use serde_json::{Value, json};
 #[cfg(feature = "voice-playback")]
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 #[cfg(feature = "voice-playback")]
 use std::sync::Mutex as StdMutex;
 #[cfg(feature = "voice-playback")]
@@ -33,7 +33,7 @@ use tokio::{
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use crate::config::MicrophoneSensitivityDb;
+use crate::config::{MicrophoneSensitivityDb, VoiceVolumePercent};
 use crate::discord::{
     CurrentVoiceConnectionState, DiscordState, SequencedAppEvent, SnapshotRevision,
     VoiceConnectionStatus, VoiceServerInfo, VoiceStateInfo,
@@ -458,6 +458,8 @@ struct VoiceChildTasks {
     #[cfg(feature = "voice-playback")]
     playback_enabled: Option<Arc<AtomicBool>>,
     #[cfg(feature = "voice-playback")]
+    playback_volume: Option<Arc<AtomicU8>>,
+    #[cfg(feature = "voice-playback")]
     microphone_pcm_tx: Option<SyncSender<Vec<i16>>>,
     opus_decode: Option<JoinHandle<()>>,
     #[cfg(feature = "voice-playback")]
@@ -482,6 +484,8 @@ struct VoiceOpusDecode {
     audio_output: Option<VoiceAudioOutput>,
     #[cfg(feature = "voice-playback")]
     playback_enabled: Arc<AtomicBool>,
+    #[cfg(feature = "voice-playback")]
+    playback_volume: Arc<AtomicU8>,
 }
 
 struct VoiceDecodedAudio {
@@ -499,11 +503,13 @@ struct VoiceAudioOutput {
 struct VoiceCaptureGate {
     enabled: bool,
     microphone_sensitivity: MicrophoneSensitivityDb,
+    microphone_volume: VoiceVolumePercent,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct VoicePlaybackGate {
     enabled: bool,
+    volume: VoiceVolumePercent,
 }
 
 #[cfg(feature = "voice-playback")]
@@ -992,6 +998,7 @@ impl VoiceChildTasks {
             let _ = gate.send(VoiceCaptureGate {
                 enabled: false,
                 microphone_sensitivity: MicrophoneSensitivityDb::default(),
+                microphone_volume: VoiceVolumePercent::default(),
             });
         }
         self.microphone_capture = None;
@@ -1008,6 +1015,7 @@ impl VoiceChildTasks {
         {
             self.audio_output = opus_decode.audio_output;
             self.playback_enabled = Some(opus_decode.playback_enabled);
+            self.playback_volume = Some(opus_decode.playback_volume);
         }
         self.opus_decode = Some(opus_decode.task);
     }
@@ -1078,14 +1086,19 @@ impl VoiceChildTasks {
         }
     }
 
-    fn set_voice_playback_enabled(&mut self, enabled: bool) {
+    fn set_voice_playback_gate(&mut self, playback_gate: VoicePlaybackGate) {
         #[cfg(feature = "voice-playback")]
-        if let Some(playback_enabled) = self.playback_enabled.as_ref() {
-            playback_enabled.store(enabled, Ordering::Relaxed);
+        {
+            if let Some(playback_enabled) = self.playback_enabled.as_ref() {
+                playback_enabled.store(playback_gate.enabled, Ordering::Relaxed);
+            }
+            if let Some(playback_volume) = self.playback_volume.as_ref() {
+                playback_volume.store(playback_gate.volume.value(), Ordering::Relaxed);
+            }
         }
         #[cfg(not(feature = "voice-playback"))]
         {
-            let _ = enabled;
+            let _ = playback_gate;
         }
     }
 }
@@ -1098,8 +1111,8 @@ impl Drop for VoiceChildTasks {
 
 impl VoiceOpusDecode {
     #[cfg(not(feature = "voice-playback"))]
-    fn start(playback_enabled: bool) -> Self {
-        let _ = playback_enabled;
+    fn start(playback_gate: VoicePlaybackGate) -> Self {
+        let _ = playback_gate;
         let (frames_tx, frames_rx) = mpsc::channel(VOICE_PLAYBACK_FRAME_QUEUE);
         let task = tokio::spawn(run_voice_playback_decode(
             frames_rx,
@@ -1113,10 +1126,11 @@ impl VoiceOpusDecode {
     }
 
     #[cfg(feature = "voice-playback")]
-    fn start(playback_enabled: bool) -> Self {
+    fn start(playback_gate: VoicePlaybackGate) -> Self {
         let (frames_tx, frames_rx) = mpsc::channel(VOICE_PLAYBACK_FRAME_QUEUE);
-        let playback_enabled = Arc::new(AtomicBool::new(playback_enabled));
-        match VoiceAudioOutput::start(Arc::clone(&playback_enabled)) {
+        let playback_enabled = Arc::new(AtomicBool::new(playback_gate.enabled));
+        let playback_volume = Arc::new(AtomicU8::new(playback_gate.volume.value()));
+        match VoiceAudioOutput::start(Arc::clone(&playback_enabled), Arc::clone(&playback_volume)) {
             Ok(audio_output) => {
                 let decoded_audio = VoiceDecodedAudio::output(audio_output.samples_tx.clone());
                 let task = tokio::spawn(run_voice_playback_decode(frames_rx, decoded_audio));
@@ -1126,6 +1140,7 @@ impl VoiceOpusDecode {
                     task,
                     audio_output: Some(audio_output),
                     playback_enabled,
+                    playback_volume,
                 }
             }
             Err(error) => {
@@ -1142,6 +1157,7 @@ impl VoiceOpusDecode {
                     task,
                     audio_output: None,
                     playback_enabled,
+                    playback_volume,
                 }
             }
         }
@@ -1177,11 +1193,14 @@ impl VoiceDecodedAudio {
 
 #[cfg(feature = "voice-playback")]
 impl VoiceAudioOutput {
-    fn start(playback_enabled: Arc<AtomicBool>) -> Result<Self, String> {
+    fn start(
+        playback_enabled: Arc<AtomicBool>,
+        playback_volume: Arc<AtomicU8>,
+    ) -> Result<Self, String> {
         #[cfg(target_os = "linux")]
         let alsa_error_output = alsa::Output::local_error_handler().ok();
 
-        let result = Self::start_with_cpal(playback_enabled);
+        let result = Self::start_with_cpal(playback_enabled, playback_volume);
 
         #[cfg(target_os = "linux")]
         log_captured_alsa_errors(&alsa_error_output);
@@ -1189,7 +1208,10 @@ impl VoiceAudioOutput {
         result
     }
 
-    fn start_with_cpal(playback_enabled: Arc<AtomicBool>) -> Result<Self, String> {
+    fn start_with_cpal(
+        playback_enabled: Arc<AtomicBool>,
+        playback_volume: Arc<AtomicU8>,
+    ) -> Result<Self, String> {
 
         let (samples_tx, samples_rx) = sync_channel(VOICE_AUDIO_OUTPUT_QUEUE);
         let host = cpal::default_host();
@@ -1205,6 +1227,7 @@ impl VoiceAudioOutput {
             sample_format,
             samples_rx,
             playback_enabled,
+            playback_volume,
         )?;
         stream
             .play()
@@ -1672,19 +1695,20 @@ fn build_voice_output_stream(
     sample_format: cpal::SampleFormat,
     samples_rx: StdReceiver<Vec<f32>>,
     playback_enabled: Arc<AtomicBool>,
+    playback_volume: Arc<AtomicU8>,
 ) -> Result<cpal::Stream, String> {
     match sample_format {
         cpal::SampleFormat::F32 => {
-            build_voice_output_stream_f32(device, config, samples_rx, playback_enabled)
+            build_voice_output_stream_f32(device, config, samples_rx, playback_enabled, playback_volume)
         }
         cpal::SampleFormat::U8 => {
-            build_voice_output_stream_u8(device, config, samples_rx, playback_enabled)
+            build_voice_output_stream_u8(device, config, samples_rx, playback_enabled, playback_volume)
         }
         cpal::SampleFormat::I16 => {
-            build_voice_output_stream_i16(device, config, samples_rx, playback_enabled)
+            build_voice_output_stream_i16(device, config, samples_rx, playback_enabled, playback_volume)
         }
         cpal::SampleFormat::U16 => {
-            build_voice_output_stream_u16(device, config, samples_rx, playback_enabled)
+            build_voice_output_stream_u16(device, config, samples_rx, playback_enabled, playback_volume)
         }
         other => Err(format!("unsupported voice audio output sample format: {other:?}")),
     }
@@ -1696,6 +1720,7 @@ fn build_voice_output_stream_f32(
     config: &cpal::StreamConfig,
     samples_rx: StdReceiver<Vec<f32>>,
     playback_enabled: Arc<AtomicBool>,
+    playback_volume: Arc<AtomicU8>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
     let mut buffer = VoiceAudioBuffer::new(samples_rx);
@@ -1703,7 +1728,7 @@ fn build_voice_output_stream_f32(
         .build_output_stream(
             config,
             move |output: &mut [f32], _| {
-                fill_voice_output_f32(output, channels, &mut buffer, &playback_enabled)
+                fill_voice_output_f32(output, channels, &mut buffer, &playback_enabled, &playback_volume)
             },
             log_voice_output_stream_error,
             None,
@@ -1717,6 +1742,7 @@ fn build_voice_output_stream_u8(
     config: &cpal::StreamConfig,
     samples_rx: StdReceiver<Vec<f32>>,
     playback_enabled: Arc<AtomicBool>,
+    playback_volume: Arc<AtomicU8>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
     let mut buffer = VoiceAudioBuffer::new(samples_rx);
@@ -1724,7 +1750,7 @@ fn build_voice_output_stream_u8(
         .build_output_stream(
             config,
             move |output: &mut [u8], _| {
-                fill_voice_output_u8(output, channels, &mut buffer, &playback_enabled)
+                fill_voice_output_u8(output, channels, &mut buffer, &playback_enabled, &playback_volume)
             },
             log_voice_output_stream_error,
             None,
@@ -1738,6 +1764,7 @@ fn build_voice_output_stream_i16(
     config: &cpal::StreamConfig,
     samples_rx: StdReceiver<Vec<f32>>,
     playback_enabled: Arc<AtomicBool>,
+    playback_volume: Arc<AtomicU8>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
     let mut buffer = VoiceAudioBuffer::new(samples_rx);
@@ -1745,7 +1772,7 @@ fn build_voice_output_stream_i16(
         .build_output_stream(
             config,
             move |output: &mut [i16], _| {
-                fill_voice_output_i16(output, channels, &mut buffer, &playback_enabled)
+                fill_voice_output_i16(output, channels, &mut buffer, &playback_enabled, &playback_volume)
             },
             log_voice_output_stream_error,
             None,
@@ -1759,6 +1786,7 @@ fn build_voice_output_stream_u16(
     config: &cpal::StreamConfig,
     samples_rx: StdReceiver<Vec<f32>>,
     playback_enabled: Arc<AtomicBool>,
+    playback_volume: Arc<AtomicU8>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
     let mut buffer = VoiceAudioBuffer::new(samples_rx);
@@ -1766,7 +1794,7 @@ fn build_voice_output_stream_u16(
         .build_output_stream(
             config,
             move |output: &mut [u16], _| {
-                fill_voice_output_u16(output, channels, &mut buffer, &playback_enabled)
+                fill_voice_output_u16(output, channels, &mut buffer, &playback_enabled, &playback_volume)
             },
             log_voice_output_stream_error,
             None,
@@ -1780,15 +1808,17 @@ fn fill_voice_output_f32(
     channels: usize,
     buffer: &mut VoiceAudioBuffer,
     playback_enabled: &AtomicBool,
+    playback_volume: &AtomicU8,
 ) {
     if !playback_enabled.load(Ordering::Relaxed) {
         buffer.clear_pending();
         fill_voice_output_silence(output, channels, clamp_voice_sample);
         return;
     }
+    let gain = f32::from(playback_volume.load(Ordering::Relaxed).min(100)) / 100.0;
     for frame in output.chunks_mut(channels) {
         let [left, right] = buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
-        write_voice_output_frame(frame, left, right, clamp_voice_sample);
+        write_voice_output_frame(frame, left * gain, right * gain, clamp_voice_sample);
     }
 }
 
@@ -1798,15 +1828,17 @@ fn fill_voice_output_u8(
     channels: usize,
     buffer: &mut VoiceAudioBuffer,
     playback_enabled: &AtomicBool,
+    playback_volume: &AtomicU8,
 ) {
     if !playback_enabled.load(Ordering::Relaxed) {
         buffer.clear_pending();
         fill_voice_output_silence(output, channels, voice_sample_to_u8);
         return;
     }
+    let gain = f32::from(playback_volume.load(Ordering::Relaxed).min(100)) / 100.0;
     for frame in output.chunks_mut(channels) {
         let [left, right] = buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
-        write_voice_output_frame(frame, left, right, voice_sample_to_u8);
+        write_voice_output_frame(frame, left * gain, right * gain, voice_sample_to_u8);
     }
 }
 
@@ -1816,15 +1848,17 @@ fn fill_voice_output_i16(
     channels: usize,
     buffer: &mut VoiceAudioBuffer,
     playback_enabled: &AtomicBool,
+    playback_volume: &AtomicU8,
 ) {
     if !playback_enabled.load(Ordering::Relaxed) {
         buffer.clear_pending();
         fill_voice_output_silence(output, channels, voice_sample_to_i16);
         return;
     }
+    let gain = f32::from(playback_volume.load(Ordering::Relaxed).min(100)) / 100.0;
     for frame in output.chunks_mut(channels) {
         let [left, right] = buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
-        write_voice_output_frame(frame, left, right, voice_sample_to_i16);
+        write_voice_output_frame(frame, left * gain, right * gain, voice_sample_to_i16);
     }
 }
 
@@ -1834,15 +1868,17 @@ fn fill_voice_output_u16(
     channels: usize,
     buffer: &mut VoiceAudioBuffer,
     playback_enabled: &AtomicBool,
+    playback_volume: &AtomicU8,
 ) {
     if !playback_enabled.load(Ordering::Relaxed) {
         buffer.clear_pending();
         fill_voice_output_silence(output, channels, voice_sample_to_u16);
         return;
     }
+    let gain = f32::from(playback_volume.load(Ordering::Relaxed).min(100)) / 100.0;
     for frame in output.chunks_mut(channels) {
         let [left, right] = buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
-        write_voice_output_frame(frame, left, right, voice_sample_to_u16);
+        write_voice_output_frame(frame, left * gain, right * gain, voice_sample_to_u16);
     }
 }
 
@@ -2044,6 +2080,7 @@ impl VoiceRuntimeState {
         Some(VoiceCaptureGate {
             enabled: requested.allow_microphone_transmit && !requested.self_mute,
             microphone_sensitivity: requested.microphone_sensitivity,
+            microphone_volume: requested.microphone_volume,
         })
     }
 
@@ -2055,6 +2092,7 @@ impl VoiceRuntimeState {
         }
         Some(VoicePlaybackGate {
             enabled: !requested.self_deaf,
+            volume: requested.voice_output_volume,
         })
     }
 }
@@ -2103,10 +2141,14 @@ pub(crate) async fn run_voice_runtime(
                         .unwrap_or(VoiceCaptureGate {
                             enabled: false,
                             microphone_sensitivity: MicrophoneSensitivityDb::default(),
+                            microphone_volume: VoiceVolumePercent::default(),
                         });
                     let initial_playback_gate = state
                         .playback_gate()
-                        .unwrap_or(VoicePlaybackGate { enabled: true });
+                        .unwrap_or(VoicePlaybackGate {
+                            enabled: true,
+                            volume: VoiceVolumePercent::default(),
+                        });
                     connection_task = Some(tokio::spawn(run_voice_gateway_session(
                         session,
                         events_tx.clone(),
@@ -2260,6 +2302,7 @@ async fn connect_voice_gateway(
                         child_tasks.set_voice_transmit_gate(VoiceCaptureGate {
                             enabled: false,
                             microphone_sensitivity: MicrophoneSensitivityDb::default(),
+                            microphone_volume: VoiceVolumePercent::default(),
                         });
                         break;
                     }
@@ -2269,11 +2312,14 @@ async fn connect_voice_gateway(
                 match playback_gate {
                     Some(playback_gate) => {
                         current_playback_gate = playback_gate;
-                        child_tasks.set_voice_playback_enabled(playback_gate.enabled);
+                        child_tasks.set_voice_playback_gate(playback_gate);
                         continue;
                     }
                     None => {
-                        child_tasks.set_voice_playback_enabled(false);
+                        child_tasks.set_voice_playback_gate(VoicePlaybackGate {
+                            enabled: false,
+                            volume: VoiceVolumePercent::default(),
+                        });
                         break;
                     }
                 }
@@ -2363,10 +2409,10 @@ async fn connect_voice_gateway(
                         }
                         if let Some(socket) = udp_socket.as_ref() {
                             logging::debug("voice", "starting voice UDP receive task");
-                            let opus_decode = VoiceOpusDecode::start(current_playback_gate.enabled);
+                            let opus_decode = VoiceOpusDecode::start(current_playback_gate);
                             let playback_tx = Some(opus_decode.frames_tx.clone());
                             child_tasks.replace_opus_decode(opus_decode);
-                            child_tasks.set_voice_playback_enabled(current_playback_gate.enabled);
+                            child_tasks.set_voice_playback_gate(current_playback_gate);
                             #[cfg_attr(not(feature = "voice-playback"), allow(unused_variables))]
                             let transmit_description = description.clone();
                             child_tasks.replace_udp_receive(tokio::spawn(run_voice_udp_receive(
@@ -3220,7 +3266,7 @@ async fn run_voice_udp_transmit(
                     continue;
                 }
                 match latest_voice_microphone_pcm_frame(&pcm_rx) {
-                    VoiceMicrophonePcmRead::Frame(frame) => {
+                    VoiceMicrophonePcmRead::Frame(mut frame) => {
                         if !voice_pcm_frame_reaches_sensitivity(&frame, gate.microphone_sensitivity) {
                             if let Err(error) = flush_voice_outbound_events(
                                 &udp_socket,
@@ -3233,6 +3279,7 @@ async fn run_voice_udp_transmit(
                             }
                             continue;
                         }
+                        apply_voice_volume_to_i16_frame(&mut frame, gate.microphone_volume);
                         let _ = local_speaking_tx.send(true);
                         let opus = match encoder.encode_20ms_i16(&frame) {
                             Ok(opus) => opus,
@@ -3751,6 +3798,17 @@ fn voice_pcm_frame_reaches_sensitivity(
 }
 
 #[cfg(any(test, feature = "voice-playback"))]
+fn apply_voice_volume_to_i16_frame(frame: &mut [i16], volume: VoiceVolumePercent) {
+    let gain = volume.gain();
+    if (gain - 1.0).abs() <= f32::EPSILON {
+        return;
+    }
+    for sample in frame {
+        *sample = (f32::from(*sample) * gain).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+    }
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
 fn voice_pcm_peak(frame: &[i16]) -> i32 {
     frame
         .iter()
@@ -3832,6 +3890,8 @@ mod tests {
             self_deaf: false,
             allow_microphone_transmit: false,
             microphone_sensitivity: MicrophoneSensitivityDb::default(),
+            microphone_volume: VoiceVolumePercent::default(),
+            voice_output_volume: VoiceVolumePercent::default(),
         }
     }
 
@@ -3898,6 +3958,8 @@ mod tests {
         let mut requested = requested_voice();
         requested.allow_microphone_transmit = true;
         requested.self_mute = false;
+        requested.microphone_volume = VoiceVolumePercent::new(40);
+        requested.voice_output_volume = VoiceVolumePercent::new(65);
         state.apply(VoiceRuntimeEvent::Requested(Some(requested)));
         assert_eq!(state.capture_gate(), None);
 
@@ -3911,9 +3973,16 @@ mod tests {
             Some(VoiceCaptureGate {
                 enabled: true,
                 microphone_sensitivity: MicrophoneSensitivityDb::default(),
+                microphone_volume: VoiceVolumePercent::new(40),
             })
         );
-        assert_eq!(state.playback_gate(), Some(VoicePlaybackGate { enabled: true }));
+        assert_eq!(
+            state.playback_gate(),
+            Some(VoicePlaybackGate {
+                enabled: true,
+                volume: VoiceVolumePercent::new(65),
+            })
+        );
 
         requested.self_mute = true;
         state.apply(VoiceRuntimeEvent::Requested(Some(requested)));
@@ -3922,9 +3991,16 @@ mod tests {
             Some(VoiceCaptureGate {
                 enabled: false,
                 microphone_sensitivity: MicrophoneSensitivityDb::default(),
+                microphone_volume: VoiceVolumePercent::new(40),
             })
         );
-        assert_eq!(state.playback_gate(), Some(VoicePlaybackGate { enabled: true }));
+        assert_eq!(
+            state.playback_gate(),
+            Some(VoicePlaybackGate {
+                enabled: true,
+                volume: VoiceVolumePercent::new(65),
+            })
+        );
 
         requested.self_deaf = true;
         state.apply(VoiceRuntimeEvent::Requested(Some(requested)));
@@ -3933,9 +4009,16 @@ mod tests {
             Some(VoiceCaptureGate {
                 enabled: false,
                 microphone_sensitivity: MicrophoneSensitivityDb::default(),
+                microphone_volume: VoiceVolumePercent::new(40),
             })
         );
-        assert_eq!(state.playback_gate(), Some(VoicePlaybackGate { enabled: false }));
+        assert_eq!(
+            state.playback_gate(),
+            Some(VoicePlaybackGate {
+                enabled: false,
+                volume: VoiceVolumePercent::new(65),
+            })
+        );
 
         requested.self_mute = false;
         requested.allow_microphone_transmit = false;
@@ -3946,9 +4029,16 @@ mod tests {
             Some(VoiceCaptureGate {
                 enabled: false,
                 microphone_sensitivity: MicrophoneSensitivityDb::default(),
+                microphone_volume: VoiceVolumePercent::new(40),
             })
         );
-        assert_eq!(state.playback_gate(), Some(VoicePlaybackGate { enabled: true }));
+        assert_eq!(
+            state.playback_gate(),
+            Some(VoicePlaybackGate {
+                enabled: true,
+                volume: VoiceVolumePercent::new(65),
+            })
+        );
 
         let mut other_channel = requested;
         other_channel.channel_id = Id::new(11);
@@ -4244,6 +4334,15 @@ mod tests {
             &loud,
             MicrophoneSensitivityDb::new(-20),
         ));
+    }
+
+    #[test]
+    fn voice_volume_scales_i16_pcm_frame() {
+        let mut frame = vec![1000, -1000, i16::MAX, i16::MIN];
+
+        apply_voice_volume_to_i16_frame(&mut frame, VoiceVolumePercent::new(50));
+
+        assert_eq!(frame, vec![500, -500, 16384, -16384]);
     }
 
     #[test]

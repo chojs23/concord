@@ -51,6 +51,8 @@ fn leader_popup_title(state: &DashboardState) -> String {
         "Server Actions".to_owned()
     } else if state.is_member_leader_action_active() {
         "Member Actions".to_owned()
+    } else if state.is_voice_leader_action_active() {
+        "Voice Actions".to_owned()
     } else {
         "Actions".to_owned()
     }
@@ -66,6 +68,7 @@ fn leader_popup_lines(state: &DashboardState, max_lines: usize) -> Vec<Line<'sta
             leader_shortcut_line('4', "toggle Members", true),
             leader_shortcut_line('a', "Actions", true),
             leader_shortcut_line('o', "Options", true),
+            leader_shortcut_line('v', "Voice", true),
             leader_shortcut_text_line("Space", "Switch channels", true),
         ]
     };
@@ -193,6 +196,20 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .map(|(index, action)| {
                 leader_shortcut_line(
                     member_action_shortcut(&actions, index).unwrap_or(' '),
+                    &action.label,
+                    action.enabled,
+                )
+            })
+            .collect();
+    }
+    if state.is_voice_leader_action_active() {
+        let actions = state.selected_voice_action_items();
+        return actions
+            .iter()
+            .enumerate()
+            .map(|(index, action)| {
+                leader_shortcut_line(
+                    voice_action_shortcut(&actions, index).unwrap_or(' '),
                     &action.label,
                     action.enabled,
                 )

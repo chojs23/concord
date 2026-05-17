@@ -80,11 +80,16 @@ pub(in crate::tui::ui) fn options_popup_lines(
                 Span::styled(item.description, Style::default().fg(DIM)),
             ]);
             let gauge_line = item.gauge_percent.map(|_| {
+                let (min_label, max_label) = if item.value.as_deref().is_some_and(|value| value.ends_with('%')) {
+                    ("0%", "100%")
+                } else {
+                    ("-100 dB", "0 dB")
+                };
                 Line::from(vec![
                     Span::styled("  ", Style::default().fg(ACCENT)),
-                    Span::styled("  -100 dB ", Style::default().fg(DIM)),
+                    Span::styled(format!("  {min_label} "), Style::default().fg(DIM)),
                     Span::styled(" ".repeat(28), Style::default()),
-                    Span::styled(" 0 dB", Style::default().fg(DIM)),
+                    Span::styled(format!(" {max_label}"), Style::default().fg(DIM)),
                 ])
             });
             std::iter::once(row).chain(gauge_line)

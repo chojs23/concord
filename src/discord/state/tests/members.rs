@@ -154,6 +154,8 @@ fn tracks_voice_participants_join_move_and_leave() {
             self_deaf: false,
             allow_microphone_transmit: false,
             microphone_sensitivity: Default::default(),
+            microphone_volume: Default::default(),
+            voice_output_volume: Default::default(),
         })
     );
 
@@ -202,6 +204,8 @@ fn tracks_voice_participants_join_move_and_leave() {
             self_deaf: false,
             allow_microphone_transmit: false,
             microphone_sensitivity: Default::default(),
+            microphone_volume: Default::default(),
+            voice_output_volume: Default::default(),
         })
     );
 

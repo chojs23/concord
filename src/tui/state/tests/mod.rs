@@ -2309,11 +2309,13 @@ fn display_option_items_include_voice_state_controls() {
         self_deaf: true,
         allow_microphone_transmit: true,
         microphone_sensitivity: Default::default(),
+        microphone_volume: Default::default(),
+        voice_output_volume: Default::default(),
     });
 
     let items = state.display_option_items();
 
-    assert_eq!(items.len(), 10);
+    assert_eq!(items.len(), 12);
     assert_eq!(items[6].label, "Voice muted");
     assert!(items[6].enabled);
     assert!(items[6].effective);
@@ -2327,6 +2329,14 @@ fn display_option_items_include_voice_state_controls() {
     assert_eq!(items[9].value, Some("-30 dB".to_owned()));
     assert_eq!(items[9].gauge_percent, Some(70));
     assert!(items[9].effective);
+    assert_eq!(items[10].label, "Microphone volume");
+    assert_eq!(items[10].value, Some("100%".to_owned()));
+    assert_eq!(items[10].gauge_percent, Some(100));
+    assert!(items[10].effective);
+    assert_eq!(items[11].label, "Voice volume");
+    assert_eq!(items[11].value, Some("100%".to_owned()));
+    assert_eq!(items[11].gauge_percent, Some(100));
+    assert!(!items[11].effective);
 }
 
 #[test]
@@ -2374,6 +2384,8 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
             channel_id: Id::new(11),
             allow_microphone_transmit: true,
             microphone_sensitivity: Default::default(),
+            microphone_volume: Default::default(),
+            voice_output_volume: Default::default(),
         }]
     );
 
@@ -2390,6 +2402,8 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
             channel_id: Id::new(11),
             allow_microphone_transmit: true,
             microphone_sensitivity: state.voice_options().microphone_sensitivity,
+            microphone_volume: Default::default(),
+            voice_output_volume: Default::default(),
         }]
     );
 }
@@ -8151,6 +8165,8 @@ fn voice_channel_action_emits_join_then_leave_command() {
         self_deaf: true,
         allow_microphone_transmit: false,
         microphone_sensitivity: Default::default(),
+        microphone_volume: Default::default(),
+        voice_output_volume: Default::default(),
     });
     state.push_event(AppEvent::GuildCreate {
         guild_id: Id::new(1),
@@ -8191,6 +8207,8 @@ fn voice_channel_action_emits_join_then_leave_command() {
             self_deaf: true,
             allow_microphone_transmit: false,
             microphone_sensitivity: Default::default(),
+            microphone_volume: Default::default(),
+            voice_output_volume: Default::default(),
         })
     );
 
@@ -8216,12 +8234,64 @@ fn voice_channel_action_emits_join_then_leave_command() {
 }
 
 #[test]
+fn voice_leader_actions_toggle_state_and_leave_current_voice() {
+    let mut state = DashboardState::new();
+    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
+        guild_id: Id::new(1),
+        channel_id: Some(Id::new(11)),
+        status: VoiceConnectionStatus::Connecting,
+        message: None,
+    });
+
+    state.open_voice_actions();
+    let command = state.activate_voice_action_shortcut('m');
+    assert_eq!(command, None);
+    assert!(state.voice_options().self_mute);
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceState {
+            guild_id: Id::new(1),
+            channel_id: Id::new(11),
+            self_mute: true,
+            self_deaf: false,
+        }]
+    );
+
+    state.open_voice_actions();
+    let command = state.activate_voice_action_shortcut('d');
+    assert_eq!(command, None);
+    assert!(state.voice_options().self_deaf);
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceState {
+            guild_id: Id::new(1),
+            channel_id: Id::new(11),
+            self_mute: true,
+            self_deaf: true,
+        }]
+    );
+
+    state.open_voice_actions();
+    let command = state.activate_voice_action_shortcut('l');
+    assert_eq!(
+        command,
+        Some(AppCommand::LeaveVoiceChannel {
+            guild_id: Id::new(1),
+            self_mute: true,
+            self_deaf: true,
+        })
+    );
+}
+
+#[test]
 fn other_client_voice_state_shows_header_only() {
     let mut state = DashboardState::new_with_voice_options(VoiceOptions {
         self_mute: true,
         self_deaf: true,
         allow_microphone_transmit: false,
         microphone_sensitivity: Default::default(),
+        microphone_volume: Default::default(),
+        voice_output_volume: Default::default(),
     });
     state.push_event(AppEvent::Ready {
         user: "me".to_owned(),

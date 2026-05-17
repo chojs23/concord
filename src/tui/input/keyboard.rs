@@ -75,6 +75,7 @@ enum LeaderAction {
     TogglePane(FocusPane),
     OpenActions,
     OpenOptions,
+    OpenVoiceActions,
     OpenChannelSwitcher,
     Close,
 }
@@ -476,6 +477,7 @@ fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCom
             state.open_options_category_picker();
             state.close_leader();
         }
+        LeaderAction::OpenVoiceActions => state.open_voice_actions(),
         LeaderAction::OpenChannelSwitcher => state.open_channel_switcher(),
         LeaderAction::Close => state.close_leader(),
     }
@@ -1039,6 +1041,7 @@ fn leader_action(key: KeyEvent) -> LeaderAction {
         KeyCode::Char('4') if is_shortcut_key(key) => LeaderAction::TogglePane(FocusPane::Members),
         KeyCode::Char('a') if is_shortcut_key(key) => LeaderAction::OpenActions,
         KeyCode::Char('o') if is_shortcut_key(key) => LeaderAction::OpenOptions,
+        KeyCode::Char('v') if is_shortcut_key(key) => LeaderAction::OpenVoiceActions,
         KeyCode::Char(' ') if is_shortcut_key(key) => LeaderAction::OpenChannelSwitcher,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => LeaderAction::Close,
         KeyCode::Esc => LeaderAction::Close,
