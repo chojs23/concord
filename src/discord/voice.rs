@@ -1749,6 +1749,7 @@ impl VoiceRuntimeState {
                     active.matches_connection_end(guild_id, channel_id, &session_id, &endpoint)
                 }) {
                     self.active = None;
+                    return self.connect_if_ready();
                 }
                 return None;
             }
@@ -3523,6 +3524,26 @@ mod tests {
         assert_eq!(
             state.apply(VoiceRuntimeEvent::Requested(None)),
             Some(VoiceRuntimeAction::Close)
+        );
+    }
+
+    #[test]
+    fn voice_runtime_reconnects_after_matching_connection_end() {
+        let mut state = VoiceRuntimeState::default();
+        state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
+        state.apply(VoiceRuntimeEvent::Requested(Some(requested_voice())));
+        state.apply(VoiceRuntimeEvent::VoiceState(voice_state(
+            10,
+            Some(Id::new(10)),
+        )));
+        let connected = state.apply(VoiceRuntimeEvent::VoiceServer(voice_server()));
+        let Some(VoiceRuntimeAction::Connect(session)) = connected else {
+            panic!("expected initial voice connect action, got {connected:?}");
+        };
+
+        assert_eq!(
+            state.apply(session.connection_ended_event()),
+            Some(VoiceRuntimeAction::Connect(session))
         );
     }
 
