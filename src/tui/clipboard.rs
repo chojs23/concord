@@ -154,7 +154,9 @@ set options to NSDictionary's dictionaryWithObject:(NSNumber's numberWithBool:tr
 set urls to (pasteboard's readObjectsForClasses:classes options:options) as list
 set paths to {}
 repeat with fileUrl in urls
-    set end of paths to POSIX path of fileUrl
+    if (fileUrl's isFileURL()) as boolean then
+        set end of paths to (fileUrl's |path|()) as text
+    end if
 end repeat
 paths as text
 "#;
