@@ -50,14 +50,8 @@ pub(super) fn handle_terminal_event(
             *last_frame_area = Rect::new(0, 0, width, height);
             outcome.dirty = true;
         }
-        TerminalEvent::Paste(text) => {
-            if text.is_empty() {
-                if handle_clipboard_image_paste(state, clipboard) {
-                    outcome.dirty = true;
-                }
-            } else if input::handle_paste(state, &text) {
-                outcome.dirty = true;
-            }
+        TerminalEvent::Paste(text) if input::handle_paste(state, &text) => {
+            outcome.dirty = true;
         }
         _ => {}
     }
@@ -94,32 +88,8 @@ fn handle_native_paste_key(
 }
 
 fn is_native_paste_key(key: KeyEvent) -> bool {
-    let paste_modifier = key
-        .modifiers
-        .intersects(KeyModifiers::SUPER | KeyModifiers::META);
+    let paste_modifier = key.modifiers.contains(KeyModifiers::CONTROL);
     matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V')) && paste_modifier
-}
-
-fn handle_clipboard_image_paste(
-    state: &mut DashboardState,
-    clipboard: &mut ClipboardService,
-) -> bool {
-    if !state.is_composing() || !state.composer_accepts_attachments() {
-        return false;
-    }
-
-    match clipboard.clipboard_image_upload() {
-        Ok(attachment) => {
-            state.add_pending_composer_attachments(vec![attachment]);
-            state.show_success_toast("Clipboard image attached", std::time::Instant::now());
-            true
-        }
-        Err(error) => {
-            logging::error("tui", format!("clipboard image paste failed: {error}"));
-            state.show_error_toast("No clipboard image", std::time::Instant::now());
-            true
-        }
-    }
 }
 
 fn save_options_if_needed(state: &mut DashboardState) {
@@ -142,22 +112,22 @@ mod tests {
     use super::is_native_paste_key;
 
     #[test]
-    fn recognizes_macos_command_v_as_native_paste_key() {
+    fn recognizes_native_clipboard_paste_keys() {
         assert!(is_native_paste_key(KeyEvent::new(
             KeyCode::Char('v'),
-            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL,
         )));
         assert!(is_native_paste_key(KeyEvent::new(
-            KeyCode::Char('v'),
-            KeyModifiers::META,
+            KeyCode::Char('V'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         )));
     }
 
     #[test]
-    fn ignores_control_v_as_native_paste_key() {
+    fn ignores_unmodified_v_as_native_paste_key() {
         assert!(!is_native_paste_key(KeyEvent::new(
             KeyCode::Char('v'),
-            KeyModifiers::CONTROL,
+            KeyModifiers::NONE,
         )));
     }
 }
