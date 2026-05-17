@@ -26,6 +26,7 @@ pub struct DisplayOptions {
 pub struct VoiceOptions {
     pub self_mute: bool,
     pub self_deaf: bool,
+    pub allow_microphone_transmit: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -237,11 +238,13 @@ mod tests {
                 ImagePreviewQualityPreset::Balanced,
                 false,
                 false,
+                false,
             ),
             (
                 "[display]\nimage_preview_quality = \"original\"\n",
                 false,
                 ImagePreviewQualityPreset::Original,
+                false,
                 false,
                 false,
             ),
@@ -251,10 +254,27 @@ mod tests {
                 ImagePreviewQualityPreset::Balanced,
                 true,
                 false,
+                false,
+            ),
+            (
+                "[voice]\nallow_microphone_transmit = true\n",
+                false,
+                ImagePreviewQualityPreset::Balanced,
+                false,
+                false,
+                true,
             ),
         ];
 
-        for (toml, disable_image_preview, image_preview_quality, self_mute, self_deaf) in cases {
+        for (
+            toml,
+            disable_image_preview,
+            image_preview_quality,
+            self_mute,
+            self_deaf,
+            allow_microphone_transmit,
+        ) in cases
+        {
             let config: AppOptions = toml::from_str(toml).expect("partial config should parse");
             assert_eq!(config.display.disable_image_preview, disable_image_preview);
             assert!(config.display.show_avatars);
@@ -264,6 +284,10 @@ mod tests {
             assert!(config.display.desktop_notifications);
             assert_eq!(config.voice.self_mute, self_mute);
             assert_eq!(config.voice.self_deaf, self_deaf);
+            assert_eq!(
+                config.voice.allow_microphone_transmit,
+                allow_microphone_transmit
+            );
             assert_eq!(config.display.server_width, 20);
             assert_eq!(config.display.channel_list_width, 24);
             assert_eq!(config.display.member_list_width, 26);
@@ -288,6 +312,7 @@ mod tests {
             voice: VoiceOptions {
                 self_mute: true,
                 self_deaf: true,
+                allow_microphone_transmit: true,
             },
         };
 

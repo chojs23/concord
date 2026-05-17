@@ -3,7 +3,7 @@ use crate::discord::AppCommand;
 
 use super::{DashboardState, FocusPane, popups::OptionsPopupState};
 
-const OPTION_COUNT: usize = 8;
+const OPTION_COUNT: usize = 9;
 const MIN_PANE_WIDTH: u16 = 8;
 const MAX_PANE_WIDTH: u16 = 80;
 
@@ -182,6 +182,13 @@ impl DashboardState {
                 effective: true,
                 description: "Set your Discord voice playback deaf state.",
             },
+            DisplayOptionItem {
+                label: "Allow microphone transmit",
+                enabled: self.voice_options.allow_microphone_transmit,
+                value: None,
+                effective: true,
+                description: "Permit manual microphone transmit actions. Does not start capture.",
+            },
         ]
     }
 
@@ -209,6 +216,10 @@ impl DashboardState {
             }
             6 => self.voice_options.self_mute = !self.voice_options.self_mute,
             7 => self.voice_options.self_deaf = !self.voice_options.self_deaf,
+            8 => {
+                self.voice_options.allow_microphone_transmit =
+                    !self.voice_options.allow_microphone_transmit
+            }
             _ => return,
         }
         if !self.show_images() {

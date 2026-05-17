@@ -84,11 +84,37 @@ The release binary is produced at:
 target/release/concord
 ```
 
+By default, source builds can join voice channels and decode received voice
+audio, but they do not open a local speaker output device. To build with
+receive-only voice playback, enable the optional `voice-playback` feature:
+
+```sh
+cargo build --release --features voice-playback
+```
+
+Linux playback uses the system audio stack through `cpal`. You may need ALSA
+development files when building from source:
+
+```sh
+sudo apt install libasound2-dev
+```
+
+On WSLg, audio is usually exposed through PulseAudio instead of a real ALSA
+sound card. If playback does not start, check that PulseAudio and ALSA routing
+work before debugging Discord voice itself:
+
+```sh
+pactl info
+paplay /usr/share/sounds/alsa/Front_Center.wav
+aplay -D pulse /usr/share/sounds/alsa/Front_Center.wav
+```
+
 ## Features
 
-Concord can request joining and leaving Discord voice channels, but it does not
-play or send voice audio yet. For now it is focusing ui/ux and conveniency
-features.
+Concord can request joining and leaving Discord voice channels. Default builds
+do not open a local speaker output device, while source builds with
+`--features voice-playback` support receive-only voice playback. Concord does
+not capture microphone audio or send voice audio.
 
 ### Authentication
 
@@ -107,7 +133,8 @@ Tokens are saved under Concord's config directory in plain text. See the Securit
 - View and filter forum posts (active / archived)
 - Load pinned messages per channel
 - Open channel actions for pinned messages, thread lists, and mark-as-read
-- Join and leave voice channels without audio playback or microphone capture
+- Join and leave voice channels
+- Receive voice playback when built with `--features voice-playback`
 - Track unread messages and mention counts per channel
 - Mute and unmute channels and servers
 
@@ -301,6 +328,7 @@ AppData config directory on Windows.
 - Toggle custom emoji rendering
 - Toggle desktop notifications
 - Set your Discord voice mute and deaf state
+- Allow future manual microphone transmit actions without starting capture
 
 You can change these from the in-app Options menu, and Concord saves them back
 to the config file.
@@ -319,6 +347,7 @@ desktop_notifications = true
 [voice]
 self_mute = false
 self_deaf = false
+allow_microphone_transmit = false
 ```
 
 `image_preview_quality` supports these values:
@@ -338,7 +367,9 @@ playing a sound when the terminal app is focused.
 
 `self_mute` and `self_deaf` under `[voice]` control the voice state Concord
 sends when joining, leaving, or updating your current Discord voice channel.
-Concord still does not play or send voice audio.
+`allow_microphone_transmit` is a local safety gate for future explicit transmit
+actions. Turning it on does not start capture, does not resume capture after a
+restart or reconnect, and current Concord builds still do not send voice audio.
 
 ## Performance
 

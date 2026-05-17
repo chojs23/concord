@@ -2308,17 +2308,21 @@ fn display_option_items_include_voice_state_controls() {
     let state = DashboardState::new_with_voice_options(VoiceOptions {
         self_mute: true,
         self_deaf: true,
+        allow_microphone_transmit: true,
     });
 
     let items = state.display_option_items();
 
-    assert_eq!(items.len(), 8);
+    assert_eq!(items.len(), 9);
     assert_eq!(items[6].label, "Voice muted");
     assert!(items[6].enabled);
     assert!(items[6].effective);
     assert_eq!(items[7].label, "Voice deafened");
     assert!(items[7].enabled);
     assert!(items[7].effective);
+    assert_eq!(items[8].label, "Allow microphone transmit");
+    assert!(items[8].enabled);
+    assert!(items[8].effective);
 }
 
 #[test]
@@ -2357,6 +2361,11 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
             self_deaf: true,
         }]
     );
+
+    state.move_option_down();
+    state.toggle_selected_display_option();
+    assert!(state.voice_options().allow_microphone_transmit);
+    assert!(state.drain_pending_commands().is_empty());
 }
 
 #[test]
@@ -8114,6 +8123,7 @@ fn voice_channel_action_emits_join_then_leave_command() {
     let mut state = DashboardState::new_with_voice_options(VoiceOptions {
         self_mute: true,
         self_deaf: true,
+        allow_microphone_transmit: false,
     });
     state.push_event(AppEvent::GuildCreate {
         guild_id: Id::new(1),
@@ -8181,6 +8191,7 @@ fn other_client_voice_state_shows_header_only() {
     let mut state = DashboardState::new_with_voice_options(VoiceOptions {
         self_mute: true,
         self_deaf: true,
+        allow_microphone_transmit: false,
     });
     state.push_event(AppEvent::Ready {
         user: "me".to_owned(),
