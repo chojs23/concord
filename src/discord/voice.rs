@@ -87,6 +87,7 @@ const VOICE_AUDIO_OUTPUT_QUEUE: usize = 64;
 const AEAD_AES256_GCM_RTPSIZE: &str = "aead_aes256_gcm_rtpsize";
 const AEAD_XCHACHA20_POLY1305_RTPSIZE: &str = "aead_xchacha20_poly1305_rtpsize";
 const VOICE_REMOTE_SPEAKING_TTL: Duration = Duration::from_millis(500);
+const VOICE_LOCAL_SPEAKING_TTL: Duration = Duration::from_millis(500);
 const VOICE_REMOTE_SPEAKING_SWEEP_INTERVAL: Duration = Duration::from_millis(250);
 
 const VOICE_OP_READY: u8 = 2;
@@ -255,12 +256,21 @@ impl VoiceSpeakingTracker {
         }
     }
 
-    fn record_local(&mut self, speaking: bool) -> Option<bool> {
-        if self.local_speaking == speaking {
-            return None;
+    fn record_local(&mut self, speaking: bool, now: Instant) -> Option<bool> {
+        if speaking {
+            self.local_deadline = Some(now + VOICE_LOCAL_SPEAKING_TTL);
+            if self.local_speaking {
+                return None;
+            }
+            self.local_speaking = true;
+            return Some(true);
         }
-        self.local_speaking = speaking;
-        Some(speaking)
+
+        if self.local_speaking {
+            self.local_deadline
+                .get_or_insert(now + VOICE_LOCAL_SPEAKING_TTL);
+        }
+        None
     }
 
     fn expire_remote(&mut self, now: Instant) -> Vec<Id<UserMarker>> {
@@ -275,9 +285,23 @@ impl VoiceSpeakingTracker {
         expired
     }
 
+    fn expire_local(&mut self, now: Instant) -> Option<bool> {
+        if !self.local_speaking {
+            self.local_deadline = None;
+            return None;
+        }
+        if self.local_deadline.is_some_and(|deadline| deadline <= now) {
+            self.local_deadline = None;
+            self.local_speaking = false;
+            return Some(false);
+        }
+        None
+    }
+
     fn clear_all(&mut self, local_user_id: Id<UserMarker>) -> Vec<Id<UserMarker>> {
         let mut cleared = self.remote_deadlines.keys().copied().collect::<Vec<_>>();
         self.remote_deadlines.clear();
+        self.local_deadline = None;
         if self.local_speaking {
             self.local_speaking = false;
             if !cleared.contains(&local_user_id) {
@@ -435,6 +459,7 @@ struct VoiceSpeakingState {
 struct VoiceSpeakingTracker {
     remote_deadlines: HashMap<Id<UserMarker>, Instant>,
     local_speaking: bool,
+    local_deadline: Option<Instant>,
 }
 
 struct VoiceDaveState {
@@ -2282,7 +2307,7 @@ async fn connect_voice_gateway(
                 let Some(local_speaking) = local_speaking else {
                     break;
                 };
-                if let Some(speaking) = speaking_tracker.record_local(local_speaking) {
+                if let Some(speaking) = speaking_tracker.record_local(local_speaking, Instant::now()) {
                     status_publisher
                         .publish_speaking(session, session.user_id, speaking)
                         .await;
@@ -2299,7 +2324,11 @@ async fn connect_voice_gateway(
                 continue;
             }
             _ = speaking_sweep.tick() => {
-                for user_id in speaking_tracker.expire_remote(Instant::now()) {
+                let now = Instant::now();
+                if let Some(speaking) = speaking_tracker.expire_local(now) {
+                    status_publisher.publish_speaking(session, session.user_id, speaking).await;
+                }
+                for user_id in speaking_tracker.expire_remote(now) {
                     status_publisher.publish_speaking(session, user_id, false).await;
                 }
                 continue;
@@ -4091,8 +4120,15 @@ mod tests {
         assert_eq!(tracker.record_remote(remote_user, true, now), Some(true));
         assert_eq!(tracker.record_remote(remote_user, false, now), Some(false));
 
-        assert_eq!(tracker.record_local(true), Some(true));
-        assert_eq!(tracker.record_local(true), None);
+        assert_eq!(tracker.record_local(true, now), Some(true));
+        assert_eq!(tracker.record_local(true, now + VOICE_LOCAL_SPEAKING_TTL / 2), None);
+        assert_eq!(tracker.record_local(false, now), None);
+        assert_eq!(tracker.expire_local(now + VOICE_LOCAL_SPEAKING_TTL), None);
+        assert_eq!(
+            tracker.expire_local(now + VOICE_LOCAL_SPEAKING_TTL + VOICE_LOCAL_SPEAKING_TTL),
+            Some(false)
+        );
+        assert_eq!(tracker.record_local(true, now), Some(true));
         assert_eq!(tracker.clear_all(local_user), vec![local_user]);
     }
 
