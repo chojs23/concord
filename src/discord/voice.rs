@@ -945,6 +945,7 @@ fn build_voice_output_stream(
 ) -> Result<cpal::Stream, String> {
     match sample_format {
         cpal::SampleFormat::F32 => build_voice_output_stream_f32(device, config, samples_rx),
+        cpal::SampleFormat::U8 => build_voice_output_stream_u8(device, config, samples_rx),
         cpal::SampleFormat::I16 => build_voice_output_stream_i16(device, config, samples_rx),
         cpal::SampleFormat::U16 => build_voice_output_stream_u16(device, config, samples_rx),
         other => Err(format!("unsupported voice audio output sample format: {other:?}")),
@@ -967,6 +968,24 @@ fn build_voice_output_stream_f32(
             None,
         )
         .map_err(|error| format!("voice f32 audio output stream build failed: {error}"))
+}
+
+#[cfg(feature = "voice-playback")]
+fn build_voice_output_stream_u8(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    samples_rx: StdReceiver<Vec<f32>>,
+) -> Result<cpal::Stream, String> {
+    let channels = usize::from(config.channels);
+    let mut buffer = VoiceAudioBuffer::new(samples_rx);
+    device
+        .build_output_stream(
+            config,
+            move |output: &mut [u8], _| fill_voice_output_u8(output, channels, &mut buffer),
+            log_voice_output_stream_error,
+            None,
+        )
+        .map_err(|error| format!("voice u8 audio output stream build failed: {error}"))
 }
 
 #[cfg(feature = "voice-playback")]
@@ -1014,6 +1033,14 @@ fn fill_voice_output_f32(output: &mut [f32], channels: usize, buffer: &mut Voice
 }
 
 #[cfg(feature = "voice-playback")]
+fn fill_voice_output_u8(output: &mut [u8], channels: usize, buffer: &mut VoiceAudioBuffer) {
+    for frame in output.chunks_mut(channels) {
+        let [left, right] = buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
+        write_voice_output_frame(frame, left, right, voice_sample_to_u8);
+    }
+}
+
+#[cfg(feature = "voice-playback")]
 fn fill_voice_output_i16(output: &mut [i16], channels: usize, buffer: &mut VoiceAudioBuffer) {
     for frame in output.chunks_mut(channels) {
         let [left, right] = buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
@@ -1054,6 +1081,11 @@ fn write_voice_output_frame<T>(
 #[cfg(feature = "voice-playback")]
 fn clamp_voice_sample(sample: f32) -> f32 {
     sample.clamp(-1.0, 1.0)
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_sample_to_u8(sample: f32) -> u8 {
+    ((clamp_voice_sample(sample) + 1.0) * 0.5 * f32::from(u8::MAX)).round() as u8
 }
 
 #[cfg(feature = "voice-playback")]
