@@ -141,17 +141,12 @@ fn file_uploads_from_paths(paths: Vec<PathBuf>) -> Result<Vec<MessageAttachmentU
 fn clipboard_file_paths() -> Result<Vec<PathBuf>, String> {
     let script = r#"
 use framework "AppKit"
-property NSPasteboard : a reference to current application's NSPasteboard
 property NSURL : a reference to current application's NSURL
-property NSNumber : a reference to current application's NSNumber
-property NSDictionary : a reference to current application's NSDictionary
-property NSArray : a reference to current application's NSArray
+property NSPasteboard : a reference to current application's NSPasteboard
 property text item delimiters : linefeed
 
 set pasteboard to NSPasteboard's generalPasteboard()
-set classes to NSArray's arrayWithObject:(NSURL's class)
-set options to NSDictionary's dictionaryWithObject:(NSNumber's numberWithBool:true) forKey:(current application's NSPasteboardURLReadingFileURLsOnlyKey)
-set urls to (pasteboard's readObjectsForClasses:classes options:options) as list
+set urls to (pasteboard's readObjectsForClasses:[NSURL] options:[]) as list
 set paths to {}
 repeat with fileUrl in urls
     if (fileUrl's isFileURL()) as boolean then
@@ -193,6 +188,13 @@ fn clipboard_file_paths() -> Result<Vec<PathBuf>, String> {
 impl fmt::Display for ClipboardError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.details)
+    }
+}
+
+impl ClipboardError {
+    pub(super) fn is_empty_file_clipboard(&self) -> bool {
+        self.details == "clipboard has no copied files"
+            || self.details == "native clipboard file paste is only implemented on macOS"
     }
 }
 

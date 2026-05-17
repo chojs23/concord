@@ -7,7 +7,11 @@ use crate::{
     logging,
 };
 
-use super::{clipboard::ClipboardService, input, state::DashboardState};
+use super::{
+    clipboard::{ClipboardError, ClipboardService},
+    input,
+    state::DashboardState,
+};
 
 pub(super) struct TerminalEventOutcome {
     pub(super) dirty: bool,
@@ -69,22 +73,30 @@ fn handle_native_paste_key(
     }
 
     if state.composer_accepts_attachments() {
-        match clipboard.clipboard_file_uploads() {
+        let file_error = match clipboard.clipboard_file_uploads() {
             Ok(attachments) => {
                 state.add_pending_composer_attachments(attachments);
                 state.show_success_toast("Clipboard file attached", std::time::Instant::now());
                 return true;
             }
-            Err(error) => logging::error("tui", format!("native file paste failed: {error}")),
-        }
-
-        match clipboard.clipboard_image_upload() {
-            Ok(attachment) => {
-                state.add_pending_composer_attachments(vec![attachment]);
-                state.show_success_toast("Clipboard image attached", std::time::Instant::now());
-                return true;
+            Err(error) => {
+                logging::error("tui", format!("native file paste failed: {error}"));
+                Some(error)
             }
-            Err(error) => logging::error("tui", format!("native image paste failed: {error}")),
+        };
+
+        if file_error
+            .as_ref()
+            .is_none_or(ClipboardError::is_empty_file_clipboard)
+        {
+            match clipboard.clipboard_image_upload() {
+                Ok(attachment) => {
+                    state.add_pending_composer_attachments(vec![attachment]);
+                    state.show_success_toast("Clipboard image attached", std::time::Instant::now());
+                    return true;
+                }
+                Err(error) => logging::error("tui", format!("native image paste failed: {error}")),
+            }
         }
     }
 
