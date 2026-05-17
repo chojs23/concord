@@ -85,8 +85,9 @@ target/release/concord
 ```
 
 By default, source builds can join voice channels and decode received voice
-audio, but they do not open local audio devices. To build with voice playback
-and gated microphone transmit, enable the optional `voice-playback` feature:
+audio, but they do not open local audio input or output devices. To build with
+voice playback and gated microphone transmit, enable the optional
+`voice-playback` feature:
 
 ```sh
 cargo build --release --features voice-playback
@@ -134,6 +135,10 @@ Tokens are saved under Concord's config directory in plain text. See the Securit
 - Open channel actions for pinned messages, thread lists, and mark-as-read
 - Join and leave voice channels
 - Receive voice playback when built with `--features voice-playback`
+- Transmit microphone audio when built with `--features voice-playback`, joined
+  from this Concord session, explicitly allowed, and not self-muted
+- Highlight active voice speakers in channel rows, the member pane, and the
+  current-user header
 - Track unread messages and mention counts per channel
 - Mute and unmute channels and servers
 
@@ -327,7 +332,8 @@ AppData config directory on Windows.
 - Toggle custom emoji rendering
 - Toggle desktop notifications
 - Set your Discord voice mute and deaf state
-- Allow gated microphone capture while joined and not muted
+- Allow gated microphone transmit while joined from this Concord session and not
+  self-muted
 
 You can change these from the in-app Options menu, and Concord saves them back
 to the config file.
@@ -366,12 +372,22 @@ playing a sound when the terminal app is focused.
 
 `self_mute` and `self_deaf` under `[voice]` control the voice state Concord
 sends when joining, leaving, or updating your current Discord voice channel.
+`self_deaf` also mutes Concord's local playback and clears buffered received
+audio.
+
 `allow_microphone_transmit` is a local safety gate. When built with
 `voice-playback`, turning it on may open microphone input and transmit voice
 only while this Concord session is joined to voice and `self_mute` is false.
 Microphone input is converted to Discord's 48 kHz voice format before Opus
-encoding, and transmit stops when the gate closes, the app leaves voice, or the
-voice session ends.
+encoding. Concord sends Discord Speaking on/off around transmitted audio, and
+transmit stops when the gate closes, the app leaves voice, or the voice session
+ends. If Discord DAVE encryption is required but outbound encryption is not
+ready, Concord fails closed instead of sending plaintext audio.
+
+Voice active speaker styling follows the actual voice path. The current user is
+highlighted only after Concord sends Speaking on. Remote users are highlighted
+from Discord speaking updates and received RTP activity, then clear after a
+short inactivity timeout.
 
 ## Performance
 
