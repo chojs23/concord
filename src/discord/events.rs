@@ -216,6 +216,12 @@ pub enum VoiceConnectionStatus {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VoiceSoundKind {
+    Join,
+    Leave,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoleInfo {
     pub id: Id<RoleMarker>,
@@ -728,6 +734,9 @@ pub enum AppEvent {
         status: VoiceConnectionStatus,
         message: Option<String>,
     },
+    VoiceSound {
+        kind: VoiceSoundKind,
+    },
     /// Discord's TYPING_START dispatch: emitted ~10s before the typing
     /// indicator should expire. The dashboard tracks the latest timestamp
     /// per (channel, user) and shows "X is typing…" while it's fresh.
@@ -886,6 +895,7 @@ impl AppEvent {
                 | AppEvent::UserProfileLoadFailed { .. }
                 | AppEvent::VoiceServerUpdate { .. }
                 | AppEvent::VoiceConnectionStatusChanged { .. }
+                | AppEvent::VoiceSound { .. }
                 | AppEvent::ActivateChannel { .. }
                 | AppEvent::GatewayClosed
         )
@@ -912,6 +922,7 @@ impl AppEvent {
             | AppEvent::AttachmentPreviewLoaded { .. }
             | AppEvent::AttachmentPreviewLoadFailed { .. }
             | AppEvent::VoiceConnectionStatusChanged { .. }
+            | AppEvent::VoiceSound { .. }
             | AppEvent::UserProfileLoadFailed { .. }
             | AppEvent::GatewayClosed => true,
             _ => false,

@@ -564,6 +564,7 @@ impl DiscordState {
             | AppEvent::UserProfileLoadFailed { .. }
             | AppEvent::VoiceServerUpdate { .. }
             | AppEvent::VoiceConnectionStatusChanged { .. }
+            | AppEvent::VoiceSound { .. }
             | AppEvent::ActivateChannel { .. }
             | AppEvent::GatewayClosed => {
                 unreachable!("non-mutating events return before snapshot area classification")
@@ -1212,6 +1213,7 @@ impl DiscordState {
             | AppEvent::UserProfileLoadFailed { .. }
             | AppEvent::VoiceServerUpdate { .. }
             | AppEvent::VoiceConnectionStatusChanged { .. }
+            | AppEvent::VoiceSound { .. }
             | AppEvent::ActivateChannel { .. }
             | AppEvent::GatewayClosed => {}
         }

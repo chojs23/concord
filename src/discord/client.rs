@@ -497,6 +497,15 @@ pub(super) async fn publish_app_event(
 ) {
     let mutates_state = event.mutates_discord_state();
     let needs_effect_delivery = event.needs_effect_delivery();
+    let voice_sound = {
+        let state = state.read().expect("discord state lock is not poisoned");
+        match event {
+            AppEvent::VoiceStateUpdate { state: voice_state } => {
+                state.voice_sound_for_state_update(voice_state)
+            }
+            _ => None,
+        }
+    };
 
     let event_revision: SnapshotRevision;
     {
@@ -530,6 +539,14 @@ pub(super) async fn publish_app_event(
                 })
                 .await;
         }
+        if let Some(kind) = voice_sound {
+            let _ = effects_tx
+                .send(SequencedAppEvent {
+                    revision: event_revision.global,
+                    event: AppEvent::VoiceSound { kind },
+                })
+                .await;
+        }
     }
 }
 
@@ -541,7 +558,7 @@ pub(crate) fn validate_token_header(token: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::discord::{AppEvent, ChannelInfo, MessageKind, VoiceStateInfo, ids::Id};
+    use crate::discord::{AppEvent, ChannelInfo, MessageKind, VoiceSoundKind, VoiceStateInfo, ids::Id};
 
     use super::{DiscordClient, validate_token_header};
 
@@ -756,6 +773,47 @@ mod tests {
         assert!(client.current_or_requested_voice_connection().is_some());
     }
 
+    #[tokio::test]
+    async fn voice_state_transitions_publish_join_and_leave_sound_effects() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let mut effects = client.take_effects();
+
+        client
+            .publish_event(AppEvent::Ready {
+                user: "me".to_owned(),
+                user_id: Some(Id::new(10)),
+            })
+            .await;
+        client
+            .publish_event(AppEvent::VoiceStateUpdate {
+                state: voice_state(10, Some(11)),
+            })
+            .await;
+        assert_voice_sound(&mut effects, VoiceSoundKind::Join).await;
+
+        client
+            .publish_event(AppEvent::VoiceStateUpdate {
+                state: voice_state(20, Some(11)),
+            })
+            .await;
+        assert_voice_sound(&mut effects, VoiceSoundKind::Join).await;
+
+        client
+            .publish_event(AppEvent::VoiceStateUpdate {
+                state: voice_state(20, None),
+            })
+            .await;
+        assert_voice_sound(&mut effects, VoiceSoundKind::Leave).await;
+
+        client
+            .publish_event(AppEvent::VoiceStateUpdate {
+                state: voice_state(10, None),
+            })
+            .await;
+        assert_voice_sound(&mut effects, VoiceSoundKind::Leave).await;
+    }
+
     #[test]
     fn validates_token_header_values() {
         validate_token_header("raw-user-token").expect("raw user token must be accepted");
@@ -802,6 +860,29 @@ mod tests {
             recipients: None,
             permission_overwrites: Vec::new(),
         })
+    }
+
+    fn voice_state(user_id: u64, channel_id: Option<u64>) -> VoiceStateInfo {
+        VoiceStateInfo {
+            guild_id: Id::new(1),
+            channel_id: channel_id.map(Id::new),
+            user_id: Id::new(user_id),
+            session_id: None,
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+            self_stream: false,
+        }
+    }
+
+    async fn assert_voice_sound(
+        effects: &mut tokio::sync::mpsc::Receiver<crate::discord::SequencedAppEvent>,
+        expected: VoiceSoundKind,
+    ) {
+        let effect = effects.recv().await.expect("voice sound effect is published");
+        assert!(matches!(effect.event, AppEvent::VoiceSound { kind } if kind == expected));
     }
 
     fn thread_channel_upsert_event() -> AppEvent {

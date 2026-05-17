@@ -12,7 +12,7 @@ use std::sync::Once;
 use tokio::sync::mpsc;
 
 use crate::{
-    discord::{AppEvent, SequencedAppEvent},
+    discord::{AppEvent, SequencedAppEvent, VoiceSoundKind},
     logging,
 };
 
@@ -80,6 +80,9 @@ pub(super) fn process_effect_event(
     if let Some(notification) = ctx.state.desktop_notification_for_event(&event) {
         dispatch_desktop_notification(notification);
     }
+    if let AppEvent::VoiceSound { kind } = event {
+        dispatch_voice_sound(kind);
+    }
     for job in ctx.image_previews.record_event(&event) {
         spawn_image_preview_decode(job, ctx.preview_decode_tx.clone());
     }
@@ -124,6 +127,23 @@ fn dispatch_desktop_notification(notification: DesktopNotification) {
     });
 }
 
+fn dispatch_voice_sound(kind: VoiceSoundKind) {
+    tokio::spawn(async move {
+        let result = tokio::task::spawn_blocking(move || play_voice_sound(kind)).await;
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                log_notification_failure_once("voice", format!("voice sound failed: {error}"));
+                ring_terminal_bell();
+            }
+            Err(error) => {
+                log_notification_failure_once("voice", format!("voice sound task failed: {error}"));
+                ring_terminal_bell();
+            }
+        }
+    });
+}
+
 fn log_notification_failure_once(target: &str, message: String) {
     if !NOTIFICATION_FAILURE_LOGGED.swap(true, Ordering::Relaxed) {
         logging::error(target, message);
@@ -138,6 +158,19 @@ fn deliver_desktop_notification(title: &str, body: &str) -> std::result::Result<
     #[cfg(not(target_os = "macos"))]
     {
         deliver_notify_rust_notification(title, body)
+    }
+}
+
+fn play_voice_sound(kind: VoiceSoundKind) -> std::result::Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        play_macos_voice_sound(kind)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = kind;
+        ring_terminal_bell();
+        Ok(())
     }
 }
 
@@ -245,6 +278,15 @@ fn play_macos_sound_fallback() -> std::result::Result<(), String> {
         Command::new("afplay").arg("/System/Library/Sounds/Ping.aiff"),
         "afplay",
     )
+}
+
+#[cfg(target_os = "macos")]
+fn play_macos_voice_sound(kind: VoiceSoundKind) -> std::result::Result<(), String> {
+    let path = match kind {
+        VoiceSoundKind::Join => "/System/Library/Sounds/Ping.aiff",
+        VoiceSoundKind::Leave => "/System/Library/Sounds/Pop.aiff",
+    };
+    command_success(Command::new("afplay").arg(path), "afplay")
 }
 
 #[cfg(target_os = "macos")]

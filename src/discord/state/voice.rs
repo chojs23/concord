@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::config::MicrophoneSensitivityDb;
-use crate::discord::VoiceStateInfo;
+use crate::discord::{VoiceSoundKind, VoiceStateInfo};
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
@@ -93,6 +93,43 @@ impl DiscordState {
             .get(&(guild_id, user_id))
             .map(|state| state.speaking)
             .unwrap_or(false)
+    }
+
+    pub fn user_voice_channel_in_guild(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> Option<Id<ChannelMarker>> {
+        self.voice
+            .states
+            .get(&(guild_id, user_id))
+            .map(|state| state.channel_id)
+    }
+
+    pub(crate) fn voice_sound_for_state_update(
+        &self,
+        state: &VoiceStateInfo,
+    ) -> Option<VoiceSoundKind> {
+        let before = self.user_voice_channel_in_guild(state.guild_id, state.user_id);
+        let after = state.channel_id;
+        if before == after {
+            return None;
+        }
+
+        if self.session.current_user_id == Some(state.user_id) {
+            return match (before, after) {
+                (None, Some(_)) | (Some(_), Some(_)) => Some(VoiceSoundKind::Join),
+                (Some(_), None) => Some(VoiceSoundKind::Leave),
+                (None, None) => None,
+            };
+        }
+
+        let active_voice_channel = self.current_user_voice_connection()?.channel_id;
+        match (before == Some(active_voice_channel), after == Some(active_voice_channel)) {
+            (false, true) => Some(VoiceSoundKind::Join),
+            (true, false) => Some(VoiceSoundKind::Leave),
+            _ => None,
+        }
     }
 
     fn user_voice_speaking(&self, user_id: Id<UserMarker>) -> bool {
