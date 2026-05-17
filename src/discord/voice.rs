@@ -15,10 +15,12 @@ use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use davey::{DaveSession, MediaType, ProposalsOperationType};
 use futures::{SinkExt, StreamExt};
-use opus::{Channels, Decoder as OpusDecoder};
+use opus::{Application as OpusApplication, Channels, Decoder as OpusDecoder, Encoder as OpusEncoder};
 use serde_json::{Value, json};
 #[cfg(feature = "voice-playback")]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "voice-playback")]
+use std::sync::Mutex as StdMutex;
 #[cfg(feature = "voice-playback")]
 use std::sync::mpsc::{Receiver as StdReceiver, SyncSender, TryRecvError, sync_channel};
 use tokio::{
@@ -56,6 +58,25 @@ const DAVE_MIN_SUPPLEMENTAL_BYTES: usize = 11;
 const DAVE_MAGIC_MARKER: [u8; 2] = [0xfa, 0xfa];
 const DISCORD_VOICE_SAMPLE_RATE: u32 = 48_000;
 const DISCORD_VOICE_CHANNELS: u16 = 2;
+#[cfg(feature = "voice-playback")]
+const DISCORD_VOICE_CHANNELS_USIZE: usize = DISCORD_VOICE_CHANNELS as usize;
+// These outbound helpers are intentionally not wired into the runtime yet.
+// They let tests prove packet shapes before any live transmit path is added.
+#[allow(dead_code)]
+const DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL: usize = 960;
+#[allow(dead_code)]
+const DISCORD_OPUS_20MS_STEREO_SAMPLES: usize =
+    DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL * DISCORD_VOICE_CHANNELS as usize;
+#[allow(dead_code)]
+const DISCORD_OPUS_TIMESTAMP_INCREMENT: u32 = DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL as u32;
+#[allow(dead_code)]
+const DISCORD_OPUS_SILENCE_FRAME: [u8; 3] = [0xf8, 0xff, 0xfe];
+#[allow(dead_code)]
+const DISCORD_TRAILING_SILENCE_FRAMES: usize = 5;
+#[allow(dead_code)]
+const OPUS_MAX_ENCODED_FRAME_BYTES: usize = 4000;
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_PCM_FRAME_QUEUE: usize = 32;
 const OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL: usize = 5760;
 const VOICE_PLAYBACK_FRAME_QUEUE: usize = 256;
 #[cfg(feature = "voice-playback")]
@@ -235,9 +256,72 @@ enum VoiceRtpDecryptor {
     XChaCha20Poly1305(XChaCha20Poly1305),
 }
 
+#[allow(dead_code)]
+enum VoiceRtpEncryptor {
+    Aes256Gcm(Aes256Gcm),
+    XChaCha20Poly1305(XChaCha20Poly1305),
+}
+
 struct DecryptedRtpPayload {
     media_payload: Vec<u8>,
     encrypted_extension_body_len: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+struct VoiceOutboundRtpState {
+    sequence: u16,
+    timestamp: u32,
+    ssrc: u32,
+}
+
+#[allow(dead_code)]
+struct VoiceOpusEncode {
+    encoder: OpusEncoder,
+}
+
+#[allow(dead_code)]
+struct VoiceFakeOutboundSendState {
+    rtp: VoiceOutboundRtpState,
+    encryptor: VoiceRtpEncryptor,
+    nonce_suffix: u32,
+    allow_microphone_transmit: bool,
+    self_mute: bool,
+    dave_active: bool,
+    speaking: bool,
+    events: Vec<VoiceFakeOutboundEvent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+enum VoiceFakeOutboundEvent {
+    Speaking { speaking: bool, ssrc: u32 },
+    Packet { bytes: Vec<u8> },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+enum VoiceFakeSendOutcome {
+    Noop,
+    Sent,
+    Blocked(VoiceFakeSendBlockReason),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+enum VoiceFakeSendBlockReason {
+    DaveOutboundUnsupported,
+    DaveOutboundMissingSession,
+    DaveOutboundNotReady,
+    DaveOutboundEncryptFailed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+enum VoiceDaveOutboundPayload {
+    Plain(Vec<u8>),
+    Encrypted(Vec<u8>),
+    Blocked(VoiceFakeSendBlockReason),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -280,6 +364,12 @@ struct VoiceDaveState {
 struct VoiceChildTasks {
     heartbeat: Option<JoinHandle<()>>,
     udp_receive: Option<JoinHandle<()>>,
+    #[cfg(feature = "voice-playback")]
+    udp_transmit: Option<JoinHandle<()>>,
+    #[cfg(feature = "voice-playback")]
+    transmit_gate: Option<watch::Sender<bool>>,
+    #[cfg(feature = "voice-playback")]
+    microphone_pcm_tx: Option<SyncSender<Vec<i16>>>,
     opus_decode: Option<JoinHandle<()>>,
     #[cfg(feature = "voice-playback")]
     audio_output: Option<VoiceAudioOutput>,
@@ -323,6 +413,15 @@ struct VoiceCaptureGate {
 struct VoiceMicrophoneCapture {
     _stream: cpal::Stream,
     stats: Arc<VoiceMicrophoneCaptureStats>,
+}
+
+#[cfg(feature = "voice-playback")]
+struct VoiceMicrophonePcmFrames {
+    frames_tx: SyncSender<Vec<i16>>,
+    source_sample_rate: u32,
+    source_pending: Vec<i16>,
+    output_pending: Vec<i16>,
+    next_source_frame: f64,
 }
 
 #[cfg(feature = "voice-playback")]
@@ -701,6 +800,29 @@ impl VoiceDaveState {
         }
     }
 
+    #[allow(dead_code)]
+    fn prepare_outbound_opus(&mut self, opus: &[u8]) -> VoiceDaveOutboundPayload {
+        if self.protocol_version.is_none() {
+            return VoiceDaveOutboundPayload::Plain(opus.to_vec());
+        }
+        let Some(session) = self.session.as_mut() else {
+            return VoiceDaveOutboundPayload::Blocked(
+                VoiceFakeSendBlockReason::DaveOutboundMissingSession,
+            );
+        };
+        if !session.is_ready() {
+            return VoiceDaveOutboundPayload::Blocked(
+                VoiceFakeSendBlockReason::DaveOutboundNotReady,
+            );
+        }
+        match session.encrypt_opus(opus) {
+            Ok(encrypted) => VoiceDaveOutboundPayload::Encrypted(encrypted.into_owned()),
+            Err(_) => VoiceDaveOutboundPayload::Blocked(
+                VoiceFakeSendBlockReason::DaveOutboundEncryptFailed,
+            ),
+        }
+    }
+
     fn dave_media_active(&self) -> bool {
         self.protocol_version.is_some() && self.session.is_some()
     }
@@ -730,6 +852,33 @@ impl VoiceChildTasks {
         self.udp_receive = Some(task);
     }
 
+    #[cfg(feature = "voice-playback")]
+    fn replace_udp_transmit(
+        &mut self,
+        task: JoinHandle<()>,
+        gate: watch::Sender<bool>,
+        microphone_pcm_tx: SyncSender<Vec<i16>>,
+    ) {
+        if let Some(task) = self.udp_transmit.take() {
+            logging::debug("voice", "stopping previous voice UDP transmit task");
+            self.signal_udp_transmit_stop();
+            drop(task);
+        }
+        self.udp_transmit = Some(task);
+        self.transmit_gate = Some(gate);
+        self.microphone_pcm_tx = Some(microphone_pcm_tx);
+    }
+
+    #[cfg(feature = "voice-playback")]
+    fn signal_udp_transmit_stop(&mut self) {
+        if let Some(gate) = self.transmit_gate.as_ref() {
+            let _ = gate.send(false);
+        }
+        self.microphone_capture = None;
+        self.microphone_pcm_tx = None;
+        self.transmit_gate = None;
+    }
+
     fn replace_opus_decode(&mut self, opus_decode: VoiceOpusDecode) {
         if let Some(task) = self.opus_decode.take() {
             logging::debug("voice", "aborting previous voice Opus decode task");
@@ -751,6 +900,12 @@ impl VoiceChildTasks {
             logging::debug("voice", "aborting voice UDP receive task");
             task.abort();
         }
+        #[cfg(feature = "voice-playback")]
+        if let Some(task) = self.udp_transmit.take() {
+            logging::debug("voice", "stopping voice UDP transmit task");
+            self.signal_udp_transmit_stop();
+            drop(task);
+        }
         if let Some(task) = self.opus_decode.take() {
             logging::debug("voice", "aborting voice Opus decode task");
             task.abort();
@@ -762,11 +917,12 @@ impl VoiceChildTasks {
         }
     }
 
+    #[allow(dead_code)]
     fn set_microphone_capture_enabled(&mut self, enabled: bool) {
         #[cfg(feature = "voice-playback")]
         {
             match (enabled, self.microphone_capture.is_some()) {
-                (true, false) => match VoiceMicrophoneCapture::start() {
+                (true, false) => match VoiceMicrophoneCapture::start(self.microphone_pcm_tx.clone()) {
                     Ok(capture) => self.microphone_capture = Some(capture),
                     Err(error) => logging::error(
                         "voice",
@@ -779,6 +935,20 @@ impl VoiceChildTasks {
                 }
                 _ => {}
             }
+        }
+        #[cfg(not(feature = "voice-playback"))]
+        {
+            let _ = enabled;
+        }
+    }
+
+    fn set_voice_transmit_gate(&mut self, enabled: bool) {
+        #[cfg(feature = "voice-playback")]
+        {
+        if let Some(gate) = self.transmit_gate.as_ref() {
+            let _ = gate.send(enabled);
+        }
+            self.set_microphone_capture_enabled(enabled && self.microphone_pcm_tx.is_some());
         }
         #[cfg(not(feature = "voice-playback"))]
         {
@@ -912,11 +1082,11 @@ impl VoiceAudioOutput {
 
 #[cfg(feature = "voice-playback")]
 impl VoiceMicrophoneCapture {
-    fn start() -> Result<Self, String> {
+    fn start(samples_tx: Option<SyncSender<Vec<i16>>>) -> Result<Self, String> {
         #[cfg(target_os = "linux")]
         let alsa_error_output = alsa::Output::local_error_handler().ok();
 
-        let result = Self::start_with_cpal();
+        let result = Self::start_with_cpal(samples_tx);
 
         #[cfg(target_os = "linux")]
         log_captured_alsa_errors(&alsa_error_output);
@@ -924,7 +1094,7 @@ impl VoiceMicrophoneCapture {
         result
     }
 
-    fn start_with_cpal() -> Result<Self, String> {
+    fn start_with_cpal(samples_tx: Option<SyncSender<Vec<i16>>>) -> Result<Self, String> {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
@@ -940,6 +1110,7 @@ impl VoiceMicrophoneCapture {
             &stream_config,
             sample_format,
             Arc::clone(&stats),
+            samples_tx,
         )?;
         stream
             .play()
@@ -969,6 +1140,82 @@ impl Default for VoiceMicrophoneCaptureStats {
 }
 
 #[cfg(feature = "voice-playback")]
+impl VoiceMicrophonePcmFrames {
+    fn new(frames_tx: SyncSender<Vec<i16>>, source_sample_rate: u32) -> Self {
+        Self {
+            frames_tx,
+            source_sample_rate,
+            source_pending: Vec::with_capacity(DISCORD_OPUS_20MS_STEREO_SAMPLES),
+            output_pending: Vec::with_capacity(DISCORD_OPUS_20MS_STEREO_SAMPLES),
+            next_source_frame: 0.0,
+        }
+    }
+
+    fn push_stereo_samples(&mut self, samples: &[i16]) {
+        if self.source_sample_rate == DISCORD_VOICE_SAMPLE_RATE {
+            self.output_pending.extend_from_slice(samples);
+            self.flush_output_frames();
+            return;
+        }
+
+        self.source_pending.extend_from_slice(samples);
+        self.resample_pending_source();
+        self.flush_output_frames();
+    }
+
+    fn resample_pending_source(&mut self) {
+        let source_frames = self.source_pending.len() / DISCORD_VOICE_CHANNELS_USIZE;
+        if source_frames < 2 {
+            return;
+        }
+
+        let source_step = f64::from(self.source_sample_rate) / f64::from(DISCORD_VOICE_SAMPLE_RATE);
+        while self.next_source_frame + 1.0 < source_frames as f64 {
+            let frame_index = self.next_source_frame.floor() as usize;
+            let fraction = self.next_source_frame - frame_index as f64;
+            let left = interpolate_i16(
+                self.source_pending[frame_index * DISCORD_VOICE_CHANNELS_USIZE],
+                self.source_pending[(frame_index + 1) * DISCORD_VOICE_CHANNELS_USIZE],
+                fraction,
+            );
+            let right = interpolate_i16(
+                self.source_pending[frame_index * DISCORD_VOICE_CHANNELS_USIZE + 1],
+                self.source_pending[(frame_index + 1) * DISCORD_VOICE_CHANNELS_USIZE + 1],
+                fraction,
+            );
+            self.output_pending.push(left);
+            self.output_pending.push(right);
+            self.next_source_frame += source_step;
+        }
+
+        let consumed_frames = self.next_source_frame.floor() as usize;
+        if consumed_frames > 0 {
+            self.source_pending
+                .drain(..consumed_frames * DISCORD_VOICE_CHANNELS_USIZE);
+            self.next_source_frame -= consumed_frames as f64;
+        }
+    }
+
+    fn flush_output_frames(&mut self) {
+        while self.output_pending.len() >= DISCORD_OPUS_20MS_STEREO_SAMPLES {
+            let frame = self
+                .output_pending
+                .drain(..DISCORD_OPUS_20MS_STEREO_SAMPLES)
+                .collect::<Vec<_>>();
+            let _ = self.frames_tx.try_send(frame);
+        }
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+fn interpolate_i16(current: i16, next: i16, fraction: f64) -> i16 {
+    let value = f64::from(current) + (f64::from(next) - f64::from(current)) * fraction;
+    value
+        .round()
+        .clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16
+}
+
+#[cfg(feature = "voice-playback")]
 impl Drop for VoiceMicrophoneCapture {
     fn drop(&mut self) {
         logging::debug(
@@ -988,12 +1235,13 @@ fn build_voice_input_stream(
     config: &cpal::StreamConfig,
     sample_format: cpal::SampleFormat,
     stats: Arc<VoiceMicrophoneCaptureStats>,
+    samples_tx: Option<SyncSender<Vec<i16>>>,
 ) -> Result<cpal::Stream, String> {
     match sample_format {
-        cpal::SampleFormat::F32 => build_voice_input_stream_typed::<f32>(device, config, stats),
-        cpal::SampleFormat::U8 => build_voice_input_stream_typed::<u8>(device, config, stats),
-        cpal::SampleFormat::I16 => build_voice_input_stream_typed::<i16>(device, config, stats),
-        cpal::SampleFormat::U16 => build_voice_input_stream_typed::<u16>(device, config, stats),
+        cpal::SampleFormat::F32 => build_voice_input_stream_f32(device, config, stats, samples_tx),
+        cpal::SampleFormat::U8 => build_voice_input_stream_u8(device, config, stats, samples_tx),
+        cpal::SampleFormat::I16 => build_voice_input_stream_i16(device, config, stats, samples_tx),
+        cpal::SampleFormat::U16 => build_voice_input_stream_u16(device, config, stats, samples_tx),
         other => Err(format!(
             "unsupported voice microphone input sample format: {other:?}"
         )),
@@ -1001,23 +1249,181 @@ fn build_voice_input_stream(
 }
 
 #[cfg(feature = "voice-playback")]
-fn build_voice_input_stream_typed<T>(
+fn build_voice_input_stream_f32(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     stats: Arc<VoiceMicrophoneCaptureStats>,
-) -> Result<cpal::Stream, String>
-where
-    T: cpal::SizedSample,
-{
+    samples_tx: Option<SyncSender<Vec<i16>>>,
+) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
+    let pcm_frames = samples_tx.map(|tx| {
+        Arc::new(StdMutex::new(VoiceMicrophonePcmFrames::new(
+            tx,
+            config.sample_rate,
+        )))
+    });
     device
         .build_input_stream(
             config,
-            move |input: &[T], _| record_voice_input_chunk(input.len(), channels, &stats),
+            move |input: &[f32], _| {
+                record_voice_input_chunk(input.len(), channels, &stats);
+                if let Some(pcm_frames) = pcm_frames.as_ref()
+                    && let Ok(mut pcm_frames) = pcm_frames.lock()
+                {
+                    let samples = voice_input_f32_to_stereo_i16(input, channels);
+                    pcm_frames.push_stereo_samples(&samples);
+                }
+            },
             log_voice_input_stream_error,
             None,
         )
         .map_err(|error| format!("voice microphone input stream build failed: {error}"))
+}
+
+#[cfg(feature = "voice-playback")]
+fn build_voice_input_stream_i16(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    stats: Arc<VoiceMicrophoneCaptureStats>,
+    samples_tx: Option<SyncSender<Vec<i16>>>,
+) -> Result<cpal::Stream, String> {
+    let channels = usize::from(config.channels);
+    let pcm_frames = samples_tx.map(|tx| {
+        Arc::new(StdMutex::new(VoiceMicrophonePcmFrames::new(
+            tx,
+            config.sample_rate,
+        )))
+    });
+    device
+        .build_input_stream(
+            config,
+            move |input: &[i16], _| {
+                record_voice_input_chunk(input.len(), channels, &stats);
+                if let Some(pcm_frames) = pcm_frames.as_ref()
+                    && let Ok(mut pcm_frames) = pcm_frames.lock()
+                {
+                    let samples = voice_input_i16_to_stereo_i16(input, channels);
+                    pcm_frames.push_stereo_samples(&samples);
+                }
+            },
+            log_voice_input_stream_error,
+            None,
+        )
+        .map_err(|error| format!("voice microphone input stream build failed: {error}"))
+}
+
+#[cfg(feature = "voice-playback")]
+fn build_voice_input_stream_u16(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    stats: Arc<VoiceMicrophoneCaptureStats>,
+    samples_tx: Option<SyncSender<Vec<i16>>>,
+) -> Result<cpal::Stream, String> {
+    let channels = usize::from(config.channels);
+    let pcm_frames = samples_tx.map(|tx| {
+        Arc::new(StdMutex::new(VoiceMicrophonePcmFrames::new(
+            tx,
+            config.sample_rate,
+        )))
+    });
+    device
+        .build_input_stream(
+            config,
+            move |input: &[u16], _| {
+                record_voice_input_chunk(input.len(), channels, &stats);
+                if let Some(pcm_frames) = pcm_frames.as_ref()
+                    && let Ok(mut pcm_frames) = pcm_frames.lock()
+                {
+                    let samples = voice_input_u16_to_stereo_i16(input, channels);
+                    pcm_frames.push_stereo_samples(&samples);
+                }
+            },
+            log_voice_input_stream_error,
+            None,
+        )
+        .map_err(|error| format!("voice microphone input stream build failed: {error}"))
+}
+
+#[cfg(feature = "voice-playback")]
+fn build_voice_input_stream_u8(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    stats: Arc<VoiceMicrophoneCaptureStats>,
+    samples_tx: Option<SyncSender<Vec<i16>>>,
+) -> Result<cpal::Stream, String> {
+    let channels = usize::from(config.channels);
+    let pcm_frames = samples_tx.map(|tx| {
+        Arc::new(StdMutex::new(VoiceMicrophonePcmFrames::new(
+            tx,
+            config.sample_rate,
+        )))
+    });
+    device
+        .build_input_stream(
+            config,
+            move |input: &[u8], _| {
+                record_voice_input_chunk(input.len(), channels, &stats);
+                if let Some(pcm_frames) = pcm_frames.as_ref()
+                    && let Ok(mut pcm_frames) = pcm_frames.lock()
+                {
+                    let samples = voice_input_u8_to_stereo_i16(input, channels);
+                    pcm_frames.push_stereo_samples(&samples);
+                }
+            },
+            log_voice_input_stream_error,
+            None,
+        )
+        .map_err(|error| format!("voice microphone input stream build failed: {error}"))
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_input_f32_to_stereo_i16(input: &[f32], channels: usize) -> Vec<i16> {
+    voice_input_to_stereo_i16(input, channels, |sample| {
+        (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16
+    })
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_input_i16_to_stereo_i16(input: &[i16], channels: usize) -> Vec<i16> {
+    voice_input_to_stereo_i16(input, channels, |sample| sample)
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_input_u16_to_stereo_i16(input: &[u16], channels: usize) -> Vec<i16> {
+    voice_input_to_stereo_i16(input, channels, |sample| {
+        let shifted = i32::from(sample) - 32768;
+        shifted.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+    })
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_input_u8_to_stereo_i16(input: &[u8], channels: usize) -> Vec<i16> {
+    voice_input_to_stereo_i16(input, channels, |sample| {
+        (i16::from(sample) - 128) << 8
+    })
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_input_to_stereo_i16<T>(
+    input: &[T],
+    channels: usize,
+    mut convert: impl FnMut(T) -> i16,
+) -> Vec<i16>
+where
+    T: Copy,
+{
+    if channels == 0 {
+        return Vec::new();
+    }
+    let frames = input.len() / channels;
+    let mut stereo = Vec::with_capacity(frames * usize::from(DISCORD_VOICE_CHANNELS));
+    for frame in input.chunks_exact(channels) {
+        let left = convert(frame[0]);
+        let right = if channels == 1 { left } else { convert(frame[1]) };
+        stereo.push(left);
+        stereo.push(right);
+    }
+    stereo
 }
 
 #[cfg(feature = "voice-playback")]
@@ -1563,8 +1969,11 @@ async fn connect_voice_gateway(
     let (writer, mut reader) = ws.split();
     let writer = Arc::new(Mutex::new(writer));
     let mut child_tasks = VoiceChildTasks::default();
-    child_tasks.set_microphone_capture_enabled(initial_capture_gate.enabled);
+    #[cfg_attr(not(feature = "voice-playback"), allow(unused_mut, unused_variables, unused_assignments))]
+    let mut current_capture_gate = initial_capture_gate;
     let mut udp_socket: Option<Arc<UdpSocket>> = None;
+    #[cfg_attr(not(feature = "voice-playback"), allow(unused_mut, unused_variables, unused_assignments))]
+    let mut voice_ready: Option<VoiceTransportSession> = None;
     let last_sequence = Arc::new(Mutex::new(None));
     let dave_state = Arc::new(Mutex::new(VoiceDaveState::new(session)));
 
@@ -1577,11 +1986,15 @@ async fn connect_voice_gateway(
             capture_gate = capture_gate_rx.recv() => {
                 match capture_gate {
                     Some(capture_gate) => {
-                        child_tasks.set_microphone_capture_enabled(capture_gate.enabled);
+                        #[cfg(feature = "voice-playback")]
+                        {
+                            current_capture_gate = capture_gate;
+                        }
+                        child_tasks.set_voice_transmit_gate(capture_gate.enabled);
                         continue;
                     }
                     None => {
-                        child_tasks.set_microphone_capture_enabled(false);
+                        child_tasks.set_voice_transmit_gate(false);
                         break;
                     }
                 }
@@ -1626,6 +2039,10 @@ async fn connect_voice_gateway(
                             ),
                         );
                         udp_socket = Some(socket);
+                        #[cfg(feature = "voice-playback")]
+                        {
+                            voice_ready = Some(ready);
+                        }
                         logging::debug("voice", "voice UDP discovery completed");
                     }
                     VOICE_OP_SESSION_DESCRIPTION => {
@@ -1644,12 +2061,33 @@ async fn connect_voice_gateway(
                             let opus_decode = VoiceOpusDecode::start();
                             let playback_tx = Some(opus_decode.frames_tx.clone());
                             child_tasks.replace_opus_decode(opus_decode);
+                            #[cfg_attr(not(feature = "voice-playback"), allow(unused_variables))]
+                            let transmit_description = description.clone();
                             child_tasks.replace_udp_receive(tokio::spawn(run_voice_udp_receive(
                                 Arc::clone(socket),
                                 description,
                                 Arc::clone(&dave_state),
                                 playback_tx,
                             )));
+                            #[cfg(feature = "voice-playback")]
+                            if let Some(ready) = voice_ready.as_ref() {
+                                let (pcm_tx, pcm_rx) = sync_channel(VOICE_MIC_PCM_FRAME_QUEUE);
+                                let (gate_tx, gate_rx) = watch::channel(current_capture_gate.enabled);
+                                child_tasks.replace_udp_transmit(
+                                    tokio::spawn(run_voice_udp_transmit(
+                                        pcm_rx,
+                                        Arc::clone(socket),
+                                        Arc::clone(&writer),
+                                        transmit_description,
+                                        ready.ssrc,
+                                        Arc::clone(&dave_state),
+                                        gate_rx,
+                                    )),
+                                    gate_tx,
+                                    pcm_tx,
+                                );
+                                child_tasks.set_voice_transmit_gate(current_capture_gate.enabled);
+                            }
                         }
                     }
                     VOICE_OP_HEARTBEAT_ACK => {}
@@ -2001,6 +2439,293 @@ impl VoiceRtpDecryptor {
     }
 }
 
+#[allow(dead_code)]
+impl VoiceRtpEncryptor {
+    fn new(mode: &str, secret_key: &[u8]) -> Result<Self, String> {
+        match mode {
+            AEAD_AES256_GCM_RTPSIZE => Aes256Gcm::new_from_slice(secret_key)
+                .map(Self::Aes256Gcm)
+                .map_err(|_| "voice AES-GCM key is invalid".to_owned()),
+            AEAD_XCHACHA20_POLY1305_RTPSIZE => XChaCha20Poly1305::new_from_slice(secret_key)
+                .map(Self::XChaCha20Poly1305)
+                .map_err(|_| "voice XChaCha20-Poly1305 key is invalid".to_owned()),
+            other => Err(format!("unsupported voice RTP encrypt mode: {other}")),
+        }
+    }
+
+    fn encrypt_packet(
+        &self,
+        packet: &[u8],
+        nonce_suffix: [u8; RTP_AEAD_NONCE_SUFFIX_BYTES],
+    ) -> Result<Vec<u8>, String> {
+        let header = parse_rtp_header(packet)?;
+        if header.payload_type != DISCORD_VOICE_PAYLOAD_TYPE {
+            return Err(format!(
+                "RTP packet has unsupported payload type: {}",
+                header.payload_type
+            ));
+        }
+        if packet.len() <= header.authenticated_header_len {
+            return Err("RTP packet is missing media payload".to_owned());
+        }
+
+        let aad = &packet[..header.authenticated_header_len];
+        let plaintext = &packet[header.authenticated_header_len..];
+        let sealed_payload = match self {
+            Self::Aes256Gcm(cipher) => {
+                let mut nonce = [0u8; 12];
+                nonce[..RTP_AEAD_NONCE_SUFFIX_BYTES].copy_from_slice(&nonce_suffix);
+                cipher
+                    .encrypt(
+                        AesGcmNonce::from_slice(&nonce),
+                        Payload {
+                            msg: plaintext,
+                            aad,
+                        },
+                    )
+                    .map_err(|_| "RTP AES-GCM encrypt failed".to_owned())?
+            }
+            Self::XChaCha20Poly1305(cipher) => {
+                let mut nonce = [0u8; 24];
+                nonce[..RTP_AEAD_NONCE_SUFFIX_BYTES].copy_from_slice(&nonce_suffix);
+                cipher
+                    .encrypt(
+                        XNonce::from_slice(&nonce),
+                        Payload {
+                            msg: plaintext,
+                            aad,
+                        },
+                    )
+                    .map_err(|_| "RTP XChaCha20-Poly1305 encrypt failed".to_owned())?
+            }
+        };
+
+        let mut encrypted = Vec::with_capacity(
+            header.authenticated_header_len + sealed_payload.len() + RTP_AEAD_NONCE_SUFFIX_BYTES,
+        );
+        encrypted.extend_from_slice(aad);
+        encrypted.extend_from_slice(&sealed_payload);
+        encrypted.extend_from_slice(&nonce_suffix);
+        Ok(encrypted)
+    }
+}
+
+#[allow(dead_code)]
+impl VoiceOutboundRtpState {
+    fn packetize(&mut self, opus_payload: &[u8]) -> Result<Vec<u8>, String> {
+        let packet = build_voice_rtp_packet(
+            self.sequence,
+            self.timestamp,
+            self.ssrc,
+            opus_payload,
+        )?;
+        self.sequence = self.sequence.wrapping_add(1);
+        self.timestamp = self.timestamp.wrapping_add(DISCORD_OPUS_TIMESTAMP_INCREMENT);
+        Ok(packet)
+    }
+}
+
+#[allow(dead_code)]
+impl VoiceOpusEncode {
+    fn new() -> Result<Self, String> {
+        OpusEncoder::new(
+            DISCORD_VOICE_SAMPLE_RATE,
+            Channels::Stereo,
+            OpusApplication::Voip,
+        )
+        .map(|encoder| Self { encoder })
+        .map_err(|error| format!("voice Opus encoder init failed: {error}"))
+    }
+
+    fn encode_20ms_i16(&mut self, pcm: &[i16]) -> Result<Vec<u8>, String> {
+        if pcm.len() != DISCORD_OPUS_20MS_STEREO_SAMPLES {
+            return Err(format!(
+                "voice Opus encoder expected {} interleaved stereo samples, got {}",
+                DISCORD_OPUS_20MS_STEREO_SAMPLES,
+                pcm.len()
+            ));
+        }
+        self.encoder
+            .encode_vec(pcm, OPUS_MAX_ENCODED_FRAME_BYTES)
+            .map_err(|error| format!("voice Opus encode failed: {error}"))
+    }
+}
+
+#[allow(dead_code)]
+impl VoiceFakeOutboundSendState {
+    fn new(
+        mode: &str,
+        secret_key: &[u8],
+        rtp: VoiceOutboundRtpState,
+        nonce_suffix: u32,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            rtp,
+            encryptor: VoiceRtpEncryptor::new(mode, secret_key)?,
+            nonce_suffix,
+            allow_microphone_transmit: false,
+            self_mute: true,
+            dave_active: false,
+            speaking: false,
+            events: Vec::new(),
+        })
+    }
+
+    fn set_capture_gate(&mut self, allow_microphone_transmit: bool, self_mute: bool) {
+        self.allow_microphone_transmit = allow_microphone_transmit;
+        self.self_mute = self_mute;
+    }
+
+    fn set_dave_active(&mut self, active: bool) {
+        self.dave_active = active;
+    }
+
+    fn events(&self) -> &[VoiceFakeOutboundEvent] {
+        &self.events
+    }
+
+    fn take_events(&mut self) -> Vec<VoiceFakeOutboundEvent> {
+        std::mem::take(&mut self.events)
+    }
+
+    fn send_opus_frame(&mut self, opus_payload: &[u8]) -> Result<VoiceFakeSendOutcome, String> {
+        self.send_opus_frame_with_dave_payload(VoiceDaveOutboundPayload::Plain(
+            opus_payload.to_vec(),
+        ))
+    }
+
+    fn send_opus_frame_with_dave(
+        &mut self,
+        opus_payload: &[u8],
+        dave: &mut VoiceDaveState,
+    ) -> Result<VoiceFakeSendOutcome, String> {
+        let dave_payload = dave.prepare_outbound_opus(opus_payload);
+        self.send_opus_frame_with_dave_payload(dave_payload)
+    }
+
+    fn send_opus_frame_with_dave_payload(
+        &mut self,
+        dave_payload: VoiceDaveOutboundPayload,
+    ) -> Result<VoiceFakeSendOutcome, String> {
+        if !self.capture_gate_enabled() {
+            return Ok(VoiceFakeSendOutcome::Noop);
+        }
+        if self.dave_active {
+            return Ok(VoiceFakeSendOutcome::Blocked(
+                VoiceFakeSendBlockReason::DaveOutboundUnsupported,
+            ));
+        }
+        let opus_payload = match dave_payload {
+            VoiceDaveOutboundPayload::Plain(opus) | VoiceDaveOutboundPayload::Encrypted(opus) => opus,
+            VoiceDaveOutboundPayload::Blocked(reason) => {
+                return Ok(VoiceFakeSendOutcome::Blocked(reason));
+            }
+        };
+
+        let encrypted = self.encrypt_current_packet(&opus_payload)?;
+        if !self.speaking {
+            self.events.push(VoiceFakeOutboundEvent::Speaking {
+                speaking: true,
+                ssrc: self.rtp.ssrc,
+            });
+            self.speaking = true;
+        }
+        self.events.push(VoiceFakeOutboundEvent::Packet { bytes: encrypted });
+        self.advance_packet_state();
+        Ok(VoiceFakeSendOutcome::Sent)
+    }
+
+    fn stop_speaking(&mut self) -> Result<VoiceFakeSendOutcome, String> {
+        self.stop_speaking_with_dave_payload(|| {
+            VoiceDaveOutboundPayload::Plain(DISCORD_OPUS_SILENCE_FRAME.to_vec())
+        })
+    }
+
+    fn stop_speaking_with_dave(
+        &mut self,
+        dave: &mut VoiceDaveState,
+    ) -> Result<VoiceFakeSendOutcome, String> {
+        self.stop_speaking_with_dave_payload(|| {
+            dave.prepare_outbound_opus(&DISCORD_OPUS_SILENCE_FRAME)
+        })
+    }
+
+    fn stop_speaking_with_dave_payload(
+        &mut self,
+        mut next_silence: impl FnMut() -> VoiceDaveOutboundPayload,
+    ) -> Result<VoiceFakeSendOutcome, String> {
+        if !self.speaking {
+            return Ok(VoiceFakeSendOutcome::Noop);
+        }
+        if !self.capture_gate_enabled() {
+            return Ok(VoiceFakeSendOutcome::Noop);
+        }
+        if self.dave_active {
+            return Ok(VoiceFakeSendOutcome::Blocked(
+                VoiceFakeSendBlockReason::DaveOutboundUnsupported,
+            ));
+        }
+        self.ensure_nonce_capacity(DISCORD_TRAILING_SILENCE_FRAMES)?;
+
+        for _ in 0..DISCORD_TRAILING_SILENCE_FRAMES {
+            let opus_payload = match next_silence() {
+                VoiceDaveOutboundPayload::Plain(opus) | VoiceDaveOutboundPayload::Encrypted(opus) => opus,
+                VoiceDaveOutboundPayload::Blocked(reason) => {
+                    return Ok(VoiceFakeSendOutcome::Blocked(reason));
+                }
+            };
+            let encrypted = self.encrypt_current_packet(&opus_payload)?;
+            self.events.push(VoiceFakeOutboundEvent::Packet { bytes: encrypted });
+            self.advance_packet_state();
+        }
+        self.events.push(VoiceFakeOutboundEvent::Speaking {
+            speaking: false,
+            ssrc: self.rtp.ssrc,
+        });
+        self.speaking = false;
+        Ok(VoiceFakeSendOutcome::Sent)
+    }
+
+    fn capture_gate_enabled(&self) -> bool {
+        self.allow_microphone_transmit && !self.self_mute
+    }
+
+    fn encrypt_current_packet(&self, opus_payload: &[u8]) -> Result<Vec<u8>, String> {
+        let nonce_suffix = self.current_nonce_suffix()?;
+        let packet = build_voice_rtp_packet(
+            self.rtp.sequence,
+            self.rtp.timestamp,
+            self.rtp.ssrc,
+            opus_payload,
+        )?;
+        self.encryptor.encrypt_packet(&packet, nonce_suffix)
+    }
+
+    fn current_nonce_suffix(&self) -> Result<[u8; RTP_AEAD_NONCE_SUFFIX_BYTES], String> {
+        if self.nonce_suffix == u32::MAX {
+            return Err("voice RTP nonce suffix exhausted".to_owned());
+        }
+        Ok(self.nonce_suffix.to_be_bytes())
+    }
+
+    fn ensure_nonce_capacity(&self, packets: usize) -> Result<(), String> {
+        let remaining = u32::MAX - self.nonce_suffix;
+        if remaining < packets as u32 {
+            return Err("voice RTP nonce suffix exhausted".to_owned());
+        }
+        Ok(())
+    }
+
+    fn advance_packet_state(&mut self) {
+        self.rtp.sequence = self.rtp.sequence.wrapping_add(1);
+        self.rtp.timestamp = self
+            .rtp
+            .timestamp
+            .wrapping_add(DISCORD_OPUS_TIMESTAMP_INCREMENT);
+        self.nonce_suffix = self.nonce_suffix.saturating_add(1);
+    }
+}
+
 async fn run_voice_playback_decode(
     mut frames_rx: mpsc::Receiver<VoicePlaybackFrame>,
     decoded_audio: VoiceDecodedAudio,
@@ -2054,6 +2779,144 @@ async fn run_voice_playback_decode(
             );
         }
     }
+}
+
+#[cfg(feature = "voice-playback")]
+async fn run_voice_udp_transmit(
+    pcm_rx: StdReceiver<Vec<i16>>,
+    udp_socket: Arc<UdpSocket>,
+    writer: VoiceWriter,
+    description: VoiceSessionDescription,
+    ssrc: u32,
+    dave_state: Arc<Mutex<VoiceDaveState>>,
+    mut gate_rx: watch::Receiver<bool>,
+) {
+    let rtp = VoiceOutboundRtpState {
+        sequence: 0,
+        timestamp: 0,
+        ssrc,
+    };
+    let mut sender = match VoiceFakeOutboundSendState::new(
+        &description.mode,
+        &description.secret_key,
+        rtp,
+        0,
+    ) {
+        Ok(sender) => sender,
+        Err(error) => {
+            logging::error("voice", format!("voice UDP transmit init failed: {error}"));
+            return;
+        }
+    };
+    sender.set_capture_gate(*gate_rx.borrow(), false);
+    let mut encoder = match VoiceOpusEncode::new() {
+        Ok(encoder) => encoder,
+        Err(error) => {
+            logging::error("voice", error);
+            return;
+        }
+    };
+
+    loop {
+        tokio::select! {
+            changed = gate_rx.changed() => {
+                if changed.is_err() {
+                    if let Err(error) = flush_voice_outbound_events(
+                        &udp_socket,
+                        &writer,
+                        sender.stop_speaking_with_dave(&mut *dave_state.lock().await),
+                        &mut sender,
+                    ).await {
+                        logging::error("voice", error);
+                    }
+                    sender.set_capture_gate(false, false);
+                    break;
+                }
+                let enabled = *gate_rx.borrow();
+                if !enabled
+                    && let Err(error) = flush_voice_outbound_events(
+                        &udp_socket,
+                        &writer,
+                        sender.stop_speaking_with_dave(&mut *dave_state.lock().await),
+                        &mut sender,
+                    ).await
+                {
+                    logging::error("voice", error);
+                }
+                sender.set_capture_gate(enabled, false);
+            }
+            _ = sleep(Duration::from_millis(20)) => {
+                if !*gate_rx.borrow() {
+                    continue;
+                }
+                match pcm_rx.try_recv() {
+                    Ok(frame) => {
+                        let opus = match encoder.encode_20ms_i16(&frame) {
+                            Ok(opus) => opus,
+                            Err(error) => {
+                                logging::debug("voice", error);
+                                continue;
+                            }
+                        };
+                        let outcome = sender.send_opus_frame_with_dave(&opus, &mut *dave_state.lock().await);
+                        if let Err(error) = flush_voice_outbound_events(
+                            &udp_socket,
+                            &writer,
+                            outcome,
+                            &mut sender,
+                        ).await {
+                            logging::error("voice", error);
+                            break;
+                        }
+                    }
+                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Disconnected) => {
+                        if let Err(error) = flush_voice_outbound_events(
+                            &udp_socket,
+                            &writer,
+                            sender.stop_speaking_with_dave(&mut *dave_state.lock().await),
+                            &mut sender,
+                        ).await {
+                            logging::error("voice", error);
+                        }
+                        sender.set_capture_gate(false, false);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+async fn flush_voice_outbound_events(
+    udp_socket: &UdpSocket,
+    writer: &VoiceWriter,
+    outcome: Result<VoiceFakeSendOutcome, String>,
+    sender: &mut VoiceFakeOutboundSendState,
+) -> Result<(), String> {
+    match outcome? {
+        VoiceFakeSendOutcome::Sent => {
+            for event in sender.take_events() {
+                match event {
+                    VoiceFakeOutboundEvent::Speaking { speaking, ssrc } => {
+                        send_voice_text(writer, voice_speaking_payload(ssrc, speaking)).await?;
+                    }
+                    VoiceFakeOutboundEvent::Packet { bytes } => {
+                        udp_socket
+                            .send(&bytes)
+                            .await
+                            .map_err(|error| format!("voice UDP transmit failed: {error}"))?;
+                    }
+                }
+            }
+        }
+        VoiceFakeSendOutcome::Noop => {}
+        VoiceFakeSendOutcome::Blocked(reason) => {
+            logging::debug("voice", format!("voice UDP transmit blocked: {reason:?}"));
+        }
+    }
+    Ok(())
 }
 
 async fn run_voice_heartbeat(
@@ -2186,6 +3049,19 @@ fn voice_heartbeat_payload(sequence: i64) -> String {
         "d": {
             "t": chrono::Utc::now().timestamp_millis(),
             "seq_ack": sequence,
+        },
+    })
+    .to_string()
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_speaking_payload(ssrc: u32, speaking: bool) -> String {
+    json!({
+        "op": VOICE_OP_SPEAKING,
+        "d": {
+            "speaking": if speaking { 1 } else { 0 },
+            "delay": 0,
+            "ssrc": ssrc,
         },
     })
     .to_string()
@@ -2429,6 +3305,27 @@ fn voice_playback_frame(media: &VoiceMediaPayload, header: &RtpHeader) -> Option
     })
 }
 
+#[allow(dead_code)]
+fn build_voice_rtp_packet(
+    sequence: u16,
+    timestamp: u32,
+    ssrc: u32,
+    opus_payload: &[u8],
+) -> Result<Vec<u8>, String> {
+    if opus_payload.is_empty() {
+        return Err("voice RTP packet requires a non-empty Opus payload".to_owned());
+    }
+
+    let mut packet = Vec::with_capacity(RTP_HEADER_MIN_LEN + opus_payload.len());
+    packet.push(RTP_VERSION << 6);
+    packet.push(DISCORD_VOICE_PAYLOAD_TYPE);
+    packet.extend_from_slice(&sequence.to_be_bytes());
+    packet.extend_from_slice(&timestamp.to_be_bytes());
+    packet.extend_from_slice(&ssrc.to_be_bytes());
+    packet.extend_from_slice(opus_payload);
+    Ok(packet)
+}
+
 fn parse_rtp_header(packet: &[u8]) -> Result<RtpHeader, String> {
     if packet.len() < RTP_HEADER_MIN_LEN {
         return Err("RTP packet is too short".to_owned());
@@ -2653,6 +3550,36 @@ mod tests {
 
         assert_eq!(state.ssrc_user_ids.get(&1234), Some(&30));
         assert!(state.known_user_ids.contains(&30));
+    }
+
+    #[test]
+    fn voice_dave_outbound_opus_fails_closed_unless_ready() {
+        let mut state = VoiceDaveState::new(&test_voice_gateway_session());
+
+        assert_eq!(
+            state.prepare_outbound_opus(b"opus-frame"),
+            VoiceDaveOutboundPayload::Plain(b"opus-frame".to_vec())
+        );
+
+        state.protocol_version = NonZeroU16::new(1);
+        assert_eq!(
+            state.prepare_outbound_opus(b"opus-frame"),
+            VoiceDaveOutboundPayload::Blocked(
+                VoiceFakeSendBlockReason::DaveOutboundMissingSession,
+            )
+        );
+
+        state.reinit(1).expect("DAVE session should initialize");
+        assert_eq!(
+            state.prepare_outbound_opus(b"opus-frame"),
+            VoiceDaveOutboundPayload::Blocked(VoiceFakeSendBlockReason::DaveOutboundNotReady)
+        );
+
+        state.reinit(0).expect("DAVE should disable cleanly");
+        assert_eq!(
+            state.prepare_outbound_opus(b"opus-frame"),
+            VoiceDaveOutboundPayload::Plain(b"opus-frame".to_vec())
+        );
     }
 
     #[test]
@@ -2913,6 +3840,373 @@ mod tests {
     }
 
     #[test]
+    fn outbound_rtp_packet_builder_sets_header_and_advances_state() {
+        let mut state = VoiceOutboundRtpState {
+            sequence: u16::MAX,
+            timestamp: u32::MAX - 100,
+            ssrc: 0x01020304,
+        };
+
+        let packet = state
+            .packetize(&DISCORD_OPUS_SILENCE_FRAME)
+            .expect("RTP packet should build");
+        let header = parse_rtp_header(&packet).expect("RTP header should parse");
+
+        assert_eq!(packet[0], 0x80);
+        assert_eq!(header.payload_type, DISCORD_VOICE_PAYLOAD_TYPE);
+        assert_eq!(header.sequence, u16::MAX);
+        assert_eq!(header.timestamp, u32::MAX - 100);
+        assert_eq!(header.ssrc, 0x01020304);
+        assert_eq!(header.payload_offset, RTP_HEADER_MIN_LEN);
+        assert_eq!(&packet[header.payload_offset..], DISCORD_OPUS_SILENCE_FRAME);
+        assert_eq!(state.sequence, 0);
+        assert_eq!(state.timestamp, (u32::MAX - 100).wrapping_add(DISCORD_OPUS_TIMESTAMP_INCREMENT));
+
+        assert_eq!(
+            build_voice_rtp_packet(1, 2, 3, &[]).expect_err("empty payload should fail"),
+            "voice RTP packet requires a non-empty Opus payload"
+        );
+    }
+
+    #[test]
+    fn outbound_rtp_encrypts_aead_rtpsize_modes_for_decrypt_round_trip() {
+        let key = [9u8; 32];
+        let nonce_suffix = [4, 3, 2, 1];
+        let packet = build_voice_rtp_packet(7, 960, 42, b"opus-frame")
+            .expect("RTP packet should build");
+
+        for mode in [AEAD_AES256_GCM_RTPSIZE, AEAD_XCHACHA20_POLY1305_RTPSIZE] {
+            let encryptor = VoiceRtpEncryptor::new(mode, &key).expect("encryptor should build");
+            let encrypted = encryptor
+                .encrypt_packet(&packet, nonce_suffix)
+                .expect("RTP payload should encrypt");
+            let header = parse_rtp_header(&encrypted).expect("encrypted RTP header should parse");
+            let decryptor = VoiceRtpDecryptor::new(mode, &key).expect("decryptor should build");
+            let decrypted = decryptor
+                .decrypt_packet(&encrypted, &header)
+                .expect("RTP payload should decrypt");
+
+            assert_eq!(&encrypted[encrypted.len() - RTP_AEAD_NONCE_SUFFIX_BYTES..], nonce_suffix);
+            assert_eq!(header.sequence, 7);
+            assert_eq!(header.timestamp, 960);
+            assert_eq!(header.ssrc, 42);
+            assert_eq!(decrypted.media_payload, b"opus-frame");
+        }
+    }
+
+    #[test]
+    fn opus_encoder_encodes_decodable_20ms_stereo_frame() {
+        let mut encoder = VoiceOpusEncode::new().expect("Opus encoder should build");
+        let pcm = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+
+        let opus = encoder
+            .encode_20ms_i16(&pcm)
+            .expect("20 ms stereo frame should encode");
+
+        assert!(!opus.is_empty());
+
+        let mut decoder = OpusDecoder::new(DISCORD_VOICE_SAMPLE_RATE, Channels::Stereo)
+            .expect("Opus decoder should build");
+        let mut decoded = vec![0.0f32; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        let samples_per_channel = decoder
+            .decode_float(&opus, &mut decoded, false)
+            .expect("encoded Opus should decode");
+
+        assert_eq!(samples_per_channel, DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL);
+        assert_eq!(
+            encoder.encode_20ms_i16(&pcm[..pcm.len() - 1]).expect_err("short frame should fail"),
+            format!(
+                "voice Opus encoder expected {} interleaved stereo samples, got {}",
+                DISCORD_OPUS_20MS_STEREO_SAMPLES,
+                DISCORD_OPUS_20MS_STEREO_SAMPLES - 1
+            )
+        );
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn microphone_input_conversion_produces_20ms_stereo_frames() {
+        let mono = vec![0.5f32; DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL];
+        let stereo = voice_input_f32_to_stereo_i16(&mono, 1);
+        assert_eq!(stereo.len(), DISCORD_OPUS_20MS_STEREO_SAMPLES);
+        assert_eq!(stereo[0], stereo[1]);
+        assert!(stereo[0] > 0);
+
+        let interleaved = voice_input_i16_to_stereo_i16(&[1, 2, 3, 4, 5, 6], 3);
+        assert_eq!(interleaved, vec![1, 2, 4, 5]);
+
+        let unsigned = voice_input_u8_to_stereo_i16(&[0, 255], 2);
+        assert_eq!(unsigned, vec![i16::MIN, 32512]);
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn microphone_pcm_frames_resample_44100_to_48000() {
+        let (tx, rx) = sync_channel(4);
+        let mut frames = VoiceMicrophonePcmFrames::new(tx, 44_100);
+        let input_frames = 883;
+        let mut samples = Vec::with_capacity(input_frames * DISCORD_VOICE_CHANNELS_USIZE);
+        for index in 0..input_frames {
+            samples.push(index as i16);
+            samples.push(-(index as i16));
+        }
+
+        frames.push_stereo_samples(&samples);
+        let frame = rx.try_recv().expect("resampled 20 ms frame should be queued");
+
+        assert_eq!(frame.len(), DISCORD_OPUS_20MS_STEREO_SAMPLES);
+        assert_eq!(frame[0], 0);
+        assert_eq!(frame[1], 0);
+        assert!(frame[frame.len() - 2] > 870);
+        assert!(frame[frame.len() - 1] < -870);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn voice_speaking_payload_matches_expected_shape() {
+        let on: Value = serde_json::from_str(&voice_speaking_payload(1234, true))
+            .expect("speaking-on payload should be JSON");
+        assert_eq!(on["op"].as_u64(), Some(u64::from(VOICE_OP_SPEAKING)));
+        assert_eq!(on["d"]["speaking"].as_u64(), Some(1));
+        assert_eq!(on["d"]["delay"].as_u64(), Some(0));
+        assert_eq!(on["d"]["ssrc"].as_u64(), Some(1234));
+
+        let off: Value = serde_json::from_str(&voice_speaking_payload(1234, false))
+            .expect("speaking-off payload should be JSON");
+        assert_eq!(off["d"]["speaking"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn fake_outbound_noops_when_capture_gate_is_closed() {
+        let mut state = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, 10);
+        let rtp = state.rtp;
+
+        assert_eq!(
+            state.send_opus_frame(b"opus-frame").expect("send should no-op"),
+            VoiceFakeSendOutcome::Noop
+        );
+        assert!(state.events().is_empty());
+        assert_eq!(state.rtp, rtp);
+        assert_eq!(state.nonce_suffix, 10);
+
+        state.set_capture_gate(true, true);
+        assert_eq!(
+            state.send_opus_frame(b"opus-frame").expect("muted send should no-op"),
+            VoiceFakeSendOutcome::Noop
+        );
+        assert!(state.events().is_empty());
+        assert_eq!(state.rtp, rtp);
+        assert_eq!(state.nonce_suffix, 10);
+    }
+
+    #[test]
+    fn fake_outbound_blocks_dave_active_plaintext_fallback() {
+        let mut state = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, 10);
+        state.set_capture_gate(true, false);
+        state.set_dave_active(true);
+        let rtp = state.rtp;
+
+        assert_eq!(
+            state.send_opus_frame(b"opus-frame").expect("DAVE block should be reported"),
+            VoiceFakeSendOutcome::Blocked(VoiceFakeSendBlockReason::DaveOutboundUnsupported)
+        );
+        assert!(state.events().is_empty());
+        assert_eq!(state.rtp, rtp);
+        assert_eq!(state.nonce_suffix, 10);
+    }
+
+    #[test]
+    fn fake_outbound_uses_dave_outbound_policy_before_transport_encrypt() {
+        let mut dave = VoiceDaveState::new(&test_voice_gateway_session());
+        let mut state = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, 30);
+        state.set_capture_gate(true, false);
+
+        assert_eq!(
+            state
+                .send_opus_frame_with_dave(b"opus-frame", &mut dave)
+                .expect("DAVE inactive frame should send"),
+            VoiceFakeSendOutcome::Sent
+        );
+        assert_fake_packet(
+            AEAD_AES256_GCM_RTPSIZE,
+            &state.events()[1],
+            7,
+            960,
+            42,
+            b"opus-frame",
+            30u32.to_be_bytes(),
+        );
+
+        let mut dave = VoiceDaveState::new(&test_voice_gateway_session());
+        dave.reinit(1).expect("DAVE session should initialize");
+        let mut blocked = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, 30);
+        blocked.set_capture_gate(true, false);
+        let rtp = blocked.rtp;
+
+        assert_eq!(
+            blocked
+                .send_opus_frame_with_dave(b"opus-frame", &mut dave)
+                .expect("DAVE not-ready frame should block"),
+            VoiceFakeSendOutcome::Blocked(VoiceFakeSendBlockReason::DaveOutboundNotReady)
+        );
+        assert!(blocked.events().is_empty());
+        assert_eq!(blocked.rtp, rtp);
+        assert_eq!(blocked.nonce_suffix, 30);
+    }
+
+    #[test]
+    fn fake_outbound_sends_encrypted_packets_without_live_io() {
+        for mode in [AEAD_AES256_GCM_RTPSIZE, AEAD_XCHACHA20_POLY1305_RTPSIZE] {
+            let mut state = fake_outbound_state(mode, 0x01020304);
+            state.set_capture_gate(true, false);
+
+            assert_eq!(
+                state.send_opus_frame(b"opus-frame").expect("first frame should send"),
+                VoiceFakeSendOutcome::Sent
+            );
+            assert_eq!(state.events().len(), 2);
+            assert_eq!(
+                state.events()[0],
+                VoiceFakeOutboundEvent::Speaking {
+                    speaking: true,
+                    ssrc: 42,
+                }
+            );
+            assert_fake_packet(mode, &state.events()[1], 7, 960, 42, b"opus-frame", [1, 2, 3, 4]);
+            assert_eq!(state.rtp.sequence, 8);
+            assert_eq!(state.rtp.timestamp, 1920);
+            assert_eq!(state.nonce_suffix, 0x01020305);
+
+            assert_eq!(
+                state.send_opus_frame(b"next-frame").expect("second frame should send"),
+                VoiceFakeSendOutcome::Sent
+            );
+            assert_eq!(state.events().len(), 3);
+            assert_fake_packet(mode, &state.events()[2], 8, 1920, 42, b"next-frame", [1, 2, 3, 5]);
+            assert_eq!(state.rtp.sequence, 9);
+            assert_eq!(state.rtp.timestamp, 2880);
+            assert_eq!(state.nonce_suffix, 0x01020306);
+        }
+    }
+
+    #[test]
+    fn fake_outbound_stop_sends_finite_silence_then_speaking_off() {
+        let mut state = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, 20);
+        state.set_capture_gate(true, false);
+
+        assert_eq!(
+            state.send_opus_frame(b"opus-frame").expect("frame should send"),
+            VoiceFakeSendOutcome::Sent
+        );
+        assert_eq!(
+            state.stop_speaking().expect("stop should send silence"),
+            VoiceFakeSendOutcome::Sent
+        );
+
+        assert_eq!(state.events().len(), DISCORD_TRAILING_SILENCE_FRAMES + 3);
+        for index in 0..DISCORD_TRAILING_SILENCE_FRAMES {
+            assert_fake_packet(
+                AEAD_AES256_GCM_RTPSIZE,
+                &state.events()[index + 2],
+                8 + index as u16,
+                1920 + index as u32 * DISCORD_OPUS_TIMESTAMP_INCREMENT,
+                42,
+                &DISCORD_OPUS_SILENCE_FRAME,
+                (21 + index as u32).to_be_bytes(),
+            );
+        }
+        assert_eq!(
+            state.events()[DISCORD_TRAILING_SILENCE_FRAMES + 2],
+            VoiceFakeOutboundEvent::Speaking {
+                speaking: false,
+                ssrc: 42,
+            }
+        );
+        assert_eq!(state.rtp.sequence, 13);
+        assert_eq!(state.rtp.timestamp, 6720);
+        assert_eq!(state.nonce_suffix, 26);
+    }
+
+    #[test]
+    fn fake_outbound_stop_noops_when_capture_gate_closes() {
+        let mut state = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, 20);
+        state.set_capture_gate(true, false);
+        assert_eq!(
+            state.send_opus_frame(b"opus-frame").expect("frame should send"),
+            VoiceFakeSendOutcome::Sent
+        );
+        let event_count = state.events().len();
+        let rtp = state.rtp;
+        let nonce_suffix = state.nonce_suffix;
+
+        state.set_capture_gate(true, true);
+        assert_eq!(
+            state.stop_speaking().expect("muted stop should no-op"),
+            VoiceFakeSendOutcome::Noop
+        );
+        assert_eq!(state.events().len(), event_count);
+        assert_eq!(state.rtp, rtp);
+        assert_eq!(state.nonce_suffix, nonce_suffix);
+
+        state.set_capture_gate(false, false);
+        assert_eq!(
+            state.stop_speaking().expect("disallowed stop should no-op"),
+            VoiceFakeSendOutcome::Noop
+        );
+        assert_eq!(state.events().len(), event_count);
+        assert_eq!(state.rtp, rtp);
+        assert_eq!(state.nonce_suffix, nonce_suffix);
+    }
+
+    #[test]
+    fn fake_outbound_stop_uses_dave_policy_for_silence_frames() {
+        let mut dave = VoiceDaveState::new(&test_voice_gateway_session());
+        dave.reinit(1).expect("DAVE session should initialize");
+        let mut state = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, 20);
+        state.set_capture_gate(true, false);
+        state.speaking = true;
+        let rtp = state.rtp;
+
+        assert_eq!(
+            state
+                .stop_speaking_with_dave(&mut dave)
+                .expect("DAVE not-ready silence should block"),
+            VoiceFakeSendOutcome::Blocked(VoiceFakeSendBlockReason::DaveOutboundNotReady)
+        );
+        assert!(state.events().is_empty());
+        assert_eq!(state.rtp, rtp);
+        assert_eq!(state.nonce_suffix, 20);
+    }
+
+    #[test]
+    fn fake_outbound_nonce_exhaustion_fails_without_state_change() {
+        let mut state = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, u32::MAX);
+        state.set_capture_gate(true, false);
+        let rtp = state.rtp;
+
+        assert_eq!(
+            state.send_opus_frame(b"opus-frame").expect_err("exhausted nonce should fail"),
+            "voice RTP nonce suffix exhausted"
+        );
+        assert!(state.events().is_empty());
+        assert_eq!(state.rtp, rtp);
+        assert_eq!(state.nonce_suffix, u32::MAX);
+
+        let mut stopping = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, u32::MAX - 2);
+        stopping.set_capture_gate(true, false);
+        stopping.speaking = true;
+        let rtp = stopping.rtp;
+        assert_eq!(
+            stopping.stop_speaking().expect_err("insufficient silence nonces should fail"),
+            "voice RTP nonce suffix exhausted"
+        );
+        assert!(stopping.events().is_empty());
+        assert_eq!(stopping.rtp, rtp);
+        assert_eq!(stopping.nonce_suffix, u32::MAX - 2);
+    }
+
+    #[test]
     fn rtp_header_rejects_malformed_packets() {
         assert_eq!(
             parse_rtp_header(&[0; 11]).expect_err("short packet should fail"),
@@ -2925,6 +4219,58 @@ mod tests {
             parse_rtp_header(&packet).expect_err("wrong version should fail"),
             "RTP packet has unsupported version"
         );
+    }
+
+    fn fake_outbound_state(mode: &str, nonce_suffix: u32) -> VoiceFakeOutboundSendState {
+        VoiceFakeOutboundSendState::new(
+            mode,
+            &[9u8; 32],
+            VoiceOutboundRtpState {
+                sequence: 7,
+                timestamp: 960,
+                ssrc: 42,
+            },
+            nonce_suffix,
+        )
+        .expect("fake outbound state should build")
+    }
+
+    fn test_voice_gateway_session() -> VoiceGatewaySession {
+        VoiceGatewaySession {
+            guild_id: Id::new(1),
+            channel_id: Id::new(10),
+            user_id: Id::new(20),
+            session_id: "voice-session".to_owned(),
+            endpoint: "voice.example.com".to_owned(),
+            token: "voice-token".to_owned(),
+        }
+    }
+
+    fn assert_fake_packet(
+        mode: &str,
+        event: &VoiceFakeOutboundEvent,
+        sequence: u16,
+        timestamp: u32,
+        ssrc: u32,
+        expected_payload: &[u8],
+        nonce_suffix: [u8; RTP_AEAD_NONCE_SUFFIX_BYTES],
+    ) {
+        let VoiceFakeOutboundEvent::Packet { bytes } = event else {
+            panic!("expected fake packet event, got {event:?}");
+        };
+        let packet_bytes = bytes.as_slice();
+        let header = parse_rtp_header(packet_bytes).expect("fake RTP header should parse");
+        let decryptor = VoiceRtpDecryptor::new(mode, &[9u8; 32]).expect("decryptor should build");
+        let decrypted = decryptor
+            .decrypt_packet(packet_bytes, &header)
+            .expect("fake RTP packet should decrypt");
+
+        let actual_nonce_suffix = &packet_bytes[packet_bytes.len() - RTP_AEAD_NONCE_SUFFIX_BYTES..];
+        assert_eq!(actual_nonce_suffix, nonce_suffix.as_slice());
+        assert_eq!(header.sequence, sequence);
+        assert_eq!(header.timestamp, timestamp);
+        assert_eq!(header.ssrc, ssrc);
+        assert_eq!(decrypted.media_payload, expected_payload);
     }
 
     fn encrypt_test_rtp_payload(

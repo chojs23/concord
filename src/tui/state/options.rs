@@ -187,7 +187,7 @@ impl DashboardState {
                 enabled: self.voice_options.allow_microphone_transmit,
                 value: None,
                 effective: true,
-                description: "Permit capture while joined and not muted. Concord still does not send voice audio.",
+                description: "Permit microphone transmit while joined and not muted.",
             },
         ]
     }

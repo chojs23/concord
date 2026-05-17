@@ -85,8 +85,8 @@ target/release/concord
 ```
 
 By default, source builds can join voice channels and decode received voice
-audio, but they do not open a local speaker output device. To build with
-receive-only voice playback, enable the optional `voice-playback` feature:
+audio, but they do not open local audio devices. To build with voice playback
+and gated microphone transmit, enable the optional `voice-playback` feature:
 
 ```sh
 cargo build --release --features voice-playback
@@ -112,10 +112,8 @@ aplay -D pulse /usr/share/sounds/alsa/Front_Center.wav
 ## Features
 
 Concord can request joining and leaving Discord voice channels. Default builds
-do not open a local speaker output device, while source builds with
-`--features voice-playback` support receive-only voice playback and gated
-capture-only microphone input. Concord does not encode microphone audio or send
-voice audio.
+do not open local audio devices, while source builds with `--features
+voice-playback` support voice playback and gated microphone transmit.
 
 ### Authentication
 
@@ -369,10 +367,11 @@ playing a sound when the terminal app is focused.
 `self_mute` and `self_deaf` under `[voice]` control the voice state Concord
 sends when joining, leaving, or updating your current Discord voice channel.
 `allow_microphone_transmit` is a local safety gate. When built with
-`voice-playback`, turning it on may open capture-only microphone input while
-this Concord session is joined to voice and `self_mute` is false. Captured
-samples are discarded. Concord still does not encode microphone audio, send a
-Speaking opcode, or send UDP/RTP voice audio.
+`voice-playback`, turning it on may open microphone input and transmit voice
+only while this Concord session is joined to voice and `self_mute` is false.
+Microphone input is converted to Discord's 48 kHz voice format before Opus
+encoding, and transmit stops when the gate closes, the app leaves voice, or the
+voice session ends.
 
 ## Performance
 
