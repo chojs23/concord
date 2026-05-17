@@ -1296,6 +1296,7 @@ fn esc_closes_composer_without_clearing_draft() {
 
 #[test]
 fn ctrl_c_clears_composer_without_quitting() {
+    let attachment = temp_upload_file("clear attachment.txt", b"attached");
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
     handle_key(&mut state, key(KeyCode::Down));
@@ -1304,13 +1305,19 @@ fn ctrl_c_clears_composer_without_quitting() {
     for value in "draft".chars() {
         handle_key(&mut state, char_key(value));
     }
+    assert!(handle_paste(
+        &mut state,
+        attachment.to_str().expect("temp path is valid unicode"),
+    ));
 
     handle_key(&mut state, ctrl_key('c'));
 
     assert!(state.is_composing());
     assert_eq!(state.composer_input(), "");
     assert_eq!(state.composer_cursor_byte_index(), 0);
+    assert!(state.pending_composer_attachments().is_empty());
     assert!(!state.should_quit());
+    remove_temp_upload_file(&attachment);
 }
 
 #[test]

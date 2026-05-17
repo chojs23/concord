@@ -1,4 +1,4 @@
-use crossterm::event::{Event as TerminalEvent, KeyEventKind};
+use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 
 use crate::{
@@ -28,7 +28,11 @@ pub(super) fn handle_terminal_event(
 
     match event {
         TerminalEvent::Key(key) => {
-            outcome.command = input::handle_key(state, key);
+            if key.kind == KeyEventKind::Press && handle_native_paste_key(state, clipboard, key) {
+                outcome.dirty = true;
+            } else {
+                outcome.command = input::handle_key(state, key);
+            }
             if key.kind == KeyEventKind::Press {
                 save_options_if_needed(state);
                 outcome.dirty = true;
@@ -61,6 +65,41 @@ pub(super) fn handle_terminal_event(
     Ok(outcome)
 }
 
+fn handle_native_paste_key(
+    state: &mut DashboardState,
+    clipboard: &mut ClipboardService,
+    key: KeyEvent,
+) -> bool {
+    if !is_native_paste_key(key) || !state.is_composing() {
+        return false;
+    }
+
+    if state.composer_accepts_attachments()
+        && let Ok(attachment) = clipboard.clipboard_image_upload()
+    {
+        state.add_pending_composer_attachments(vec![attachment]);
+        state.show_success_toast("Clipboard image attached", std::time::Instant::now());
+        return true;
+    }
+
+    match clipboard.clipboard_text() {
+        Ok(text) if input::handle_paste(state, &text) => true,
+        Ok(_) => false,
+        Err(error) => {
+            logging::error("tui", format!("native paste failed: {error}"));
+            state.show_error_toast("No clipboard content", std::time::Instant::now());
+            true
+        }
+    }
+}
+
+fn is_native_paste_key(key: KeyEvent) -> bool {
+    let paste_modifier = key
+        .modifiers
+        .intersects(KeyModifiers::SUPER | KeyModifiers::META);
+    matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V')) && paste_modifier
+}
+
 fn handle_clipboard_image_paste(
     state: &mut DashboardState,
     clipboard: &mut ClipboardService,
@@ -80,6 +119,33 @@ fn handle_clipboard_image_paste(
             state.show_error_toast("No clipboard image", std::time::Instant::now());
             true
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::is_native_paste_key;
+
+    #[test]
+    fn recognizes_macos_command_v_as_native_paste_key() {
+        assert!(is_native_paste_key(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::SUPER,
+        )));
+        assert!(is_native_paste_key(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::META,
+        )));
+    }
+
+    #[test]
+    fn ignores_control_v_as_native_paste_key() {
+        assert!(!is_native_paste_key(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::CONTROL,
+        )));
     }
 }
 

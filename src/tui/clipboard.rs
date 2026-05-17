@@ -66,6 +66,21 @@ impl ClipboardService {
             .map_err(|details| ClipboardError { details })
     }
 
+    pub(super) fn clipboard_text(&mut self) -> Result<String, ClipboardError> {
+        if is_remote_session() {
+            return Err(ClipboardError {
+                details: "native clipboard text paste is only available in local sessions"
+                    .to_owned(),
+            });
+        }
+        self.native_clipboard()
+            .map_err(|details| ClipboardError { details })?
+            .get_text()
+            .map_err(|error| ClipboardError {
+                details: format!("clipboard text unavailable: {error}"),
+            })
+    }
+
     fn native_clipboard(&mut self) -> Result<&mut arboard::Clipboard, String> {
         if self.native.is_none() {
             self.native = Some(

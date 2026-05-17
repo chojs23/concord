@@ -167,6 +167,7 @@ impl DashboardState {
     pub fn clear_composer_input(&mut self) {
         self.composer_input.clear();
         self.composer_cursor_byte_index = 0;
+        self.pending_composer_attachments.clear();
         self.reset_mention_picker_state();
     }
 
