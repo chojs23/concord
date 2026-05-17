@@ -194,8 +194,10 @@ pub struct TextHighlight {
 pub enum TextHighlightKind {
     /// The current user is being notified (`<@me>`, `@everyone`, `@here`).
     SelfMention,
-    /// Some other user is being mentioned. Subdued background for information.
+    /// Some other user is mentioned. Subdued background for information.
     OtherMention,
+    /// A URL/link in message content.
+    Url,
 }
 
 pub fn render_user_mentions_with_highlights<U, R, C, H>(
@@ -559,16 +561,141 @@ fn parse_mention(value: &str, start: usize) -> Option<(usize, MentionTarget)> {
     Some((index.saturating_add(1), target))
 }
 
+pub fn extract_urls_from_text(text: &str) -> Vec<TextHighlight> {
+    let mut urls = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(b"http://") || bytes[i..].starts_with(b"https://") {
+            let start = i;
+            i += if bytes[i..].starts_with(b"https://") {
+                8
+            } else {
+                7
+            };
+            while i < bytes.len() && !is_url_terminator(bytes[i]) {
+                i += 1;
+            }
+            let mut end = i;
+            while end > start {
+                let trailing = bytes[end.saturating_sub(1)];
+                if matches!(trailing, b')' | b',' | b'.' | b'!' | b';') {
+                    let has_open_paren = bytes[start..end].contains(&b'(');
+                    if trailing == b')' && !has_open_paren {
+                        end = end.saturating_sub(1);
+                        continue;
+                    }
+                    if trailing != b')' {
+                        end = end.saturating_sub(1);
+                        continue;
+                    }
+                }
+                break;
+            }
+            if end > start {
+                urls.push(TextHighlight {
+                    start,
+                    end,
+                    kind: TextHighlightKind::Url,
+                });
+            }
+        } else {
+            i += 1;
+        }
+    }
+    urls
+}
+
+fn is_url_terminator(b: u8) -> bool {
+    matches!(
+        b,
+        b' ' | b'\t'
+            | b'\n'
+            | b'\r'
+            | b'<'
+            | b'>'
+            | b'['
+            | b']'
+            | b'{'
+            | b'}'
+            | b'"'
+            | b'\''
+            | b'`'
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use unicode_width::UnicodeWidthStr;
 
     use super::{
-        InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, render_user_mentions,
-        replace_custom_emoji_markup, replace_custom_emoji_markup_in_rendered,
+        InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, extract_urls_from_text,
+        render_user_mentions, replace_custom_emoji_markup, replace_custom_emoji_markup_in_rendered,
         replace_custom_emoji_markup_in_rendered_with_images, sanitize_for_display_width,
         truncate_display_width, truncate_text,
     };
+
+    #[test]
+    fn extract_urls_finds_https_link() {
+        let text = "check this out https://example.com/path";
+        let urls = extract_urls_from_text(text);
+        assert_eq!(urls.len(), 1);
+        assert_eq!(
+            &text[urls[0].start..urls[0].end],
+            "https://example.com/path"
+        );
+    }
+
+    #[test]
+    fn extract_urls_finds_http_link() {
+        let text = "visit http://example.com today";
+        let urls = extract_urls_from_text(text);
+        assert_eq!(urls.len(), 1);
+        assert_eq!(&text[urls[0].start..urls[0].end], "http://example.com");
+    }
+
+    #[test]
+    fn extract_urls_finds_multiple_links() {
+        let text = "see https://a.com and https://b.org/page";
+        let urls = extract_urls_from_text(text);
+        assert_eq!(urls.len(), 2);
+        assert_eq!(&text[urls[0].start..urls[0].end], "https://a.com");
+        assert_eq!(&text[urls[1].start..urls[1].end], "https://b.org/page");
+    }
+
+    #[test]
+    fn extract_urls_strips_trailing_punctuation() {
+        let text = "go to https://example.com.";
+        let urls = extract_urls_from_text(text);
+        assert_eq!(urls.len(), 1);
+        assert_eq!(&text[urls[0].start..urls[0].end], "https://example.com");
+    }
+
+    #[test]
+    fn extract_urls_keeps_parentheses_in_url() {
+        let text = "see https://en.wikipedia.org/wiki/Rust_(programming_language)";
+        let urls = extract_urls_from_text(text);
+        assert_eq!(urls.len(), 1);
+        assert_eq!(
+            &text[urls[0].start..urls[0].end],
+            "https://en.wikipedia.org/wiki/Rust_(programming_language)"
+        );
+    }
+
+    #[test]
+    fn extract_urls_strips_unmatched_trailing_paren() {
+        let text = "link (https://example.com)";
+        let urls = extract_urls_from_text(text);
+        assert_eq!(urls.len(), 1);
+        assert_eq!(&text[urls[0].start..urls[0].end], "https://example.com");
+    }
+
+    #[test]
+    fn extract_urls_returns_empty_for_no_links() {
+        let text = "no links here";
+        let urls = extract_urls_from_text(text);
+        assert!(urls.is_empty());
+    }
 
     #[test]
     fn rendered_replacer_emits_text_fallback_and_records_slot() {

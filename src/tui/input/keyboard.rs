@@ -68,6 +68,7 @@ enum MessageShortcutAction {
     ViewImage,
     ShowProfile,
     OpenPinConfirmation,
+    OpenUrl,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -461,6 +462,7 @@ fn handle_message_shortcut_action(
             state.direct_open_selected_message_pin_confirmation();
             None
         }
+        MessageShortcutAction::OpenUrl => state.direct_open_url_from_selected_message(),
     }
 }
 
@@ -1026,6 +1028,7 @@ fn message_shortcut_action(key: KeyEvent) -> Option<MessageShortcutAction> {
         KeyCode::Char('v') => Some(MessageShortcutAction::ViewImage),
         KeyCode::Char('p') => Some(MessageShortcutAction::ShowProfile),
         KeyCode::Char('P') => Some(MessageShortcutAction::OpenPinConfirmation),
+        KeyCode::Char('o') => Some(MessageShortcutAction::OpenUrl),
         _ => None,
     }
 }

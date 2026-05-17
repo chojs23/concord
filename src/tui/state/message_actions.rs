@@ -1,4 +1,5 @@
 use crate::discord::{AppCommand, MessageState, ReactionEmoji};
+use crate::tui::format::extract_urls_from_text;
 
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
 use super::{
@@ -437,6 +438,17 @@ impl DashboardState {
             return;
         };
         self.open_selected_message_pin_confirmation(!message.pinned);
+    }
+
+    pub fn direct_open_url_from_selected_message(&mut self) -> Option<AppCommand> {
+        let message = self.selected_message_state()?;
+        let content = message.content.as_ref()?;
+        let urls = extract_urls_from_text(content);
+        if urls.is_empty() {
+            return None;
+        }
+        let url = content[urls[0].start..urls[0].end].to_owned();
+        Some(AppCommand::OpenUrl { url })
     }
 
     pub fn open_selected_message_delete_confirmation(&mut self) {

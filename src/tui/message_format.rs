@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{
     format::{
-        InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind,
+        InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, extract_urls_from_text,
         replace_custom_emoji_markup_in_rendered_with_images, truncate_display_width, truncate_text,
     },
     message_time,
@@ -936,6 +936,10 @@ fn wrap_markdown_message_lines_with_loaded_custom_emoji_urls(
     if rendered.text.is_empty() {
         return wrap_rendered_text_lines(rendered, width, style);
     }
+
+    let mut rendered = rendered;
+    let url_highlights = extract_urls_from_text(&rendered.text);
+    rendered.highlights.extend(url_highlights);
 
     let mut lines = Vec::new();
     let mut line_start = 0usize;
@@ -2425,14 +2429,15 @@ fn format_attachment(attachment: &AttachmentInfo) -> String {
 
 pub(super) fn mention_highlight_style(kind: TextHighlightKind) -> Style {
     match kind {
-        // The current user got pinged, so match Discord's gold highlight.
         TextHighlightKind::SelfMention => Style::default()
             .bg(Color::Rgb(92, 76, 35))
             .fg(Color::Yellow),
-        // Someone else was pinged, so use Discord's softer blue tint.
         TextHighlightKind::OtherMention => Style::default()
             .bg(Color::Rgb(40, 50, 92))
             .fg(Color::Rgb(193, 206, 247)),
+        TextHighlightKind::Url => Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::UNDERLINED),
     }
 }
 
