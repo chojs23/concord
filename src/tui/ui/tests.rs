@@ -72,6 +72,7 @@ fn options_popup_lines_show_selected_toggle_state() {
             label: "Disable all image previews",
             enabled: false,
             value: None,
+            gauge_percent: None,
             effective: false,
             description: "Master switch.",
         },
@@ -79,13 +80,15 @@ fn options_popup_lines_show_selected_toggle_state() {
             label: "Show avatars",
             enabled: true,
             value: None,
+            gauge_percent: None,
             effective: true,
             description: "Message and profile avatars.",
         },
         DisplayOptionItem {
             label: "Image preview quality",
             enabled: true,
-            value: Some("balanced"),
+            value: Some("balanced".to_owned()),
+            gauge_percent: Some(55),
             effective: true,
             description: "Attachment and embed previews.",
         },
@@ -97,7 +100,9 @@ fn options_popup_lines_show_selected_toggle_state() {
     assert_eq!(lines[1].spans[0].content, "› ");
     assert_eq!(lines[1].spans[1].content, "[x] ");
     assert_eq!(lines[2].spans[1].content, "[balanced] ");
-    assert_eq!(lines.len(), 3);
+    assert!(lines[3].spans[1].content.contains("-100 dB"));
+    assert!(lines[3].spans[3].content.contains("0 dB"));
+    assert_eq!(lines.len(), 4);
 }
 
 #[test]
@@ -160,6 +165,7 @@ fn options_popup_lines_keep_selected_item_visible_when_clipped() {
             label: "Option 1",
             enabled: true,
             value: None,
+            gauge_percent: None,
             effective: true,
             description: "First.",
         },
@@ -167,6 +173,7 @@ fn options_popup_lines_keep_selected_item_visible_when_clipped() {
             label: "Option 2",
             enabled: true,
             value: None,
+            gauge_percent: None,
             effective: true,
             description: "Second.",
         },
@@ -174,6 +181,7 @@ fn options_popup_lines_keep_selected_item_visible_when_clipped() {
             label: "Option 3",
             enabled: true,
             value: None,
+            gauge_percent: None,
             effective: true,
             description: "Third.",
         },
@@ -181,6 +189,7 @@ fn options_popup_lines_keep_selected_item_visible_when_clipped() {
             label: "Option 4",
             enabled: true,
             value: None,
+            gauge_percent: None,
             effective: true,
             description: "Fourth.",
         },
@@ -197,10 +206,8 @@ fn options_popup_lines_keep_selected_item_visible_when_clipped() {
 #[test]
 fn options_popup_render_keeps_selected_row_visible_when_short() {
     let mut state = DashboardState::new();
-    state.open_options_popup();
-    for _ in 0..5 {
-        state.move_option_down();
-    }
+    state.open_options_category_picker();
+    state.open_options_category_shortcut('n');
 
     let dump = render_dashboard_dump(100, 9, &mut state);
     let rendered = dump.join("\n");

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::config::MicrophoneSensitivityPreset;
+use crate::config::MicrophoneSensitivityDb;
 use crate::discord::VoiceStateInfo;
 use crate::discord::ids::{
     Id,
@@ -28,7 +28,7 @@ pub struct CurrentVoiceConnectionState {
     pub self_mute: bool,
     pub self_deaf: bool,
     pub allow_microphone_transmit: bool,
-    pub microphone_sensitivity: MicrophoneSensitivityPreset,
+    pub microphone_sensitivity: MicrophoneSensitivityDb,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -56,7 +56,7 @@ impl DiscordState {
                     self_mute: state.self_mute,
                     self_deaf: state.self_deaf,
                     allow_microphone_transmit: false,
-                    microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+                    microphone_sensitivity: MicrophoneSensitivityDb::default(),
                 })
             })
     }

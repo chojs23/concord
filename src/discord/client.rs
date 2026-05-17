@@ -1,10 +1,10 @@
 use std::sync::{Arc, Mutex, RwLock};
 
+use crate::config::MicrophoneSensitivityDb;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
-use crate::config::MicrophoneSensitivityPreset;
 use chrono::{DateTime, Utc};
 use reqwest::header::HeaderValue;
 use tokio::{
@@ -254,7 +254,7 @@ impl DiscordClient {
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
         allow_microphone_transmit: bool,
-        microphone_sensitivity: MicrophoneSensitivityPreset,
+        microphone_sensitivity: MicrophoneSensitivityDb,
     ) {
         let mut requested = self
             .requested_voice

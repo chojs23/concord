@@ -50,7 +50,11 @@ pub(super) async fn run_dashboard(
             config::AppOptions::default()
         }
     };
-    let mut state = DashboardState::new_with_options(options.display, options.voice);
+    let mut state = DashboardState::new_with_options(
+        options.display,
+        options.notifications,
+        options.voice,
+    );
     drop(snapshots.borrow_and_update());
     let initial_snapshot = client.current_discord_snapshot();
     let mut current_snapshot_revision = initial_snapshot.revision.global;

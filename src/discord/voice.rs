@@ -31,7 +31,7 @@ use tokio::{
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use crate::config::MicrophoneSensitivityPreset;
+use crate::config::MicrophoneSensitivityDb;
 use crate::discord::{
     CurrentVoiceConnectionState, DiscordState, SequencedAppEvent, SnapshotRevision,
     VoiceConnectionStatus, VoiceServerInfo, VoiceStateInfo,
@@ -496,7 +496,7 @@ struct VoiceAudioOutput {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct VoiceCaptureGate {
     enabled: bool,
-    microphone_sensitivity: MicrophoneSensitivityPreset,
+    microphone_sensitivity: MicrophoneSensitivityDb,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -981,7 +981,7 @@ impl VoiceChildTasks {
         if let Some(gate) = self.transmit_gate.as_ref() {
             let _ = gate.send(VoiceCaptureGate {
                 enabled: false,
-                microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+                microphone_sensitivity: MicrophoneSensitivityDb::default(),
             });
         }
         self.microphone_capture = None;
@@ -2092,7 +2092,7 @@ pub(crate) async fn run_voice_runtime(
                         .capture_gate()
                         .unwrap_or(VoiceCaptureGate {
                             enabled: false,
-                            microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+                            microphone_sensitivity: MicrophoneSensitivityDb::default(),
                         });
                     let initial_playback_gate = state
                         .playback_gate()
@@ -2249,7 +2249,7 @@ async fn connect_voice_gateway(
                     None => {
                         child_tasks.set_voice_transmit_gate(VoiceCaptureGate {
                             enabled: false,
-                            microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+                            microphone_sensitivity: MicrophoneSensitivityDb::default(),
                         });
                         break;
                     }
@@ -3701,9 +3701,9 @@ fn voice_media_payload_counts_as_remote_activity(media: &VoiceMediaPayload) -> b
 #[cfg(any(test, feature = "voice-playback"))]
 fn voice_pcm_frame_reaches_sensitivity(
     frame: &[i16],
-    sensitivity: MicrophoneSensitivityPreset,
+    sensitivity: MicrophoneSensitivityDb,
 ) -> bool {
-    let threshold = i32::from(sensitivity.peak_threshold());
+    let threshold = sensitivity.peak_threshold();
     threshold == 0 || voice_pcm_peak(frame) >= threshold
 }
 
@@ -3788,7 +3788,7 @@ mod tests {
             self_mute: true,
             self_deaf: false,
             allow_microphone_transmit: false,
-            microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+            microphone_sensitivity: MicrophoneSensitivityDb::default(),
         }
     }
 
@@ -3867,7 +3867,7 @@ mod tests {
             state.capture_gate(),
             Some(VoiceCaptureGate {
                 enabled: true,
-                microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+                microphone_sensitivity: MicrophoneSensitivityDb::default(),
             })
         );
         assert_eq!(state.playback_gate(), Some(VoicePlaybackGate { enabled: true }));
@@ -3878,7 +3878,7 @@ mod tests {
             state.capture_gate(),
             Some(VoiceCaptureGate {
                 enabled: false,
-                microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+                microphone_sensitivity: MicrophoneSensitivityDb::default(),
             })
         );
         assert_eq!(state.playback_gate(), Some(VoicePlaybackGate { enabled: true }));
@@ -3889,7 +3889,7 @@ mod tests {
             state.capture_gate(),
             Some(VoiceCaptureGate {
                 enabled: false,
-                microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+                microphone_sensitivity: MicrophoneSensitivityDb::default(),
             })
         );
         assert_eq!(state.playback_gate(), Some(VoicePlaybackGate { enabled: false }));
@@ -3902,7 +3902,7 @@ mod tests {
             state.capture_gate(),
             Some(VoiceCaptureGate {
                 enabled: false,
-                microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+                microphone_sensitivity: MicrophoneSensitivityDb::default(),
             })
         );
         assert_eq!(state.playback_gate(), Some(VoicePlaybackGate { enabled: true }));
@@ -4182,24 +4182,24 @@ mod tests {
     #[test]
     fn microphone_sensitivity_filters_quiet_pcm_frames() {
         let quiet = vec![100i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
-        let medium = vec![1500i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        let normal = vec![1500i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
         let loud = vec![4000i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
 
         assert!(voice_pcm_frame_reaches_sensitivity(
             &quiet,
-            MicrophoneSensitivityPreset::Off,
+            MicrophoneSensitivityDb::new(-60),
         ));
         assert!(!voice_pcm_frame_reaches_sensitivity(
             &quiet,
-            MicrophoneSensitivityPreset::High,
+            MicrophoneSensitivityDb::new(-30),
         ));
         assert!(voice_pcm_frame_reaches_sensitivity(
-            &medium,
-            MicrophoneSensitivityPreset::Medium,
+            &normal,
+            MicrophoneSensitivityDb::default(),
         ));
         assert!(voice_pcm_frame_reaches_sensitivity(
             &loud,
-            MicrophoneSensitivityPreset::Low,
+            MicrophoneSensitivityDb::new(-20),
         ));
     }
 

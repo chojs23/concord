@@ -4,7 +4,7 @@ use fixtures::*;
 use ratatui::text::Line;
 
 use crate::{
-    config::{DisplayOptions, ImagePreviewQualityPreset, VoiceOptions},
+    config::{ImagePreviewQualityPreset, NotificationOptions, VoiceOptions},
     discord::ids::{
         Id,
         marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
@@ -200,10 +200,9 @@ fn desktop_notification_for_event_suppresses_active_channel() {
 }
 
 #[test]
-fn desktop_notification_for_event_respects_display_opt_out() {
-    let mut state = DashboardState::new_with_display_options(DisplayOptions {
+fn desktop_notification_for_event_respects_notification_opt_out() {
+    let mut state = DashboardState::new_with_notification_options(NotificationOptions {
         desktop_notifications: false,
-        ..DisplayOptions::default()
     });
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
@@ -2325,7 +2324,8 @@ fn display_option_items_include_voice_state_controls() {
     assert!(items[8].enabled);
     assert!(items[8].effective);
     assert_eq!(items[9].label, "Microphone sensitivity");
-    assert_eq!(items[9].value, Some("medium"));
+    assert_eq!(items[9].value, Some("-30 dB".to_owned()));
+    assert_eq!(items[9].gauge_percent, Some(70));
     assert!(items[9].effective);
 }
 
@@ -2338,10 +2338,8 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
         status: VoiceConnectionStatus::Connecting,
         message: None,
     });
-    state.open_options_popup();
-    for _ in 0..6 {
-        state.move_option_down();
-    }
+    state.open_options_category_picker();
+    state.open_options_category_shortcut('v');
 
     state.toggle_selected_display_option();
     assert_eq!(
@@ -2380,8 +2378,11 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
     );
 
     state.move_option_down();
-    state.toggle_selected_display_option();
-    assert_eq!(state.voice_options().microphone_sensitivity.label(), "high");
+    state.adjust_selected_display_option(10);
+    assert_eq!(
+        state.voice_options().microphone_sensitivity.label(),
+        "-20 dB"
+    );
     assert_eq!(
         state.drain_pending_commands(),
         vec![AppCommand::UpdateVoiceCapturePermission {

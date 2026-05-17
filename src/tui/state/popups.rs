@@ -30,9 +30,17 @@ pub struct MessagePinConfirmationState {
     pub(super) content: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OptionsCategory {
+    Display,
+    Notifications,
+    Voice,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct OptionsPopupState {
     pub(super) selected: usize,
+    pub(super) category: Option<OptionsCategory>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

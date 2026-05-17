@@ -15,10 +15,15 @@ pub struct DisplayOptions {
     pub show_images: bool,
     pub image_preview_quality: ImagePreviewQualityPreset,
     pub show_custom_emoji: bool,
-    pub desktop_notifications: bool,
     pub server_width: u16,
     pub channel_list_width: u16,
     pub member_list_width: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct NotificationOptions {
+    pub desktop_notifications: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -27,13 +32,14 @@ pub struct VoiceOptions {
     pub self_mute: bool,
     pub self_deaf: bool,
     pub allow_microphone_transmit: bool,
-    pub microphone_sensitivity: MicrophoneSensitivityPreset,
+    pub microphone_sensitivity: MicrophoneSensitivityDb,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AppOptions {
     pub display: DisplayOptions,
+    pub notifications: NotificationOptions,
     pub voice: VoiceOptions,
 }
 
@@ -47,15 +53,13 @@ pub enum ImagePreviewQualityPreset {
     Original,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum MicrophoneSensitivityPreset {
-    Off,
-    Low,
-    #[default]
-    Medium,
-    High,
-}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct MicrophoneSensitivityDb(i8);
+
+const MIN_MICROPHONE_SENSITIVITY_DB: i8 = -100;
+const MAX_MICROPHONE_SENSITIVITY_DB: i8 = 0;
+const DEFAULT_MICROPHONE_SENSITIVITY_DB: i8 = -30;
 
 impl ImagePreviewQualityPreset {
     pub fn label(self) -> &'static str {
@@ -77,32 +81,52 @@ impl ImagePreviewQualityPreset {
     }
 }
 
-impl MicrophoneSensitivityPreset {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-        }
+impl<'de> Deserialize<'de> for MicrophoneSensitivityDb {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self::from_raw_db(i64::deserialize(deserializer)?))
+    }
+}
+
+impl Default for MicrophoneSensitivityDb {
+    fn default() -> Self {
+        Self(DEFAULT_MICROPHONE_SENSITIVITY_DB)
+    }
+}
+
+impl MicrophoneSensitivityDb {
+    pub fn new(value: i8) -> Self {
+        Self::from_raw_db(i64::from(value))
     }
 
-    pub fn next(self) -> Self {
-        match self {
-            Self::Off => Self::Low,
-            Self::Low => Self::Medium,
-            Self::Medium => Self::High,
-            Self::High => Self::Off,
-        }
+    fn from_raw_db(value: i64) -> Self {
+        Self(
+            value
+                .clamp(
+                    i64::from(MIN_MICROPHONE_SENSITIVITY_DB),
+                    i64::from(MAX_MICROPHONE_SENSITIVITY_DB),
+                )
+                as i8,
+        )
     }
 
-    pub fn peak_threshold(self) -> i16 {
-        match self {
-            Self::Off => 0,
-            Self::Low => 3500,
-            Self::Medium => 1500,
-            Self::High => 500,
-        }
+    pub fn value(self) -> i8 {
+        self.0
+    }
+
+    pub fn label(self) -> String {
+        format!("{} dB", self.0)
+    }
+
+    pub fn adjust(self, delta: i8) -> Self {
+        Self::new(self.0.saturating_add(delta))
+    }
+
+    pub fn peak_threshold(self) -> i32 {
+        let ratio = 10_f64.powf(f64::from(self.0) / 20.0);
+        (f64::from(i16::MAX) * ratio).round() as i32
     }
 }
 
@@ -112,7 +136,15 @@ impl Default for VoiceOptions {
             self_mute: false,
             self_deaf: false,
             allow_microphone_transmit: false,
-            microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+            microphone_sensitivity: MicrophoneSensitivityDb::default(),
+        }
+    }
+}
+
+impl Default for NotificationOptions {
+    fn default() -> Self {
+        Self {
+            desktop_notifications: true,
         }
     }
 }
@@ -125,7 +157,6 @@ impl Default for DisplayOptions {
             show_images: true,
             image_preview_quality: ImagePreviewQualityPreset::default(),
             show_custom_emoji: true,
-            desktop_notifications: true,
             server_width: 20,
             channel_list_width: 24,
             member_list_width: 26,
@@ -244,8 +275,8 @@ mod tests {
     };
 
     use super::{
-        AppOptions, DisplayOptions, ImagePreviewQualityPreset, MicrophoneSensitivityPreset,
-        VoiceOptions,
+        AppOptions, DisplayOptions, ImagePreviewQualityPreset, MicrophoneSensitivityDb,
+        NotificationOptions, VoiceOptions,
         load_options_from_path, save_options_to_path,
     };
 
@@ -270,7 +301,6 @@ mod tests {
             show_images: true,
             image_preview_quality: ImagePreviewQualityPreset::Balanced,
             show_custom_emoji: true,
-            desktop_notifications: true,
             server_width: 20,
             channel_list_width: 24,
             member_list_width: 26,
@@ -291,7 +321,7 @@ mod tests {
                 false,
                 false,
                 false,
-                MicrophoneSensitivityPreset::Medium,
+                MicrophoneSensitivityDb::default(),
             ),
             (
                 "[display]\nimage_preview_quality = \"original\"\n",
@@ -300,7 +330,7 @@ mod tests {
                 false,
                 false,
                 false,
-                MicrophoneSensitivityPreset::Medium,
+                MicrophoneSensitivityDb::default(),
             ),
             (
                 "[voice]\nself_mute = true\n",
@@ -309,7 +339,7 @@ mod tests {
                 true,
                 false,
                 false,
-                MicrophoneSensitivityPreset::Medium,
+                MicrophoneSensitivityDb::default(),
             ),
             (
                 "[voice]\nallow_microphone_transmit = true\n",
@@ -318,16 +348,43 @@ mod tests {
                 false,
                 false,
                 true,
-                MicrophoneSensitivityPreset::Medium,
+                MicrophoneSensitivityDb::default(),
             ),
             (
-                "[voice]\nmicrophone_sensitivity = \"high\"\n",
+                "[voice]\nmicrophone_sensitivity = -70\n",
                 false,
                 ImagePreviewQualityPreset::Balanced,
                 false,
                 false,
                 false,
-                MicrophoneSensitivityPreset::High,
+                MicrophoneSensitivityDb::new(-70),
+            ),
+            (
+                "[voice]\nmicrophone_sensitivity = 10\n",
+                false,
+                ImagePreviewQualityPreset::Balanced,
+                false,
+                false,
+                false,
+                MicrophoneSensitivityDb::new(0),
+            ),
+            (
+                "[voice]\nmicrophone_sensitivity = -500\n",
+                false,
+                ImagePreviewQualityPreset::Balanced,
+                false,
+                false,
+                false,
+                MicrophoneSensitivityDb::new(-100),
+            ),
+            (
+                "[notifications]\ndesktop_notifications = false\n",
+                false,
+                ImagePreviewQualityPreset::Balanced,
+                false,
+                false,
+                false,
+                MicrophoneSensitivityDb::default(),
             ),
         ];
 
@@ -347,7 +404,12 @@ mod tests {
             assert!(config.display.show_images);
             assert_eq!(config.display.image_preview_quality, image_preview_quality);
             assert!(config.display.show_custom_emoji);
-            assert!(config.display.desktop_notifications);
+            let expected_desktop_notifications =
+                !toml.contains("[notifications]\ndesktop_notifications = false");
+            assert_eq!(
+                config.notifications.desktop_notifications,
+                expected_desktop_notifications
+            );
             assert_eq!(config.voice.self_mute, self_mute);
             assert_eq!(config.voice.self_deaf, self_deaf);
             assert_eq!(
@@ -371,16 +433,18 @@ mod tests {
                 show_images: false,
                 image_preview_quality: ImagePreviewQualityPreset::Original,
                 show_custom_emoji: false,
-                desktop_notifications: false,
                 server_width: 12,
                 channel_list_width: 30,
                 member_list_width: 18,
+            },
+            notifications: NotificationOptions {
+                desktop_notifications: false,
             },
             voice: VoiceOptions {
                 self_mute: true,
                 self_deaf: true,
                 allow_microphone_transmit: true,
-                microphone_sensitivity: MicrophoneSensitivityPreset::Low,
+                microphone_sensitivity: MicrophoneSensitivityDb::new(-50),
             },
         };
 

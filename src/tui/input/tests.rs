@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 
 use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event, handle_paste};
 use crate::{
-    config::{AppOptions, ImagePreviewQualityPreset},
+    config::{AppOptions, ImagePreviewQualityPreset, MicrophoneSensitivityDb},
     discord::{
         AppCommand, AppEvent, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
         CustomEmojiInfo, DownloadAttachmentSource, GuildFolder, GuildNotificationSettingsInfo,
@@ -463,6 +463,63 @@ fn leader_server_actions_unmute_when_already_muted() {
 }
 
 #[test]
+fn leader_o_opens_options_category_picker() {
+    let mut state = DashboardState::new();
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('o'));
+
+    assert!(!state.is_leader_active());
+    assert!(state.is_options_category_picker_open());
+    assert_eq!(state.options_popup_title(), "Options");
+    assert_eq!(state.display_option_items()[0].label, "Display");
+    assert_eq!(state.display_option_items()[1].label, "Notifications");
+    assert_eq!(state.display_option_items()[2].label, "Voice");
+}
+
+#[test]
+fn leader_o_category_shortcuts_open_scoped_options() {
+    let mut state = DashboardState::new();
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('o'));
+    handle_key(&mut state, char_key('d'));
+
+    assert_eq!(state.options_popup_title(), "Display Options");
+    assert_eq!(state.display_option_items()[0].label, "Disable all image previews");
+    assert!(!state.display_option_items().iter().any(|item| item.label == "Voice muted"));
+    assert!(
+        !state
+            .display_option_items()
+            .iter()
+            .any(|item| item.label == "Desktop notifications")
+    );
+
+    state.close_options_popup();
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('o'));
+    handle_key(&mut state, char_key('n'));
+
+    assert_eq!(state.options_popup_title(), "Notification Options");
+    assert_eq!(state.display_option_items()[0].label, "Desktop notifications");
+    assert_eq!(state.display_option_items().len(), 1);
+
+    state.close_options_popup();
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('o'));
+    handle_key(&mut state, char_key('v'));
+
+    assert_eq!(state.options_popup_title(), "Voice Options");
+    assert_eq!(state.display_option_items()[0].label, "Voice muted");
+    assert!(
+        !state
+            .display_option_items()
+            .iter()
+            .any(|item| item.label == "Show avatars")
+    );
+}
+
+#[test]
 fn leader_number_keys_toggle_side_panes() {
     let mut state = DashboardState::new();
     state.focus_pane(FocusPane::Guilds);
@@ -502,6 +559,7 @@ fn alt_arrows_adjust_focused_side_pane_width() {
         state.take_options_save_request(),
         Some(AppOptions {
             display: state.display_options(),
+            notifications: state.notification_options(),
             voice: state.voice_options(),
         })
     );
@@ -1693,6 +1751,7 @@ fn options_popup_toggles_selected_setting() {
         state.take_options_save_request(),
         Some(AppOptions {
             display: state.display_options(),
+            notifications: state.notification_options(),
             voice: state.voice_options(),
         })
     );
@@ -1716,6 +1775,51 @@ fn options_popup_cycles_image_preview_quality() {
         state.take_options_save_request(),
         Some(AppOptions {
             display: state.display_options(),
+            notifications: state.notification_options(),
+            voice: state.voice_options(),
+        })
+    );
+}
+
+#[test]
+fn options_popup_h_l_adjust_microphone_sensitivity_by_one_or_ten_db() {
+    let mut state = state_with_messages(1);
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('o'));
+    handle_key(&mut state, char_key('v'));
+    for _ in 0..3 {
+        handle_key(&mut state, key(KeyCode::Down));
+    }
+
+    handle_key(&mut state, char_key('h'));
+    assert_eq!(
+        state.voice_options().microphone_sensitivity,
+        MicrophoneSensitivityDb::new(-31)
+    );
+
+    handle_key(&mut state, char_key('H'));
+    assert_eq!(
+        state.voice_options().microphone_sensitivity,
+        MicrophoneSensitivityDb::new(-41)
+    );
+
+    handle_key(&mut state, char_key('l'));
+    assert_eq!(
+        state.voice_options().microphone_sensitivity,
+        MicrophoneSensitivityDb::new(-40)
+    );
+
+    handle_key(&mut state, char_key('L'));
+    assert_eq!(
+        state.voice_options().microphone_sensitivity,
+        MicrophoneSensitivityDb::new(-30)
+    );
+    assert_eq!(
+        state.take_options_save_request(),
+        Some(AppOptions {
+            display: state.display_options(),
+            notifications: state.notification_options(),
             voice: state.voice_options(),
         })
     );

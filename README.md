@@ -242,7 +242,7 @@ Press `Space` to open the leader shortcut window.
 | `Space`, `2`     | Toggle the Channels pane          |
 | `Space`, `4`     | Toggle the Members pane           |
 | `Space`, `a`     | Open actions for the focused pane |
-| `Space`, `o`     | Open concord options              |
+| `Space`, `o`     | Choose concord option category    |
 | `Space`, `Space` | Open the fuzzy channel switcher   |
 
 #### Action menus
@@ -318,7 +318,7 @@ open or activate items, and use the wheel to scroll panes and popups.
 
 ### Configuration
 
-Display options are stored under Concord's config directory. If
+Concord options are stored under Concord's config directory. If
 `XDG_CONFIG_HOME` is set, Concord uses
 `$XDG_CONFIG_HOME/concord/config.toml`. Otherwise it uses the platform config
 directory. The usual fallback is `~/.config/concord/config.toml` on Linux,
@@ -347,13 +347,15 @@ show_avatars = true
 show_images = true
 image_preview_quality = "balanced"
 show_custom_emoji = true
+
+[notifications]
 desktop_notifications = true
 
 [voice]
 self_mute = false
 self_deaf = false
 allow_microphone_transmit = false
-microphone_sensitivity = "medium"
+microphone_sensitivity = -30
 ```
 
 `image_preview_quality` supports these values:
@@ -366,7 +368,7 @@ microphone_sensitivity = "medium"
 This setting only applies to attachment, embed, and image viewer previews.
 Avatars and custom emoji keep their separate small-image behavior.
 
-`desktop_notifications` controls OS notifications for Discord messages that
+`desktop_notifications` under `[notifications]` controls OS notifications for Discord messages that
 pass Discord notification settings. On macOS, Concord keeps the visual
 notification and audible alert separate to avoid duplicate sounds while still
 playing a sound when the terminal app is focused.
@@ -386,10 +388,13 @@ ends. If Discord DAVE encryption is required but outbound encryption is not
 ready, Concord fails closed instead of sending plaintext audio.
 
 `microphone_sensitivity` controls how loud a 20 ms microphone frame must be
-before Concord transmits it. It accepts `off`, `low`, `medium`, and `high`.
-`off` keeps the old always-transmit behavior while the microphone gate is open.
-`high` transmits quieter input. `medium` is the default and filters tiny ambient
-noise so the active speaker indicator does not stay green all the time.
+before Concord transmits it. It accepts an integer dB threshold from `-100` to
+`0`. Lower values transmit quieter input. The default is `-30`, which filters
+small ambient noise so the active speaker indicator does not stay green all the
+time. Press `Space`, `o`, `d` for display options, `Space`, `o`, `n` for
+notification options, or `Space`, `o`, `v` for voice options. In Voice Options,
+select Microphone sensitivity and press `h`/`l` to adjust by 1 dB or `H`/`L` to
+adjust by 10 dB.
 
 Voice active speaker styling follows the actual voice path. The current user is
 highlighted only after Concord sends Speaking on. Remote users are highlighted

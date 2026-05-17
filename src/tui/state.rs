@@ -9,7 +9,7 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
-use crate::config::{DisplayOptions, VoiceOptions};
+use crate::config::{DisplayOptions, NotificationOptions, VoiceOptions};
 use crate::discord::{
     AppCommand, AppEvent, ChannelUnreadState, DiscordSnapshot, DiscordState,
     DownloadAttachmentSource, ForumPostArchiveState, MentionInfo, MessageAttachmentUpload,
@@ -294,6 +294,7 @@ pub struct DashboardState {
     channel_pane_visible: bool,
     member_pane_visible: bool,
     display_options: DisplayOptions,
+    notification_options: NotificationOptions,
     voice_options: VoiceOptions,
     options_save_pending: bool,
     current_user: Option<String>,
@@ -433,6 +434,7 @@ impl DashboardState {
             channel_pane_visible: true,
             member_pane_visible: true,
             display_options: DisplayOptions::default(),
+            notification_options: NotificationOptions::default(),
             voice_options: VoiceOptions::default(),
             options_save_pending: false,
             current_user: None,
