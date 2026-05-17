@@ -178,7 +178,6 @@ pub(super) async fn run_dashboard(
                     Some(Ok(event)) => {
                         let outcome = events::handle_terminal_event(
                             &mut state,
-                            &mut clipboard,
                             event,
                             &mut last_frame_area,
                             &mut mouse_clicks,

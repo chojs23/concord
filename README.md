@@ -284,11 +284,11 @@ Channel actions:
 
 Voice actions:
 
-| Shortcut | Action       | Description                              |
-| -------- | ------------ | ---------------------------------------- |
+| Shortcut | Action       | Description                               |
+| -------- | ------------ | ----------------------------------------- |
 | `d`      | Deafen voice | Toggle Concord's Discord voice deaf state |
 | `m`      | Mute voice   | Toggle Concord's Discord voice mute state |
-| `l`      | Leave voice  | Leave the current Concord voice channel  |
+| `l`      | Leave voice  | Leave the current Concord voice channel   |
 
 When the image viewer is open, press `d` to download the current image directly.
 
@@ -304,7 +304,6 @@ are shown above the input before sending.
 | ------------------------- | ----------------- | -------------------------------------------------- |
 | `Ctrl+e`                  | open $EDITOR      | Open $EDITOR on the current draft for long editing |
 | `Ctrl+c`                  | clear             | Clear current draft                                |
-| `Ctrl+v`                  | paste clipboard   | Paste text or attach an image from the clipboard   |
 | `Ctrl+Left`/ `Ctrl+Right` | Jump word         | Jump the cursor by word                            |
 | `Ctrl+Backspace`          | Detach attachment | Removes the last pending attachment                |
 

@@ -1,17 +1,12 @@
-use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event as TerminalEvent, KeyEventKind};
 use ratatui::layout::Rect;
 
 use crate::{
     Result, config,
     discord::{AppCommand, AppEvent},
-    logging,
 };
 
-use super::{
-    clipboard::{ClipboardError, ClipboardService},
-    input,
-    state::DashboardState,
-};
+use super::{input, state::DashboardState};
 
 pub(super) struct TerminalEventOutcome {
     pub(super) dirty: bool,
@@ -20,7 +15,6 @@ pub(super) struct TerminalEventOutcome {
 
 pub(super) fn handle_terminal_event(
     state: &mut DashboardState,
-    clipboard: &mut ClipboardService,
     event: TerminalEvent,
     last_frame_area: &mut Rect,
     mouse_clicks: &mut input::MouseClickTracker,
@@ -32,9 +26,7 @@ pub(super) fn handle_terminal_event(
 
     match event {
         TerminalEvent::Key(key) => {
-            if key.kind == KeyEventKind::Press && handle_native_paste_key(state, clipboard, key) {
-                outcome.dirty = true;
-            } else {
+            if key.kind == KeyEventKind::Press {
                 outcome.command = input::handle_key(state, key);
             }
             if key.kind == KeyEventKind::Press {
@@ -63,59 +55,6 @@ pub(super) fn handle_terminal_event(
     Ok(outcome)
 }
 
-fn handle_native_paste_key(
-    state: &mut DashboardState,
-    clipboard: &mut ClipboardService,
-    key: KeyEvent,
-) -> bool {
-    if !is_native_paste_key(key) || !state.is_composing() {
-        return false;
-    }
-
-    if state.composer_accepts_attachments() {
-        let file_error = match clipboard.clipboard_file_uploads() {
-            Ok(attachments) => {
-                state.add_pending_composer_attachments(attachments);
-                state.show_success_toast("Clipboard file attached", std::time::Instant::now());
-                return true;
-            }
-            Err(error) => {
-                logging::error("tui", format!("native file paste failed: {error}"));
-                Some(error)
-            }
-        };
-
-        if file_error
-            .as_ref()
-            .is_none_or(ClipboardError::is_empty_file_clipboard)
-        {
-            match clipboard.clipboard_image_upload() {
-                Ok(attachment) => {
-                    state.add_pending_composer_attachments(vec![attachment]);
-                    state.show_success_toast("Clipboard image attached", std::time::Instant::now());
-                    return true;
-                }
-                Err(error) => logging::error("tui", format!("native image paste failed: {error}")),
-            }
-        }
-    }
-
-    match clipboard.clipboard_text() {
-        Ok(text) if input::handle_paste(state, &text) => true,
-        Ok(_) => false,
-        Err(error) => {
-            logging::error("tui", format!("native text paste failed: {error}"));
-            state.show_error_toast("No clipboard content", std::time::Instant::now());
-            true
-        }
-    }
-}
-
-fn is_native_paste_key(key: KeyEvent) -> bool {
-    let paste_modifier = key.modifiers.contains(KeyModifiers::CONTROL);
-    matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V')) && paste_modifier
-}
-
 fn save_options_if_needed(state: &mut DashboardState) {
     let Some(options) = state.take_options_save_request() else {
         return;
@@ -126,32 +65,5 @@ fn save_options_if_needed(state: &mut DashboardState) {
         Err(error) => state.push_effect(AppEvent::GatewayError {
             message: format!("save options failed: {error}"),
         }),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-    use super::is_native_paste_key;
-
-    #[test]
-    fn recognizes_native_clipboard_paste_keys() {
-        assert!(is_native_paste_key(KeyEvent::new(
-            KeyCode::Char('v'),
-            KeyModifiers::CONTROL,
-        )));
-        assert!(is_native_paste_key(KeyEvent::new(
-            KeyCode::Char('V'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )));
-    }
-
-    #[test]
-    fn ignores_unmodified_v_as_native_paste_key() {
-        assert!(!is_native_paste_key(KeyEvent::new(
-            KeyCode::Char('v'),
-            KeyModifiers::NONE,
-        )));
     }
 }
