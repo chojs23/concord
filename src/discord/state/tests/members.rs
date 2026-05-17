@@ -228,6 +228,31 @@ fn tracks_voice_participants_join_move_and_leave() {
 }
 
 #[test]
+fn local_speaking_update_creates_current_user_voice_state_when_missing() {
+    let guild_id = Id::new(1);
+    let voice_channel = Id::new(2);
+    let current_user = Id::new(10);
+    let mut state = DiscordState::default();
+
+    state.apply_event(&AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(current_user),
+    });
+    state.apply_event(&AppEvent::VoiceSpeakingUpdate {
+        guild_id,
+        channel_id: voice_channel,
+        user_id: current_user,
+        speaking: true,
+    });
+
+    let participants = state.voice_participants_for_channel(guild_id, voice_channel);
+    assert_eq!(participants.len(), 1);
+    assert_eq!(participants[0].user_id, current_user);
+    assert!(participants[0].speaking);
+    assert!(state.current_user_voice_speaking());
+}
+
+#[test]
 fn guild_create_replaces_cached_voice_state_snapshot() {
     let guild_id = Id::new(1);
     let voice = Id::new(10);
