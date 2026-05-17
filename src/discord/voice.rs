@@ -2565,9 +2565,6 @@ async fn run_voice_udp_receive(
                                     .unwrap_media_payload_for_ssrc(header.ssrc, &payload.media_payload);
                                 (remote_user_id, media)
                             };
-                            if let Some(user_id) = remote_user_id {
-                                let _ = remote_speaking_tx.send(user_id);
-                            }
                             let media_payload_len = match &media {
                                 VoiceMediaPayload::Plain(payload) => payload.len(),
                                 VoiceMediaPayload::DaveMissingUser { payload_len }
@@ -2624,6 +2621,11 @@ async fn run_voice_udp_receive(
                                 && let Some(tx) = playback_tx.as_ref()
                             {
                                 let _ = tx.try_send(frame);
+                            }
+                            if let Some(user_id) = remote_user_id
+                                && voice_media_payload_counts_as_remote_activity(&media)
+                            {
+                                let _ = remote_speaking_tx.send(user_id);
                             }
                             if decrypted_packets == 1 || decrypted_packets % 500 == 0 {
                                 logging::debug(
@@ -3660,6 +3662,16 @@ fn voice_playback_frame(media: &VoiceMediaPayload, header: &RtpHeader) -> Option
     })
 }
 
+fn voice_media_payload_counts_as_remote_activity(media: &VoiceMediaPayload) -> bool {
+    let opus = match media {
+        VoiceMediaPayload::Plain(opus) | VoiceMediaPayload::DaveDecrypted { opus, .. } => opus,
+        VoiceMediaPayload::DaveMissingUser { .. }
+        | VoiceMediaPayload::DaveNotReady { .. }
+        | VoiceMediaPayload::DaveDecryptFailed { .. } => return false,
+    };
+    opus.as_slice() != DISCORD_OPUS_SILENCE_FRAME
+}
+
 #[allow(dead_code)]
 fn build_voice_rtp_packet(
     sequence: u16,
@@ -4059,6 +4071,43 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn remote_speaking_activity_ignores_silence_and_unplayable_media() {
+        assert!(!voice_media_payload_counts_as_remote_activity(
+            &VoiceMediaPayload::Plain(DISCORD_OPUS_SILENCE_FRAME.to_vec()),
+        ));
+        assert!(!voice_media_payload_counts_as_remote_activity(
+            &VoiceMediaPayload::DaveDecrypted {
+                user_id: 42,
+                opus: DISCORD_OPUS_SILENCE_FRAME.to_vec(),
+            },
+        ));
+        assert!(!voice_media_payload_counts_as_remote_activity(
+            &VoiceMediaPayload::DaveMissingUser { payload_len: 4 },
+        ));
+        assert!(!voice_media_payload_counts_as_remote_activity(
+            &VoiceMediaPayload::DaveNotReady {
+                user_id: 42,
+                payload_len: 4,
+            },
+        ));
+        assert!(!voice_media_payload_counts_as_remote_activity(
+            &VoiceMediaPayload::DaveDecryptFailed {
+                user_id: 42,
+                message: "failed".to_owned(),
+            },
+        ));
+        assert!(voice_media_payload_counts_as_remote_activity(
+            &VoiceMediaPayload::Plain(b"opus".to_vec()),
+        ));
+        assert!(voice_media_payload_counts_as_remote_activity(
+            &VoiceMediaPayload::DaveDecrypted {
+                user_id: 42,
+                opus: b"opus".to_vec(),
+            },
+        ));
     }
 
     #[test]
