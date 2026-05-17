@@ -289,6 +289,7 @@ struct VoiceFakeOutboundSendState {
     self_mute: bool,
     dave_active: bool,
     speaking: bool,
+    logged_block_reason: Option<VoiceFakeSendBlockReason>,
     events: Vec<VoiceFakeOutboundEvent>,
 }
 
@@ -2567,6 +2568,7 @@ impl VoiceFakeOutboundSendState {
             self_mute: true,
             dave_active: false,
             speaking: false,
+            logged_block_reason: None,
             events: Vec::new(),
         })
     }
@@ -2586,6 +2588,18 @@ impl VoiceFakeOutboundSendState {
 
     fn take_events(&mut self) -> Vec<VoiceFakeOutboundEvent> {
         std::mem::take(&mut self.events)
+    }
+
+    fn record_blocked_transmit(&mut self, reason: VoiceFakeSendBlockReason) -> bool {
+        if self.logged_block_reason == Some(reason) {
+            return false;
+        }
+        self.logged_block_reason = Some(reason);
+        true
+    }
+
+    fn take_logged_block_reason(&mut self) -> Option<VoiceFakeSendBlockReason> {
+        self.logged_block_reason.take()
     }
 
     fn send_opus_frame(&mut self, opus_payload: &[u8]) -> Result<VoiceFakeSendOutcome, String> {
@@ -2910,10 +2924,20 @@ async fn flush_voice_outbound_events(
                     }
                 }
             }
+            if let Some(reason) = sender.take_logged_block_reason() {
+                logging::debug(
+                    "voice",
+                    format!("voice UDP transmit resumed after block: {reason:?}"),
+                );
+            }
         }
-        VoiceFakeSendOutcome::Noop => {}
+        VoiceFakeSendOutcome::Noop => {
+            let _ = sender.take_logged_block_reason();
+        }
         VoiceFakeSendOutcome::Blocked(reason) => {
-            logging::debug("voice", format!("voice UDP transmit blocked: {reason:?}"));
+            if sender.record_blocked_transmit(reason) {
+                logging::debug("voice", format!("voice UDP transmit blocked: {reason:?}"));
+            }
         }
     }
     Ok(())
