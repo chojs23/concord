@@ -574,7 +574,9 @@ pub(crate) fn validate_token_header(token: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::discord::{AppEvent, ChannelInfo, MessageKind, VoiceSoundKind, VoiceStateInfo, ids::Id};
+    use crate::discord::{
+        AppEvent, ChannelInfo, MessageKind, VoiceSoundKind, VoiceStateInfo, ids::Id,
+    };
 
     use super::{DiscordClient, validate_token_header};
 
@@ -897,7 +899,10 @@ mod tests {
         effects: &mut tokio::sync::mpsc::Receiver<crate::discord::SequencedAppEvent>,
         expected: VoiceSoundKind,
     ) {
-        let effect = effects.recv().await.expect("voice sound effect is published");
+        let effect = effects
+            .recv()
+            .await
+            .expect("voice sound effect is published");
         assert!(matches!(effect.event, AppEvent::VoiceSound { kind } if kind == expected));
     }
 

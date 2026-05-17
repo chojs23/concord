@@ -1,8 +1,7 @@
 use crate::discord::AppCommand;
 
 use super::{
-    DashboardState, VoiceActionItem, VoiceActionKind,
-    popups::VoiceLeaderActionState,
+    DashboardState, VoiceActionItem, VoiceActionKind, popups::VoiceLeaderActionState,
     scroll::clamp_selected_index,
 };
 

@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use crate::config::{MicrophoneSensitivityDb, VoiceVolumePercent};
-use crate::discord::{VoiceSoundKind, VoiceStateInfo};
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
+use crate::discord::{VoiceSoundKind, VoiceStateInfo};
 
 use super::DiscordState;
 
@@ -129,7 +129,10 @@ impl DiscordState {
         }
 
         let active_voice_channel = self.current_user_voice_connection()?.channel_id;
-        match (before == Some(active_voice_channel), after == Some(active_voice_channel)) {
+        match (
+            before == Some(active_voice_channel),
+            after == Some(active_voice_channel),
+        ) {
             (false, true) => Some(VoiceSoundKind::Join),
             (true, false) => Some(VoiceSoundKind::Leave),
             _ => None,

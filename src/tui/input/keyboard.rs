@@ -1248,20 +1248,20 @@ fn options_popup_action(key: KeyEvent, category_picker_open: bool) -> Option<Opt
         {
             Some(OptionsPopupAction::OpenCategory(shortcut))
         }
-        KeyCode::Char('h') | KeyCode::Char('H') if is_shortcut_key(key) => {
-            Some(OptionsPopupAction::AdjustSelected(if key.code == KeyCode::Char('H') {
+        KeyCode::Char('h') | KeyCode::Char('H') if is_shortcut_key(key) => Some(
+            OptionsPopupAction::AdjustSelected(if key.code == KeyCode::Char('H') {
                 -10
             } else {
                 -1
-            }))
-        }
-        KeyCode::Char('l') | KeyCode::Char('L') if is_shortcut_key(key) => {
-            Some(OptionsPopupAction::AdjustSelected(if key.code == KeyCode::Char('L') {
+            }),
+        ),
+        KeyCode::Char('l') | KeyCode::Char('L') if is_shortcut_key(key) => Some(
+            OptionsPopupAction::AdjustSelected(if key.code == KeyCode::Char('L') {
                 10
             } else {
                 1
-            }))
-        }
+            }),
+        ),
         code if is_confirm_key(code) => Some(OptionsPopupAction::ToggleSelected),
         _ => None,
     }

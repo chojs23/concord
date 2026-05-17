@@ -1488,10 +1488,7 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
         } else {
             Style::default().fg(Color::White).bold()
         };
-        spans.push(Span::styled(
-            format!("{user} "),
-            user_style,
-        ));
+        spans.push(Span::styled(format!("{user} "), user_style));
     } else {
         spans.push(Span::styled(
             " Loading... ",

@@ -11,11 +11,16 @@ pub(in crate::tui::ui) fn render_options_popup(
 
     let items = state.display_option_items();
     let selected = state.selected_option_index().unwrap_or(0);
-    let detail_lines = items.iter().filter(|item| item.gauge_percent.is_some()).count() as u16;
+    let detail_lines = items
+        .iter()
+        .filter(|item| item.gauge_percent.is_some())
+        .count() as u16;
     let popup = centered_rect(
         area,
         66,
-        (items.len() as u16).saturating_add(detail_lines).saturating_add(2),
+        (items.len() as u16)
+            .saturating_add(detail_lines)
+            .saturating_add(2),
     );
     let block = panel_block(state.options_popup_title(), true);
     let inner = block.inner(popup);
@@ -80,7 +85,11 @@ pub(in crate::tui::ui) fn options_popup_lines(
                 Span::styled(item.description, Style::default().fg(DIM)),
             ]);
             let gauge_line = item.gauge_percent.map(|_| {
-                let (min_label, max_label) = if item.value.as_deref().is_some_and(|value| value.ends_with('%')) {
+                let (min_label, max_label) = if item
+                    .value
+                    .as_deref()
+                    .is_some_and(|value| value.ends_with('%'))
+                {
                     ("0%", "100%")
                 } else {
                     ("-100 dB", "0 dB")

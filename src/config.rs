@@ -26,7 +26,7 @@ pub struct NotificationOptions {
     pub desktop_notifications: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct VoiceOptions {
     pub self_mute: bool,
@@ -126,14 +126,10 @@ impl MicrophoneSensitivityDb {
     }
 
     fn from_raw_db(value: i64) -> Self {
-        Self(
-            value
-                .clamp(
-                    i64::from(MIN_MICROPHONE_SENSITIVITY_DB),
-                    i64::from(MAX_MICROPHONE_SENSITIVITY_DB),
-                )
-                as i8,
-        )
+        Self(value.clamp(
+            i64::from(MIN_MICROPHONE_SENSITIVITY_DB),
+            i64::from(MAX_MICROPHONE_SENSITIVITY_DB),
+        ) as i8)
     }
 
     pub fn value(self) -> i8 {
@@ -160,12 +156,10 @@ impl VoiceVolumePercent {
     }
 
     fn from_raw_percent(value: i64) -> Self {
-        Self(
-            value.clamp(
-                i64::from(MIN_VOICE_VOLUME_PERCENT),
-                i64::from(MAX_VOICE_VOLUME_PERCENT),
-            ) as u8,
-        )
+        Self(value.clamp(
+            i64::from(MIN_VOICE_VOLUME_PERCENT),
+            i64::from(MAX_VOICE_VOLUME_PERCENT),
+        ) as u8)
     }
 
     pub fn value(self) -> u8 {
@@ -186,19 +180,6 @@ impl VoiceVolumePercent {
 
     pub fn gain(self) -> f32 {
         f32::from(self.0) / 100.0
-    }
-}
-
-impl Default for VoiceOptions {
-    fn default() -> Self {
-        Self {
-            self_mute: false,
-            self_deaf: false,
-            allow_microphone_transmit: false,
-            microphone_sensitivity: MicrophoneSensitivityDb::default(),
-            microphone_volume: VoiceVolumePercent::default(),
-            voice_output_volume: VoiceVolumePercent::default(),
-        }
     }
 }
 
@@ -337,8 +318,8 @@ mod tests {
 
     use super::{
         AppOptions, DisplayOptions, ImagePreviewQualityPreset, MicrophoneSensitivityDb,
-        NotificationOptions, VoiceOptions, VoiceVolumePercent,
-        load_options_from_path, save_options_to_path,
+        NotificationOptions, VoiceOptions, VoiceVolumePercent, load_options_from_path,
+        save_options_to_path,
     };
 
     #[test]
@@ -478,7 +459,10 @@ mod tests {
                 allow_microphone_transmit
             );
             assert_eq!(config.voice.microphone_sensitivity, microphone_sensitivity);
-            assert_eq!(config.voice.microphone_volume, VoiceVolumePercent::default());
+            assert_eq!(
+                config.voice.microphone_volume,
+                VoiceVolumePercent::default()
+            );
             assert_eq!(
                 config.voice.voice_output_volume,
                 VoiceVolumePercent::default()
@@ -491,10 +475,9 @@ mod tests {
 
     #[test]
     fn voice_volume_config_values_are_clamped() {
-        let config: AppOptions = toml::from_str(
-            "[voice]\nmicrophone_volume = 150\nvoice_output_volume = -10\n",
-        )
-        .expect("voice volume config should parse");
+        let config: AppOptions =
+            toml::from_str("[voice]\nmicrophone_volume = 150\nvoice_output_volume = -10\n")
+                .expect("voice volume config should parse");
 
         assert_eq!(config.voice.microphone_volume, VoiceVolumePercent::new(100));
         assert_eq!(config.voice.voice_output_volume, VoiceVolumePercent::new(0));

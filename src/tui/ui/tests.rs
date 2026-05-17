@@ -28,8 +28,7 @@ use super::{
     primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
     render_channels, render_guilds, render_header, render_members, selected_avatar_x_offset,
     selected_message_card_width, selected_message_content_x_offset, sync_view_heights, toast_area,
-    toast_line,
-    user_profile_popup_has_avatar, user_profile_popup_lines,
+    toast_line, user_profile_popup_has_avatar, user_profile_popup_lines,
     user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
 };
 use crate::tui::message_time::{
@@ -1629,7 +1628,11 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         .find(|col| buffer[(*col, alice_row)].symbol() == "A")
         .expect("participant name should render");
     assert_eq!(buffer[(alice_col, alice_row)].fg, Color::Green);
-    assert!(buffer[(alice_col, alice_row)].modifier.contains(Modifier::BOLD));
+    assert!(
+        buffer[(alice_col, alice_row)]
+            .modifier
+            .contains(Modifier::BOLD)
+    );
 
     state.focus_pane(FocusPane::Channels);
     state.set_channel_view_height(1);

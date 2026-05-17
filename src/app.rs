@@ -362,7 +362,7 @@ fn start_command_loop(
                             logging::error("app", &message);
                             client
                                 .publish_event(AppEvent::GatewayError { message })
-                            .await;
+                                .await;
                         }
                     }
                     AppCommand::UpdateVoiceCapturePermission {

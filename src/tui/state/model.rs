@@ -112,6 +112,7 @@ pub struct ChannelActionItem {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(clippy::enum_variant_names)]
 pub enum VoiceActionKind {
     QuickDeafen,
     QuickMute,

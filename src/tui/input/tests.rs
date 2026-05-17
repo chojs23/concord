@@ -503,8 +503,16 @@ fn leader_o_category_shortcuts_open_scoped_options() {
     handle_key(&mut state, char_key('d'));
 
     assert_eq!(state.options_popup_title(), "Display Options");
-    assert_eq!(state.display_option_items()[0].label, "Disable all image previews");
-    assert!(!state.display_option_items().iter().any(|item| item.label == "Voice muted"));
+    assert_eq!(
+        state.display_option_items()[0].label,
+        "Disable all image previews"
+    );
+    assert!(
+        !state
+            .display_option_items()
+            .iter()
+            .any(|item| item.label == "Voice muted")
+    );
     assert!(
         !state
             .display_option_items()
@@ -518,7 +526,10 @@ fn leader_o_category_shortcuts_open_scoped_options() {
     handle_key(&mut state, char_key('n'));
 
     assert_eq!(state.options_popup_title(), "Notification Options");
-    assert_eq!(state.display_option_items()[0].label, "Desktop notifications");
+    assert_eq!(
+        state.display_option_items()[0].label,
+        "Desktop notifications"
+    );
     assert_eq!(state.display_option_items().len(), 1);
 
     state.close_options_popup();

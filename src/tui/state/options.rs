@@ -168,9 +168,11 @@ impl DashboardState {
     }
 
     pub fn selected_option_index(&self) -> Option<usize> {
-        self.options_popup
-            .as_ref()
-            .map(|popup| popup.selected.min(self.options_popup_item_count().saturating_sub(1)))
+        self.options_popup.as_ref().map(|popup| {
+            popup
+                .selected
+                .min(self.options_popup_item_count().saturating_sub(1))
+        })
     }
 
     pub fn options_popup_title(&self) -> &'static str {
