@@ -3262,6 +3262,7 @@ async fn run_voice_udp_transmit(
                             }
                             continue;
                         }
+                        let _ = local_speaking_tx.send(true);
                         let opus = match encoder.encode_20ms_i16(&frame) {
                             Ok(opus) => opus,
                             Err(error) => {
