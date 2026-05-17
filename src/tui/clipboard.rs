@@ -1,4 +1,4 @@
-use std::{env, fmt, io::Cursor, io::stdout};
+use std::{env, fmt, io::Cursor, io::stdout, path::PathBuf};
 
 use crate::discord::{MAX_UPLOAD_FILE_BYTES, MessageAttachmentUpload};
 use crossterm::clipboard::CopyToClipboard;
@@ -66,6 +66,20 @@ impl ClipboardService {
             .map_err(|details| ClipboardError { details })
     }
 
+    pub(super) fn clipboard_file_uploads(
+        &mut self,
+    ) -> Result<Vec<MessageAttachmentUpload>, ClipboardError> {
+        if is_remote_session() {
+            return Err(ClipboardError {
+                details: "native clipboard file paste is only available in local sessions"
+                    .to_owned(),
+            });
+        }
+        clipboard_file_paths()
+            .and_then(file_uploads_from_paths)
+            .map_err(|details| ClipboardError { details })
+    }
+
     pub(super) fn clipboard_text(&mut self) -> Result<String, ClipboardError> {
         if is_remote_session() {
             return Err(ClipboardError {
@@ -94,6 +108,84 @@ impl ClipboardService {
             .as_mut()
             .expect("native clipboard was initialized above"))
     }
+}
+
+fn file_uploads_from_paths(paths: Vec<PathBuf>) -> Result<Vec<MessageAttachmentUpload>, String> {
+    let mut uploads = Vec::new();
+    for path in paths {
+        if !path.is_file() {
+            return Err(format!("clipboard path is not a file: {}", path.display()));
+        }
+        let metadata = path
+            .metadata()
+            .map_err(|error| format!("stat clipboard file {} failed: {error}", path.display()))?;
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("attachment")
+            .to_owned();
+        uploads.push(MessageAttachmentUpload::from_path(
+            path,
+            filename,
+            metadata.len(),
+        ));
+    }
+
+    if uploads.is_empty() {
+        return Err("clipboard has no copied files".to_owned());
+    }
+    Ok(uploads)
+}
+
+#[cfg(target_os = "macos")]
+fn clipboard_file_paths() -> Result<Vec<PathBuf>, String> {
+    let script = r#"
+use framework "AppKit"
+property NSPasteboard : a reference to current application's NSPasteboard
+property NSURL : a reference to current application's NSURL
+property NSNumber : a reference to current application's NSNumber
+property NSDictionary : a reference to current application's NSDictionary
+property NSArray : a reference to current application's NSArray
+property text item delimiters : linefeed
+
+set pasteboard to NSPasteboard's generalPasteboard()
+set classes to NSArray's arrayWithObject:(NSURL's class)
+set options to NSDictionary's dictionaryWithObject:(NSNumber's numberWithBool:true) forKey:(current application's NSPasteboardURLReadingFileURLsOnlyKey)
+set urls to (pasteboard's readObjectsForClasses:classes options:options) as list
+set paths to {}
+repeat with fileUrl in urls
+    set end of paths to POSIX path of fileUrl
+end repeat
+paths as text
+"#;
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|error| format!("read macOS clipboard files failed: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "read macOS clipboard files failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|error| format!("read macOS clipboard files returned invalid UTF-8: {error}"))?;
+    let paths = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return Err("clipboard has no copied files".to_owned());
+    }
+    Ok(paths)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn clipboard_file_paths() -> Result<Vec<PathBuf>, String> {
+    Err("native clipboard file paste is only implemented on macOS".to_owned())
 }
 
 impl fmt::Display for ClipboardError {
@@ -145,7 +237,13 @@ fn png_attachment_from_rgba(
 
 #[cfg(test)]
 mod tests {
-    use super::{CopyTextBackend, copy_text_backend_order, png_attachment_from_rgba};
+    use super::{
+        CopyTextBackend, copy_text_backend_order, file_uploads_from_paths, png_attachment_from_rgba,
+    };
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn local_sessions_try_native_clipboard_before_osc52() {
@@ -175,5 +273,28 @@ mod tests {
         );
         image::load_from_memory(upload.bytes().expect("upload is memory backed"))
             .expect("clipboard image upload contains valid PNG bytes");
+    }
+
+    #[test]
+    fn file_uploads_from_paths_builds_file_backed_attachments() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is after unix epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("concord-clipboard-{unique}"));
+        fs::create_dir_all(&directory).expect("temp upload directory can be created");
+        let path = directory.join("clip.pdf");
+        fs::write(&path, b"pdf").expect("temp upload file can be written");
+
+        let uploads =
+            file_uploads_from_paths(vec![path.clone()]).expect("existing file path becomes upload");
+
+        assert_eq!(uploads.len(), 1);
+        assert_eq!(uploads[0].filename, "clip.pdf");
+        assert_eq!(uploads[0].size_bytes, 3);
+        assert_eq!(uploads[0].path(), Some(path.as_path()));
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir(directory);
     }
 }
