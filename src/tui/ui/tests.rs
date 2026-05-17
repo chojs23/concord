@@ -25,8 +25,9 @@ use super::{
     message_delete_confirmation_lines, message_item_lines, message_pin_confirmation_lines,
     message_viewport_lines, new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
     primary_activity_summary, reaction_users_popup_lines, reaction_users_visible_line_count,
-    render_channels, render_guilds, selected_avatar_x_offset, selected_message_card_width,
-    selected_message_content_x_offset, sync_view_heights, toast_area, toast_line,
+    render_channels, render_guilds, render_header, selected_avatar_x_offset,
+    selected_message_card_width, selected_message_content_x_offset, sync_view_heights, toast_area,
+    toast_line,
     user_profile_popup_has_avatar, user_profile_popup_lines,
     user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
 };
@@ -282,6 +283,58 @@ fn header_shows_connected_account() {
     assert!(header.contains("Connected as muri"), "{header}");
     assert!(header.contains("Voice guild - Lobby"), "{header}");
     assert!(!header.contains("Loading..."), "{header}");
+}
+
+#[test]
+fn header_styles_current_user_white_until_speaking() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "muri".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    let backend = TestBackend::new(80, 1);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_header(frame, frame.area(), &state))
+        .expect("draw should succeed");
+    let buffer = terminal.backend().buffer();
+    let header = (0..buffer.area.width)
+        .map(|col| buffer[(col, 0)].symbol().to_owned())
+        .collect::<String>();
+    let user_col = header.find("muri").expect("header should include user") as u16;
+    assert_eq!(buffer[(user_col, 0)].fg, Color::White);
+
+    state.push_event(AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id: Id::new(1),
+            channel_id: Some(Id::new(11)),
+            user_id: Id::new(10),
+            session_id: None,
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+            self_stream: false,
+        },
+    });
+    state.push_event(AppEvent::VoiceSpeakingUpdate {
+        guild_id: Id::new(1),
+        channel_id: Id::new(11),
+        user_id: Id::new(10),
+        speaking: true,
+    });
+    let backend = TestBackend::new(80, 1);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_header(frame, frame.area(), &state))
+        .expect("draw should succeed");
+    let buffer = terminal.backend().buffer();
+    let header = (0..buffer.area.width)
+        .map(|col| buffer[(col, 0)].symbol().to_owned())
+        .collect::<String>();
+    let user_col = header.find("muri").expect("header should include user") as u16;
+    assert_eq!(buffer[(user_col, 0)].fg, Color::Green);
 }
 
 #[test]
@@ -1473,6 +1526,12 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
             self_stream: true,
         },
     });
+    state.push_event(AppEvent::VoiceSpeakingUpdate {
+        guild_id,
+        channel_id: voice_id,
+        user_id: alice,
+        speaking: true,
+    });
     state.push_effect(AppEvent::VoiceConnectionStatusChanged {
         guild_id,
         channel_id: Some(voice_id),
@@ -1550,6 +1609,19 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         (0..buffer.area.height)
             .any(|row| (0..buffer.area.width).any(|col| buffer[(col, row)].symbol() == "🔴"))
     );
+    let alice_row = (0..buffer.area.height)
+        .find(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, *row)].symbol().to_owned())
+                .collect::<String>()
+                .contains("Alice")
+        })
+        .expect("participant row should render");
+    let alice_col = (0..buffer.area.width)
+        .find(|col| buffer[(*col, alice_row)].symbol() == "A")
+        .expect("participant name should render");
+    assert_eq!(buffer[(alice_col, alice_row)].fg, Color::Green);
+    assert!(buffer[(alice_col, alice_row)].modifier.contains(Modifier::BOLD));
 
     state.focus_pane(FocusPane::Channels);
     state.set_channel_view_height(1);

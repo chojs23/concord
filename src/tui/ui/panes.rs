@@ -459,6 +459,11 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                         if participant.deaf || participant.self_deaf {
                             label.push_str(" 🎧");
                         }
+                        let label_style = if participant.speaking {
+                            Style::default().fg(Color::Green).bold()
+                        } else {
+                            Style::default().fg(DIM)
+                        };
                         let prefix = "  • ";
                         let label_width = max_width
                             .saturating_sub(branch_prefix.width())
@@ -469,7 +474,7 @@ pub(super) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardSt
                             Span::styled(prefix, Style::default().fg(DIM)),
                             Span::styled(
                                 truncate_display_width_from(&label, horizontal_scroll, label_width),
-                                Style::default().fg(DIM),
+                                label_style,
                             ),
                         ]))
                     }
@@ -1475,9 +1480,14 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, state: &DashboardStat
     let mut spans = vec![Span::styled(title, Style::default().fg(Color::Cyan).bold())];
     if let Some(user) = state.current_user() {
         spans.push(Span::styled(" Connected as ", Style::default().fg(DIM)));
+        let user_style = if state.current_user_voice_speaking() {
+            Style::default().fg(Color::Green).bold()
+        } else {
+            Style::default().fg(Color::White).bold()
+        };
         spans.push(Span::styled(
             format!("{user} "),
-            Style::default().fg(Color::Green).bold(),
+            user_style,
         ));
     } else {
         spans.push(Span::styled(

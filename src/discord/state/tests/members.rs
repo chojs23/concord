@@ -144,6 +144,7 @@ fn tracks_voice_participants_join_move_and_leave() {
     let first_voice_participants = state.voice_participants_for_channel(guild_id, first_voice);
     assert_eq!(first_voice_participants[0].display_name, "Alice");
     assert!(first_voice_participants[0].self_stream);
+    assert!(!first_voice_participants[0].speaking);
     assert_eq!(
         state.current_user_voice_connection(),
         Some(CurrentVoiceConnectionState {
@@ -154,6 +155,15 @@ fn tracks_voice_participants_join_move_and_leave() {
             allow_microphone_transmit: false,
         })
     );
+
+    state.apply_event(&AppEvent::VoiceSpeakingUpdate {
+        guild_id,
+        channel_id: first_voice,
+        user_id: alice,
+        speaking: true,
+    });
+    assert!(state.voice_participants_for_channel(guild_id, first_voice)[0].speaking);
+    assert!(state.current_user_voice_speaking());
 
     state.apply_event(&AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo {
@@ -178,6 +188,8 @@ fn tracks_voice_participants_join_move_and_leave() {
         state.voice_participants_for_channel(guild_id, second_voice)[0].user_id,
         alice
     );
+    assert!(!state.voice_participants_for_channel(guild_id, second_voice)[0].speaking);
+    assert!(!state.current_user_voice_speaking());
     assert_eq!(
         state.current_user_voice_connection(),
         Some(CurrentVoiceConnectionState {

@@ -58,11 +58,11 @@ mod tests {
 
     use crate::discord::ids::{
         Id,
-        marker::{AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker},
+        marker::{AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker, UserMarker},
     };
     use crate::discord::{
         AppEvent, AttachmentInfo, ChannelInfo, DownloadAttachmentSource, MessageKind,
-        ReadStateInfo, SequencedAppEvent,
+        ReadStateInfo, SequencedAppEvent, VoiceStateInfo,
     };
 
     use super::{
@@ -244,6 +244,46 @@ mod tests {
         ));
         assert!(should_redraw_after_visible_signature_change(
             &before, &after, false, false,
+        ));
+    }
+
+    #[test]
+    fn current_user_voice_speaking_redraws_header_style() {
+        let guild_id = Id::<GuildMarker>::new(1);
+        let channel_id = Id::<ChannelMarker>::new(2);
+        let user_id = Id::<UserMarker>::new(10);
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(user_id),
+        });
+        state.push_event(AppEvent::VoiceStateUpdate {
+            state: VoiceStateInfo {
+                guild_id,
+                channel_id: Some(channel_id),
+                user_id,
+                session_id: None,
+                member: None,
+                deaf: false,
+                mute: false,
+                self_deaf: false,
+                self_mute: false,
+                self_stream: false,
+            },
+        });
+        let before = visible_dashboard_signature(&state);
+
+        state.push_event(AppEvent::VoiceSpeakingUpdate {
+            guild_id,
+            channel_id,
+            user_id,
+            speaking: true,
+        });
+        let after = visible_dashboard_signature(&state);
+
+        assert_ne!(before, after);
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, true, false,
         ));
     }
 

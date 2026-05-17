@@ -1069,6 +1069,10 @@ impl DashboardState {
         Some(format!("{guild} - {channel}{suffix}"))
     }
 
+    pub fn current_user_voice_speaking(&self) -> bool {
+        self.discord.current_user_voice_speaking()
+    }
+
     pub fn is_joined_voice_channel(&self, channel_id: Id<ChannelMarker>) -> bool {
         self.voice_connection
             .and_then(|voice| voice.channel_id)

@@ -713,6 +713,12 @@ pub enum AppEvent {
     VoiceStateUpdate {
         state: VoiceStateInfo,
     },
+    VoiceSpeakingUpdate {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        user_id: Id<UserMarker>,
+        speaking: bool,
+    },
     VoiceServerUpdate {
         server: VoiceServerInfo,
     },

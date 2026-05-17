@@ -17,6 +17,7 @@ pub struct VoiceParticipantState {
     pub self_deaf: bool,
     pub self_mute: bool,
     pub self_stream: bool,
+    pub speaking: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,6 +38,7 @@ pub(super) struct VoiceState {
     self_deaf: bool,
     self_mute: bool,
     self_stream: bool,
+    speaking: bool,
 }
 
 impl DiscordState {
@@ -69,6 +71,19 @@ impl DiscordState {
         }
         sort_voice_participants(&mut participants);
         participants
+    }
+
+    pub fn current_user_voice_speaking(&self) -> bool {
+        let Some(current_user_id) = self.session.current_user_id else {
+            return false;
+        };
+        self.voice
+            .states
+            .iter()
+            .find_map(|((_, user_id), state)| {
+                (*user_id == current_user_id).then_some(state.speaking)
+            })
+            .unwrap_or(false)
     }
 
     pub fn voice_participants_by_channel_for_guild(
@@ -108,12 +123,18 @@ impl DiscordState {
             self_deaf: state.self_deaf,
             self_mute: state.self_mute,
             self_stream: state.self_stream,
+            speaking: state.speaking,
         }
     }
 
     pub(super) fn update_voice_state(&mut self, state: &VoiceStateInfo) {
         let key = (state.guild_id, state.user_id);
         if let Some(channel_id) = state.channel_id {
+            let speaking = self
+                .voice
+                .states
+                .get(&key)
+                .is_some_and(|current| current.channel_id == channel_id && current.speaking);
             self.voice.states.insert(
                 key,
                 VoiceState {
@@ -124,10 +145,26 @@ impl DiscordState {
                     self_deaf: state.self_deaf,
                     self_mute: state.self_mute,
                     self_stream: state.self_stream,
+                    speaking,
                 },
             );
         } else {
             self.voice.states.remove(&key);
+        }
+    }
+
+    pub(super) fn update_voice_speaking(
+        &mut self,
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        user_id: Id<UserMarker>,
+        speaking: bool,
+    ) {
+        let Some(state) = self.voice.states.get_mut(&(guild_id, user_id)) else {
+            return;
+        };
+        if state.channel_id == channel_id {
+            state.speaking = speaking;
         }
     }
 

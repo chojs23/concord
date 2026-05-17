@@ -26,6 +26,7 @@ pub(super) struct VisibleDashboardSignature {
     channel_pane_visible: bool,
     member_pane_visible: bool,
     current_user: Option<String>,
+    current_user_voice_speaking: bool,
     update_available_version: Option<String>,
     selected_guild_id: Option<Id<GuildMarker>>,
     selected_channel_id: Option<Id<ChannelMarker>>,
@@ -96,6 +97,7 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
         channel_pane_visible: state.is_pane_visible(state::FocusPane::Channels),
         member_pane_visible: state.is_pane_visible(state::FocusPane::Members),
         current_user: state.current_user().map(str::to_owned),
+        current_user_voice_speaking: state.current_user_voice_speaking(),
         update_available_version: state.update_available_version().map(str::to_owned),
         selected_guild_id: state.selected_guild_id(),
         selected_channel_id: state.selected_channel_id(),
@@ -194,6 +196,7 @@ fn only_visible_member_signature_changed(
         && before.channel_pane_visible == after.channel_pane_visible
         && before.member_pane_visible == after.member_pane_visible
         && before.current_user == after.current_user
+        && before.current_user_voice_speaking == after.current_user_voice_speaking
         && before.update_available_version == after.update_available_version
         && before.selected_guild_id == after.selected_guild_id
         && before.selected_channel_id == after.selected_channel_id
@@ -234,6 +237,7 @@ fn only_new_message_notice_changed(
         && before.channel_pane_visible == after.channel_pane_visible
         && before.member_pane_visible == after.member_pane_visible
         && before.current_user == after.current_user
+        && before.current_user_voice_speaking == after.current_user_voice_speaking
         && before.update_available_version == after.update_available_version
         && before.selected_guild_id == after.selected_guild_id
         && before.selected_channel_id == after.selected_channel_id

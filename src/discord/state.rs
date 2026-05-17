@@ -539,6 +539,7 @@ impl DiscordState {
             | AppEvent::PresenceUpdate { .. }
             | AppEvent::UserPresenceUpdate { .. }
             | AppEvent::VoiceStateUpdate { .. }
+            | AppEvent::VoiceSpeakingUpdate { .. }
             | AppEvent::TypingStart { .. }
             | AppEvent::GuildFoldersUpdate { .. }
             | AppEvent::UserNoteLoaded { .. }
@@ -967,6 +968,14 @@ impl DiscordState {
                     self.refresh_message_author_display_name(state.guild_id, member);
                 }
                 self.update_voice_state(state);
+            }
+            AppEvent::VoiceSpeakingUpdate {
+                guild_id,
+                channel_id,
+                user_id,
+                speaking,
+            } => {
+                self.update_voice_speaking(*guild_id, *channel_id, *user_id, *speaking);
             }
             AppEvent::TypingStart {
                 channel_id,

@@ -182,6 +182,28 @@ impl VoiceStatusPublisher {
         )
         .await;
     }
+
+    async fn publish_speaking(
+        &self,
+        session: &VoiceGatewaySession,
+        user_id: Id<UserMarker>,
+        speaking: bool,
+    ) {
+        publish_app_event(
+            &self.effects_tx,
+            &self.snapshots_tx,
+            &self.state,
+            &self.revision,
+            &self.publish_lock,
+            &AppEvent::VoiceSpeakingUpdate {
+                guild_id: session.guild_id,
+                channel_id: session.channel_id,
+                user_id,
+                speaking,
+            },
+        )
+        .await;
+    }
 }
 
 impl VoiceGatewaySession {
@@ -475,18 +497,7 @@ impl VoiceDaveState {
     ) -> Result<(), String> {
         match opcode {
             VOICE_OP_SPEAKING => {
-                let speaking = parse_voice_speaking(value);
-                self.record_speaking_state(speaking);
-                logging::debug(
-                    "voice",
-                    format!(
-                        "voice speaking received: user_id={:?} ssrc={:?} speaking={:?} known_ssrcs={}",
-                        speaking.user_id,
-                        speaking.ssrc,
-                        speaking.speaking,
-                        self.ssrc_user_ids.len()
-                    ),
-                );
+                self.handle_speaking_op(value);
             }
             VOICE_OP_CLIENTS_CONNECT => {
                 for user_id in voice_user_ids(value) {
@@ -594,6 +605,22 @@ impl VoiceDaveState {
             _ => {}
         }
         Ok(())
+    }
+
+    fn handle_speaking_op(&mut self, value: &Value) -> VoiceSpeakingState {
+        let speaking = parse_voice_speaking(value);
+        self.record_speaking_state(speaking);
+        logging::debug(
+            "voice",
+            format!(
+                "voice speaking received: user_id={:?} ssrc={:?} speaking={:?} known_ssrcs={}",
+                speaking.user_id,
+                speaking.ssrc,
+                speaking.speaking,
+                self.ssrc_user_ids.len()
+            ),
+        );
+        speaking
     }
 
     async fn handle_binary_frame(
@@ -2116,7 +2143,6 @@ async fn connect_voice_gateway(
                     }
                     VOICE_OP_CLIENTS_CONNECT
                     | VOICE_OP_CLIENT_DISCONNECT
-                    | VOICE_OP_SPEAKING
                     | VOICE_OP_MEDIA_SINK_WANTS
                     | VOICE_OP_CLIENT_FLAGS
                     | VOICE_OP_CLIENT_PLATFORM
@@ -2128,6 +2154,17 @@ async fn connect_voice_gateway(
                             .await
                             .handle_json_op(&writer, opcode, &value)
                             .await?;
+                    }
+                    VOICE_OP_SPEAKING => {
+                        let speaking = dave_state.lock().await.handle_speaking_op(&value);
+                        if let (Some(user_id), Some(speaking)) = (
+                            speaking.user_id.and_then(Id::<UserMarker>::new_checked),
+                            speaking.speaking,
+                        ) {
+                            status_publisher
+                                .publish_speaking(session, user_id, speaking != 0)
+                                .await;
+                        }
                     }
                     other => logging::debug("voice", format!("unhandled voice gateway op={other}")),
                 }
