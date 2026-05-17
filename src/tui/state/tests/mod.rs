@@ -2365,7 +2365,14 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
     state.move_option_down();
     state.toggle_selected_display_option();
     assert!(state.voice_options().allow_microphone_transmit);
-    assert!(state.drain_pending_commands().is_empty());
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceCapturePermission {
+            guild_id: Id::new(1),
+            channel_id: Id::new(11),
+            allow_microphone_transmit: true,
+        }]
+    );
 }
 
 #[test]
@@ -8162,6 +8169,7 @@ fn voice_channel_action_emits_join_then_leave_command() {
             channel_id: Id::new(11),
             self_mute: true,
             self_deaf: true,
+            allow_microphone_transmit: false,
         })
     );
 

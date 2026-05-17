@@ -113,8 +113,9 @@ aplay -D pulse /usr/share/sounds/alsa/Front_Center.wav
 
 Concord can request joining and leaving Discord voice channels. Default builds
 do not open a local speaker output device, while source builds with
-`--features voice-playback` support receive-only voice playback. Concord does
-not capture microphone audio or send voice audio.
+`--features voice-playback` support receive-only voice playback and gated
+capture-only microphone input. Concord does not encode microphone audio or send
+voice audio.
 
 ### Authentication
 
@@ -328,7 +329,7 @@ AppData config directory on Windows.
 - Toggle custom emoji rendering
 - Toggle desktop notifications
 - Set your Discord voice mute and deaf state
-- Allow future manual microphone transmit actions without starting capture
+- Allow gated microphone capture while joined and not muted
 
 You can change these from the in-app Options menu, and Concord saves them back
 to the config file.
@@ -367,9 +368,11 @@ playing a sound when the terminal app is focused.
 
 `self_mute` and `self_deaf` under `[voice]` control the voice state Concord
 sends when joining, leaving, or updating your current Discord voice channel.
-`allow_microphone_transmit` is a local safety gate for future explicit transmit
-actions. Turning it on does not start capture, does not resume capture after a
-restart or reconnect, and current Concord builds still do not send voice audio.
+`allow_microphone_transmit` is a local safety gate. When built with
+`voice-playback`, turning it on may open capture-only microphone input while
+this Concord session is joined to voice and `self_mute` is false. Captured
+samples are discarded. Concord still does not encode microphone audio, send a
+Speaking opcode, or send UDP/RTP voice audio.
 
 ## Performance
 

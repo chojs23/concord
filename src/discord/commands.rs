@@ -139,12 +139,18 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         self_mute: bool,
         self_deaf: bool,
+        allow_microphone_transmit: bool,
     },
     UpdateVoiceState {
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
         self_mute: bool,
         self_deaf: bool,
+    },
+    UpdateVoiceCapturePermission {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        allow_microphone_transmit: bool,
     },
     LeaveVoiceChannel {
         guild_id: Id<GuildMarker>,

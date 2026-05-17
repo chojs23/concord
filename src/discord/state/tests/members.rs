@@ -151,6 +151,7 @@ fn tracks_voice_participants_join_move_and_leave() {
             channel_id: first_voice,
             self_mute: true,
             self_deaf: false,
+            allow_microphone_transmit: false,
         })
     );
 
@@ -184,6 +185,7 @@ fn tracks_voice_participants_join_move_and_leave() {
             channel_id: second_voice,
             self_mute: false,
             self_deaf: false,
+            allow_microphone_transmit: false,
         })
     );
 

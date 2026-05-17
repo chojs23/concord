@@ -219,11 +219,15 @@ impl DiscordClient {
                 .write()
                 .expect("requested voice lock is not poisoned");
             if let Some(channel_id) = channel_id {
+                let allow_microphone_transmit = requested
+                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .is_some_and(|voice| voice.allow_microphone_transmit);
                 let voice = CurrentVoiceConnectionState {
                     guild_id,
                     channel_id,
                     self_mute,
                     self_deaf,
+                    allow_microphone_transmit,
                 };
                 *requested = Some(voice);
                 let _ = self
@@ -237,6 +241,33 @@ impl DiscordClient {
             }
         }
         result
+    }
+
+    pub fn update_voice_capture_permission(
+        &self,
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        allow_microphone_transmit: bool,
+    ) {
+        let mut requested = self
+            .requested_voice
+            .write()
+            .expect("requested voice lock is not poisoned");
+        let Some(mut voice) = *requested else {
+            return;
+        };
+        if voice.guild_id != guild_id || voice.channel_id != channel_id {
+            return;
+        }
+        if voice.allow_microphone_transmit == allow_microphone_transmit {
+            return;
+        }
+
+        voice.allow_microphone_transmit = allow_microphone_transmit;
+        *requested = Some(voice);
+        let _ = self
+            .voice_events_tx
+            .send(VoiceRuntimeEvent::Requested(Some(voice)));
     }
 
     pub fn current_or_requested_voice_connection(&self) -> Option<CurrentVoiceConnectionState> {

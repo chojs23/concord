@@ -308,6 +308,7 @@ fn start_command_loop(
                         channel_id,
                         self_mute,
                         self_deaf,
+                        allow_microphone_transmit,
                     } => {
                         if let Err(message) = client.update_voice_state(
                             guild_id,
@@ -325,6 +326,11 @@ fn start_command_loop(
                                 })
                                 .await;
                         } else {
+                            client.update_voice_capture_permission(
+                                guild_id,
+                                channel_id,
+                                allow_microphone_transmit,
+                            );
                             client
                                 .publish_event(AppEvent::VoiceConnectionStatusChanged {
                                     guild_id,
@@ -350,8 +356,19 @@ fn start_command_loop(
                             logging::error("app", &message);
                             client
                                 .publish_event(AppEvent::GatewayError { message })
-                                .await;
+                            .await;
                         }
+                    }
+                    AppCommand::UpdateVoiceCapturePermission {
+                        guild_id,
+                        channel_id,
+                        allow_microphone_transmit,
+                    } => {
+                        client.update_voice_capture_permission(
+                            guild_id,
+                            channel_id,
+                            allow_microphone_transmit,
+                        );
                     }
                     AppCommand::LeaveVoiceChannel {
                         guild_id,

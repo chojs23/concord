@@ -187,7 +187,7 @@ impl DashboardState {
                 enabled: self.voice_options.allow_microphone_transmit,
                 value: None,
                 effective: true,
-                description: "Permit manual microphone transmit actions. Does not start capture.",
+                description: "Permit capture while joined and not muted. Concord still does not send voice audio.",
             },
         ]
     }
@@ -197,6 +197,7 @@ impl DashboardState {
             return;
         };
         let update_current_voice_state = matches!(selected, 6 | 7);
+        let update_current_voice_capture_permission = selected == 8;
 
         match selected {
             0 => {
@@ -230,6 +231,9 @@ impl DashboardState {
         if update_current_voice_state {
             self.queue_current_voice_state_update();
         }
+        if update_current_voice_capture_permission {
+            self.queue_current_voice_capture_permission_update();
+        }
     }
 
     fn queue_current_voice_state_update(&mut self) {
@@ -246,6 +250,22 @@ impl DashboardState {
                 channel_id,
                 self_mute: self.voice_options.self_mute,
                 self_deaf: self.voice_options.self_deaf,
+            });
+    }
+
+    fn queue_current_voice_capture_permission_update(&mut self) {
+        let Some(voice) = self.voice_connection else {
+            return;
+        };
+        let Some(channel_id) = voice.channel_id else {
+            return;
+        };
+
+        self.pending_commands
+            .push_back(AppCommand::UpdateVoiceCapturePermission {
+                guild_id: voice.guild_id,
+                channel_id,
+                allow_microphone_transmit: self.voice_options.allow_microphone_transmit,
             });
     }
 

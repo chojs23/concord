@@ -25,6 +25,7 @@ pub struct CurrentVoiceConnectionState {
     pub channel_id: Id<ChannelMarker>,
     pub self_mute: bool,
     pub self_deaf: bool,
+    pub allow_microphone_transmit: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,6 +51,7 @@ impl DiscordState {
                     channel_id: state.channel_id,
                     self_mute: state.self_mute,
                     self_deaf: state.self_deaf,
+                    allow_microphone_transmit: false,
                 })
             })
     }

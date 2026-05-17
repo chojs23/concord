@@ -523,6 +523,9 @@ impl DashboardState {
                                 channel_id,
                                 self_mute: self.voice_options.self_mute,
                                 self_deaf: self.voice_options.self_deaf,
+                                allow_microphone_transmit: self
+                                    .voice_options
+                                    .allow_microphone_transmit,
                             })
                     }
                     ChannelActionKind::LeaveVoice => {

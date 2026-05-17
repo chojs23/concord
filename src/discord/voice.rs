@@ -18,6 +18,8 @@ use futures::{SinkExt, StreamExt};
 use opus::{Channels, Decoder as OpusDecoder};
 use serde_json::{Value, json};
 #[cfg(feature = "voice-playback")]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "voice-playback")]
 use std::sync::mpsc::{Receiver as StdReceiver, SyncSender, TryRecvError, sync_channel};
 use tokio::{
     net::UdpSocket,
@@ -281,6 +283,8 @@ struct VoiceChildTasks {
     opus_decode: Option<JoinHandle<()>>,
     #[cfg(feature = "voice-playback")]
     audio_output: Option<VoiceAudioOutput>,
+    #[cfg(feature = "voice-playback")]
+    microphone_capture: Option<VoiceMicrophoneCapture>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -308,6 +312,23 @@ struct VoiceDecodedAudio {
 struct VoiceAudioOutput {
     samples_tx: SyncSender<Vec<f32>>,
     _stream: cpal::Stream,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VoiceCaptureGate {
+    enabled: bool,
+}
+
+#[cfg(feature = "voice-playback")]
+struct VoiceMicrophoneCapture {
+    _stream: cpal::Stream,
+    stats: Arc<VoiceMicrophoneCaptureStats>,
+}
+
+#[cfg(feature = "voice-playback")]
+struct VoiceMicrophoneCaptureStats {
+    chunks: AtomicU64,
+    frames: AtomicU64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -737,6 +758,31 @@ impl VoiceChildTasks {
         #[cfg(feature = "voice-playback")]
         {
             self.audio_output = None;
+            self.microphone_capture = None;
+        }
+    }
+
+    fn set_microphone_capture_enabled(&mut self, enabled: bool) {
+        #[cfg(feature = "voice-playback")]
+        {
+            match (enabled, self.microphone_capture.is_some()) {
+                (true, false) => match VoiceMicrophoneCapture::start() {
+                    Ok(capture) => self.microphone_capture = Some(capture),
+                    Err(error) => logging::error(
+                        "voice",
+                        format!("voice microphone capture unavailable: {error}"),
+                    ),
+                },
+                (false, true) => {
+                    logging::debug("voice", "stopping voice microphone capture");
+                    self.microphone_capture = None;
+                }
+                _ => {}
+            }
+        }
+        #[cfg(not(feature = "voice-playback"))]
+        {
+            let _ = enabled;
         }
     }
 }
@@ -862,6 +908,134 @@ impl VoiceAudioOutput {
             _stream: stream,
         })
     }
+}
+
+#[cfg(feature = "voice-playback")]
+impl VoiceMicrophoneCapture {
+    fn start() -> Result<Self, String> {
+        #[cfg(target_os = "linux")]
+        let alsa_error_output = alsa::Output::local_error_handler().ok();
+
+        let result = Self::start_with_cpal();
+
+        #[cfg(target_os = "linux")]
+        log_captured_alsa_errors(&alsa_error_output);
+
+        result
+    }
+
+    fn start_with_cpal() -> Result<Self, String> {
+        let host = cpal::default_host();
+        let device = host
+            .default_input_device()
+            .ok_or_else(|| "no default microphone input device is available".to_owned())?;
+        let supported_config = device
+            .default_input_config()
+            .map_err(|error| format!("voice microphone default input config failed: {error}"))?;
+        let sample_format = supported_config.sample_format();
+        let stream_config = supported_config.config();
+        let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
+        let stream = build_voice_input_stream(
+            &device,
+            &stream_config,
+            sample_format,
+            Arc::clone(&stats),
+        )?;
+        stream
+            .play()
+            .map_err(|error| format!("voice microphone input stream start failed: {error}"))?;
+        logging::debug(
+            "voice",
+            format!(
+                "voice microphone capture started: sample_rate={} channels={} format={:?}",
+                stream_config.sample_rate, stream_config.channels, sample_format
+            ),
+        );
+        Ok(Self {
+            _stream: stream,
+            stats,
+        })
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+impl Default for VoiceMicrophoneCaptureStats {
+    fn default() -> Self {
+        Self {
+            chunks: AtomicU64::new(0),
+            frames: AtomicU64::new(0),
+        }
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+impl Drop for VoiceMicrophoneCapture {
+    fn drop(&mut self) {
+        logging::debug(
+            "voice",
+            format!(
+                "voice microphone capture stopped: chunks={} frames={}",
+                self.stats.chunks.load(Ordering::Relaxed),
+                self.stats.frames.load(Ordering::Relaxed),
+            ),
+        );
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+fn build_voice_input_stream(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    sample_format: cpal::SampleFormat,
+    stats: Arc<VoiceMicrophoneCaptureStats>,
+) -> Result<cpal::Stream, String> {
+    match sample_format {
+        cpal::SampleFormat::F32 => build_voice_input_stream_typed::<f32>(device, config, stats),
+        cpal::SampleFormat::U8 => build_voice_input_stream_typed::<u8>(device, config, stats),
+        cpal::SampleFormat::I16 => build_voice_input_stream_typed::<i16>(device, config, stats),
+        cpal::SampleFormat::U16 => build_voice_input_stream_typed::<u16>(device, config, stats),
+        other => Err(format!(
+            "unsupported voice microphone input sample format: {other:?}"
+        )),
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+fn build_voice_input_stream_typed<T>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    stats: Arc<VoiceMicrophoneCaptureStats>,
+) -> Result<cpal::Stream, String>
+where
+    T: cpal::SizedSample,
+{
+    let channels = usize::from(config.channels);
+    device
+        .build_input_stream(
+            config,
+            move |input: &[T], _| record_voice_input_chunk(input.len(), channels, &stats),
+            log_voice_input_stream_error,
+            None,
+        )
+        .map_err(|error| format!("voice microphone input stream build failed: {error}"))
+}
+
+#[cfg(feature = "voice-playback")]
+fn record_voice_input_chunk(
+    sample_count: usize,
+    channels: usize,
+    stats: &VoiceMicrophoneCaptureStats,
+) {
+    let frames = sample_count / channels.max(1);
+    stats.chunks.fetch_add(1, Ordering::Relaxed);
+    stats
+        .frames
+        .fetch_add(u64::try_from(frames).unwrap_or(u64::MAX), Ordering::Relaxed);
+}
+
+#[cfg(feature = "voice-playback")]
+fn log_voice_input_stream_error(error: cpal::StreamError) {
+    logging::error("voice", format!("voice microphone input stream failed: {error}"));
 }
 
 #[cfg(all(feature = "voice-playback", target_os = "linux"))]
@@ -1233,6 +1407,17 @@ impl VoiceRuntimeState {
     fn close_active(&mut self) -> Option<VoiceRuntimeAction> {
         self.active.take().map(|_| VoiceRuntimeAction::Close)
     }
+
+    fn capture_gate(&self) -> Option<VoiceCaptureGate> {
+        let active = self.active.as_ref()?;
+        let requested = self.requested?;
+        if active.guild_id != requested.guild_id || active.channel_id != requested.channel_id {
+            return None;
+        }
+        Some(VoiceCaptureGate {
+            enabled: requested.allow_microphone_transmit && !requested.self_mute,
+        })
+    }
 }
 
 pub(crate) fn forward_app_event(
@@ -1255,6 +1440,7 @@ pub(crate) async fn run_voice_runtime(
 ) {
     let mut state = VoiceRuntimeState::default();
     let mut connection_task: Option<JoinHandle<()>> = None;
+    let mut capture_gate_tx: Option<mpsc::UnboundedSender<VoiceCaptureGate>> = None;
 
     while let Some(event) = events.recv().await {
         let shutdown = matches!(event, VoiceRuntimeEvent::Shutdown);
@@ -1268,10 +1454,17 @@ pub(crate) async fn run_voice_runtime(
                         );
                         task.abort();
                     }
+                    let (next_capture_gate_tx, capture_gate_rx) = mpsc::unbounded_channel();
+                    capture_gate_tx = Some(next_capture_gate_tx);
+                    let initial_capture_gate = state
+                        .capture_gate()
+                        .unwrap_or(VoiceCaptureGate { enabled: false });
                     connection_task = Some(tokio::spawn(run_voice_gateway_session(
                         session,
                         events_tx.clone(),
                         status_publisher.clone(),
+                        initial_capture_gate,
+                        capture_gate_rx,
                     )));
                 }
                 VoiceRuntimeAction::Close => {
@@ -1279,8 +1472,17 @@ pub(crate) async fn run_voice_runtime(
                         logging::debug("voice", "aborting active voice connection task");
                         task.abort();
                     }
+                    capture_gate_tx = None;
                 }
             }
+        }
+        if state.active.is_none() {
+            capture_gate_tx = None;
+        }
+        if let (Some(capture_gate_tx), Some(capture_gate)) =
+            (capture_gate_tx.as_ref(), state.capture_gate())
+        {
+            let _ = capture_gate_tx.send(capture_gate);
         }
         if shutdown {
             break;
@@ -1300,8 +1502,17 @@ async fn run_voice_gateway_session(
     session: VoiceGatewaySession,
     events_tx: mpsc::UnboundedSender<VoiceRuntimeEvent>,
     status_publisher: VoiceStatusPublisher,
+    initial_capture_gate: VoiceCaptureGate,
+    capture_gate_rx: mpsc::UnboundedReceiver<VoiceCaptureGate>,
 ) {
-    match connect_voice_gateway(&session, &status_publisher).await {
+    match connect_voice_gateway(
+        &session,
+        &status_publisher,
+        initial_capture_gate,
+        capture_gate_rx,
+    )
+    .await
+    {
         Ok(()) => {
             status_publisher
                 .publish(
@@ -1324,6 +1535,8 @@ async fn run_voice_gateway_session(
 async fn connect_voice_gateway(
     session: &VoiceGatewaySession,
     status_publisher: &VoiceStatusPublisher,
+    initial_capture_gate: VoiceCaptureGate,
+    mut capture_gate_rx: mpsc::UnboundedReceiver<VoiceCaptureGate>,
 ) -> Result<(), String> {
     let url = voice_gateway_url(&session.endpoint)?;
     logging::debug("voice", format!("connecting voice websocket: {url}"));
@@ -1350,6 +1563,7 @@ async fn connect_voice_gateway(
     let (writer, mut reader) = ws.split();
     let writer = Arc::new(Mutex::new(writer));
     let mut child_tasks = VoiceChildTasks::default();
+    child_tasks.set_microphone_capture_enabled(initial_capture_gate.enabled);
     let mut udp_socket: Option<Arc<UdpSocket>> = None;
     let last_sequence = Arc::new(Mutex::new(None));
     let dave_state = Arc::new(Mutex::new(VoiceDaveState::new(session)));
@@ -1358,7 +1572,25 @@ async fn connect_voice_gateway(
     logging::debug("voice", "voice identify sent");
     logging::debug("voice", "voice websocket read loop started");
 
-    while let Some(frame) = reader.next().await {
+    loop {
+        let frame = tokio::select! {
+            capture_gate = capture_gate_rx.recv() => {
+                match capture_gate {
+                    Some(capture_gate) => {
+                        child_tasks.set_microphone_capture_enabled(capture_gate.enabled);
+                        continue;
+                    }
+                    None => {
+                        child_tasks.set_microphone_capture_enabled(false);
+                        break;
+                    }
+                }
+            }
+            frame = reader.next() => frame,
+        };
+        let Some(frame) = frame else {
+            break;
+        };
         let frame = frame.map_err(|error| format!("voice websocket read failed: {error}"))?;
         match frame {
             WsMessage::Text(text) => {
@@ -2247,6 +2479,7 @@ mod tests {
             channel_id: Id::new(10),
             self_mute: true,
             self_deaf: false,
+            allow_microphone_transmit: false,
         }
     }
 
@@ -2303,6 +2536,40 @@ mod tests {
             }
             other => panic!("expected connect action, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn voice_runtime_capture_gate_requires_allowed_active_unmuted_voice() {
+        let mut state = VoiceRuntimeState::default();
+        state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
+
+        let mut requested = requested_voice();
+        requested.allow_microphone_transmit = true;
+        requested.self_mute = false;
+        state.apply(VoiceRuntimeEvent::Requested(Some(requested)));
+        assert_eq!(state.capture_gate(), None);
+
+        state.apply(VoiceRuntimeEvent::VoiceState(voice_state(
+            10,
+            Some(Id::new(10)),
+        )));
+        state.apply(VoiceRuntimeEvent::VoiceServer(voice_server()));
+        assert_eq!(state.capture_gate(), Some(VoiceCaptureGate { enabled: true }));
+
+        requested.self_mute = true;
+        state.apply(VoiceRuntimeEvent::Requested(Some(requested)));
+        assert_eq!(state.capture_gate(), Some(VoiceCaptureGate { enabled: false }));
+
+        requested.self_mute = false;
+        requested.allow_microphone_transmit = false;
+        state.apply(VoiceRuntimeEvent::Requested(Some(requested)));
+        assert_eq!(state.capture_gate(), Some(VoiceCaptureGate { enabled: false }));
+
+        let mut other_channel = requested;
+        other_channel.channel_id = Id::new(11);
+        other_channel.allow_microphone_transmit = true;
+        state.apply(VoiceRuntimeEvent::Requested(Some(other_channel)));
+        assert_eq!(state.capture_gate(), None);
     }
 
     #[test]
