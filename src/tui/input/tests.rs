@@ -1513,7 +1513,12 @@ fn paste_file_path_adds_pending_attachment() {
 
     assert_eq!(state.composer_input(), "");
     assert_eq!(state.pending_composer_attachments().len(), 1);
-    assert_eq!(state.pending_composer_attachments()[0].path, path);
+    assert_eq!(
+        state.pending_composer_attachments()[0]
+            .path()
+            .expect("upload is file backed"),
+        path
+    );
     assert_eq!(
         state.pending_composer_attachments()[0].filename,
         "paste path.txt"
@@ -1536,7 +1541,12 @@ fn paste_single_quoted_file_path_adds_pending_attachment() {
 
     assert_eq!(state.composer_input(), "");
     assert_eq!(state.pending_composer_attachments().len(), 1);
-    assert_eq!(state.pending_composer_attachments()[0].path, path);
+    assert_eq!(
+        state.pending_composer_attachments()[0]
+            .path()
+            .expect("upload is file backed"),
+        path
+    );
     assert_eq!(
         state.pending_composer_attachments()[0].filename,
         "quoted path.txt"
@@ -1561,7 +1571,12 @@ fn paste_backslash_escaped_file_path_adds_pending_attachment() {
 
     assert_eq!(state.composer_input(), "");
     assert_eq!(state.pending_composer_attachments().len(), 1);
-    assert_eq!(state.pending_composer_attachments()[0].path, path);
+    assert_eq!(
+        state.pending_composer_attachments()[0]
+            .path()
+            .expect("upload is file backed"),
+        path
+    );
     assert_eq!(
         state.pending_composer_attachments()[0].filename,
         "escaped path.txt"
@@ -1592,11 +1607,11 @@ fn paste_file_uri_list_can_submit_attachment_only_message() {
             channel_id: Id::new(11),
             content: String::new(),
             reply_to: None,
-            attachments: vec![crate::discord::MessageAttachmentUpload {
-                path: path.clone(),
-                filename: "uri path.txt".to_owned(),
-                size_bytes: 6,
-            }],
+            attachments: vec![crate::discord::MessageAttachmentUpload::from_path(
+                path.clone(),
+                "uri path.txt".to_owned(),
+                6,
+            )],
         })
     );
     remove_temp_upload_file(&path);
@@ -1626,9 +1641,27 @@ fn ctrl_backspace_removes_last_pending_attachment() {
 
     assert_eq!(state.composer_input(), "x");
     assert_eq!(state.pending_composer_attachments().len(), 1);
-    assert_eq!(state.pending_composer_attachments()[0].path, first);
+    assert_eq!(
+        state.pending_composer_attachments()[0]
+            .path()
+            .expect("upload is file backed"),
+        first
+    );
     remove_temp_upload_file(&first);
     remove_temp_upload_file(&second);
+}
+
+#[test]
+fn ctrl_v_while_composing_requests_clipboard_image_upload() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+
+    handle_key(&mut state, ctrl_key('v'));
+
+    assert!(state.take_clipboard_image_upload_request());
 }
 
 #[test]

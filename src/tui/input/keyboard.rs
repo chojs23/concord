@@ -195,6 +195,7 @@ enum ComposerAction {
     Submit,
     Close,
     ClearInput,
+    AttachClipboardImage,
     RemoveLastAttachment,
     DeletePreviousChar,
     DeleteNextChar,
@@ -587,15 +588,16 @@ fn pasted_file_attachments(text: &str) -> Option<Vec<MessageAttachmentUpload>> {
                 return None;
             }
             let metadata = path.metadata().ok()?;
-            attachments.push(MessageAttachmentUpload {
-                filename: path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("attachment")
-                    .to_owned(),
+            let filename = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("attachment")
+                .to_owned();
+            attachments.push(MessageAttachmentUpload::from_path(
                 path,
-                size_bytes: metadata.len(),
-            });
+                filename,
+                metadata.len(),
+            ));
         }
     }
     (!attachments.is_empty()).then_some(attachments)
@@ -1280,6 +1282,9 @@ fn composer_action(key: KeyEvent) -> ComposerAction {
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             ComposerAction::ClearInput
         }
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            ComposerAction::AttachClipboardImage
+        }
         KeyCode::Backspace if key.modifiers.contains(KeyModifiers::CONTROL) => {
             ComposerAction::RemoveLastAttachment
         }
@@ -1383,6 +1388,10 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
         }
         ComposerAction::ClearInput => {
             state.clear_composer_input();
+            None
+        }
+        ComposerAction::AttachClipboardImage => {
+            state.request_clipboard_image_upload();
             None
         }
         ComposerAction::RemoveLastAttachment => {

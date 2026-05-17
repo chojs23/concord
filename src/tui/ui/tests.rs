@@ -844,11 +844,11 @@ fn composer_border_title_tracks_message_mode() {
 fn composer_lines_show_pending_upload_above_input() {
     let mut state = state_with_message();
     state.start_composer();
-    state.add_pending_composer_attachments(vec![MessageAttachmentUpload {
-        path: "/tmp/cat.png".into(),
-        filename: "cat.png".to_owned(),
-        size_bytes: 2_048,
-    }]);
+    state.add_pending_composer_attachments(vec![MessageAttachmentUpload::from_path(
+        "/tmp/cat.png".into(),
+        "cat.png".to_owned(),
+        2_048,
+    )]);
 
     let lines = composer_lines(&state, 80);
 
@@ -916,11 +916,11 @@ fn composer_cursor_position_accounts_for_upload_and_reply_rows() {
     let mut state = state_with_message();
     state.open_selected_message_actions();
     state.activate_selected_message_action();
-    state.add_pending_composer_attachments(vec![MessageAttachmentUpload {
-        path: "/tmp/cat.png".into(),
-        filename: "cat.png".to_owned(),
-        size_bytes: 2_048,
-    }]);
+    state.add_pending_composer_attachments(vec![MessageAttachmentUpload::from_path(
+        "/tmp/cat.png".into(),
+        "cat.png".to_owned(),
+        2_048,
+    )]);
     for value in "hi".chars() {
         state.push_composer_char(value);
     }

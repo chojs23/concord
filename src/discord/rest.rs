@@ -1079,7 +1079,7 @@ async fn message_multipart_form(
     body: Value,
     attachments: &[MessageAttachmentUpload],
 ) -> Result<Form> {
-    let actual_sizes = attachment_file_sizes(attachments).await?;
+    let actual_sizes = attachment_sizes(attachments).await?;
     validate_attachment_sizes(&actual_sizes)?;
 
     let mut form = Form::new().part(
@@ -1090,12 +1090,7 @@ async fn message_multipart_form(
     );
 
     for (index, attachment) in attachments.iter().enumerate() {
-        let bytes = tokio::fs::read(&attachment.path).await.map_err(|error| {
-            AppError::DiscordRequest(format!(
-                "read attachment {} failed: {error}",
-                attachment.filename
-            ))
-        })?;
+        let bytes = attachment_bytes(attachment).await?;
         validate_attachment_sizes(&[(attachment.filename.clone(), bytes.len() as u64)])?;
         let content_type = upload_content_type(&attachment.filename);
         let part = Part::bytes(bytes)
@@ -1112,22 +1107,43 @@ async fn message_multipart_form(
     Ok(form)
 }
 
-async fn attachment_file_sizes(
-    attachments: &[MessageAttachmentUpload],
-) -> Result<Vec<(String, u64)>> {
+async fn attachment_sizes(attachments: &[MessageAttachmentUpload]) -> Result<Vec<(String, u64)>> {
     let mut sizes = Vec::with_capacity(attachments.len());
     for attachment in attachments {
-        let metadata = tokio::fs::metadata(&attachment.path)
-            .await
-            .map_err(|error| {
-                AppError::DiscordRequest(format!(
-                    "stat attachment {} failed: {error}",
-                    attachment.filename
-                ))
-            })?;
-        sizes.push((attachment.filename.clone(), metadata.len()));
+        let size = if let Some(path) = attachment.path() {
+            tokio::fs::metadata(path)
+                .await
+                .map_err(|error| {
+                    AppError::DiscordRequest(format!(
+                        "stat attachment {} failed: {error}",
+                        attachment.filename
+                    ))
+                })?
+                .len()
+        } else {
+            attachment.size_bytes
+        };
+        sizes.push((attachment.filename.clone(), size));
     }
     Ok(sizes)
+}
+
+async fn attachment_bytes(attachment: &MessageAttachmentUpload) -> Result<Vec<u8>> {
+    if let Some(bytes) = attachment.bytes() {
+        return Ok(bytes.to_vec());
+    }
+    let Some(path) = attachment.path() else {
+        return Err(AppError::DiscordRequest(format!(
+            "attachment {} has no data",
+            attachment.filename
+        )));
+    };
+    tokio::fs::read(path).await.map_err(|error| {
+        AppError::DiscordRequest(format!(
+            "read attachment {} failed: {error}",
+            attachment.filename
+        ))
+    })
 }
 
 fn upload_content_type(filename: &str) -> String {
@@ -1222,11 +1238,11 @@ mod tests {
 
     #[test]
     fn validates_attachment_only_message_payload() {
-        let attachments = vec![MessageAttachmentUpload {
-            path: "/tmp/cat.png".into(),
-            filename: "cat.png".to_owned(),
-            size_bytes: 2_048,
-        }];
+        let attachments = vec![MessageAttachmentUpload::from_path(
+            "/tmp/cat.png".into(),
+            "cat.png".to_owned(),
+            2_048,
+        )];
 
         validate_message_payload("   ", &attachments).expect("file-only messages should be valid");
 
@@ -1239,31 +1255,31 @@ mod tests {
 
     #[test]
     fn rejects_attachment_upload_limits() {
-        let too_large_file = vec![MessageAttachmentUpload {
-            path: "/tmp/large.bin".into(),
-            filename: "large.bin".to_owned(),
-            size_bytes: MAX_UPLOAD_FILE_BYTES + 1,
-        }];
+        let too_large_file = vec![MessageAttachmentUpload::from_path(
+            "/tmp/large.bin".into(),
+            "large.bin".to_owned(),
+            MAX_UPLOAD_FILE_BYTES + 1,
+        )];
         let error = validate_message_payload("", &too_large_file)
             .expect_err("oversized attachment must fail");
         assert!(matches!(error, AppError::AttachmentTooLarge { .. }));
 
         let too_large_total = vec![
-            MessageAttachmentUpload {
-                path: "/tmp/a.bin".into(),
-                filename: "a.bin".to_owned(),
-                size_bytes: MAX_UPLOAD_FILE_BYTES - 1,
-            },
-            MessageAttachmentUpload {
-                path: "/tmp/b.bin".into(),
-                filename: "b.bin".to_owned(),
-                size_bytes: MAX_UPLOAD_FILE_BYTES - 1,
-            },
-            MessageAttachmentUpload {
-                path: "/tmp/c.bin".into(),
-                filename: "c.bin".to_owned(),
-                size_bytes: MAX_UPLOAD_FILE_BYTES - 1,
-            },
+            MessageAttachmentUpload::from_path(
+                "/tmp/a.bin".into(),
+                "a.bin".to_owned(),
+                MAX_UPLOAD_FILE_BYTES - 1,
+            ),
+            MessageAttachmentUpload::from_path(
+                "/tmp/b.bin".into(),
+                "b.bin".to_owned(),
+                MAX_UPLOAD_FILE_BYTES - 1,
+            ),
+            MessageAttachmentUpload::from_path(
+                "/tmp/c.bin".into(),
+                "c.bin".to_owned(),
+                MAX_UPLOAD_FILE_BYTES - 1,
+            ),
         ];
         let error = validate_message_payload("", &too_large_total)
             .expect_err("oversized attachment total must fail");
@@ -1280,11 +1296,8 @@ mod tests {
         std::fs::create_dir_all(&directory).expect("temp upload directory can be created");
         let path = directory.join("changed.bin");
         std::fs::write(&path, [0_u8]).expect("small temp file can be written");
-        let attachment = MessageAttachmentUpload {
-            path: path.clone(),
-            filename: "changed.bin".to_owned(),
-            size_bytes: 1,
-        };
+        let attachment =
+            MessageAttachmentUpload::from_path(path.clone(), "changed.bin".to_owned(), 1);
         std::fs::write(&path, vec![0_u8; (MAX_UPLOAD_FILE_BYTES + 1) as usize])
             .expect("oversized temp file can be written");
 
