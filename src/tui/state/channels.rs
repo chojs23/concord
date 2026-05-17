@@ -526,6 +526,7 @@ impl DashboardState {
                                 allow_microphone_transmit: self
                                     .voice_options
                                     .allow_microphone_transmit,
+                                microphone_sensitivity: self.voice_options.microphone_sensitivity,
                             })
                     }
                     ChannelActionKind::LeaveVoice => {

@@ -353,6 +353,7 @@ desktop_notifications = true
 self_mute = false
 self_deaf = false
 allow_microphone_transmit = false
+microphone_sensitivity = "medium"
 ```
 
 `image_preview_quality` supports these values:
@@ -383,6 +384,12 @@ encoding. Concord sends Discord Speaking on/off around transmitted audio, and
 transmit stops when the gate closes, the app leaves voice, or the voice session
 ends. If Discord DAVE encryption is required but outbound encryption is not
 ready, Concord fails closed instead of sending plaintext audio.
+
+`microphone_sensitivity` controls how loud a 20 ms microphone frame must be
+before Concord transmits it. It accepts `off`, `low`, `medium`, and `high`.
+`off` keeps the old always-transmit behavior while the microphone gate is open.
+`high` transmits quieter input. `medium` is the default and filters tiny ambient
+noise so the active speaker indicator does not stay green all the time.
 
 Voice active speaker styling follows the actual voice path. The current user is
 highlighted only after Concord sends Speaking on. Remote users are highlighted

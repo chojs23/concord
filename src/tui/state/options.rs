@@ -3,7 +3,7 @@ use crate::discord::AppCommand;
 
 use super::{DashboardState, FocusPane, popups::OptionsPopupState};
 
-const OPTION_COUNT: usize = 9;
+const OPTION_COUNT: usize = 10;
 const MIN_PANE_WIDTH: u16 = 8;
 const MAX_PANE_WIDTH: u16 = 80;
 
@@ -189,6 +189,13 @@ impl DashboardState {
                 effective: true,
                 description: "Permit microphone transmit while joined and not muted.",
             },
+            DisplayOptionItem {
+                label: "Microphone sensitivity",
+                enabled: true,
+                value: Some(self.voice_options.microphone_sensitivity.label()),
+                effective: self.voice_options.allow_microphone_transmit,
+                description: "Higher values transmit quieter microphone input.",
+            },
         ]
     }
 
@@ -197,7 +204,7 @@ impl DashboardState {
             return;
         };
         let update_current_voice_state = matches!(selected, 6 | 7);
-        let update_current_voice_capture_permission = selected == 8;
+        let update_current_voice_capture_permission = matches!(selected, 8 | 9);
 
         match selected {
             0 => {
@@ -220,6 +227,10 @@ impl DashboardState {
             8 => {
                 self.voice_options.allow_microphone_transmit =
                     !self.voice_options.allow_microphone_transmit
+            }
+            9 => {
+                self.voice_options.microphone_sensitivity =
+                    self.voice_options.microphone_sensitivity.next()
             }
             _ => return,
         }
@@ -266,6 +277,7 @@ impl DashboardState {
                 guild_id: voice.guild_id,
                 channel_id,
                 allow_microphone_transmit: self.voice_options.allow_microphone_transmit,
+                microphone_sensitivity: self.voice_options.microphone_sensitivity,
             });
     }
 

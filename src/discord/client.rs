@@ -4,6 +4,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
+use crate::config::MicrophoneSensitivityPreset;
 use chrono::{DateTime, Utc};
 use reqwest::header::HeaderValue;
 use tokio::{
@@ -222,12 +223,17 @@ impl DiscordClient {
                 let allow_microphone_transmit = requested
                     .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
                     .is_some_and(|voice| voice.allow_microphone_transmit);
+                let microphone_sensitivity = requested
+                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .map(|voice| voice.microphone_sensitivity)
+                    .unwrap_or_default();
                 let voice = CurrentVoiceConnectionState {
                     guild_id,
                     channel_id,
                     self_mute,
                     self_deaf,
                     allow_microphone_transmit,
+                    microphone_sensitivity,
                 };
                 *requested = Some(voice);
                 let _ = self
@@ -248,6 +254,7 @@ impl DiscordClient {
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
         allow_microphone_transmit: bool,
+        microphone_sensitivity: MicrophoneSensitivityPreset,
     ) {
         let mut requested = self
             .requested_voice
@@ -259,11 +266,14 @@ impl DiscordClient {
         if voice.guild_id != guild_id || voice.channel_id != channel_id {
             return;
         }
-        if voice.allow_microphone_transmit == allow_microphone_transmit {
+        if voice.allow_microphone_transmit == allow_microphone_transmit
+            && voice.microphone_sensitivity == microphone_sensitivity
+        {
             return;
         }
 
         voice.allow_microphone_transmit = allow_microphone_transmit;
+        voice.microphone_sensitivity = microphone_sensitivity;
         *requested = Some(voice);
         let _ = self
             .voice_events_tx

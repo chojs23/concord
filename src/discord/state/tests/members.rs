@@ -153,6 +153,7 @@ fn tracks_voice_participants_join_move_and_leave() {
             self_mute: true,
             self_deaf: false,
             allow_microphone_transmit: false,
+            microphone_sensitivity: Default::default(),
         })
     );
 
@@ -200,6 +201,7 @@ fn tracks_voice_participants_join_move_and_leave() {
             self_mute: false,
             self_deaf: false,
             allow_microphone_transmit: false,
+            microphone_sensitivity: Default::default(),
         })
     );
 

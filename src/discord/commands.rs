@@ -140,6 +140,7 @@ pub enum AppCommand {
         self_mute: bool,
         self_deaf: bool,
         allow_microphone_transmit: bool,
+        microphone_sensitivity: crate::config::MicrophoneSensitivityPreset,
     },
     UpdateVoiceState {
         guild_id: Id<GuildMarker>,
@@ -151,6 +152,7 @@ pub enum AppCommand {
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
         allow_microphone_transmit: bool,
+        microphone_sensitivity: crate::config::MicrophoneSensitivityPreset,
     },
     LeaveVoiceChannel {
         guild_id: Id<GuildMarker>,

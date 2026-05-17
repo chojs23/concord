@@ -2309,11 +2309,12 @@ fn display_option_items_include_voice_state_controls() {
         self_mute: true,
         self_deaf: true,
         allow_microphone_transmit: true,
+        microphone_sensitivity: Default::default(),
     });
 
     let items = state.display_option_items();
 
-    assert_eq!(items.len(), 9);
+    assert_eq!(items.len(), 10);
     assert_eq!(items[6].label, "Voice muted");
     assert!(items[6].enabled);
     assert!(items[6].effective);
@@ -2323,6 +2324,9 @@ fn display_option_items_include_voice_state_controls() {
     assert_eq!(items[8].label, "Allow microphone transmit");
     assert!(items[8].enabled);
     assert!(items[8].effective);
+    assert_eq!(items[9].label, "Microphone sensitivity");
+    assert_eq!(items[9].value, Some("medium"));
+    assert!(items[9].effective);
 }
 
 #[test]
@@ -2371,6 +2375,20 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
             guild_id: Id::new(1),
             channel_id: Id::new(11),
             allow_microphone_transmit: true,
+            microphone_sensitivity: Default::default(),
+        }]
+    );
+
+    state.move_option_down();
+    state.toggle_selected_display_option();
+    assert_eq!(state.voice_options().microphone_sensitivity.label(), "high");
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceCapturePermission {
+            guild_id: Id::new(1),
+            channel_id: Id::new(11),
+            allow_microphone_transmit: true,
+            microphone_sensitivity: state.voice_options().microphone_sensitivity,
         }]
     );
 }
@@ -8131,6 +8149,7 @@ fn voice_channel_action_emits_join_then_leave_command() {
         self_mute: true,
         self_deaf: true,
         allow_microphone_transmit: false,
+        microphone_sensitivity: Default::default(),
     });
     state.push_event(AppEvent::GuildCreate {
         guild_id: Id::new(1),
@@ -8170,6 +8189,7 @@ fn voice_channel_action_emits_join_then_leave_command() {
             self_mute: true,
             self_deaf: true,
             allow_microphone_transmit: false,
+            microphone_sensitivity: Default::default(),
         })
     );
 
@@ -8200,6 +8220,7 @@ fn other_client_voice_state_shows_header_only() {
         self_mute: true,
         self_deaf: true,
         allow_microphone_transmit: false,
+        microphone_sensitivity: Default::default(),
     });
     state.push_event(AppEvent::Ready {
         user: "me".to_owned(),

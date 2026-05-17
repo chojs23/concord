@@ -31,6 +31,7 @@ use tokio::{
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
+use crate::config::MicrophoneSensitivityPreset;
 use crate::discord::{
     CurrentVoiceConnectionState, DiscordState, SequencedAppEvent, SnapshotRevision,
     VoiceConnectionStatus, VoiceServerInfo, VoiceStateInfo,
@@ -451,7 +452,7 @@ struct VoiceChildTasks {
     #[cfg(feature = "voice-playback")]
     udp_transmit: Option<JoinHandle<()>>,
     #[cfg(feature = "voice-playback")]
-    transmit_gate: Option<watch::Sender<bool>>,
+    transmit_gate: Option<watch::Sender<VoiceCaptureGate>>,
     #[cfg(feature = "voice-playback")]
     playback_enabled: Option<Arc<AtomicBool>>,
     #[cfg(feature = "voice-playback")]
@@ -495,6 +496,7 @@ struct VoiceAudioOutput {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct VoiceCaptureGate {
     enabled: bool,
+    microphone_sensitivity: MicrophoneSensitivityPreset,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -961,7 +963,7 @@ impl VoiceChildTasks {
     fn replace_udp_transmit(
         &mut self,
         task: JoinHandle<()>,
-        gate: watch::Sender<bool>,
+        gate: watch::Sender<VoiceCaptureGate>,
         microphone_pcm_tx: SyncSender<Vec<i16>>,
     ) {
         if let Some(task) = self.udp_transmit.take() {
@@ -977,7 +979,10 @@ impl VoiceChildTasks {
     #[cfg(feature = "voice-playback")]
     fn signal_udp_transmit_stop(&mut self) {
         if let Some(gate) = self.transmit_gate.as_ref() {
-            let _ = gate.send(false);
+            let _ = gate.send(VoiceCaptureGate {
+                enabled: false,
+                microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+            });
         }
         self.microphone_capture = None;
         self.microphone_pcm_tx = None;
@@ -1049,17 +1054,17 @@ impl VoiceChildTasks {
         }
     }
 
-    fn set_voice_transmit_gate(&mut self, enabled: bool) {
+    fn set_voice_transmit_gate(&mut self, capture_gate: VoiceCaptureGate) {
         #[cfg(feature = "voice-playback")]
         {
         if let Some(gate) = self.transmit_gate.as_ref() {
-            let _ = gate.send(enabled);
+            let _ = gate.send(capture_gate);
         }
-            self.set_microphone_capture_enabled(enabled && self.microphone_pcm_tx.is_some());
+            self.set_microphone_capture_enabled(capture_gate.enabled && self.microphone_pcm_tx.is_some());
         }
         #[cfg(not(feature = "voice-playback"))]
         {
-            let _ = enabled;
+            let _ = capture_gate;
         }
     }
 
@@ -2028,6 +2033,7 @@ impl VoiceRuntimeState {
         }
         Some(VoiceCaptureGate {
             enabled: requested.allow_microphone_transmit && !requested.self_mute,
+            microphone_sensitivity: requested.microphone_sensitivity,
         })
     }
 
@@ -2084,7 +2090,10 @@ pub(crate) async fn run_voice_runtime(
                     playback_gate_tx = Some(next_playback_gate_tx);
                     let initial_capture_gate = state
                         .capture_gate()
-                        .unwrap_or(VoiceCaptureGate { enabled: false });
+                        .unwrap_or(VoiceCaptureGate {
+                            enabled: false,
+                            microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+                        });
                     let initial_playback_gate = state
                         .playback_gate()
                         .unwrap_or(VoicePlaybackGate { enabled: true });
@@ -2234,11 +2243,14 @@ async fn connect_voice_gateway(
                         {
                             current_capture_gate = capture_gate;
                         }
-                        child_tasks.set_voice_transmit_gate(capture_gate.enabled);
+                        child_tasks.set_voice_transmit_gate(capture_gate);
                         continue;
                     }
                     None => {
-                        child_tasks.set_voice_transmit_gate(false);
+                        child_tasks.set_voice_transmit_gate(VoiceCaptureGate {
+                            enabled: false,
+                            microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+                        });
                         break;
                     }
                 }
@@ -2357,7 +2369,7 @@ async fn connect_voice_gateway(
                             #[cfg(feature = "voice-playback")]
                             if let Some(ready) = voice_ready.as_ref() {
                                 let (pcm_tx, pcm_rx) = sync_channel(VOICE_MIC_PCM_FRAME_QUEUE);
-                                let (gate_tx, gate_rx) = watch::channel(current_capture_gate.enabled);
+                                let (gate_tx, gate_rx) = watch::channel(current_capture_gate);
                                 child_tasks.replace_udp_transmit(
                                     tokio::spawn(run_voice_udp_transmit(
                                         pcm_rx,
@@ -2372,7 +2384,7 @@ async fn connect_voice_gateway(
                                     gate_tx,
                                     pcm_tx,
                                 );
-                                child_tasks.set_voice_transmit_gate(current_capture_gate.enabled);
+                                child_tasks.set_voice_transmit_gate(current_capture_gate);
                             }
                         }
                     }
@@ -3120,7 +3132,7 @@ async fn run_voice_udp_transmit(
     description: VoiceSessionDescription,
     ssrc: u32,
     dave_state: Arc<Mutex<VoiceDaveState>>,
-    mut gate_rx: watch::Receiver<bool>,
+    mut gate_rx: watch::Receiver<VoiceCaptureGate>,
     local_speaking_tx: mpsc::UnboundedSender<bool>,
 ) {
     let rtp = VoiceOutboundRtpState {
@@ -3140,7 +3152,8 @@ async fn run_voice_udp_transmit(
             return;
         }
     };
-    sender.set_capture_gate(*gate_rx.borrow(), false);
+    let initial_gate = *gate_rx.borrow();
+    sender.set_capture_gate(initial_gate.enabled, false);
     let mut encoder = match VoiceOpusEncode::new() {
         Ok(encoder) => encoder,
         Err(error) => {
@@ -3166,8 +3179,8 @@ async fn run_voice_udp_transmit(
                     sender.set_capture_gate(false, false);
                     break;
                 }
-                let enabled = *gate_rx.borrow();
-                if !enabled
+                let gate = *gate_rx.borrow();
+                if !gate.enabled
                     && let Err(error) = flush_voice_outbound_events(
                         &udp_socket,
                         &writer,
@@ -3178,17 +3191,30 @@ async fn run_voice_udp_transmit(
                 {
                     logging::error("voice", error);
                 }
-                if !enabled {
+                if !gate.enabled {
                     let _ = local_speaking_tx.send(false);
                 }
-                sender.set_capture_gate(enabled, false);
+                sender.set_capture_gate(gate.enabled, false);
             }
             _ = sleep(Duration::from_millis(20)) => {
-                if !*gate_rx.borrow() {
+                let gate = *gate_rx.borrow();
+                if !gate.enabled {
                     continue;
                 }
                 match pcm_rx.try_recv() {
                     Ok(frame) => {
+                        if !voice_pcm_frame_reaches_sensitivity(&frame, gate.microphone_sensitivity) {
+                            if let Err(error) = flush_voice_outbound_events(
+                                &udp_socket,
+                                &writer,
+                                sender.stop_speaking_with_dave(&mut *dave_state.lock().await),
+                                &mut sender,
+                                &local_speaking_tx,
+                            ).await {
+                                logging::error("voice", error);
+                            }
+                            continue;
+                        }
                         let opus = match encoder.encode_20ms_i16(&frame) {
                             Ok(opus) => opus,
                             Err(error) => {
@@ -3672,6 +3698,24 @@ fn voice_media_payload_counts_as_remote_activity(media: &VoiceMediaPayload) -> b
     opus.as_slice() != DISCORD_OPUS_SILENCE_FRAME
 }
 
+#[cfg(any(test, feature = "voice-playback"))]
+fn voice_pcm_frame_reaches_sensitivity(
+    frame: &[i16],
+    sensitivity: MicrophoneSensitivityPreset,
+) -> bool {
+    let threshold = i32::from(sensitivity.peak_threshold());
+    threshold == 0 || voice_pcm_peak(frame) >= threshold
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+fn voice_pcm_peak(frame: &[i16]) -> i32 {
+    frame
+        .iter()
+        .map(|sample| i32::from(*sample).abs())
+        .max()
+        .unwrap_or(0)
+}
+
 #[allow(dead_code)]
 fn build_voice_rtp_packet(
     sequence: u16,
@@ -3744,6 +3788,7 @@ mod tests {
             self_mute: true,
             self_deaf: false,
             allow_microphone_transmit: false,
+            microphone_sensitivity: MicrophoneSensitivityPreset::default(),
         }
     }
 
@@ -3818,24 +3863,48 @@ mod tests {
             Some(Id::new(10)),
         )));
         state.apply(VoiceRuntimeEvent::VoiceServer(voice_server()));
-        assert_eq!(state.capture_gate(), Some(VoiceCaptureGate { enabled: true }));
+        assert_eq!(
+            state.capture_gate(),
+            Some(VoiceCaptureGate {
+                enabled: true,
+                microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+            })
+        );
         assert_eq!(state.playback_gate(), Some(VoicePlaybackGate { enabled: true }));
 
         requested.self_mute = true;
         state.apply(VoiceRuntimeEvent::Requested(Some(requested)));
-        assert_eq!(state.capture_gate(), Some(VoiceCaptureGate { enabled: false }));
+        assert_eq!(
+            state.capture_gate(),
+            Some(VoiceCaptureGate {
+                enabled: false,
+                microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+            })
+        );
         assert_eq!(state.playback_gate(), Some(VoicePlaybackGate { enabled: true }));
 
         requested.self_deaf = true;
         state.apply(VoiceRuntimeEvent::Requested(Some(requested)));
-        assert_eq!(state.capture_gate(), Some(VoiceCaptureGate { enabled: false }));
+        assert_eq!(
+            state.capture_gate(),
+            Some(VoiceCaptureGate {
+                enabled: false,
+                microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+            })
+        );
         assert_eq!(state.playback_gate(), Some(VoicePlaybackGate { enabled: false }));
 
         requested.self_mute = false;
         requested.allow_microphone_transmit = false;
         requested.self_deaf = false;
         state.apply(VoiceRuntimeEvent::Requested(Some(requested)));
-        assert_eq!(state.capture_gate(), Some(VoiceCaptureGate { enabled: false }));
+        assert_eq!(
+            state.capture_gate(),
+            Some(VoiceCaptureGate {
+                enabled: false,
+                microphone_sensitivity: MicrophoneSensitivityPreset::default(),
+            })
+        );
         assert_eq!(state.playback_gate(), Some(VoicePlaybackGate { enabled: true }));
 
         let mut other_channel = requested;
@@ -4107,6 +4176,30 @@ mod tests {
                 user_id: 42,
                 opus: b"opus".to_vec(),
             },
+        ));
+    }
+
+    #[test]
+    fn microphone_sensitivity_filters_quiet_pcm_frames() {
+        let quiet = vec![100i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        let medium = vec![1500i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        let loud = vec![4000i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+
+        assert!(voice_pcm_frame_reaches_sensitivity(
+            &quiet,
+            MicrophoneSensitivityPreset::Off,
+        ));
+        assert!(!voice_pcm_frame_reaches_sensitivity(
+            &quiet,
+            MicrophoneSensitivityPreset::High,
+        ));
+        assert!(voice_pcm_frame_reaches_sensitivity(
+            &medium,
+            MicrophoneSensitivityPreset::Medium,
+        ));
+        assert!(voice_pcm_frame_reaches_sensitivity(
+            &loud,
+            MicrophoneSensitivityPreset::Low,
         ));
     }
 

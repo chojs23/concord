@@ -21,12 +21,13 @@ pub struct DisplayOptions {
     pub member_list_width: u16,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct VoiceOptions {
     pub self_mute: bool,
     pub self_deaf: bool,
     pub allow_microphone_transmit: bool,
+    pub microphone_sensitivity: MicrophoneSensitivityPreset,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -46,6 +47,16 @@ pub enum ImagePreviewQualityPreset {
     Original,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MicrophoneSensitivityPreset {
+    Off,
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
 impl ImagePreviewQualityPreset {
     pub fn label(self) -> &'static str {
         match self {
@@ -62,6 +73,46 @@ impl ImagePreviewQualityPreset {
             Self::Balanced => Self::High,
             Self::High => Self::Original,
             Self::Original => Self::Efficient,
+        }
+    }
+}
+
+impl MicrophoneSensitivityPreset {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Low,
+            Self::Low => Self::Medium,
+            Self::Medium => Self::High,
+            Self::High => Self::Off,
+        }
+    }
+
+    pub fn peak_threshold(self) -> i16 {
+        match self {
+            Self::Off => 0,
+            Self::Low => 3500,
+            Self::Medium => 1500,
+            Self::High => 500,
+        }
+    }
+}
+
+impl Default for VoiceOptions {
+    fn default() -> Self {
+        Self {
+            self_mute: false,
+            self_deaf: false,
+            allow_microphone_transmit: false,
+            microphone_sensitivity: MicrophoneSensitivityPreset::default(),
         }
     }
 }
@@ -193,7 +244,8 @@ mod tests {
     };
 
     use super::{
-        AppOptions, DisplayOptions, ImagePreviewQualityPreset, VoiceOptions,
+        AppOptions, DisplayOptions, ImagePreviewQualityPreset, MicrophoneSensitivityPreset,
+        VoiceOptions,
         load_options_from_path, save_options_to_path,
     };
 
@@ -239,6 +291,7 @@ mod tests {
                 false,
                 false,
                 false,
+                MicrophoneSensitivityPreset::Medium,
             ),
             (
                 "[display]\nimage_preview_quality = \"original\"\n",
@@ -247,6 +300,7 @@ mod tests {
                 false,
                 false,
                 false,
+                MicrophoneSensitivityPreset::Medium,
             ),
             (
                 "[voice]\nself_mute = true\n",
@@ -255,6 +309,7 @@ mod tests {
                 true,
                 false,
                 false,
+                MicrophoneSensitivityPreset::Medium,
             ),
             (
                 "[voice]\nallow_microphone_transmit = true\n",
@@ -263,6 +318,16 @@ mod tests {
                 false,
                 false,
                 true,
+                MicrophoneSensitivityPreset::Medium,
+            ),
+            (
+                "[voice]\nmicrophone_sensitivity = \"high\"\n",
+                false,
+                ImagePreviewQualityPreset::Balanced,
+                false,
+                false,
+                false,
+                MicrophoneSensitivityPreset::High,
             ),
         ];
 
@@ -273,6 +338,7 @@ mod tests {
             self_mute,
             self_deaf,
             allow_microphone_transmit,
+            microphone_sensitivity,
         ) in cases
         {
             let config: AppOptions = toml::from_str(toml).expect("partial config should parse");
@@ -288,6 +354,7 @@ mod tests {
                 config.voice.allow_microphone_transmit,
                 allow_microphone_transmit
             );
+            assert_eq!(config.voice.microphone_sensitivity, microphone_sensitivity);
             assert_eq!(config.display.server_width, 20);
             assert_eq!(config.display.channel_list_width, 24);
             assert_eq!(config.display.member_list_width, 26);
@@ -313,6 +380,7 @@ mod tests {
                 self_mute: true,
                 self_deaf: true,
                 allow_microphone_transmit: true,
+                microphone_sensitivity: MicrophoneSensitivityPreset::Low,
             },
         };
 
