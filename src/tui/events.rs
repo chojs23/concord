@@ -122,6 +122,19 @@ fn handle_clipboard_image_paste(
     }
 }
 
+fn save_options_if_needed(state: &mut DashboardState) {
+    let Some(options) = state.take_options_save_request() else {
+        return;
+    };
+
+    match config::save_options(&options) {
+        Ok(()) => {}
+        Err(error) => state.push_effect(AppEvent::GatewayError {
+            message: format!("save options failed: {error}"),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -146,18 +159,5 @@ mod tests {
             KeyCode::Char('v'),
             KeyModifiers::CONTROL,
         )));
-    }
-}
-
-fn save_options_if_needed(state: &mut DashboardState) {
-    let Some(options) = state.take_options_save_request() else {
-        return;
-    };
-
-    match config::save_options(&options) {
-        Ok(()) => {}
-        Err(error) => state.push_effect(AppEvent::GatewayError {
-            message: format!("save options failed: {error}"),
-        }),
     }
 }
