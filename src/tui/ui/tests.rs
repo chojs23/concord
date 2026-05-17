@@ -312,6 +312,20 @@ fn header_styles_current_user_white_until_speaking() {
     let user_col = header.find("muri").expect("header should include user") as u16;
     assert_eq!(buffer[(user_col, 0)].fg, Color::White);
 
+    state.push_event(AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id: Id::new(1),
+            channel_id: Some(Id::new(11)),
+            user_id: Id::new(10),
+            session_id: None,
+            member: None,
+            deaf: false,
+            mute: false,
+            self_deaf: false,
+            self_mute: false,
+            self_stream: false,
+        },
+    });
     state.push_event(AppEvent::VoiceSpeakingUpdate {
         guild_id: Id::new(1),
         channel_id: Id::new(11),

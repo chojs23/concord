@@ -217,21 +217,6 @@ impl DiscordState {
         speaking: bool,
     ) {
         let Some(state) = self.voice.states.get_mut(&(guild_id, user_id)) else {
-            if speaking && self.session.current_user_id == Some(user_id) {
-                self.voice.states.insert(
-                    (guild_id, user_id),
-                    VoiceState {
-                        channel_id,
-                        user_id,
-                        deaf: false,
-                        mute: false,
-                        self_deaf: false,
-                        self_mute: false,
-                        self_stream: false,
-                        speaking: true,
-                    },
-                );
-            }
             return;
         };
         if state.channel_id == channel_id {
