@@ -114,7 +114,11 @@ fn action_menu_mouse_target(
     if state.is_message_action_menu_open() {
         return action_menu_row_target(
             message_action_menu_area(area, state),
-            state.selected_message_action_items().len(),
+            if state.is_message_url_picker_open() {
+                state.selected_message_url_items().len()
+            } else {
+                state.selected_message_action_items().len()
+            },
             ActionMenuTarget::Message,
             column,
             row,
@@ -147,8 +151,12 @@ fn action_menu_row_target(
 }
 
 fn message_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
-    let actions = state.selected_message_action_items();
-    (!actions.is_empty()).then(|| centered_rect(area, 54, (actions.len() as u16).saturating_add(2)))
+    let item_count = if state.is_message_url_picker_open() {
+        state.selected_message_url_items().len()
+    } else {
+        state.selected_message_action_items().len()
+    };
+    (item_count > 0).then(|| centered_rect(area, 54, (item_count as u16).saturating_add(2)))
 }
 
 fn pane_row_mouse_target(

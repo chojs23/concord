@@ -72,6 +72,52 @@ pub fn sanitize_for_display_width(value: &str) -> String {
     out
 }
 
+pub(crate) fn detected_urls(value: &str) -> Vec<String> {
+    detected_url_ranges(value)
+        .into_iter()
+        .map(|(start, end)| value[start..end].to_owned())
+        .collect()
+}
+
+pub(crate) fn detected_url_ranges(value: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut cursor = 0usize;
+
+    while let Some(start) = next_url_start(value, cursor) {
+        let mut end = value.len();
+        for (relative_index, ch) in value[start..].char_indices().skip(1) {
+            if ch.is_whitespace() || matches!(ch, '>' | ')' | ']' | '}' | '"' | '\'') {
+                end = start.saturating_add(relative_index);
+                break;
+            }
+        }
+
+        while let Some((last_index, ch)) = value[..end].char_indices().next_back()
+            && matches!(ch, '.' | ',' | '!' | '?' | ':' | ';')
+            && last_index >= start
+        {
+            end = last_index;
+        }
+
+        if start < end {
+            ranges.push((start, end));
+        }
+        cursor = end.max(start.saturating_add(1));
+    }
+
+    ranges
+}
+
+fn next_url_start(value: &str, cursor: usize) -> Option<usize> {
+    let rest = value.get(cursor..)?;
+    match (rest.find("https://"), rest.find("http://")) {
+        (Some(https), Some(http)) => Some(cursor.saturating_add(https.min(http))),
+        (Some(https), None) => Some(cursor.saturating_add(https)),
+        (None, Some(http)) => Some(cursor.saturating_add(http)),
+        (None, None) => None,
+    }
+}
+
 fn grapheme_is_likely_wide_emoji(grapheme: &str) -> bool {
     grapheme.chars().any(|c| {
         let cp = c as u32;
@@ -196,6 +242,8 @@ pub enum TextHighlightKind {
     SelfMention,
     /// Some other user is being mentioned. Subdued background for information.
     OtherMention,
+    /// A detected URL that can be opened from message actions.
+    Url,
 }
 
 pub fn render_user_mentions_with_highlights<U, R, C, H>(

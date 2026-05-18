@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{
     format::{
-        InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind,
+        InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, detected_url_ranges,
         replace_custom_emoji_markup_in_rendered_with_images, truncate_display_width, truncate_text,
     },
     message_time,
@@ -906,6 +906,7 @@ fn wrap_rendered_text_lines_with_styled_ranges(
     style: Style,
     styled_ranges: &[StyledPrefix],
 ) -> Vec<MessageContentLine> {
+    let rendered = rendered_text_with_url_highlights(rendered);
     wrap_text_with_metadata(
         &rendered.text,
         &rendered.highlights,
@@ -1425,6 +1426,22 @@ fn remap_emoji_slots_with_segments(
                     },
                 )
             })
+        })
+        .collect()
+}
+
+fn rendered_text_with_url_highlights(mut rendered: RenderedText) -> RenderedText {
+    rendered.highlights.extend(url_highlights(&rendered.text));
+    rendered
+}
+
+fn url_highlights(value: &str) -> Vec<TextHighlight> {
+    detected_url_ranges(value)
+        .into_iter()
+        .map(|(start, end)| TextHighlight {
+            start,
+            end,
+            kind: TextHighlightKind::Url,
         })
         .collect()
 }
@@ -2433,6 +2450,9 @@ pub(super) fn mention_highlight_style(kind: TextHighlightKind) -> Style {
         TextHighlightKind::OtherMention => Style::default()
             .bg(Color::Rgb(40, 50, 92))
             .fg(Color::Rgb(193, 206, 247)),
+        TextHighlightKind::Url => Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::UNDERLINED),
     }
 }
 

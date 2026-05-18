@@ -39,6 +39,7 @@ pub enum MessageActionKind {
     Delete,
     OpenThread,
     ViewImage,
+    OpenUrl,
     DownloadAttachment(usize),
     AddReaction,
     RemoveReaction(usize),
@@ -57,6 +58,17 @@ pub struct MessageActionItem {
     pub enabled: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessageActionMenuPhase {
+    Actions,
+    Urls,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageUrlItem {
+    pub url: String,
+    pub label: String,
+}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ImageViewerItem {
     pub index: usize,

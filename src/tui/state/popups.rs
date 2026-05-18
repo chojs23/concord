@@ -6,11 +6,12 @@ use crate::discord::ids::{
 
 use crate::discord::ReactionUsersInfo;
 
-use super::{EmojiReactionItem, PollVotePickerItem};
+use super::{EmojiReactionItem, MessageActionMenuPhase, PollVotePickerItem};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageActionMenuState {
     pub(super) selected: usize,
+    pub(super) phase: MessageActionMenuPhase,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

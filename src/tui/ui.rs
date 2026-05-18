@@ -25,7 +25,7 @@ use super::{
     state::{
         ChannelSwitcherItem, ChannelThreadItem, DashboardState, DisplayOptionItem,
         EmojiReactionItem, FORUM_POST_CARD_HEIGHT, FocusPane, ImageViewerItem, MessageActionItem,
-        PollVotePickerItem, discord_color, presence_color, presence_marker,
+        MessageUrlItem, PollVotePickerItem, discord_color, presence_color, presence_marker,
     },
 };
 use crate::discord::{
@@ -103,9 +103,9 @@ use self::{
         debug_log_popup_lines, emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
         emoji_reaction_picker_lines_with_existing, filtered_emoji_reaction_picker_lines,
         message_action_menu_lines, message_delete_confirmation_lines,
-        message_pin_confirmation_lines, options_popup_lines, poll_vote_picker_lines,
-        reaction_users_popup_lines, toast_area, toast_line, user_profile_popup_lines,
-        user_profile_popup_lines_with_activities,
+        message_pin_confirmation_lines, message_url_picker_lines_for_width, options_popup_lines,
+        poll_vote_picker_lines, reaction_users_popup_lines, toast_area, toast_line,
+        user_profile_popup_lines, user_profile_popup_lines_with_activities,
     },
 };
 pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
