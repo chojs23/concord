@@ -71,6 +71,8 @@ where
     }
 }
 
+#[allow(unused)] // currently unused, but I feel this may be needed in the future.
+#[cfg(test)]
 pub(super) fn open_collapsed_key<T>(set: &mut HashSet<T>, key: &T)
 where
     T: Eq + Hash,

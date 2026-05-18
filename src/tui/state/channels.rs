@@ -7,8 +7,8 @@ use crate::discord::ids::{
 use crate::discord::{AppCommand, AppEvent, ChannelState, VoiceParticipantState};
 
 use super::{
-    ActiveGuildScope, DashboardState, PaneFilterState, PendingReadAck,
-    READ_ACK_DEBOUNCE, ThreadReturnTarget,
+    ActiveGuildScope, DashboardState, PaneFilterState, PendingReadAck, READ_ACK_DEBOUNCE,
+    ThreadReturnTarget,
 };
 use super::{
     model::{
@@ -18,11 +18,14 @@ use super::{
     popups::ChannelLeaderActionState,
     presentation::{is_direct_message_channel, sort_channels, sort_direct_message_channels},
     scroll::{
-        clamp_list_viewport, clamp_selected_index, close_collapsed_key, open_collapsed_key,
+        clamp_list_viewport, clamp_selected_index, close_collapsed_key,
         pane_content_height, toggle_collapsed_key,
     },
 };
 use crate::tui::fuzzy::fuzzy_text_score;
+
+#[cfg(test)]
+use crate::tui::state::scroll::open_collapsed_key;
 
 impl DashboardState {
     pub fn open_selected_channel_actions(&mut self) {
@@ -1122,12 +1125,14 @@ impl DashboardState {
         toggle_collapsed_key(&mut self.collapsed_channel_categories, category_id);
     }
 
+    #[cfg(test)]
     pub fn open_selected_channel_category(&mut self) {
         if let Some(category_id) = self.selected_channel_category_id() {
             open_collapsed_key(&mut self.collapsed_channel_categories, &category_id);
         }
     }
 
+    #[cfg(test)]
     pub fn close_selected_channel_category(&mut self) {
         if let Some(category_id) = self.selected_channel_category_id() {
             close_collapsed_key(&mut self.collapsed_channel_categories, category_id);
@@ -1155,15 +1160,14 @@ impl DashboardState {
             .iter()
             .enumerate()
             .find(|(_, channel_entry)| {
-                Self::get_selected_channel_category_helper(channel_entry, &category_id)
+                Self::get_selected_channel_category_helper(channel_entry, category_id)
             })
             .map(|(index, _)| index)
     }
 
     pub fn close_selected_channel_category_or_unfocus(&mut self) {
         if let Some(category_id) = self.selected_channel_category_id() {
-            if self.collapsed_channel_categories.contains(&category_id)
-            {
+            if self.collapsed_channel_categories.contains(&category_id) {
                 self.focus_pane(FocusPane::Guilds);
                 return;
             }
@@ -1172,8 +1176,7 @@ impl DashboardState {
                 self.selected_channel = index;
             }
             close_collapsed_key(&mut self.collapsed_channel_categories, category_id);
-        } else if self.active_guild == ActiveGuildScope::DirectMessages
-        {
+        } else if self.active_guild == ActiveGuildScope::DirectMessages {
             self.focus_pane(FocusPane::Guilds);
         }
     }

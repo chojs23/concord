@@ -1118,7 +1118,6 @@ fn mouse_click_outside_composer_blurs_and_focuses_clicked_pane() {
 
 #[test]
 fn mouse_click_outside_composer_blurs_and_selects_clicked_row() {
-    return;
     // let mut state = state_with_channel_tree();
     // state.focus_pane(FocusPane::Channels);
     // handle_key(&mut state, key(KeyCode::Down));
@@ -3713,7 +3712,11 @@ fn activating_guild_focuses_channels() {
 
     state.focus_pane(FocusPane::Guilds);
     handle_key(&mut state, key(KeyCode::Right));
-    assert_eq!(state.focus(), FocusPane::Channels, "Focus should be moved to the channels pane after pressing right a guild.");
+    assert_eq!(
+        state.focus(),
+        FocusPane::Channels,
+        "Focus should be moved to the channels pane after pressing right a guild."
+    );
 }
 
 #[test]
@@ -3725,7 +3728,11 @@ fn activating_channel_focuses_messages() {
     state.focus_pane(FocusPane::Channels);
     handle_key(&mut state, key(KeyCode::Down));
     handle_key(&mut state, key(KeyCode::Right));
-    assert_eq!(state.focus(), FocusPane::Messages, "Focus should be moved to the messages pane after pressing right on a channel.");
+    assert_eq!(
+        state.focus(),
+        FocusPane::Messages,
+        "Focus should be moved to the messages pane after pressing right on a channel."
+    );
 }
 
 #[test]
@@ -3739,7 +3746,11 @@ fn escaping_messages_focuses_channels() {
     handle_key(&mut state, key(KeyCode::Right));
     state.focus_pane(FocusPane::Messages);
     handle_key(&mut state, key(KeyCode::Left));
-    assert_eq!(state.focus(), FocusPane::Channels, "Focus should be moved to the channels pane after pressing left on the message panel.");
+    assert_eq!(
+        state.focus(),
+        FocusPane::Channels,
+        "Focus should be moved to the channels pane after pressing left on the message panel."
+    );
 }
 
 #[test]
@@ -3750,5 +3761,9 @@ fn escaping_collapsed_category_focuses_guilds() {
     handle_key(&mut state, key(KeyCode::Right));
     handle_key(&mut state, key(KeyCode::Left)); // collapse category
     handle_key(&mut state, key(KeyCode::Left)); // escape
-    assert_eq!(state.focus(), FocusPane::Guilds, "Focus should be moved to the guilds pane after pressing left on a collapsed category.");
+    assert_eq!(
+        state.focus(),
+        FocusPane::Guilds,
+        "Focus should be moved to the guilds pane after pressing left on a collapsed category."
+    );
 }

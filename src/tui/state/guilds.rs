@@ -14,11 +14,13 @@ use super::{
     },
     popups::GuildLeaderActionState,
     scroll::{
-        clamp_list_viewport, clamp_selected_index, close_collapsed_key, open_collapsed_key,
+        clamp_list_viewport, clamp_selected_index, close_collapsed_key,
         pane_content_height, toggle_collapsed_key,
     },
 };
 use crate::tui::fuzzy::fuzzy_text_score;
+#[cfg(test)]
+use crate::tui::state::scroll::open_collapsed_key;
 
 impl DashboardState {
     pub fn guild_name(&self, guild_id: Id<GuildMarker>) -> Option<&str> {
@@ -522,6 +524,7 @@ impl DashboardState {
         }
     }
 
+    #[cfg(test)]
     pub fn open_selected_folder(&mut self) {
         if let Some(key) = self.selected_folder_key() {
             open_collapsed_key(&mut self.collapsed_folders, &key);
@@ -544,9 +547,7 @@ impl DashboardState {
     fn get_selected_guild_folder_index(&self) -> Option<usize> {
         let entries = self.guild_pane_entries();
 
-        let Some(folder_key) = self.selected_folder_key() else {
-            return None;
-        };
+        let folder_key = self.selected_folder_key()?;
         entries
             .iter()
             .enumerate()
