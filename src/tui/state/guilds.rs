@@ -14,8 +14,8 @@ use super::{
     },
     popups::GuildLeaderActionState,
     scroll::{
-        clamp_list_viewport, clamp_selected_index, close_collapsed_key,
-        pane_content_height, toggle_collapsed_key,
+        clamp_list_viewport, clamp_selected_index, close_collapsed_key, pane_content_height,
+        toggle_collapsed_key,
     },
 };
 use crate::tui::fuzzy::fuzzy_text_score;
