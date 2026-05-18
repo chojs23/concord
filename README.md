@@ -149,6 +149,7 @@ Tokens are saved under Concord's config directory in plain text. See the Securit
 - Use @mention autocomplete while composing messages
 - View full message history with pagination
 - Rich content display (embeds, attachments, stickers, and mentions)
+- Detect URLs in message bodies, markdown links, and embed content, then open them in your default browser
 - Direct message shortcuts for copy, reply, edit, delete, pin/unpin, reactions,
   image viewing, and profile lookup
 
@@ -163,6 +164,7 @@ Concord renders a practical subset of Discord-style Markdown in message bodies:
 - Bullets: `- item` and `* item`
 - Inline styles: `**bold**`, `*italic*`, and `` `inline code` ``
 - Fenced code blocks with optional language labels, rendered as compact boxes
+- Raw URLs and markdown link destinations are underlined and can be opened from message actions
 
 ### Reactions & Polls
 
@@ -261,9 +263,12 @@ Message shortcuts:
 | `R`      | Reply       | Start a reply to the selected message                      |
 | `d`      | Delete      | Open a delete confirmation before deleting the message     |
 | `e`      | Edit        | Start editing the selected message when editing is allowed |
+| `o`      | Open URL    | Open the selected message URL, or choose from multiple URLs |
 | `v`      | View image  | Open the selected message's image viewer                   |
 | `p`      | Profile     | Open the selected message author's profile                 |
 | `P`      | Pin / unpin | Open a pin or unpin confirmation for the selected message  |
+
+If a message contains more than one detected URL, `o` opens a numbered URL picker inside the leader popup so you can choose which link to open.
 
 Server actions:
 
