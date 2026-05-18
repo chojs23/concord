@@ -1754,7 +1754,7 @@ mod tests {
             emojis: Vec::new(),
             owner_id: None,
         });
-        state.confirm_selected_guild();
+        state.confirm_and_focus_selected_guild();
         state.confirm_selected_channel();
         state.push_event(AppEvent::ForumPostsLoaded {
             channel_id: forum_id,
@@ -1958,7 +1958,7 @@ mod tests {
             emojis: Vec::new(),
             owner_id: None,
         });
-        state.confirm_selected_guild();
+        state.confirm_and_focus_selected_guild();
         state.confirm_selected_channel();
 
         for id in 1..=count {
@@ -2021,7 +2021,7 @@ mod tests {
             emojis: Vec::new(),
             owner_id: None,
         });
-        state.confirm_selected_guild();
+        state.confirm_and_focus_selected_guild();
         state.confirm_selected_channel();
 
         for id in 1..=count {
@@ -2080,7 +2080,7 @@ mod tests {
             emojis: Vec::new(),
             owner_id: None,
         });
-        state.confirm_selected_guild();
+        state.confirm_and_focus_selected_guild();
         state.confirm_selected_channel();
 
         let day_one = test_message_id_for_unix_millis(1_743_465_600_000);

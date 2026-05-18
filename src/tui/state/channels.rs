@@ -7,8 +7,8 @@ use crate::discord::ids::{
 use crate::discord::{AppCommand, AppEvent, ChannelState, VoiceParticipantState};
 
 use super::{
-    ActiveGuildScope, DashboardState, PaneFilterState, PendingReadAck, READ_ACK_DEBOUNCE,
-    ThreadReturnTarget,
+    ActiveGuildScope, DashboardState, PaneFilterState, PendingReadAck,
+    READ_ACK_DEBOUNCE, ThreadReturnTarget,
 };
 use super::{
     model::{
@@ -1136,17 +1136,19 @@ impl DashboardState {
 
     #[cfg(test)]
     pub fn confirm_selected_channel(&mut self) {
-        let _ = self.confirm_selected_channel_command();
+        let _ = self.confirm_and_focus_selected_channel_command();
     }
 
-    pub fn confirm_selected_channel_command(&mut self) -> Option<AppCommand> {
+    pub fn confirm_and_focus_selected_channel_command(&mut self) -> Option<AppCommand> {
         match self.channel_pane_entries().get(self.selected_channel()) {
             Some(ChannelPaneEntry::CategoryHeader { .. }) => {
                 self.toggle_selected_channel_category();
                 None
             }
             Some(ChannelPaneEntry::Channel { state, .. }) => {
-                self.activate_channel_command(state.id)
+                let command = self.activate_channel_command(state.id);
+                self.focus_pane(FocusPane::Messages);
+                command
             }
             Some(ChannelPaneEntry::VoiceParticipant { .. }) => None,
             None => None,

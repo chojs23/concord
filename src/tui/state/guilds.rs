@@ -534,13 +534,15 @@ impl DashboardState {
         }
     }
 
-    pub fn confirm_selected_guild(&mut self) {
+    pub fn confirm_and_focus_selected_guild(&mut self) {
         match self.guild_pane_entries().get(self.selected_guild()) {
             Some(GuildPaneEntry::DirectMessages) => {
-                self.activate_guild(ActiveGuildScope::DirectMessages)
+                self.activate_guild(ActiveGuildScope::DirectMessages);
+                self.focus_pane(FocusPane::Channels);
             }
             Some(GuildPaneEntry::Guild { state, .. }) => {
-                self.activate_guild(ActiveGuildScope::Guild(state.id))
+                self.activate_guild(ActiveGuildScope::Guild(state.id));
+                self.focus_pane(FocusPane::Channels);
             }
             Some(GuildPaneEntry::FolderHeader { .. }) => self.toggle_selected_folder(),
             None => {}

@@ -496,8 +496,11 @@ fn loaded_messages_are_unselected_until_message_pane_is_focused() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+
+    state.confirm_and_focus_selected_guild();
+    state.focus_pane(FocusPane::Guilds);
     state.confirm_selected_channel();
+    state.focus_pane(FocusPane::Channels);
     for id in 1..=2u64 {
         state.push_event(AppEvent::MessageCreate {
             guild_id: Some(guild_id),
@@ -634,7 +637,7 @@ fn member_groups_use_roles_and_status_sorted_entries() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
 
     let groups = state.members_grouped();
     assert_eq!(groups.len(), 1);
@@ -702,7 +705,7 @@ fn member_role_color_uses_highest_nonzero_role_color() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
 
     let member = state.flattened_members()[0];
 
@@ -752,7 +755,7 @@ fn member_role_color_breaks_equal_position_ties_by_role_id() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
 
     let member = state.flattened_members()[0];
 
@@ -797,7 +800,7 @@ fn member_groups_show_selected_group_dm_recipients() {
         permission_overwrites: Vec::new(),
     }));
 
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
 
     let groups = state.members_grouped();
@@ -838,7 +841,7 @@ fn member_panel_title_shows_online_and_total_when_counts_available() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
 
     state.push_event(AppEvent::GuildMemberListCounts {
         guild_id,
@@ -865,7 +868,7 @@ fn member_panel_title_stays_plain_without_guild_total_or_in_direct_messages() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    guild_state.confirm_selected_guild();
+    guild_state.confirm_and_focus_selected_guild();
     assert_eq!(guild_state.member_panel_title(), Line::from(" Members "));
 
     let mut dm_state = DashboardState::new();
@@ -885,7 +888,7 @@ fn member_panel_title_stays_plain_without_guild_total_or_in_direct_messages() {
         recipients: None,
         permission_overwrites: Vec::new(),
     }));
-    dm_state.confirm_selected_guild();
+    dm_state.confirm_and_focus_selected_guild();
     assert_eq!(dm_state.member_panel_title(), Line::from(" Members "));
 }
 
@@ -967,7 +970,7 @@ fn member_groups_split_role_online_and_offline_buckets() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
 
     let groups = state.members_grouped();
     assert_eq!(
@@ -1070,7 +1073,7 @@ fn member_groups_treat_idle_and_dnd_as_online() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
 
     let groups = state.members_grouped();
     assert_eq!(groups.len(), 2);
@@ -1109,7 +1112,7 @@ fn member_groups_show_selected_dm_recipient() {
         permission_overwrites: Vec::new(),
     }));
 
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
 
     let groups = state.members_grouped();
@@ -1248,7 +1251,7 @@ fn emoji_picker_items_stay_unicode_only_for_direct_messages() {
         recipients: None,
         permission_overwrites: Vec::new(),
     }));
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     state.push_event(AppEvent::MessageCreate {
         guild_id: None,
@@ -1311,7 +1314,7 @@ fn message_creation_keeps_viewport_on_latest() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     for id in 1..=3u64 {
         state.push_event(AppEvent::MessageCreate {
@@ -2585,6 +2588,7 @@ fn normal_message_actions_do_not_include_poll_or_image_actions() {
 fn focused_pane_horizontal_scroll_is_scoped_by_focus() {
     let mut state = state_with_many_channels(1);
 
+    state.focus_pane(FocusPane::Guilds);
     state.scroll_focused_pane_horizontal_right();
     state.scroll_focused_pane_horizontal_right();
     assert_eq!(state.guild_horizontal_scroll(), 2);
@@ -3288,7 +3292,7 @@ fn guild_change_exits_pinned_message_view() {
 
     state.focus_pane(FocusPane::Guilds);
     state.move_down();
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
 
     assert_eq!(state.selected_guild_id(), Some(Id::new(2)));
     assert_eq!(state.selected_channel_id(), None);
@@ -3936,7 +3940,7 @@ fn state_with_thread_created_message_after_regular_message() -> DashboardState {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     state.push_event(AppEvent::MessageCreate {
         guild_id: Some(guild_id),
@@ -5689,7 +5693,7 @@ fn forum_posts_loaded_event_populates_selected_forum_items() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
 
     let mut preview =
@@ -5764,7 +5768,7 @@ fn missing_message_author_profile_requests_include_visible_forum_preview_authors
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     state.push_event(AppEvent::ForumPostsLoaded {
         channel_id: forum_id,
@@ -5818,7 +5822,7 @@ fn forum_post_first_page_starts_cursor_at_top_and_next_page_appends() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     state.focus_pane(FocusPane::Messages);
 
@@ -5891,7 +5895,7 @@ fn archived_forum_posts_render_after_active_posts_without_moving_shared_active_p
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
 
     state.push_event(AppEvent::ForumPostsLoaded {
@@ -5962,7 +5966,7 @@ fn forum_posts_resort_by_last_message_id_when_server_index_is_stale() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
 
     // Posts arrive in the order Discord returned them (stale): the post with
@@ -6008,7 +6012,7 @@ fn forum_pinned_posts_float_to_top_preserving_relative_order() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
 
     // Mirrors a real Discord response: posts arrive sorted by activity but a
@@ -6065,7 +6069,7 @@ fn forum_channel_upsert_inserts_new_thread_at_top_of_active_list() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
 
     state.push_event(AppEvent::ForumPostsLoaded {
@@ -6129,7 +6133,7 @@ fn forum_channel_upsert_effect_inserts_new_thread_after_snapshot_restore() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     state.push_event(AppEvent::ForumPostsLoaded {
         channel_id: forum_id,
@@ -6335,7 +6339,7 @@ fn opening_forum_channel_marks_unread_child_posts_as_read() {
             },
         ],
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
 
     assert_eq!(
         state.sidebar_channel_unread(forum_id),
@@ -6427,7 +6431,7 @@ fn hidden_forum_child_posts_are_not_listed_or_acked() {
             },
         ],
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
 
     assert_eq!(
@@ -6666,7 +6670,7 @@ fn state_with_many_forum_channel_posts(count: u64) -> DashboardState {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
 
     // Discord's `/threads/search` returns posts newest-first, so emit them in
@@ -7733,7 +7737,7 @@ fn empty_older_history_page_marks_cursor_exhausted() {
 #[test]
 fn direct_messages_are_sorted_by_latest_message_id() {
     let mut state = state_with_direct_messages();
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
 
     assert_eq!(channel_entry_names(&state), vec!["new", "old", "empty"]);
 }
@@ -7947,7 +7951,7 @@ fn channel_unread_message_count_counts_loaded_messages_after_ack() {
 fn direct_message_selection_waits_for_channel_confirmation() {
     let mut state = state_with_direct_messages();
 
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     assert_eq!(state.selected_channel_id(), None);
 
     state.confirm_selected_channel();
@@ -7957,7 +7961,7 @@ fn direct_message_selection_waits_for_channel_confirmation() {
 #[test]
 fn activate_channel_effect_moves_direct_message_cursor_to_target() {
     let mut state = state_with_direct_messages();
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     assert_eq!(state.selected_channel(), 0);
 
     state.push_effect(AppEvent::ActivateChannel {
@@ -7989,7 +7993,7 @@ fn direct_message_sorting_uses_channel_id_fallback() {
             permission_overwrites: Vec::new(),
         }));
     }
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
 
     assert_eq!(channel_entry_names(&state), vec!["newer-id", "older-id"]);
 }
@@ -8054,19 +8058,19 @@ fn restoring_discord_snapshot_recovers_missed_guilds_and_direct_messages() {
     assert_eq!(state.current_user_id, Some(Id::new(10)));
     assert_eq!(state.guild_pane_entries().len(), 2);
 
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     assert_eq!(state.selected_guild_id(), Some(guild_id));
     assert_eq!(channel_entry_names(&state), vec!["general"]);
 
     state.selected_guild = 0;
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     assert_eq!(channel_entry_names(&state), vec!["alice"]);
 }
 
 #[test]
 fn direct_message_cursor_stays_on_same_channel_after_recency_sort() {
     let mut state = state_with_direct_messages();
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.focus_pane(FocusPane::Channels);
     state.move_down();
 
@@ -8466,15 +8470,16 @@ fn moving_guild_cursor_does_not_activate_guild() {
     let mut state = state_with_two_guilds();
     state.focus_pane(FocusPane::Guilds);
 
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     let active_guild = state.selected_guild_id();
     assert!(active_guild.is_some());
 
+    state.focus_pane(FocusPane::Guilds);
     state.move_down();
     assert_eq!(state.selected_guild, 2);
     assert_eq!(state.selected_guild_id(), active_guild);
 
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     assert_ne!(state.selected_guild_id(), active_guild);
 }
 
@@ -8490,7 +8495,7 @@ fn active_guild_entry_tracks_confirmed_guild() {
         assert!(!state.is_active_guild_entry(&entries[2]));
     }
 
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     {
         let entries = state.guild_pane_entries();
         assert!(!state.is_active_guild_entry(&entries[0]));
@@ -8498,6 +8503,7 @@ fn active_guild_entry_tracks_confirmed_guild() {
         assert!(!state.is_active_guild_entry(&entries[2]));
     }
 
+    state.focus_pane(FocusPane::Guilds);
     state.move_down();
     {
         let entries = state.guild_pane_entries();
@@ -8505,7 +8511,7 @@ fn active_guild_entry_tracks_confirmed_guild() {
         assert!(!state.is_active_guild_entry(&entries[2]));
     }
 
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     let entries = state.guild_pane_entries();
     assert!(!state.is_active_guild_entry(&entries[1]));
     assert!(state.is_active_guild_entry(&entries[2]));
@@ -8549,6 +8555,7 @@ fn active_channel_entry_tracks_confirmed_channel() {
         assert!(!state.is_active_channel_entry(&entries[2]));
     }
 
+    state.focus_pane(FocusPane::Channels);
     state.move_down();
     {
         let entries = state.channel_pane_entries();
@@ -8746,6 +8753,6 @@ fn state_with_voice_channel_participant() -> DashboardState {
             self_stream: false,
         },
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state
 }

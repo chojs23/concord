@@ -456,7 +456,7 @@ pub(super) fn state_with_many_channels(count: u64) -> DashboardState {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state
 }
 
@@ -504,7 +504,7 @@ pub(super) fn state_with_members(count: u64) -> DashboardState {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state
 }
 
@@ -562,7 +562,7 @@ pub(super) fn state_with_grouped_members() -> DashboardState {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state
 }
 
@@ -633,7 +633,7 @@ pub(super) fn state_with_channel_tree() -> DashboardState {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state
 }
 
@@ -740,7 +740,7 @@ pub(super) fn state_with_custom_emojis() -> DashboardState {
         ],
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     state.push_event(AppEvent::MessageCreate {
         guild_id: Some(guild_id),
@@ -795,7 +795,7 @@ pub(super) fn state_with_single_message_content(content: &str) -> DashboardState
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     state.push_event(AppEvent::MessageCreate {
         guild_id: Some(guild_id),
@@ -869,7 +869,7 @@ pub(super) fn state_with_thread_created_message() -> DashboardState {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     state.push_event(AppEvent::MessageCreate {
         guild_id: Some(guild_id),
@@ -962,7 +962,7 @@ pub(super) fn state_with_messages_matching(
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     for id in message_ids {
         state.push_event(AppEvent::MessageCreate {

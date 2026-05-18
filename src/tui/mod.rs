@@ -371,7 +371,7 @@ mod tests {
             emojis: Vec::new(),
             owner_id: None,
         });
-        state.confirm_selected_guild();
+        state.confirm_and_focus_selected_guild();
         state.confirm_selected_channel();
         for id in 1..=count {
             push_message(&mut state, id);

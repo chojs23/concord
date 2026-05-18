@@ -1260,7 +1260,7 @@ fn active_server_mention_badge_keeps_active_name_style() {
     });
     state.set_guild_view_height(20);
     assert!(state.select_visible_pane_row(FocusPane::Guilds, 1));
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.focus_pane(FocusPane::Messages);
     state.push_event(AppEvent::ReadStateInit {
         entries: vec![ReadStateInfo {
@@ -1400,7 +1400,7 @@ fn muted_server_name_is_dimmed() {
 #[test]
 fn dm_channel_pane_shows_unread_channel_count_badge() {
     let mut state = state_with_unread_direct_messages();
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     let backend = TestBackend::new(40, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
 
@@ -1423,7 +1423,7 @@ fn dm_channel_pane_shows_unread_channel_count_badge() {
 #[test]
 fn dm_channel_pane_shows_loaded_unread_message_count_badge() {
     let mut state = state_with_unread_direct_messages_with_loaded_unread_messages(5);
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     let backend = TestBackend::new(40, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
 
@@ -1545,7 +1545,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         status: VoiceConnectionStatus::Connecting,
         message: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.set_channel_view_height(10);
 
     let backend = TestBackend::new(40, 9);
@@ -1710,7 +1710,7 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.push_event(AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo {
             guild_id,
@@ -1801,7 +1801,7 @@ fn channel_pane_filter_width_uses_filtered_entry_count() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.open_channel_pane_filter();
     for value in matching_name.chars() {
         state.push_channel_pane_filter_char(value);
@@ -1885,7 +1885,7 @@ fn muted_category_and_channel_names_are_dimmed() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.push_event(AppEvent::UserGuildNotificationSettingsInit {
         settings: vec![GuildNotificationSettingsInfo {
             guild_id: Some(guild_id),
@@ -1998,7 +1998,7 @@ fn message_viewport_author_uses_resolved_role_color() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     state.push_event(AppEvent::MessageCreate {
         guild_id: None,
@@ -2258,7 +2258,7 @@ fn history_message_author_uses_channel_guild_for_role_color() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     state.push_event(AppEvent::MessageHistoryLoaded {
         channel_id,
@@ -4436,7 +4436,7 @@ fn leader_action_popup_from_guilds_uses_server_action_title() {
 #[test]
 fn leader_action_popup_from_members_uses_member_action_title() {
     let mut state = state_with_member(42, "Neo");
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.focus_pane(FocusPane::Members);
     state.open_leader();
     state.open_leader_actions_for_focused_target();
@@ -5715,7 +5715,7 @@ fn state_with_message_id(message_id: Id<MessageMarker>, content: &str) -> Dashbo
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     state.focus_pane(FocusPane::Messages);
     state.push_event(AppEvent::MessageCreate {
@@ -5771,7 +5771,7 @@ fn state_with_forum_posts(post_count: usize) -> DashboardState {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.confirm_selected_guild();
+    state.confirm_and_focus_selected_guild();
     state.confirm_selected_channel();
     state.focus_pane(FocusPane::Messages);
 

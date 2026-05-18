@@ -281,10 +281,10 @@ fn move_action_menu_up(state: &mut DashboardState) {
 fn activate_focused_target(state: &mut DashboardState) -> Option<AppCommand> {
     match state.focus() {
         FocusPane::Guilds => {
-            state.confirm_selected_guild();
+            state.confirm_and_focus_selected_guild();
             None
         }
-        FocusPane::Channels => state.confirm_selected_channel_command(),
+        FocusPane::Channels => state.confirm_and_focus_selected_channel_command(),
         FocusPane::Messages => state.activate_selected_message_pane_item(),
         FocusPane::Members => state.show_selected_member_profile(),
     }
