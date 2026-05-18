@@ -2152,7 +2152,7 @@ fn record_voice_input_chunk(
 fn record_voice_input_pcm_stats(samples: &[i16], stats: &VoiceMicrophoneCaptureStats) {
     let peak = samples
         .iter()
-        .map(|sample| i32::from(*sample).abs() as u64)
+        .map(|sample| i32::from(*sample).unsigned_abs() as u64)
         .max()
         .unwrap_or(0);
     let clipped = samples
