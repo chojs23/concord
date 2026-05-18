@@ -217,10 +217,11 @@ Concord has a four-pane layout like Discord.
 With vim-style navigation:
 
 | Key                       | Action                               |
-| ------------------------- | ------------------------------------ |
+| ------------------------- |--------------------------------------|
 | `1` `2` `3` `4`           | Focus pane                           |
 | `Tab` / `Shift+Tab`       | Cycle focus forward / backward       |
 | `j` / `k`, arrows         | Move down / up                       |
+| `j` / `k`, arrows         | Move to previous / next pane         |
 | `J`, `K` / `H`, `L`       | Scroll viewport                      |
 | `Ctrl+d` / `Ctrl+u`       | Half-page scroll                     |
 | `Alt+h/l/←/→`             | Resize focused pane width            |
