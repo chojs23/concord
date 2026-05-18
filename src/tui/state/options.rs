@@ -4,7 +4,7 @@ use crate::config::{
 use crate::discord::AppCommand;
 
 use super::{
-    DashboardState, FocusPane,
+    DashboardState, FocusPane, OptionsCategoryShortcut,
     popups::{OptionsCategory, OptionsPopupState},
 };
 
@@ -76,6 +76,10 @@ impl DashboardState {
 
     pub fn voice_options(&self) -> VoiceOptions {
         self.voice_options
+    }
+
+    pub fn key_bindings(&self) -> &crate::tui::keybindings::KeyBindings {
+        &self.key_bindings
     }
 
     pub fn show_avatars(&self) -> bool {
@@ -217,11 +221,16 @@ impl DashboardState {
     }
 
     fn option_category_items(&self) -> Vec<DisplayOptionItem> {
+        let key_bindings = self.key_bindings();
         vec![
             DisplayOptionItem {
                 label: "Display",
                 enabled: true,
-                value: Some("d".to_owned()),
+                value: Some(
+                    key_bindings
+                        .options_category_shortcut_label(OptionsCategoryShortcut::Display)
+                        .to_owned(),
+                ),
                 gauge_percent: None,
                 effective: true,
                 description: "Image, emoji, and pane display settings.",
@@ -229,7 +238,11 @@ impl DashboardState {
             DisplayOptionItem {
                 label: "Notifications",
                 enabled: true,
-                value: Some("n".to_owned()),
+                value: Some(
+                    key_bindings
+                        .options_category_shortcut_label(OptionsCategoryShortcut::Notifications)
+                        .to_owned(),
+                ),
                 gauge_percent: None,
                 effective: true,
                 description: "Desktop notification settings.",
@@ -237,7 +250,11 @@ impl DashboardState {
             DisplayOptionItem {
                 label: "Voice",
                 enabled: true,
-                value: Some("v".to_owned()),
+                value: Some(
+                    key_bindings
+                        .options_category_shortcut_label(OptionsCategoryShortcut::Voice)
+                        .to_owned(),
+                ),
                 gauge_percent: None,
                 effective: true,
                 description: "Mute, deaf, microphone transmit, sensitivity, and volume settings.",
@@ -445,11 +462,17 @@ impl DashboardState {
     }
 
     pub fn open_options_category_shortcut(&mut self, shortcut: char) {
-        match shortcut {
-            'd' | 'D' => self.open_options_category(OptionsCategory::Display),
-            'n' | 'N' => self.open_options_category(OptionsCategory::Notifications),
-            'v' | 'V' => self.open_options_category(OptionsCategory::Voice),
-            _ => {}
+        match self.key_bindings.options_category_shortcut(shortcut) {
+            Some(OptionsCategoryShortcut::Display) => {
+                self.open_options_category(OptionsCategory::Display)
+            }
+            Some(OptionsCategoryShortcut::Notifications) => {
+                self.open_options_category(OptionsCategory::Notifications)
+            }
+            Some(OptionsCategoryShortcut::Voice) => {
+                self.open_options_category(OptionsCategory::Voice)
+            }
+            None => {}
         }
     }
 

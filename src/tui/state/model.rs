@@ -57,35 +57,6 @@ pub struct MessageActionItem {
     pub enabled: bool,
 }
 
-impl MessageActionKind {
-    fn preferred_shortcut(&self) -> Option<char> {
-        match self {
-            MessageActionKind::Reply => Some('R'),
-            MessageActionKind::Edit => Some('e'),
-            MessageActionKind::Delete => Some('d'),
-            MessageActionKind::OpenThread => Some('t'),
-            MessageActionKind::ViewImage => Some('v'),
-            MessageActionKind::DownloadAttachment(_) => Some('f'),
-            MessageActionKind::AddReaction => Some('r'),
-            MessageActionKind::RemoveReaction(_) => Some('x'),
-            MessageActionKind::ShowReactionUsers => Some('u'),
-            MessageActionKind::ShowProfile => Some('p'),
-            MessageActionKind::SetPinned(_) => Some('P'),
-            MessageActionKind::VotePollAnswer(_) => None,
-            MessageActionKind::OpenPollVotePicker => Some('c'),
-        }
-    }
-}
-
-pub fn message_action_shortcut(actions: &[MessageActionItem], index: usize) -> Option<char> {
-    let action = actions.get(index)?;
-    unique_preferred_shortcut(
-        action.kind.preferred_shortcut(),
-        actions.iter().map(|item| item.kind.preferred_shortcut()),
-    )
-    .or_else(|| indexed_shortcut(index))
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ImageViewerItem {
     pub index: usize,
@@ -126,48 +97,6 @@ pub struct VoiceActionItem {
     pub enabled: bool,
 }
 
-impl ChannelActionKind {
-    fn preferred_shortcut(&self) -> char {
-        match self {
-            ChannelActionKind::JoinVoice => 'j',
-            ChannelActionKind::LeaveVoice => 'l',
-            ChannelActionKind::LoadPinnedMessages => 'p',
-            ChannelActionKind::ShowThreads => 't',
-            ChannelActionKind::MarkAsRead => 'm',
-            ChannelActionKind::ToggleMute => 'u',
-        }
-    }
-}
-
-pub fn channel_action_shortcut(actions: &[ChannelActionItem], index: usize) -> Option<char> {
-    let action = actions.get(index)?;
-    unique_preferred_shortcut(
-        Some(action.kind.preferred_shortcut()),
-        actions
-            .iter()
-            .map(|item| Some(item.kind.preferred_shortcut())),
-    )
-    .or_else(|| indexed_shortcut(index))
-}
-
-pub fn voice_action_shortcut(actions: &[VoiceActionItem], index: usize) -> Option<char> {
-    let action = actions.get(index)?;
-    let preferred = match action.kind {
-        VoiceActionKind::QuickDeafen => 'd',
-        VoiceActionKind::QuickMute => 'm',
-        VoiceActionKind::QuickLeave => 'l',
-    };
-    unique_preferred_shortcut(
-        Some(preferred),
-        actions.iter().map(|item| match item.kind {
-            VoiceActionKind::QuickDeafen => Some('d'),
-            VoiceActionKind::QuickMute => Some('m'),
-            VoiceActionKind::QuickLeave => Some('l'),
-        }),
-    )
-    .or_else(|| indexed_shortcut(index))
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GuildActionKind {
     NoActionsYet,
@@ -180,24 +109,6 @@ pub struct GuildActionItem {
     pub kind: GuildActionKind,
     pub label: String,
     pub enabled: bool,
-}
-
-pub fn guild_action_shortcut(actions: &[GuildActionItem], index: usize) -> Option<char> {
-    let action = actions.get(index)?;
-    let preferred = match action.kind {
-        GuildActionKind::MarkAsRead => Some('m'),
-        GuildActionKind::ToggleMute => Some('u'),
-        GuildActionKind::NoActionsYet => None,
-    }?;
-    unique_preferred_shortcut(
-        Some(preferred),
-        actions.iter().map(|item| match item.kind {
-            GuildActionKind::MarkAsRead => Some('m'),
-            GuildActionKind::ToggleMute => Some('u'),
-            GuildActionKind::NoActionsYet => None,
-        }),
-    )
-    .or_else(|| indexed_shortcut(index))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -243,70 +154,6 @@ pub struct MemberActionItem {
     pub kind: MemberActionKind,
     pub label: String,
     pub enabled: bool,
-}
-
-impl MemberActionKind {
-    fn preferred_shortcut(&self) -> char {
-        match self {
-            MemberActionKind::ShowProfile => 'p',
-        }
-    }
-}
-
-pub fn member_action_shortcut(actions: &[MemberActionItem], index: usize) -> Option<char> {
-    let action = actions.get(index)?;
-    unique_preferred_shortcut(
-        Some(action.kind.preferred_shortcut()),
-        actions
-            .iter()
-            .map(|item| Some(item.kind.preferred_shortcut())),
-    )
-    .or_else(|| indexed_shortcut(index))
-}
-
-pub fn indexed_shortcut(index: usize) -> Option<char> {
-    match index {
-        0..=8 => char::from_digit(u32::try_from(index + 1).ok()?, 10),
-        9 => Some('0'),
-        _ => None,
-    }
-}
-
-pub fn emoji_reaction_shortcut(
-    reactions: &[EmojiReactionItem],
-    existing_reactions: &[ReactionEmoji],
-    index: usize,
-) -> Option<char> {
-    let reaction = reactions.get(index)?;
-    if let Some(existing_index) = existing_reactions
-        .iter()
-        .position(|existing| existing == &reaction.emoji)
-    {
-        return qwerty_shortcut(existing_index);
-    }
-
-    let regular_index = reactions[..index]
-        .iter()
-        .filter(|item| !existing_reactions.contains(&item.emoji))
-        .count();
-    indexed_shortcut(regular_index)
-}
-
-fn qwerty_shortcut(index: usize) -> Option<char> {
-    const SHORTCUTS: &[u8] = b"qwertyuiop";
-    SHORTCUTS.get(index).map(|shortcut| char::from(*shortcut))
-}
-
-fn unique_preferred_shortcut(
-    preferred: Option<char>,
-    shortcuts: impl IntoIterator<Item = Option<char>>,
-) -> Option<char> {
-    let preferred = preferred?;
-    let matches = shortcuts
-        .into_iter()
-        .filter(|shortcut| shortcut.is_some_and(|shortcut| shortcut == preferred))
-        .count();
-    (matches == 1).then_some(preferred)
 }
 
 pub const FORUM_POST_CARD_HEIGHT: usize = 5;

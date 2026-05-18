@@ -275,7 +275,7 @@ fn render_unread_banner(frame: &mut Frame, area: Rect, state: &DashboardState) {
         Some(time) => format!(" {} unread messages since {}", banner.unread_count, time),
         None => format!(" {} unread messages", banner.unread_count),
     };
-    let right = "channel action (a) to mark as read ";
+    let right = state.key_bindings().unread_mark_as_read_hint();
 
     frame.render_widget(
         Paragraph::new(unread_banner_line(left, right, area.width as usize, style)).style(style),

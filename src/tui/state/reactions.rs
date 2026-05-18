@@ -8,10 +8,7 @@ use super::emoji::{
     remaining_unicode_emoji_reaction_items,
 };
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
-use super::{
-    DashboardState, EmojiReactionItem, EmojiReactionPickerState, ReactionUsersPopupState,
-    emoji_reaction_shortcut,
-};
+use super::{DashboardState, EmojiReactionItem, EmojiReactionPickerState, ReactionUsersPopupState};
 
 impl DashboardState {
     pub fn is_emoji_reaction_picker_open(&self) -> bool {
@@ -202,8 +199,11 @@ impl DashboardState {
             .iter()
             .enumerate()
             .position(|(index, _)| {
-                emoji_reaction_shortcut(&picker.filtered_items, &picker.existing_reactions, index)
-                    == Some(shortcut)
+                self.key_bindings().emoji_reaction_shortcut(
+                    &picker.filtered_items,
+                    &picker.existing_reactions,
+                    index,
+                ) == Some(shortcut)
             })?;
         if let Some(picker) = &mut self.emoji_reaction_picker {
             picker.selected = index;

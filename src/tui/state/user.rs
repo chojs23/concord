@@ -18,7 +18,7 @@ use super::{
         MemberEntry, MemberGroup, channel_recipient_group, flatten_member_groups,
         guild_member_groups,
     },
-    model::{FocusPane, MemberActionItem, MemberActionKind, member_action_shortcut},
+    model::{FocusPane, MemberActionItem, MemberActionKind},
     popups::{MemberLeaderActionState, UserProfilePopupState},
     scroll::clamp_selected_index,
 };
@@ -128,7 +128,9 @@ impl DashboardState {
         let actions = self.selected_member_action_items();
         let index = actions.iter().enumerate().position(|(index, action)| {
             action.enabled
-                && member_action_shortcut(&actions, index)
+                && self
+                    .key_bindings()
+                    .member_action_shortcut(&actions, index)
                     .is_some_and(|candidate| candidate == shortcut)
         })?;
         self.select_member_action_row(index);

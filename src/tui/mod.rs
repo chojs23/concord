@@ -5,6 +5,7 @@ mod events;
 mod format;
 mod fuzzy;
 mod input;
+mod keybindings;
 mod login;
 mod media;
 mod message_format;

@@ -16,23 +16,40 @@ pub(in crate::tui::ui) fn render_poll_vote_picker(
     let popup = centered_rect(area, 58, (answers.len() as u16).saturating_add(2));
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(poll_vote_picker_lines(answers, selected))
-            .block(panel_block("Choose poll votes", true))
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(poll_vote_picker_lines_with_key_bindings(
+            answers,
+            selected,
+            state.key_bindings(),
+        ))
+        .block(panel_block("Choose poll votes", true))
+        .wrap(Wrap { trim: false }),
         popup,
     );
 }
 
+#[cfg(test)]
 pub(in crate::tui::ui) fn poll_vote_picker_lines(
     answers: &[PollVotePickerItem],
     selected: usize,
+) -> Vec<Line<'static>> {
+    poll_vote_picker_lines_with_key_bindings(
+        answers,
+        selected,
+        &crate::tui::keybindings::KeyBindings,
+    )
+}
+
+fn poll_vote_picker_lines_with_key_bindings(
+    answers: &[PollVotePickerItem],
+    selected: usize,
+    key_bindings: &crate::tui::keybindings::KeyBindings,
 ) -> Vec<Line<'static>> {
     answers
         .iter()
         .enumerate()
         .map(|(index, answer)| {
             let marker = if index == selected { "› " } else { "  " };
-            let shortcut = shortcut_prefix(indexed_shortcut(index));
+            let shortcut = shortcut_prefix(key_bindings.indexed_shortcut(index));
             let checkbox = if answer.selected { "[x]" } else { "[ ]" };
             let mut style = Style::default();
             if index == selected {

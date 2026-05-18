@@ -13,8 +13,7 @@ use super::{
 use super::{
     model::{
         ChannelActionItem, ChannelActionKind, ChannelBranch, ChannelPaneEntry, ChannelThreadItem,
-        FORUM_POST_CARD_HEIGHT, FocusPane, MUTE_ACTION_DURATIONS, channel_action_shortcut,
-        indexed_shortcut,
+        FORUM_POST_CARD_HEIGHT, FocusPane, MUTE_ACTION_DURATIONS,
     },
     popups::ChannelLeaderActionState,
     presentation::{is_direct_message_channel, sort_channels, sort_direct_message_channels},
@@ -615,7 +614,9 @@ impl DashboardState {
                 let actions = self.selected_channel_action_items();
                 let index = actions.iter().enumerate().position(|(index, action)| {
                     action.enabled
-                        && channel_action_shortcut(&actions, index)
+                        && self
+                            .key_bindings()
+                            .channel_action_shortcut(&actions, index)
                             .is_some_and(|candidate| candidate == shortcut)
                 })?;
                 self.select_channel_action_row(index);
@@ -626,16 +627,17 @@ impl DashboardState {
                     .selected_channel_mute_duration_items()
                     .iter()
                     .enumerate()
-                    .position(|(index, _)| indexed_shortcut(index) == Some(shortcut))?;
+                    .position(|(index, _)| {
+                        self.key_bindings().indexed_shortcut(index) == Some(shortcut)
+                    })?;
                 self.select_channel_action_row(index);
                 self.activate_selected_channel_action()
             }
             ChannelLeaderActionState::Threads { .. } => {
                 let threads = self.channel_action_thread_items();
-                let index = threads
-                    .iter()
-                    .enumerate()
-                    .position(|(index, _)| indexed_shortcut(index) == Some(shortcut))?;
+                let index = threads.iter().enumerate().position(|(index, _)| {
+                    self.key_bindings().indexed_shortcut(index) == Some(shortcut)
+                })?;
                 self.select_channel_action_row(index);
                 self.activate_selected_channel_action()
             }

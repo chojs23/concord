@@ -22,6 +22,7 @@ use super::format::{
     MentionTarget, RenderedText, TextHighlightKind, render_user_mentions,
     render_user_mentions_with_highlights, replace_custom_emoji_markup,
 };
+use super::keybindings::{KeyBindings, OptionsCategoryShortcut};
 mod channel_switcher;
 mod channels;
 mod composer;
@@ -71,8 +72,6 @@ pub use model::{
     FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, ImageViewerItem,
     MemberActionItem, MessageActionItem, MessageActionKind, MuteActionDurationItem,
     PollVotePickerItem, ThreadMessagePreview, ThreadSummary, VoiceActionItem,
-    channel_action_shortcut, emoji_reaction_shortcut, guild_action_shortcut, indexed_shortcut,
-    member_action_shortcut, message_action_shortcut, voice_action_shortcut,
 };
 #[allow(unused_imports)]
 pub use model::{
@@ -301,6 +300,7 @@ pub struct DashboardState {
     display_options: DisplayOptions,
     notification_options: NotificationOptions,
     voice_options: VoiceOptions,
+    key_bindings: KeyBindings,
     options_save_pending: bool,
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
@@ -442,6 +442,7 @@ impl DashboardState {
             display_options: DisplayOptions::default(),
             notification_options: NotificationOptions::default(),
             voice_options: VoiceOptions::default(),
+            key_bindings: KeyBindings,
             options_save_pending: false,
             current_user: None,
             current_user_id: None,
@@ -981,7 +982,9 @@ impl DashboardState {
             let actions = self.selected_message_action_items();
             let matched = actions.iter().enumerate().any(|(index, action)| {
                 action.enabled
-                    && message_action_shortcut(&actions, index)
+                    && self
+                        .key_bindings
+                        .message_action_shortcut(&actions, index)
                         .is_some_and(|candidate| candidate == shortcut)
             });
             return (
@@ -996,12 +999,14 @@ impl DashboardState {
                 self.selected_guild_mute_duration_items()
                     .iter()
                     .enumerate()
-                    .any(|(index, _)| indexed_shortcut(index) == Some(shortcut))
+                    .any(|(index, _)| self.key_bindings.indexed_shortcut(index) == Some(shortcut))
             } else {
                 let actions = self.selected_guild_action_items();
                 actions.iter().enumerate().any(|(index, action)| {
                     action.enabled
-                        && guild_action_shortcut(&actions, index)
+                        && self
+                            .key_bindings
+                            .guild_action_shortcut(&actions, index)
                             .is_some_and(|candidate| candidate == shortcut)
                 })
             };
@@ -1018,7 +1023,9 @@ impl DashboardState {
                     let actions = self.selected_channel_action_items();
                     actions.iter().enumerate().any(|(index, action)| {
                         action.enabled
-                            && channel_action_shortcut(&actions, index)
+                            && self
+                                .key_bindings
+                                .channel_action_shortcut(&actions, index)
                                 .is_some_and(|candidate| candidate == shortcut)
                     })
                 }
@@ -1026,12 +1033,12 @@ impl DashboardState {
                     .selected_channel_mute_duration_items()
                     .iter()
                     .enumerate()
-                    .any(|(index, _)| indexed_shortcut(index) == Some(shortcut)),
+                    .any(|(index, _)| self.key_bindings.indexed_shortcut(index) == Some(shortcut)),
                 ChannelLeaderActionState::Threads { .. } => self
                     .channel_action_thread_items()
                     .iter()
                     .enumerate()
-                    .any(|(index, _)| indexed_shortcut(index) == Some(shortcut)),
+                    .any(|(index, _)| self.key_bindings.indexed_shortcut(index) == Some(shortcut)),
             };
             return (
                 matched,
@@ -1044,7 +1051,9 @@ impl DashboardState {
             let actions = self.selected_member_action_items();
             let matched = actions.iter().enumerate().any(|(index, action)| {
                 action.enabled
-                    && member_action_shortcut(&actions, index)
+                    && self
+                        .key_bindings
+                        .member_action_shortcut(&actions, index)
                         .is_some_and(|candidate| candidate == shortcut)
             });
             return (
@@ -1058,7 +1067,9 @@ impl DashboardState {
             let actions = self.selected_voice_action_items();
             let matched = actions.iter().enumerate().any(|(index, action)| {
                 action.enabled
-                    && voice_action_shortcut(&actions, index)
+                    && self
+                        .key_bindings
+                        .voice_action_shortcut(&actions, index)
                         .is_some_and(|candidate| candidate == shortcut)
             });
             return (

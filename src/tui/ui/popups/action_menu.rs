@@ -62,15 +62,12 @@ fn leader_popup_lines(state: &DashboardState, max_lines: usize) -> Vec<Line<'sta
     let lines = if state.is_leader_action_mode() {
         leader_action_lines(state)
     } else {
-        vec![
-            leader_shortcut_line('1', "toggle Servers", true),
-            leader_shortcut_line('2', "toggle Channels", true),
-            leader_shortcut_line('4', "toggle Members", true),
-            leader_shortcut_line('a', "Actions", true),
-            leader_shortcut_line('o', "Options", true),
-            leader_shortcut_line('v', "Voice", true),
-            leader_shortcut_text_line("Space", "Switch channels", true),
-        ]
+        state
+            .key_bindings()
+            .leader_root_shortcuts()
+            .into_iter()
+            .map(|(key, label)| leader_shortcut_text_line(key, label, true))
+            .collect()
     };
     leader_shortcut_grid_lines(lines, max_lines)
 }
@@ -123,7 +120,10 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .enumerate()
             .map(|(index, action)| {
                 leader_shortcut_line(
-                    message_action_shortcut(&actions, index).unwrap_or(' '),
+                    state
+                        .key_bindings()
+                        .message_action_shortcut(&actions, index)
+                        .unwrap_or(' '),
                     &action.label,
                     action.enabled,
                 )
@@ -137,7 +137,11 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
                 .iter()
                 .enumerate()
                 .map(|(index, item)| {
-                    leader_shortcut_line(indexed_shortcut(index).unwrap_or(' '), item.label, true)
+                    leader_shortcut_line(
+                        state.key_bindings().indexed_shortcut(index).unwrap_or(' '),
+                        item.label,
+                        true,
+                    )
                 })
                 .collect();
         }
@@ -147,7 +151,10 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .enumerate()
             .map(|(index, action)| {
                 leader_shortcut_line(
-                    guild_action_shortcut(&actions, index).unwrap_or(' '),
+                    state
+                        .key_bindings()
+                        .guild_action_shortcut(&actions, index)
+                        .unwrap_or(' '),
                     &action.label,
                     action.enabled,
                 )
@@ -160,7 +167,11 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .into_iter()
             .enumerate()
             .map(|(index, thread)| {
-                leader_shortcut_line(indexed_shortcut(index).unwrap_or(' '), &thread.label, true)
+                leader_shortcut_line(
+                    state.key_bindings().indexed_shortcut(index).unwrap_or(' '),
+                    &thread.label,
+                    true,
+                )
             })
             .collect();
     }
@@ -171,7 +182,11 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
                 .iter()
                 .enumerate()
                 .map(|(index, item)| {
-                    leader_shortcut_line(indexed_shortcut(index).unwrap_or(' '), item.label, true)
+                    leader_shortcut_line(
+                        state.key_bindings().indexed_shortcut(index).unwrap_or(' '),
+                        item.label,
+                        true,
+                    )
                 })
                 .collect();
         }
@@ -181,7 +196,10 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .enumerate()
             .map(|(index, action)| {
                 leader_shortcut_line(
-                    channel_action_shortcut(&actions, index).unwrap_or(' '),
+                    state
+                        .key_bindings()
+                        .channel_action_shortcut(&actions, index)
+                        .unwrap_or(' '),
                     &action.label,
                     action.enabled,
                 )
@@ -195,7 +213,10 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .enumerate()
             .map(|(index, action)| {
                 leader_shortcut_line(
-                    member_action_shortcut(&actions, index).unwrap_or(' '),
+                    state
+                        .key_bindings()
+                        .member_action_shortcut(&actions, index)
+                        .unwrap_or(' '),
                     &action.label,
                     action.enabled,
                 )
@@ -209,7 +230,10 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .enumerate()
             .map(|(index, action)| {
                 leader_shortcut_line(
-                    voice_action_shortcut(&actions, index).unwrap_or(' '),
+                    state
+                        .key_bindings()
+                        .voice_action_shortcut(&actions, index)
+                        .unwrap_or(' '),
                     &action.label,
                     action.enabled,
                 )
@@ -263,23 +287,40 @@ pub(in crate::tui::ui) fn render_message_action_menu(
     let popup = centered_rect(area, 54, (actions.len() as u16).saturating_add(2));
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(message_action_menu_lines(&actions, selected))
-            .block(panel_block("Message actions", true))
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(message_action_menu_lines_with_key_bindings(
+            &actions,
+            selected,
+            state.key_bindings(),
+        ))
+        .block(panel_block("Message actions", true))
+        .wrap(Wrap { trim: false }),
         popup,
     );
 }
 
+#[cfg(test)]
 pub(in crate::tui::ui) fn message_action_menu_lines(
     actions: &[MessageActionItem],
     selected: usize,
+) -> Vec<Line<'static>> {
+    message_action_menu_lines_with_key_bindings(
+        actions,
+        selected,
+        &crate::tui::keybindings::KeyBindings,
+    )
+}
+
+fn message_action_menu_lines_with_key_bindings(
+    actions: &[MessageActionItem],
+    selected: usize,
+    key_bindings: &crate::tui::keybindings::KeyBindings,
 ) -> Vec<Line<'static>> {
     actions
         .iter()
         .enumerate()
         .map(|(index, action)| {
             let marker = if index == selected { "› " } else { "  " };
-            let shortcut = shortcut_prefix(message_action_shortcut(actions, index));
+            let shortcut = shortcut_prefix(key_bindings.message_action_shortcut(actions, index));
             let label = if action.enabled {
                 action.label.to_owned()
             } else {

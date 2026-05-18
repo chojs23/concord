@@ -1,7 +1,5 @@
 use super::*;
 
-const IMAGE_VIEWER_DOWNLOAD_HINT: &str = "[d] download image";
-
 pub(in crate::tui::ui) fn render_image_viewer(
     frame: &mut Frame,
     area: Rect,
@@ -62,7 +60,7 @@ pub(in crate::tui::ui) fn render_image_viewer(
     }
     if let Some(hint_area) = hint_area {
         frame.render_widget(
-            Paragraph::new(IMAGE_VIEWER_DOWNLOAD_HINT)
+            Paragraph::new(state.key_bindings().image_viewer_download_hint())
                 .style(Style::default().fg(DIM))
                 .alignment(Alignment::Center),
             hint_area,

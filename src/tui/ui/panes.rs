@@ -1186,9 +1186,15 @@ pub(super) fn composer_text(state: &DashboardState, width: u16) -> String {
         // SEND is allowed but ATTACH is not. Tell the user uploads will be
         // refused before they try.
         if !state.can_attach_in_selected_channel() {
-            return format!("press i to write in {label} (attachments disabled)");
+            return format!(
+                "press {} to write in {label} (attachments disabled)",
+                state.key_bindings().start_composer_key_label()
+            );
         }
-        return format!("press i to write in {label}");
+        return format!(
+            "press {} to write in {label}",
+            state.key_bindings().start_composer_key_label()
+        );
     }
 
     "select a channel to write a message".to_owned()

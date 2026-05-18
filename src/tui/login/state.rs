@@ -1,5 +1,7 @@
 use crate::discord::password_auth::{MfaChallenge, MfaMethod};
 
+use super::super::keybindings::KeyBindings;
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum LoginScreen {
     ModeSelect,
@@ -17,6 +19,7 @@ pub(super) enum PasswordField {
 }
 
 pub(super) struct LoginState {
+    pub(super) key_bindings: KeyBindings,
     pub(super) screen: LoginScreen,
     pub(super) notice: Option<String>,
     pub(super) error: Option<String>,
@@ -85,6 +88,7 @@ impl QrViewState {
 impl LoginState {
     pub(super) fn new(notice: Option<String>) -> Self {
         Self {
+            key_bindings: KeyBindings,
             screen: LoginScreen::ModeSelect,
             notice,
             error: None,

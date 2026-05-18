@@ -1,7 +1,7 @@
 use crate::discord::AppCommand;
 
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
-use super::{DashboardState, PollVotePickerItem, PollVotePickerState, indexed_shortcut};
+use super::{DashboardState, PollVotePickerItem, PollVotePickerState};
 
 impl DashboardState {
     pub fn is_poll_vote_picker_open(&self) -> bool {
@@ -41,6 +41,7 @@ impl DashboardState {
 
     pub fn toggle_poll_vote_answer_shortcut(&mut self, shortcut: char) {
         let shortcut = shortcut.to_ascii_lowercase();
+        let key_bindings = self.key_bindings().clone();
         let Some(picker) = &mut self.poll_vote_picker else {
             return;
         };
@@ -48,7 +49,7 @@ impl DashboardState {
             .answers
             .iter()
             .enumerate()
-            .position(|(index, _)| indexed_shortcut(index) == Some(shortcut))
+            .position(|(index, _)| key_bindings.indexed_shortcut(index) == Some(shortcut))
         else {
             return;
         };

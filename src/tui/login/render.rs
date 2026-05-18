@@ -51,15 +51,25 @@ pub(super) fn render(frame: &mut Frame, state: &LoginState) {
 
 fn render_mode_select(frame: &mut Frame, state: &LoginState) {
     let area = centered_rect(72, 18, frame.area());
+    let key_bindings = &state.key_bindings;
 
     let mut lines = vec![
         Line::from(Span::styled("Discord login", accent_style())),
         Line::from(""),
         Line::from("Choose how you want to log in:"),
         Line::from(""),
-        choice_line("[t] ", "Use Discord token (paste an existing token)"),
-        choice_line("[e] ", "Login with email/phone and password"),
-        choice_line("[q] ", "Login with QR code (scan with the mobile app)"),
+        choice_line(
+            key_bindings.login_token_choice_prefix(),
+            "Use Discord token (paste an existing token)",
+        ),
+        choice_line(
+            key_bindings.login_password_choice_prefix(),
+            "Login with email/phone and password",
+        ),
+        choice_line(
+            key_bindings.login_qr_choice_prefix(),
+            "Login with QR code (scan with the mobile app)",
+        ),
         Line::from(""),
     ];
 
@@ -73,7 +83,7 @@ fn render_mode_select(frame: &mut Frame, state: &LoginState) {
     }
 
     lines.push(Line::from(Span::styled(
-        "Esc cancel | Ctrl-C quit",
+        key_bindings.login_cancel_quit_label(),
         dim_style(),
     )));
 
@@ -83,6 +93,7 @@ fn render_mode_select(frame: &mut Frame, state: &LoginState) {
 fn render_token_input(frame: &mut Frame, state: &LoginState) {
     let area = centered_rect(72, 14, frame.area());
     let masked = mask_chars(&state.token_input);
+    let key_bindings = &state.key_bindings;
 
     let persistence_text = if state.notice.is_some() {
         "Paste your token below. It will be used for this session.".to_owned()
@@ -116,7 +127,7 @@ fn render_token_input(frame: &mut Frame, state: &LoginState) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Enter save | Esc back | Ctrl-C quit",
+        key_bindings.login_token_input_label(),
         dim_style(),
     )));
 
@@ -125,6 +136,7 @@ fn render_token_input(frame: &mut Frame, state: &LoginState) {
 
 fn render_password_input(frame: &mut Frame, state: &LoginState) {
     let area = centered_rect(82, 18, frame.area());
+    let key_bindings = &state.key_bindings;
     let password_mask = mask_chars(&state.password.password);
     let login_active = state.password.active_field == PasswordField::Login;
     let password_active = state.password.active_field == PasswordField::Password;
@@ -168,7 +180,7 @@ fn render_password_input(frame: &mut Frame, state: &LoginState) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Tab switch field | Enter login | Esc back | Ctrl-C quit",
+        key_bindings.login_password_input_label(),
         dim_style(),
     )));
 
@@ -177,6 +189,7 @@ fn render_password_input(frame: &mut Frame, state: &LoginState) {
 
 fn render_mfa_select(frame: &mut Frame, state: &LoginState) {
     let area = centered_rect(82, 16, frame.area());
+    let key_bindings = &state.key_bindings;
     let mut lines = vec![
         Line::from(Span::styled("Multi-factor authentication", accent_style())),
         Line::from(""),
@@ -185,10 +198,16 @@ fn render_mfa_select(frame: &mut Frame, state: &LoginState) {
     ];
 
     if mfa_supports(&state.password.mfa, MfaMethod::Totp) {
-        lines.push(choice_line("[t] ", "Use TOTP authenticator code"));
+        lines.push(choice_line(
+            key_bindings.login_totp_choice_prefix(),
+            "Use TOTP authenticator code",
+        ));
     }
     if mfa_supports(&state.password.mfa, MfaMethod::Sms) {
-        lines.push(choice_line("[s] ", "Send SMS verification code"));
+        lines.push(choice_line(
+            key_bindings.login_sms_choice_prefix(),
+            "Send SMS verification code",
+        ));
     }
     lines.push(Line::from(""));
 
@@ -204,7 +223,7 @@ fn render_mfa_select(frame: &mut Frame, state: &LoginState) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Esc back | Ctrl-C quit",
+        key_bindings.login_back_quit_label(),
         dim_style(),
     )));
 
@@ -213,6 +232,7 @@ fn render_mfa_select(frame: &mut Frame, state: &LoginState) {
 
 pub(super) fn render_mfa_code(frame: &mut Frame, state: &LoginState) {
     let area = centered_rect(82, 15, frame.area());
+    let key_bindings = &state.key_bindings;
     let method = match state.password.mfa_method {
         Some(MfaMethod::Totp) => "TOTP code",
         Some(MfaMethod::Sms) => "SMS code",
@@ -241,7 +261,7 @@ pub(super) fn render_mfa_code(frame: &mut Frame, state: &LoginState) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Enter verify | Esc choose method | Ctrl-C quit",
+        key_bindings.login_mfa_code_label(),
         dim_style(),
     )));
 
@@ -250,6 +270,7 @@ pub(super) fn render_mfa_code(frame: &mut Frame, state: &LoginState) {
 
 fn render_qr(frame: &mut Frame, state: &LoginState) {
     let area = frame.area();
+    let key_bindings = &state.key_bindings;
 
     let mut lines = vec![
         Line::from(Span::styled("Discord QR login", accent_style())),
@@ -293,7 +314,7 @@ fn render_qr(frame: &mut Frame, state: &LoginState) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Esc cancel | Ctrl-C quit",
+        key_bindings.login_cancel_quit_label(),
         dim_style(),
     )));
 

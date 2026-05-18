@@ -1,222 +1,17 @@
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyEvent, KeyEventKind};
 
 use crate::discord::{AppCommand, MessageAttachmentUpload};
+use crate::tui::keybindings::{
+    ChannelSwitcherAction, ComposerAction, ComposerCompletionAction, DashboardAction,
+    DebugLogPopupAction, EmojiReactionPickerAction, GlobalAction, ImageViewerAction, LeaderAction,
+    LeaderActionMenuAction, MessageActionMenuAction, MessageConfirmationAction,
+    MessageShortcutAction, OptionsPopupAction, PaneFilterAction, PollVotePickerAction,
+    ProfilePopupAction, ReactionUsersPopupAction, ScrollAction, SelectionAction,
+};
 
 use super::super::state::{DashboardState, FocusPane};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SelectionAction {
-    Next,
-    Previous,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SelectionKeySet {
-    TextSafe,
-    Navigation,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ScrollAction {
-    Down,
-    Up,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum GlobalAction {
-    ToggleDebugLog,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DashboardAction {
-    Select(SelectionAction),
-    MessageShortcut(MessageShortcutAction),
-    Back,
-    Quit,
-    StartComposer,
-    OpenLeader,
-    FocusPane(FocusPane),
-    CycleFocusForward,
-    CycleFocusBackward,
-    OpenFocusedPaneFilter,
-    ResizePaneLeft,
-    ResizePaneRight,
-    HalfPageDown,
-    HalfPageUp,
-    JumpTop,
-    JumpBottom,
-    ScrollMessageViewportTop,
-    ScrollMessageViewportBottom,
-    ScrollMessageViewportDown,
-    ScrollMessageViewportUp,
-    ScrollHorizontalLeft,
-    ScrollHorizontalRight,
-    ActivateFocused,
-    OpenTreeNode,
-    CloseTreeNode,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MessageShortcutAction {
-    CopyContent,
-    OpenReactionPicker,
-    Reply,
-    OpenDeleteConfirmation,
-    Edit,
-    ViewImage,
-    ShowProfile,
-    OpenPinConfirmation,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LeaderAction {
-    TogglePane(FocusPane),
-    OpenActions,
-    OpenOptions,
-    OpenVoiceActions,
-    OpenChannelSwitcher,
-    Close,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ChannelSwitcherAction {
-    Select(SelectionAction),
-    Close,
-    ActivateSelected,
-    MoveQueryCursorLeft,
-    MoveQueryCursorRight,
-    DeleteQueryChar,
-    InsertQueryChar(char),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LeaderActionMenuAction {
-    BackOrClose,
-    Close,
-    ActivateShortcut(char),
-    UnknownClose,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MessageActionMenuAction {
-    Close,
-    Select(SelectionAction),
-    ActivateSelected,
-    ActivateShortcut(char),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MessageDeleteConfirmationAction {
-    Confirm,
-    Cancel,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MessagePinConfirmationAction {
-    Confirm,
-    Cancel,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ImageViewerAction {
-    Close,
-    Previous,
-    Next,
-    DownloadSelected,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ProfilePopupAction {
-    Close,
-    Scroll(ScrollAction),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PaneFilterAction {
-    Select(SelectionAction),
-    Close,
-    Confirm,
-    DeleteChar,
-    MoveCursorLeft,
-    MoveCursorRight,
-    Ignore,
-    InsertChar(char),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum EmojiReactionPickerAction {
-    Select(SelectionAction),
-    Close,
-    StartFilter,
-    DeleteFilterChar,
-    InsertFilterChar(char),
-    ActivateSelected,
-    ActivateShortcut(char),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PollVotePickerAction {
-    Close,
-    Select(SelectionAction),
-    ToggleSelected,
-    Submit,
-    ToggleShortcut(char),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ReactionUsersPopupAction {
-    Close,
-    Scroll(ScrollAction),
-    PageDown,
-    PageUp,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DebugLogPopupAction {
-    Close,
-    Ignore,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum OptionsPopupAction {
-    Close,
-    OpenCategory(char),
-    Select(SelectionAction),
-    ToggleSelected,
-    AdjustSelected(i8),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ComposerAction {
-    OpenInEditor,
-    InsertNewline,
-    Submit,
-    Close,
-    ClearInput,
-    RemoveLastAttachment,
-    DeletePreviousChar,
-    DeleteNextChar,
-    MoveCursorUp,
-    MoveCursorDown,
-    MoveCursorWordLeft,
-    MoveCursorLeft,
-    MoveCursorWordRight,
-    MoveCursorRight,
-    MoveCursorHome,
-    MoveCursorEnd,
-    InsertChar(char),
-    Ignore,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ComposerCompletionAction {
-    Select(SelectionAction),
-    Confirm,
-    Cancel,
-    FallThrough,
-}
 
 pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     if key.kind != KeyEventKind::Press {
@@ -249,7 +44,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
 
     // The debug log is intentionally available from regular dashboard modes,
     // but popups and the composer get first chance to handle their own keys.
-    if matches!(global_action(key), Some(GlobalAction::ToggleDebugLog)) {
+    if matches!(
+        state.key_bindings().global_action(key),
+        Some(GlobalAction::ToggleDebugLog)
+    ) {
         state.toggle_debug_log_popup();
         return None;
     }
@@ -295,7 +93,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         }
     }
 
-    dashboard_action(key, focus).and_then(|action| handle_dashboard_action(state, focus, action))
+    state
+        .key_bindings()
+        .dashboard_action(key, focus)
+        .and_then(|action| handle_dashboard_action(state, focus, action))
 }
 
 fn handle_dashboard_action(
@@ -469,7 +270,7 @@ fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCom
         return handle_leader_action_key(state, key);
     }
 
-    match leader_action(key) {
+    match state.key_bindings().leader_action(key) {
         LeaderAction::TogglePane(pane) => {
             state.toggle_pane_visibility(pane);
             state.close_leader();
@@ -488,7 +289,7 @@ fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCom
 }
 
 fn handle_channel_switcher_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match channel_switcher_action(key) {
+    match state.key_bindings().channel_switcher_action(key) {
         Some(ChannelSwitcherAction::Select(SelectionAction::Next)) => {
             state.move_channel_switcher_down();
             None
@@ -525,7 +326,7 @@ fn handle_channel_switcher_key(state: &mut DashboardState, key: KeyEvent) -> Opt
 }
 
 fn handle_leader_action_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match leader_action_menu_action(key) {
+    match state.key_bindings().leader_action_menu_action(key) {
         LeaderActionMenuAction::BackOrClose => {
             if state.back_channel_leader_action() || state.back_guild_leader_action() {
                 return None;
@@ -694,7 +495,7 @@ fn hex_value(value: u8) -> Option<u8> {
 }
 
 fn handle_message_action_menu_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match message_action_menu_action(key) {
+    match state.key_bindings().message_action_menu_action(key) {
         Some(MessageActionMenuAction::Close) => state.close_message_action_menu(),
         Some(MessageActionMenuAction::Select(SelectionAction::Next)) => {
             state.move_message_action_down()
@@ -718,9 +519,9 @@ fn handle_message_delete_confirmation_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    match message_delete_confirmation_action(key) {
-        Some(MessageDeleteConfirmationAction::Confirm) => state.confirm_message_delete(),
-        Some(MessageDeleteConfirmationAction::Cancel) => {
+    match state.key_bindings().message_confirmation_action(key) {
+        Some(MessageConfirmationAction::Confirm) => state.confirm_message_delete(),
+        Some(MessageConfirmationAction::Cancel) => {
             state.close_message_delete_confirmation();
             None
         }
@@ -732,9 +533,9 @@ fn handle_message_pin_confirmation_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    match message_pin_confirmation_action(key) {
-        Some(MessagePinConfirmationAction::Confirm) => state.confirm_message_pin(),
-        Some(MessagePinConfirmationAction::Cancel) => {
+    match state.key_bindings().message_confirmation_action(key) {
+        Some(MessageConfirmationAction::Confirm) => state.confirm_message_pin(),
+        Some(MessageConfirmationAction::Cancel) => {
             state.close_message_pin_confirmation();
             None
         }
@@ -743,7 +544,7 @@ fn handle_message_pin_confirmation_key(
 }
 
 fn handle_image_viewer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match image_viewer_action(key) {
+    match state.key_bindings().image_viewer_action(key) {
         Some(ImageViewerAction::Close) => state.close_image_viewer(),
         Some(ImageViewerAction::Previous) => state.move_image_viewer_previous(),
         Some(ImageViewerAction::Next) => state.move_image_viewer_next(),
@@ -757,7 +558,7 @@ fn handle_image_viewer_key(state: &mut DashboardState, key: KeyEvent) -> Option<
 }
 
 fn handle_user_profile_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match profile_popup_action(key) {
+    match state.key_bindings().profile_popup_action(key) {
         Some(ProfilePopupAction::Close) => state.close_user_profile_popup(),
         Some(ProfilePopupAction::Scroll(ScrollAction::Down)) => {
             state.scroll_user_profile_popup_down()
@@ -778,7 +579,7 @@ fn handle_pane_filter_key(
     focus: FocusPane,
 ) -> Option<Option<AppCommand>> {
     let guild_focused = focus == FocusPane::Guilds;
-    match pane_filter_action(key) {
+    match state.key_bindings().pane_filter_action(key) {
         Some(PaneFilterAction::Select(SelectionAction::Next)) => {
             state.move_down();
             Some(None)
@@ -844,7 +645,10 @@ fn handle_emoji_reaction_picker_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    match emoji_reaction_picker_action(key, state.is_filtering_emoji_reactions()) {
+    match state
+        .key_bindings()
+        .emoji_reaction_picker_action(key, state.is_filtering_emoji_reactions())
+    {
         Some(EmojiReactionPickerAction::Select(SelectionAction::Next)) => {
             state.move_emoji_reaction_down()
         }
@@ -880,7 +684,7 @@ fn handle_emoji_reaction_picker_key(
 }
 
 fn handle_poll_vote_picker_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match poll_vote_picker_action(key) {
+    match state.key_bindings().poll_vote_picker_action(key) {
         Some(PollVotePickerAction::Close) => {
             state.close_poll_vote_picker();
             return None;
@@ -906,7 +710,7 @@ fn handle_reaction_users_popup_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    match reaction_users_popup_action(key) {
+    match state.key_bindings().reaction_users_popup_action(key) {
         Some(ReactionUsersPopupAction::Close) => state.close_reaction_users_popup(),
         Some(ReactionUsersPopupAction::Scroll(ScrollAction::Down)) => {
             state.scroll_reaction_users_popup_down()
@@ -923,7 +727,7 @@ fn handle_reaction_users_popup_key(
 }
 
 fn handle_debug_log_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match debug_log_popup_action(key) {
+    match state.key_bindings().debug_log_popup_action(key) {
         DebugLogPopupAction::Close => state.close_debug_log_popup(),
         DebugLogPopupAction::Ignore => {}
     }
@@ -932,7 +736,10 @@ fn handle_debug_log_popup_key(state: &mut DashboardState, key: KeyEvent) -> Opti
 }
 
 fn handle_options_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match options_popup_action(key, state.is_options_category_picker_open()) {
+    match state
+        .key_bindings()
+        .options_popup_action(key, state.is_options_category_picker_open())
+    {
         Some(OptionsPopupAction::Close) => state.close_options_popup(),
         Some(OptionsPopupAction::OpenCategory(shortcut)) => {
             state.open_options_category_shortcut(shortcut)
@@ -949,417 +756,6 @@ fn handle_options_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option
     None
 }
 
-fn dashboard_action(key: KeyEvent, focus: FocusPane) -> Option<DashboardAction> {
-    if focus == FocusPane::Messages
-        && let Some(action) = message_shortcut_action(key)
-    {
-        return Some(DashboardAction::MessageShortcut(action));
-    }
-
-    if let Some(action) = selection_action(key, SelectionKeySet::Navigation) {
-        return Some(DashboardAction::Select(action));
-    }
-
-    match key.code {
-        KeyCode::Esc => Some(DashboardAction::Back),
-        KeyCode::Char('q') => Some(DashboardAction::Quit),
-        KeyCode::Char('i') => Some(DashboardAction::StartComposer),
-        KeyCode::Char(' ') if is_shortcut_key(key) => Some(DashboardAction::OpenLeader),
-        KeyCode::Char('1') => Some(DashboardAction::FocusPane(FocusPane::Guilds)),
-        KeyCode::Char('2') => Some(DashboardAction::FocusPane(FocusPane::Channels)),
-        KeyCode::Char('3') => Some(DashboardAction::FocusPane(FocusPane::Messages)),
-        KeyCode::Char('4') => Some(DashboardAction::FocusPane(FocusPane::Members)),
-        KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
-            Some(DashboardAction::CycleFocusBackward)
-        }
-        KeyCode::BackTab => Some(DashboardAction::CycleFocusBackward),
-        KeyCode::Tab => Some(DashboardAction::CycleFocusForward),
-        KeyCode::Char('/') if is_shortcut_key(key) => Some(DashboardAction::OpenFocusedPaneFilter),
-        KeyCode::Char('h') | KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
-            Some(DashboardAction::ResizePaneLeft)
-        }
-        KeyCode::Char('l') | KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
-            Some(DashboardAction::ResizePaneRight)
-        }
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            Some(DashboardAction::HalfPageDown)
-        }
-        KeyCode::PageDown => Some(DashboardAction::HalfPageDown),
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            Some(DashboardAction::HalfPageUp)
-        }
-        KeyCode::PageUp => Some(DashboardAction::HalfPageUp),
-        KeyCode::Home if focus == FocusPane::Messages => {
-            Some(DashboardAction::ScrollMessageViewportTop)
-        }
-        KeyCode::Char('g') | KeyCode::Home => Some(DashboardAction::JumpTop),
-        KeyCode::End if focus == FocusPane::Messages => {
-            Some(DashboardAction::ScrollMessageViewportBottom)
-        }
-        KeyCode::Char('G') | KeyCode::End => Some(DashboardAction::JumpBottom),
-        KeyCode::Char('J') if focus == FocusPane::Messages => {
-            Some(DashboardAction::ScrollMessageViewportDown)
-        }
-        KeyCode::Char('K') if focus == FocusPane::Messages => {
-            Some(DashboardAction::ScrollMessageViewportUp)
-        }
-        KeyCode::Char('H') => Some(DashboardAction::ScrollHorizontalLeft),
-        KeyCode::Char('L') => Some(DashboardAction::ScrollHorizontalRight),
-        KeyCode::Enter => Some(DashboardAction::ActivateFocused),
-        KeyCode::Char('l') | KeyCode::Right => Some(DashboardAction::OpenTreeNode),
-        KeyCode::Char('h') | KeyCode::Left => Some(DashboardAction::CloseTreeNode),
-        _ => None,
-    }
-}
-
-fn message_shortcut_action(key: KeyEvent) -> Option<MessageShortcutAction> {
-    if !is_shortcut_key(key) {
-        return None;
-    }
-
-    match key.code {
-        KeyCode::Char('y') => Some(MessageShortcutAction::CopyContent),
-        KeyCode::Char('r') => Some(MessageShortcutAction::OpenReactionPicker),
-        KeyCode::Char('R') => Some(MessageShortcutAction::Reply),
-        KeyCode::Char('d') => Some(MessageShortcutAction::OpenDeleteConfirmation),
-        KeyCode::Char('e') => Some(MessageShortcutAction::Edit),
-        KeyCode::Char('v') => Some(MessageShortcutAction::ViewImage),
-        KeyCode::Char('p') => Some(MessageShortcutAction::ShowProfile),
-        KeyCode::Char('P') => Some(MessageShortcutAction::OpenPinConfirmation),
-        _ => None,
-    }
-}
-
-fn global_action(key: KeyEvent) -> Option<GlobalAction> {
-    match key.code {
-        KeyCode::Char('`') => Some(GlobalAction::ToggleDebugLog),
-        _ => None,
-    }
-}
-
-fn leader_action(key: KeyEvent) -> LeaderAction {
-    match key.code {
-        KeyCode::Char('1') if is_shortcut_key(key) => LeaderAction::TogglePane(FocusPane::Guilds),
-        KeyCode::Char('2') if is_shortcut_key(key) => LeaderAction::TogglePane(FocusPane::Channels),
-        KeyCode::Char('4') if is_shortcut_key(key) => LeaderAction::TogglePane(FocusPane::Members),
-        KeyCode::Char('a') if is_shortcut_key(key) => LeaderAction::OpenActions,
-        KeyCode::Char('o') if is_shortcut_key(key) => LeaderAction::OpenOptions,
-        KeyCode::Char('v') if is_shortcut_key(key) => LeaderAction::OpenVoiceActions,
-        KeyCode::Char(' ') if is_shortcut_key(key) => LeaderAction::OpenChannelSwitcher,
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => LeaderAction::Close,
-        KeyCode::Esc => LeaderAction::Close,
-        _ => LeaderAction::Close,
-    }
-}
-
-fn channel_switcher_action(key: KeyEvent) -> Option<ChannelSwitcherAction> {
-    if let Some(action) = selection_action(key, SelectionKeySet::TextSafe) {
-        return Some(ChannelSwitcherAction::Select(action));
-    }
-
-    match key.code {
-        KeyCode::Esc => Some(ChannelSwitcherAction::Close),
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            Some(ChannelSwitcherAction::Close)
-        }
-        KeyCode::Enter => Some(ChannelSwitcherAction::ActivateSelected),
-        KeyCode::Left => Some(ChannelSwitcherAction::MoveQueryCursorLeft),
-        KeyCode::Right => Some(ChannelSwitcherAction::MoveQueryCursorRight),
-        KeyCode::Backspace => Some(ChannelSwitcherAction::DeleteQueryChar),
-        KeyCode::Char(value) if is_shortcut_key(key) => {
-            Some(ChannelSwitcherAction::InsertQueryChar(value))
-        }
-        _ => None,
-    }
-}
-
-fn leader_action_menu_action(key: KeyEvent) -> LeaderActionMenuAction {
-    match key.code {
-        KeyCode::Esc => LeaderActionMenuAction::BackOrClose,
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            LeaderActionMenuAction::Close
-        }
-        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
-            LeaderActionMenuAction::ActivateShortcut(shortcut)
-        }
-        code if is_left_key(code) => LeaderActionMenuAction::BackOrClose,
-        _ => LeaderActionMenuAction::UnknownClose,
-    }
-}
-
-fn message_action_menu_action(key: KeyEvent) -> Option<MessageActionMenuAction> {
-    if key.code == KeyCode::Esc {
-        return Some(MessageActionMenuAction::Close);
-    }
-    if let Some(action) = selection_action(key, SelectionKeySet::Navigation) {
-        return Some(MessageActionMenuAction::Select(action));
-    }
-
-    match key.code {
-        code if is_confirm_key(code) => Some(MessageActionMenuAction::ActivateSelected),
-        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
-            Some(MessageActionMenuAction::ActivateShortcut(shortcut))
-        }
-        _ => None,
-    }
-}
-
-fn message_delete_confirmation_action(key: KeyEvent) -> Option<MessageDeleteConfirmationAction> {
-    match key.code {
-        KeyCode::Enter | KeyCode::Char('y') if is_shortcut_key(key) => {
-            Some(MessageDeleteConfirmationAction::Confirm)
-        }
-        KeyCode::Esc | KeyCode::Char('n') if is_shortcut_key(key) => {
-            Some(MessageDeleteConfirmationAction::Cancel)
-        }
-        _ => None,
-    }
-}
-
-fn message_pin_confirmation_action(key: KeyEvent) -> Option<MessagePinConfirmationAction> {
-    match key.code {
-        KeyCode::Enter | KeyCode::Char('y') if is_shortcut_key(key) => {
-            Some(MessagePinConfirmationAction::Confirm)
-        }
-        KeyCode::Esc | KeyCode::Char('n') if is_shortcut_key(key) => {
-            Some(MessagePinConfirmationAction::Cancel)
-        }
-        _ => None,
-    }
-}
-
-fn image_viewer_action(key: KeyEvent) -> Option<ImageViewerAction> {
-    match key.code {
-        KeyCode::Esc => Some(ImageViewerAction::Close),
-        code if is_left_key(code) => Some(ImageViewerAction::Previous),
-        code if is_right_key(code) => Some(ImageViewerAction::Next),
-        KeyCode::Char('d') if is_shortcut_key(key) => Some(ImageViewerAction::DownloadSelected),
-        _ => None,
-    }
-}
-
-fn profile_popup_action(key: KeyEvent) -> Option<ProfilePopupAction> {
-    match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => Some(ProfilePopupAction::Close),
-        _ => scroll_action(key).map(ProfilePopupAction::Scroll),
-    }
-}
-
-fn pane_filter_action(key: KeyEvent) -> Option<PaneFilterAction> {
-    if let Some(action) = selection_action(key, SelectionKeySet::TextSafe) {
-        return Some(PaneFilterAction::Select(action));
-    }
-
-    match key.code {
-        KeyCode::Esc => Some(PaneFilterAction::Close),
-        KeyCode::Enter => Some(PaneFilterAction::Confirm),
-        KeyCode::Backspace => Some(PaneFilterAction::DeleteChar),
-        KeyCode::Left => Some(PaneFilterAction::MoveCursorLeft),
-        KeyCode::Right => Some(PaneFilterAction::MoveCursorRight),
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            Some(PaneFilterAction::Ignore)
-        }
-        KeyCode::Char(value) if is_shortcut_key(key) => Some(PaneFilterAction::InsertChar(value)),
-        _ => None,
-    }
-}
-
-fn emoji_reaction_picker_action(
-    key: KeyEvent,
-    filtering: bool,
-) -> Option<EmojiReactionPickerAction> {
-    let key_set = if filtering {
-        SelectionKeySet::TextSafe
-    } else {
-        SelectionKeySet::Navigation
-    };
-    if let Some(action) = selection_action(key, key_set) {
-        return Some(EmojiReactionPickerAction::Select(action));
-    }
-
-    match key.code {
-        KeyCode::Esc => Some(EmojiReactionPickerAction::Close),
-        KeyCode::Backspace if filtering => Some(EmojiReactionPickerAction::DeleteFilterChar),
-        KeyCode::Char('/') if is_shortcut_key(key) && !filtering => {
-            Some(EmojiReactionPickerAction::StartFilter)
-        }
-        KeyCode::Char(value) if is_shortcut_key(key) && filtering => {
-            Some(EmojiReactionPickerAction::InsertFilterChar(value))
-        }
-        code if is_confirm_key(code) => Some(EmojiReactionPickerAction::ActivateSelected),
-        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
-            Some(EmojiReactionPickerAction::ActivateShortcut(shortcut))
-        }
-        _ => None,
-    }
-}
-
-fn poll_vote_picker_action(key: KeyEvent) -> Option<PollVotePickerAction> {
-    if key.code == KeyCode::Esc {
-        return Some(PollVotePickerAction::Close);
-    }
-    if let Some(action) = selection_action(key, SelectionKeySet::Navigation) {
-        return Some(PollVotePickerAction::Select(action));
-    }
-
-    match key.code {
-        KeyCode::Char(' ') => Some(PollVotePickerAction::ToggleSelected),
-        KeyCode::Enter => Some(PollVotePickerAction::Submit),
-        KeyCode::Char(shortcut) if is_shortcut_key(key) => {
-            Some(PollVotePickerAction::ToggleShortcut(shortcut))
-        }
-        _ => None,
-    }
-}
-
-fn reaction_users_popup_action(key: KeyEvent) -> Option<ReactionUsersPopupAction> {
-    if key.code == KeyCode::Esc {
-        return Some(ReactionUsersPopupAction::Close);
-    }
-    if let Some(action) = scroll_action(key) {
-        return Some(ReactionUsersPopupAction::Scroll(action));
-    }
-
-    match key.code {
-        KeyCode::PageDown => Some(ReactionUsersPopupAction::PageDown),
-        KeyCode::PageUp => Some(ReactionUsersPopupAction::PageUp),
-        _ => None,
-    }
-}
-
-fn debug_log_popup_action(key: KeyEvent) -> DebugLogPopupAction {
-    match key.code {
-        KeyCode::Esc | KeyCode::Char('`') => DebugLogPopupAction::Close,
-        _ => DebugLogPopupAction::Ignore,
-    }
-}
-
-fn options_popup_action(key: KeyEvent, category_picker_open: bool) -> Option<OptionsPopupAction> {
-    if matches!(
-        key.code,
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('o')
-    ) {
-        return Some(OptionsPopupAction::Close);
-    }
-    if let Some(action) = selection_action(key, SelectionKeySet::Navigation) {
-        return Some(OptionsPopupAction::Select(action));
-    }
-
-    match key.code {
-        KeyCode::Char(shortcut @ ('d' | 'D' | 'n' | 'N' | 'v' | 'V'))
-            if is_shortcut_key(key) && category_picker_open =>
-        {
-            Some(OptionsPopupAction::OpenCategory(shortcut))
-        }
-        KeyCode::Char('h') | KeyCode::Char('H') if is_shortcut_key(key) => Some(
-            OptionsPopupAction::AdjustSelected(if key.code == KeyCode::Char('H') {
-                -10
-            } else {
-                -1
-            }),
-        ),
-        KeyCode::Char('l') | KeyCode::Char('L') if is_shortcut_key(key) => Some(
-            OptionsPopupAction::AdjustSelected(if key.code == KeyCode::Char('L') {
-                10
-            } else {
-                1
-            }),
-        ),
-        code if is_confirm_key(code) => Some(OptionsPopupAction::ToggleSelected),
-        _ => None,
-    }
-}
-
-fn composer_action(key: KeyEvent) -> ComposerAction {
-    match key.code {
-        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            ComposerAction::OpenInEditor
-        }
-        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
-            ComposerAction::InsertNewline
-        }
-        KeyCode::Enter => ComposerAction::Submit,
-        KeyCode::Esc => ComposerAction::Close,
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            ComposerAction::ClearInput
-        }
-        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            ComposerAction::RemoveLastAttachment
-        }
-        KeyCode::Backspace => ComposerAction::DeletePreviousChar,
-        KeyCode::Delete => ComposerAction::DeleteNextChar,
-        KeyCode::Up => ComposerAction::MoveCursorUp,
-        KeyCode::Down => ComposerAction::MoveCursorDown,
-        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            ComposerAction::MoveCursorWordLeft
-        }
-        KeyCode::Left => ComposerAction::MoveCursorLeft,
-        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            ComposerAction::MoveCursorWordRight
-        }
-        KeyCode::Right => ComposerAction::MoveCursorRight,
-        KeyCode::Home => ComposerAction::MoveCursorHome,
-        KeyCode::End => ComposerAction::MoveCursorEnd,
-        KeyCode::Char(value) if is_shortcut_key(key) => ComposerAction::InsertChar(value),
-        _ => ComposerAction::Ignore,
-    }
-}
-
-fn composer_completion_action(key: KeyEvent) -> ComposerCompletionAction {
-    if let Some(action) = selection_action(key, SelectionKeySet::TextSafe) {
-        return ComposerCompletionAction::Select(action);
-    }
-
-    match key.code {
-        KeyCode::Tab | KeyCode::Enter => ComposerCompletionAction::Confirm,
-        KeyCode::Esc => ComposerCompletionAction::Cancel,
-        _ => ComposerCompletionAction::FallThrough,
-    }
-}
-
-fn selection_action(key: KeyEvent, key_set: SelectionKeySet) -> Option<SelectionAction> {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    match key.code {
-        KeyCode::Down => Some(SelectionAction::Next),
-        KeyCode::Up => Some(SelectionAction::Previous),
-        KeyCode::Char('n') if ctrl => Some(SelectionAction::Next),
-        KeyCode::Char('p') if ctrl => Some(SelectionAction::Previous),
-        KeyCode::Char('j') if key_set == SelectionKeySet::Navigation && is_shortcut_key(key) => {
-            Some(SelectionAction::Next)
-        }
-        KeyCode::Char('k') if key_set == SelectionKeySet::Navigation && is_shortcut_key(key) => {
-            Some(SelectionAction::Previous)
-        }
-        _ => None,
-    }
-}
-
-fn scroll_action(key: KeyEvent) -> Option<ScrollAction> {
-    match key.code {
-        KeyCode::Char('j') if is_shortcut_key(key) => Some(ScrollAction::Down),
-        KeyCode::Char('k') if is_shortcut_key(key) => Some(ScrollAction::Up),
-        KeyCode::Down => Some(ScrollAction::Down),
-        KeyCode::Up => Some(ScrollAction::Up),
-        _ => None,
-    }
-}
-
-fn is_left_key(code: KeyCode) -> bool {
-    matches!(code, KeyCode::Char('h') | KeyCode::Left)
-}
-
-fn is_right_key(code: KeyCode) -> bool {
-    matches!(code, KeyCode::Char('l') | KeyCode::Right)
-}
-
-fn is_confirm_key(code: KeyCode) -> bool {
-    matches!(code, KeyCode::Enter | KeyCode::Char(' '))
-}
-
-fn is_shortcut_key(key: KeyEvent) -> bool {
-    key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT
-}
-
 fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     if state.composer_mention_query().is_some()
         && let Some(command) = handle_mention_picker_key(state, key)
@@ -1372,7 +768,7 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
         return command;
     }
 
-    match composer_action(key) {
+    match state.key_bindings().composer_action(key) {
         ComposerAction::OpenInEditor => {
             state.request_open_composer_in_editor();
             None
@@ -1478,7 +874,7 @@ fn handle_composer_completion_picker_key(
     mut confirm: impl FnMut(&mut DashboardState) -> bool,
     mut cancel: impl FnMut(&mut DashboardState),
 ) -> Option<Option<AppCommand>> {
-    match composer_completion_action(key) {
+    match state.key_bindings().composer_completion_action(key) {
         ComposerCompletionAction::Select(SelectionAction::Next) => {
             move_selection(state, 1);
             Some(None)

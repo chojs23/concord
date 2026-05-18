@@ -1,4 +1,4 @@
-use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event as TerminalEvent, KeyEventKind};
 
 use crate::discord::{
     password_auth::{MfaChallenge, MfaMethod},
@@ -6,6 +6,10 @@ use crate::discord::{
 };
 
 use super::state::{LoginScreen, LoginState, PasswordField};
+use crate::tui::keybindings::{
+    LoginBusyAction, LoginGlobalAction, LoginMfaSelectAction, LoginModeSelectAction,
+    LoginPasswordInputAction, LoginTextInputAction,
+};
 
 pub(super) enum LoginAction {
     Submit(String),
@@ -37,32 +41,35 @@ pub(super) fn handle_terminal(state: &mut LoginState, event: TerminalEvent) -> O
     if key.kind != KeyEventKind::Press {
         return None;
     }
-    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+    if matches!(
+        state.key_bindings.login_global_action(key),
+        Some(LoginGlobalAction::Cancel)
+    ) {
         return Some(LoginAction::Cancel);
     }
 
     match state.screen {
-        LoginScreen::ModeSelect => match key.code {
-            KeyCode::Char('t') | KeyCode::Char('T') => {
+        LoginScreen::ModeSelect => match state.key_bindings.login_mode_select_action(key) {
+            Some(LoginModeSelectAction::StartToken) => {
                 state.screen = LoginScreen::TokenInput;
                 state.error = None;
                 None
             }
-            KeyCode::Char('e') | KeyCode::Char('E') => {
+            Some(LoginModeSelectAction::StartPassword) => {
                 state.screen = LoginScreen::PasswordInput;
                 state.error = None;
                 None
             }
-            KeyCode::Char('q') | KeyCode::Char('Q') => {
+            Some(LoginModeSelectAction::StartQr) => {
                 state.screen = LoginScreen::Qr;
                 state.error = None;
                 Some(LoginAction::StartQr)
             }
-            KeyCode::Esc => Some(LoginAction::Cancel),
-            _ => None,
+            Some(LoginModeSelectAction::Cancel) => Some(LoginAction::Cancel),
+            None => None,
         },
-        LoginScreen::TokenInput => match key.code {
-            KeyCode::Enter => {
+        LoginScreen::TokenInput => match state.key_bindings.login_text_input_action(key) {
+            LoginTextInputAction::Submit => {
                 let token = state.token_input.trim();
                 if token.is_empty() {
                     state.error = Some("Token cannot be empty".to_string());
@@ -74,36 +81,36 @@ pub(super) fn handle_terminal(state: &mut LoginState, event: TerminalEvent) -> O
                     Some(LoginAction::Submit(token.to_string()))
                 }
             }
-            KeyCode::Esc => {
+            LoginTextInputAction::Back => {
                 state.screen = LoginScreen::ModeSelect;
                 state.token_input.clear();
                 state.error = None;
                 None
             }
-            KeyCode::Backspace => {
+            LoginTextInputAction::DeletePreviousChar => {
                 state.token_input.pop();
                 state.error = None;
                 None
             }
-            KeyCode::Char(value) => {
+            LoginTextInputAction::InsertChar(value) => {
                 state.token_input.push(value);
                 state.error = None;
                 None
             }
-            _ => None,
+            LoginTextInputAction::Ignore => None,
         },
         LoginScreen::PasswordInput => {
             if state.password.in_progress {
-                return match key.code {
-                    KeyCode::Esc => {
+                return match state.key_bindings.login_busy_action(key) {
+                    LoginBusyAction::Cancel => {
                         state.screen = LoginScreen::ModeSelect;
                         Some(LoginAction::CancelPasswordLogin)
                     }
-                    _ => None,
+                    LoginBusyAction::Ignore => None,
                 };
             }
-            match key.code {
-                KeyCode::Enter => {
+            match state.key_bindings.login_password_input_action(key) {
+                LoginPasswordInputAction::Submit => {
                     let login = state.password.login.trim().to_string();
                     let password = state.password.password.clone();
                     if login.is_empty() || password.is_empty() {
@@ -114,7 +121,7 @@ pub(super) fn handle_terminal(state: &mut LoginState, event: TerminalEvent) -> O
                         Some(LoginAction::StartPasswordLogin { login, password })
                     }
                 }
-                KeyCode::Tab | KeyCode::Down | KeyCode::Up => {
+                LoginPasswordInputAction::SwitchField => {
                     state.password.active_field = match state.password.active_field {
                         PasswordField::Login => PasswordField::Password,
                         PasswordField::Password => PasswordField::Login,
@@ -122,38 +129,38 @@ pub(super) fn handle_terminal(state: &mut LoginState, event: TerminalEvent) -> O
                     state.error = None;
                     None
                 }
-                KeyCode::Esc => {
+                LoginPasswordInputAction::Back => {
                     state.screen = LoginScreen::ModeSelect;
                     state.error = None;
                     Some(LoginAction::CancelPasswordLogin)
                 }
-                KeyCode::Backspace => {
+                LoginPasswordInputAction::DeletePreviousChar => {
                     active_password_input(state).pop();
                     state.error = None;
                     None
                 }
-                KeyCode::Char(value) => {
+                LoginPasswordInputAction::InsertChar(value) => {
                     active_password_input(state).push(value);
                     state.error = None;
                     None
                 }
-                _ => None,
+                LoginPasswordInputAction::Ignore => None,
             }
         }
         LoginScreen::MfaSelect => {
             if state.password.in_progress {
-                return match key.code {
-                    KeyCode::Esc => {
+                return match state.key_bindings.login_busy_action(key) {
+                    LoginBusyAction::Cancel => {
                         state.screen = LoginScreen::PasswordInput;
                         Some(LoginAction::CancelPasswordLogin)
                     }
-                    _ => None,
+                    LoginBusyAction::Ignore => None,
                 };
             }
-            match key.code {
-                KeyCode::Char('t') | KeyCode::Char('T') => {
-                    if mfa_supports(&state.password.mfa, MfaMethod::Totp) {
-                        state.password.mfa_method = Some(MfaMethod::Totp);
+            match state.key_bindings.login_mfa_select_action(key) {
+                LoginMfaSelectAction::Choose(method) if method == MfaMethod::Totp => {
+                    if mfa_supports(&state.password.mfa, method) {
+                        state.password.mfa_method = Some(method);
                         state.password.mfa_code.clear();
                         state.password.status =
                             "Enter the TOTP code from your authenticator app.".to_string();
@@ -161,8 +168,8 @@ pub(super) fn handle_terminal(state: &mut LoginState, event: TerminalEvent) -> O
                     }
                     None
                 }
-                KeyCode::Char('s') | KeyCode::Char('S') => {
-                    if mfa_supports(&state.password.mfa, MfaMethod::Sms)
+                LoginMfaSelectAction::Choose(method) if method == MfaMethod::Sms => {
+                    if mfa_supports(&state.password.mfa, method)
                         && let Some(challenge) = &state.password.mfa
                     {
                         return Some(LoginAction::SendMfaSms {
@@ -171,28 +178,29 @@ pub(super) fn handle_terminal(state: &mut LoginState, event: TerminalEvent) -> O
                     }
                     None
                 }
-                KeyCode::Esc => {
+                LoginMfaSelectAction::Choose(_) => None,
+                LoginMfaSelectAction::Back => {
                     state.screen = LoginScreen::PasswordInput;
                     state.password.reset_sensitive();
                     state.error = None;
                     None
                 }
-                _ => None,
+                LoginMfaSelectAction::Ignore => None,
             }
         }
         LoginScreen::MfaCode => {
             if state.password.in_progress {
-                return match key.code {
-                    KeyCode::Esc => {
+                return match state.key_bindings.login_busy_action(key) {
+                    LoginBusyAction::Cancel => {
                         state.screen = LoginScreen::PasswordInput;
                         state.error = None;
                         Some(LoginAction::CancelPasswordLogin)
                     }
-                    _ => None,
+                    LoginBusyAction::Ignore => None,
                 };
             }
-            match key.code {
-                KeyCode::Enter => {
+            match state.key_bindings.login_text_input_action(key) {
+                LoginTextInputAction::Submit => {
                     let code = state.password.mfa_code.trim().to_string();
                     if code.is_empty() {
                         state.error = Some("MFA code cannot be empty".to_string());
@@ -216,31 +224,31 @@ pub(super) fn handle_terminal(state: &mut LoginState, event: TerminalEvent) -> O
                         login_instance_id: challenge.login_instance_id.clone(),
                     })
                 }
-                KeyCode::Esc => {
+                LoginTextInputAction::Back => {
                     state.screen = LoginScreen::MfaSelect;
                     state.password.mfa_code.clear();
                     state.error = None;
                     None
                 }
-                KeyCode::Backspace => {
+                LoginTextInputAction::DeletePreviousChar => {
                     state.password.mfa_code.pop();
                     state.error = None;
                     None
                 }
-                KeyCode::Char(value) => {
+                LoginTextInputAction::InsertChar(value) => {
                     state.password.mfa_code.push(value);
                     state.error = None;
                     None
                 }
-                _ => None,
+                LoginTextInputAction::Ignore => None,
             }
         }
-        LoginScreen::Qr => match key.code {
-            KeyCode::Esc => {
+        LoginScreen::Qr => match state.key_bindings.login_busy_action(key) {
+            LoginBusyAction::Cancel => {
                 state.screen = LoginScreen::ModeSelect;
                 Some(LoginAction::CancelQr)
             }
-            _ => None,
+            LoginBusyAction::Ignore => None,
         },
     }
 }

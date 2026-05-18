@@ -10,7 +10,7 @@ use super::{ActiveGuildScope, DashboardState, FolderKey, PaneFilterState};
 use super::{
     model::{
         FocusPane, GuildActionItem, GuildActionKind, GuildBranch, GuildPaneEntry,
-        MUTE_ACTION_DURATIONS, guild_action_shortcut, indexed_shortcut,
+        MUTE_ACTION_DURATIONS,
     },
     popups::GuildLeaderActionState,
     scroll::{
@@ -450,7 +450,9 @@ impl DashboardState {
                 let actions = self.selected_guild_action_items();
                 let index = actions.iter().enumerate().position(|(index, action)| {
                     action.enabled
-                        && guild_action_shortcut(&actions, index)
+                        && self
+                            .key_bindings()
+                            .guild_action_shortcut(&actions, index)
                             .is_some_and(|candidate| candidate == shortcut)
                 })?;
                 self.select_guild_action_row(index);
@@ -461,7 +463,9 @@ impl DashboardState {
                     .selected_guild_mute_duration_items()
                     .iter()
                     .enumerate()
-                    .position(|(index, _)| indexed_shortcut(index) == Some(shortcut))?;
+                    .position(|(index, _)| {
+                        self.key_bindings().indexed_shortcut(index) == Some(shortcut)
+                    })?;
                 self.select_guild_action_row(index);
                 self.activate_selected_guild_action()
             }

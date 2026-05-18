@@ -51,7 +51,9 @@ impl DashboardState {
         let actions = self.selected_voice_action_items();
         let index = actions.iter().enumerate().find_map(|(index, action)| {
             let matches = action.enabled
-                && super::voice_action_shortcut(&actions, index)
+                && self
+                    .key_bindings()
+                    .voice_action_shortcut(&actions, index)
                     .is_some_and(|candidate| candidate == shortcut);
             matches.then_some(index)
         })?;

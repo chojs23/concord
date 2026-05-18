@@ -48,6 +48,7 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
             reactions,
             selected,
             EmojiReactionPickerRenderOptions {
+                key_bindings: state.key_bindings(),
                 max_visible_items: visible_items,
                 thumbnail_urls: &ready_urls,
                 existing_reactions,
@@ -222,6 +223,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines(
         reactions,
         selected,
         EmojiReactionPickerRenderOptions {
+            key_bindings: &crate::tui::keybindings::KeyBindings,
             max_visible_items,
             thumbnail_urls,
             existing_reactions: &[],
@@ -244,6 +246,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_for_width(
         reactions,
         selected,
         EmojiReactionPickerRenderOptions {
+            key_bindings: &crate::tui::keybindings::KeyBindings,
             max_visible_items,
             thumbnail_urls,
             existing_reactions: &[],
@@ -266,6 +269,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_with_existing(
         reactions,
         selected,
         EmojiReactionPickerRenderOptions {
+            key_bindings: &crate::tui::keybindings::KeyBindings,
             max_visible_items,
             thumbnail_urls,
             existing_reactions,
@@ -288,6 +292,7 @@ pub(in crate::tui::ui) fn filtered_emoji_reaction_picker_lines(
         reactions,
         selected,
         EmojiReactionPickerRenderOptions {
+            key_bindings: &crate::tui::keybindings::KeyBindings,
             max_visible_items,
             thumbnail_urls,
             existing_reactions: &[],
@@ -299,6 +304,7 @@ pub(in crate::tui::ui) fn filtered_emoji_reaction_picker_lines(
 }
 
 struct EmojiReactionPickerRenderOptions<'a> {
+    key_bindings: &'a crate::tui::keybindings::KeyBindings,
     max_visible_items: usize,
     thumbnail_urls: &'a [String],
     existing_reactions: &'a [crate::discord::ReactionEmoji],
@@ -322,7 +328,7 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
         .map(|(offset, reaction)| {
             let index = visible_range.start + offset;
             let marker = if index == selected { "› " } else { "  " };
-            let shortcut = shortcut_prefix(emoji_reaction_shortcut(
+            let shortcut = shortcut_prefix(options.key_bindings.emoji_reaction_shortcut(
                 reactions,
                 options.existing_reactions,
                 index,
@@ -363,7 +369,10 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
         lines.push(Line::from(vec![
             Span::styled("Filter ", Style::default().fg(DIM)),
             Span::styled(
-                format!("/{filter}"),
+                format!(
+                    "{}{filter}",
+                    options.key_bindings.emoji_reaction_filter_prefix()
+                ),
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             ),
         ]));
