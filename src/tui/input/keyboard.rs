@@ -212,7 +212,7 @@ fn handle_dashboard_action(
         DashboardAction::CloseTreeNode => {
             match focus {
                 FocusPane::Guilds => state.close_selected_folder(),
-                FocusPane::Channels => state.close_selected_channel_category(),
+                FocusPane::Channels => state.close_selected_channel_category_or_unfocus(),
                 FocusPane::Messages => state.focus_pane(FocusPane::Channels),
                 _ => {}
             }

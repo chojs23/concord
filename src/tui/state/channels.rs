@@ -1134,6 +1134,50 @@ impl DashboardState {
         }
     }
 
+    fn get_selected_channel_category_helper(
+        channel_pane_entry: &ChannelPaneEntry,
+        category_id: &Id<ChannelMarker>,
+    ) -> bool {
+        match channel_pane_entry {
+            ChannelPaneEntry::CategoryHeader { state, .. } => state.id == *category_id,
+            ChannelPaneEntry::Channel { .. } => false,
+            ChannelPaneEntry::VoiceParticipant { .. } => false,
+        }
+    }
+
+    fn get_selected_channel_category_index(
+        &self,
+        category_id: &Id<ChannelMarker>,
+    ) -> Option<usize> {
+        let entries = self.channel_pane_entries();
+
+        entries
+            .iter()
+            .enumerate()
+            .find(|(_, channel_entry)| {
+                Self::get_selected_channel_category_helper(channel_entry, &category_id)
+            })
+            .map(|(index, _)| index)
+    }
+
+    pub fn close_selected_channel_category_or_unfocus(&mut self) {
+        if let Some(category_id) = self.selected_channel_category_id() {
+            if self.collapsed_channel_categories.contains(&category_id)
+            {
+                self.focus_pane(FocusPane::Guilds);
+                return;
+            }
+
+            if let Some(index) = self.get_selected_channel_category_index(&category_id) {
+                self.selected_channel = index;
+            }
+            close_collapsed_key(&mut self.collapsed_channel_categories, category_id);
+        } else if self.active_guild == ActiveGuildScope::DirectMessages
+        {
+            self.focus_pane(FocusPane::Guilds);
+        }
+    }
+
     #[cfg(test)]
     pub fn confirm_selected_channel(&mut self) {
         let _ = self.confirm_and_focus_selected_channel_command();

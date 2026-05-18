@@ -528,9 +528,43 @@ impl DashboardState {
         }
     }
 
+    fn get_selected_guild_folder_helper(
+        guild_pane_entry: &GuildPaneEntry,
+        folder_key: &FolderKey,
+    ) -> bool {
+        match guild_pane_entry {
+            GuildPaneEntry::DirectMessages => false,
+            GuildPaneEntry::FolderHeader { folder, .. } => Self::folder_key(folder)
+                .map(|other| other == *folder_key)
+                .unwrap_or(false),
+            GuildPaneEntry::Guild { .. } => false,
+        }
+    }
+
+    fn get_selected_guild_folder_index(&self) -> Option<usize> {
+        let entries = self.guild_pane_entries();
+
+        let Some(folder_key) = self.selected_folder_key() else {
+            return None;
+        };
+        entries
+            .iter()
+            .enumerate()
+            .find(|(_, guild_entry)| {
+                Self::get_selected_guild_folder_helper(guild_entry, &folder_key)
+            })
+            .map(|(index, _)| index)
+    }
+
     pub fn close_selected_folder(&mut self) {
         if let Some(key) = self.selected_folder_key() {
             close_collapsed_key(&mut self.collapsed_folders, key);
+
+            if let Some(index) = self.get_selected_guild_folder_index()
+                && self.selected_guild != index
+            {
+                self.selected_guild = index - 1;
+            }
         }
     }
 
