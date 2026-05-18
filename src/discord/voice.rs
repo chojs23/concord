@@ -83,9 +83,47 @@ const DISCORD_TRAILING_SILENCE_FRAMES: usize = 5;
 const OPUS_MAX_ENCODED_FRAME_BYTES: usize = 4000;
 #[cfg(feature = "voice-playback")]
 const VOICE_MIC_PCM_FRAME_QUEUE: usize = 4;
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_PREFERRED_BUFFER_FRAMES: u32 = 480;
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_GATE_HANGOVER_FRAMES: u8 = 8;
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_OVERLOAD_RECOVERY_FRAMES: u8 = 8;
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_HANDLING_NOISE_SUPPRESSION_FRAMES: u8 = 12;
+#[cfg(any(test, feature = "voice-playback"))]
+const VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES: usize = 8;
+#[cfg(any(test, feature = "voice-playback"))]
+const VOICE_MIC_OVERLOAD_SEVERE_CLIPPED_SAMPLES: usize = DISCORD_OPUS_20MS_STEREO_SAMPLES / 20;
+#[cfg(any(test, feature = "voice-playback"))]
+const VOICE_MIC_OVERLOAD_EXTREME_CLIPPED_SAMPLES: usize = DISCORD_OPUS_20MS_STEREO_SAMPLES / 8;
+#[cfg(any(test, feature = "voice-playback"))]
+const VOICE_MIC_HANDLING_NOISE_DELTA: i32 = 42_000;
+#[cfg(any(test, feature = "voice-playback"))]
+const VOICE_MIC_OVERLOAD_CLIPPED_STEP_DELTA: i32 = 32_000;
+#[cfg(any(test, feature = "voice-playback"))]
+const VOICE_MIC_OVERLOAD_IMPULSE_DELTA: i32 = 36_000;
+#[cfg(any(test, feature = "voice-playback"))]
+const VOICE_MIC_OVERLOAD_ATTENUATION_GAIN: f32 = 0.35;
+#[cfg(any(test, feature = "voice-playback"))]
+const VOICE_MIC_HANDLING_NOISE_GAIN: f32 = 0.0;
+#[cfg(any(test, feature = "voice-playback"))]
+const VOICE_MIC_OVERLOAD_TRANSIENT_GAIN: f32 = 0.03;
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_OVERLOAD_RECOVERY_START_GAIN: f32 = 0.15;
+#[cfg(any(test, feature = "voice-playback"))]
+const VOICE_MIC_TRANSMIT_BOOST_GAIN: f32 = 1.15;
+#[cfg(any(test, feature = "voice-playback"))]
+const VOICE_MIC_SOFT_LIMIT_THRESHOLD: f32 = 0.85;
+#[cfg(any(test, feature = "voice-playback"))]
+const VOICE_MIC_SOFT_LIMIT_CEILING: f32 = 0.95;
+#[cfg(any(test, feature = "voice-playback"))]
+const VOICE_MIC_SOFT_LIMIT_CURVE: f32 = 4.0;
 const OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL: usize = 5760;
 const VOICE_PLAYBACK_FRAME_QUEUE: usize = 256;
 const VOICE_PLAYBACK_FRAME_DURATION: Duration = Duration::from_millis(20);
+#[cfg(feature = "voice-playback")]
+const VOICE_TRANSMIT_STATS_LOG_INTERVAL: Duration = Duration::from_secs(5);
 const VOICE_PLAYBACK_JITTER_BUFFER_FRAMES: usize = 3;
 const VOICE_PLAYBACK_JITTER_BUFFER_DELAY: Duration = Duration::from_millis(60);
 const VOICE_PLAYBACK_MAX_BUFFERED_FRAMES_PER_SSRC: usize = 32;
@@ -582,6 +620,7 @@ struct VoiceMicrophoneCapture {
 #[cfg(feature = "voice-playback")]
 struct VoiceMicrophonePcmFrames {
     frames_tx: SyncSender<Vec<i16>>,
+    stats: Arc<VoiceMicrophoneCaptureStats>,
     source_sample_rate: u32,
     source_pending: Vec<i16>,
     output_pending: Vec<i16>,
@@ -592,6 +631,48 @@ struct VoiceMicrophonePcmFrames {
 struct VoiceMicrophoneCaptureStats {
     chunks: AtomicU64,
     frames: AtomicU64,
+    min_callback_frames: AtomicU64,
+    max_callback_frames: AtomicU64,
+    queued_frames: AtomicU64,
+    dropped_frames: AtomicU64,
+    peak_sample: AtomicU64,
+    clipped_samples: AtomicU64,
+}
+
+#[cfg(feature = "voice-playback")]
+#[derive(Default)]
+struct VoiceUdpTransmitStats {
+    sent_packets: u64,
+    stale_frames_drained: u64,
+    empty_ticks_while_speaking: u64,
+    overload_smoothed_frames: u64,
+    limited_samples: u64,
+    max_tick_gap_ms: u128,
+    last_tick_at: Option<Instant>,
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VoiceMicrophoneOverloadKind {
+    HandlingNoise,
+    Transient,
+    Attenuated,
+    Recovery,
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+#[derive(Clone, Copy, Debug)]
+struct VoiceMicrophoneOverloadDecision {
+    kind: VoiceMicrophoneOverloadKind,
+    gain: f32,
+}
+
+#[cfg(feature = "voice-playback")]
+#[derive(Default)]
+struct VoiceMicrophoneGateState {
+    hangover_frames: u8,
+    overload_recovery_frames: u8,
+    handling_noise_suppression_frames: u8,
 }
 
 #[cfg(feature = "voice-playback")]
@@ -1584,27 +1665,29 @@ impl VoiceMicrophoneCapture {
         let device = host
             .default_input_device()
             .ok_or_else(|| "no default microphone input device is available".to_owned())?;
-        let supported_config = device
-            .default_input_config()
-            .map_err(|error| format!("voice microphone default input config failed: {error}"))?;
-        let sample_format = supported_config.sample_format();
-        let stream_config = supported_config.config();
         let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
-        let stream = build_voice_input_stream(
-            &device,
-            &stream_config,
-            sample_format,
-            Arc::clone(&stats),
-            samples_tx,
-        )?;
+        let (stream, stream_config, sample_format) =
+            build_preferred_voice_input_stream(&device, Arc::clone(&stats), samples_tx.clone())
+                .or_else(|preferred_error| {
+                    logging::debug(
+                        "voice",
+                        format!(
+                            "voice preferred microphone input stream failed: {preferred_error}"
+                        ),
+                    );
+                    build_default_voice_input_stream(&device, Arc::clone(&stats), samples_tx)
+                })?;
         stream
             .play()
             .map_err(|error| format!("voice microphone input stream start failed: {error}"))?;
         logging::debug(
             "voice",
             format!(
-                "voice microphone capture started: sample_rate={} channels={} format={:?}",
-                stream_config.sample_rate, stream_config.channels, sample_format
+                "voice microphone capture started: sample_rate={} channels={} format={:?} buffer_size={:?}",
+                stream_config.sample_rate,
+                stream_config.channels,
+                sample_format,
+                stream_config.buffer_size,
             ),
         );
         Ok(Self {
@@ -1615,20 +1698,134 @@ impl VoiceMicrophoneCapture {
 }
 
 #[cfg(feature = "voice-playback")]
+fn build_preferred_voice_input_stream(
+    device: &cpal::Device,
+    stats: Arc<VoiceMicrophoneCaptureStats>,
+    samples_tx: Option<SyncSender<Vec<i16>>>,
+) -> Result<(cpal::Stream, cpal::StreamConfig, cpal::SampleFormat), String> {
+    let supported_config = select_voice_input_config(device)?;
+    let sample_format = supported_config.sample_format();
+    let mut stream_config = supported_config.config();
+    stream_config.buffer_size = voice_input_buffer_size(supported_config.buffer_size());
+
+    match build_voice_input_stream(
+        device,
+        &stream_config,
+        sample_format,
+        Arc::clone(&stats),
+        samples_tx.clone(),
+    ) {
+        Ok(stream) => Ok((stream, stream_config, sample_format)),
+        Err(error) if stream_config.buffer_size != cpal::BufferSize::Default => {
+            logging::debug(
+                "voice",
+                format!(
+                    "voice fixed microphone input buffer failed, retrying default buffer: {error}"
+                ),
+            );
+            stream_config.buffer_size = cpal::BufferSize::Default;
+            build_voice_input_stream(device, &stream_config, sample_format, stats, samples_tx)
+                .map(|stream| (stream, stream_config, sample_format))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+fn build_default_voice_input_stream(
+    device: &cpal::Device,
+    stats: Arc<VoiceMicrophoneCaptureStats>,
+    samples_tx: Option<SyncSender<Vec<i16>>>,
+) -> Result<(cpal::Stream, cpal::StreamConfig, cpal::SampleFormat), String> {
+    let supported_config = device
+        .default_input_config()
+        .map_err(|error| format!("voice microphone default input config failed: {error}"))?;
+    let sample_format = supported_config.sample_format();
+    let stream_config = supported_config.config();
+    build_voice_input_stream(device, &stream_config, sample_format, stats, samples_tx)
+        .map(|stream| (stream, stream_config, sample_format))
+}
+
+#[cfg(feature = "voice-playback")]
+fn select_voice_input_config(device: &cpal::Device) -> Result<cpal::SupportedStreamConfig, String> {
+    device
+        .supported_input_configs()
+        .map_err(|error| format!("voice microphone input config query failed: {error}"))?
+        .filter(|config| {
+            config.min_sample_rate() <= DISCORD_VOICE_SAMPLE_RATE
+                && config.max_sample_rate() >= DISCORD_VOICE_SAMPLE_RATE
+                && (config.channels() == 1 || config.channels() == DISCORD_VOICE_CHANNELS)
+        })
+        .min_by_key(voice_input_config_rank)
+        .map(|config| config.with_sample_rate(DISCORD_VOICE_SAMPLE_RATE))
+        .ok_or_else(|| "no Discord-friendly microphone input config found".to_owned())
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_input_config_rank(config: &cpal::SupportedStreamConfigRange) -> (u8, u8) {
+    (
+        voice_input_channel_rank(config.channels()),
+        voice_input_sample_format_rank(config.sample_format()),
+    )
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_input_channel_rank(channels: u16) -> u8 {
+    match channels {
+        1 => 0,
+        DISCORD_VOICE_CHANNELS => 1,
+        _ => 2,
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_input_sample_format_rank(format: cpal::SampleFormat) -> u8 {
+    match format {
+        cpal::SampleFormat::F32 => 0,
+        cpal::SampleFormat::I16 => 1,
+        cpal::SampleFormat::U16 => 2,
+        cpal::SampleFormat::U8 => 3,
+        _ if format.is_uint() => 4,
+        _ => 5,
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_input_buffer_size(supported: &cpal::SupportedBufferSize) -> cpal::BufferSize {
+    match supported {
+        cpal::SupportedBufferSize::Range { min, max } => {
+            cpal::BufferSize::Fixed(VOICE_MIC_PREFERRED_BUFFER_FRAMES.clamp(*min, *max))
+        }
+        cpal::SupportedBufferSize::Unknown => cpal::BufferSize::Default,
+    }
+}
+
+#[cfg(feature = "voice-playback")]
 impl Default for VoiceMicrophoneCaptureStats {
     fn default() -> Self {
         Self {
             chunks: AtomicU64::new(0),
             frames: AtomicU64::new(0),
+            min_callback_frames: AtomicU64::new(u64::MAX),
+            max_callback_frames: AtomicU64::new(0),
+            queued_frames: AtomicU64::new(0),
+            dropped_frames: AtomicU64::new(0),
+            peak_sample: AtomicU64::new(0),
+            clipped_samples: AtomicU64::new(0),
         }
     }
 }
 
 #[cfg(feature = "voice-playback")]
 impl VoiceMicrophonePcmFrames {
-    fn new(frames_tx: SyncSender<Vec<i16>>, source_sample_rate: u32) -> Self {
+    fn new(
+        frames_tx: SyncSender<Vec<i16>>,
+        stats: Arc<VoiceMicrophoneCaptureStats>,
+        source_sample_rate: u32,
+    ) -> Self {
         Self {
             frames_tx,
+            stats,
             source_sample_rate,
             source_pending: Vec::with_capacity(DISCORD_OPUS_20MS_STEREO_SAMPLES),
             output_pending: Vec::with_capacity(DISCORD_OPUS_20MS_STEREO_SAMPLES),
@@ -1687,7 +1884,11 @@ impl VoiceMicrophonePcmFrames {
                 .output_pending
                 .drain(..DISCORD_OPUS_20MS_STEREO_SAMPLES)
                 .collect::<Vec<_>>();
-            let _ = self.frames_tx.try_send(frame);
+            if self.frames_tx.try_send(frame).is_ok() {
+                self.stats.queued_frames.fetch_add(1, Ordering::Relaxed);
+            } else {
+                self.stats.dropped_frames.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 }
@@ -1706,9 +1907,15 @@ impl Drop for VoiceMicrophoneCapture {
         logging::debug(
             "voice",
             format!(
-                "voice microphone capture stopped: chunks={} frames={}",
+                "voice microphone capture stopped: chunks={} frames={} callback_frames_min={} callback_frames_max={} queued_20ms_frames={} dropped_20ms_frames={} peak_sample={} clipped_samples={}",
                 self.stats.chunks.load(Ordering::Relaxed),
                 self.stats.frames.load(Ordering::Relaxed),
+                voice_microphone_min_callback_frames(&self.stats),
+                self.stats.max_callback_frames.load(Ordering::Relaxed),
+                self.stats.queued_frames.load(Ordering::Relaxed),
+                self.stats.dropped_frames.load(Ordering::Relaxed),
+                self.stats.peak_sample.load(Ordering::Relaxed),
+                self.stats.clipped_samples.load(Ordering::Relaxed),
             ),
         );
     }
@@ -1744,6 +1951,7 @@ fn build_voice_input_stream_f32(
     let pcm_frames = samples_tx.map(|tx| {
         Arc::new(StdMutex::new(VoiceMicrophonePcmFrames::new(
             tx,
+            Arc::clone(&stats),
             config.sample_rate,
         )))
     });
@@ -1756,6 +1964,7 @@ fn build_voice_input_stream_f32(
                     && let Ok(mut pcm_frames) = pcm_frames.lock()
                 {
                     let samples = voice_input_f32_to_stereo_i16(input, channels);
+                    record_voice_input_pcm_stats(&samples, &stats);
                     pcm_frames.push_stereo_samples(&samples);
                 }
             },
@@ -1776,6 +1985,7 @@ fn build_voice_input_stream_i16(
     let pcm_frames = samples_tx.map(|tx| {
         Arc::new(StdMutex::new(VoiceMicrophonePcmFrames::new(
             tx,
+            Arc::clone(&stats),
             config.sample_rate,
         )))
     });
@@ -1788,6 +1998,7 @@ fn build_voice_input_stream_i16(
                     && let Ok(mut pcm_frames) = pcm_frames.lock()
                 {
                     let samples = voice_input_i16_to_stereo_i16(input, channels);
+                    record_voice_input_pcm_stats(&samples, &stats);
                     pcm_frames.push_stereo_samples(&samples);
                 }
             },
@@ -1808,6 +2019,7 @@ fn build_voice_input_stream_u16(
     let pcm_frames = samples_tx.map(|tx| {
         Arc::new(StdMutex::new(VoiceMicrophonePcmFrames::new(
             tx,
+            Arc::clone(&stats),
             config.sample_rate,
         )))
     });
@@ -1820,6 +2032,7 @@ fn build_voice_input_stream_u16(
                     && let Ok(mut pcm_frames) = pcm_frames.lock()
                 {
                     let samples = voice_input_u16_to_stereo_i16(input, channels);
+                    record_voice_input_pcm_stats(&samples, &stats);
                     pcm_frames.push_stereo_samples(&samples);
                 }
             },
@@ -1840,6 +2053,7 @@ fn build_voice_input_stream_u8(
     let pcm_frames = samples_tx.map(|tx| {
         Arc::new(StdMutex::new(VoiceMicrophonePcmFrames::new(
             tx,
+            Arc::clone(&stats),
             config.sample_rate,
         )))
     });
@@ -1852,6 +2066,7 @@ fn build_voice_input_stream_u8(
                     && let Ok(mut pcm_frames) = pcm_frames.lock()
                 {
                     let samples = voice_input_u8_to_stereo_i16(input, channels);
+                    record_voice_input_pcm_stats(&samples, &stats);
                     pcm_frames.push_stereo_samples(&samples);
                 }
             },
@@ -1924,6 +2139,38 @@ fn record_voice_input_chunk(
     stats
         .frames
         .fetch_add(u64::try_from(frames).unwrap_or(u64::MAX), Ordering::Relaxed);
+    let frames = u64::try_from(frames).unwrap_or(u64::MAX);
+    stats
+        .min_callback_frames
+        .fetch_min(frames, Ordering::Relaxed);
+    stats
+        .max_callback_frames
+        .fetch_max(frames, Ordering::Relaxed);
+}
+
+#[cfg(feature = "voice-playback")]
+fn record_voice_input_pcm_stats(samples: &[i16], stats: &VoiceMicrophoneCaptureStats) {
+    let peak = samples
+        .iter()
+        .map(|sample| i32::from(*sample).abs() as u64)
+        .max()
+        .unwrap_or(0);
+    let clipped = samples
+        .iter()
+        .filter(|sample| i32::from(**sample).abs() >= i32::from(i16::MAX) - 1)
+        .count();
+
+    stats.peak_sample.fetch_max(peak, Ordering::Relaxed);
+    stats.clipped_samples.fetch_add(
+        u64::try_from(clipped).unwrap_or(u64::MAX),
+        Ordering::Relaxed,
+    );
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_microphone_min_callback_frames(stats: &VoiceMicrophoneCaptureStats) -> u64 {
+    let min = stats.min_callback_frames.load(Ordering::Relaxed);
+    if min == u64::MAX { 0 } else { min }
 }
 
 #[cfg(feature = "voice-playback")]
@@ -3834,6 +4081,10 @@ async fn run_voice_udp_transmit(
     };
     let mut transmit_tick = tokio::time::interval(Duration::from_millis(20));
     transmit_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let transmit_started_at = Instant::now();
+    let mut transmit_stats = VoiceUdpTransmitStats::default();
+    let mut microphone_gate = VoiceMicrophoneGateState::default();
+    let mut next_stats_log_at = transmit_started_at + VOICE_TRANSMIT_STATS_LOG_INTERVAL;
 
     loop {
         tokio::select! {
@@ -3846,6 +4097,7 @@ async fn run_voice_udp_transmit(
                         sender.stop_speaking_with_dave(&mut *context.dave_state.lock().await),
                         &mut sender,
                         &context.local_speaking_tx,
+                        &mut transmit_stats,
                     ).await {
                         logging::error("voice", error);
                     }
@@ -3857,6 +4109,7 @@ async fn run_voice_udp_transmit(
                 let was_enabled = sender.capture_gate_enabled();
                 if !(gate.enabled && was_enabled) {
                     drain_voice_microphone_pcm_queue(&pcm_rx);
+                    microphone_gate.reset();
                 }
                 if !gate.enabled
                     && let Err(error) = flush_voice_outbound_events(
@@ -3865,36 +4118,61 @@ async fn run_voice_udp_transmit(
                         sender.stop_speaking_with_dave(&mut *context.dave_state.lock().await),
                         &mut sender,
                         &context.local_speaking_tx,
+                        &mut transmit_stats,
                     ).await
                 {
                     logging::error("voice", error);
                 }
                 if !gate.enabled {
                     let _ = context.local_speaking_tx.send(false);
+                    microphone_gate.reset();
                 }
                 sender.set_capture_gate(gate.enabled, false);
             }
             _ = transmit_tick.tick() => {
+                record_voice_transmit_tick(&mut transmit_stats, Instant::now());
                 let gate = *gate_rx.borrow();
                 if !gate.enabled {
                     drain_voice_microphone_pcm_queue(&pcm_rx);
+                    microphone_gate.reset();
                     continue;
                 }
-                match latest_voice_microphone_pcm_frame(&pcm_rx) {
+                let (read, stale_frames) = latest_voice_microphone_pcm_frame_with_drain_count(&pcm_rx);
+                transmit_stats.stale_frames_drained += stale_frames;
+                match read {
                     VoiceMicrophonePcmRead::Frame(mut frame) => {
-                        if !voice_pcm_frame_reaches_sensitivity(&frame, gate.microphone_sensitivity) {
+                        if !microphone_gate.allows_frame(&frame, gate.microphone_sensitivity) {
                             if let Err(error) = flush_voice_outbound_events(
                                 &context.udp_socket,
                                 &context.writer,
                                 sender.stop_speaking_with_dave(&mut *context.dave_state.lock().await),
                                 &mut sender,
                                 &context.local_speaking_tx,
+                                &mut transmit_stats,
                             ).await {
                                 logging::error("voice", error);
                             }
                             continue;
                         }
+                        let raw_overload_decision = voice_microphone_overload_decision(&frame);
+                        let overload_decision = if voice_microphone_clipped_frame_needs_blank(
+                            &frame,
+                            raw_overload_decision,
+                        ) {
+                            Some(VoiceMicrophoneOverloadDecision {
+                                kind: VoiceMicrophoneOverloadKind::HandlingNoise,
+                                gain: VOICE_MIC_HANDLING_NOISE_GAIN,
+                            })
+                        } else {
+                            microphone_gate.overload_decision(&frame)
+                        };
+                        if let Some(decision) = overload_decision {
+                            transmit_stats.overload_smoothed_frames += 1;
+                            apply_voice_microphone_gain(&mut frame, decision.gain);
+                        }
                         apply_voice_volume_to_i16_frame(&mut frame, gate.microphone_volume);
+                        apply_voice_microphone_gain(&mut frame, VOICE_MIC_TRANSMIT_BOOST_GAIN);
+                        transmit_stats.limited_samples += protect_voice_microphone_frame(&mut frame);
                         let _ = context.local_speaking_tx.send(true);
                         let opus = match encoder.encode_20ms_i16(&frame) {
                             Ok(opus) => opus,
@@ -3910,12 +4188,17 @@ async fn run_voice_udp_transmit(
                             outcome,
                             &mut sender,
                             &context.local_speaking_tx,
+                            &mut transmit_stats,
                         ).await {
                             logging::error("voice", error);
                             break;
                         }
                     }
-                    VoiceMicrophonePcmRead::Empty => {}
+                    VoiceMicrophonePcmRead::Empty => {
+                        if sender.speaking {
+                            transmit_stats.empty_ticks_while_speaking += 1;
+                        }
+                    }
                     VoiceMicrophonePcmRead::Disconnected => {
                         if let Err(error) = flush_voice_outbound_events(
                             &context.udp_socket,
@@ -3923,35 +4206,132 @@ async fn run_voice_udp_transmit(
                             sender.stop_speaking_with_dave(&mut *context.dave_state.lock().await),
                             &mut sender,
                             &context.local_speaking_tx,
+                            &mut transmit_stats,
                         ).await {
                             logging::error("voice", error);
                         }
                         let _ = context.local_speaking_tx.send(false);
                         sender.set_capture_gate(false, false);
+                        microphone_gate.reset();
                         break;
                     }
                 }
+                let now = Instant::now();
+                if now >= next_stats_log_at {
+                    log_voice_transmit_stats(
+                        "voice UDP transmit stats",
+                        &transmit_stats,
+                        transmit_started_at,
+                        sender.rtp.timestamp,
+                    );
+                    next_stats_log_at = now + VOICE_TRANSMIT_STATS_LOG_INTERVAL;
+                }
+            }
+        }
+    }
+    log_voice_transmit_stats(
+        "voice UDP transmit stopped",
+        &transmit_stats,
+        transmit_started_at,
+        sender.rtp.timestamp,
+    );
+}
+
+#[cfg(all(test, feature = "voice-playback"))]
+fn latest_voice_microphone_pcm_frame(pcm_rx: &StdReceiver<Vec<i16>>) -> VoiceMicrophonePcmRead {
+    latest_voice_microphone_pcm_frame_with_drain_count(pcm_rx).0
+}
+
+#[cfg(feature = "voice-playback")]
+fn latest_voice_microphone_pcm_frame_with_drain_count(
+    pcm_rx: &StdReceiver<Vec<i16>>,
+) -> (VoiceMicrophonePcmRead, u64) {
+    let mut latest = None;
+    let mut received_frames = 0u64;
+    loop {
+        match pcm_rx.try_recv() {
+            Ok(frame) => {
+                received_frames = received_frames.saturating_add(1);
+                latest = Some(frame);
+            }
+            Err(TryRecvError::Empty) => {
+                return (
+                    latest.map_or(VoiceMicrophonePcmRead::Empty, VoiceMicrophonePcmRead::Frame),
+                    received_frames.saturating_sub(1),
+                );
+            }
+            Err(TryRecvError::Disconnected) => {
+                return (
+                    latest.map_or(
+                        VoiceMicrophonePcmRead::Disconnected,
+                        VoiceMicrophonePcmRead::Frame,
+                    ),
+                    received_frames.saturating_sub(1),
+                );
             }
         }
     }
 }
 
 #[cfg(feature = "voice-playback")]
-fn latest_voice_microphone_pcm_frame(pcm_rx: &StdReceiver<Vec<i16>>) -> VoiceMicrophonePcmRead {
-    let mut latest = None;
-    loop {
-        match pcm_rx.try_recv() {
-            Ok(frame) => latest = Some(frame),
-            Err(TryRecvError::Empty) => {
-                return latest.map_or(VoiceMicrophonePcmRead::Empty, VoiceMicrophonePcmRead::Frame);
+impl VoiceMicrophoneGateState {
+    fn overload_decision(&mut self, frame: &[i16]) -> Option<VoiceMicrophoneOverloadDecision> {
+        if let Some(decision) = voice_microphone_overload_decision(frame) {
+            if decision.kind == VoiceMicrophoneOverloadKind::HandlingNoise {
+                self.handling_noise_suppression_frames =
+                    VOICE_MIC_HANDLING_NOISE_SUPPRESSION_FRAMES;
+                self.overload_recovery_frames = 0;
+                return Some(decision);
             }
-            Err(TryRecvError::Disconnected) => {
-                return latest.map_or(
-                    VoiceMicrophonePcmRead::Disconnected,
-                    VoiceMicrophonePcmRead::Frame,
-                );
+            if self.handling_noise_suppression_frames > 0 {
+                self.handling_noise_suppression_frames -= 1;
+                return Some(VoiceMicrophoneOverloadDecision {
+                    kind: VoiceMicrophoneOverloadKind::Recovery,
+                    gain: VOICE_MIC_HANDLING_NOISE_GAIN,
+                });
             }
+            self.overload_recovery_frames = if decision.gain <= VOICE_MIC_OVERLOAD_TRANSIENT_GAIN {
+                VOICE_MIC_OVERLOAD_RECOVERY_FRAMES
+            } else {
+                0
+            };
+            return Some(decision);
         }
+        if self.handling_noise_suppression_frames > 0 {
+            self.handling_noise_suppression_frames -= 1;
+            return Some(VoiceMicrophoneOverloadDecision {
+                kind: VoiceMicrophoneOverloadKind::Recovery,
+                gain: VOICE_MIC_HANDLING_NOISE_GAIN,
+            });
+        }
+        if self.overload_recovery_frames > 0 {
+            let recovery_gain =
+                voice_microphone_overload_recovery_gain(self.overload_recovery_frames);
+            self.overload_recovery_frames -= 1;
+            return Some(VoiceMicrophoneOverloadDecision {
+                kind: VoiceMicrophoneOverloadKind::Recovery,
+                gain: recovery_gain,
+            });
+        }
+        None
+    }
+
+    fn allows_frame(&mut self, frame: &[i16], sensitivity: MicrophoneSensitivityDb) -> bool {
+        if voice_pcm_frame_reaches_sensitivity(frame, sensitivity) {
+            self.hangover_frames = VOICE_MIC_GATE_HANGOVER_FRAMES;
+            return true;
+        }
+        if self.hangover_frames > 0 {
+            self.hangover_frames -= 1;
+            return true;
+        }
+        false
+    }
+
+    fn reset(&mut self) {
+        self.hangover_frames = 0;
+        self.overload_recovery_frames = 0;
+        self.handling_noise_suppression_frames = 0;
     }
 }
 
@@ -3967,6 +4347,7 @@ async fn flush_voice_outbound_events(
     outcome: Result<VoiceFakeSendOutcome, String>,
     sender: &mut VoiceFakeOutboundSendState,
     local_speaking_tx: &mpsc::UnboundedSender<bool>,
+    transmit_stats: &mut VoiceUdpTransmitStats,
 ) -> Result<(), String> {
     match outcome? {
         VoiceFakeSendOutcome::Sent => {
@@ -3981,6 +4362,7 @@ async fn flush_voice_outbound_events(
                             .send(&bytes)
                             .await
                             .map_err(|error| format!("voice UDP transmit failed: {error}"))?;
+                        transmit_stats.sent_packets += 1;
                     }
                 }
             }
@@ -4001,6 +4383,43 @@ async fn flush_voice_outbound_events(
         }
     }
     Ok(())
+}
+
+#[cfg(feature = "voice-playback")]
+fn record_voice_transmit_tick(stats: &mut VoiceUdpTransmitStats, now: Instant) {
+    if let Some(last_tick_at) = stats.last_tick_at {
+        stats.max_tick_gap_ms = stats
+            .max_tick_gap_ms
+            .max(now.duration_since(last_tick_at).as_millis());
+    }
+    stats.last_tick_at = Some(now);
+}
+
+#[cfg(feature = "voice-playback")]
+fn log_voice_transmit_stats(
+    label: &str,
+    stats: &VoiceUdpTransmitStats,
+    started_at: Instant,
+    rtp_timestamp: u32,
+) {
+    let elapsed_ms = started_at.elapsed().as_millis();
+    let rtp_elapsed_ms =
+        (u128::from(rtp_timestamp) * 1_000) / u128::from(DISCORD_VOICE_SAMPLE_RATE);
+    logging::debug(
+        "voice",
+        format!(
+            "{label}: elapsed_ms={} sent_packets={} rtp_timestamp={} rtp_elapsed_ms={} stale_frames_drained={} empty_ticks_while_speaking={} overload_smoothed_frames={} limited_samples={} max_tick_gap_ms={}",
+            elapsed_ms,
+            stats.sent_packets,
+            rtp_timestamp,
+            rtp_elapsed_ms,
+            stats.stale_frames_drained,
+            stats.empty_ticks_while_speaking,
+            stats.overload_smoothed_frames,
+            stats.limited_samples,
+            stats.max_tick_gap_ms,
+        ),
+    );
 }
 
 async fn run_voice_heartbeat(
@@ -4434,6 +4853,152 @@ fn apply_voice_volume_to_i16_frame(frame: &mut [i16], volume: VoiceVolumePercent
             .round()
             .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
     }
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+fn apply_voice_microphone_gain(frame: &mut [i16], gain: f32) {
+    if (gain - 1.0).abs() <= f32::EPSILON {
+        return;
+    }
+    for sample in frame {
+        *sample = (f32::from(*sample) * gain)
+            .round()
+            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16;
+    }
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+fn protect_voice_microphone_frame(frame: &mut [i16]) -> u64 {
+    let mut limited = 0u64;
+    for sample in frame {
+        let original = *sample;
+        *sample = soft_limit_voice_microphone_sample(original);
+        if *sample != original {
+            limited += 1;
+        }
+    }
+    limited
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+#[allow(dead_code)]
+fn voice_microphone_frame_is_overloaded(frame: &[i16]) -> bool {
+    voice_microphone_clipped_sample_count(frame) >= VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+#[allow(dead_code)]
+fn voice_microphone_overload_gain(frame: &[i16]) -> Option<f32> {
+    voice_microphone_overload_decision(frame).map(|decision| decision.gain)
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+fn voice_microphone_clipped_frame_needs_blank(
+    frame: &[i16],
+    raw_decision: Option<VoiceMicrophoneOverloadDecision>,
+) -> bool {
+    voice_microphone_clipped_sample_count(frame) > 0
+        && !matches!(
+            raw_decision.map(|decision| decision.kind),
+            Some(VoiceMicrophoneOverloadKind::HandlingNoise)
+        )
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+fn voice_microphone_overload_decision(frame: &[i16]) -> Option<VoiceMicrophoneOverloadDecision> {
+    let max_adjacent_delta = voice_microphone_max_adjacent_delta(frame);
+    let clipped_samples = voice_microphone_clipped_sample_count(frame);
+    if max_adjacent_delta >= VOICE_MIC_HANDLING_NOISE_DELTA {
+        return Some(VoiceMicrophoneOverloadDecision {
+            kind: VoiceMicrophoneOverloadKind::HandlingNoise,
+            gain: VOICE_MIC_HANDLING_NOISE_GAIN,
+        });
+    }
+
+    if clipped_samples >= VOICE_MIC_OVERLOAD_EXTREME_CLIPPED_SAMPLES {
+        return Some(VoiceMicrophoneOverloadDecision {
+            kind: VoiceMicrophoneOverloadKind::HandlingNoise,
+            gain: VOICE_MIC_HANDLING_NOISE_GAIN,
+        });
+    }
+
+    if clipped_samples > 0
+        && clipped_samples < VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES
+        && max_adjacent_delta >= VOICE_MIC_OVERLOAD_CLIPPED_STEP_DELTA
+    {
+        return Some(VoiceMicrophoneOverloadDecision {
+            kind: VoiceMicrophoneOverloadKind::HandlingNoise,
+            gain: VOICE_MIC_HANDLING_NOISE_GAIN,
+        });
+    }
+
+    if clipped_samples > 0 && max_adjacent_delta >= VOICE_MIC_OVERLOAD_IMPULSE_DELTA {
+        return Some(VoiceMicrophoneOverloadDecision {
+            kind: VoiceMicrophoneOverloadKind::HandlingNoise,
+            gain: VOICE_MIC_HANDLING_NOISE_GAIN,
+        });
+    }
+
+    if clipped_samples < VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES {
+        return None;
+    }
+
+    if clipped_samples >= VOICE_MIC_OVERLOAD_SEVERE_CLIPPED_SAMPLES {
+        return Some(VoiceMicrophoneOverloadDecision {
+            kind: VoiceMicrophoneOverloadKind::Transient,
+            gain: VOICE_MIC_OVERLOAD_TRANSIENT_GAIN,
+        });
+    }
+
+    Some(VoiceMicrophoneOverloadDecision {
+        kind: VoiceMicrophoneOverloadKind::Attenuated,
+        gain: VOICE_MIC_OVERLOAD_ATTENUATION_GAIN,
+    })
+}
+
+#[cfg(feature = "voice-playback")]
+fn voice_microphone_overload_recovery_gain(frames_remaining: u8) -> f32 {
+    let recovery_frames = f32::from(VOICE_MIC_OVERLOAD_RECOVERY_FRAMES.max(1));
+    let elapsed_frames = f32::from(VOICE_MIC_OVERLOAD_RECOVERY_FRAMES - frames_remaining);
+    VOICE_MIC_OVERLOAD_RECOVERY_START_GAIN
+        + (1.0 - VOICE_MIC_OVERLOAD_RECOVERY_START_GAIN) * (elapsed_frames / recovery_frames)
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+fn voice_microphone_clipped_sample_count(frame: &[i16]) -> usize {
+    frame
+        .iter()
+        .filter(|sample| i32::from(**sample).abs() >= i32::from(i16::MAX) - 1)
+        .count()
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+fn voice_microphone_max_adjacent_delta(frame: &[i16]) -> i32 {
+    frame
+        .windows(2)
+        .map(|samples| (i32::from(samples[1]) - i32::from(samples[0])).abs())
+        .max()
+        .unwrap_or(0)
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+fn soft_limit_voice_microphone_sample(sample: i16) -> i16 {
+    let normalized = (f32::from(sample) / f32::from(i16::MAX)).clamp(-1.0, 1.0);
+    let magnitude = normalized.abs();
+    if magnitude <= VOICE_MIC_SOFT_LIMIT_THRESHOLD {
+        return sample;
+    }
+
+    let excess =
+        (magnitude - VOICE_MIC_SOFT_LIMIT_THRESHOLD) / (1.0 - VOICE_MIC_SOFT_LIMIT_THRESHOLD);
+    let shaped = VOICE_MIC_SOFT_LIMIT_THRESHOLD
+        + (VOICE_MIC_SOFT_LIMIT_CEILING - VOICE_MIC_SOFT_LIMIT_THRESHOLD)
+            * (1.0 - 1.0 / (1.0 + VOICE_MIC_SOFT_LIMIT_CURVE * excess));
+    let limited = normalized.signum() * shaped.min(VOICE_MIC_SOFT_LIMIT_CEILING);
+
+    (limited * f32::from(i16::MAX))
+        .round()
+        .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16
 }
 
 #[cfg(any(test, feature = "voice-playback"))]
@@ -5223,6 +5788,24 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn microphone_gate_hangover_keeps_short_quiet_gaps_open() {
+        let quiet = vec![100i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        let normal = vec![1500i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        let mut gate = VoiceMicrophoneGateState::default();
+
+        assert!(gate.allows_frame(&normal, MicrophoneSensitivityDb::default()));
+        for _ in 0..VOICE_MIC_GATE_HANGOVER_FRAMES {
+            assert!(gate.allows_frame(&quiet, MicrophoneSensitivityDb::default()));
+        }
+        assert!(!gate.allows_frame(&quiet, MicrophoneSensitivityDb::default()));
+
+        gate.allows_frame(&normal, MicrophoneSensitivityDb::default());
+        gate.reset();
+        assert!(!gate.allows_frame(&quiet, MicrophoneSensitivityDb::default()));
+    }
+
     #[test]
     fn voice_volume_scales_i16_pcm_frame() {
         let mut frame = vec![1000, -1000, i16::MAX, i16::MIN];
@@ -5230,6 +5813,330 @@ mod tests {
         apply_voice_volume_to_i16_frame(&mut frame, VoiceVolumePercent::new(50));
 
         assert_eq!(frame, vec![500, -500, 16384, -16384]);
+    }
+
+    #[test]
+    fn voice_microphone_protection_soft_limits_extreme_samples() {
+        let mut frame = vec![1000, -1000, i16::MAX, i16::MIN];
+
+        let limited = protect_voice_microphone_frame(&mut frame);
+
+        assert_eq!(frame[0], 1000);
+        assert_eq!(frame[1], -1000);
+        assert!(frame[2] < i16::MAX);
+        assert!(frame[3] > i16::MIN);
+        assert_eq!(frame[2], -frame[3]);
+        assert_eq!(limited, 2);
+    }
+
+    #[test]
+    fn voice_microphone_overload_detects_dense_clipping_not_single_peaks() {
+        let mut normal_loud = vec![8_000i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        normal_loud[0] = i16::MAX;
+        normal_loud[1] = i16::MIN + 1;
+        assert!(!voice_microphone_frame_is_overloaded(&normal_loud));
+
+        let mut below_threshold = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        for sample in below_threshold
+            .iter_mut()
+            .take(VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES - 1)
+        {
+            *sample = i16::MAX;
+        }
+        assert!(!voice_microphone_frame_is_overloaded(&below_threshold));
+
+        let mut overloaded = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        for sample in overloaded
+            .iter_mut()
+            .take(VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES)
+        {
+            *sample = i16::MAX;
+        }
+        assert!(voice_microphone_frame_is_overloaded(&overloaded));
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn microphone_gate_blanks_handling_noise_envelope() {
+        let mut gate = VoiceMicrophoneGateState::default();
+        let normal = vec![1500i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        let mut handling_noise = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        handling_noise[0] = i16::MAX;
+        handling_noise[1] = i16::MIN + 1;
+        for sample in handling_noise
+            .iter_mut()
+            .skip(2)
+            .take(VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES - 2)
+        {
+            *sample = i16::MAX;
+        }
+
+        let overload_decision = gate
+            .overload_decision(&handling_noise)
+            .expect("handling-noise frame should be blanked");
+        assert_eq!(
+            overload_decision.kind,
+            VoiceMicrophoneOverloadKind::HandlingNoise
+        );
+        assert_eq!(overload_decision.gain, VOICE_MIC_HANDLING_NOISE_GAIN);
+
+        for _ in 0..VOICE_MIC_HANDLING_NOISE_SUPPRESSION_FRAMES {
+            let recovery_decision = gate
+                .overload_decision(&normal)
+                .expect("handling-noise envelope should be blanked");
+            assert_eq!(
+                recovery_decision.kind,
+                VoiceMicrophoneOverloadKind::Recovery
+            );
+            assert_eq!(recovery_decision.gain, VOICE_MIC_HANDLING_NOISE_GAIN);
+        }
+        assert!(gate.overload_decision(&normal).is_none());
+
+        gate.overload_decision(&handling_noise);
+        gate.reset();
+        assert!(gate.overload_decision(&normal).is_none());
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn microphone_gate_ramps_after_non_handling_transient() {
+        let mut gate = VoiceMicrophoneGateState::default();
+        let normal = vec![1500i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        let mut transient = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        for sample in transient
+            .iter_mut()
+            .take(VOICE_MIC_OVERLOAD_SEVERE_CLIPPED_SAMPLES)
+        {
+            *sample = i16::MAX;
+        }
+
+        let overload_decision = gate
+            .overload_decision(&transient)
+            .expect("transient frame should be attenuated");
+        assert_eq!(
+            overload_decision.kind,
+            VoiceMicrophoneOverloadKind::Transient
+        );
+        assert_eq!(overload_decision.gain, VOICE_MIC_OVERLOAD_TRANSIENT_GAIN);
+
+        let mut previous_gain = overload_decision.gain;
+        for frame_index in 0..VOICE_MIC_OVERLOAD_RECOVERY_FRAMES {
+            let recovery_decision = gate
+                .overload_decision(&normal)
+                .expect("transient recovery should be ramped");
+            assert_eq!(
+                recovery_decision.kind,
+                VoiceMicrophoneOverloadKind::Recovery
+            );
+            if frame_index == 0 {
+                assert!(
+                    (recovery_decision.gain - VOICE_MIC_OVERLOAD_RECOVERY_START_GAIN).abs()
+                        < f32::EPSILON
+                );
+            }
+            assert!(recovery_decision.gain > previous_gain);
+            assert!(recovery_decision.gain <= 1.0);
+            previous_gain = recovery_decision.gain;
+        }
+        assert!(gate.overload_decision(&normal).is_none());
+    }
+
+    #[test]
+    fn voice_microphone_overload_gain_keeps_shouted_frame_audible() {
+        let mut shouted = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        for sample in shouted
+            .iter_mut()
+            .take(VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES)
+        {
+            *sample = i16::MAX;
+        }
+
+        let gain = voice_microphone_overload_gain(&shouted)
+            .expect("clipped shouted frame should be gain-reduced");
+        apply_voice_microphone_gain(&mut shouted, gain);
+
+        assert_eq!(gain, VOICE_MIC_OVERLOAD_ATTENUATION_GAIN);
+        assert!(shouted.iter().any(|sample| *sample > 0));
+        assert!(
+            shouted
+                .iter()
+                .all(|sample| i32::from(*sample).abs() < i32::from(i16::MAX))
+        );
+    }
+
+    #[test]
+    fn voice_microphone_blanks_sparse_clipped_unclassified_frame() {
+        let mut sparse_clip = vec![2000i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        for sample in sparse_clip
+            .iter_mut()
+            .take(VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES - 2)
+        {
+            *sample = i16::MAX;
+        }
+        let raw_decision = voice_microphone_overload_decision(&sparse_clip);
+        assert!(raw_decision.is_none());
+
+        assert!(voice_microphone_clipped_frame_needs_blank(
+            &sparse_clip,
+            raw_decision,
+        ));
+    }
+
+    #[test]
+    fn voice_microphone_blanks_clipped_non_handling_frame() {
+        let mut attenuated = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        for sample in attenuated
+            .iter_mut()
+            .take(VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES)
+        {
+            *sample = i16::MAX;
+        }
+        let raw_decision = voice_microphone_overload_decision(&attenuated);
+        assert_eq!(
+            raw_decision.map(|decision| decision.kind),
+            Some(VoiceMicrophoneOverloadKind::Attenuated)
+        );
+
+        assert!(voice_microphone_clipped_frame_needs_blank(
+            &attenuated,
+            raw_decision,
+        ));
+    }
+
+    #[test]
+    fn voice_microphone_keeps_handling_noise_on_gate_path() {
+        let mut handling_noise = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        handling_noise[0] = i16::MAX;
+        handling_noise[1] = i16::MIN + 1;
+        let raw_decision = voice_microphone_overload_decision(&handling_noise);
+        assert_eq!(
+            raw_decision.map(|decision| decision.kind),
+            Some(VoiceMicrophoneOverloadKind::HandlingNoise)
+        );
+
+        assert!(!voice_microphone_clipped_frame_needs_blank(
+            &handling_noise,
+            raw_decision,
+        ));
+    }
+
+    #[test]
+    fn voice_microphone_does_not_blank_unclipped_unclassified_frame() {
+        let normal = vec![1500i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        let raw_decision = voice_microphone_overload_decision(&normal);
+        assert!(raw_decision.is_none());
+
+        assert!(!voice_microphone_clipped_frame_needs_blank(
+            &normal,
+            raw_decision,
+        ));
+    }
+
+    #[test]
+    fn voice_microphone_handling_noise_uses_adjacent_delta_without_dense_clipping() {
+        let mut handling_noise = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        handling_noise[0] = 22_000;
+        handling_noise[1] = -20_001;
+
+        let decision = voice_microphone_overload_decision(&handling_noise)
+            .expect("large adjacent delta should classify handling noise");
+
+        assert_eq!(decision.kind, VoiceMicrophoneOverloadKind::HandlingNoise);
+        assert_eq!(decision.gain, VOICE_MIC_HANDLING_NOISE_GAIN);
+        assert_eq!(voice_microphone_clipped_sample_count(&handling_noise), 0);
+    }
+
+    #[test]
+    fn voice_microphone_overload_promotes_sparse_clipped_impulse_to_handling_noise() {
+        let mut impulse = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        impulse[0] = i16::MAX;
+        impulse[1] = -3_233;
+
+        let decision = voice_microphone_overload_decision(&impulse)
+            .expect("clipped impulse should be gain-reduced");
+
+        assert_eq!(decision.kind, VoiceMicrophoneOverloadKind::HandlingNoise);
+        assert_eq!(decision.gain, VOICE_MIC_HANDLING_NOISE_GAIN);
+        let max_adjacent_delta = voice_microphone_max_adjacent_delta(&impulse);
+        assert!(max_adjacent_delta >= VOICE_MIC_OVERLOAD_IMPULSE_DELTA);
+        assert!(max_adjacent_delta < VOICE_MIC_HANDLING_NOISE_DELTA);
+        assert!(
+            voice_microphone_clipped_sample_count(&impulse)
+                < VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES
+        );
+    }
+
+    #[test]
+    fn voice_microphone_overload_promotes_sparse_clipped_step_to_handling_noise() {
+        let mut impulse = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        impulse[0] = i16::MAX;
+        impulse[1] = i16::MAX;
+
+        let decision = voice_microphone_overload_decision(&impulse)
+            .expect("clipped step should be gain-reduced");
+
+        assert_eq!(decision.kind, VoiceMicrophoneOverloadKind::HandlingNoise);
+        assert_eq!(decision.gain, VOICE_MIC_HANDLING_NOISE_GAIN);
+        let max_adjacent_delta = voice_microphone_max_adjacent_delta(&impulse);
+        assert!(max_adjacent_delta >= VOICE_MIC_OVERLOAD_CLIPPED_STEP_DELTA);
+        assert!(max_adjacent_delta < VOICE_MIC_OVERLOAD_IMPULSE_DELTA);
+        assert!(
+            voice_microphone_clipped_sample_count(&impulse)
+                < VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES
+        );
+    }
+
+    #[test]
+    fn voice_microphone_overload_gain_keeps_severe_same_polarity_clip_audible() {
+        let mut clipped = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        for sample in clipped
+            .iter_mut()
+            .take(VOICE_MIC_OVERLOAD_SEVERE_CLIPPED_SAMPLES)
+        {
+            *sample = i16::MAX;
+        }
+
+        assert_eq!(
+            voice_microphone_overload_gain(&clipped),
+            Some(VOICE_MIC_OVERLOAD_TRANSIENT_GAIN)
+        );
+    }
+
+    #[test]
+    fn voice_microphone_overload_gain_keeps_sub_extreme_same_polarity_clip_audible() {
+        let mut clipped = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        for sample in clipped
+            .iter_mut()
+            .take(VOICE_MIC_OVERLOAD_EXTREME_CLIPPED_SAMPLES - 1)
+        {
+            *sample = i16::MAX;
+        }
+
+        assert_eq!(
+            voice_microphone_overload_gain(&clipped),
+            Some(VOICE_MIC_OVERLOAD_TRANSIENT_GAIN)
+        );
+    }
+
+    #[test]
+    fn voice_microphone_overload_gain_blanks_extreme_same_polarity_clip() {
+        let mut clipped = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        for sample in clipped
+            .iter_mut()
+            .take(VOICE_MIC_OVERLOAD_EXTREME_CLIPPED_SAMPLES)
+        {
+            *sample = i16::MAX;
+        }
+
+        let decision = voice_microphone_overload_decision(&clipped)
+            .expect("extreme clipped frame should be blanked");
+
+        assert_eq!(decision.kind, VoiceMicrophoneOverloadKind::HandlingNoise);
+        assert_eq!(decision.gain, VOICE_MIC_HANDLING_NOISE_GAIN);
+        assert_eq!(
+            voice_microphone_clipped_sample_count(&clipped),
+            VOICE_MIC_OVERLOAD_EXTREME_CLIPPED_SAMPLES
+        );
     }
 
     #[test]
@@ -5549,7 +6456,8 @@ mod tests {
     #[test]
     fn microphone_pcm_frames_resample_44100_to_48000() {
         let (tx, rx) = sync_channel(4);
-        let mut frames = VoiceMicrophonePcmFrames::new(tx, 44_100);
+        let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
+        let mut frames = VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), 44_100);
         let input_frames = 883;
         let mut samples = Vec::with_capacity(input_frames * DISCORD_VOICE_CHANNELS_USIZE);
         for index in 0..input_frames {
@@ -5568,6 +6476,27 @@ mod tests {
         assert!(frame[frame.len() - 2] > 870);
         assert!(frame[frame.len() - 1] < -870);
         assert!(rx.try_recv().is_err());
+        assert_eq!(stats.queued_frames.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.dropped_frames.load(Ordering::Relaxed), 0);
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn microphone_pcm_frames_count_full_queue_drops() {
+        let (tx, rx) = sync_channel(1);
+        let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
+        let mut frames =
+            VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), DISCORD_VOICE_SAMPLE_RATE);
+        let samples = vec![1i16; DISCORD_OPUS_20MS_STEREO_SAMPLES * 2];
+
+        frames.push_stereo_samples(&samples);
+
+        assert_eq!(
+            rx.try_recv().expect("first frame should queue").len(),
+            DISCORD_OPUS_20MS_STEREO_SAMPLES
+        );
+        assert_eq!(stats.queued_frames.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.dropped_frames.load(Ordering::Relaxed), 1);
     }
 
     #[cfg(feature = "voice-playback")]
@@ -5607,6 +6536,66 @@ mod tests {
         assert_eq!(
             latest_voice_microphone_pcm_frame(&rx),
             VoiceMicrophonePcmRead::Disconnected
+        );
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn microphone_pcm_read_reports_stale_drained_frames() {
+        let (tx, rx) = sync_channel(VOICE_MIC_PCM_FRAME_QUEUE);
+
+        tx.try_send(vec![1]).expect("first frame should queue");
+        tx.try_send(vec![2]).expect("second frame should queue");
+        tx.try_send(vec![3]).expect("third frame should queue");
+
+        let (read, stale_frames) = latest_voice_microphone_pcm_frame_with_drain_count(&rx);
+
+        assert_eq!(read, VoiceMicrophonePcmRead::Frame(vec![3]));
+        assert_eq!(stale_frames, 2);
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn microphone_capture_stats_track_callback_size_and_clipping() {
+        let stats = VoiceMicrophoneCaptureStats::default();
+
+        record_voice_input_chunk(960, 2, &stats);
+        record_voice_input_chunk(480, 2, &stats);
+        record_voice_input_pcm_stats(&[0, i16::MAX, i16::MIN + 1, 120], &stats);
+
+        assert_eq!(stats.chunks.load(Ordering::Relaxed), 2);
+        assert_eq!(stats.frames.load(Ordering::Relaxed), 720);
+        assert_eq!(voice_microphone_min_callback_frames(&stats), 240);
+        assert_eq!(stats.max_callback_frames.load(Ordering::Relaxed), 480);
+        assert_eq!(stats.peak_sample.load(Ordering::Relaxed), 32767);
+        assert_eq!(stats.clipped_samples.load(Ordering::Relaxed), 2);
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn voice_input_config_prefers_mono_then_sample_format() {
+        assert!(voice_input_channel_rank(1) < voice_input_channel_rank(2));
+        assert!(
+            voice_input_sample_format_rank(cpal::SampleFormat::F32)
+                < voice_input_sample_format_rank(cpal::SampleFormat::I16)
+        );
+        assert!(
+            voice_input_sample_format_rank(cpal::SampleFormat::I16)
+                < voice_input_sample_format_rank(cpal::SampleFormat::U16)
+        );
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn voice_input_buffer_size_requests_small_supported_fixed_buffer() {
+        let supported = cpal::SupportedBufferSize::Range { min: 128, max: 960 };
+        assert_eq!(
+            voice_input_buffer_size(&supported),
+            cpal::BufferSize::Fixed(VOICE_MIC_PREFERRED_BUFFER_FRAMES)
+        );
+        assert_eq!(
+            voice_input_buffer_size(&cpal::SupportedBufferSize::Unknown),
+            cpal::BufferSize::Default
         );
     }
 
