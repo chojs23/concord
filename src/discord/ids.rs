@@ -2,6 +2,11 @@ use std::{fmt, marker::PhantomData, num::NonZeroU64};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
+// Type adapted from Twilight <https://github.com/twilight-rs/twilight>
+// Copyright (c) 2025 Twilight Contributors
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[repr(transparent)]
 pub struct Id<T> {
