@@ -19,7 +19,8 @@ use tokio::{
 use crate::{AppError, Result};
 
 use super::{
-    MessageAttachmentUpload, MessageInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
+    ApplicationCommandInfo, ApplicationCommandInteraction, MessageAttachmentUpload, MessageInfo,
+    ReactionEmoji, ReactionUserInfo, UserProfileInfo,
     commands::ForumPostArchiveState,
     events::{AppEvent, SequencedAppEvent},
     gateway::{GatewayCommand, GatewayRuntime, run_gateway},
@@ -414,6 +415,20 @@ impl DiscordClient {
         message_id: Id<MessageMarker>,
     ) -> Result<()> {
         self.rest.delete_message(channel_id, message_id).await
+    }
+
+    pub async fn load_application_commands(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> Result<Vec<ApplicationCommandInfo>> {
+        self.rest.load_application_commands(guild_id).await
+    }
+
+    pub async fn run_application_command(
+        &self,
+        interaction: &ApplicationCommandInteraction,
+    ) -> Result<()> {
+        self.rest.run_application_command(interaction).await
     }
 
     pub async fn ack_channel(

@@ -1,5 +1,8 @@
 use super::forum;
-use super::panes::{render_composer, render_composer_emoji_picker, render_composer_mention_picker};
+use super::panes::{
+    render_composer, render_composer_command_picker, render_composer_emoji_picker,
+    render_composer_mention_picker,
+};
 use super::*;
 use crate::tui::message_time::{
     format_message_local_time, message_local_date, message_local_datetime,
@@ -84,6 +87,7 @@ pub(super) fn render_messages(
         );
         render_typing_footer(frame, message_areas.typing, state);
         render_composer(frame, message_areas.composer, state, emoji_images);
+        render_composer_command_picker(frame, message_areas, state);
         render_composer_mention_picker(frame, message_areas, state);
         render_composer_emoji_picker(frame, message_areas, state, emoji_images);
         return;
@@ -210,6 +214,7 @@ pub(super) fn render_messages(
     render_new_messages_notice(frame, message_areas.list, state);
     render_typing_footer(frame, message_areas.typing, state);
     render_composer(frame, message_areas.composer, state, emoji_images);
+    render_composer_command_picker(frame, message_areas, state);
     render_composer_mention_picker(frame, message_areas, state);
     render_composer_emoji_picker(frame, message_areas, state, emoji_images);
 }

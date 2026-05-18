@@ -93,6 +93,9 @@ impl<'de, T> Deserialize<'de> for Id<T> {
 
 pub mod marker {
     #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+    pub struct ApplicationMarker;
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
     pub struct AttachmentMarker;
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]

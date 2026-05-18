@@ -3,7 +3,9 @@ use crate::discord::ids::{
     marker::{EmojiMarker, UserMarker},
 };
 
-use crate::discord::{CustomEmojiInfo, PresenceStatus};
+use crate::discord::{
+    ApplicationCommandInfo, ApplicationCommandOptionInfo, CustomEmojiInfo, PresenceStatus,
+};
 
 use super::MemberEntry;
 
@@ -33,6 +35,86 @@ pub struct EmojiPickerEntry {
     pub wire_format: Option<String>,
     pub available: bool,
     pub custom_image_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CommandPickerEntry {
+    pub label: String,
+    pub detail: String,
+    pub replacement: String,
+}
+
+pub(super) fn build_command_candidates(
+    query: &str,
+    commands: &[ApplicationCommandInfo],
+) -> Vec<CommandPickerEntry> {
+    let needle = query.to_ascii_lowercase();
+    let mut scored: Vec<(u8, String, CommandPickerEntry)> = commands
+        .iter()
+        .filter_map(|command| {
+            let lowered = command.name.to_ascii_lowercase();
+            let rank = if needle.is_empty() {
+                1
+            } else if lowered.starts_with(&needle) {
+                0
+            } else if lowered.contains(&needle) {
+                2
+            } else {
+                return None;
+            };
+            Some((
+                rank,
+                lowered,
+                CommandPickerEntry {
+                    label: format!("/{}", command.name),
+                    detail: command.description.clone(),
+                    replacement: format!("/{} ", command.name),
+                },
+            ))
+        })
+        .collect();
+    scored.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    scored.into_iter().map(|(_, _, entry)| entry).collect()
+}
+
+pub(super) fn build_command_option_candidates(
+    query: &str,
+    options: &[ApplicationCommandOptionInfo],
+) -> Vec<CommandPickerEntry> {
+    let needle = query.to_ascii_lowercase();
+    options
+        .iter()
+        .filter(|option| needle.is_empty() || option.name.to_ascii_lowercase().starts_with(&needle))
+        .map(|option| CommandPickerEntry {
+            label: format!("{}:", option.name),
+            detail: option.description.clone(),
+            replacement: format!("{}:", option.name),
+        })
+        .collect()
+}
+
+pub(super) fn build_command_choice_candidates(
+    query: &str,
+    option: &ApplicationCommandOptionInfo,
+) -> Vec<CommandPickerEntry> {
+    let needle = query.to_ascii_lowercase();
+    option
+        .choices
+        .iter()
+        .filter(|choice| choice.name.to_ascii_lowercase().contains(&needle))
+        .map(|choice| CommandPickerEntry {
+            label: choice.name.clone(),
+            detail: choice.value.as_str().unwrap_or_default().to_owned(),
+            replacement: format!(
+                "{} ",
+                choice
+                    .value
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| choice.value.to_string())
+            ),
+        })
+        .collect()
 }
 
 pub(super) fn build_mention_candidates(
@@ -178,6 +260,10 @@ pub(super) fn is_mention_query_char(value: char) -> bool {
 
 pub(super) fn is_emoji_query_char(value: char) -> bool {
     value.is_ascii_alphanumeric() || matches!(value, '_' | '-' | '+')
+}
+
+pub(super) fn is_command_query_char(value: char) -> bool {
+    value.is_ascii_alphanumeric() || matches!(value, '_' | '-')
 }
 
 pub(super) fn expand_emoji_shortcodes(input: &str) -> String {

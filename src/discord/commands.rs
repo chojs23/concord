@@ -1,13 +1,61 @@
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
+
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, UserMarker},
+    marker::{
+        ApplicationMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, UserMarker,
+    },
 };
 
 pub const MAX_UPLOAD_FILE_BYTES: u64 = 10 * 1024 * 1024;
 pub const MAX_UPLOAD_TOTAL_BYTES: u64 = 25 * 1024 * 1024;
 pub const MAX_UPLOAD_ATTACHMENT_COUNT: usize = 10;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationCommandInfo {
+    pub id: Id<ApplicationMarker>,
+    pub application_id: Id<ApplicationMarker>,
+    pub version: String,
+    pub name: String,
+    pub description: String,
+    pub options: Vec<ApplicationCommandOptionInfo>,
+    pub raw: Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationCommandOptionInfo {
+    pub kind: u64,
+    pub name: String,
+    pub description: String,
+    pub required: bool,
+    pub autocomplete: bool,
+    pub choices: Vec<ApplicationCommandChoiceInfo>,
+    pub options: Vec<ApplicationCommandOptionInfo>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationCommandChoiceInfo {
+    pub name: String,
+    pub value: Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationCommandInteraction {
+    pub guild_id: Option<Id<GuildMarker>>,
+    pub channel_id: Id<ChannelMarker>,
+    pub session_id: String,
+    pub command: ApplicationCommandInfo,
+    pub options: Vec<ApplicationCommandInteractionOption>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationCommandInteractionOption {
+    pub kind: u64,
+    pub name: String,
+    pub value: Value,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageAttachmentUpload {
@@ -217,6 +265,12 @@ pub enum AppCommand {
         content: String,
         reply_to: Option<Id<MessageMarker>>,
         attachments: Vec<MessageAttachmentUpload>,
+    },
+    LoadApplicationCommands {
+        guild_id: Option<Id<GuildMarker>>,
+    },
+    RunApplicationCommand {
+        interaction: ApplicationCommandInteraction,
     },
     EditMessage {
         channel_id: Id<ChannelMarker>,

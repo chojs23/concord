@@ -1,14 +1,20 @@
 use std::ops::Range;
 
-use crate::discord::{AppCommand, MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload};
+use crate::discord::{
+    AppCommand, ApplicationCommandInfo, ApplicationCommandInteraction,
+    ApplicationCommandInteractionOption, ApplicationCommandOptionInfo, MAX_UPLOAD_ATTACHMENT_COUNT,
+    MessageAttachmentUpload,
+};
+use serde_json::{Number, Value};
 
 use super::composer::{
-    ComposerEmojiImageCompletion, EmojiCompletion, MentionCompletion, build_emoji_candidates,
+    ComposerEmojiImageCompletion, EmojiCompletion, MentionCompletion, build_command_candidates,
+    build_command_choice_candidates, build_command_option_candidates, build_emoji_candidates,
     build_mention_candidates, expand_composer_completions, expand_emoji_shortcodes,
-    is_emoji_query_char, is_mention_query_char, move_picker_selection,
+    is_command_query_char, is_emoji_query_char, is_mention_query_char, move_picker_selection,
     should_start_completion_query,
 };
-use super::{DashboardState, EmojiPickerEntry, FocusPane, MentionPickerEntry};
+use super::{CommandPickerEntry, DashboardState, EmojiPickerEntry, FocusPane, MentionPickerEntry};
 
 impl DashboardState {
     pub fn is_composing(&self) -> bool {
@@ -140,6 +146,7 @@ impl DashboardState {
         self.composer.reply_target_message_id = None;
         self.composer.edit_target_message = None;
         self.composer.composer_active = true;
+        self.queue_application_commands_for_selected_channel();
         self.move_composer_cursor_end();
         self.navigation.focus = FocusPane::Messages;
     }
@@ -325,6 +332,18 @@ impl DashboardState {
             return None;
         }
 
+        if !has_attachments
+            && self.composer.reply_target_message_id.is_none()
+            && let Some(interaction) = self.application_command_interaction_for_content(&content)
+        {
+            self.composer.composer_input.clear();
+            self.composer.composer_cursor_byte_index = 0;
+            self.reset_mention_picker_state();
+            self.composer.reply_target_message_id = None;
+            self.composer.pending_composer_attachments.clear();
+            return Some(AppCommand::RunApplicationCommand { interaction });
+        }
+
         self.composer.composer_input.clear();
         self.composer.composer_cursor_byte_index = 0;
         self.reset_mention_picker_state();
@@ -381,6 +400,27 @@ impl DashboardState {
 
     pub fn composer_emoji_candidates(&self) -> Vec<EmojiPickerEntry> {
         self.composer.composer_emoji_candidates.clone()
+    }
+
+    pub fn composer_command_query(&self) -> Option<&str> {
+        self.composer.composer_command_query.as_deref()
+    }
+
+    pub fn composer_command_selected(&self) -> usize {
+        self.composer.composer_command_selected
+    }
+
+    pub fn composer_command_candidates(&self) -> Vec<CommandPickerEntry> {
+        self.composer.composer_command_candidates.clone()
+    }
+
+    pub fn move_composer_command_selection(&mut self, delta: isize) {
+        if self.composer.composer_command_query.is_none() {
+            return;
+        }
+        let len = self.composer.composer_command_candidates.len();
+        self.composer.composer_command_selected =
+            move_picker_selection(self.composer.composer_command_selected, len, delta);
     }
 
     pub fn move_composer_emoji_selection(&mut self, delta: isize) {
@@ -479,6 +519,28 @@ impl DashboardState {
         true
     }
 
+    pub fn confirm_composer_command(&mut self) -> bool {
+        let Some(command_start) = self.composer.composer_command_start else {
+            return false;
+        };
+        let Some(entry) = self
+            .composer
+            .composer_command_candidates
+            .get(self.composer.composer_command_selected)
+            .cloned()
+        else {
+            return false;
+        };
+        let cursor = self.composer_cursor_byte_index();
+        if command_start > cursor {
+            return false;
+        }
+
+        self.replace_composer_range(command_start..cursor, &entry.replacement);
+        self.close_composer_command_query();
+        true
+    }
+
     pub(in crate::tui) fn composer_emoji_image_completions(
         &self,
     ) -> Vec<ComposerEmojiImageCompletion> {
@@ -509,9 +571,14 @@ impl DashboardState {
         self.close_composer_emoji_query();
     }
 
+    pub fn cancel_composer_command(&mut self) {
+        self.close_composer_command_query();
+    }
+
     fn reset_mention_picker_state(&mut self) {
         self.close_composer_mention_query();
         self.close_composer_emoji_query();
+        self.close_composer_command_query();
         self.composer.composer_mention_completions.clear();
         self.composer.composer_emoji_completions.clear();
     }
@@ -527,6 +594,13 @@ impl DashboardState {
         self.composer.composer_emoji_start = None;
         self.composer.composer_emoji_selected = 0;
         self.composer.composer_emoji_candidates.clear();
+    }
+
+    fn close_composer_command_query(&mut self) {
+        self.composer.composer_command_query = None;
+        self.composer.composer_command_start = None;
+        self.composer.composer_command_selected = 0;
+        self.composer.composer_command_candidates.clear();
     }
 
     pub(super) fn refresh_composer_emoji_candidates_for_current_query(&mut self) {
@@ -565,7 +639,7 @@ impl DashboardState {
         self.refresh_active_mention_query();
     }
 
-    fn refresh_active_mention_query(&mut self) {
+    pub(super) fn refresh_active_mention_query(&mut self) {
         let cursor = self.composer.composer_cursor_byte_index();
         let mut query_start = cursor;
 
@@ -591,6 +665,7 @@ impl DashboardState {
                 self.composer.composer_mention_start = Some(mention_start);
                 self.composer.composer_mention_selected = 0;
                 self.close_composer_emoji_query();
+                self.close_composer_command_query();
                 return;
             }
         }
@@ -627,12 +702,162 @@ impl DashboardState {
                 self.composer.composer_emoji_selected = 0;
                 self.composer.composer_emoji_candidates = candidates;
                 self.close_composer_mention_query();
+                self.close_composer_command_query();
+                return;
+            }
+        }
+
+        if let Some((query_start, candidates)) = self.command_completion_at_cursor() {
+            if candidates.is_empty() {
+                self.close_composer_command_query();
+            } else {
+                self.composer.composer_command_query =
+                    Some(self.composer.composer_input[query_start..cursor].to_owned());
+                self.composer.composer_command_start = Some(query_start);
+                self.composer.composer_command_selected = self
+                    .composer
+                    .composer_command_selected
+                    .min(candidates.len() - 1);
+                self.composer.composer_command_candidates = candidates;
+                self.close_composer_mention_query();
+                self.close_composer_emoji_query();
                 return;
             }
         }
 
         self.close_composer_mention_query();
         self.close_composer_emoji_query();
+        self.close_composer_command_query();
+    }
+
+    fn queue_application_commands_for_selected_channel(&mut self) {
+        let guild_id = self
+            .selected_channel_state()
+            .and_then(|channel| channel.guild_id);
+        if self.discord.application_commands.contains_key(&guild_id)
+            || self
+                .discord
+                .application_command_requests
+                .contains(&guild_id)
+        {
+            return;
+        }
+        self.discord.application_command_requests.insert(guild_id);
+        self.requests
+            .pending_commands
+            .push_back(AppCommand::LoadApplicationCommands { guild_id });
+    }
+
+    fn command_completion_at_cursor(&mut self) -> Option<(usize, Vec<CommandPickerEntry>)> {
+        if self.composer.composer_input.is_empty() || !self.composer.composer_input.starts_with('/')
+        {
+            return None;
+        }
+        self.queue_application_commands_for_selected_channel();
+
+        let cursor = self.composer.composer_cursor_byte_index();
+        if cursor == 0 || cursor > self.composer.composer_input.len() {
+            return None;
+        }
+        let before_cursor = &self.composer.composer_input[..cursor];
+        let token_start = before_cursor
+            .rfind(char::is_whitespace)
+            .map(|index| index + before_cursor[index..].chars().next().unwrap().len_utf8())
+            .unwrap_or(0);
+        let token = &self.composer.composer_input[token_start..cursor];
+        let commands = self.application_commands_for_selected_channel();
+
+        if token_start == 0 {
+            let query = token.strip_prefix('/')?;
+            if query.chars().all(is_command_query_char) {
+                return Some((0, build_command_candidates(query, commands)));
+            }
+            return None;
+        }
+
+        let command = self.application_command_for_input()?;
+        if let Some((option_name, value_query)) = token.split_once(':') {
+            let option = command
+                .options
+                .iter()
+                .find(|option| option.name == option_name)?;
+            if !option.choices.is_empty() {
+                return Some((
+                    token_start + option_name.len() + ':'.len_utf8(),
+                    build_command_choice_candidates(value_query, option),
+                ));
+            }
+            return None;
+        }
+
+        if token.chars().all(is_command_query_char) {
+            let used = parsed_application_command_options(&self.composer.composer_input, command)
+                .into_iter()
+                .map(|option| option.name)
+                .collect::<std::collections::HashSet<_>>();
+            let options = command
+                .options
+                .iter()
+                .filter(|option| !used.contains(&option.name))
+                .cloned()
+                .collect::<Vec<_>>();
+            return Some((
+                token_start,
+                build_command_option_candidates(token, &options),
+            ));
+        }
+
+        None
+    }
+
+    fn application_commands_for_selected_channel(&self) -> &[ApplicationCommandInfo] {
+        let guild_id = self
+            .selected_channel_state()
+            .and_then(|channel| channel.guild_id);
+        self.discord
+            .application_commands
+            .get(&guild_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn application_command_for_input(&self) -> Option<&ApplicationCommandInfo> {
+        let name = self
+            .composer
+            .composer_input
+            .strip_prefix('/')?
+            .split_whitespace()
+            .next()?;
+        self.application_commands_for_selected_channel()
+            .iter()
+            .find(|command| command.name == name)
+    }
+
+    fn application_command_interaction_for_content(
+        &self,
+        content: &str,
+    ) -> Option<ApplicationCommandInteraction> {
+        let channel_id = self.selected_channel_id()?;
+        let guild_id = self
+            .selected_channel_state()
+            .and_then(|channel| channel.guild_id);
+        let session_id = self.discord.gateway_session_id.clone()?;
+        let command_name = content.strip_prefix('/')?.split_whitespace().next()?;
+        let command = self
+            .discord
+            .application_commands
+            .get(&guild_id)?
+            .iter()
+            .find(|command| command.name == command_name)?
+            .clone();
+        let options = parsed_application_command_options(content, &command);
+        Some(ApplicationCommandInteraction {
+            guild_id,
+            channel_id,
+            session_id,
+            command,
+            options,
+        })
     }
 
     fn adjust_mention_completions_for_replace(
@@ -700,6 +925,73 @@ fn clamp_cursor_index(input: &str, index: usize) -> usize {
         index -= 1;
     }
     index
+}
+
+fn parsed_application_command_options(
+    content: &str,
+    command: &ApplicationCommandInfo,
+) -> Vec<ApplicationCommandInteractionOption> {
+    let Some(rest) = content.strip_prefix('/') else {
+        return Vec::new();
+    };
+    let mut parts = rest.split_whitespace();
+    if parts.next() != Some(command.name.as_str()) {
+        return Vec::new();
+    }
+
+    let mut parsed = Vec::new();
+    let mut current: Option<(&ApplicationCommandOptionInfo, String)> = None;
+
+    for part in parts {
+        if let Some((name, raw_value)) = part.split_once(':')
+            && let Some(option) = command.options.iter().find(|option| option.name == name)
+        {
+            if let Some((option, value)) = current.take() {
+                parsed.push(ApplicationCommandInteractionOption {
+                    kind: option.kind,
+                    name: option.name.clone(),
+                    value: application_command_option_value(option, value.trim()),
+                });
+            }
+            current = Some((option, raw_value.to_owned()));
+            continue;
+        }
+
+        if let Some((_, value)) = current.as_mut() {
+            if !value.is_empty() {
+                value.push(' ');
+            }
+            value.push_str(part);
+        }
+    }
+
+    if let Some((option, value)) = current.take() {
+        parsed.push(ApplicationCommandInteractionOption {
+            kind: option.kind,
+            name: option.name.clone(),
+            value: application_command_option_value(option, value.trim()),
+        });
+    }
+
+    parsed
+}
+
+fn application_command_option_value(option: &ApplicationCommandOptionInfo, raw: &str) -> Value {
+    match option.kind {
+        4 => raw
+            .parse::<i64>()
+            .map(Number::from)
+            .map(Value::Number)
+            .unwrap_or_else(|_| Value::String(raw.to_owned())),
+        5 => Value::Bool(matches!(raw, "true" | "yes" | "1" | "on")),
+        10 => raw
+            .parse::<f64>()
+            .ok()
+            .and_then(Number::from_f64)
+            .map(Value::Number)
+            .unwrap_or_else(|| Value::String(raw.to_owned())),
+        _ => Value::String(raw.to_owned()),
+    }
 }
 
 fn previous_char_boundary(input: &str, index: usize) -> usize {

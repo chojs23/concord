@@ -16,9 +16,11 @@ use serde_json::{Value, json};
 use crate::{
     AppError, Result,
     discord::{
-        ChannelInfo, ForumPostArchiveState, FriendStatus, MAX_UPLOAD_ATTACHMENT_COUNT,
-        MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES, MessageAttachmentUpload, MessageInfo,
-        MutualGuildInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
+        ApplicationCommandChoiceInfo, ApplicationCommandInfo, ApplicationCommandInteraction,
+        ApplicationCommandInteractionOption, ApplicationCommandOptionInfo, ChannelInfo,
+        ForumPostArchiveState, FriendStatus, MAX_UPLOAD_ATTACHMENT_COUNT, MAX_UPLOAD_FILE_BYTES,
+        MAX_UPLOAD_TOTAL_BYTES, MessageAttachmentUpload, MessageInfo, MutualGuildInfo,
+        ReactionEmoji, ReactionUserInfo, UserProfileInfo,
         gateway::{parse_channel_info, parse_message_info},
     },
 };
@@ -150,6 +152,63 @@ impl DiscordRest {
         parse_message_info(&raw).ok_or_else(|| {
             AppError::DiscordRequest("edit message response was missing required fields".to_owned())
         })
+    }
+
+    pub async fn load_application_commands(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> Result<Vec<ApplicationCommandInfo>> {
+        let endpoint = match guild_id {
+            Some(guild_id) => format!(
+                "https://discord.com/api/v9/guilds/{}/application-command-index",
+                guild_id.get()
+            ),
+            None => "https://discord.com/api/v9/users/@me/application-command-index".to_owned(),
+        };
+        let raw = self
+            .raw_http
+            .get(endpoint)
+            .header(AUTHORIZATION, &self.token)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!(
+                    "application command index request failed: {error}"
+                ))
+            })?
+            .error_for_status()
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("application command index failed: {error}"))
+            })?
+            .json::<Value>()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!(
+                    "application command index decode failed: {error}"
+                ))
+            })?;
+        Ok(parse_application_command_index(&raw))
+    }
+
+    pub async fn run_application_command(
+        &self,
+        interaction: &ApplicationCommandInteraction,
+    ) -> Result<()> {
+        let body = application_command_interaction_body(interaction);
+        self.raw_http
+            .post("https://discord.com/api/v9/interactions")
+            .header(AUTHORIZATION, &self.token)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("application command request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("application command failed: {error}"))
+            })?;
+        Ok(())
     }
 
     pub async fn delete_message(
@@ -1078,6 +1137,118 @@ fn message_request_body(
         );
     }
     body
+}
+
+fn parse_application_command_index(raw: &Value) -> Vec<ApplicationCommandInfo> {
+    raw.get("application_commands")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(parse_application_command_info)
+        .collect()
+}
+
+fn parse_application_command_info(raw: &Value) -> Option<ApplicationCommandInfo> {
+    let id = raw.get("id")?.as_str()?.parse::<u64>().ok()?;
+    let application_id = raw.get("application_id")?.as_str()?.parse::<u64>().ok()?;
+    let name = raw.get("name")?.as_str()?.to_owned();
+    Some(ApplicationCommandInfo {
+        id: Id::new(id),
+        application_id: Id::new(application_id),
+        version: raw.get("version")?.as_str()?.to_owned(),
+        name,
+        description: raw
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        options: raw
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(parse_application_command_option_info)
+            .collect(),
+        raw: raw.clone(),
+    })
+}
+
+fn parse_application_command_option_info(raw: &Value) -> Option<ApplicationCommandOptionInfo> {
+    Some(ApplicationCommandOptionInfo {
+        kind: raw.get("type")?.as_u64()?,
+        name: raw.get("name")?.as_str()?.to_owned(),
+        description: raw
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        required: raw
+            .get("required")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        autocomplete: raw
+            .get("autocomplete")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        choices: raw
+            .get("choices")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|choice| {
+                Some(ApplicationCommandChoiceInfo {
+                    name: choice.get("name")?.as_str()?.to_owned(),
+                    value: choice.get("value")?.clone(),
+                })
+            })
+            .collect(),
+        options: raw
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(parse_application_command_option_info)
+            .collect(),
+    })
+}
+
+fn application_command_interaction_body(interaction: &ApplicationCommandInteraction) -> Value {
+    json!({
+        "type": 2,
+        "application_id": interaction.command.application_id.to_string(),
+        "guild_id": interaction.guild_id.map(|guild_id| guild_id.to_string()),
+        "channel_id": interaction.channel_id.to_string(),
+        "session_id": interaction.session_id,
+        "data": {
+            "version": interaction.command.version,
+            "id": interaction.command.id.to_string(),
+            "name": interaction.command.name,
+            "type": 1,
+            "options": interaction.options.iter().map(application_command_option_body).collect::<Vec<_>>(),
+            "application_command": interaction.command.raw,
+            "attachments": [],
+        },
+        "nonce": interaction_nonce(),
+        "analytics_location": "slash_ui",
+    })
+}
+
+fn application_command_option_body(option: &ApplicationCommandInteractionOption) -> Value {
+    json!({
+        "type": option.kind,
+        "name": option.name,
+        "value": option.value,
+    })
+}
+
+fn interaction_nonce() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default();
+    (millis << 22).to_string()
 }
 
 async fn message_multipart_form(

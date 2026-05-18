@@ -18,9 +18,9 @@ use super::super::{
     format::{sanitize_for_display_width, truncate_display_width, truncate_display_width_from},
     message_format::{EMOJI_REACTION_IMAGE_WIDTH, format_attachment_summary, wrap_text_lines},
     state::{
-        ChannelPaneEntry, DashboardState, EmojiPickerEntry, FocusPane, GuildPaneEntry,
-        MAX_MENTION_PICKER_VISIBLE, MemberEntry, MemberGroup, MentionPickerEntry, discord_color,
-        folder_color, presence_color, presence_marker,
+        ChannelPaneEntry, CommandPickerEntry, DashboardState, EmojiPickerEntry, FocusPane,
+        GuildPaneEntry, MAX_MENTION_PICKER_VISIBLE, MemberEntry, MemberGroup, MentionPickerEntry,
+        discord_color, folder_color, presence_color, presence_marker,
     },
 };
 use super::{
@@ -654,6 +654,47 @@ pub(super) fn render_composer_mention_picker(
     );
 }
 
+pub(super) fn render_composer_command_picker(
+    frame: &mut Frame,
+    message_areas: MessageAreas,
+    state: &DashboardState,
+) {
+    if state.composer_command_query().is_none() {
+        return;
+    }
+    let candidates = state.composer_command_candidates();
+    if candidates.is_empty() {
+        return;
+    }
+    let Some(area) = mention_picker_area(message_areas, candidates.len()) else {
+        return;
+    };
+    let visible_count = picker_visible_count(area, candidates.len());
+    let selected = state.composer_command_selected().min(candidates.len() - 1);
+    let window_start = picker_window_start(candidates.len(), selected, visible_count);
+    let shows_scrollbar = candidates.len() > visible_count;
+    let inner_width = picker_inner_width(area, shows_scrollbar);
+    let lines = command_picker_lines(
+        &candidates[window_start..(window_start + visible_count).min(candidates.len())],
+        selected - window_start,
+        inner_width,
+    );
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::default().title(" Commands ").borders(Borders::ALL)),
+        area,
+    );
+    if shows_scrollbar {
+        render_vertical_scrollbar(
+            frame,
+            panel_scrollbar_area(area),
+            window_start,
+            visible_count,
+            candidates.len(),
+        );
+    }
+}
+
 pub(super) fn render_composer_emoji_picker(
     frame: &mut Frame,
     message_areas: MessageAreas,
@@ -790,6 +831,38 @@ fn mention_picker_lines(
                 Span::styled(presence_marker(entry.status).to_string(), row_style),
                 Span::styled(" ", row_style),
                 Span::styled(label, row_style),
+            ])
+        })
+        .collect()
+}
+
+fn command_picker_lines(
+    candidates: &[CommandPickerEntry],
+    selected: usize,
+    inner_width: usize,
+) -> Vec<Line<'static>> {
+    candidates
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let marker = selection_marker(index == selected);
+            let marker_width = marker.content.width();
+            let label_width = entry.label.width();
+            let detail_width = inner_width
+                .saturating_sub(marker_width)
+                .saturating_sub(label_width)
+                .saturating_sub(1);
+            Line::from(vec![
+                marker,
+                Span::styled(
+                    entry.label.clone(),
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    truncate_display_width(&entry.detail, detail_width),
+                    Style::default().fg(DIM),
+                ),
             ])
         })
         .collect()

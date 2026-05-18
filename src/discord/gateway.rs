@@ -517,6 +517,13 @@ async fn handle_frame(
                     .get("resume_gateway_url")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
+                if let Some(session_id) = session.session_id.clone() {
+                    publish_gateway_event(
+                        context.publish,
+                        AppEvent::GatewaySessionReady { session_id },
+                    )
+                    .await;
+                }
             }
             let events = parse_user_account_event(raw);
             for app_event in events {

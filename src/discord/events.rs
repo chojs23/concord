@@ -8,6 +8,7 @@ use crate::discord::ids::{
     },
 };
 
+use super::ApplicationCommandInfo;
 use super::commands::{DownloadAttachmentSource, ForumPostArchiveState, ReactionEmoji};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -579,6 +580,13 @@ pub enum AppEvent {
     CurrentUserCapabilities {
         can_use_animated_custom_emojis: bool,
     },
+    GatewaySessionReady {
+        session_id: String,
+    },
+    ApplicationCommandsLoaded {
+        guild_id: Option<Id<GuildMarker>>,
+        commands: Vec<ApplicationCommandInfo>,
+    },
     GuildCreate {
         guild_id: Id<GuildMarker>,
         name: String,
@@ -889,6 +897,8 @@ impl AppEvent {
             self,
             AppEvent::GatewayError { .. }
                 | AppEvent::CurrentUserCapabilities { .. }
+                | AppEvent::GatewaySessionReady { .. }
+                | AppEvent::ApplicationCommandsLoaded { .. }
                 | AppEvent::AttachmentDownloadCompleted { .. }
                 | AppEvent::UpdateAvailable { .. }
                 | AppEvent::ReactionUsersLoaded { .. }
@@ -922,6 +932,8 @@ impl AppEvent {
             | AppEvent::ReactionUsersLoaded { .. }
             | AppEvent::GatewayError { .. }
             | AppEvent::CurrentUserCapabilities { .. }
+            | AppEvent::GatewaySessionReady { .. }
+            | AppEvent::ApplicationCommandsLoaded { .. }
             | AppEvent::AttachmentDownloadCompleted { .. }
             | AppEvent::UpdateAvailable { .. }
             | AppEvent::ActivateChannel { .. }

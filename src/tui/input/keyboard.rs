@@ -775,6 +775,11 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
     {
         return command;
     }
+    if state.composer_command_query().is_some()
+        && let Some(command) = handle_command_picker_key(state, key)
+    {
+        return command;
+    }
 
     match state.key_bindings().composer_action(key) {
         ComposerAction::OpenInEditor => {
@@ -876,6 +881,19 @@ fn handle_emoji_picker_key(
         DashboardState::move_composer_emoji_selection,
         DashboardState::confirm_composer_emoji,
         DashboardState::cancel_composer_emoji,
+    )
+}
+
+fn handle_command_picker_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<Option<AppCommand>> {
+    handle_composer_completion_picker_key(
+        state,
+        key,
+        DashboardState::move_composer_command_selection,
+        DashboardState::confirm_composer_command,
+        DashboardState::cancel_composer_command,
     )
 }
 

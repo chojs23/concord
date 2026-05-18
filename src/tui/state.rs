@@ -12,10 +12,10 @@ use crate::discord::ids::{
 
 use crate::config::{DisplayOptions, NotificationOptions, VoiceOptions};
 use crate::discord::{
-    AppCommand, AppEvent, ChannelUnreadState, DiscordSnapshot, DiscordState,
-    DownloadAttachmentSource, ForumPostArchiveState, MentionInfo, MessageAttachmentUpload,
-    MessageInfo, MessageSnapshotInfo, MessageState, MuteDuration, PresenceStatus, SnapshotAreas,
-    SnapshotRevision, VoiceConnectionStatus,
+    AppCommand, AppEvent, ApplicationCommandInfo, ChannelUnreadState, DiscordSnapshot,
+    DiscordState, DownloadAttachmentSource, ForumPostArchiveState, MentionInfo,
+    MessageAttachmentUpload, MessageInfo, MessageSnapshotInfo, MessageState, MuteDuration,
+    PresenceStatus, SnapshotAreas, SnapshotRevision, VoiceConnectionStatus,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -63,7 +63,9 @@ use scroll::{
     move_index_up, move_index_up_by, pane_content_height, scroll_list_down, scroll_list_up,
 };
 
-pub use composer::{EmojiPickerEntry, MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry};
+pub use composer::{
+    CommandPickerEntry, EmojiPickerEntry, MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry,
+};
 pub use member_grouping::{MemberEntry, MemberGroup};
 #[allow(unused_imports)]
 pub use model::{
@@ -215,6 +217,9 @@ struct DiscordUiState {
     cache: DiscordState,
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
+    gateway_session_id: Option<String>,
+    application_commands: HashMap<Option<Id<GuildMarker>>, Vec<ApplicationCommandInfo>>,
+    application_command_requests: HashSet<Option<Id<GuildMarker>>>,
     current_user_can_use_animated_custom_emojis: Option<bool>,
     update_available_version: Option<String>,
 }
@@ -375,6 +380,10 @@ struct ComposerUiState {
     composer_emoji_start: Option<usize>,
     composer_emoji_selected: usize,
     composer_emoji_candidates: Vec<EmojiPickerEntry>,
+    composer_command_query: Option<String>,
+    composer_command_start: Option<usize>,
+    composer_command_selected: usize,
+    composer_command_candidates: Vec<CommandPickerEntry>,
     /// Records `@displayname` substrings that the picker inserted, so the
     /// composer can rewrite them to Discord's `<@USER_ID>` wire format on
     /// submit even though the visible text is still the friendly form.
@@ -648,6 +657,16 @@ impl DashboardState {
             } => {
                 self.discord.current_user_can_use_animated_custom_emojis =
                     Some(*can_use_animated_custom_emojis);
+            }
+            AppEvent::GatewaySessionReady { session_id } => {
+                self.discord.gateway_session_id = Some(session_id.clone());
+            }
+            AppEvent::ApplicationCommandsLoaded { guild_id, commands } => {
+                self.discord.application_command_requests.remove(guild_id);
+                self.discord
+                    .application_commands
+                    .insert(*guild_id, commands.clone());
+                self.refresh_active_mention_query();
             }
             AppEvent::AttachmentDownloadCompleted { path, source }
                 if *source == DownloadAttachmentSource::ImageViewer =>

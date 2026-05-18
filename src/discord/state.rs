@@ -563,6 +563,8 @@ impl DiscordState {
             AppEvent::MessageHistoryLoadFailed { .. }
             | AppEvent::PinnedMessagesLoadFailed { .. }
             | AppEvent::CurrentUserCapabilities { .. }
+            | AppEvent::GatewaySessionReady { .. }
+            | AppEvent::ApplicationCommandsLoaded { .. }
             | AppEvent::GatewayError { .. }
             | AppEvent::AttachmentDownloadCompleted { .. }
             | AppEvent::UpdateAvailable { .. }
@@ -1249,6 +1251,8 @@ impl DiscordState {
                 self.upsert_notification_settings(settings);
             }
             AppEvent::GatewayError { .. }
+            | AppEvent::GatewaySessionReady { .. }
+            | AppEvent::ApplicationCommandsLoaded { .. }
             | AppEvent::AttachmentDownloadCompleted { .. }
             | AppEvent::UpdateAvailable { .. }
             | AppEvent::ReactionUsersLoaded { .. }
