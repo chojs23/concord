@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -120,6 +121,60 @@ type GatewayStream =
 /// dispatch loop need to send over the same connection, so the sink lives
 /// behind a `Mutex<Arc<…>>` instead of being moved into either side.
 type WriterHandle = Arc<Mutex<futures::stream::SplitSink<GatewayStream, WsMessage>>>;
+
+#[derive(Default)]
+struct SubscriptionDeduper {
+    sent: HashSet<SubscriptionKey>,
+}
+
+impl SubscriptionDeduper {
+    fn should_send(&mut self, command: &GatewayCommand) -> bool {
+        let Some(key) = SubscriptionKey::from_command(command) else {
+            return true;
+        };
+        self.sent.insert(key)
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum SubscriptionKey {
+    DirectMessage {
+        channel_id: Id<ChannelMarker>,
+    },
+    GuildChannel {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        ranges: Vec<(u32, u32)>,
+    },
+}
+
+impl SubscriptionKey {
+    fn from_command(command: &GatewayCommand) -> Option<Self> {
+        match command {
+            GatewayCommand::SubscribeDirectMessage { channel_id } => Some(Self::DirectMessage {
+                channel_id: *channel_id,
+            }),
+            GatewayCommand::SubscribeGuildChannel {
+                guild_id,
+                channel_id,
+            } => Some(Self::GuildChannel {
+                guild_id: *guild_id,
+                channel_id: *channel_id,
+                ranges: vec![(0, 99)],
+            }),
+            GatewayCommand::UpdateMemberListSubscription {
+                guild_id,
+                channel_id,
+                ranges,
+            } => Some(Self::GuildChannel {
+                guild_id: *guild_id,
+                channel_id: *channel_id,
+                ranges: ranges.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 struct GatewayPublishContext<'a> {
@@ -260,6 +315,7 @@ async fn connect_and_run(
         .map_err(|error| format!("websocket connect failed: {error}"))?;
     let (writer, mut reader) = ws.split();
     let writer = Arc::new(Mutex::new(writer));
+    let mut subscription_deduper = SubscriptionDeduper::default();
 
     // Discord must speak first with op-10 HELLO carrying heartbeat_interval.
     // If the first frame is anything else, fail fast and try a clean
@@ -342,7 +398,9 @@ async fn connect_and_run(
                                 log_and_publish_gateway_error(publish, message).await;
                             }
                             break ConnectionOutcome::Stop;
-                        } else if let Err(error) = dispatch_command(&writer, command).await {
+                        } else if let Err(error) =
+                            dispatch_command(&writer, command, &mut subscription_deduper).await
+                        {
                             let message = format!("command send failed: {error}");
                             log_and_publish_gateway_error(publish, message).await;
                             break ConnectionOutcome::Resume;
@@ -548,7 +606,16 @@ fn websocket_close_message(context: &str, frame: Option<&CloseFrame>) -> String 
     }
 }
 
-async fn dispatch_command(writer: &WriterHandle, command: GatewayCommand) -> Result<(), String> {
+async fn dispatch_command(
+    writer: &WriterHandle,
+    command: GatewayCommand,
+    subscription_deduper: &mut SubscriptionDeduper,
+) -> Result<(), String> {
+    if !subscription_deduper.should_send(&command) {
+        logging::debug("gateway", "skipping duplicate channel subscription");
+        return Ok(());
+    }
+
     let payload = match command {
         GatewayCommand::RequestGuildMembers {
             guild_id,
@@ -821,10 +888,11 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        GATEWAY_WEBSOCKET_LIMIT, SessionState, USER_ACCOUNT_CAPABILITIES, build_identify_payload,
-        build_resume_payload, direct_message_subscribe_payload, gateway_websocket_config,
-        guild_channel_subscribe_payload, request_guild_members_by_ids_payload,
-        request_guild_members_payload, voice_state_update_payload,
+        GATEWAY_WEBSOCKET_LIMIT, GatewayCommand, SessionState, SubscriptionDeduper,
+        USER_ACCOUNT_CAPABILITIES, build_identify_payload, build_resume_payload,
+        direct_message_subscribe_payload, gateway_websocket_config, guild_channel_subscribe_payload,
+        request_guild_members_by_ids_payload, request_guild_members_payload,
+        voice_state_update_payload,
     };
 
     #[test]
@@ -1000,6 +1068,45 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn subscription_deduper_skips_exact_duplicate_channel_subscriptions() {
+        let guild_id = Id::<GuildMarker>::new(10);
+        let channel_id = Id::<ChannelMarker>::new(20);
+        let other_channel_id = Id::<ChannelMarker>::new(30);
+        let mut deduper = SubscriptionDeduper::default();
+
+        assert!(deduper.should_send(&GatewayCommand::SubscribeDirectMessage { channel_id }));
+        assert!(!deduper.should_send(&GatewayCommand::SubscribeDirectMessage { channel_id }));
+        assert!(deduper.should_send(&GatewayCommand::SubscribeDirectMessage {
+            channel_id: other_channel_id,
+        }));
+
+        assert!(deduper.should_send(&GatewayCommand::SubscribeGuildChannel {
+            guild_id,
+            channel_id,
+        }));
+        assert!(!deduper.should_send(&GatewayCommand::SubscribeGuildChannel {
+            guild_id,
+            channel_id,
+        }));
+
+        assert!(deduper.should_send(&GatewayCommand::UpdateMemberListSubscription {
+            guild_id,
+            channel_id,
+            ranges: vec![(0, 99), (100, 199)],
+        }));
+        assert!(!deduper.should_send(&GatewayCommand::UpdateMemberListSubscription {
+            guild_id,
+            channel_id,
+            ranges: vec![(0, 99), (100, 199)],
+        }));
+        assert!(deduper.should_send(&GatewayCommand::RequestGuildMembersByIds {
+            guild_id,
+            user_ids: vec![Id::new(40)],
+            presences: false,
+        }));
     }
 
     #[test]
