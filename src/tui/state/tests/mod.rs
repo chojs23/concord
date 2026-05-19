@@ -6020,60 +6020,6 @@ fn forum_posts_loaded_event_populates_selected_forum_items() {
 }
 
 #[test]
-fn missing_message_author_profile_requests_include_visible_forum_preview_authors() {
-    let guild_id = Id::new(1);
-    let forum_id = Id::new(20);
-    let mut state = DashboardState::new();
-
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: vec![forum_channel_info(guild_id, forum_id)],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
-    state.confirm_selected_guild();
-    state.confirm_selected_channel();
-    state.push_event(AppEvent::ForumPostsLoaded {
-        channel_id: forum_id,
-        archive_state: ForumPostArchiveState::Active,
-        offset: 0,
-        next_offset: 1,
-        posts: vec![forum_thread_info(
-            guild_id,
-            forum_id,
-            30,
-            "welcome",
-            Some(300),
-            false,
-        )],
-        preview_messages: vec![forum_preview_message(
-            guild_id,
-            Id::new(30),
-            300,
-            "neo",
-            "first message preview",
-        )],
-        has_more: false,
-    });
-
-    assert_eq!(
-        state.missing_message_author_profile_requests(),
-        vec![(Id::new(99), Some(guild_id))]
-    );
-
-    state.push_event(AppEvent::UserProfileLoaded {
-        guild_id: Some(guild_id),
-        profile: profile_info(99, Some("neo")),
-    });
-    assert_eq!(state.missing_message_author_profile_requests(), Vec::new());
-}
-
-#[test]
 fn forum_post_first_page_starts_cursor_at_top_and_next_page_appends() {
     let guild_id = Id::new(1);
     let forum_id = Id::new(20);
@@ -7617,18 +7563,6 @@ fn member_scroll_uses_scrolloff() {
     state.move_up();
     assert_eq!(state.selected_member(), 4);
     assert_eq!(state.member_scroll(), 2);
-}
-
-#[test]
-fn visible_member_profile_requests_follow_rendered_member_rows() {
-    let mut state = state_with_members(3);
-    state.member_scroll = 1;
-    state.member_view_height = 1;
-
-    assert_eq!(
-        state.missing_visible_member_profile_requests(),
-        vec![(Id::new(1), Some(Id::new(1)))]
-    );
 }
 
 #[test]

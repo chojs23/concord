@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use ratatui::{
     layout::Alignment,
     style::{Color, Style},
@@ -299,66 +297,6 @@ impl DashboardState {
         )
     }
 
-    pub fn missing_message_author_profile_requests(
-        &self,
-    ) -> Vec<(Id<UserMarker>, Option<Id<GuildMarker>>)> {
-        let mut seen = HashSet::new();
-        let mut requests = Vec::new();
-
-        for message in self.visible_messages() {
-            let guild_id = message.guild_id.or_else(|| {
-                self.discord
-                    .channel(message.channel_id)
-                    .and_then(|channel| channel.guild_id)
-            });
-            self.push_missing_author_profile_request(
-                &mut requests,
-                &mut seen,
-                message.author_id,
-                guild_id,
-            );
-        }
-
-        for post in self.visible_forum_post_items() {
-            let guild_id = self
-                .discord
-                .channel(post.channel_id)
-                .and_then(|channel| channel.guild_id);
-            if let Some(author_id) = post.preview_author_id {
-                self.push_missing_author_profile_request(
-                    &mut requests,
-                    &mut seen,
-                    author_id,
-                    guild_id,
-                );
-            }
-        }
-
-        requests
-    }
-
-    fn push_missing_author_profile_request(
-        &self,
-        requests: &mut Vec<(Id<UserMarker>, Option<Id<GuildMarker>>)>,
-        seen: &mut HashSet<(Id<UserMarker>, Option<Id<GuildMarker>>)>,
-        user_id: Id<UserMarker>,
-        guild_id: Option<Id<GuildMarker>>,
-    ) {
-        if let Some(guild_id) = guild_id {
-            if self.discord.member_has_known_name(guild_id, user_id)
-                || self.discord.user_profile(user_id, Some(guild_id)).is_some()
-                || !seen.insert((user_id, Some(guild_id)))
-            {
-                return;
-            }
-        } else if self.discord.user_profile(user_id, None).is_some()
-            || !seen.insert((user_id, None))
-        {
-            return;
-        }
-        requests.push((user_id, guild_id));
-    }
-
     pub fn member_role_color(&self, member: MemberEntry<'_>) -> Option<u32> {
         let guild_id = self.selected_guild_id()?;
         self.discord.member_role_color(guild_id, member.user_id())
@@ -376,44 +314,6 @@ impl DashboardState {
             }
         }
         name
-    }
-
-    /// Profile requests for visible members in the member panel whose name is
-    /// still a fallback placeholder. Complements
-    /// `missing_message_author_profile_requests` which only covers messages.
-    pub fn missing_visible_member_profile_requests(
-        &self,
-    ) -> Vec<(Id<UserMarker>, Option<Id<GuildMarker>>)> {
-        let Some(guild_id) = self.selected_guild_id() else {
-            return Vec::new();
-        };
-        let members = self.flattened_members();
-        let visible_start = self.member_scroll();
-        let visible_end = visible_start.saturating_add(self.member_content_height());
-        let mut seen = HashSet::new();
-        let mut requests = Vec::new();
-        for (member_index, line_index) in self.member_line_indices() {
-            if line_index < visible_start {
-                continue;
-            }
-            if line_index >= visible_end {
-                break;
-            }
-            let Some(entry) = members.get(member_index) else {
-                continue;
-            };
-            if entry.username().is_some() {
-                continue;
-            }
-            let user_id = entry.user_id();
-            if self.discord.user_profile(user_id, Some(guild_id)).is_some() {
-                continue;
-            }
-            if seen.insert((user_id, Some(guild_id))) {
-                requests.push((user_id, Some(guild_id)));
-            }
-        }
-        requests
     }
 
     pub fn member_panel_title(&self) -> Line<'static> {

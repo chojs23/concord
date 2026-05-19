@@ -1,8 +1,8 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, GuildMarker, UserMarker},
+    marker::{ChannelMarker, GuildMarker},
 };
 use crossterm::event::EventStream;
 use futures::StreamExt;
@@ -71,8 +71,6 @@ pub(super) async fn run_dashboard(
     let mut last_member_subscription: Option<(Id<GuildMarker>, Id<ChannelMarker>, u32)> = None;
     let mut last_reported_active_guild: Option<Id<GuildMarker>> = None;
     let mut last_reported_message_channel: Option<Id<ChannelMarker>> = None;
-    let mut requested_author_profiles: HashSet<(Id<UserMarker>, Option<Id<GuildMarker>>)> =
-        HashSet::new();
     let mut image_targets = Vec::new();
     let mut avatar_targets = Vec::new();
     let mut emoji_targets = Vec::new();
@@ -513,24 +511,6 @@ pub(super) async fn run_dashboard(
                     })
                     .await
                     .is_err()
-            {
-                command_helpers::record_command_channel_closed(&mut state);
-                dirty = true;
-            }
-        }
-
-        let profile_requests = state
-            .missing_message_author_profile_requests()
-            .into_iter()
-            .chain(state.missing_visible_member_profile_requests());
-        for (user_id, guild_id) in profile_requests {
-            if !requested_author_profiles.insert((user_id, guild_id)) {
-                continue;
-            }
-            if commands
-                .send(AppCommand::LoadUserProfile { user_id, guild_id })
-                .await
-                .is_err()
             {
                 command_helpers::record_command_channel_closed(&mut state);
                 dirty = true;
