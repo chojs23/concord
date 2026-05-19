@@ -1096,7 +1096,7 @@ fn mouse_click_outside_dashboard_panes_does_not_change_focus() {
 }
 
 #[test]
-fn mouse_click_outside_composer_blurs_and_focuses_clicked_pane() {
+fn mouse_click_outside_composer_blurs_and_focuses_clicked_pane_without_clearing_draft() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
     handle_key(&mut state, key(KeyCode::Down));
@@ -1111,7 +1111,7 @@ fn mouse_click_outside_composer_blurs_and_focuses_clicked_pane() {
     ));
     assert_eq!(state.focus(), FocusPane::Members);
     assert!(!state.is_composing());
-    assert_eq!(state.composer_input(), "");
+    assert_eq!(state.composer_input(), "d");
 }
 
 #[test]

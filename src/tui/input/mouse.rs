@@ -81,7 +81,7 @@ pub fn handle_mouse_event(
     }
     if blurred_composer {
         clicks.clear();
-        state.cancel_composer();
+        state.close_composer();
     }
 
     match mouse.kind {
