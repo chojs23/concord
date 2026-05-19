@@ -58,8 +58,6 @@ pub(in crate::tui) enum DashboardAction {
     ScrollHorizontalLeft,
     ScrollHorizontalRight,
     ActivateFocused,
-    OpenTreeNode,
-    CloseTreeNode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -326,8 +324,8 @@ impl KeyBindings {
             KeyCode::Char('H') => Some(DashboardAction::ScrollHorizontalLeft),
             KeyCode::Char('L') => Some(DashboardAction::ScrollHorizontalRight),
             KeyCode::Enter => Some(DashboardAction::ActivateFocused),
-            KeyCode::Char('l') | KeyCode::Right => Some(DashboardAction::OpenTreeNode),
-            KeyCode::Char('h') | KeyCode::Left => Some(DashboardAction::CloseTreeNode),
+            KeyCode::Char('l') | KeyCode::Right => Some(DashboardAction::CycleFocusForward),
+            KeyCode::Char('h') | KeyCode::Left => Some(DashboardAction::CycleFocusBackward),
             _ => None,
         }
     }

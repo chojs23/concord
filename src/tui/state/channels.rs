@@ -18,8 +18,7 @@ use super::{
     popups::ChannelLeaderActionState,
     presentation::{is_direct_message_channel, sort_channels, sort_direct_message_channels},
     scroll::{
-        clamp_list_viewport, clamp_selected_index, close_collapsed_key, open_collapsed_key,
-        pane_content_height, toggle_collapsed_key,
+        clamp_list_viewport, clamp_selected_index, pane_content_height, toggle_collapsed_key,
     },
 };
 use crate::tui::fuzzy::fuzzy_text_score;
@@ -1120,18 +1119,6 @@ impl DashboardState {
             return;
         };
         toggle_collapsed_key(&mut self.collapsed_channel_categories, category_id);
-    }
-
-    pub fn open_selected_channel_category(&mut self) {
-        if let Some(category_id) = self.selected_channel_category_id() {
-            open_collapsed_key(&mut self.collapsed_channel_categories, &category_id);
-        }
-    }
-
-    pub fn close_selected_channel_category(&mut self) {
-        if let Some(category_id) = self.selected_channel_category_id() {
-            close_collapsed_key(&mut self.collapsed_channel_categories, category_id);
-        }
     }
 
     #[cfg(test)]

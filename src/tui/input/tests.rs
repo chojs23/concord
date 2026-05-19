@@ -90,7 +90,7 @@ fn remove_temp_upload_file(path: &PathBuf) {
 }
 
 #[test]
-fn enter_toggles_selected_folder_and_space_opens_leader() {
+fn enter_toggles_selected_folder_and_focuses_channels_after_server_selection() {
     let mut state = state_with_folder();
     state.focus_pane(FocusPane::Guilds);
 
@@ -100,6 +100,11 @@ fn enter_toggles_selected_folder_and_space_opens_leader() {
     handle_key(&mut state, char_key(' '));
     assert!(state.is_leader_active());
     assert_selected_folder_collapsed(&state, true);
+
+    let mut state = DashboardState::new();
+    state.focus_pane(FocusPane::Guilds);
+    handle_key(&mut state, key(KeyCode::Enter));
+    assert_eq!(state.focus(), FocusPane::Channels);
 }
 
 #[test]
@@ -158,7 +163,9 @@ fn movement_waits_for_enter_to_activate_channel() {
         })
     );
     assert_eq!(state.selected_channel_id(), Some(Id::new(11)));
+    assert_eq!(state.focus(), FocusPane::Messages);
 
+    state.focus_pane(FocusPane::Channels);
     handle_key(&mut state, key(KeyCode::Down));
     let command = handle_key(&mut state, key(KeyCode::Enter));
     assert_eq!(
@@ -169,6 +176,7 @@ fn movement_waits_for_enter_to_activate_channel() {
         })
     );
     assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
+    assert_eq!(state.focus(), FocusPane::Messages);
 }
 
 #[test]
@@ -1120,6 +1128,7 @@ fn mouse_click_outside_composer_blurs_and_selects_clicked_row() {
     state.focus_pane(FocusPane::Channels);
     handle_key(&mut state, key(KeyCode::Down));
     handle_key(&mut state, key(KeyCode::Enter));
+    state.focus_pane(FocusPane::Channels);
     handle_key(&mut state, key(KeyCode::Up));
     state.start_composer();
     let (column, row) = channel_row_point(1);
@@ -3147,35 +3156,43 @@ fn assert_selected_channel_category_collapsed(state: &DashboardState, expected: 
 }
 
 #[test]
-fn h_l_and_left_right_open_close_tree_nodes() {
+fn h_l_and_left_right_move_focus_without_toggling_tree_nodes() {
     let mut guild_state = state_with_folder();
     guild_state.focus_pane(FocusPane::Guilds);
 
     handle_key(&mut guild_state, char_key('h'));
-    assert_selected_folder_collapsed(&guild_state, true);
+    assert_eq!(guild_state.focus(), FocusPane::Members);
+    assert_selected_folder_collapsed(&guild_state, false);
 
     handle_key(&mut guild_state, char_key('l'));
+    assert_eq!(guild_state.focus(), FocusPane::Guilds);
     assert_selected_folder_collapsed(&guild_state, false);
 
     handle_key(&mut guild_state, key(KeyCode::Left));
-    assert_selected_folder_collapsed(&guild_state, true);
+    assert_eq!(guild_state.focus(), FocusPane::Members);
+    assert_selected_folder_collapsed(&guild_state, false);
 
     handle_key(&mut guild_state, key(KeyCode::Right));
+    assert_eq!(guild_state.focus(), FocusPane::Guilds);
     assert_selected_folder_collapsed(&guild_state, false);
 
     let mut channel_state = state_with_channel_tree();
     channel_state.focus_pane(FocusPane::Channels);
 
-    handle_key(&mut channel_state, char_key('h'));
-    assert_selected_channel_category_collapsed(&channel_state, true);
-
     handle_key(&mut channel_state, char_key('l'));
+    assert_eq!(channel_state.focus(), FocusPane::Messages);
+    assert_selected_channel_category_collapsed(&channel_state, false);
+
+    handle_key(&mut channel_state, char_key('h'));
+    assert_eq!(channel_state.focus(), FocusPane::Channels);
     assert_selected_channel_category_collapsed(&channel_state, false);
 
     handle_key(&mut channel_state, key(KeyCode::Left));
-    assert_selected_channel_category_collapsed(&channel_state, true);
+    assert_eq!(channel_state.focus(), FocusPane::Guilds);
+    assert_selected_channel_category_collapsed(&channel_state, false);
 
     handle_key(&mut channel_state, key(KeyCode::Right));
+    assert_eq!(channel_state.focus(), FocusPane::Channels);
     assert_selected_channel_category_collapsed(&channel_state, false);
 }
 

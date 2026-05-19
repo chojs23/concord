@@ -71,20 +71,6 @@ where
     }
 }
 
-pub(super) fn open_collapsed_key<T>(set: &mut HashSet<T>, key: &T)
-where
-    T: Eq + Hash,
-{
-    set.remove(key);
-}
-
-pub(super) fn close_collapsed_key<T>(set: &mut HashSet<T>, key: T)
-where
-    T: Eq + Hash,
-{
-    set.insert(key);
-}
-
 pub(super) fn clamp_list_scroll(
     cursor: usize,
     mut scroll: usize,

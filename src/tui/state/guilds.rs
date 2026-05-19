@@ -14,8 +14,7 @@ use super::{
     },
     popups::GuildLeaderActionState,
     scroll::{
-        clamp_list_viewport, clamp_selected_index, close_collapsed_key, open_collapsed_key,
-        pane_content_height, toggle_collapsed_key,
+        clamp_list_viewport, clamp_selected_index, pane_content_height, toggle_collapsed_key,
     },
 };
 use crate::tui::fuzzy::fuzzy_text_score;
@@ -522,28 +521,21 @@ impl DashboardState {
         }
     }
 
-    pub fn open_selected_folder(&mut self) {
-        if let Some(key) = self.selected_folder_key() {
-            open_collapsed_key(&mut self.collapsed_folders, &key);
-        }
-    }
-
-    pub fn close_selected_folder(&mut self) {
-        if let Some(key) = self.selected_folder_key() {
-            close_collapsed_key(&mut self.collapsed_folders, key);
-        }
-    }
-
-    pub fn confirm_selected_guild(&mut self) {
+    pub fn confirm_selected_guild(&mut self) -> bool {
         match self.guild_pane_entries().get(self.selected_guild()) {
             Some(GuildPaneEntry::DirectMessages) => {
-                self.activate_guild(ActiveGuildScope::DirectMessages)
+                self.activate_guild(ActiveGuildScope::DirectMessages);
+                true
             }
             Some(GuildPaneEntry::Guild { state, .. }) => {
-                self.activate_guild(ActiveGuildScope::Guild(state.id))
+                self.activate_guild(ActiveGuildScope::Guild(state.id));
+                true
             }
-            Some(GuildPaneEntry::FolderHeader { .. }) => self.toggle_selected_folder(),
-            None => {}
+            Some(GuildPaneEntry::FolderHeader { .. }) => {
+                self.toggle_selected_folder();
+                false
+            }
+            None => false,
         }
     }
 

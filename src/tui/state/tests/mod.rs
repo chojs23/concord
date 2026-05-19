@@ -8556,13 +8556,13 @@ fn voice_channel_join_action_requires_connect_permission() {
 }
 
 #[test]
-fn selected_channel_category_can_be_closed_and_opened() {
+fn selected_channel_category_toggles_open_and_closed() {
     let mut state = state_with_channel_tree();
 
     assert_eq!(state.channel_pane_entries().len(), 3);
     assert_eq!(state.selected_channel_id(), None);
 
-    state.close_selected_channel_category();
+    state.toggle_selected_channel_category();
     let closed_entries = state.channel_pane_entries();
     assert_eq!(closed_entries.len(), 1);
     assert!(matches!(
@@ -8573,7 +8573,7 @@ fn selected_channel_category_can_be_closed_and_opened() {
         }
     ));
 
-    state.open_selected_channel_category();
+    state.toggle_selected_channel_category();
     assert_eq!(state.channel_pane_entries().len(), 3);
 }
 
@@ -8696,11 +8696,11 @@ fn active_channel_entry_tracks_confirmed_channel() {
 }
 
 #[test]
-fn selected_folder_can_be_closed_and_opened() {
+fn selected_folder_toggles_open_and_closed() {
     let mut state = state_with_folder(Some(42));
 
     assert_eq!(state.guild_pane_entries().len(), 4);
-    state.close_selected_folder();
+    state.toggle_selected_folder();
     let closed_entries = state.guild_pane_entries();
     assert_eq!(closed_entries.len(), 2);
     assert!(matches!(
@@ -8711,7 +8711,7 @@ fn selected_folder_can_be_closed_and_opened() {
         }
     ));
 
-    state.open_selected_folder();
+    state.toggle_selected_folder();
     let open_entries = state.guild_pane_entries();
     assert_eq!(open_entries.len(), 4);
     assert!(matches!(
@@ -8745,10 +8745,10 @@ fn folder_children_use_middle_and_last_branches() {
 }
 
 #[test]
-fn folder_without_id_can_be_closed() {
+fn folder_without_id_can_be_toggled_closed() {
     let mut state = state_with_folder(None);
 
-    state.close_selected_folder();
+    state.toggle_selected_folder();
     let entries = state.guild_pane_entries();
     assert_eq!(entries.len(), 2);
     assert!(matches!(

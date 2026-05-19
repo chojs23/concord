@@ -202,29 +202,21 @@ fn handle_dashboard_action(
         }
         DashboardAction::ActivateFocused => match focus {
             FocusPane::Guilds => {
-                state.confirm_selected_guild();
+                if state.confirm_selected_guild() {
+                    state.focus_pane(FocusPane::Channels);
+                }
                 None
             }
-            FocusPane::Channels => state.confirm_selected_channel_command(),
+            FocusPane::Channels => {
+                let command = state.confirm_selected_channel_command();
+                if command.is_some() {
+                    state.focus_pane(FocusPane::Messages);
+                }
+                command
+            }
             FocusPane::Members => state.show_selected_member_profile(),
             FocusPane::Messages => state.activate_selected_message_pane_item(),
         },
-        DashboardAction::OpenTreeNode => {
-            match focus {
-                FocusPane::Guilds => state.open_selected_folder(),
-                FocusPane::Channels => state.open_selected_channel_category(),
-                _ => {}
-            }
-            None
-        }
-        DashboardAction::CloseTreeNode => {
-            match focus {
-                FocusPane::Guilds => state.close_selected_folder(),
-                FocusPane::Channels => state.close_selected_channel_category(),
-                _ => {}
-            }
-            None
-        }
     }
 }
 
