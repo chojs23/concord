@@ -23,6 +23,34 @@ pub(super) struct ChannelSwitcherState {
     query: String,
     query_cursor_byte_index: usize,
     selected: usize,
+    base_items: Vec<ChannelSwitcherItem>,
+    query_items: Option<Vec<ChannelSwitcherItem>>,
+}
+
+impl ChannelSwitcherState {
+    fn new(base_items: Vec<ChannelSwitcherItem>) -> Self {
+        Self {
+            query: String::new(),
+            query_cursor_byte_index: 0,
+            selected: 0,
+            base_items,
+            query_items: None,
+        }
+    }
+
+    fn visible_items(&self) -> &[ChannelSwitcherItem] {
+        self.query_items.as_deref().unwrap_or(&self.base_items)
+    }
+
+    fn visible_len(&self) -> usize {
+        self.visible_items().len()
+    }
+
+    fn refresh_query_items(&mut self) {
+        let query = self.query.trim();
+        self.query_items =
+            (!query.is_empty()).then(|| filter_channel_switcher_items(&self.base_items, query));
+    }
 }
 
 impl DashboardState {
@@ -33,11 +61,8 @@ impl DashboardState {
     pub fn open_channel_switcher(&mut self) {
         self.close_all_action_contexts();
         self.close_leader();
-        self.channel_switcher = Some(ChannelSwitcherState {
-            query: String::new(),
-            query_cursor_byte_index: 0,
-            selected: 0,
-        });
+        let items = self.all_channel_switcher_items();
+        self.channel_switcher = Some(ChannelSwitcherState::new(items));
     }
 
     pub fn close_channel_switcher(&mut self) {
@@ -62,33 +87,23 @@ impl DashboardState {
         let switcher = self.channel_switcher.as_ref()?;
         Some(clamp_selected_index(
             switcher.selected,
-            self.channel_switcher_items().len(),
+            switcher.visible_len(),
         ))
     }
 
     pub fn channel_switcher_items(&self) -> Vec<ChannelSwitcherItem> {
-        let query = self
-            .channel_switcher
+        self.channel_switcher
             .as_ref()
-            .map(|switcher| switcher.query.trim())
-            .unwrap_or_default();
-        let items = self.all_channel_switcher_items();
-        if query.is_empty() {
-            return items;
-        }
-
-        let mut scored: Vec<(FuzzyScore, ChannelSwitcherItem)> = items
-            .into_iter()
-            .filter_map(|item| {
-                channel_switcher_match_score(&item, query).map(|score| (score, item))
-            })
-            .collect();
-        scored.sort_by_key(|(score, item)| (item.group_order, *score, item.original_index));
-        scored.into_iter().map(|(_, item)| item).collect()
+            .map(|switcher| switcher.visible_items().to_vec())
+            .unwrap_or_default()
     }
 
     pub fn move_channel_switcher_down(&mut self) {
-        let len = self.channel_switcher_items().len();
+        let len = self
+            .channel_switcher
+            .as_ref()
+            .map(ChannelSwitcherState::visible_len)
+            .unwrap_or_default();
         if let Some(switcher) = self.channel_switcher.as_mut() {
             move_index_down(&mut switcher.selected, len);
         }
@@ -101,14 +116,14 @@ impl DashboardState {
     }
 
     pub fn select_channel_switcher_item(&mut self, row: usize) -> bool {
-        if row >= self.channel_switcher_items().len() {
+        let Some(switcher) = self.channel_switcher.as_mut() else {
+            return false;
+        };
+        if row >= switcher.visible_len() {
             return false;
         }
-        if let Some(switcher) = self.channel_switcher.as_mut() {
-            switcher.selected = row;
-            return true;
-        }
-        false
+        switcher.selected = row;
+        true
     }
 
     pub fn push_channel_switcher_char(&mut self, value: char) {
@@ -117,6 +132,7 @@ impl DashboardState {
             switcher.query.insert(cursor, value);
             switcher.query_cursor_byte_index = cursor + value.len_utf8();
             switcher.selected = 0;
+            switcher.refresh_query_items();
         }
     }
 
@@ -130,6 +146,7 @@ impl DashboardState {
             switcher.query.replace_range(start..cursor, "");
             switcher.query_cursor_byte_index = start;
             switcher.selected = 0;
+            switcher.refresh_query_items();
         }
     }
 
@@ -148,16 +165,22 @@ impl DashboardState {
     }
 
     pub fn activate_selected_channel_switcher_item(&mut self) -> Option<AppCommand> {
-        let selected = self.selected_channel_switcher_index()?;
-        let item = self.channel_switcher_items().get(selected)?.clone();
+        let item = {
+            let switcher = self.channel_switcher.as_ref()?;
+            let selected = clamp_selected_index(switcher.selected, switcher.visible_len());
+            switcher.visible_items().get(selected)?.clone()
+        };
+
+        let Some(channel) = self.discord.channel(item.channel_id) else {
+            self.close_channel_switcher();
+            return None;
+        };
+        let guild_id = channel.guild_id;
+        let parent_id = channel.parent_id;
         self.close_channel_switcher();
 
-        match item.guild_id {
+        match guild_id {
             Some(guild_id) => {
-                let parent_id = self
-                    .discord
-                    .channel(item.channel_id)
-                    .and_then(|channel| channel.parent_id);
                 self.activate_guild(ActiveGuildScope::Guild(guild_id));
                 if let Some(parent_id) = parent_id {
                     self.collapsed_channel_categories.remove(&parent_id);
@@ -385,6 +408,19 @@ fn push_channel_switcher_item(
 
 fn channel_switcher_match_score(item: &ChannelSwitcherItem, query: &str) -> Option<FuzzyScore> {
     fuzzy_text_score(&item.search_name, query)
+}
+
+fn filter_channel_switcher_items(
+    items: &[ChannelSwitcherItem],
+    query: &str,
+) -> Vec<ChannelSwitcherItem> {
+    let mut scored: Vec<(FuzzyScore, ChannelSwitcherItem)> = items
+        .iter()
+        .filter_map(|item| channel_switcher_match_score(item, query).map(|score| (score, item)))
+        .map(|(score, item)| (score, item.clone()))
+        .collect();
+    scored.sort_by_key(|(score, item)| (item.group_order, *score, item.original_index));
+    scored.into_iter().map(|(_, item)| item).collect()
 }
 
 fn channel_switcher_channel_label(channel: &ChannelState) -> String {

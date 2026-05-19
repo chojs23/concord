@@ -5166,12 +5166,42 @@ fn channel_switcher_groups_channels_and_filters_by_fuzzy_name() {
     assert_eq!(all_items[1].group_label, "guild");
     assert_eq!(all_items[1].parent_label.as_deref(), Some("Text"));
 
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(13),
+        parent_id: Some(Id::new(10)),
+        position: Some(2),
+        last_message_id: None,
+        name: "general-new".to_owned(),
+        kind: "text".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        thread_pinned: None,
+        recipients: None,
+        permission_overwrites: Vec::new(),
+    }));
+
     for ch in "gnrl".chars() {
         state.push_channel_switcher_char(ch);
     }
     let filtered = state.channel_switcher_items();
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].channel_id, Id::new(11));
+
+    state.close_channel_switcher();
+    state.open_channel_switcher();
+    for ch in "gnrl".chars() {
+        state.push_channel_switcher_char(ch);
+    }
+    let filtered: Vec<Id<ChannelMarker>> = state
+        .channel_switcher_items()
+        .into_iter()
+        .map(|item| item.channel_id)
+        .collect();
+    assert!(filtered.contains(&Id::new(11)));
+    assert!(filtered.contains(&Id::new(13)));
 }
 
 #[test]
