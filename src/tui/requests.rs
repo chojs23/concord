@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
 use crate::discord::ids::{
     Id,
@@ -29,6 +30,19 @@ pub(super) struct ForumPostRequestTarget {
     pub(super) guild_id: Id<GuildMarker>,
     pub(super) channel_id: Id<ChannelMarker>,
     pub(super) should_load_more: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct MentionMemberSearchTarget {
+    pub(super) guild_id: Id<GuildMarker>,
+    pub(super) query: String,
+}
+
+#[derive(Default)]
+pub(super) struct MentionMemberSearchRequests {
+    requested: HashMap<MentionMemberSearchKey, Instant>,
+    requested_order: VecDeque<MentionMemberSearchKey>,
+    pending: Option<PendingMentionMemberSearch>,
 }
 
 impl HistoryRequests {
@@ -268,6 +282,119 @@ impl ThreadPreviewRequests {
     }
 }
 
+impl MentionMemberSearchRequests {
+    const MIN_QUERY_CHARS: usize = 2;
+    const MAX_QUERY_CHARS: usize = 64;
+    const DEBOUNCE: Duration = Duration::from_millis(250);
+    const REQUEST_TTL: Duration = Duration::from_secs(30);
+    const MAX_REQUESTED: usize = 128;
+
+    pub(super) fn set_target(&mut self, target: Option<MentionMemberSearchTarget>, now: Instant) {
+        self.prune_requested(now);
+        let Some(target) = target.and_then(normalize_mention_member_search_target) else {
+            self.pending = None;
+            return;
+        };
+        if self.requested.contains_key(&target.key()) {
+            self.pending = None;
+            return;
+        }
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.target.key() == target.key())
+        {
+            return;
+        }
+        self.pending = Some(PendingMentionMemberSearch {
+            target,
+            ready_at: now + Self::DEBOUNCE,
+        });
+    }
+
+    pub(super) fn pending_deadline(&self) -> Option<Instant> {
+        self.pending.as_ref().map(|pending| pending.ready_at)
+    }
+
+    pub(super) fn next_due(&mut self, now: Instant) -> Option<MentionMemberSearchTarget> {
+        self.prune_requested(now);
+        let pending = self.pending.as_ref()?;
+        if pending.ready_at > now {
+            return None;
+        }
+        let pending = self.pending.take()?;
+        let key = pending.target.key();
+        if self.requested.contains_key(&key) {
+            return None;
+        }
+        self.insert_requested(key, now);
+        Some(pending.target)
+    }
+
+    fn insert_requested(&mut self, key: MentionMemberSearchKey, now: Instant) {
+        self.requested_order.retain(|existing| existing != &key);
+        self.requested.insert(key.clone(), now);
+        self.requested_order.push_back(key);
+        self.prune_requested(now);
+    }
+
+    fn prune_requested(&mut self, now: Instant) {
+        self.requested.retain(|_, requested_at| {
+            now.checked_duration_since(*requested_at)
+                .is_none_or(|age| age <= Self::REQUEST_TTL)
+        });
+        self.requested_order
+            .retain(|key| self.requested.contains_key(key));
+        while self.requested.len() > Self::MAX_REQUESTED {
+            let Some(oldest) = self.requested_order.pop_front() else {
+                break;
+            };
+            self.requested.remove(&oldest);
+        }
+    }
+}
+
+type MentionMemberSearchKey = (Id<GuildMarker>, String);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingMentionMemberSearch {
+    target: MentionMemberSearchTarget,
+    ready_at: Instant,
+}
+
+impl MentionMemberSearchTarget {
+    fn key(&self) -> MentionMemberSearchKey {
+        (self.guild_id, self.query.clone())
+    }
+}
+
+fn normalize_mention_member_search_target(
+    target: MentionMemberSearchTarget,
+) -> Option<MentionMemberSearchTarget> {
+    let query = normalize_mention_member_search_query(&target.query);
+    (query.chars().count() >= MentionMemberSearchRequests::MIN_QUERY_CHARS).then_some(
+        MentionMemberSearchTarget {
+            guild_id: target.guild_id,
+            query,
+        },
+    )
+}
+
+fn normalize_mention_member_search_query(query: &str) -> String {
+    let mut normalized = String::new();
+    let mut count = 0usize;
+    for ch in query.trim().chars() {
+        for lowered in ch.to_lowercase() {
+            if count >= MentionMemberSearchRequests::MAX_QUERY_CHARS {
+                return normalized;
+            }
+            normalized.push(lowered);
+            count += 1;
+        }
+    }
+    normalized
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum HistoryRequestState {
     Requested,
@@ -408,7 +535,7 @@ mod tests {
 
     use super::{
         ForumPostRequestTarget, ForumPostRequests, HistoryRequests, MemberRequests,
-        ThreadPreviewRequests,
+        MentionMemberSearchRequests, MentionMemberSearchTarget, ThreadPreviewRequests,
     };
 
     #[test]
@@ -624,6 +751,104 @@ mod tests {
         requests.remove(guild_id);
 
         assert_eq!(requests.next(Some(guild_id)), Some(guild_id));
+    }
+
+    #[test]
+    fn mention_member_search_debounces_bounds_and_retries_queries() {
+        let mut requests = MentionMemberSearchRequests::default();
+        let guild_id = Id::new(1);
+        let now = std::time::Instant::now();
+
+        requests.set_target(
+            Some(MentionMemberSearchTarget {
+                guild_id,
+                query: "A".to_owned(),
+            }),
+            now,
+        );
+        assert_eq!(requests.pending_deadline(), None);
+
+        requests.set_target(
+            Some(MentionMemberSearchTarget {
+                guild_id,
+                query: " Alice ".to_owned(),
+            }),
+            now,
+        );
+        let deadline = requests
+            .pending_deadline()
+            .expect("valid query should arm debounce");
+        assert_eq!(
+            requests.next_due(deadline - std::time::Duration::from_millis(1)),
+            None
+        );
+        assert_eq!(
+            requests.next_due(deadline),
+            Some(MentionMemberSearchTarget {
+                guild_id,
+                query: "alice".to_owned(),
+            })
+        );
+
+        requests.set_target(
+            Some(MentionMemberSearchTarget {
+                guild_id,
+                query: "ALICE".to_owned(),
+            }),
+            now + std::time::Duration::from_secs(1),
+        );
+        assert_eq!(requests.pending_deadline(), None);
+
+        let retry_at = deadline
+            + MentionMemberSearchRequests::REQUEST_TTL
+            + std::time::Duration::from_millis(1);
+        requests.set_target(
+            Some(MentionMemberSearchTarget {
+                guild_id,
+                query: "alice".to_owned(),
+            }),
+            retry_at,
+        );
+        assert!(requests.pending_deadline().is_some());
+
+        let long_query = "A".repeat(MentionMemberSearchRequests::MAX_QUERY_CHARS + 10);
+        requests.set_target(
+            Some(MentionMemberSearchTarget {
+                guild_id,
+                query: long_query,
+            }),
+            retry_at + std::time::Duration::from_millis(1),
+        );
+        let deadline = requests
+            .pending_deadline()
+            .expect("long query should still search by capped prefix");
+        let target = requests
+            .next_due(deadline)
+            .expect("capped query should be due");
+        assert_eq!(
+            target.query.chars().count(),
+            MentionMemberSearchRequests::MAX_QUERY_CHARS
+        );
+        assert!(target.query.chars().all(|ch| ch == 'a'));
+
+        let expanding_query = "İ".repeat(MentionMemberSearchRequests::MAX_QUERY_CHARS + 10);
+        requests.set_target(
+            Some(MentionMemberSearchTarget {
+                guild_id,
+                query: expanding_query,
+            }),
+            retry_at + std::time::Duration::from_millis(2),
+        );
+        let deadline = requests
+            .pending_deadline()
+            .expect("expanding query should still search by capped prefix");
+        let target = requests
+            .next_due(deadline)
+            .expect("expanded lowercase query should be due");
+        assert_eq!(
+            target.query.chars().count(),
+            MentionMemberSearchRequests::MAX_QUERY_CHARS
+        );
     }
 
     #[test]

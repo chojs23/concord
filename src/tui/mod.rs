@@ -63,7 +63,7 @@ mod tests {
         marker::{AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker},
     };
     use crate::discord::{
-        AppEvent, AttachmentInfo, ChannelInfo, DownloadAttachmentSource, MessageKind,
+        AppEvent, AttachmentInfo, ChannelInfo, DownloadAttachmentSource, MemberInfo, MessageKind,
         ReadStateInfo, SequencedAppEvent,
     };
 
@@ -167,7 +167,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_signature_changes_when_update_notice_arrives() {
+    fn visible_signature_tracks_update_notices_and_open_mention_picker_candidates() {
         let mut state = DashboardState::new();
         let before = visible_dashboard_signature(&state);
 
@@ -177,6 +177,31 @@ mod tests {
         let after = visible_dashboard_signature(&state);
 
         assert_ne!(before, after);
+
+        let mut state = state_with_messages(0);
+        state.start_composer();
+        for ch in "@al".chars() {
+            state.push_composer_char(ch);
+        }
+        let before = visible_dashboard_signature(&state);
+
+        state.push_event(AppEvent::GuildMemberUpsert {
+            guild_id: Id::new(1),
+            member: MemberInfo {
+                user_id: Id::new(10),
+                display_name: "Alice".to_owned(),
+                username: Some("alice".to_owned()),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            },
+        });
+        let after = visible_dashboard_signature(&state);
+
+        assert_ne!(before, after);
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, false, false,
+        ));
     }
 
     #[test]

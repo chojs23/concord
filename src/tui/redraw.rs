@@ -41,6 +41,9 @@ pub(super) struct VisibleDashboardSignature {
     channel_action_threads_phase: bool,
     message_pane_title: String,
     typing_footer: Option<String>,
+    composer_mention_query: Option<String>,
+    composer_mention_selected: usize,
+    composer_mention_candidates: Vec<MemberEntrySignature>,
     popups: VisiblePopupSignature,
     visible_guilds: Vec<String>,
     pub(super) visible_channels: Vec<String>,
@@ -115,6 +118,19 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
         channel_action_threads_phase: state.is_channel_action_threads_phase(),
         message_pane_title: state.message_pane_title(),
         typing_footer: state.typing_footer_for_selected_channel(),
+        composer_mention_query: state.composer_mention_query().map(str::to_owned),
+        composer_mention_selected: state.composer_mention_selected(),
+        composer_mention_candidates: state
+            .composer_mention_candidates()
+            .into_iter()
+            .map(|entry| MemberEntrySignature {
+                user_id: entry.user_id,
+                display_name: entry.display_name,
+                username: entry.username,
+                is_bot: entry.is_bot,
+                status: entry.status,
+            })
+            .collect(),
         popups: VisiblePopupSignature {
             message_action_open: state.is_message_action_menu_open(),
             image_viewer_open: state.is_image_viewer_open(),
@@ -213,6 +229,9 @@ fn only_visible_member_signature_changed(
         && before.new_messages_count == after.new_messages_count
         && before.message_pane_title == after.message_pane_title
         && before.typing_footer == after.typing_footer
+        && before.composer_mention_query == after.composer_mention_query
+        && before.composer_mention_selected == after.composer_mention_selected
+        && before.composer_mention_candidates == after.composer_mention_candidates
         && before.popups == after.popups
         && before.channel_action_threads_phase == after.channel_action_threads_phase
         && before.visible_guilds == after.visible_guilds
@@ -255,6 +274,9 @@ fn only_new_message_notice_changed(
         && before.member_horizontal_scroll == after.member_horizontal_scroll
         && before.message_pane_title == after.message_pane_title
         && before.typing_footer == after.typing_footer
+        && before.composer_mention_query == after.composer_mention_query
+        && before.composer_mention_selected == after.composer_mention_selected
+        && before.composer_mention_candidates == after.composer_mention_candidates
         && before.popups == after.popups
         && before.channel_action_threads_phase == after.channel_action_threads_phase
         && before.visible_guilds == after.visible_guilds

@@ -28,7 +28,8 @@ use super::{
     },
     requests::{
         ForumPostRequestTarget, ForumPostRequests, HistoryRequests, MemberRequests,
-        PinnedMessageRequests, ThreadPreviewRequests,
+        MentionMemberSearchRequests, MentionMemberSearchTarget, PinnedMessageRequests,
+        ThreadPreviewRequests,
     },
     state::DashboardState,
     ui,
@@ -65,6 +66,7 @@ pub(super) async fn run_dashboard(
     let mut forum_post_requests = ForumPostRequests::default();
     let mut pinned_message_requests = PinnedMessageRequests::default();
     let mut member_requests = MemberRequests::default();
+    let mut mention_member_search_requests = MentionMemberSearchRequests::default();
     let mut thread_preview_requests = ThreadPreviewRequests::default();
     let mut last_member_subscription: Option<(Id<GuildMarker>, Id<ChannelMarker>, u32)> = None;
     let mut last_reported_active_guild: Option<Id<GuildMarker>> = None;
@@ -171,6 +173,8 @@ pub(super) async fn run_dashboard(
 
         let pending_read_ack_deadline = state.next_read_ack_deadline();
         let pending_toast_deadline = state.next_toast_deadline();
+        let pending_mention_member_search_deadline =
+            mention_member_search_requests.pending_deadline();
 
         tokio::select! {
             maybe_event = terminal_events.next() => {
@@ -363,6 +367,15 @@ pub(super) async fn run_dashboard(
                 dirty = true;
             }
             _ = async {
+                match pending_mention_member_search_deadline {
+                    Some(deadline) => tokio::time::sleep_until(
+                        tokio::time::Instant::from_std(deadline),
+                    )
+                    .await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {}
+            _ = async {
                 match pending_toast_deadline {
                     Some(deadline) => tokio::time::sleep_until(
                         tokio::time::Instant::from_std(deadline),
@@ -375,6 +388,23 @@ pub(super) async fn run_dashboard(
                     dirty = true;
                 }
             }
+        }
+
+        mention_member_search_requests.set_target(
+            mention_member_search_target(&state),
+            std::time::Instant::now(),
+        );
+        if let Some(target) = mention_member_search_requests.next_due(std::time::Instant::now())
+            && commands
+                .send(AppCommand::SearchGuildMembers {
+                    guild_id: target.guild_id,
+                    query: target.query,
+                })
+                .await
+                .is_err()
+        {
+            command_helpers::record_command_channel_closed(&mut state);
+            dirty = true;
         }
 
         if let Some(channel_id) = history_requests.next(
@@ -556,6 +586,13 @@ pub(super) async fn run_dashboard(
     }
 
     Ok(())
+}
+
+fn mention_member_search_target(state: &DashboardState) -> Option<MentionMemberSearchTarget> {
+    Some(MentionMemberSearchTarget {
+        guild_id: state.selected_guild_id()?,
+        query: state.composer_mention_query()?.to_owned(),
+    })
 }
 
 fn open_composer_in_editor(

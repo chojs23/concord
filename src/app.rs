@@ -29,6 +29,7 @@ use crate::{
 
 const MESSAGE_HISTORY_LIMIT: u16 = 50;
 const THREAD_PREVIEW_LIMIT: u16 = 1;
+const MENTION_MEMBER_SEARCH_LIMIT: u16 = 10;
 const MAX_ATTACHMENT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ATTACHMENT_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
 const ATTACHMENT_PREVIEW_TIMEOUT: Duration = Duration::from_secs(30);
@@ -256,6 +257,18 @@ fn start_command_loop(
                     }
                     AppCommand::LoadGuildMembers { guild_id } => {
                         if let Err(message) = client.request_guild_members(guild_id) {
+                            logging::error("app", &message);
+                            client
+                                .publish_event(AppEvent::GatewayError { message })
+                                .await;
+                        }
+                    }
+                    AppCommand::SearchGuildMembers { guild_id, query } => {
+                        if let Err(message) = client.search_guild_members(
+                            guild_id,
+                            query,
+                            MENTION_MEMBER_SEARCH_LIMIT,
+                        ) {
                             logging::error("app", &message);
                             client
                                 .publish_event(AppEvent::GatewayError { message })

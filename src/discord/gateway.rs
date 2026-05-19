@@ -37,6 +37,10 @@ pub(crate) use parser::{parse_channel_info, parse_message_info};
 pub enum GatewayCommand {
     RequestGuildMembers {
         guild_id: Id<GuildMarker>,
+        query: String,
+        limit: u16,
+        presences: bool,
+        nonce: Option<String>,
     },
     SubscribeDirectMessage {
         channel_id: Id<ChannelMarker>,
@@ -541,21 +545,24 @@ fn websocket_close_message(context: &str, frame: Option<&CloseFrame>) -> String 
 
 async fn dispatch_command(writer: &WriterHandle, command: GatewayCommand) -> Result<(), String> {
     let payload = match command {
-        GatewayCommand::RequestGuildMembers { guild_id } => {
+        GatewayCommand::RequestGuildMembers {
+            guild_id,
+            query,
+            limit,
+            presences,
+            nonce,
+        } => {
             logging::debug(
                 "gateway",
-                format!("requesting guild members: guild={}", guild_id.get()),
+                format!(
+                    "requesting guild members: guild={} query_len={} limit={} presences={}",
+                    guild_id.get(),
+                    query.len(),
+                    limit,
+                    presences
+                ),
             );
-            json!({
-                "op": 8,
-                "d": {
-                    "guild_id": guild_id.to_string(),
-                    "query": "",
-                    "limit": 0,
-                    "presences": true,
-                },
-            })
-            .to_string()
+            request_guild_members_payload(guild_id, &query, limit, presences, nonce.as_deref())
         }
         GatewayCommand::SubscribeDirectMessage { channel_id } => {
             logging::debug(
@@ -688,6 +695,29 @@ fn build_resume_payload(token: &str, session: &SessionState) -> String {
     .to_string()
 }
 
+fn request_guild_members_payload(
+    guild_id: Id<GuildMarker>,
+    query: &str,
+    limit: u16,
+    presences: bool,
+    nonce: Option<&str>,
+) -> String {
+    let mut data = json!({
+        "guild_id": guild_id.to_string(),
+        "query": query,
+        "limit": limit,
+        "presences": presences,
+    });
+    if let Some(nonce) = nonce {
+        data["nonce"] = json!(nonce);
+    }
+    json!({
+        "op": 8,
+        "d": data,
+    })
+    .to_string()
+}
+
 fn direct_message_subscribe_payload(channel_id: Id<ChannelMarker>) -> String {
     json!({
         "op": 13,
@@ -751,7 +781,7 @@ mod tests {
     use super::{
         GATEWAY_WEBSOCKET_LIMIT, SessionState, USER_ACCOUNT_CAPABILITIES, build_identify_payload,
         build_resume_payload, direct_message_subscribe_payload, gateway_websocket_config,
-        guild_channel_subscribe_payload, voice_state_update_payload,
+        guild_channel_subscribe_payload, request_guild_members_payload, voice_state_update_payload,
     };
 
     #[test]
@@ -796,6 +826,45 @@ mod tests {
         assert_eq!(payload["op"].as_u64(), Some(6));
         assert_eq!(payload["d"]["session_id"].as_str(), Some("sess-123"));
         assert_eq!(payload["d"]["seq"].as_u64(), Some(42));
+    }
+
+    #[test]
+    fn request_guild_members_payload_supports_full_load_and_search_shapes() {
+        let search_payload: serde_json::Value =
+            serde_json::from_str(&request_guild_members_payload(
+                Id::<GuildMarker>::new(10),
+                "alic",
+                10,
+                false,
+                Some("mention-ac-10-alic"),
+            ))
+            .expect("payload should be valid json");
+
+        assert_eq!(
+            search_payload,
+            json!({
+                "op": 8,
+                "d": {
+                    "guild_id": "10",
+                    "query": "alic",
+                    "limit": 10,
+                    "presences": false,
+                    "nonce": "mention-ac-10-alic"
+                }
+            })
+        );
+
+        let full_load_payload: serde_json::Value = serde_json::from_str(
+            &request_guild_members_payload(Id::<GuildMarker>::new(10), "", 0, true, None),
+        )
+        .expect("payload should be valid json");
+
+        assert_eq!(full_load_payload["op"].as_u64(), Some(8));
+        assert_eq!(full_load_payload["d"]["guild_id"].as_str(), Some("10"));
+        assert_eq!(full_load_payload["d"]["query"].as_str(), Some(""));
+        assert_eq!(full_load_payload["d"]["limit"].as_u64(), Some(0));
+        assert_eq!(full_load_payload["d"]["presences"].as_bool(), Some(true));
+        assert!(full_load_payload["d"].get("nonce").is_none());
     }
 
     #[test]

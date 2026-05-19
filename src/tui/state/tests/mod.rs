@@ -4293,6 +4293,24 @@ fn typing_after_at_filters_candidates_by_substring() {
     assert!(names.iter().any(|name| name == "Sally"));
     assert!(names.iter().any(|name| name == "Sammy"));
     assert!(!names.iter().any(|name| name == "Bob"));
+
+    state.push_event(AppEvent::GuildMemberUpsert {
+        guild_id: Id::new(1),
+        member: MemberInfo {
+            user_id: Id::new(30),
+            display_name: "Offline Sally".to_owned(),
+            username: Some("offlinesally".to_owned()),
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+        },
+    });
+    let names: Vec<_> = state
+        .composer_mention_candidates()
+        .into_iter()
+        .map(|entry| entry.display_name)
+        .collect();
+    assert!(names.iter().any(|name| name == "Offline Sally"));
 }
 
 #[test]

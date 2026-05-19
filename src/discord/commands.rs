@@ -152,6 +152,10 @@ pub enum AppCommand {
     LoadGuildMembers {
         guild_id: Id<GuildMarker>,
     },
+    SearchGuildMembers {
+        guild_id: Id<GuildMarker>,
+        query: String,
+    },
     SetSelectedGuild {
         guild_id: Option<Id<GuildMarker>>,
     },

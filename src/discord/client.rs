@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex, RwLock};
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    sync::{Arc, Mutex, RwLock},
+};
 
 use crate::config::{MicrophoneSensitivityDb, VoiceVolumePercent};
 use crate::discord::ids::{
@@ -23,6 +27,10 @@ use super::{
     state::{CurrentVoiceConnectionState, DiscordSnapshot, DiscordState, SnapshotRevision},
     voice::{self, VoiceRuntimeEvent},
 };
+
+const MEMBER_SEARCH_MIN_QUERY_CHARS: usize = 2;
+const MEMBER_SEARCH_MAX_QUERY_CHARS: usize = 64;
+const MEMBER_SEARCH_MAX_LIMIT: u16 = 10;
 
 #[derive(Clone, Debug)]
 pub struct DiscordClient {
@@ -157,7 +165,35 @@ impl DiscordClient {
         guild_id: Id<GuildMarker>,
     ) -> std::result::Result<(), String> {
         self.gateway_commands_tx
-            .send(GatewayCommand::RequestGuildMembers { guild_id })
+            .send(GatewayCommand::RequestGuildMembers {
+                guild_id,
+                query: String::new(),
+                limit: 0,
+                presences: true,
+                nonce: None,
+            })
+            .map_err(|_| "gateway command channel closed".to_owned())
+    }
+
+    pub fn search_guild_members(
+        &self,
+        guild_id: Id<GuildMarker>,
+        query: String,
+        limit: u16,
+    ) -> std::result::Result<(), String> {
+        let Some(query) = normalize_member_search_query(&query) else {
+            return Ok(());
+        };
+        let limit = limit.min(MEMBER_SEARCH_MAX_LIMIT);
+        let nonce = format!("mention-ac-{}-{:016x}", guild_id.get(), query_hash(&query));
+        self.gateway_commands_tx
+            .send(GatewayCommand::RequestGuildMembers {
+                guild_id,
+                query,
+                limit,
+                presences: true,
+                nonce: Some(nonce),
+            })
             .map_err(|_| "gateway command channel closed".to_owned())
     }
 
@@ -572,13 +608,39 @@ pub(crate) fn validate_token_header(token: &str) -> Result<()> {
     Ok(())
 }
 
+fn normalize_member_search_query(query: &str) -> Option<String> {
+    let mut normalized = String::new();
+    let mut count = 0usize;
+    for ch in query.trim().chars() {
+        for lowered in ch.to_lowercase() {
+            if count >= MEMBER_SEARCH_MAX_QUERY_CHARS {
+                return (normalized.chars().count() >= MEMBER_SEARCH_MIN_QUERY_CHARS)
+                    .then_some(normalized);
+            }
+            normalized.push(lowered);
+            count += 1;
+        }
+    }
+    (normalized.chars().count() >= MEMBER_SEARCH_MIN_QUERY_CHARS).then_some(normalized)
+}
+
+fn query_hash(query: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    query.hash(&mut hasher);
+    hasher.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::discord::{
-        AppEvent, ChannelInfo, MessageKind, VoiceSoundKind, VoiceStateInfo, ids::Id,
+        AppEvent, ChannelInfo, MessageKind, VoiceSoundKind, VoiceStateInfo,
+        gateway::GatewayCommand, ids::Id,
     };
 
-    use super::{DiscordClient, validate_token_header};
+    use super::{
+        DiscordClient, MEMBER_SEARCH_MAX_LIMIT, MEMBER_SEARCH_MAX_QUERY_CHARS,
+        validate_token_header,
+    };
 
     #[tokio::test]
     async fn publish_event_sends_matching_snapshot_and_effect_revisions() {
@@ -757,6 +819,52 @@ mod tests {
             .expect("gateway command should queue");
 
         assert_eq!(client.requested_voice_connection(), None);
+    }
+
+    #[test]
+    fn guild_member_search_validates_query_and_caps_limit() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let mut gateway_commands = client
+            .gateway_commands_rx
+            .lock()
+            .expect("gateway command receiver mutex is not poisoned")
+            .take()
+            .expect("gateway commands can be taken once");
+
+        client
+            .search_guild_members(Id::new(1), " a ".to_owned(), 10)
+            .expect("short search is ignored without closing channel");
+        assert!(matches!(
+            gateway_commands.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+
+        let long_query = "İ".repeat(MEMBER_SEARCH_MAX_QUERY_CHARS + 10);
+        client
+            .search_guild_members(Id::new(1), long_query, 99)
+            .expect("valid search should queue");
+
+        let command = gateway_commands
+            .try_recv()
+            .expect("search command should be queued");
+        let GatewayCommand::RequestGuildMembers {
+            guild_id,
+            query,
+            limit,
+            presences,
+            nonce,
+        } = command
+        else {
+            panic!("expected guild member search command");
+        };
+        assert_eq!(guild_id, Id::new(1));
+        assert_eq!(query.chars().count(), MEMBER_SEARCH_MAX_QUERY_CHARS);
+        assert_eq!(limit, MEMBER_SEARCH_MAX_LIMIT);
+        assert!(presences);
+        let nonce = nonce.expect("member search should include nonce");
+        assert!(nonce.starts_with("mention-ac-1-"));
+        assert!(!nonce.contains(&query));
     }
 
     #[tokio::test]
