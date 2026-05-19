@@ -1,5 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::{Duration, Instant};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque, hash_map::DefaultHasher},
+    hash::{Hash, Hasher},
+};
 
 mod channels;
 mod guilds;
@@ -504,7 +507,7 @@ impl DiscordState {
             | AppEvent::ForumPostsLoaded { .. }
             | AppEvent::Ready { .. } => SnapshotAreas::all(),
 
-            AppEvent::MessageCreate { .. } => SnapshotAreas::all(),
+            AppEvent::MessageCreate { .. } => SnapshotAreas::navigation_and_message(),
 
             AppEvent::MessageHistoryLoaded { .. }
             | AppEvent::ThreadPreviewLoaded { .. }
@@ -570,6 +573,17 @@ impl DiscordState {
                 unreachable!("non-mutating events return before snapshot area classification")
             }
         })
+    }
+
+    pub(crate) fn detail_revision_signature(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        for (channel_id, read_state) in &self.notifications.read_states {
+            channel_id.hash(&mut hasher);
+            read_state.last_acked_message_id.hash(&mut hasher);
+            read_state.mention_count.hash(&mut hasher);
+            read_state.notification_count.hash(&mut hasher);
+        }
+        hasher.finish()
     }
 
     pub fn apply_event(&mut self, event: &AppEvent) {

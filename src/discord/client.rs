@@ -566,11 +566,16 @@ pub(super) async fn publish_app_event(
         event_revision = if mutates_state {
             let next_revision = {
                 let mut state = state.write().expect("discord state lock is not poisoned");
+                let detail_revision_before = matches!(event, AppEvent::MessageCreate { .. })
+                    .then(|| state.detail_revision_signature());
                 state.apply_event(event);
                 let mut revision = revision
                     .write()
                     .expect("snapshot revision lock is not poisoned");
-                if let Some(areas) = DiscordState::snapshot_areas_for_event(event) {
+                if let Some(mut areas) = DiscordState::snapshot_areas_for_event(event) {
+                    if let Some(before) = detail_revision_before {
+                        areas.detail = state.detail_revision_signature() != before;
+                    }
                     *revision = revision.advance(areas);
                 }
                 *revision
@@ -633,7 +638,7 @@ fn query_hash(query: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use crate::discord::{
-        AppEvent, ChannelInfo, MessageKind, VoiceSoundKind, VoiceStateInfo,
+        AppEvent, ChannelInfo, MentionInfo, MessageKind, VoiceSoundKind, VoiceStateInfo,
         gateway::GatewayCommand, ids::Id,
     };
 
@@ -687,8 +692,92 @@ mod tests {
         assert_eq!(snapshot.global, 1);
         assert_eq!(snapshot.navigation, 1);
         assert_eq!(snapshot.message, 1);
-        assert_eq!(snapshot.detail, 1);
+        assert_eq!(snapshot.detail, 0);
         assert_eq!(effect.revision, 1);
+        assert!(matches!(effect.event, AppEvent::MessageCreate { .. }));
+    }
+
+    #[tokio::test]
+    async fn current_user_message_create_advances_detail_revision() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let mut effects = client.take_effects();
+        let mut snapshots = client.subscribe_snapshots();
+
+        client
+            .publish_event(AppEvent::Ready {
+                user: "neo".to_owned(),
+                user_id: Some(Id::new(99)),
+            })
+            .await;
+        snapshots
+            .changed()
+            .await
+            .expect("ready snapshot is published");
+        drop(snapshots.borrow_and_update());
+
+        client.publish_event(message_create_event(1)).await;
+
+        snapshots
+            .changed()
+            .await
+            .expect("message snapshot is published");
+        let snapshot = *snapshots.borrow_and_update();
+        let effect = effects.recv().await.expect("message effect is published");
+
+        assert_eq!(snapshot.global, 2);
+        assert_eq!(snapshot.navigation, 2);
+        assert_eq!(snapshot.message, 2);
+        assert_eq!(snapshot.detail, 2);
+        assert_eq!(effect.revision, 2);
+        assert!(matches!(effect.event, AppEvent::MessageCreate { .. }));
+    }
+
+    #[tokio::test]
+    async fn mentioned_message_create_advances_detail_revision() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let mut effects = client.take_effects();
+        let mut snapshots = client.subscribe_snapshots();
+
+        client
+            .publish_event(AppEvent::Ready {
+                user: "neo".to_owned(),
+                user_id: Some(Id::new(42)),
+            })
+            .await;
+        snapshots
+            .changed()
+            .await
+            .expect("ready snapshot is published");
+        drop(snapshots.borrow_and_update());
+
+        let mut event = message_create_event(1);
+        if let AppEvent::MessageCreate {
+            content, mentions, ..
+        } = &mut event
+        {
+            *content = Some("hello <@42>".to_owned());
+            mentions.push(MentionInfo {
+                user_id: Id::new(42),
+                guild_nick: None,
+                display_name: "neo".to_owned(),
+            });
+        }
+        client.publish_event(event).await;
+
+        snapshots
+            .changed()
+            .await
+            .expect("message snapshot is published");
+        let snapshot = *snapshots.borrow_and_update();
+        let effect = effects.recv().await.expect("message effect is published");
+
+        assert_eq!(snapshot.global, 2);
+        assert_eq!(snapshot.navigation, 2);
+        assert_eq!(snapshot.message, 2);
+        assert_eq!(snapshot.detail, 2);
+        assert_eq!(effect.revision, 2);
         assert!(matches!(effect.event, AppEvent::MessageCreate { .. }));
     }
 
