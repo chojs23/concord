@@ -653,6 +653,17 @@ fn message_urls(message: &MessageState) -> Vec<String> {
     if let Some(content) = &message.content {
         urls.extend(detected_urls(content));
     }
+    // URLs in a reply quote or a forwarded message are shown to the user too.
+    if let Some(reply) = &message.reply
+        && let Some(content) = &reply.content
+    {
+        urls.extend(detected_urls(content));
+    }
+    for snapshot in &message.forwarded_snapshots {
+        if let Some(content) = &snapshot.content {
+            urls.extend(detected_urls(content));
+        }
+    }
     dedupe_urls(urls)
 }
 

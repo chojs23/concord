@@ -3277,6 +3277,44 @@ fn message_action_ignores_embed_urls() {
 }
 
 #[test]
+fn message_action_detects_urls_in_reply_quote_and_forwarded_snapshot() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            content: Some("see above".to_owned()),
+            reply: Some(ReplyInfo {
+                author_id: None,
+                author: "alice".to_owned(),
+                content: Some("check https://reply.example/page".to_owned()),
+                sticker_names: Vec::new(),
+                mentions: Vec::new(),
+            }),
+            forwarded_snapshots: vec![MessageSnapshotInfo {
+                content: Some("forwarded https://forward.example/doc".to_owned()),
+                sticker_names: Vec::new(),
+                mentions: Vec::new(),
+                attachments: Vec::new(),
+                embeds: Vec::new(),
+                source_channel_id: None,
+                timestamp: None,
+            }],
+            ..message_info(Id::new(2), 1)
+        }],
+    });
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+
+    let urls = state.selected_message_url_items();
+
+    assert_eq!(
+        urls.into_iter().map(|item| item.url).collect::<Vec<_>>(),
+        vec!["https://reply.example/page", "https://forward.example/doc"]
+    );
+}
+
+#[test]
 fn non_regular_message_actions_do_not_include_attachment_downloads() {
     let mut state = state_with_message_ids([]);
     state.push_event(AppEvent::MessageCreate {
