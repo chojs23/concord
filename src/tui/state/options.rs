@@ -1,10 +1,11 @@
 use crate::config::{
-    AppOptions, DisplayOptions, ImagePreviewQualityPreset, NotificationOptions, VoiceOptions,
+    AppOptions, DisplayOptions, ImagePreviewQualityPreset, NotificationOptions, UiStateOptions,
+    VoiceOptions,
 };
 use crate::discord::AppCommand;
 
 use super::{
-    DashboardState, FocusPane, OptionsCategoryShortcut,
+    DashboardState, FocusPane, FolderKey, OptionsCategoryShortcut,
     popups::{OptionsCategory, OptionsPopupState},
 };
 
@@ -30,13 +31,16 @@ impl DashboardState {
         display_options: DisplayOptions,
         notification_options: NotificationOptions,
         voice_options: VoiceOptions,
+        ui_state_options: UiStateOptions,
     ) -> Self {
-        Self {
+        let mut state = Self {
             display_options,
             notification_options,
             voice_options,
             ..Self::new()
-        }
+        };
+        state.apply_ui_state_options(ui_state_options);
+        state
     }
 
     pub fn display_options(&self) -> DisplayOptions {
@@ -49,6 +53,7 @@ impl DashboardState {
             display_options,
             NotificationOptions::default(),
             VoiceOptions::default(),
+            UiStateOptions::default(),
         )
     }
 
@@ -58,6 +63,7 @@ impl DashboardState {
             DisplayOptions::default(),
             NotificationOptions::default(),
             voice_options,
+            UiStateOptions::default(),
         )
     }
 
@@ -67,6 +73,7 @@ impl DashboardState {
             DisplayOptions::default(),
             notification_options,
             VoiceOptions::default(),
+            UiStateOptions::default(),
         )
     }
 
@@ -80,6 +87,49 @@ impl DashboardState {
 
     pub fn key_bindings(&self) -> &crate::tui::keybindings::KeyBindings {
         &self.key_bindings
+    }
+
+    fn apply_ui_state_options(&mut self, options: UiStateOptions) {
+        self.collapsed_channel_categories =
+            options.collapsed_channel_categories.into_iter().collect();
+        self.collapsed_folders = options
+            .collapsed_server_folder_ids
+            .into_iter()
+            .map(FolderKey::Id)
+            .chain(
+                options
+                    .collapsed_server_folder_guilds
+                    .into_iter()
+                    .map(FolderKey::Guilds),
+            )
+            .collect();
+    }
+
+    fn ui_state_options(&self) -> UiStateOptions {
+        let mut collapsed_channel_categories: Vec<_> =
+            self.collapsed_channel_categories.iter().copied().collect();
+        collapsed_channel_categories.sort_by_key(|id| id.get());
+
+        let mut collapsed_server_folder_ids = Vec::new();
+        let mut collapsed_server_folder_guilds = Vec::new();
+        for folder in &self.collapsed_folders {
+            match folder {
+                FolderKey::Id(id) => collapsed_server_folder_ids.push(*id),
+                FolderKey::Guilds(guilds) => collapsed_server_folder_guilds.push(guilds.clone()),
+            }
+        }
+        collapsed_server_folder_ids.sort_unstable();
+        collapsed_server_folder_guilds.sort_by(|left, right| {
+            left.iter()
+                .map(|id| id.get())
+                .cmp(right.iter().map(|id| id.get()))
+        });
+
+        UiStateOptions {
+            collapsed_channel_categories,
+            collapsed_server_folder_ids,
+            collapsed_server_folder_guilds,
+        }
     }
 
     pub fn show_avatars(&self) -> bool {
@@ -548,6 +598,7 @@ impl DashboardState {
             display: self.display_options,
             notifications: self.notification_options,
             voice: self.voice_options,
+            ui_state: self.ui_state_options(),
         })
     }
 }

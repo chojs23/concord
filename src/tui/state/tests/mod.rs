@@ -4,7 +4,7 @@ use fixtures::*;
 use ratatui::text::Line;
 
 use crate::{
-    config::{ImagePreviewQualityPreset, NotificationOptions, VoiceOptions},
+    config::{DisplayOptions, ImagePreviewQualityPreset, NotificationOptions, VoiceOptions},
     discord::ids::{
         Id,
         marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
@@ -8785,6 +8785,64 @@ fn selected_channel_child_can_close_parent_category() {
 }
 
 #[test]
+fn collapsed_category_keeps_unread_child_visible_until_another_channel_is_selected() {
+    let mut state = state_with_channel_tree();
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![ReadStateInfo {
+            channel_id: Id::new(11),
+            last_acked_message_id: Some(Id::new(99)),
+            mention_count: 0,
+        }],
+    });
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(11),
+        message_id: Id::new(100),
+        author_id: Id::new(20),
+        author: "alice".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("unread".to_owned()),
+        sticker_names: Vec::new(),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+
+    state.toggle_selected_channel_category();
+    assert_eq!(channel_entry_names(&state), vec!["general"]);
+
+    state.activate_channel(Id::new(11));
+    assert_eq!(channel_entry_names(&state), vec!["general"]);
+
+    state.activate_channel(Id::new(12));
+    assert_eq!(channel_entry_names(&state), vec!["random"]);
+}
+
+#[test]
+fn collapsed_category_state_is_saved_and_restored() {
+    let mut state = state_with_channel_tree();
+    state.toggle_selected_channel_category();
+
+    let options = state
+        .take_options_save_request()
+        .expect("collapse should request an options save");
+    let restored = DashboardState::new_with_options(
+        DisplayOptions::default(),
+        NotificationOptions::default(),
+        VoiceOptions::default(),
+        options.ui_state,
+    );
+
+    assert!(restored.collapsed_channel_categories.contains(&Id::new(10)));
+}
+
+#[test]
 fn moving_guild_cursor_does_not_activate_guild() {
     let mut state = state_with_two_guilds();
     state.focus_pane(FocusPane::Guilds);
@@ -8965,6 +9023,18 @@ fn selected_folder_child_can_close_parent() {
             ..
         }
     ));
+}
+
+#[test]
+fn collapsed_server_folder_state_is_saved() {
+    let mut state = state_with_folder(Some(42));
+
+    state.toggle_selected_folder();
+
+    let options = state
+        .take_options_save_request()
+        .expect("folder collapse should request an options save");
+    assert_eq!(options.ui_state.collapsed_server_folder_ids, vec![42]);
 }
 
 fn channel_entry_names(state: &DashboardState) -> Vec<&str> {

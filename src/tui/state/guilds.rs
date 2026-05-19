@@ -518,6 +518,7 @@ impl DashboardState {
         let folder_key = self.selected_folder_key();
         if let Some(key) = folder_key {
             toggle_collapsed_key(&mut self.collapsed_folders, key);
+            self.options_save_pending = true;
         }
     }
 

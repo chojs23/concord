@@ -39,6 +39,7 @@ pub(super) fn handle_terminal_event(
                 input::handle_mouse_event(state, mouse, *last_frame_area, mouse_clicks);
             outcome.command = mouse_outcome.command;
             if mouse_outcome.handled {
+                save_options_if_needed(state);
                 outcome.dirty = true;
             }
         }

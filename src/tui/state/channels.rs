@@ -1,12 +1,11 @@
 use std::collections::{BTreeMap, HashSet};
 
-use crate::discord::{AppCommand, AppEvent, ChannelState, VoiceParticipantState};
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, GuildMarker},
+};
 use crate::discord::{
-    TypingUserState,
-    ids::{
-        Id,
-        marker::{ChannelMarker, GuildMarker},
-    },
+    AppCommand, AppEvent, ChannelState, ChannelUnreadState, TypingUserState, VoiceParticipantState,
 };
 
 use super::{
@@ -726,9 +725,6 @@ impl DashboardState {
                 state: root,
                 collapsed,
             });
-            if collapsed {
-                continue;
-            }
 
             let mut children: Vec<&ChannelState> = channels
                 .iter()
@@ -736,6 +732,9 @@ impl DashboardState {
                 .filter(|channel| !channel.is_category() && channel.parent_id == Some(root.id))
                 .collect();
             sort_channels(&mut children);
+            if collapsed {
+                children.retain(|child| self.collapsed_category_child_visible(child));
+            }
             let last_child_index = children.len().saturating_sub(1);
             for (index, child) in children.into_iter().enumerate() {
                 let branch = if index == last_child_index {
@@ -753,6 +752,11 @@ impl DashboardState {
         }
 
         entries
+    }
+
+    fn collapsed_category_child_visible(&self, channel: &ChannelState) -> bool {
+        self.active_channel_id == Some(channel.id)
+            || self.sidebar_channel_unread(channel.id) != ChannelUnreadState::Seen
     }
 
     fn push_channel_pane_channel_entry<'a>(
@@ -1129,6 +1133,7 @@ impl DashboardState {
             return;
         };
         toggle_collapsed_key(&mut self.collapsed_channel_categories, category_id);
+        self.options_save_pending = true;
     }
 
     #[cfg(test)]

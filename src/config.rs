@@ -5,6 +5,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, GuildMarker},
+};
 use crate::{Result, paths};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -37,12 +41,21 @@ pub struct VoiceOptions {
     pub voice_output_volume: VoiceVolumePercent,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AppOptions {
     pub display: DisplayOptions,
     pub notifications: NotificationOptions,
     pub voice: VoiceOptions,
+    pub ui_state: UiStateOptions,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct UiStateOptions {
+    pub collapsed_channel_categories: Vec<Id<ChannelMarker>>,
+    pub collapsed_server_folder_ids: Vec<u64>,
+    pub collapsed_server_folder_guilds: Vec<Vec<Id<GuildMarker>>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -508,6 +521,7 @@ mod tests {
                 microphone_volume: VoiceVolumePercent::new(80),
                 voice_output_volume: VoiceVolumePercent::new(60),
             },
+            ui_state: Default::default(),
         };
 
         save_options_to_path(&path, &options).expect("config should save");

@@ -597,6 +597,7 @@ fn alt_arrows_adjust_focused_side_pane_width() {
             display: state.display_options(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
+            ui_state: Default::default(),
         })
     );
 
@@ -1876,6 +1877,7 @@ fn options_popup_toggles_selected_setting() {
             display: state.display_options(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
+            ui_state: Default::default(),
         })
     );
 }
@@ -1900,6 +1902,7 @@ fn options_popup_cycles_image_preview_quality() {
             display: state.display_options(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
+            ui_state: Default::default(),
         })
     );
 }
@@ -1957,6 +1960,7 @@ fn options_popup_h_l_adjust_microphone_sensitivity_by_one_or_ten_db() {
             display: state.display_options(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
+            ui_state: Default::default(),
         })
     );
 }
