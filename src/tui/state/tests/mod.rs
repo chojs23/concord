@@ -4487,20 +4487,28 @@ fn confirm_mention_in_middle_keeps_trailing_text() {
 }
 
 #[test]
-fn cancel_composer_clears_pending_attachments() {
-    let mut state = state_with_channel_tree();
-    state.focus_pane(FocusPane::Channels);
-    state.confirm_selected_channel();
-    state.start_composer();
-    state.add_pending_composer_attachments(vec![MessageAttachmentUpload::from_path(
+fn cancel_composer_clears_pending_upload_state() {
+    let mut attachments = state_with_channel_tree();
+    attachments.focus_pane(FocusPane::Channels);
+    attachments.confirm_selected_channel();
+    attachments.start_composer();
+    attachments.add_pending_composer_attachments(vec![MessageAttachmentUpload::from_path(
         "/tmp/cat.png".into(),
         "cat.png".to_owned(),
         2_048,
     )]);
 
-    state.cancel_composer();
+    attachments.cancel_composer();
 
-    assert_eq!(state.pending_composer_attachments(), &[]);
+    assert_eq!(attachments.pending_composer_attachments(), &[]);
+
+    let mut processing = state_with_messages(1);
+    processing.start_composer();
+    assert!(processing.begin_clipboard_paste());
+
+    processing.cancel_composer();
+
+    assert!(!processing.clipboard_paste_pending());
 }
 
 #[test]

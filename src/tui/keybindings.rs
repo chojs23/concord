@@ -188,6 +188,7 @@ pub(in crate::tui) enum OptionsPopupAction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum ComposerAction {
     OpenInEditor,
+    PasteClipboard,
     InsertNewline,
     Submit,
     Close,
@@ -617,6 +618,9 @@ impl KeyBindings {
         match key.code {
             KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 ComposerAction::OpenInEditor
+            }
+            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                ComposerAction::PasteClipboard
             }
             _ if is_composer_newline_key(key) => ComposerAction::InsertNewline,
             KeyCode::Enter => ComposerAction::Submit,

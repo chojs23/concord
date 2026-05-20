@@ -358,11 +358,8 @@ pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
         return false;
     }
 
-    if state.composer_accepts_attachments() {
-        if let Some(attachments) = pasted_file_attachments(text) {
-            state.add_pending_composer_attachments(attachments);
-            return true;
-        }
+    if handle_pasted_file_attachments(state, text) {
+        return true;
     }
 
     let pasted: String = text.chars().filter(|value| *value != '\r').collect();
@@ -370,6 +367,17 @@ pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
         return false;
     }
     state.insert_composer_text_at_cursor(&pasted);
+    true
+}
+
+pub fn handle_pasted_file_attachments(state: &mut DashboardState, text: &str) -> bool {
+    if !state.is_composing() || !state.composer_accepts_attachments() {
+        return false;
+    }
+    let Some(attachments) = pasted_file_attachments(text) else {
+        return false;
+    };
+    state.add_pending_composer_attachments(attachments);
     true
 }
 
@@ -771,6 +779,10 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
     match state.key_bindings().composer_action(key) {
         ComposerAction::OpenInEditor => {
             state.request_open_composer_in_editor();
+            None
+        }
+        ComposerAction::PasteClipboard => {
+            state.request_paste_clipboard();
             None
         }
         ComposerAction::InsertNewline => {

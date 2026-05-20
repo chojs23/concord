@@ -27,6 +27,7 @@ impl DashboardState {
         self.composer_input.clear();
         self.composer_cursor_byte_index = 0;
         self.pending_composer_attachments.clear();
+        self.clipboard_paste_pending = false;
         self.reply_target_message_id = Some(message_id);
         self.edit_target_message = None;
         self.reset_mention_picker_state();
@@ -51,6 +52,7 @@ impl DashboardState {
         self.composer_input = content;
         self.composer_cursor_byte_index = self.composer_input.len();
         self.pending_composer_attachments.clear();
+        self.clipboard_paste_pending = false;
         self.reply_target_message_id = None;
         self.edit_target_message = Some((channel_id, message_id));
         self.reset_mention_picker_state();
@@ -150,6 +152,7 @@ impl DashboardState {
         self.composer_input.clear();
         self.composer_cursor_byte_index = 0;
         self.pending_composer_attachments.clear();
+        self.clipboard_paste_pending = false;
         self.reply_target_message_id = None;
         self.edit_target_message = None;
         self.reset_mention_picker_state();
@@ -161,6 +164,7 @@ impl DashboardState {
             return;
         }
         self.composer_active = false;
+        self.clipboard_paste_pending = false;
         self.reset_mention_picker_state();
     }
 
@@ -168,6 +172,7 @@ impl DashboardState {
         self.composer_input.clear();
         self.composer_cursor_byte_index = 0;
         self.pending_composer_attachments.clear();
+        self.clipboard_paste_pending = false;
         self.reset_mention_picker_state();
     }
 
@@ -273,6 +278,7 @@ impl DashboardState {
             self.composer_input.clear();
             self.composer_cursor_byte_index = 0;
             self.pending_composer_attachments.clear();
+            self.clipboard_paste_pending = false;
             self.composer_active = false;
             self.reply_target_message_id = None;
             self.reset_mention_picker_state();
@@ -290,6 +296,7 @@ impl DashboardState {
             self.composer_input.clear();
             self.composer_cursor_byte_index = 0;
             self.pending_composer_attachments.clear();
+            self.clipboard_paste_pending = false;
             self.composer_active = false;
             self.reply_target_message_id = None;
             self.edit_target_message = None;
@@ -300,6 +307,7 @@ impl DashboardState {
             self.composer_input.clear();
             self.composer_cursor_byte_index = 0;
             self.pending_composer_attachments.clear();
+            self.clipboard_paste_pending = false;
             self.composer_active = false;
             self.reply_target_message_id = None;
             self.edit_target_message = None;

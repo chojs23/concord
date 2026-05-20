@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 
 use super::state::DashboardState;
 
-pub use self::keyboard::{handle_key, handle_paste};
+pub use self::keyboard::{handle_key, handle_paste, handle_pasted_file_attachments};
 pub type MouseClickTracker = self::mouse::MouseClickTracker;
 pub type MouseOutcome = self::mouse::MouseOutcome;
 

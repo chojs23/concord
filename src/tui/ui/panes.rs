@@ -588,7 +588,7 @@ fn composer_cursor_position_with_loaded_custom_emoji_urls(
         prompt_column = 0;
     }
 
-    let mut content_row = state.pending_composer_attachments().len();
+    let mut content_row = state.pending_composer_upload_line_count();
     if state.reply_target_message_state().is_some() {
         content_row = content_row.saturating_add(1);
     }
@@ -920,6 +920,7 @@ pub(super) fn composer_lines_with_loaded_custom_emoji_urls(
     if state.is_composing()
         || !state.composer_input().is_empty()
         || !state.pending_composer_attachments().is_empty()
+        || state.clipboard_paste_pending()
     {
         let mut lines = pending_upload_lines(state, width);
         let display_input = composer_display_input(state, loaded_custom_emoji_urls);
@@ -1050,7 +1051,7 @@ fn render_composer_custom_emoji_images(
     let display_input = composer_display_input(state, &ready_urls);
     let input = display_input.input.as_str();
     let inner_width = composer_inner_width(area.width) as usize;
-    let mut content_row = state.pending_composer_attachments().len();
+    let mut content_row = state.pending_composer_upload_line_count();
     if state.reply_target_message_state().is_some() {
         content_row = content_row.saturating_add(1);
     }
@@ -1129,7 +1130,7 @@ fn pending_upload_lines(state: &DashboardState, width: u16) -> Vec<Line<'static>
 
 fn pending_upload_texts(state: &DashboardState, width: u16) -> Vec<String> {
     let max_width = usize::from(width).max(1);
-    state
+    let mut lines: Vec<_> = state
         .pending_composer_attachments()
         .iter()
         .map(|attachment| {
@@ -1140,7 +1141,14 @@ fn pending_upload_texts(state: &DashboardState, width: u16) -> Vec<String> {
             );
             truncate_display_width(&label, max_width)
         })
-        .collect()
+        .collect();
+    if state.clipboard_paste_pending() {
+        lines.push(truncate_display_width(
+            "upload: ⠋ processing clipboard attachment...",
+            max_width,
+        ));
+    }
+    lines
 }
 
 fn format_byte_size(bytes: u64) -> String {
@@ -1166,7 +1174,10 @@ pub(super) fn composer_text(state: &DashboardState, width: u16) -> String {
         return lines.join("\n");
     }
 
-    if !state.composer_input().is_empty() || !state.pending_composer_attachments().is_empty() {
+    if !state.composer_input().is_empty()
+        || !state.pending_composer_attachments().is_empty()
+        || state.clipboard_paste_pending()
+    {
         let mut lines = pending_upload_texts(state, width);
         lines.push(prefixed_composer_input(state.composer_input()));
         return lines.join("\n");

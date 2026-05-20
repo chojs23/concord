@@ -867,7 +867,7 @@ fn composer_border_title_tracks_message_mode() {
 }
 
 #[test]
-fn composer_lines_show_pending_upload_above_input() {
+fn composer_lines_show_pending_upload_rows_above_input() {
     let mut state = state_with_message();
     state.start_composer();
     state.add_pending_composer_attachments(vec![MessageAttachmentUpload::from_path(
@@ -884,6 +884,20 @@ fn composer_lines_show_pending_upload_above_input() {
     );
     assert_eq!(lines[0].spans[0].style.fg, Some(ACCENT));
     assert_eq!(composer_content_line_count(&state, 80), 2);
+
+    let mut processing = state_with_message();
+    processing.start_composer();
+
+    assert!(processing.begin_clipboard_paste());
+
+    let processing_lines = composer_lines(&processing, 80);
+
+    assert_eq!(
+        line_texts_from_ratatui(&processing_lines),
+        vec!["upload: ⠋ processing clipboard attachment...", "> "]
+    );
+    assert_eq!(processing_lines[0].spans[0].style.fg, Some(ACCENT));
+    assert_eq!(composer_content_line_count(&processing, 80), 2);
 }
 
 #[test]

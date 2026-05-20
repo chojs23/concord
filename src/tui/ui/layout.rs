@@ -197,6 +197,7 @@ pub(super) fn composer_height(area: Rect, state: &DashboardState) -> u16 {
     let content_lines = if state.is_composing()
         || !state.composer_input().is_empty()
         || !state.pending_composer_attachments().is_empty()
+        || state.clipboard_paste_pending()
     {
         composer_content_line_count(state, composer_inner_width(area.width))
     } else {
@@ -211,7 +212,7 @@ pub(super) fn composer_inner_width(width: u16) -> u16 {
 
 pub(super) fn composer_content_line_count(state: &DashboardState, width: u16) -> u16 {
     let mut line_count = composer_prompt_line_count(state.composer_input(), width);
-    line_count = line_count.saturating_add(state.pending_composer_attachments().len() as u16);
+    line_count = line_count.saturating_add(state.pending_composer_upload_line_count() as u16);
     if state.is_composing() && state.reply_target_message_state().is_some() {
         line_count = line_count.saturating_add(1);
     }

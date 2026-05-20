@@ -146,6 +146,7 @@ Tokens are saved under Concord's config directory in plain text. See the Securit
 - Send, edit, and delete messages
 - Reply to specific messages
 - Upload files by copying them from your file manager and pasting them into the composer
+- Upload images copied directly to the system clipboard when the terminal forwards the paste key
 - Use @mention autocomplete while composing messages
 - View full message history with pagination
 - Rich content display (embeds, attachments, stickers, and mentions)
@@ -305,13 +306,14 @@ number key directly shows and focuses it again.
 You can paste copied files into the composer to attach them. Pending uploads
 are shown above the input before sending.
 
-| Shortcut                   | Action            | Description                                        |
-| -------------------------- | ----------------- | -------------------------------------------------- |
-| `Ctrl+e`                   | open $EDITOR      | Open $EDITOR on the current draft for long editing |
-| `Ctrl+c`                   | clear             | Clear current draft                                |
-| `Ctrl+Left`/ `Ctrl+Right`  | Jump word         | Jump the cursor by word                            |
-| `Ctrl+Backspace`/ `Ctrl+w` | Delete word       | Delete the word before the cursor                  |
-| `Delete`                   | Detach attachment | Removes the last pending attachment                |
+| Shortcut                   | Action            | Description                                                      |
+| -------------------------- | ----------------- | ---------------------------------------------------------------- |
+| `Ctrl+v`                   | paste clipboard   | Attach copied files or images when present, otherwise paste text |
+| `Ctrl+e`                   | open $EDITOR      | Open $EDITOR on the current draft for long editing               |
+| `Ctrl+c`                   | clear             | Clear current draft                                              |
+| `Ctrl+Left`/ `Ctrl+Right`  | Jump word         | Jump the cursor by word                                          |
+| `Ctrl+Backspace`/ `Ctrl+w` | Delete word       | Delete the word before the cursor                                |
+| `Delete`                   | Detach attachment | Removes the last pending attachment                              |
 
 #### Mention picker
 
