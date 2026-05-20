@@ -2,7 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.0.3] - 2026-05-20
+## [2.0.4] - 2026-05-20
+
+### Bug Fixes
+
+- _(tui)_ Detect URLs in reply quotes and forwarded messages (#107) in [#107](https://github.com/chojs23/concord/pull/107) by @SAY-5
+- Use transient typing display names for TYPING_START by @chojs23
+- Clear typing indicator when a typer sends a message by @chojs23
+- Composer newline fallbacks (#112) in [#112](https://github.com/chojs23/concord/pull/112) by @chojs23
+- Fix bold italic markdown rendering (#113) in [#113](https://github.com/chojs23/concord/pull/113) by @chojs23
+
+### Documentation
+
+- Require related issues for pr by @chojs23
+- Update readme by @chojs23
+
+### Features
+
+- Add mute,deafen state on header by @chojs23
+- Add ctrl+w composer word deletion
+
+### Performance
+
+- _(tui)_ Improve member sidebar loading and rendering by @chojs23
+
+### New Contributors
+
+- @SAY-5 made their first contribution in [#107](https://github.com/chojs23/concord/pull/107)
+
+## [2.0.3] - 2026-05-19
 
 ### Bug Fixes
 
