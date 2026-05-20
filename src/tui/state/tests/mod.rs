@@ -3235,7 +3235,7 @@ fn message_action_detects_markdown_link_urls() {
 }
 
 #[test]
-fn message_action_ignores_embed_urls() {
+fn message_action_detects_embed_urls() {
     let mut state = state_with_messages(1);
     state.push_event(AppEvent::MessageHistoryLoaded {
         channel_id: Id::new(2),
@@ -3273,7 +3273,10 @@ fn message_action_ignores_embed_urls() {
 
     let urls = state.selected_message_url_items();
 
-    assert_eq!(urls, Vec::new());
+    assert_eq!(
+        urls.into_iter().map(|item| item.url).collect::<Vec<_>>(),
+        vec!["https://app.example/releases/1"]
+    );
 }
 
 #[test]
@@ -3296,7 +3299,7 @@ fn message_action_detects_urls_in_reply_quote_and_forwarded_snapshot() {
                 sticker_names: Vec::new(),
                 mentions: Vec::new(),
                 attachments: Vec::new(),
-                embeds: Vec::new(),
+                embeds: vec![youtube_embed()],
                 source_channel_id: None,
                 timestamp: None,
             }],
@@ -3310,7 +3313,11 @@ fn message_action_detects_urls_in_reply_quote_and_forwarded_snapshot() {
 
     assert_eq!(
         urls.into_iter().map(|item| item.url).collect::<Vec<_>>(),
-        vec!["https://reply.example/page", "https://forward.example/doc"]
+        vec![
+            "https://reply.example/page",
+            "https://forward.example/doc",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        ]
     );
 }
 

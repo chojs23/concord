@@ -1,4 +1,4 @@
-use crate::discord::{AppCommand, MessageState, ReactionEmoji};
+use crate::discord::{AppCommand, EmbedInfo, MessageState, ReactionEmoji};
 use crate::tui::format::detected_urls;
 
 use super::scroll::{clamp_selected_index, move_index_down, move_index_up};
@@ -653,6 +653,7 @@ fn message_urls(message: &MessageState) -> Vec<String> {
     if let Some(content) = &message.content {
         urls.extend(detected_urls(content));
     }
+    urls.extend(embed_urls(&message.embeds));
     // URLs in a reply quote or a forwarded message are shown to the user too.
     if let Some(reply) = &message.reply
         && let Some(content) = &reply.content
@@ -663,8 +664,16 @@ fn message_urls(message: &MessageState) -> Vec<String> {
         if let Some(content) = &snapshot.content {
             urls.extend(detected_urls(content));
         }
+        urls.extend(embed_urls(&snapshot.embeds));
     }
     dedupe_urls(urls)
+}
+
+fn embed_urls(embeds: &[EmbedInfo]) -> Vec<String> {
+    embeds
+        .iter()
+        .filter_map(|embed| embed.url.clone())
+        .collect()
 }
 
 fn dedupe_urls(urls: Vec<String>) -> Vec<String> {
