@@ -23,7 +23,7 @@ impl TerminalRestoreGuard {
         // so the app still runs with basic key handling.
         let keyboard_enhancement_enabled = execute!(
             stdout(),
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            PushKeyboardEnhancementFlags(keyboard_enhancement_flags())
         )
         .is_ok();
         let mouse_capture_enabled = execute!(stdout(), EnableMouseCapture).is_ok();
@@ -34,6 +34,12 @@ impl TerminalRestoreGuard {
             bracketed_paste_enabled,
         })
     }
+}
+
+pub(in crate::tui) fn keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
+    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+        | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
 }
 
 impl Drop for TerminalRestoreGuard {
