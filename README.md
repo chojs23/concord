@@ -257,17 +257,17 @@ shortcuts:
 
 Message shortcuts:
 
-| Shortcut | Action      | Description                                                |
-| -------- | ----------- | ---------------------------------------------------------- |
-| `y`      | Copy        | Copy the selected message text and show a short toast      |
-| `r`      | React       | Open the reaction picker for the selected message          |
-| `R`      | Reply       | Start a reply to the selected message                      |
-| `d`      | Delete      | Open a delete confirmation before deleting the message     |
-| `e`      | Edit        | Start editing the selected message when editing is allowed |
+| Shortcut | Action      | Description                                                 |
+| -------- | ----------- | ----------------------------------------------------------- |
+| `y`      | Copy        | Copy the selected message text and show a short toast       |
+| `r`      | React       | Open the reaction picker for the selected message           |
+| `R`      | Reply       | Start a reply to the selected message                       |
+| `d`      | Delete      | Open a delete confirmation before deleting the message      |
+| `e`      | Edit        | Start editing the selected message when editing is allowed  |
 | `o`      | Open URL    | Open the selected message URL, or choose from multiple URLs |
-| `v`      | View image  | Open the selected message's image viewer                   |
-| `p`      | Profile     | Open the selected message author's profile                 |
-| `P`      | Pin / unpin | Open a pin or unpin confirmation for the selected message  |
+| `v`      | View image  | Open the selected message's image viewer                    |
+| `p`      | Profile     | Open the selected message author's profile                  |
+| `P`      | Pin / unpin | Open a pin or unpin confirmation for the selected message   |
 
 If a message contains more than one detected URL, `o` opens a numbered URL picker inside the leader popup so you can choose which link to open.
 
@@ -448,8 +448,12 @@ sessions do not keep every message in memory forever.
 
 Honestly, no.
 
-In day-to-day use, I have not seen an account block after several months of using Concord.
-There was one path that did trigger a temporary block: trying to **create a new DM channel and send a message to an unknown user**(meaning there was no pre-existing DM created through the Discord client) immediately blocked my account for 30 minutes. That feature has been removed. Other supported features have not caused blocks in my testing.
+There are some path that did trigger a account block:
+
+- Trying to **create a new DM channel and send a message to an unknown user**(meaning there was no pre-existing DM created through the Discord client) can immediately block your account temporarily.
+- Some features that requires a hCapcha challenge on Discord's side.
+
+Other features have not caused blocks in my testing.
 
 That said, Concord is not an official Discord client. Using unofficial clients, automated user accounts, or self-bots can violate Discord's TOS, so there is always some risk. Use it at your own discretion.
 
