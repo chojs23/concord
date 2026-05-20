@@ -1305,7 +1305,7 @@ fn parse_inline_markdown(rendered: RenderedText) -> InlineMarkdownText {
 }
 
 fn next_inline_markdown_marker(value: &str, cursor: usize) -> Option<usize> {
-    ["`", "**", "*"]
+    ["`", "***", "**", "*"]
         .into_iter()
         .filter_map(|marker| {
             value[cursor..]
@@ -1319,6 +1319,11 @@ fn inline_markdown_marker_at(value: &str, cursor: usize) -> Option<(&'static str
     let rest = &value[cursor..];
     if rest.starts_with('`') {
         Some(("`", inline_code_style()))
+    } else if rest.starts_with("***") {
+        Some((
+            "***",
+            Style::default().add_modifier(Modifier::BOLD | Modifier::ITALIC),
+        ))
     } else if rest.starts_with("**") {
         Some(("**", Style::default().add_modifier(Modifier::BOLD)))
     } else if rest.starts_with('*') {
