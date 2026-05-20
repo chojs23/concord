@@ -600,7 +600,7 @@ fn open_composer_in_editor(
 ) -> crate::Result<()> {
     use crossterm::event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     };
     use crossterm::execute;
     use std::{env, io::stdout};
@@ -634,7 +634,7 @@ fn open_composer_in_editor(
     *terminal = ratatui::init();
     let _ = execute!(
         stdout(),
-        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+        PushKeyboardEnhancementFlags(super::terminal::keyboard_enhancement_flags()),
         EnableMouseCapture,
         EnableBracketedPaste,
     );

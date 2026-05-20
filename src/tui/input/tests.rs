@@ -36,6 +36,14 @@ fn shift_enter() -> KeyEvent {
     KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)
 }
 
+fn ctrl_enter() -> KeyEvent {
+    KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)
+}
+
+fn alt_enter() -> KeyEvent {
+    KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)
+}
+
 fn alt_key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::ALT)
 }
@@ -1438,9 +1446,28 @@ fn shift_enter_inserts_newline_while_composing() {
     handle_key(&mut state, char_key('h'));
     handle_key(&mut state, shift_enter());
     handle_key(&mut state, char_key('i'));
+    handle_key(&mut state, ctrl_enter());
+    handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, alt_enter());
+    handle_key(&mut state, char_key('k'));
 
     assert!(state.is_composing());
-    assert_eq!(state.composer_input(), "h\ni");
+    assert_eq!(state.composer_input(), "h\ni\nj\nk");
+
+    let mut completion_state = state_with_channel_tree();
+    completion_state.focus_pane(FocusPane::Channels);
+    handle_key(&mut completion_state, key(KeyCode::Down));
+    handle_key(&mut completion_state, key(KeyCode::Enter));
+    handle_key(&mut completion_state, char_key('i'));
+    for ch in ":heart".chars() {
+        handle_key(&mut completion_state, char_key(ch));
+    }
+
+    handle_key(&mut completion_state, shift_enter());
+    handle_key(&mut completion_state, char_key('x'));
+
+    assert!(completion_state.is_composing());
+    assert_eq!(completion_state.composer_input(), ":heart\nx");
 }
 
 #[test]

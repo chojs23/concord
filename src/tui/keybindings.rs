@@ -618,9 +618,7 @@ impl KeyBindings {
             KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 ComposerAction::OpenInEditor
             }
-            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                ComposerAction::InsertNewline
-            }
+            _ if is_composer_newline_key(key) => ComposerAction::InsertNewline,
             KeyCode::Enter => ComposerAction::Submit,
             KeyCode::Esc => ComposerAction::Close,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -657,6 +655,7 @@ impl KeyBindings {
         }
 
         match key.code {
+            _ if is_composer_newline_key(key) => ComposerCompletionAction::FallThrough,
             KeyCode::Tab | KeyCode::Enter => ComposerCompletionAction::Confirm,
             KeyCode::Esc => ComposerCompletionAction::Cancel,
             _ => ComposerCompletionAction::FallThrough,
@@ -1042,6 +1041,15 @@ fn is_confirm_key(code: KeyCode) -> bool {
 
 fn is_shortcut_key(key: KeyEvent) -> bool {
     key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT
+}
+
+fn is_composer_newline_key(key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Enter => key
+            .modifiers
+            .intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL | KeyModifiers::ALT),
+        _ => false,
+    }
 }
 
 fn unique_preferred_shortcut(
