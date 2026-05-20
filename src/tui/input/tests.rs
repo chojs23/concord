@@ -141,6 +141,7 @@ fn channel_filter_opens_child_inside_collapsed_category() {
         })
     );
     assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
+    assert_eq!(state.selected_channel(), 1);
     assert_selected_channel_category_collapsed(&state, true);
 }
 

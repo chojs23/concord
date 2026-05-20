@@ -847,6 +847,7 @@ impl DashboardState {
         };
         self.channel_pane_filter = None;
         if let Some(channel_id) = channel_id {
+            let command = self.activate_channel_command(channel_id);
             // Restore selection to the unfiltered position
             if let Some(idx) = self.channel_pane_entries().iter().position(
                 |e| matches!(e, ChannelPaneEntry::Channel { state, .. } if state.id == channel_id),
@@ -854,7 +855,7 @@ impl DashboardState {
                 self.selected_channel = idx;
             }
             self.channel_keep_selection_visible = true;
-            return self.activate_channel_command(channel_id);
+            return command;
         }
         None
     }
