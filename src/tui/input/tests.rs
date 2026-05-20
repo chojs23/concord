@@ -1524,10 +1524,7 @@ fn ctrl_backspace_deletes_previous_composer_word() {
     assert_eq!(state.composer_input(), "hello brave ");
     assert_eq!(state.composer_cursor_byte_index(), "hello brave ".len());
 
-    handle_key(
-        &mut state,
-        KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL),
-    );
+    handle_key(&mut state, ctrl_key('w'));
 
     assert_eq!(state.composer_input(), "hello ");
     assert_eq!(state.composer_cursor_byte_index(), "hello ".len());

@@ -627,6 +627,9 @@ impl KeyBindings {
             KeyCode::Backspace if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 ComposerAction::DeletePreviousWord
             }
+            KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                ComposerAction::DeletePreviousWord
+            }
             KeyCode::Backspace => ComposerAction::DeletePreviousChar,
             KeyCode::Delete => ComposerAction::RemoveLastAttachment,
             KeyCode::Up => ComposerAction::MoveCursorUp,
