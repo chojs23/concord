@@ -16,7 +16,7 @@ use crate::{
 };
 
 use super::{
-    clipboard::ClipboardService,
+    clipboard::{ClipboardError, ClipboardPasteData, ClipboardService},
     commands as command_helpers, effects as effect_helpers, events, input,
     media::{
         AvatarImageCache, EmojiImageCache, ImagePreviewCache, visible_avatar_targets,
@@ -35,6 +35,11 @@ use super::{
     state::DashboardState,
     ui,
 };
+
+type ClipboardPasteResult = std::result::Result<
+    std::result::Result<ClipboardPasteData, ClipboardError>,
+    tokio::task::JoinError,
+>;
 
 pub(super) async fn run_dashboard(
     terminal: &mut ratatui::DefaultTerminal,
@@ -63,6 +68,9 @@ pub(super) async fn run_dashboard(
     let mut terminal_events = EventStream::new();
     let mut mouse_clicks = input::MouseClickTracker::default();
     let (preview_decode_tx, mut preview_decode_rx) = mpsc::unbounded_channel();
+    let (clipboard_paste_tx, mut clipboard_paste_rx) = mpsc::unbounded_channel();
+    let (clipboard_paste_indicator_tx, mut clipboard_paste_indicator_rx) =
+        mpsc::unbounded_channel();
     let mut history_requests = HistoryRequests::default();
     let mut forum_post_requests = ForumPostRequests::default();
     let mut pinned_message_requests = PinnedMessageRequests::default();
@@ -88,6 +96,7 @@ pub(super) async fn run_dashboard(
     // immediately to keep input responsiveness intact.
     const BACKGROUND_REDRAW_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
+    let mut clipboard_paste_in_flight = false;
 
     while !state.should_quit() {
         if dirty {
@@ -194,6 +203,23 @@ pub(super) async fn run_dashboard(
                                 logging::error("tui", format!("editor failed: {error}"));
                             }
                         }
+                        if state.take_paste_clipboard_request()
+                            && state.is_composing()
+                            && !clipboard_paste_in_flight
+                        {
+                            clipboard_paste_in_flight = true;
+                            let clipboard_paste_tx = clipboard_paste_tx.clone();
+                            let clipboard_paste_indicator_tx = clipboard_paste_indicator_tx.clone();
+                            tokio::spawn(async move {
+                                let result = tokio::task::spawn_blocking(move || {
+                                    ClipboardService::read_paste_data_with_progress(|| {
+                                        let _ = clipboard_paste_indicator_tx.send(());
+                                    })
+                                })
+                                .await;
+                                let _ = clipboard_paste_tx.send(result);
+                            });
+                        }
                         if let Some(content) = state.take_copy_message_content_request() {
                             let now = std::time::Instant::now();
                             match clipboard.copy_text(&content) {
@@ -226,6 +252,23 @@ pub(super) async fn run_dashboard(
                 if pending_redraw_deadline.is_none() {
                     pending_redraw_deadline =
                         Some(tokio::time::Instant::now() + BACKGROUND_REDRAW_DEBOUNCE);
+                }
+            }
+            Some(result) = clipboard_paste_rx.recv() => {
+                let was_pending = clipboard_paste_in_flight;
+                clipboard_paste_in_flight = false;
+                let indicator_was_visible = state.clipboard_paste_pending();
+                state.finish_clipboard_paste();
+                if was_pending {
+                    apply_clipboard_paste_result(&mut state, result);
+                    dirty = true;
+                } else if indicator_was_visible {
+                    dirty = true;
+                }
+            }
+            Some(()) = clipboard_paste_indicator_rx.recv() => {
+                if clipboard_paste_in_flight && state.begin_clipboard_paste() {
+                    dirty = true;
                 }
             }
             snapshot_changed = snapshots.changed() => {
@@ -592,6 +635,44 @@ fn mention_member_search_target(state: &DashboardState) -> Option<MentionMemberS
         guild_id: state.selected_guild_id()?,
         query: state.composer_mention_query()?.to_owned(),
     })
+}
+
+fn apply_clipboard_paste_result(state: &mut DashboardState, result: ClipboardPasteResult) {
+    match result {
+        Ok(Ok(data)) => {
+            let _ = apply_clipboard_paste_data(state, data);
+        }
+        Ok(Err(error)) => {
+            logging::debug("clipboard", format!("clipboard paste unavailable: {error}"));
+        }
+        Err(error) => {
+            logging::debug("clipboard", format!("clipboard paste task failed: {error}"));
+        }
+    }
+}
+
+fn apply_clipboard_paste_data(state: &mut DashboardState, data: ClipboardPasteData) -> bool {
+    if !state.is_composing() {
+        return false;
+    }
+    if state.composer_accepts_attachments() {
+        if let Some(attachments) = data.file_attachments {
+            state.add_pending_composer_attachments(attachments);
+            return true;
+        }
+        if let Some(text) = data.text.as_deref()
+            && input::handle_pasted_file_attachments(state, text)
+        {
+            return true;
+        }
+        if let Some(attachment) = data.image_attachment {
+            state.add_pending_composer_attachments(vec![attachment]);
+            return true;
+        }
+    }
+    data.text
+        .as_deref()
+        .is_some_and(|text| input::handle_paste(state, text))
 }
 
 fn open_composer_in_editor(

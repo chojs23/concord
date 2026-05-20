@@ -28,6 +28,34 @@ impl DashboardState {
         std::mem::take(&mut self.open_composer_in_editor_requested)
     }
 
+    pub fn request_paste_clipboard(&mut self) {
+        self.paste_clipboard_requested = true;
+    }
+
+    pub fn take_paste_clipboard_request(&mut self) -> bool {
+        std::mem::take(&mut self.paste_clipboard_requested)
+    }
+
+    pub fn begin_clipboard_paste(&mut self) -> bool {
+        if !self.is_composing() || self.clipboard_paste_pending {
+            return false;
+        }
+        self.clipboard_paste_pending = true;
+        true
+    }
+
+    pub fn finish_clipboard_paste(&mut self) {
+        self.clipboard_paste_pending = false;
+    }
+
+    pub fn clipboard_paste_pending(&self) -> bool {
+        self.clipboard_paste_pending
+    }
+
+    pub fn pending_composer_upload_line_count(&self) -> usize {
+        self.pending_composer_attachments.len() + usize::from(self.clipboard_paste_pending)
+    }
+
     pub fn debug_log_lines(&self) -> Vec<String> {
         logging::error_entries()
             .into_iter()
