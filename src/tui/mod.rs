@@ -165,8 +165,8 @@ mod tests {
         push_message(&mut state, 11);
         let after = visible_dashboard_signature(&state);
 
-        assert_eq!(before.new_messages_count, 0);
-        assert_eq!(after.new_messages_count, 1);
+        assert_eq!(before.messages.new_messages_count, 0);
+        assert_eq!(after.messages.new_messages_count, 1);
         assert_ne!(before, after);
     }
 
@@ -206,6 +206,47 @@ mod tests {
         assert!(should_redraw_after_visible_signature_change(
             &before, &after, false, false,
         ));
+
+        let mut state = state_with_messages(1);
+        state.focus_pane(FocusPane::Messages);
+        state.open_selected_message_actions();
+        let before = visible_dashboard_signature(&state);
+
+        state.move_message_action_down();
+        let after = visible_dashboard_signature(&state);
+
+        assert_ne!(before, after);
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, false, false,
+        ));
+
+        let mut state = state_with_messages(1);
+        state.focus_pane(FocusPane::Messages);
+        state.open_emoji_reaction_picker();
+        let before = visible_dashboard_signature(&state);
+
+        state.start_emoji_reaction_filter();
+        state.push_emoji_reaction_filter_char('s');
+        let after = visible_dashboard_signature(&state);
+
+        assert_ne!(before, after);
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, false, false,
+        ));
+
+        let mut state = DashboardState::new();
+        let _ = state.open_user_profile_popup(Id::new(99), None);
+        state.set_user_profile_popup_view_height(1);
+        state.set_user_profile_popup_total_lines(3);
+        let before = visible_dashboard_signature(&state);
+
+        state.scroll_user_profile_popup_down();
+        let after = visible_dashboard_signature(&state);
+
+        assert_ne!(before, after);
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, false, false,
+        ));
     }
 
     #[test]
@@ -235,10 +276,10 @@ mod tests {
         state.scroll_message_viewport_top();
         let before = visible_dashboard_signature(&state);
         let mut after = before.clone();
-        after.new_messages_count = 1;
+        after.messages.new_messages_count = 1;
 
-        assert_eq!(before.new_messages_count, 0);
-        assert_eq!(after.new_messages_count, 1);
+        assert_eq!(before.messages.new_messages_count, 0);
+        assert_eq!(after.messages.new_messages_count, 1);
         assert!(should_suppress_image_redraw_for_signature_change(
             &before, &after, true,
         ));
@@ -269,7 +310,10 @@ mod tests {
         let after = visible_dashboard_signature(&state);
 
         assert_ne!(before, after);
-        assert_eq!(before.visible_messages, after.visible_messages);
+        assert_eq!(
+            before.messages.visible_messages,
+            after.messages.visible_messages
+        );
         assert!(should_redraw_after_visible_signature_change(
             &before, &after, true, false,
         ));
@@ -279,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_sidebar_unread_state_redraws_while_images_are_visible() {
+    fn visible_sidebar_unread_state_suppresses_image_redraw_while_messages_are_focused() {
         let mut state = state_with_messages(10);
         state.focus_pane(FocusPane::Messages);
         state.push_event(AppEvent::ReadStateInit {
@@ -292,10 +336,22 @@ mod tests {
         });
         let after = visible_dashboard_signature(&state);
 
-        assert_eq!(before.visible_messages, after.visible_messages);
-        assert_ne!(before.visible_channels, after.visible_channels);
-        assert!(should_redraw_after_visible_signature_change(
+        assert_eq!(
+            before.messages.visible_messages,
+            after.messages.visible_messages
+        );
+        assert_ne!(
+            before.channels.visible_channels,
+            after.channels.visible_channels
+        );
+        assert!(should_suppress_image_redraw_for_signature_change(
+            &before, &after, true,
+        ));
+        assert!(!should_redraw_after_visible_signature_change(
             &before, &after, true, false,
+        ));
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, false, false,
         ));
 
         let mut state = state_with_active_dm_and_guild();
@@ -306,9 +362,19 @@ mod tests {
         let after = visible_dashboard_signature(&state);
 
         assert_ne!(before, after);
-        assert_eq!(before.visible_messages, after.visible_messages);
-        assert!(should_redraw_after_visible_signature_change(
+        assert_eq!(
+            before.messages.visible_messages,
+            after.messages.visible_messages
+        );
+        assert_ne!(before.guilds.visible_guilds, after.guilds.visible_guilds);
+        assert!(should_suppress_image_redraw_for_signature_change(
+            &before, &after, true,
+        ));
+        assert!(!should_redraw_after_visible_signature_change(
             &before, &after, true, false,
+        ));
+        assert!(should_redraw_after_visible_signature_change(
+            &before, &after, false, false,
         ));
     }
 
@@ -341,7 +407,10 @@ mod tests {
         push_message(&mut state, 3);
         let after = visible_dashboard_signature(&state);
 
-        assert_ne!(before.visible_messages, after.visible_messages);
+        assert_ne!(
+            before.messages.visible_messages,
+            after.messages.visible_messages
+        );
         assert!(should_redraw_after_visible_signature_change(
             &before, &after, true, false,
         ));
@@ -368,7 +437,10 @@ mod tests {
         });
         let after = visible_dashboard_signature(&state);
 
-        assert_ne!(before.visible_messages, after.visible_messages);
+        assert_ne!(
+            before.messages.visible_messages,
+            after.messages.visible_messages
+        );
         assert!(should_redraw_after_visible_signature_change(
             &before, &after, true, false,
         ));
