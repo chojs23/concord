@@ -318,7 +318,9 @@ impl DashboardState {
                     self.clear_submitted_composer_text();
                     self.composer.reply_target_message_id = None;
                     self.composer.pending_composer_attachments.clear();
-                    return Some(AppCommand::RunApplicationCommand { interaction });
+                    return Some(AppCommand::RunApplicationCommand {
+                        interaction: *interaction,
+                    });
                 }
                 ApplicationCommandSubmit::Incomplete => return None,
                 ApplicationCommandSubmit::NotCommand => {}
@@ -847,13 +849,13 @@ impl DashboardState {
         let Some(options) = parsed_application_command_options(content, &command) else {
             return ApplicationCommandSubmit::Incomplete;
         };
-        ApplicationCommandSubmit::Ready(ApplicationCommandInteraction {
+        ApplicationCommandSubmit::Ready(Box::new(ApplicationCommandInteraction {
             guild_id,
             channel_id,
             session_id,
             command,
             options,
-        })
+        }))
     }
 
     fn adjust_mention_completions_for_replace(
@@ -924,7 +926,7 @@ fn clamp_cursor_index(input: &str, index: usize) -> usize {
 }
 
 enum ApplicationCommandSubmit {
-    Ready(ApplicationCommandInteraction),
+    Ready(Box<ApplicationCommandInteraction>),
     Incomplete,
     NotCommand,
 }
@@ -944,9 +946,7 @@ fn parsed_application_command_options(
     content: &str,
     command: &ApplicationCommandInfo,
 ) -> Option<Vec<ApplicationCommandInteractionOption>> {
-    let Some(rest) = content.strip_prefix('/') else {
-        return None;
-    };
+    let rest = content.strip_prefix('/')?;
     let mut parts = rest.split_whitespace();
     if parts.next() != Some(command.name.as_str()) {
         return None;

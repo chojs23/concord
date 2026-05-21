@@ -1164,13 +1164,21 @@ fn parse_application_command_info(
     raw: &Value,
     applications: &std::collections::HashMap<String, &Value>,
 ) -> Option<ApplicationCommandInfo> {
-    let id = raw.get("id")?.as_str()?.parse::<u64>().ok()?;
+    let id = raw
+        .get("id")?
+        .as_str()?
+        .parse::<u64>()
+        .ok()
+        .and_then(Id::new_checked)?;
     let application_id_raw = raw.get("application_id")?.as_str()?;
-    let application_id = application_id_raw.parse::<u64>().ok()?;
+    let application_id = application_id_raw
+        .parse::<u64>()
+        .ok()
+        .and_then(Id::new_checked)?;
     let name = raw.get("name")?.as_str()?.to_owned();
     Some(ApplicationCommandInfo {
-        id: Id::new(id),
-        application_id: Id::new(application_id),
+        id,
+        application_id,
         version: raw.get("version")?.as_str()?.to_owned(),
         name,
         application_name: parse_application_command_application_name(
