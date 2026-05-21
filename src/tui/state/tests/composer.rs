@@ -44,9 +44,6 @@ fn application_command_option(
 
 fn state_with_application_command(command: ApplicationCommandInfo) -> DashboardState {
     let mut state = state_with_writable_channel();
-    state.push_event(AppEvent::GatewaySessionReady {
-        session_id: "session".to_owned(),
-    });
     state.push_event(AppEvent::ApplicationCommandsLoaded {
         guild_id: Some(Id::new(1)),
         commands: vec![command],

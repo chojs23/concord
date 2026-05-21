@@ -42,6 +42,7 @@ pub struct DiscordClient {
     snapshots_tx: watch::Sender<SnapshotRevision>,
     state: Arc<RwLock<DiscordState>>,
     requested_voice: Arc<RwLock<Option<CurrentVoiceConnectionState>>>,
+    gateway_session_id: Arc<RwLock<Option<String>>>,
     revision: Arc<RwLock<SnapshotRevision>>,
     publish_lock: Arc<AsyncMutex<()>>,
     gateway_commands_tx: mpsc::UnboundedSender<GatewayCommand>,
@@ -68,6 +69,7 @@ impl DiscordClient {
             snapshots_tx,
             state: Arc::new(RwLock::new(initial_state)),
             requested_voice: Arc::new(RwLock::new(None)),
+            gateway_session_id: Arc::new(RwLock::new(None)),
             revision: Arc::new(RwLock::new(SnapshotRevision::default())),
             publish_lock: Arc::new(AsyncMutex::new(())),
             gateway_commands_tx,
@@ -120,6 +122,7 @@ impl DiscordClient {
         let snapshots_tx = self.snapshots_tx.clone();
         let state = Arc::clone(&self.state);
         let revision = Arc::clone(&self.revision);
+        let gateway_session_id = Arc::clone(&self.gateway_session_id);
         let publish_lock = Arc::clone(&self.publish_lock);
         let gateway_commands = self
             .gateway_commands_rx
@@ -154,6 +157,7 @@ impl DiscordClient {
                 snapshots_tx,
                 state,
                 revision,
+                gateway_session_id,
                 publish_lock,
                 voice_events_tx,
             };
@@ -428,7 +432,15 @@ impl DiscordClient {
         &self,
         interaction: &ApplicationCommandInteraction,
     ) -> Result<()> {
-        self.rest.run_application_command(interaction).await
+        let session_id = self
+            .gateway_session_id
+            .read()
+            .expect("gateway session id lock is not poisoned")
+            .clone()
+            .ok_or_else(|| AppError::DiscordRequest("gateway session is not ready".to_owned()))?;
+        self.rest
+            .run_application_command(interaction, &session_id)
+            .await
     }
 
     pub async fn ack_channel(

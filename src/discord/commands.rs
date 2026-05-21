@@ -46,7 +46,6 @@ pub struct ApplicationCommandChoiceInfo {
 pub struct ApplicationCommandInteraction {
     pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,
-    pub session_id: String,
     pub command: ApplicationCommandInfo,
     pub options: Vec<ApplicationCommandInteractionOption>,
 }

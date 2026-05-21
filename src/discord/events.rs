@@ -591,9 +591,6 @@ pub enum AppEvent {
     CurrentUserCapabilities {
         can_use_animated_custom_emojis: bool,
     },
-    GatewaySessionReady {
-        session_id: String,
-    },
     ApplicationCommandsLoaded {
         guild_id: Option<Id<GuildMarker>>,
         commands: Vec<ApplicationCommandInfo>,
@@ -910,7 +907,6 @@ impl AppEvent {
             self,
             AppEvent::GatewayError { .. }
                 | AppEvent::CurrentUserCapabilities { .. }
-                | AppEvent::GatewaySessionReady { .. }
                 | AppEvent::ApplicationCommandsLoaded { .. }
                 | AppEvent::AttachmentDownloadCompleted { .. }
                 | AppEvent::UpdateAvailable { .. }
@@ -945,7 +941,6 @@ impl AppEvent {
             | AppEvent::ReactionUsersLoaded { .. }
             | AppEvent::GatewayError { .. }
             | AppEvent::CurrentUserCapabilities { .. }
-            | AppEvent::GatewaySessionReady { .. }
             | AppEvent::ApplicationCommandsLoaded { .. }
             | AppEvent::AttachmentDownloadCompleted { .. }
             | AppEvent::UpdateAvailable { .. }

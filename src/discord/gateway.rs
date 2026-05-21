@@ -75,6 +75,7 @@ pub(crate) struct GatewayRuntime {
     pub(crate) snapshots_tx: watch::Sender<SnapshotRevision>,
     pub(crate) state: Arc<RwLock<DiscordState>>,
     pub(crate) revision: Arc<RwLock<SnapshotRevision>>,
+    pub(crate) gateway_session_id: Arc<RwLock<Option<String>>>,
     pub(crate) publish_lock: Arc<Mutex<()>>,
     pub(crate) voice_events_tx: mpsc::UnboundedSender<VoiceRuntimeEvent>,
 }
@@ -181,6 +182,7 @@ struct GatewayPublishContext<'a> {
     snapshots_tx: &'a watch::Sender<SnapshotRevision>,
     state: &'a Arc<RwLock<DiscordState>>,
     revision: &'a Arc<RwLock<SnapshotRevision>>,
+    gateway_session_id: &'a Arc<RwLock<Option<String>>>,
     publish_lock: &'a Arc<Mutex<()>>,
     voice_events_tx: &'a mpsc::UnboundedSender<VoiceRuntimeEvent>,
 }
@@ -249,6 +251,7 @@ pub async fn run_gateway(
             snapshots_tx: &runtime.snapshots_tx,
             state: &runtime.state,
             revision: &runtime.revision,
+            gateway_session_id: &runtime.gateway_session_id,
             publish_lock: &runtime.publish_lock,
             voice_events_tx: &runtime.voice_events_tx,
         };
@@ -274,7 +277,13 @@ pub async fn run_gateway(
                     // No saved session, fall through to a clean IDENTIFY.
                 }
             }
-            ConnectionOutcome::Reidentify => session.clear(),
+            ConnectionOutcome::Reidentify => {
+                session.clear();
+                *runtime
+                    .gateway_session_id
+                    .write()
+                    .expect("gateway session id lock is not poisoned") = None;
+            }
         }
 
         // Exponential backoff with full jitter so a flapping network doesn't
@@ -294,6 +303,7 @@ pub async fn run_gateway(
         snapshots_tx: &runtime.snapshots_tx,
         state: &runtime.state,
         revision: &runtime.revision,
+        gateway_session_id: &runtime.gateway_session_id,
         publish_lock: &runtime.publish_lock,
         voice_events_tx: &runtime.voice_events_tx,
     };
@@ -517,13 +527,11 @@ async fn handle_frame(
                     .get("resume_gateway_url")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
-                if let Some(session_id) = session.session_id.clone() {
-                    publish_gateway_event(
-                        context.publish,
-                        AppEvent::GatewaySessionReady { session_id },
-                    )
-                    .await;
-                }
+                *context
+                    .publish
+                    .gateway_session_id
+                    .write()
+                    .expect("gateway session id lock is not poisoned") = session.session_id.clone();
             }
             let events = parse_user_account_event(raw);
             for app_event in events {

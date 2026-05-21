@@ -843,16 +843,12 @@ impl DashboardState {
         else {
             return ApplicationCommandSubmit::NotCommand;
         };
-        let Some(session_id) = self.discord.gateway_session_id.clone() else {
-            return ApplicationCommandSubmit::Incomplete;
-        };
         let Some(options) = parsed_application_command_options(content, &command) else {
             return ApplicationCommandSubmit::Incomplete;
         };
         ApplicationCommandSubmit::Ready(Box::new(ApplicationCommandInteraction {
             guild_id,
             channel_id,
-            session_id,
             command,
             options,
         }))

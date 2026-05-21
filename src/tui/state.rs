@@ -217,7 +217,6 @@ struct DiscordUiState {
     cache: DiscordState,
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
-    gateway_session_id: Option<String>,
     application_commands: HashMap<Option<Id<GuildMarker>>, Vec<ApplicationCommandInfo>>,
     application_command_requests: HashSet<Option<Id<GuildMarker>>>,
     current_user_can_use_animated_custom_emojis: Option<bool>,
@@ -657,9 +656,6 @@ impl DashboardState {
             } => {
                 self.discord.current_user_can_use_animated_custom_emojis =
                     Some(*can_use_animated_custom_emojis);
-            }
-            AppEvent::GatewaySessionReady { session_id } => {
-                self.discord.gateway_session_id = Some(session_id.clone());
             }
             AppEvent::ApplicationCommandsLoaded { guild_id, commands } => {
                 self.discord.application_command_requests.remove(guild_id);

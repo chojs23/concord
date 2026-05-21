@@ -193,8 +193,9 @@ impl DiscordRest {
     pub async fn run_application_command(
         &self,
         interaction: &ApplicationCommandInteraction,
+        session_id: &str,
     ) -> Result<()> {
-        let body = application_command_interaction_body(interaction);
+        let body = application_command_interaction_body(interaction, session_id);
         self.raw_http
             .post("https://discord.com/api/v9/interactions")
             .header(AUTHORIZATION, &self.token)
@@ -1267,13 +1268,16 @@ fn parse_application_command_option_info(raw: &Value) -> Option<ApplicationComma
     })
 }
 
-fn application_command_interaction_body(interaction: &ApplicationCommandInteraction) -> Value {
+fn application_command_interaction_body(
+    interaction: &ApplicationCommandInteraction,
+    session_id: &str,
+) -> Value {
     let mut body = json!({
         "type": 2,
         "application_id": interaction.command.application_id.to_string(),
         "guild_id": interaction.guild_id.map(|guild_id| guild_id.to_string()),
         "channel_id": interaction.channel_id.to_string(),
-        "session_id": interaction.session_id,
+        "session_id": session_id,
         "data": {
             "version": interaction.command.version,
             "id": interaction.command.id.to_string(),
@@ -1286,8 +1290,13 @@ fn application_command_interaction_body(interaction: &ApplicationCommandInteract
         "nonce": interaction_nonce(),
         "analytics_location": "slash_ui",
     });
-    if let Some(guild_id) = interaction.guild_id {
-        body["data"]["guild_id"] = Value::String(guild_id.to_string());
+    if let Some(command_guild_id) = interaction
+        .command
+        .raw
+        .get("guild_id")
+        .and_then(Value::as_str)
+    {
+        body["data"]["guild_id"] = Value::String(command_guild_id.to_owned());
     }
     body
 }
@@ -1505,11 +1514,10 @@ mod tests {
     }
 
     #[test]
-    fn application_command_interaction_body_nests_subcommand_options() {
+    fn application_command_interaction_body_nests_subcommand_options_for_guild_command() {
         let interaction = ApplicationCommandInteraction {
             guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
-            session_id: "session".to_owned(),
             command: ApplicationCommandInfo {
                 id: Id::<ApplicationMarker>::new(100),
                 application_id: Id::<ApplicationMarker>::new(200),
@@ -1518,7 +1526,7 @@ mod tests {
                 application_name: Some("ModBot".to_owned()),
                 description: "moderation".to_owned(),
                 options: Vec::new(),
-                raw: serde_json::json!({ "name": "mod" }),
+                raw: serde_json::json!({ "name": "mod", "guild_id": "1" }),
             },
             options: vec![ApplicationCommandInteractionOption {
                 kind: 2,
@@ -1538,7 +1546,7 @@ mod tests {
             }],
         };
 
-        let body = application_command_interaction_body(&interaction);
+        let body = application_command_interaction_body(&interaction, "session");
 
         assert_eq!(
             body["data"]["options"],
@@ -1565,6 +1573,36 @@ mod tests {
                 .get("value")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn application_command_interaction_body_omits_data_guild_id_for_global_command() {
+        let interaction = ApplicationCommandInteraction {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            command: ApplicationCommandInfo {
+                id: Id::<ApplicationMarker>::new(100),
+                application_id: Id::<ApplicationMarker>::new(200),
+                version: "1".to_owned(),
+                name: "search".to_owned(),
+                application_name: Some("MusicBot".to_owned()),
+                description: "search music".to_owned(),
+                options: Vec::new(),
+                raw: serde_json::json!({
+                    "id": "100",
+                    "application_id": "200",
+                    "name": "search",
+                    "version": "1",
+                    "integration_types": [0],
+                }),
+            },
+            options: Vec::new(),
+        };
+
+        let body = application_command_interaction_body(&interaction, "session");
+
+        assert_eq!(body["guild_id"], "1");
+        assert!(body["data"].get("guild_id").is_none());
     }
 
     #[test]
