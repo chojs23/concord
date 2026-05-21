@@ -81,15 +81,14 @@ impl DashboardState {
                 placed.insert(*guild_id);
             }
 
-            if collapsed {
-                continue;
-            }
-
-            let child_guilds: Vec<&GuildState> = folder
+            let mut child_guilds: Vec<&GuildState> = folder
                 .guild_ids
                 .iter()
                 .filter_map(|guild_id| by_id.get(guild_id).copied())
                 .collect();
+            if collapsed {
+                child_guilds.retain(|guild| self.active_guild == ActiveGuildScope::Guild(guild.id));
+            }
             let last_child_index = child_guilds.len().saturating_sub(1);
             for (index, guild) in child_guilds.into_iter().enumerate() {
                 let branch = if index == last_child_index {
@@ -194,6 +193,7 @@ impl DashboardState {
         self.selected_guild = 0;
         self.guild_scroll = 0;
         if let Some(scope) = action {
+            self.activate_guild(scope);
             match scope {
                 ActiveGuildScope::DirectMessages => {
                     if let Some(idx) = self
@@ -213,7 +213,6 @@ impl DashboardState {
                 }
                 ActiveGuildScope::Unset => {}
             }
-            self.activate_guild(scope);
         }
     }
 

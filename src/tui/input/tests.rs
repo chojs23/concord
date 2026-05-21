@@ -146,6 +146,25 @@ fn channel_filter_opens_child_inside_collapsed_category() {
 }
 
 #[test]
+fn guild_filter_opens_child_inside_collapsed_folder() {
+    let mut state = state_with_folder();
+    state.focus_pane(FocusPane::Guilds);
+    handle_key(&mut state, key(KeyCode::Enter));
+    assert_selected_folder_collapsed(&state, true);
+
+    handle_key(&mut state, char_key('/'));
+    for value in "second".chars() {
+        handle_key(&mut state, char_key(value));
+    }
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(state.selected_guild_id(), Some(Id::new(2)));
+    assert_eq!(state.selected_guild_cursor_id(), Some(Id::new(2)));
+    assert_eq!(state.selected_guild(), 2);
+    assert_selected_folder_collapsed(&state, true);
+}
+
+#[test]
 fn movement_waits_for_enter_to_activate_channel() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
