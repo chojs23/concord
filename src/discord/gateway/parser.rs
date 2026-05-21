@@ -2063,17 +2063,35 @@ mod tests {
         let event = parse_message_create(&json!({
             "id": "20",
             "channel_id": "10",
-            "author": { "id": "30", "username": "neo" },
-            "type": 19,
-            "content": "reply",
-            "attachments": []
+            "author": { "id": "30", "username": "mee6", "bot": true },
+            "type": 20,
+            "content": "",
+            "attachments": [],
+            "interaction": {
+                "name": "anime search",
+                "user": { "id": "40", "global_name": "Casey", "username": "casey" }
+            },
+            "interaction_metadata": {
+                "user": { "id": "40", "global_name": "Casey", "username": "casey" }
+            }
         }))
         .expect("message create should parse");
 
-        let AppEvent::MessageCreate { message_kind, .. } = event else {
+        let AppEvent::MessageCreate {
+            author_is_bot,
+            message_kind,
+            interaction,
+            ..
+        } = event
+        else {
             panic!("expected message create event");
         };
-        assert_eq!(message_kind, MessageKind::new(19));
+        assert_eq!(message_kind, MessageKind::new(20));
+        assert!(author_is_bot);
+        let interaction = interaction.expect("interaction metadata should parse");
+        assert_eq!(interaction.user_id, Some(Id::new(40)));
+        assert_eq!(interaction.user, "Casey");
+        assert_eq!(interaction.command_name.as_deref(), Some("anime search"));
     }
 
     #[test]

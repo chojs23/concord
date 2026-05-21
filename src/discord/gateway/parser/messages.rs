@@ -2,9 +2,9 @@ use serde_json::Value;
 
 use crate::{
     discord::{
-        AttachmentInfo, EmbedFieldInfo, EmbedInfo, MentionInfo, MessageInfo, MessageKind,
-        MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo, ReactionEmoji,
-        ReactionInfo, ReplyInfo,
+        AttachmentInfo, EmbedFieldInfo, EmbedInfo, MentionInfo, MessageInfo,
+        MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+        PollAnswerInfo, PollInfo, ReactionEmoji, ReactionInfo, ReplyInfo,
         events::{AppEvent, AttachmentUpdate},
         ids::{
             Id,
@@ -28,6 +28,7 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
     let author_id = parse_id::<UserMarker>(author.get("id")?)?;
     let author_name = message_author_display_name(data, author);
     let author_avatar_url = raw_user_avatar_url(author_id, author);
+    let author_is_bot = author.get("bot").and_then(Value::as_bool).unwrap_or(false);
     let author_role_ids = parse_message_author_role_ids(data);
     let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
     let message_kind = data
@@ -40,6 +41,7 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         .get("content")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let interaction = parse_message_interaction_info(data);
     let sticker_names = parse_sticker_names(data.get("sticker_items"));
     let mentions = parse_mentions(data.get("mentions"));
     let attachments = parse_attachments(data.get("attachments"));
@@ -68,8 +70,10 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         author_id,
         author: author_name,
         author_avatar_url,
+        author_is_bot,
         author_role_ids,
         message_kind,
+        interaction,
         reference,
         reply,
         poll,
@@ -82,6 +86,31 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         embeds,
         forwarded_snapshots,
         edited_timestamp,
+    })
+}
+
+fn parse_message_interaction_info(data: &Value) -> Option<MessageInteractionInfo> {
+    let legacy = data.get("interaction");
+    let metadata = data.get("interaction_metadata");
+    let user = metadata
+        .and_then(|value| value.get("user"))
+        .or_else(|| legacy.and_then(|value| value.get("user")))?;
+    let user_id = user.get("id").and_then(parse_id::<UserMarker>);
+    let command_name = legacy
+        .and_then(|value| value.get("name"))
+        .or_else(|| metadata.and_then(|value| value.get("name")))
+        .and_then(Value::as_str)
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_owned);
+
+    Some(MessageInteractionInfo {
+        user_id,
+        user: display_name_from_parts_or_unknown(
+            None,
+            user.get("global_name").and_then(Value::as_str),
+            user.get("username").and_then(Value::as_str),
+        ),
+        command_name,
     })
 }
 
@@ -599,8 +628,10 @@ pub(super) fn parse_message_create(data: &Value) -> Option<AppEvent> {
         author_id: message.author_id,
         author: message.author,
         author_avatar_url: message.author_avatar_url,
+        author_is_bot: message.author_is_bot,
         author_role_ids: message.author_role_ids,
         message_kind: message.message_kind,
+        interaction: message.interaction,
         reference: message.reference,
         reply: message.reply,
         poll: message.poll,

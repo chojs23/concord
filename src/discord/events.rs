@@ -472,6 +472,13 @@ pub struct ReplyInfo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageInteractionInfo {
+    pub user_id: Option<Id<UserMarker>>,
+    pub user: String,
+    pub command_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageReferenceInfo {
     pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Option<Id<ChannelMarker>>,
@@ -522,8 +529,10 @@ pub struct MessageInfo {
     pub author_id: Id<UserMarker>,
     pub author: String,
     pub author_avatar_url: Option<String>,
+    pub author_is_bot: bool,
     pub author_role_ids: Vec<Id<RoleMarker>>,
     pub message_kind: MessageKind,
+    pub interaction: Option<MessageInteractionInfo>,
     pub reference: Option<MessageReferenceInfo>,
     pub reply: Option<ReplyInfo>,
     pub poll: Option<PollInfo>,
@@ -547,8 +556,10 @@ impl Default for MessageInfo {
             author_id: Id::new(1),
             author: String::new(),
             author_avatar_url: None,
+            author_is_bot: false,
             author_role_ids: Vec::new(),
             message_kind: MessageKind::default(),
+            interaction: None,
             reference: None,
             reply: None,
             poll: None,
@@ -636,8 +647,10 @@ pub enum AppEvent {
         author_id: Id<UserMarker>,
         author: String,
         author_avatar_url: Option<String>,
+        author_is_bot: bool,
         author_role_ids: Vec<Id<RoleMarker>>,
         message_kind: MessageKind,
+        interaction: Option<MessageInteractionInfo>,
         reference: Option<MessageReferenceInfo>,
         reply: Option<ReplyInfo>,
         poll: Option<PollInfo>,

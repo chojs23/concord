@@ -27,6 +27,8 @@ use crate::discord::{
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
+const COMMAND_BLUE: Color = Color::Rgb(88, 101, 242);
+const COMMAND_USAGE_PREFIX: &str = "┌ ";
 const SELF_REACTION: Color = Color::Yellow;
 const INLINE_CODE: Color = Color::Rgb(255, 165, 0);
 const THREAD_CARD_INDENT: &str = "  ";
@@ -315,6 +317,10 @@ pub(super) fn format_message_content_sections_with_loaded_custom_emoji_urls(
     }
 
     let renders_poll_card = message.reply.is_none() && message.poll.is_some();
+    let chat_input_command_line = format_chat_input_command_line(message, state, width);
+    if let Some(line) = chat_input_command_line.clone() {
+        lines.push(line);
+    }
 
     if let Some(line) = message
         .reply
@@ -336,7 +342,9 @@ pub(super) fn format_message_content_sections_with_loaded_custom_emoji_urls(
             width,
             loaded_custom_emoji_urls,
         ));
-    } else if let Some(line) = format_message_kind_line(message.message_kind) {
+    } else if chat_input_command_line.is_none()
+        && let Some(line) = format_message_kind_line(message.message_kind)
+    {
         lines.push(line);
     }
 
@@ -2076,6 +2084,56 @@ fn format_system_message_lines(
         21 => Some(format_thread_starter_lines(message, state, width)),
         46 => Some(format_poll_result_lines(message.poll.as_ref(), width)),
         _ => None,
+    }
+}
+
+fn format_chat_input_command_line(
+    message: &MessageState,
+    state: &DashboardState,
+    width: usize,
+) -> Option<MessageContentLine> {
+    if message.message_kind.code() != 20 {
+        return None;
+    }
+    let interaction = message.interaction.as_ref()?;
+    let command = interaction
+        .command_name
+        .as_deref()
+        .map(format_command_name)
+        .unwrap_or_else(|| "a command".to_owned());
+    let user_start = COMMAND_USAGE_PREFIX.len();
+    let command_start = user_start + interaction.user.len() + " used ".len();
+    let text = truncate_text(
+        &format!("{COMMAND_USAGE_PREFIX}{} used {command}", interaction.user),
+        width,
+    );
+    let mut line = MessageContentLine::dim(text);
+    let user_color = interaction
+        .user_id
+        .and_then(|user_id| state.message_user_role_color(message, user_id));
+    line.styled_range(
+        user_start,
+        interaction.user.len(),
+        Style::default()
+            .fg(discord_color(user_color, Color::White))
+            .add_modifier(Modifier::DIM),
+    );
+    line.styled_range(
+        command_start,
+        command.len(),
+        Style::default()
+            .fg(COMMAND_BLUE)
+            .add_modifier(Modifier::DIM),
+    );
+    Some(line)
+}
+
+fn format_command_name(command_name: &str) -> String {
+    let command_name = command_name.trim();
+    if command_name.starts_with('/') {
+        command_name.to_owned()
+    } else {
+        format!("/{command_name}")
     }
 }
 

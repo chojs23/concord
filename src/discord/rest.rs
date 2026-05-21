@@ -1260,7 +1260,7 @@ fn parse_application_command_option_info(raw: &Value) -> Option<ApplicationComma
 }
 
 fn application_command_interaction_body(interaction: &ApplicationCommandInteraction) -> Value {
-    json!({
+    let mut body = json!({
         "type": 2,
         "application_id": interaction.command.application_id.to_string(),
         "guild_id": interaction.guild_id.map(|guild_id| guild_id.to_string()),
@@ -1277,7 +1277,11 @@ fn application_command_interaction_body(interaction: &ApplicationCommandInteract
         },
         "nonce": interaction_nonce(),
         "analytics_location": "slash_ui",
-    })
+    });
+    if let Some(guild_id) = interaction.guild_id {
+        body["data"]["guild_id"] = Value::String(guild_id.to_string());
+    }
+    body
 }
 
 fn application_command_option_body(option: &ApplicationCommandInteractionOption) -> Value {
@@ -1546,6 +1550,7 @@ mod tests {
                 }
             ])
         );
+        assert_eq!(body["data"]["guild_id"], "1");
         assert!(body["data"]["options"][0].get("value").is_none());
         assert!(
             body["data"]["options"][0]["options"][0]

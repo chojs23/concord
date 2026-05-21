@@ -43,10 +43,11 @@ use crate::{
         ApplicationCommandOptionInfo, AttachmentInfo, ChannelInfo, ChannelNotificationOverrideInfo,
         ChannelRecipientState, ChannelState, ChannelUnreadState, ChannelVisibilityStats,
         CustomEmojiInfo, EmbedInfo, FriendStatus, GuildMemberState, GuildNotificationSettingsInfo,
-        MemberInfo, MentionInfo, MessageAttachmentUpload, MessageInfo, MessageKind,
-        MessageSnapshotInfo, MessageState, MutualGuildInfo, NotificationLevel, PollAnswerInfo,
-        PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
-        ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo, VoiceConnectionStatus, VoiceStateInfo,
+        MemberInfo, MentionInfo, MessageAttachmentUpload, MessageInfo, MessageInteractionInfo,
+        MessageKind, MessageSnapshotInfo, MessageState, MutualGuildInfo, NotificationLevel,
+        PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo,
+        ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+        VoiceConnectionStatus, VoiceStateInfo,
     },
     tui::{
         format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
@@ -437,8 +438,10 @@ fn image_viewer_render_shows_download_hint_below_popup() {
         author_id: Id::new(99),
         author: "neo".to_owned(),
         author_avatar_url: None,
+        author_is_bot: false,
         author_role_ids: Vec::new(),
         message_kind: crate::discord::MessageKind::regular(),
+        interaction: None,
         reference: None,
         reply: None,
         poll: None,
@@ -1016,9 +1019,51 @@ fn dashboard_renders_emoji_picker_above_composer() {
 }
 
 #[test]
-fn dashboard_renders_command_picker_across_composer_width() {
-    let mut state = state_with_message();
-    state.push_event(AppEvent::ApplicationCommandsLoaded {
+fn dashboard_renders_composer_pickers_across_composer_width() {
+    let mut mention_state = state_with_message();
+    mention_state.push_event(AppEvent::GuildMemberUpsert {
+        guild_id: Id::new(1),
+        member: MemberInfo {
+            user_id: Id::new(101),
+            display_name: "candidate visible past the old narrow picker limit".to_owned(),
+            username: Some("candidate_visible_past_the_old_narrow_picker_limit".to_owned()),
+            is_bot: true,
+            avatar_url: None,
+            role_ids: Vec::new(),
+        },
+    });
+    mention_state.start_composer();
+    for ch in "@candidate".chars() {
+        mention_state.push_composer_char(ch);
+    }
+    let rendered = render_dashboard_dump(180, 24, &mut mention_state).join("\n");
+    assert!(
+        rendered.contains("past the old narrow picker limit"),
+        "mention picker should use composer width for long labels:\n{rendered}"
+    );
+
+    let mut emoji_state = state_with_message();
+    emoji_state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id: Id::new(1),
+        emojis: vec![CustomEmojiInfo {
+            id: Id::new(50),
+            name: "party_visible_past_the_old_narrow_picker_limit".to_owned(),
+            animated: false,
+            available: true,
+        }],
+    });
+    emoji_state.start_composer();
+    for ch in ":party".chars() {
+        emoji_state.push_composer_char(ch);
+    }
+    let rendered = render_dashboard_dump(180, 24, &mut emoji_state).join("\n");
+    assert!(
+        rendered.contains("past_the_old_narrow_picker_limit"),
+        "emoji picker should use composer width for long labels:\n{rendered}"
+    );
+
+    let mut command_state = state_with_message();
+    command_state.push_event(AppEvent::ApplicationCommandsLoaded {
         guild_id: Some(Id::new(1)),
         commands: vec![ApplicationCommandInfo {
             id: Id::new(100),
@@ -1041,14 +1086,11 @@ fn dashboard_renders_command_picker_across_composer_width() {
             raw: serde_json::json!({ "name": "lookup" }),
         }],
     });
-    state.start_composer();
+    command_state.start_composer();
     for ch in "/lo".chars() {
-        state.push_composer_char(ch);
+        command_state.push_composer_char(ch);
     }
-
-    let dump = render_dashboard_dump(180, 24, &mut state);
-    let rendered = dump.join("\n");
-
+    let rendered = render_dashboard_dump(180, 24, &mut command_state).join("\n");
     assert!(
         rendered.contains("past the old narrow picker limit"),
         "command picker should use composer width for long descriptions:\n{rendered}"
@@ -2091,8 +2133,10 @@ fn message_viewport_author_uses_resolved_role_color() {
         author_id,
         author: "fallback".to_owned(),
         author_avatar_url: None,
+        author_is_bot: true,
         author_role_ids: Vec::new(),
         message_kind: crate::discord::MessageKind::regular(),
+        interaction: None,
         reference: None,
         reply: None,
         poll: None,
@@ -2117,6 +2161,9 @@ fn message_viewport_author_uses_resolved_role_color() {
         lines[1].spans[1].style.fg,
         Some(Color::Rgb(0x33, 0x66, 0xCC))
     );
+    assert_eq!(lines[1].spans[2].content.as_ref(), " [bot]");
+    assert_eq!(lines[1].spans[2].style.fg, Some(Color::White));
+    assert_eq!(lines[1].spans[2].style.bg, Some(Color::Rgb(88, 101, 242)));
 }
 
 #[test]
@@ -3558,6 +3605,88 @@ fn non_default_message_type_adds_dim_label_line() {
 }
 
 #[test]
+fn chat_input_command_message_keeps_embed_text() {
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(2);
+    let user_id = Id::new(30);
+    let role_id = Id::new(100);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id,
+            parent_id: None,
+            position: None,
+            last_message_id: None,
+            name: "general".to_owned(),
+            kind: "GuildText".to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }],
+        members: vec![MemberInfo {
+            user_id,
+            display_name: "casey".to_owned(),
+            username: Some("casey".to_owned()),
+            is_bot: false,
+            avatar_url: None,
+            role_ids: vec![role_id],
+        }],
+        presences: Vec::new(),
+        roles: vec![RoleInfo {
+            id: role_id,
+            name: "Blue".to_owned(),
+            color: Some(0x3366CC),
+            position: 10,
+            hoist: false,
+            permissions: 0,
+        }],
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    let mut message = message_with_content(Some(String::new()));
+    message.message_kind = MessageKind::new(20);
+    message.interaction = Some(MessageInteractionInfo {
+        user_id: Some(user_id),
+        user: "casey".to_owned(),
+        command_name: Some("anime search".to_owned()),
+    });
+    message.embeds = vec![youtube_embed()];
+
+    let lines = format_message_content_lines(&message, &state, 80);
+
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            "┌ casey used /anime search",
+            "  ▎ YouTube",
+            "  ▎ Example Video",
+            "  ▎ A video description",
+            "  ▎ https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        ]
+    );
+    assert_eq!(lines[0].style, Style::default().fg(DIM));
+    let spans = lines[0].spans();
+
+    assert_eq!(spans[0].content.as_ref(), "┌ ");
+    assert_eq!(spans[1].content.as_ref(), "casey");
+    assert_eq!(spans[1].style.fg, Some(Color::Rgb(0x33, 0x66, 0xCC)));
+    assert!(spans[1].style.add_modifier.contains(Modifier::DIM));
+    assert_eq!(spans[2].content.as_ref(), " used ");
+    assert_eq!(spans[2].style.fg, Some(DIM));
+    assert_eq!(spans[3].content.as_ref(), "/anime search");
+    assert_eq!(spans[3].style.fg, Some(Color::Rgb(88, 101, 242)));
+    assert!(spans[3].style.add_modifier.contains(Modifier::DIM));
+}
+
+#[test]
 fn user_join_message_type_uses_join_label() {
     let mut message = message_with_content(Some(String::new()));
     message.message_kind = MessageKind::new(7);
@@ -3657,8 +3786,10 @@ fn thread_created_message_uses_cached_thread_message_when_last_id_missing() {
         author_id: Id::new(99),
         author: "neo".to_owned(),
         author_avatar_url: None,
+        author_is_bot: false,
         author_role_ids: Vec::new(),
         message_kind: MessageKind::regular(),
+        interaction: None,
         reference: None,
         reply: None,
         poll: None,
@@ -5787,7 +5918,9 @@ fn message_with_attachment(content: Option<String>, attachment: AttachmentInfo) 
         author_id: Id::new(99),
         author: "neo".to_owned(),
         author_avatar_url: None,
+        author_is_bot: false,
         message_kind: crate::discord::MessageKind::regular(),
+        interaction: None,
         reference: None,
         reply: None,
         poll: None,
@@ -5876,8 +6009,10 @@ fn state_with_message_id(message_id: Id<MessageMarker>, content: &str) -> Dashbo
         author_id: Id::new(99),
         author: "neo".to_owned(),
         author_avatar_url: None,
+        author_is_bot: false,
         author_role_ids: Vec::new(),
         message_kind: crate::discord::MessageKind::regular(),
+        interaction: None,
         reference: None,
         reply: None,
         poll: None,
@@ -6013,8 +6148,10 @@ fn state_with_unread_direct_messages_with_loaded_unread_messages(count: u64) -> 
                 author_id: Id::new(99),
                 author: "neo".to_owned(),
                 author_avatar_url: None,
+                author_is_bot: false,
                 author_role_ids: Vec::new(),
                 message_kind: crate::discord::MessageKind::regular(),
+                interaction: None,
                 reference: None,
                 reply: None,
                 poll: None,
@@ -6045,8 +6182,10 @@ fn push_message_with_id(state: &mut DashboardState, message_id: Id<MessageMarker
         author_id: Id::new(99),
         author: "neo".to_owned(),
         author_avatar_url: None,
+        author_is_bot: false,
         author_role_ids: Vec::new(),
         message_kind: crate::discord::MessageKind::regular(),
+        interaction: None,
         reference: None,
         reply: None,
         poll: None,
@@ -6067,8 +6206,10 @@ fn message_info(message_id: u64, author: &str, content: &str, pinned: bool) -> M
         author_id: Id::new(99),
         author: author.to_owned(),
         author_avatar_url: None,
+        author_is_bot: false,
         author_role_ids: Vec::new(),
         message_kind: crate::discord::MessageKind::regular(),
+        interaction: None,
         reference: None,
         reply: None,
         poll: None,
@@ -6092,7 +6233,9 @@ fn message_with_forwarded_snapshot(snapshot: MessageSnapshotInfo) -> MessageStat
         author_id: Id::new(99),
         author: "neo".to_owned(),
         author_avatar_url: None,
+        author_is_bot: false,
         message_kind: crate::discord::MessageKind::regular(),
+        interaction: None,
         reference: None,
         reply: None,
         poll: None,

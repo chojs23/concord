@@ -292,13 +292,7 @@ impl DashboardState {
                 self.composer.edit_target_message = Some((channel_id, message_id));
                 return None;
             }
-            self.composer.composer_input.clear();
-            self.composer.composer_cursor_byte_index = 0;
-            self.composer.pending_composer_attachments.clear();
-            self.runtime.clipboard_paste_pending = false;
-            self.composer.composer_active = false;
-            self.composer.reply_target_message_id = None;
-            self.reset_mention_picker_state();
+            self.cancel_composer();
             return Some(AppCommand::EditMessage {
                 channel_id,
                 message_id,
@@ -310,34 +304,18 @@ impl DashboardState {
         // the composer was open (role change, channel overwrite update). Drop
         // the message rather than fire a request that would 403.
         if !self.can_send_in_selected_channel() {
-            self.composer.composer_input.clear();
-            self.composer.composer_cursor_byte_index = 0;
-            self.composer.pending_composer_attachments.clear();
-            self.runtime.clipboard_paste_pending = false;
-            self.composer.composer_active = false;
-            self.composer.reply_target_message_id = None;
-            self.composer.edit_target_message = None;
-            self.reset_mention_picker_state();
+            self.cancel_composer();
             return None;
         }
         if has_attachments && !self.can_attach_in_selected_channel() {
-            self.composer.composer_input.clear();
-            self.composer.composer_cursor_byte_index = 0;
-            self.composer.pending_composer_attachments.clear();
-            self.runtime.clipboard_paste_pending = false;
-            self.composer.composer_active = false;
-            self.composer.reply_target_message_id = None;
-            self.composer.edit_target_message = None;
-            self.reset_mention_picker_state();
+            self.cancel_composer();
             return None;
         }
 
         if !has_attachments && self.composer.reply_target_message_id.is_none() {
             match self.application_command_submit_for_content(&content) {
                 ApplicationCommandSubmit::Ready(interaction) => {
-                    self.composer.composer_input.clear();
-                    self.composer.composer_cursor_byte_index = 0;
-                    self.reset_mention_picker_state();
+                    self.clear_submitted_composer_text();
                     self.composer.reply_target_message_id = None;
                     self.composer.pending_composer_attachments.clear();
                     return Some(AppCommand::RunApplicationCommand { interaction });
@@ -347,9 +325,7 @@ impl DashboardState {
             }
         }
 
-        self.composer.composer_input.clear();
-        self.composer.composer_cursor_byte_index = 0;
-        self.reset_mention_picker_state();
+        self.clear_submitted_composer_text();
         let reply_to = self.composer.reply_target_message_id.take();
         let attachments = std::mem::take(&mut self.composer.pending_composer_attachments);
         // Stay in insert mode so the user can send several messages in a
@@ -362,6 +338,12 @@ impl DashboardState {
             reply_to,
             attachments,
         })
+    }
+
+    fn clear_submitted_composer_text(&mut self) {
+        self.composer.composer_input.clear();
+        self.composer.composer_cursor_byte_index = 0;
+        self.reset_mention_picker_state();
     }
 
     /// Returns the characters typed after the `@` if the picker is open.
@@ -956,6 +938,7 @@ const APPLICATION_COMMAND_CHANNEL_KIND: u64 = 7;
 const APPLICATION_COMMAND_ROLE_KIND: u64 = 8;
 const APPLICATION_COMMAND_MENTIONABLE_KIND: u64 = 9;
 const APPLICATION_COMMAND_NUMBER_KIND: u64 = 10;
+const APPLICATION_COMMAND_ATTACHMENT_KIND: u64 = 11;
 
 fn parsed_application_command_options(
     content: &str,
@@ -978,6 +961,20 @@ fn parsed_application_command_options_from_parts(
     command: &ApplicationCommandInfo,
 ) -> Option<Vec<ApplicationCommandInteractionOption>> {
     let has_structural_options = command.options.iter().any(is_structural_command_option);
+
+    if let Some(first) = parts.first().copied()
+        && let Some((subcommand_name, raw_value)) = first.split_once(':')
+        && let Some(subcommand) = command.options.iter().find(|option| {
+            option.kind == APPLICATION_COMMAND_SUBCOMMAND_KIND && option.name == subcommand_name
+        })
+    {
+        let options = parse_single_leaf_application_command_option(
+            &subcommand.options,
+            raw_value,
+            &parts[1..],
+        )?;
+        return Some(vec![structural_interaction_option(subcommand, options)]);
+    }
 
     if let Some(first) = parts.first().copied().filter(|part| !part.contains(':')) {
         if let Some(group) = command.options.iter().find(|option| {
@@ -1034,7 +1031,7 @@ fn parse_leaf_application_command_options(
                 .iter()
                 .find(|option| !is_structural_command_option(option) && option.name == name)
         {
-            push_leaf_application_command_option(&mut parsed, current.take());
+            push_leaf_application_command_option(&mut parsed, current.take())?;
             current = Some((option, raw_value.to_owned()));
             continue;
         }
@@ -1052,27 +1049,63 @@ fn parse_leaf_application_command_options(
         }
     }
 
-    push_leaf_application_command_option(&mut parsed, current.take());
+    push_leaf_application_command_option(&mut parsed, current.take())?;
+    required_application_command_options_present(options, &parsed).then_some(parsed)
+}
+
+fn parse_single_leaf_application_command_option(
+    options: &[ApplicationCommandOptionInfo],
+    raw_value: &str,
+    trailing_parts: &[&str],
+) -> Option<Vec<ApplicationCommandInteractionOption>> {
+    let leaf_options = options
+        .iter()
+        .filter(|option| !is_structural_command_option(option))
+        .collect::<Vec<_>>();
+    let required_options = leaf_options
+        .iter()
+        .copied()
+        .filter(|option| option.required)
+        .collect::<Vec<_>>();
+    let option = if required_options.len() == 1 {
+        required_options[0]
+    } else if leaf_options.len() == 1 {
+        leaf_options[0]
+    } else {
+        return None;
+    };
+
+    let mut value = raw_value.to_owned();
+    for part in trailing_parts {
+        if !value.is_empty() {
+            value.push(' ');
+        }
+        value.push_str(part);
+    }
+    let mut parsed = Vec::new();
+    push_leaf_application_command_option(&mut parsed, Some((option, value)))?;
     required_application_command_options_present(options, &parsed).then_some(parsed)
 }
 
 fn push_leaf_application_command_option(
     parsed: &mut Vec<ApplicationCommandInteractionOption>,
     current: Option<(&ApplicationCommandOptionInfo, String)>,
-) {
+) -> Option<()> {
     let Some((option, value)) = current else {
-        return;
+        return Some(());
     };
     let value = value.trim();
     if value.is_empty() {
-        return;
+        return None;
     }
+    let value = application_command_option_value(option, value)?;
     parsed.push(ApplicationCommandInteractionOption {
         kind: option.kind,
         name: option.name.clone(),
-        value: Some(application_command_option_value(option, value)),
+        value: Some(value),
         options: Vec::new(),
     });
+    Some(())
 }
 
 fn required_application_command_options_present(
@@ -1190,25 +1223,30 @@ fn is_structural_command_option(option: &ApplicationCommandOptionInfo) -> bool {
     )
 }
 
-fn application_command_option_value(option: &ApplicationCommandOptionInfo, raw: &str) -> Value {
+fn application_command_option_value(
+    option: &ApplicationCommandOptionInfo,
+    raw: &str,
+) -> Option<Value> {
     match option.kind {
-        APPLICATION_COMMAND_INTEGER_KIND => raw
-            .parse::<i64>()
-            .map(Number::from)
-            .map(Value::Number)
-            .unwrap_or_else(|_| Value::String(raw.to_owned())),
-        APPLICATION_COMMAND_BOOLEAN_KIND => Value::Bool(matches!(raw, "true" | "yes" | "1" | "on")),
+        APPLICATION_COMMAND_INTEGER_KIND => {
+            raw.parse::<i64>().map(Number::from).map(Value::Number).ok()
+        }
+        APPLICATION_COMMAND_BOOLEAN_KIND => match raw {
+            "true" | "yes" | "1" | "on" => Some(Value::Bool(true)),
+            "false" | "no" | "0" | "off" => Some(Value::Bool(false)),
+            _ => None,
+        },
         APPLICATION_COMMAND_NUMBER_KIND => raw
             .parse::<f64>()
             .ok()
             .and_then(Number::from_f64)
-            .map(Value::Number)
-            .unwrap_or_else(|| Value::String(raw.to_owned())),
+            .map(Value::Number),
         APPLICATION_COMMAND_USER_KIND
         | APPLICATION_COMMAND_CHANNEL_KIND
         | APPLICATION_COMMAND_ROLE_KIND
-        | APPLICATION_COMMAND_MENTIONABLE_KIND => Value::String(snowflake_option_value(raw)),
-        _ => Value::String(raw.to_owned()),
+        | APPLICATION_COMMAND_MENTIONABLE_KIND => Some(Value::String(snowflake_option_value(raw))),
+        APPLICATION_COMMAND_ATTACHMENT_KIND => None,
+        _ => Some(Value::String(raw.to_owned())),
     }
 }
 

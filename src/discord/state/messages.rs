@@ -6,8 +6,8 @@ use crate::discord::ids::{
 };
 use crate::discord::{
     AttachmentInfo, AttachmentUpdate, EmbedInfo, InlinePreviewInfo, MemberInfo, MentionInfo,
-    MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PollInfo, ReactionEmoji,
-    ReactionInfo, ReplyInfo,
+    MessageInfo, MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+    PollInfo, ReactionEmoji, ReactionInfo, ReplyInfo,
 };
 
 use super::{
@@ -24,7 +24,9 @@ pub struct MessageState {
     pub author_id: Id<UserMarker>,
     pub author: String,
     pub author_avatar_url: Option<String>,
+    pub author_is_bot: bool,
     pub message_kind: MessageKind,
+    pub interaction: Option<MessageInteractionInfo>,
     pub reference: Option<MessageReferenceInfo>,
     pub reply: Option<ReplyInfo>,
     pub poll: Option<PollInfo>,
@@ -48,7 +50,9 @@ impl Default for MessageState {
             author_id: Id::new(1),
             author: String::new(),
             author_avatar_url: None,
+            author_is_bot: false,
             message_kind: MessageKind::default(),
+            interaction: None,
             reference: None,
             reply: None,
             poll: None,
@@ -324,6 +328,25 @@ impl DiscordState {
             .message_cache
             .message_author_role_ids
             .get(&(channel_id, message_id))?;
+        selected_role_ids_color(role_ids, roles)
+    }
+
+    pub fn user_role_color(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> Option<u32> {
+        let roles = self.guild_details.roles.get(&guild_id)?;
+        if let Some(member) = self
+            .guild_details
+            .members
+            .get(&guild_id)
+            .and_then(|members| members.get(&user_id))
+        {
+            return selected_member_role_color(member, roles);
+        }
+
+        let role_ids = self.profiles.profile_role_ids.get(&(guild_id, user_id))?;
         selected_role_ids_color(role_ids, roles)
     }
 
@@ -761,7 +784,9 @@ impl DiscordState {
                 message.author_id,
                 &message.author_avatar_url,
             ),
+            author_is_bot: message.author_is_bot,
             message_kind: message.message_kind,
+            interaction: message.interaction.clone(),
             reference: message.reference.clone(),
             reply: message.reply.clone(),
             poll: message.poll.clone(),
@@ -922,10 +947,14 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
     existing.channel_id = incoming.channel_id;
     existing.author_id = incoming.author_id;
     existing.author = incoming.author.clone();
+    existing.author_is_bot = incoming.author_is_bot;
     if incoming.author_avatar_url.is_some() || existing.author_avatar_url.is_none() {
         existing.author_avatar_url = incoming.author_avatar_url.clone();
     }
     existing.message_kind = incoming.message_kind;
+    if incoming.interaction.is_some() || existing.interaction.is_none() {
+        existing.interaction = incoming.interaction.clone();
+    }
     if incoming.reply.is_some() || existing.reply.is_none() {
         existing.reply = incoming.reply.clone();
     }

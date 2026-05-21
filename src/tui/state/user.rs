@@ -308,16 +308,27 @@ impl DashboardState {
     }
 
     pub fn message_author_role_color(&self, message: &MessageState) -> Option<u32> {
+        self.message_user_role_color(message, message.author_id)
+    }
+
+    pub fn message_user_role_color(
+        &self,
+        message: &MessageState,
+        user_id: Id<UserMarker>,
+    ) -> Option<u32> {
         let channel = self.discord.cache.channel(message.channel_id);
         let guild_id = message
             .guild_id
             .or_else(|| channel.and_then(|channel| channel.guild_id));
         let guild_id = guild_id?;
+        if user_id != message.author_id {
+            return self.discord.cache.user_role_color(guild_id, user_id);
+        }
         self.discord.cache.message_author_role_color(
             guild_id,
             message.channel_id,
             message.id,
-            message.author_id,
+            user_id,
         )
     }
 

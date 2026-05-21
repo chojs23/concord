@@ -24,12 +24,12 @@ pub use events::{
     ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, AttachmentInfo, AttachmentUpdate,
     ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo, CustomEmojiInfo,
     EmbedFieldInfo, EmbedInfo, FriendStatus, GuildFolder, GuildNotificationSettingsInfo,
-    InlinePreviewInfo, MemberInfo, MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo,
-    MessageSnapshotInfo, MutualGuildInfo, NotificationLevel, PermissionOverwriteInfo,
-    PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus, ReactionInfo,
-    ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, RelationshipInfo, ReplyInfo, RoleInfo,
-    SequencedAppEvent, UserProfileInfo, VoiceConnectionStatus, VoiceServerInfo, VoiceSoundKind,
-    VoiceStateInfo,
+    InlinePreviewInfo, MemberInfo, MentionInfo, MessageInfo, MessageInteractionInfo, MessageKind,
+    MessageReferenceInfo, MessageSnapshotInfo, MutualGuildInfo, NotificationLevel,
+    PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus,
+    ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, RelationshipInfo, ReplyInfo,
+    RoleInfo, SequencedAppEvent, UserProfileInfo, VoiceConnectionStatus, VoiceServerInfo,
+    VoiceSoundKind, VoiceStateInfo,
 };
 pub use ids::{Id, marker};
 pub use rest::ForumPostPage;

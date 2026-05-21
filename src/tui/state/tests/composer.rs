@@ -229,6 +229,64 @@ fn submit_slash_subcommand_emits_nested_interaction_options() {
 }
 
 #[test]
+fn submit_slash_subcommand_accepts_single_option_shorthand() {
+    for input in [
+        "/anime search:naruto uzumaki",
+        "/anime search: naruto uzumaki",
+    ] {
+        let command = application_command(
+            "anime",
+            vec![application_command_option(
+                1,
+                "search",
+                false,
+                vec![application_command_option(3, "query", true, Vec::new())],
+            )],
+        );
+        let mut state = state_with_application_command(command);
+        type_composer_text(&mut state, input);
+
+        let Some(AppCommand::RunApplicationCommand { interaction }) = state.submit_composer()
+        else {
+            panic!("expected slash command interaction for {input}");
+        };
+
+        assert_eq!(
+            interaction.options,
+            vec![ApplicationCommandInteractionOption {
+                kind: 1,
+                name: "search".to_owned(),
+                value: None,
+                options: vec![ApplicationCommandInteractionOption {
+                    kind: 3,
+                    name: "query".to_owned(),
+                    value: Some(Value::String("naruto uzumaki".to_owned())),
+                    options: Vec::new(),
+                }],
+            }]
+        );
+    }
+}
+
+#[test]
+fn submit_slash_subcommand_rejects_empty_single_option_shorthand() {
+    let command = application_command(
+        "anime",
+        vec![application_command_option(
+            1,
+            "search",
+            false,
+            vec![application_command_option(3, "query", false, Vec::new())],
+        )],
+    );
+    let mut state = state_with_application_command(command);
+    type_composer_text(&mut state, "/anime search:");
+
+    assert_eq!(state.submit_composer(), None);
+    assert_eq!(state.composer_input(), "/anime search:");
+}
+
+#[test]
 fn submit_slash_subcommand_group_emits_nested_interaction_options() {
     let command = application_command(
         "mod",
@@ -281,6 +339,19 @@ fn submit_slash_subcommand_group_emits_nested_interaction_options() {
             }],
         }]
     );
+}
+
+#[test]
+fn submit_slash_command_rejects_invalid_typed_options() {
+    let command = application_command(
+        "roll",
+        vec![application_command_option(4, "sides", true, Vec::new())],
+    );
+    let mut state = state_with_application_command(command);
+    type_composer_text(&mut state, "/roll sides:many");
+
+    assert_eq!(state.submit_composer(), None);
+    assert_eq!(state.composer_input(), "/roll sides:many");
 }
 
 #[test]
@@ -1035,8 +1106,10 @@ fn typing_footer_resolves_one_user_to_alias() {
         author_id: user_id,
         author: "Live Nick".to_owned(),
         author_avatar_url: None,
+        author_is_bot: false,
         author_role_ids: Vec::new(),
         message_kind: MessageKind::regular(),
+        interaction: None,
         reference: None,
         reply: None,
         poll: None,
