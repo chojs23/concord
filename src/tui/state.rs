@@ -58,8 +58,6 @@ use popups::{
     ChannelLeaderActionState, GuildLeaderActionState, ImageViewerState, MemberLeaderActionState,
     UserProfilePopupState, VoiceLeaderActionState,
 };
-#[cfg(test)]
-use scroll::clamp_list_scroll;
 use scroll::{
     clamp_list_viewport, clamp_selected_index, last_index, move_index_down, move_index_down_by,
     move_index_up, move_index_up_by, pane_content_height, scroll_list_down, scroll_list_up,

@@ -1,0 +1,874 @@
+use super::*;
+
+#[test]
+fn start_composer_refused_in_read_only_channel() {
+    let mut state = state_with_read_only_channel();
+    state.start_composer();
+    assert!(
+        !state.is_composing(),
+        "composer must not open when SEND_MESSAGES is denied"
+    );
+}
+
+#[test]
+fn submit_composer_drops_message_when_send_revoked_after_open() {
+    // Open the composer with SEND_MESSAGES granted, type something, then
+    // simulate a permission overwrite arriving that revokes SEND. Submit
+    // must refuse rather than silently fire a request that would 403.
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    state.push_composer_char('h');
+    state.push_composer_char('i');
+    assert!(state.is_composing());
+
+    // Apply a CHANNEL_UPDATE that strips SEND_MESSAGES via a channel
+    // overwrite on @everyone (role id == guild id == 1).
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        parent_id: None,
+        position: Some(0),
+        last_message_id: None,
+        name: "general".to_owned(),
+        kind: "GuildText".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        thread_pinned: None,
+        recipients: None,
+        permission_overwrites: vec![PermissionOverwriteInfo {
+            id: 1,
+            kind: PermissionOverwriteKind::Role,
+            allow: 0,
+            deny: 0x800,
+        }],
+    }));
+    assert_eq!(state.submit_composer(), None);
+    assert!(!state.is_composing());
+}
+
+#[test]
+fn active_channel_is_cleared_when_view_permission_is_revoked() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    assert_eq!(state.selected_channel_id(), Some(Id::new(2)));
+    assert!(state.is_composing());
+
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        parent_id: None,
+        position: Some(0),
+        last_message_id: None,
+        name: "general".to_owned(),
+        kind: "GuildText".to_owned(),
+        message_count: None,
+        total_message_sent: None,
+        thread_archived: None,
+        thread_locked: None,
+        thread_pinned: None,
+        recipients: None,
+        permission_overwrites: vec![PermissionOverwriteInfo {
+            id: 1,
+            kind: PermissionOverwriteKind::Role,
+            allow: 0,
+            deny: 0x400,
+        }],
+    }));
+
+    assert_eq!(state.selected_channel_id(), None);
+    assert!(!state.is_composing());
+    assert!(state.channel_pane_entries().is_empty());
+}
+
+#[test]
+fn debug_channel_visibility_reports_active_guild_counts() {
+    // The fixture's channel denies VIEW_CHANNEL on @everyone, so it
+    // shows up in the hidden bucket.
+    let state = state_with_view_denied_channel();
+    let stats = state.debug_channel_visibility();
+    assert_eq!(
+        stats,
+        ChannelVisibilityStats {
+            visible: 0,
+            hidden: 1,
+        }
+    );
+}
+
+#[test]
+fn typing_at_sign_at_start_opens_mention_picker() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+
+    assert_eq!(state.composer_mention_query(), Some(""));
+    assert!(!state.composer_mention_candidates().is_empty());
+}
+
+#[test]
+fn typing_at_sign_after_letter_does_not_trigger_picker() {
+    // `me@` should not open the picker because the user is mid-word.
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    for ch in "me".chars() {
+        state.push_composer_char(ch);
+    }
+    state.push_composer_char('@');
+
+    assert_eq!(state.composer_mention_query(), None);
+    assert_eq!(state.composer_input(), "me@");
+}
+
+#[test]
+fn typing_after_at_filters_candidates_by_substring() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('s');
+
+    assert_eq!(state.composer_mention_query(), Some("s"));
+    let names: Vec<_> = state
+        .composer_mention_candidates()
+        .into_iter()
+        .map(|entry| entry.display_name)
+        .collect();
+    assert!(
+        names.iter().all(|name| name.to_lowercase().contains('s')),
+        "expected only `s` matches, got {names:?}"
+    );
+    assert!(names.iter().any(|name| name == "Sally"));
+    assert!(names.iter().any(|name| name == "Sammy"));
+    assert!(!names.iter().any(|name| name == "Bob"));
+
+    state.push_event(AppEvent::GuildMemberUpsert {
+        guild_id: Id::new(1),
+        member: MemberInfo {
+            user_id: Id::new(30),
+            display_name: "Offline Sally".to_owned(),
+            username: Some("offlinesally".to_owned()),
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+        },
+    });
+    let names: Vec<_> = state
+        .composer_mention_candidates()
+        .into_iter()
+        .map(|entry| entry.display_name)
+        .collect();
+    assert!(names.iter().any(|name| name == "Offline Sally"));
+}
+
+#[test]
+fn backspace_shrinks_query_then_closes_picker() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('s');
+
+    state.pop_composer_char();
+    assert_eq!(state.composer_mention_query(), Some(""));
+    assert_eq!(state.composer_input(), "@");
+
+    state.pop_composer_char();
+    assert_eq!(state.composer_mention_query(), None);
+    assert_eq!(state.composer_input(), "");
+}
+
+#[test]
+fn confirm_inserts_display_name_and_submit_expands_to_wire_format() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('s');
+    // First match (alphabetical within "starts_with s") is "Sally" (id 20).
+    assert!(state.confirm_composer_mention());
+    assert_eq!(state.composer_input(), "@Sally ");
+    assert_eq!(state.composer_mention_query(), None);
+
+    state.push_composer_char('h');
+    state.push_composer_char('i');
+
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(2),
+            content: "<@20> hi".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+    );
+}
+
+#[test]
+fn confirm_mention_in_middle_keeps_trailing_text() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    for value in "hello @sworld".chars() {
+        state.push_composer_char(value);
+    }
+    for _ in 0.."world".len() {
+        state.move_composer_cursor_left();
+    }
+
+    assert_eq!(state.composer_mention_query(), Some("s"));
+    assert!(state.confirm_composer_mention());
+
+    assert_eq!(state.composer_input(), "hello @Sally world");
+    assert_eq!(state.composer_cursor_byte_index(), "hello @Sally ".len());
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(2),
+            content: "hello <@20> world".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+    );
+}
+
+#[test]
+fn cancel_composer_clears_pending_upload_state() {
+    let mut attachments = state_with_channel_tree();
+    attachments.focus_pane(FocusPane::Channels);
+    attachments.confirm_selected_channel();
+    attachments.start_composer();
+    attachments.add_pending_composer_attachments(vec![MessageAttachmentUpload::from_path(
+        "/tmp/cat.png".into(),
+        "cat.png".to_owned(),
+        2_048,
+    )]);
+
+    attachments.cancel_composer();
+
+    assert_eq!(attachments.pending_composer_attachments(), &[]);
+
+    let mut processing = state_with_messages(1);
+    processing.start_composer();
+    assert!(processing.begin_clipboard_paste());
+
+    processing.cancel_composer();
+
+    assert!(!processing.clipboard_paste_pending());
+}
+
+#[test]
+fn pending_attachments_are_capped_at_upload_limit() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    state.confirm_selected_channel();
+    state.start_composer();
+    let attachments = (0..crate::discord::MAX_UPLOAD_ATTACHMENT_COUNT + 2)
+        .map(|index| {
+            MessageAttachmentUpload::from_path(
+                format!("/tmp/{index}.txt").into(),
+                format!("{index}.txt"),
+                1,
+            )
+        })
+        .collect();
+
+    state.add_pending_composer_attachments(attachments);
+
+    assert_eq!(
+        state.pending_composer_attachments().len(),
+        crate::discord::MAX_UPLOAD_ATTACHMENT_COUNT
+    );
+}
+
+#[test]
+fn move_selection_navigates_filtered_list() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('s');
+    let candidates = state.composer_mention_candidates();
+    assert!(candidates.len() >= 2);
+
+    state.move_composer_mention_selection(1);
+    assert_eq!(state.composer_mention_selected(), 1);
+
+    state.move_composer_mention_selection(-5);
+    assert_eq!(state.composer_mention_selected(), 0);
+}
+
+#[test]
+fn mention_picker_keeps_more_than_visible_candidates_selectable() {
+    let mut state = state_with_writable_channel_and_members();
+    for index in 0..10 {
+        state.push_event(AppEvent::GuildMemberUpsert {
+            guild_id: Id::new(1),
+            member: MemberInfo {
+                user_id: Id::new(100 + index),
+                display_name: format!("Scroll {index:02}"),
+                username: Some(format!("scroll{index:02}")),
+                is_bot: false,
+                avatar_url: None,
+                role_ids: Vec::new(),
+            },
+        });
+    }
+    state.start_composer();
+    for ch in "@sc".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let candidates = state.composer_mention_candidates();
+    assert!(
+        candidates.len() > 8,
+        "picker should keep every matching candidate, got {candidates:?}"
+    );
+
+    state.move_composer_mention_selection(9);
+
+    assert_eq!(state.composer_mention_selected(), 9);
+    assert!(state.confirm_composer_mention());
+    assert_eq!(state.composer_input(), "@Scroll 09 ");
+}
+
+#[test]
+fn cancel_picker_keeps_typed_text() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('s');
+
+    state.cancel_composer_mention();
+    assert_eq!(state.composer_mention_query(), None);
+    assert_eq!(state.composer_input(), "@s");
+}
+
+#[test]
+fn typing_colon_plus_two_letters_opens_emoji_picker() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    state.push_composer_char(':');
+    state.push_composer_char('h');
+
+    assert_eq!(state.composer_emoji_query(), None);
+
+    state.push_composer_char('e');
+
+    assert_eq!(state.composer_emoji_query(), Some("he"));
+    let shortcodes: Vec<_> = state
+        .composer_emoji_candidates()
+        .into_iter()
+        .map(|entry| entry.shortcode)
+        .collect();
+    assert!(
+        shortcodes.iter().any(|shortcode| shortcode == "heart"),
+        "expected `heart` in emoji candidates, got {shortcodes:?}"
+    );
+}
+
+#[test]
+fn unavailable_custom_emojis_stay_visible_but_not_selectable() {
+    for (label, query, shortcode, wire_format, set_capability) in [
+        (
+            "animated emoji without Nitro",
+            ":pa",
+            "party_time",
+            "<a:party_time:50>",
+            Some(false),
+        ),
+        (
+            "animated emoji with unknown Nitro state",
+            ":pa",
+            "party_time",
+            "<a:party_time:50>",
+            None,
+        ),
+        (
+            "server-unavailable static emoji",
+            ":go",
+            "gone",
+            "<:gone:51>",
+            None,
+        ),
+    ] {
+        let mut state = state_with_custom_emojis();
+        if let Some(can_use_animated_custom_emojis) = set_capability {
+            state.push_event(AppEvent::CurrentUserCapabilities {
+                can_use_animated_custom_emojis,
+            });
+        }
+        state.start_composer();
+        for ch in query.chars() {
+            state.push_composer_char(ch);
+        }
+
+        let candidates = state.composer_emoji_candidates();
+        let entry = candidates
+            .iter()
+            .find(|entry| entry.shortcode == shortcode)
+            .unwrap_or_else(|| panic!("{label} should stay visible in suggestions"));
+
+        assert!(!entry.available, "{label} should be unavailable");
+        assert_eq!(entry.wire_format.as_deref(), Some(wire_format));
+        assert!(
+            !state.confirm_composer_emoji(),
+            "{label} should not confirm"
+        );
+        assert_eq!(state.composer_input(), query);
+    }
+}
+
+#[test]
+fn active_emoji_candidates_refresh_when_nitro_capability_changes() {
+    let mut state = state_with_custom_emojis();
+    state.start_composer();
+    for ch in ":pa".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let before = state
+        .composer_emoji_candidates()
+        .into_iter()
+        .find(|entry| entry.shortcode == "party_time")
+        .expect("animated custom emoji should stay visible in suggestions");
+    assert!(!before.available);
+
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        can_use_animated_custom_emojis: true,
+    });
+
+    let after = state
+        .composer_emoji_candidates()
+        .into_iter()
+        .find(|entry| entry.shortcode == "party_time")
+        .expect("active emoji suggestions should refresh after capability changes");
+    assert!(after.available);
+}
+
+#[test]
+fn emoji_picker_keeps_more_than_visible_candidates_selectable() {
+    let mut state = state_with_writable_channel();
+    state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id: Id::new(1),
+        emojis: (0..10)
+            .map(|index| CustomEmojiInfo {
+                id: Id::new(100 + index),
+                name: format!("overflow_{index:02}"),
+                animated: false,
+                available: true,
+            })
+            .collect(),
+    });
+    state.start_composer();
+    for ch in ":ov".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let candidates = state.composer_emoji_candidates();
+    assert!(
+        candidates.len() > 8,
+        "picker should keep every matching candidate, got {candidates:?}"
+    );
+
+    state.move_composer_emoji_selection(9);
+
+    assert_eq!(state.composer_emoji_selected(), 9);
+    assert!(state.confirm_composer_emoji());
+    assert_eq!(state.composer_input(), ":overflow_09: ");
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(2),
+            content: "<:overflow_09:109>".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+    );
+}
+
+#[test]
+fn custom_emoji_submit_keeps_readable_text_and_sends_wire_format() {
+    let mut state = state_with_custom_emojis();
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        can_use_animated_custom_emojis: true,
+    });
+    state.start_composer();
+    for ch in ":pa".chars() {
+        state.push_composer_char(ch);
+    }
+
+    assert!(state.confirm_composer_emoji());
+
+    assert_eq!(state.composer_input(), ":party_time: ");
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(2),
+            content: "<a:party_time:50>".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+    );
+
+    let guild_id = Id::new(1);
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id,
+        emojis: vec![CustomEmojiInfo {
+            id: Id::new(60),
+            name: "wave".to_owned(),
+            animated: false,
+            available: true,
+        }],
+    });
+    state.start_composer();
+    for ch in ":wa".chars() {
+        state.push_composer_char(ch);
+    }
+
+    assert!(state.confirm_composer_emoji());
+
+    assert_eq!(state.composer_input(), ":wave: ");
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(2),
+            content: "<:wave:60>".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+    );
+}
+
+#[test]
+fn submit_expands_mention_and_following_custom_emoji_without_stale_ranges() {
+    let mut state = state_with_writable_channel_and_members();
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        can_use_animated_custom_emojis: true,
+    });
+    state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id: Id::new(1),
+        emojis: vec![CustomEmojiInfo {
+            id: Id::new(50),
+            name: "party_time".to_owned(),
+            animated: true,
+            available: true,
+        }],
+    });
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('s');
+    assert!(state.confirm_composer_mention());
+    for ch in ":pa".chars() {
+        state.push_composer_char(ch);
+    }
+    assert!(state.confirm_composer_emoji());
+
+    assert_eq!(state.composer_input(), "@Sally :party_time: ");
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(2),
+            content: "<@20> <a:party_time:50>".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+    );
+}
+
+#[test]
+fn confirm_emoji_inserts_unicode_and_closes_picker() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    for ch in ":heart".chars() {
+        state.push_composer_char(ch);
+    }
+
+    assert_eq!(state.composer_emoji_query(), Some("heart"));
+    assert!(state.confirm_composer_emoji());
+
+    assert_eq!(state.composer_input(), "❤️ ");
+    assert_eq!(state.composer_emoji_query(), None);
+}
+
+#[test]
+fn submit_expands_known_emoji_shortcodes_and_keeps_unknown_text() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    for ch in "take :heart: :unknown:".chars() {
+        state.push_composer_char(ch);
+    }
+
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(2),
+            content: "take ❤️ :unknown:".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+    );
+}
+
+#[test]
+fn submit_preserves_empty_shortcode_colon_runs() {
+    for (input, expected) in [
+        ("::", "::"),
+        (":::", ":::"),
+        ("::::heart:", ":::❤️"),
+        ("start :::heart: end", "start ::❤️ end"),
+    ] {
+        let mut state = state_with_writable_channel();
+        state.start_composer();
+        for ch in input.chars() {
+            state.push_composer_char(ch);
+        }
+
+        assert_eq!(
+            state.submit_composer(),
+            Some(AppCommand::SendMessage {
+                channel_id: Id::new(2),
+                content: expected.to_owned(),
+                reply_to: None,
+                attachments: Vec::new(),
+            }),
+            "empty emoji shortcode spans should preserve {input:?}",
+        );
+    }
+}
+
+#[test]
+fn submit_keeps_custom_emoji_markup_literal() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    for ch in "custom <:heart:123> <a:party:456> :heart:".chars() {
+        state.push_composer_char(ch);
+    }
+
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(2),
+            content: "custom <:heart:123> <a:party:456> ❤️".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+    );
+}
+
+#[test]
+fn no_match_emoji_query_does_not_open_hidden_picker() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    for ch in ":qq".chars() {
+        state.push_composer_char(ch);
+    }
+
+    assert_eq!(state.composer_emoji_query(), None);
+}
+
+#[test]
+fn uppercase_emoji_query_matches_lowercase_shortcodes() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    for ch in ":HE".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let shortcodes: Vec<_> = state
+        .composer_emoji_candidates()
+        .into_iter()
+        .map(|entry| entry.shortcode)
+        .collect();
+    assert!(
+        shortcodes.iter().any(|shortcode| shortcode == "heart"),
+        "expected uppercase query to match `heart`, got {shortcodes:?}"
+    );
+}
+
+#[test]
+fn cancel_emoji_picker_keeps_typed_text() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    for ch in ":he".chars() {
+        state.push_composer_char(ch);
+    }
+
+    state.cancel_composer_emoji();
+
+    assert_eq!(state.composer_emoji_query(), None);
+    assert_eq!(state.composer_input(), ":he");
+}
+
+#[test]
+fn typing_footer_resolves_one_user_to_alias() {
+    let mut state = state_with_writable_channel_and_members();
+    let channel_id = Id::new(2);
+    let user_id = Id::new(20);
+    state.push_event(AppEvent::TypingStart {
+        channel_id,
+        user_id,
+        display_name: Some("Live Nick".to_owned()),
+    });
+
+    assert_eq!(
+        state.typing_footer_for_selected_channel(),
+        Some("Live Nick is typing\u{2026}".to_owned())
+    );
+
+    state.push_event(AppEvent::MessageCreate {
+        guild_id: Some(Id::new(1)),
+        channel_id,
+        message_id: Id::new(100),
+        author_id: user_id,
+        author: "Live Nick".to_owned(),
+        author_avatar_url: None,
+        author_role_ids: Vec::new(),
+        message_kind: MessageKind::regular(),
+        reference: None,
+        reply: None,
+        poll: None,
+        content: Some("sent".to_owned()),
+        sticker_names: Vec::new(),
+        mentions: Vec::new(),
+        attachments: Vec::new(),
+        embeds: Vec::new(),
+        forwarded_snapshots: Vec::new(),
+    });
+
+    assert_eq!(state.typing_footer_for_selected_channel(), None);
+}
+
+#[test]
+fn typing_footer_excludes_current_user() {
+    let mut state = state_with_writable_channel_and_members();
+    // user_id 10 is the local user in the fixture's READY event.
+    state.push_event(AppEvent::TypingStart {
+        channel_id: Id::new(2),
+        user_id: Id::new(10),
+        display_name: Some("Local User".to_owned()),
+    });
+
+    assert_eq!(state.typing_footer_for_selected_channel(), None);
+}
+
+#[test]
+fn typing_footer_pluralizes_at_two_three_and_more_typers() {
+    let mut state = state_with_writable_channel_and_members();
+    state.push_event(AppEvent::TypingStart {
+        channel_id: Id::new(2),
+        user_id: Id::new(20),
+        display_name: None,
+    });
+    state.push_event(AppEvent::TypingStart {
+        channel_id: Id::new(2),
+        user_id: Id::new(21),
+        display_name: None,
+    });
+    let footer = state
+        .typing_footer_for_selected_channel()
+        .expect("two typers should produce a footer");
+    // Newest typer first, so id 21 (Sammy) leads.
+    assert_eq!(footer, "Sammy and Sally are typing\u{2026}");
+
+    state.push_event(AppEvent::TypingStart {
+        channel_id: Id::new(2),
+        user_id: Id::new(22),
+        display_name: None,
+    });
+    let footer = state
+        .typing_footer_for_selected_channel()
+        .expect("three typers should produce a footer");
+    assert_eq!(footer, "Bob, Sammy, and Sally are typing\u{2026}");
+
+    state.push_event(AppEvent::TypingStart {
+        channel_id: Id::new(2),
+        user_id: Id::new(23),
+        display_name: None,
+    });
+    let footer = state
+        .typing_footer_for_selected_channel()
+        .expect("four typers should still produce a footer");
+    assert_eq!(footer, "Several people are typing\u{2026}");
+}
+
+#[test]
+fn picker_matches_alias_with_multibyte_query() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('A');
+
+    let candidates = state.composer_mention_candidates();
+    assert!(
+        candidates.iter().any(|entry| entry.display_name == "Alias"),
+        "alias `Alias` must surface when typing `A`, got {:?}",
+        candidates
+            .iter()
+            .map(|c| c.display_name.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn picker_matches_username_when_alias_does_not_contain_query() {
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('A');
+    state.push_composer_char('l');
+
+    let candidates = state.composer_mention_candidates();
+    assert!(
+        candidates
+            .iter()
+            .any(|entry| entry.username.as_deref() == Some("Alias123")),
+        "username `Alias123` must match query `Al`, got {:?}",
+        candidates
+            .iter()
+            .map(|c| (c.display_name.clone(), c.username.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn picker_ranks_alias_prefix_above_username_prefix() {
+    // `s` should put display-name matches (Sally, Sammy) before any
+    // username-only match. We don't have a username-only `s` match in the
+    // fixture, but we still verify alias rows come first when both have
+    // candidates.
+    let mut state = state_with_writable_channel_and_members();
+    state.start_composer();
+    state.push_composer_char('@');
+    state.push_composer_char('s');
+
+    let candidates = state.composer_mention_candidates();
+    let names: Vec<_> = candidates.iter().map(|c| c.display_name.clone()).collect();
+    assert!(
+        names
+            .first()
+            .map(|name| name.starts_with('S'))
+            .unwrap_or(false),
+        "alias-prefix matches must lead the list, got {names:?}"
+    );
+}
+
+#[test]
+fn composer_sends_to_opened_thread_channel() {
+    let mut state = state_with_thread_created_message();
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+    state.move_message_action_down();
+    state.activate_selected_message_action();
+
+    state.start_composer();
+    state.push_composer_char('h');
+    state.push_composer_char('i');
+
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(10),
+            content: "hi".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+    );
+}
