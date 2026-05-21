@@ -2,7 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.0.5] - 2026-05-21
+## [2.0.6] - 2026-05-21
+
+### Bug Fixes
+
+- Fix slash command guild scope payload by @chojs23
+
+### Features
+
+- Better server/channel collapsing (#105) in [#105](https://github.com/chojs23/concord/pull/105) by @nexxai
+- Support slash commands (#90) in [#90](https://github.com/chojs23/concord/pull/90) by @nexxai
+
+### Performance
+
+- _(tui)_ Suppress image redraws for sidebar updates by @chojs23
+
+### Refactor
+
+- Group DashboardState internals into substates by @chojs23
+- Split tui state test module by @chojs23
+
+## [2.0.5] - 2026-05-20
 
 ### Documentation
 
