@@ -256,18 +256,6 @@ impl VisibleDashboardChangeSet {
             && !self.messages
             && !self.members
     }
-
-    fn only_unfocused_sidebar_changed(self, focus: state::FocusPane) -> bool {
-        (self.guilds || self.channels)
-            && !(self.guilds && focus == state::FocusPane::Guilds)
-            && !(self.channels && focus == state::FocusPane::Channels)
-            && !self.layout
-            && !self.overlay
-            && !self.header
-            && !self.messages
-            && !self.members
-            && !self.new_message_notice
-    }
 }
 
 pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDashboardSignature {
@@ -582,8 +570,7 @@ pub(super) fn should_suppress_image_redraw_for_signature_change(
     image_surfaces_visible
         && ((after.layout.focus != state::FocusPane::Members && changes.only_members_changed())
             || (after.layout.focus != state::FocusPane::Channels
-                && changes.only_new_message_notice_changed())
-            || changes.only_unfocused_sidebar_changed(after.layout.focus))
+                && changes.only_new_message_notice_changed()))
 }
 
 pub(super) fn should_redraw_after_visible_signature_change(

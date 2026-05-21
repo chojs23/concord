@@ -12,7 +12,7 @@ use super::{DashboardState, EmojiPickerEntry, FocusPane, MentionPickerEntry};
 
 impl DashboardState {
     pub fn is_composing(&self) -> bool {
-        self.composer_active
+        self.composer.composer_active
     }
 
     pub(super) fn start_reply_composer(&mut self) {
@@ -24,22 +24,22 @@ impl DashboardState {
         if !self.can_send_in_selected_channel() {
             return;
         }
-        self.composer_input.clear();
-        self.composer_cursor_byte_index = 0;
-        self.pending_composer_attachments.clear();
-        self.clipboard_paste_pending = false;
-        self.reply_target_message_id = Some(message_id);
-        self.edit_target_message = None;
+        self.composer.composer_input.clear();
+        self.composer.composer_cursor_byte_index = 0;
+        self.composer.pending_composer_attachments.clear();
+        self.runtime.clipboard_paste_pending = false;
+        self.composer.reply_target_message_id = Some(message_id);
+        self.composer.edit_target_message = None;
         self.reset_mention_picker_state();
-        self.composer_active = true;
-        self.focus = FocusPane::Messages;
+        self.composer.composer_active = true;
+        self.navigation.focus = FocusPane::Messages;
     }
 
     pub(super) fn start_edit_composer(&mut self) {
         let Some(message) = self.selected_message_state() else {
             return;
         };
-        if Some(message.author_id) != self.current_user_id
+        if Some(message.author_id) != self.discord.current_user_id
             || !message.message_kind.is_regular_or_reply()
         {
             return;
@@ -49,33 +49,36 @@ impl DashboardState {
         };
         let channel_id = message.channel_id;
         let message_id = message.id;
-        self.composer_input = content;
-        self.composer_cursor_byte_index = self.composer_input.len();
-        self.pending_composer_attachments.clear();
-        self.clipboard_paste_pending = false;
-        self.reply_target_message_id = None;
-        self.edit_target_message = Some((channel_id, message_id));
+        self.composer.composer_input = content;
+        self.composer.composer_cursor_byte_index = self.composer.composer_input.len();
+        self.composer.pending_composer_attachments.clear();
+        self.runtime.clipboard_paste_pending = false;
+        self.composer.reply_target_message_id = None;
+        self.composer.edit_target_message = Some((channel_id, message_id));
         self.reset_mention_picker_state();
-        self.composer_active = true;
-        self.focus = FocusPane::Messages;
+        self.composer.composer_active = true;
+        self.navigation.focus = FocusPane::Messages;
     }
 
     pub fn composer_input(&self) -> &str {
-        &self.composer_input
+        &self.composer.composer_input
     }
 
     pub fn composer_cursor_byte_index(&self) -> usize {
-        clamp_cursor_index(&self.composer_input, self.composer_cursor_byte_index)
+        clamp_cursor_index(
+            &self.composer.composer_input,
+            self.composer.composer_cursor_byte_index,
+        )
     }
 
     pub fn pending_composer_attachments(&self) -> &[MessageAttachmentUpload] {
-        &self.pending_composer_attachments
+        &self.composer.pending_composer_attachments
     }
 
     pub fn composer_title(&self) -> &'static str {
-        if self.edit_target_message.is_some() {
+        if self.composer.edit_target_message.is_some() {
             " Edit Message "
-        } else if self.reply_target_message_id.is_some() {
+        } else if self.composer.reply_target_message_id.is_some() {
             " Reply "
         } else {
             " Message Input "
@@ -86,18 +89,19 @@ impl DashboardState {
         if attachments.is_empty() || !self.composer_accepts_attachments() {
             return;
         }
-        let available =
-            MAX_UPLOAD_ATTACHMENT_COUNT.saturating_sub(self.pending_composer_attachments.len());
-        self.pending_composer_attachments
+        let available = MAX_UPLOAD_ATTACHMENT_COUNT
+            .saturating_sub(self.composer.pending_composer_attachments.len());
+        self.composer
+            .pending_composer_attachments
             .extend(attachments.into_iter().take(available));
     }
 
     pub fn pop_pending_composer_attachment(&mut self) {
-        self.pending_composer_attachments.pop();
+        self.composer.pending_composer_attachments.pop();
     }
 
     pub fn composer_accepts_attachments(&self) -> bool {
-        self.edit_target_message.is_none() && self.can_attach_in_selected_channel()
+        self.composer.edit_target_message.is_none() && self.can_attach_in_selected_channel()
     }
 
     /// Whether the user can post messages in the currently selected channel.
@@ -106,7 +110,7 @@ impl DashboardState {
     pub fn can_send_in_selected_channel(&self) -> bool {
         match self.selected_channel_state() {
             Some(channel) if channel.is_forum() => false,
-            Some(channel) => self.discord.can_send_in_channel(channel),
+            Some(channel) => self.discord.cache.can_send_in_channel(channel),
             None => true,
         }
     }
@@ -117,7 +121,7 @@ impl DashboardState {
     pub fn can_attach_in_selected_channel(&self) -> bool {
         match self.selected_channel_state() {
             Some(channel) if channel.is_forum() => false,
-            Some(channel) => self.discord.can_attach_in_channel(channel),
+            Some(channel) => self.discord.cache.can_attach_in_channel(channel),
             None => true,
         }
     }
@@ -133,46 +137,48 @@ impl DashboardState {
         if !self.can_send_in_selected_channel() {
             return;
         }
-        self.reply_target_message_id = None;
-        self.edit_target_message = None;
-        self.composer_active = true;
+        self.composer.reply_target_message_id = None;
+        self.composer.edit_target_message = None;
+        self.composer.composer_active = true;
         self.move_composer_cursor_end();
-        self.focus = FocusPane::Messages;
+        self.navigation.focus = FocusPane::Messages;
     }
 
     pub fn replace_composer_input_from_editor(&mut self, value: String) {
-        self.composer_input = value;
-        self.composer_cursor_byte_index = self.composer_input.len();
+        self.composer.composer_input = value;
+        self.composer.composer_cursor_byte_index = self.composer.composer_input.len();
         self.reset_mention_picker_state();
         self.refresh_active_mention_query();
     }
 
     pub fn cancel_composer(&mut self) {
-        self.composer_active = false;
-        self.composer_input.clear();
-        self.composer_cursor_byte_index = 0;
-        self.pending_composer_attachments.clear();
-        self.clipboard_paste_pending = false;
-        self.reply_target_message_id = None;
-        self.edit_target_message = None;
+        self.composer.composer_active = false;
+        self.composer.composer_input.clear();
+        self.composer.composer_cursor_byte_index = 0;
+        self.composer.pending_composer_attachments.clear();
+        self.runtime.clipboard_paste_pending = false;
+        self.composer.reply_target_message_id = None;
+        self.composer.edit_target_message = None;
         self.reset_mention_picker_state();
     }
 
     pub fn close_composer(&mut self) {
-        if self.reply_target_message_id.is_some() || self.edit_target_message.is_some() {
+        if self.composer.reply_target_message_id.is_some()
+            || self.composer.edit_target_message.is_some()
+        {
             self.cancel_composer();
             return;
         }
-        self.composer_active = false;
-        self.clipboard_paste_pending = false;
+        self.composer.composer_active = false;
+        self.runtime.clipboard_paste_pending = false;
         self.reset_mention_picker_state();
     }
 
     pub fn clear_composer_input(&mut self) {
-        self.composer_input.clear();
-        self.composer_cursor_byte_index = 0;
-        self.pending_composer_attachments.clear();
-        self.clipboard_paste_pending = false;
+        self.composer.composer_input.clear();
+        self.composer.composer_cursor_byte_index = 0;
+        self.composer.pending_composer_attachments.clear();
+        self.runtime.clipboard_paste_pending = false;
         self.reset_mention_picker_state();
     }
 
@@ -186,101 +192,105 @@ impl DashboardState {
         if value.is_empty() {
             return;
         }
-        let cursor = self.composer_cursor_byte_index();
+        let cursor = self.composer.composer_cursor_byte_index();
         self.replace_composer_range(cursor..cursor, value);
     }
 
     pub fn pop_composer_char(&mut self) {
-        let end = self.composer_cursor_byte_index();
+        let end = self.composer.composer_cursor_byte_index();
         if end == 0 {
             return;
         }
-        let start = previous_char_boundary(&self.composer_input, end);
+        let start = previous_char_boundary(&self.composer.composer_input, end);
         self.replace_composer_range(start..end, "");
     }
 
     pub fn delete_previous_composer_word(&mut self) {
-        let end = self.composer_cursor_byte_index();
+        let end = self.composer.composer_cursor_byte_index();
         if end == 0 {
             return;
         }
-        let start = previous_word_boundary(&self.composer_input, end);
+        let start = previous_word_boundary(&self.composer.composer_input, end);
         self.replace_composer_range(start..end, "");
     }
 
     pub fn move_composer_cursor_left(&mut self) {
-        let cursor = self.composer_cursor_byte_index();
-        self.composer_cursor_byte_index = previous_char_boundary(&self.composer_input, cursor);
+        let cursor = self.composer.composer_cursor_byte_index();
+        self.composer.composer_cursor_byte_index =
+            previous_char_boundary(&self.composer.composer_input, cursor);
         self.refresh_active_mention_query();
     }
 
     pub fn move_composer_cursor_right(&mut self) {
-        let cursor = self.composer_cursor_byte_index();
-        self.composer_cursor_byte_index = next_char_boundary(&self.composer_input, cursor);
+        let cursor = self.composer.composer_cursor_byte_index();
+        self.composer.composer_cursor_byte_index =
+            next_char_boundary(&self.composer.composer_input, cursor);
         self.refresh_active_mention_query();
     }
 
     pub fn move_composer_cursor_up(&mut self) {
-        let cursor = self.composer_cursor_byte_index();
-        if let Some(target) = vertical_cursor_target(&self.composer_input, cursor, -1) {
-            self.composer_cursor_byte_index = target;
+        let cursor = self.composer.composer_cursor_byte_index();
+        if let Some(target) = vertical_cursor_target(&self.composer.composer_input, cursor, -1) {
+            self.composer.composer_cursor_byte_index = target;
             self.refresh_active_mention_query();
         }
     }
 
     pub fn move_composer_cursor_down(&mut self) {
-        let cursor = self.composer_cursor_byte_index();
-        if let Some(target) = vertical_cursor_target(&self.composer_input, cursor, 1) {
-            self.composer_cursor_byte_index = target;
+        let cursor = self.composer.composer_cursor_byte_index();
+        if let Some(target) = vertical_cursor_target(&self.composer.composer_input, cursor, 1) {
+            self.composer.composer_cursor_byte_index = target;
             self.refresh_active_mention_query();
         }
     }
 
     pub fn move_composer_cursor_word_left(&mut self) {
-        let cursor = self.composer_cursor_byte_index();
-        self.composer_cursor_byte_index = previous_word_boundary(&self.composer_input, cursor);
+        let cursor = self.composer.composer_cursor_byte_index();
+        self.composer.composer_cursor_byte_index =
+            previous_word_boundary(&self.composer.composer_input, cursor);
         self.refresh_active_mention_query();
     }
 
     pub fn move_composer_cursor_word_right(&mut self) {
-        let cursor = self.composer_cursor_byte_index();
-        self.composer_cursor_byte_index = next_word_boundary(&self.composer_input, cursor);
+        let cursor = self.composer.composer_cursor_byte_index();
+        self.composer.composer_cursor_byte_index =
+            next_word_boundary(&self.composer.composer_input, cursor);
         self.refresh_active_mention_query();
     }
 
     pub fn move_composer_cursor_home(&mut self) {
-        self.composer_cursor_byte_index = 0;
+        self.composer.composer_cursor_byte_index = 0;
         self.refresh_active_mention_query();
     }
 
     pub fn move_composer_cursor_end(&mut self) {
-        self.composer_cursor_byte_index = self.composer_input.len();
+        self.composer.composer_cursor_byte_index = self.composer.composer_input.len();
         self.refresh_active_mention_query();
     }
 
     pub fn submit_composer(&mut self) -> Option<AppCommand> {
         let expanded = expand_composer_completions(
-            &self.composer_input,
-            &self.composer_mention_completions,
-            &self.composer_emoji_completions,
+            &self.composer.composer_input,
+            &self.composer.composer_mention_completions,
+            &self.composer.composer_emoji_completions,
         );
         let expanded = expand_emoji_shortcodes(&expanded);
         let content = expanded.trim().to_owned();
-        let has_attachments = !self.pending_composer_attachments.is_empty();
+        let has_attachments = !self.composer.pending_composer_attachments.is_empty();
         if content.is_empty() && !has_attachments {
             return None;
         }
-        if let Some((channel_id, message_id)) = self.edit_target_message.take() {
+        if let Some((channel_id, message_id)) = self.composer.edit_target_message.take() {
             if content.is_empty() {
-                self.edit_target_message = Some((channel_id, message_id));
+                self.composer.edit_target_message = Some((channel_id, message_id));
                 return None;
             }
-            self.composer_input.clear();
-            self.composer_cursor_byte_index = 0;
-            self.pending_composer_attachments.clear();
-            self.clipboard_paste_pending = false;
-            self.composer_active = false;
-            self.reply_target_message_id = None;
+            self.composer.composer_input.clear();
+            self.composer.composer_cursor_byte_index = 0;
+            self.composer.pending_composer_attachments.clear();
+            self.runtime.clipboard_paste_pending = false;
+            self.composer.composer_active = false;
+            self.composer.reply_target_message_id = None;
             self.reset_mention_picker_state();
             return Some(AppCommand::EditMessage {
                 channel_id,
@@ -293,33 +303,33 @@ impl DashboardState {
         // the composer was open (role change, channel overwrite update). Drop
         // the message rather than fire a request that would 403.
         if !self.can_send_in_selected_channel() {
-            self.composer_input.clear();
-            self.composer_cursor_byte_index = 0;
-            self.pending_composer_attachments.clear();
-            self.clipboard_paste_pending = false;
-            self.composer_active = false;
-            self.reply_target_message_id = None;
-            self.edit_target_message = None;
+            self.composer.composer_input.clear();
+            self.composer.composer_cursor_byte_index = 0;
+            self.composer.pending_composer_attachments.clear();
+            self.runtime.clipboard_paste_pending = false;
+            self.composer.composer_active = false;
+            self.composer.reply_target_message_id = None;
+            self.composer.edit_target_message = None;
             self.reset_mention_picker_state();
             return None;
         }
         if has_attachments && !self.can_attach_in_selected_channel() {
-            self.composer_input.clear();
-            self.composer_cursor_byte_index = 0;
-            self.pending_composer_attachments.clear();
-            self.clipboard_paste_pending = false;
-            self.composer_active = false;
-            self.reply_target_message_id = None;
-            self.edit_target_message = None;
+            self.composer.composer_input.clear();
+            self.composer.composer_cursor_byte_index = 0;
+            self.composer.pending_composer_attachments.clear();
+            self.runtime.clipboard_paste_pending = false;
+            self.composer.composer_active = false;
+            self.composer.reply_target_message_id = None;
+            self.composer.edit_target_message = None;
             self.reset_mention_picker_state();
             return None;
         }
 
-        self.composer_input.clear();
-        self.composer_cursor_byte_index = 0;
+        self.composer.composer_input.clear();
+        self.composer.composer_cursor_byte_index = 0;
         self.reset_mention_picker_state();
-        let reply_to = self.reply_target_message_id.take();
-        let attachments = std::mem::take(&mut self.pending_composer_attachments);
+        let reply_to = self.composer.reply_target_message_id.take();
+        let attachments = std::mem::take(&mut self.composer.pending_composer_attachments);
         // Stay in insert mode so the user can send several messages in a
         // row without re-pressing `i`. The composer closes only when the
         // user explicitly bails with Esc or the channel revokes
@@ -334,11 +344,11 @@ impl DashboardState {
 
     /// Returns the characters typed after the `@` if the picker is open.
     pub fn composer_mention_query(&self) -> Option<&str> {
-        self.composer_mention_query.as_deref()
+        self.composer.composer_mention_query.as_deref()
     }
 
     pub fn composer_mention_selected(&self) -> usize {
-        self.composer_mention_selected
+        self.composer.composer_mention_selected
     }
 
     /// Builds the full suggestion list for the picker, ordered by best match
@@ -346,40 +356,40 @@ impl DashboardState {
     /// substring matches, alias matches beat username matches at the same rank,
     /// and ties are broken alphabetically by display name.
     pub fn composer_mention_candidates(&self) -> Vec<MentionPickerEntry> {
-        let Some(query) = self.composer_mention_query.as_deref() else {
+        let Some(query) = self.composer.composer_mention_query.as_deref() else {
             return Vec::new();
         };
         build_mention_candidates(query, self.flattened_members())
     }
 
     pub fn move_composer_mention_selection(&mut self, delta: isize) {
-        if self.composer_mention_query.is_none() {
+        if self.composer.composer_mention_query.is_none() {
             return;
         }
         let len = self.composer_mention_candidates().len();
-        self.composer_mention_selected =
-            move_picker_selection(self.composer_mention_selected, len, delta);
+        self.composer.composer_mention_selected =
+            move_picker_selection(self.composer.composer_mention_selected, len, delta);
     }
 
     pub fn composer_emoji_query(&self) -> Option<&str> {
-        self.composer_emoji_query.as_deref()
+        self.composer.composer_emoji_query.as_deref()
     }
 
     pub fn composer_emoji_selected(&self) -> usize {
-        self.composer_emoji_selected
+        self.composer.composer_emoji_selected
     }
 
     pub fn composer_emoji_candidates(&self) -> Vec<EmojiPickerEntry> {
-        self.composer_emoji_candidates.clone()
+        self.composer.composer_emoji_candidates.clone()
     }
 
     pub fn move_composer_emoji_selection(&mut self, delta: isize) {
-        if self.composer_emoji_query.is_none() {
+        if self.composer.composer_emoji_query.is_none() {
             return;
         }
-        let len = self.composer_emoji_candidates.len();
-        self.composer_emoji_selected =
-            move_picker_selection(self.composer_emoji_selected, len, delta);
+        let len = self.composer.composer_emoji_candidates.len();
+        self.composer.composer_emoji_selected =
+            move_picker_selection(self.composer.composer_emoji_selected, len, delta);
     }
 
     /// Confirms the currently highlighted mention. Replaces the trailing
@@ -388,19 +398,19 @@ impl DashboardState {
     /// `<@USER_ID>` later. Returns `false` when the picker has no candidate
     /// to apply.
     pub fn confirm_composer_mention(&mut self) -> bool {
-        let Some(_query) = self.composer_mention_query.clone() else {
+        let Some(_query) = self.composer.composer_mention_query.clone() else {
             return false;
         };
-        let Some(mention_start) = self.composer_mention_start else {
+        let Some(mention_start) = self.composer.composer_mention_start else {
             return false;
         };
         let candidates = self.composer_mention_candidates();
-        let Some(entry) = candidates.get(self.composer_mention_selected) else {
+        let Some(entry) = candidates.get(self.composer.composer_mention_selected) else {
             return false;
         };
         let entry = entry.clone();
 
-        let cursor = self.composer_cursor_byte_index();
+        let cursor = self.composer.composer_cursor_byte_index();
         if mention_start > cursor {
             return false;
         }
@@ -409,11 +419,13 @@ impl DashboardState {
         self.replace_composer_range(mention_start..cursor, &replacement);
         let end = mention_start + '@'.len_utf8() + entry.display_name.len();
 
-        self.composer_mention_completions.push(MentionCompletion {
-            byte_start: mention_start,
-            byte_end: end,
-            user_id: entry.user_id,
-        });
+        self.composer
+            .composer_mention_completions
+            .push(MentionCompletion {
+                byte_start: mention_start,
+                byte_end: end,
+                user_id: entry.user_id,
+            });
         self.close_composer_mention_query();
         true
     }
@@ -423,15 +435,16 @@ impl DashboardState {
     /// byte range so submit can send Discord's wire markup. Unavailable custom
     /// emoji stay visible in the picker as a hint, but cannot be confirmed.
     pub fn confirm_composer_emoji(&mut self) -> bool {
-        let Some(_query) = self.composer_emoji_query.clone() else {
+        let Some(_query) = self.composer.composer_emoji_query.clone() else {
             return false;
         };
-        let Some(emoji_start) = self.composer_emoji_start else {
+        let Some(emoji_start) = self.composer.composer_emoji_start else {
             return false;
         };
         let Some(entry) = self
+            .composer
             .composer_emoji_candidates
-            .get(self.composer_emoji_selected)
+            .get(self.composer.composer_emoji_selected)
         else {
             return false;
         };
@@ -440,7 +453,7 @@ impl DashboardState {
             return false;
         }
 
-        let cursor = self.composer_cursor_byte_index();
+        let cursor = self.composer.composer_cursor_byte_index();
         if emoji_start > cursor {
             return false;
         }
@@ -453,12 +466,14 @@ impl DashboardState {
         self.replace_composer_range(emoji_start..cursor, &replacement);
         if let Some(wire_format) = entry.wire_format {
             let end = emoji_start + ':'.len_utf8() + entry.shortcode.len() + ':'.len_utf8();
-            self.composer_emoji_completions.push(EmojiCompletion {
-                byte_start: emoji_start,
-                byte_end: end,
-                replacement: wire_format,
-                custom_image_url: entry.custom_image_url,
-            });
+            self.composer
+                .composer_emoji_completions
+                .push(EmojiCompletion {
+                    byte_start: emoji_start,
+                    byte_end: end,
+                    replacement: wire_format,
+                    custom_image_url: entry.custom_image_url,
+                });
         }
         self.close_composer_emoji_query();
         true
@@ -467,9 +482,10 @@ impl DashboardState {
     pub(in crate::tui) fn composer_emoji_image_completions(
         &self,
     ) -> Vec<ComposerEmojiImageCompletion> {
-        self.composer_emoji_completions
+        self.composer
+            .composer_emoji_completions
             .iter()
-            .filter(|completion| completion.byte_end <= self.composer_input.len())
+            .filter(|completion| completion.byte_end <= self.composer.composer_input.len())
             .filter_map(|completion| {
                 completion
                     .custom_image_url
@@ -496,26 +512,26 @@ impl DashboardState {
     fn reset_mention_picker_state(&mut self) {
         self.close_composer_mention_query();
         self.close_composer_emoji_query();
-        self.composer_mention_completions.clear();
-        self.composer_emoji_completions.clear();
+        self.composer.composer_mention_completions.clear();
+        self.composer.composer_emoji_completions.clear();
     }
 
     fn close_composer_mention_query(&mut self) {
-        self.composer_mention_query = None;
-        self.composer_mention_start = None;
-        self.composer_mention_selected = 0;
+        self.composer.composer_mention_query = None;
+        self.composer.composer_mention_start = None;
+        self.composer.composer_mention_selected = 0;
     }
 
     fn close_composer_emoji_query(&mut self) {
-        self.composer_emoji_query = None;
-        self.composer_emoji_start = None;
-        self.composer_emoji_selected = 0;
-        self.composer_emoji_candidates.clear();
+        self.composer.composer_emoji_query = None;
+        self.composer.composer_emoji_start = None;
+        self.composer.composer_emoji_selected = 0;
+        self.composer.composer_emoji_candidates.clear();
     }
 
     pub(super) fn refresh_composer_emoji_candidates_for_current_query(&mut self) {
-        let Some(query) = self.composer_emoji_query.clone() else {
-            self.composer_emoji_candidates.clear();
+        let Some(query) = self.composer.composer_emoji_query.clone() else {
+            self.composer.composer_emoji_candidates.clear();
             return;
         };
 
@@ -525,33 +541,37 @@ impl DashboardState {
             return;
         }
 
-        self.composer_emoji_selected = self.composer_emoji_selected.min(candidates.len() - 1);
-        self.composer_emoji_candidates = candidates;
+        self.composer.composer_emoji_selected = self
+            .composer
+            .composer_emoji_selected
+            .min(candidates.len() - 1);
+        self.composer.composer_emoji_candidates = candidates;
     }
 
     fn replace_composer_range(&mut self, range: Range<usize>, replacement: &str) {
         if range.start > range.end
-            || range.end > self.composer_input.len()
-            || !self.composer_input.is_char_boundary(range.start)
-            || !self.composer_input.is_char_boundary(range.end)
+            || range.end > self.composer.composer_input.len()
+            || !self.composer.composer_input.is_char_boundary(range.start)
+            || !self.composer.composer_input.is_char_boundary(range.end)
         {
             return;
         }
         self.adjust_mention_completions_for_replace(range.clone(), replacement.len());
         self.adjust_emoji_completions_for_replace(range.clone(), replacement.len());
-        self.composer_input
+        self.composer
+            .composer_input
             .replace_range(range.clone(), replacement);
-        self.composer_cursor_byte_index = range.start + replacement.len();
+        self.composer.composer_cursor_byte_index = range.start + replacement.len();
         self.refresh_active_mention_query();
     }
 
     fn refresh_active_mention_query(&mut self) {
-        let cursor = self.composer_cursor_byte_index();
+        let cursor = self.composer.composer_cursor_byte_index();
         let mut query_start = cursor;
 
         while query_start > 0 {
-            let previous = previous_char_boundary(&self.composer_input, query_start);
-            let value = self.composer_input[previous..query_start]
+            let previous = previous_char_boundary(&self.composer.composer_input, query_start);
+            let value = self.composer.composer_input[previous..query_start]
                 .chars()
                 .next()
                 .expect("character boundary slice contains one character");
@@ -562,14 +582,14 @@ impl DashboardState {
         }
 
         if query_start > 0 {
-            let mention_start = previous_char_boundary(&self.composer_input, query_start);
-            if &self.composer_input[mention_start..query_start] == "@"
-                && should_start_completion_query(&self.composer_input[..mention_start])
+            let mention_start = previous_char_boundary(&self.composer.composer_input, query_start);
+            if &self.composer.composer_input[mention_start..query_start] == "@"
+                && should_start_completion_query(&self.composer.composer_input[..mention_start])
             {
-                self.composer_mention_query =
-                    Some(self.composer_input[query_start..cursor].to_owned());
-                self.composer_mention_start = Some(mention_start);
-                self.composer_mention_selected = 0;
+                self.composer.composer_mention_query =
+                    Some(self.composer.composer_input[query_start..cursor].to_owned());
+                self.composer.composer_mention_start = Some(mention_start);
+                self.composer.composer_mention_selected = 0;
                 self.close_composer_emoji_query();
                 return;
             }
@@ -578,8 +598,8 @@ impl DashboardState {
         let mut query_start = cursor;
 
         while query_start > 0 {
-            let previous = previous_char_boundary(&self.composer_input, query_start);
-            let value = self.composer_input[previous..query_start]
+            let previous = previous_char_boundary(&self.composer.composer_input, query_start);
+            let value = self.composer.composer_input[previous..query_start]
                 .chars()
                 .next()
                 .expect("character boundary slice contains one character");
@@ -590,11 +610,11 @@ impl DashboardState {
         }
 
         if query_start > 0 {
-            let emoji_start = previous_char_boundary(&self.composer_input, query_start);
-            let query = &self.composer_input[query_start..cursor];
-            if &self.composer_input[emoji_start..query_start] == ":"
+            let emoji_start = previous_char_boundary(&self.composer.composer_input, query_start);
+            let query = &self.composer.composer_input[query_start..cursor];
+            if &self.composer.composer_input[emoji_start..query_start] == ":"
                 && query.chars().count() >= 2
-                && should_start_completion_query(&self.composer_input[..emoji_start])
+                && should_start_completion_query(&self.composer.composer_input[..emoji_start])
             {
                 let candidates = self.emoji_candidates_for_query(query);
                 if candidates.is_empty() {
@@ -602,10 +622,10 @@ impl DashboardState {
                     self.close_composer_emoji_query();
                     return;
                 }
-                self.composer_emoji_query = Some(query.to_owned());
-                self.composer_emoji_start = Some(emoji_start);
-                self.composer_emoji_selected = 0;
-                self.composer_emoji_candidates = candidates;
+                self.composer.composer_emoji_query = Some(query.to_owned());
+                self.composer.composer_emoji_start = Some(emoji_start);
+                self.composer.composer_emoji_selected = 0;
+                self.composer.composer_emoji_candidates = candidates;
                 self.close_composer_mention_query();
                 return;
             }
@@ -622,9 +642,9 @@ impl DashboardState {
     ) {
         let replaced_len = replaced.end - replaced.start;
         let delta = replacement_len as isize - replaced_len as isize;
-        let mut completions = Vec::with_capacity(self.composer_mention_completions.len());
+        let mut completions = Vec::with_capacity(self.composer.composer_mention_completions.len());
 
-        for mut completion in self.composer_mention_completions.drain(..) {
+        for mut completion in self.composer.composer_mention_completions.drain(..) {
             if completion.byte_end <= replaced.start {
                 completions.push(completion);
             } else if completion.byte_start >= replaced.end {
@@ -634,7 +654,7 @@ impl DashboardState {
             }
         }
 
-        self.composer_mention_completions = completions;
+        self.composer.composer_mention_completions = completions;
     }
 
     fn adjust_emoji_completions_for_replace(
@@ -644,9 +664,9 @@ impl DashboardState {
     ) {
         let replaced_len = replaced.end - replaced.start;
         let delta = replacement_len as isize - replaced_len as isize;
-        let mut completions = Vec::with_capacity(self.composer_emoji_completions.len());
+        let mut completions = Vec::with_capacity(self.composer.composer_emoji_completions.len());
 
-        for mut completion in self.composer_emoji_completions.drain(..) {
+        for mut completion in self.composer.composer_emoji_completions.drain(..) {
             if completion.byte_end <= replaced.start {
                 completions.push(completion);
             } else if completion.byte_start >= replaced.end {
@@ -656,18 +676,19 @@ impl DashboardState {
             }
         }
 
-        self.composer_emoji_completions = completions;
+        self.composer.composer_emoji_completions = completions;
     }
 
     fn emoji_candidates_for_query(&self, query: &str) -> Vec<EmojiPickerEntry> {
         let custom_emojis = self
             .selected_channel_guild_id()
-            .map(|guild_id| self.discord.custom_emojis_for_guild(guild_id))
+            .map(|guild_id| self.discord.cache.custom_emojis_for_guild(guild_id))
             .unwrap_or_default();
         build_emoji_candidates(
             query,
             custom_emojis,
-            self.current_user_can_use_animated_custom_emojis
+            self.discord
+                .current_user_can_use_animated_custom_emojis
                 .unwrap_or(false),
         )
     }

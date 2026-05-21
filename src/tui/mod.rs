@@ -323,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_sidebar_unread_state_suppresses_image_redraw_while_messages_are_focused() {
+    fn visible_sidebar_unread_state_redraws_while_images_are_visible() {
         let mut state = state_with_messages(10);
         state.focus_pane(FocusPane::Messages);
         state.push_event(AppEvent::ReadStateInit {
@@ -344,10 +344,10 @@ mod tests {
             before.channels.visible_channels,
             after.channels.visible_channels
         );
-        assert!(should_suppress_image_redraw_for_signature_change(
+        assert!(!should_suppress_image_redraw_for_signature_change(
             &before, &after, true,
         ));
-        assert!(!should_redraw_after_visible_signature_change(
+        assert!(should_redraw_after_visible_signature_change(
             &before, &after, true, false,
         ));
         assert!(should_redraw_after_visible_signature_change(
@@ -367,10 +367,10 @@ mod tests {
             after.messages.visible_messages
         );
         assert_ne!(before.guilds.visible_guilds, after.guilds.visible_guilds);
-        assert!(should_suppress_image_redraw_for_signature_change(
+        assert!(!should_suppress_image_redraw_for_signature_change(
             &before, &after, true,
         ));
-        assert!(!should_redraw_after_visible_signature_change(
+        assert!(should_redraw_after_visible_signature_change(
             &before, &after, true, false,
         ));
         assert!(should_redraw_after_visible_signature_change(

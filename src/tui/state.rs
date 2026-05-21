@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
+    ops::{Deref, DerefMut},
     time::{Duration, Instant},
 };
 
@@ -198,9 +199,44 @@ struct MessageRowContentMetrics {
     preview_rows: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DashboardState {
-    discord: DiscordState,
+    discord: DiscordUiState,
+    navigation: NavigationState,
+    messages: MessageViewportState,
+    composer: ComposerUiState,
+    popups: PopupUiState,
+    runtime: RuntimeUiState,
+    options: OptionsUiState,
+    requests: RequestTrackingState,
+    layout_cache: LayoutCacheState,
+}
+
+#[derive(Debug, Default)]
+struct DiscordUiState {
+    cache: DiscordState,
+    current_user: Option<String>,
+    current_user_id: Option<Id<UserMarker>>,
+    current_user_can_use_animated_custom_emojis: Option<bool>,
+    update_available_version: Option<String>,
+}
+
+impl Deref for DiscordUiState {
+    type Target = DiscordState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cache
+    }
+}
+
+impl DerefMut for DiscordUiState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.cache
+    }
+}
+
+#[derive(Debug)]
+struct NavigationState {
     focus: FocusPane,
     active_guild: ActiveGuildScope,
     active_channel_id: Option<Id<ChannelMarker>>,
@@ -214,6 +250,62 @@ pub struct DashboardState {
     channel_horizontal_scroll: usize,
     channel_keep_selection_visible: bool,
     channel_view_height: usize,
+    selected_member: usize,
+    member_scroll: usize,
+    member_horizontal_scroll: usize,
+    member_keep_selection_visible: bool,
+    member_view_height: usize,
+    recent_channel_ids: VecDeque<Id<ChannelMarker>>,
+    guild_pane_filter: Option<PaneFilterState>,
+    channel_pane_filter: Option<PaneFilterState>,
+    guild_pane_visible: bool,
+    channel_pane_visible: bool,
+    member_pane_visible: bool,
+    /// Folder IDs the user has collapsed in the guild pane. Single-guild
+    /// "folders" (id = None) are never collapsible since they have no header.
+    collapsed_folders: HashSet<FolderKey>,
+    collapsed_channel_categories: HashSet<Id<ChannelMarker>>,
+}
+
+impl Default for NavigationState {
+    fn default() -> Self {
+        Self {
+            focus: FocusPane::Guilds,
+            active_guild: ActiveGuildScope::Unset,
+            active_channel_id: None,
+            // Index 0 is the virtual "Direct Messages" entry. Start on the
+            // first real guild when one exists. The bounds clamp inside
+            // `selected_guild()` falls back to the DM entry while the guild
+            // list is still empty.
+            selected_guild: 1,
+            guild_scroll: 0,
+            guild_horizontal_scroll: 0,
+            guild_keep_selection_visible: true,
+            guild_view_height: 1,
+            selected_channel: 0,
+            channel_scroll: 0,
+            channel_horizontal_scroll: 0,
+            channel_keep_selection_visible: true,
+            channel_view_height: 1,
+            selected_member: 0,
+            member_scroll: 0,
+            member_horizontal_scroll: 0,
+            member_keep_selection_visible: true,
+            member_view_height: 1,
+            recent_channel_ids: VecDeque::new(),
+            guild_pane_filter: None,
+            channel_pane_filter: None,
+            guild_pane_visible: true,
+            channel_pane_visible: true,
+            member_pane_visible: true,
+            collapsed_folders: HashSet::new(),
+            collapsed_channel_categories: HashSet::new(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct MessageViewportState {
     selected_message: usize,
     message_scroll: usize,
     message_line_scroll: usize,
@@ -240,11 +332,32 @@ pub struct DashboardState {
     pinned_message_view_channel_id: Option<Id<ChannelMarker>>,
     pinned_message_view_return_target: Option<PinnedMessageViewReturnTarget>,
     thread_return_target: Option<ThreadReturnTarget>,
-    selected_member: usize,
-    member_scroll: usize,
-    member_horizontal_scroll: usize,
-    member_keep_selection_visible: bool,
-    member_view_height: usize,
+}
+
+impl Default for MessageViewportState {
+    fn default() -> Self {
+        Self {
+            selected_message: 0,
+            message_scroll: 0,
+            message_line_scroll: 0,
+            message_keep_selection_visible: true,
+            message_auto_follow: true,
+            new_messages_marker_message_id: None,
+            unread_divider_last_acked_id: None,
+            pending_unread_anchor_scroll: false,
+            message_view_height: 1,
+            message_content_width: usize::MAX,
+            message_preview_width: 0,
+            message_max_preview_height: 0,
+            pinned_message_view_channel_id: None,
+            pinned_message_view_return_target: None,
+            thread_return_target: None,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct ComposerUiState {
     composer_input: String,
     composer_cursor_byte_index: usize,
     pending_composer_attachments: Vec<MessageAttachmentUpload>,
@@ -272,6 +385,22 @@ pub struct DashboardState {
     /// the readable `:name:` text while submit rewrites these ranges to
     /// Discord's `<:name:id>` or `<a:name:id>` wire format.
     composer_emoji_completions: Vec<EmojiCompletion>,
+}
+
+impl ComposerUiState {
+    fn composer_cursor_byte_index(&self) -> usize {
+        let mut index = self
+            .composer_cursor_byte_index
+            .min(self.composer_input.len());
+        while index > 0 && !self.composer_input.is_char_boundary(index) {
+            index -= 1;
+        }
+        index
+    }
+}
+
+#[derive(Debug, Default)]
+struct PopupUiState {
     message_action_menu: Option<MessageActionMenuState>,
     message_delete_confirmation: Option<popups::MessageDeleteConfirmationState>,
     message_pin_confirmation: Option<popups::MessagePinConfirmationState>,
@@ -286,38 +415,58 @@ pub struct DashboardState {
     poll_vote_picker: Option<PollVotePickerState>,
     reaction_users_popup: Option<ReactionUsersPopupState>,
     debug_log_popup_open: bool,
+    leader_mode: Option<LeaderMode>,
+    channel_switcher: Option<ChannelSwitcherState>,
+}
+
+#[derive(Debug, Default)]
+struct RuntimeUiState {
     toast_message: Option<ToastMessage>,
     voice_connection: Option<VoiceConnectionUiState>,
     open_composer_in_editor_requested: bool,
     paste_clipboard_requested: bool,
     clipboard_paste_pending: bool,
     copy_message_content_requested: Option<String>,
-    leader_mode: Option<LeaderMode>,
-    channel_switcher: Option<ChannelSwitcherState>,
-    recent_channel_ids: VecDeque<Id<ChannelMarker>>,
-    guild_pane_filter: Option<PaneFilterState>,
-    channel_pane_filter: Option<PaneFilterState>,
-    guild_pane_visible: bool,
-    channel_pane_visible: bool,
-    member_pane_visible: bool,
+    should_quit: bool,
+}
+
+#[derive(Debug)]
+struct OptionsUiState {
     display_options: DisplayOptions,
     notification_options: NotificationOptions,
     voice_options: VoiceOptions,
     key_bindings: KeyBindings,
     options_save_pending: bool,
-    current_user: Option<String>,
-    current_user_id: Option<Id<UserMarker>>,
-    current_user_can_use_animated_custom_emojis: Option<bool>,
-    update_available_version: Option<String>,
-    should_quit: bool,
+}
+
+impl Default for OptionsUiState {
+    fn default() -> Self {
+        Self {
+            display_options: DisplayOptions::default(),
+            notification_options: NotificationOptions::default(),
+            voice_options: VoiceOptions::default(),
+            key_bindings: KeyBindings,
+            options_save_pending: false,
+        }
+    }
+}
+
+impl OptionsUiState {
+    fn key_bindings(&self) -> &KeyBindings {
+        &self.key_bindings
+    }
+}
+
+#[derive(Debug, Default)]
+struct RequestTrackingState {
     older_history_requests: HashMap<Id<ChannelMarker>, OlderHistoryRequestState>,
     forum_post_lists: HashMap<Id<ChannelMarker>, ForumPostListState>,
-    /// Folder IDs the user has collapsed in the guild pane. Single-guild
-    /// "folders" (id = None) are never collapsible since they have no header.
-    collapsed_folders: HashSet<FolderKey>,
-    collapsed_channel_categories: HashSet<Id<ChannelMarker>>,
     pending_read_acks: HashMap<Id<ChannelMarker>, PendingReadAck>,
     pending_commands: VecDeque<AppCommand>,
+}
+
+#[derive(Debug, Default)]
+struct LayoutCacheState {
     message_row_content_metrics_cache:
         RefCell<HashMap<MessageRowContentMetricsCacheKey, MessageRowContentMetrics>>,
 }
@@ -363,110 +512,14 @@ fn truncate_notification_text(value: &str, max_chars: usize) -> String {
 
 impl DashboardState {
     pub fn new() -> Self {
-        Self {
-            discord: DiscordState::default(),
-            focus: FocusPane::Guilds,
-            active_guild: ActiveGuildScope::Unset,
-            active_channel_id: None,
-            // Index 0 is the virtual "Direct Messages" entry. Start on the
-            // first real guild when one exists. The bounds clamp inside
-            // `selected_guild()` falls back to the DM entry while the guild
-            // list is still empty.
-            selected_guild: 1,
-            guild_scroll: 0,
-            guild_horizontal_scroll: 0,
-            guild_keep_selection_visible: true,
-            guild_view_height: 1,
-            selected_channel: 0,
-            channel_scroll: 0,
-            channel_horizontal_scroll: 0,
-            channel_keep_selection_visible: true,
-            channel_view_height: 1,
-            selected_message: 0,
-            message_scroll: 0,
-            message_line_scroll: 0,
-            message_keep_selection_visible: true,
-            message_auto_follow: true,
-            new_messages_marker_message_id: None,
-            unread_divider_last_acked_id: None,
-            pending_unread_anchor_scroll: false,
-            message_view_height: 1,
-            message_content_width: usize::MAX,
-            message_preview_width: 0,
-            message_max_preview_height: 0,
-            pinned_message_view_channel_id: None,
-            pinned_message_view_return_target: None,
-            thread_return_target: None,
-            selected_member: 0,
-            member_scroll: 0,
-            member_horizontal_scroll: 0,
-            member_keep_selection_visible: true,
-            member_view_height: 1,
-            composer_input: String::new(),
-            composer_cursor_byte_index: 0,
-            pending_composer_attachments: Vec::new(),
-            composer_active: false,
-            reply_target_message_id: None,
-            edit_target_message: None,
-            composer_mention_query: None,
-            composer_mention_start: None,
-            composer_mention_selected: 0,
-            composer_emoji_query: None,
-            composer_emoji_start: None,
-            composer_emoji_selected: 0,
-            composer_emoji_candidates: Vec::new(),
-            composer_mention_completions: Vec::new(),
-            composer_emoji_completions: Vec::new(),
-            message_action_menu: None,
-            message_delete_confirmation: None,
-            message_pin_confirmation: None,
-            options_popup: None,
-            image_viewer: None,
-            guild_leader_action: None,
-            channel_leader_action: None,
-            member_leader_action: None,
-            voice_leader_action: None,
-            user_profile_popup: None,
-            emoji_reaction_picker: None,
-            poll_vote_picker: None,
-            reaction_users_popup: None,
-            debug_log_popup_open: false,
-            toast_message: None,
-            voice_connection: None,
-            open_composer_in_editor_requested: false,
-            paste_clipboard_requested: false,
-            clipboard_paste_pending: false,
-            copy_message_content_requested: None,
-            leader_mode: None,
-            channel_switcher: None,
-            recent_channel_ids: VecDeque::new(),
-            guild_pane_filter: None,
-            channel_pane_filter: None,
-            guild_pane_visible: true,
-            channel_pane_visible: true,
-            member_pane_visible: true,
-            display_options: DisplayOptions::default(),
-            notification_options: NotificationOptions::default(),
-            voice_options: VoiceOptions::default(),
-            key_bindings: KeyBindings,
-            options_save_pending: false,
-            current_user: None,
-            current_user_id: None,
-            current_user_can_use_animated_custom_emojis: None,
-            update_available_version: None,
-            should_quit: false,
-            older_history_requests: HashMap::new(),
-            forum_post_lists: HashMap::new(),
-            collapsed_folders: HashSet::new(),
-            collapsed_channel_categories: HashSet::new(),
-            pending_read_acks: HashMap::new(),
-            pending_commands: VecDeque::new(),
-            message_row_content_metrics_cache: RefCell::new(HashMap::new()),
-        }
+        Self::default()
     }
 
     fn clear_message_row_content_metrics_cache(&mut self) {
-        self.message_row_content_metrics_cache.get_mut().clear();
+        self.layout_cache
+            .message_row_content_metrics_cache
+            .get_mut()
+            .clear();
     }
 
     fn event_affects_message_row_content_metrics(event: &AppEvent) -> bool {
@@ -492,11 +545,15 @@ impl DashboardState {
 
     #[cfg(test)]
     pub(super) fn message_row_content_metrics_cache_len(&self) -> usize {
-        self.message_row_content_metrics_cache.borrow().len()
+        self.layout_cache
+            .message_row_content_metrics_cache
+            .borrow()
+            .len()
     }
 
     pub fn next_read_ack_deadline(&self) -> Option<Instant> {
-        self.pending_read_acks
+        self.requests
+            .pending_read_acks
             .values()
             .map(|pending| pending.deadline)
             .min()
@@ -504,25 +561,29 @@ impl DashboardState {
 
     pub fn flush_due_read_acks(&mut self, now: Instant) {
         let mut due = Vec::new();
-        self.pending_read_acks.retain(|channel_id, pending| {
-            if pending.deadline <= now {
-                due.push((*channel_id, pending.message_id));
-                false
-            } else {
-                true
-            }
-        });
+        self.requests
+            .pending_read_acks
+            .retain(|channel_id, pending| {
+                if pending.deadline <= now {
+                    due.push((*channel_id, pending.message_id));
+                    false
+                } else {
+                    true
+                }
+            });
 
         for (channel_id, message_id) in due {
-            self.pending_commands.push_back(AppCommand::AckChannel {
-                channel_id,
-                message_id,
-            });
+            self.requests
+                .pending_commands
+                .push_back(AppCommand::AckChannel {
+                    channel_id,
+                    message_id,
+                });
         }
     }
 
     pub fn drain_pending_commands(&mut self) -> Vec<AppCommand> {
-        self.pending_commands.drain(..).collect()
+        self.requests.pending_commands.drain(..).collect()
     }
 
     #[cfg(test)]
@@ -555,7 +616,7 @@ impl DashboardState {
         // Both modes share `message_auto_follow`. It means the next render
         // should align the viewport to the bottom. Auto-follow also jumps
         // the cursor.
-        let was_auto_follow = self.message_auto_follow;
+        let was_auto_follow = self.messages.message_auto_follow;
         let was_at_latest = was_auto_follow || self.is_viewport_at_latest_message();
         let was_cursor_on_last = self.cursor_on_last_message();
         let was_following_cursor = was_at_latest && was_cursor_on_last;
@@ -573,7 +634,7 @@ impl DashboardState {
         let scroll_message_id = preserve_scroll
             .then(|| {
                 self.messages()
-                    .get(self.message_scroll)
+                    .get(self.messages.message_scroll)
                     .map(|message| message.id)
             })
             .flatten();
@@ -581,13 +642,13 @@ impl DashboardState {
 
         match &event {
             AppEvent::Ready { user, user_id } => {
-                self.current_user = Some(user.clone());
-                self.current_user_id = *user_id;
+                self.discord.current_user = Some(user.clone());
+                self.discord.current_user_id = *user_id;
             }
             AppEvent::CurrentUserCapabilities {
                 can_use_animated_custom_emojis,
             } => {
-                self.current_user_can_use_animated_custom_emojis =
+                self.discord.current_user_can_use_animated_custom_emojis =
                     Some(*can_use_animated_custom_emojis);
             }
             AppEvent::AttachmentDownloadCompleted { path, source }
@@ -596,14 +657,14 @@ impl DashboardState {
                 self.record_image_viewer_download_completed(path);
             }
             AppEvent::UpdateAvailable { latest_version } => {
-                self.update_available_version = Some(latest_version.clone());
+                self.discord.update_available_version = Some(latest_version.clone());
             }
             AppEvent::ReactionUsersLoaded {
                 channel_id,
                 message_id,
                 reactions,
             } => {
-                self.reaction_users_popup = Some(ReactionUsersPopupState {
+                self.popups.reaction_users_popup = Some(ReactionUsersPopupState {
                     channel_id: *channel_id,
                     message_id: *message_id,
                     reactions: reactions.clone(),
@@ -612,7 +673,7 @@ impl DashboardState {
                 });
             }
             AppEvent::MessageHistoryLoadFailed { channel_id, .. } => {
-                self.older_history_requests.remove(channel_id);
+                self.requests.older_history_requests.remove(channel_id);
             }
             AppEvent::ForumPostsLoaded {
                 channel_id,
@@ -641,7 +702,7 @@ impl DashboardState {
                 guild_id,
                 message,
             } => {
-                if let Some(popup) = self.user_profile_popup.as_mut()
+                if let Some(popup) = self.popups.user_profile_popup.as_mut()
                     && popup.user_id == *user_id
                     && popup.guild_id == *guild_id
                 {
@@ -652,6 +713,7 @@ impl DashboardState {
                 let channel_id = *channel_id;
                 let scope =
                     self.discord
+                        .cache
                         .channel(channel_id)
                         .map(|channel| match channel.guild_id {
                             Some(guild_id) => ActiveGuildScope::Guild(guild_id),
@@ -660,7 +722,7 @@ impl DashboardState {
                 if let Some(scope) = scope {
                     self.activate_guild(scope);
                     self.activate_channel(channel_id);
-                    self.channel_keep_selection_visible = true;
+                    self.navigation.channel_keep_selection_visible = true;
                     channel_cursor_id = Some(channel_id);
                 }
             }
@@ -671,7 +733,7 @@ impl DashboardState {
                 message,
             } => match status {
                 VoiceConnectionStatus::Connecting => {
-                    self.voice_connection = Some(VoiceConnectionUiState {
+                    self.runtime.voice_connection = Some(VoiceConnectionUiState {
                         guild_id: *guild_id,
                         channel_id: *channel_id,
                     });
@@ -681,7 +743,7 @@ impl DashboardState {
                     );
                 }
                 VoiceConnectionStatus::Connected => {
-                    self.voice_connection = Some(VoiceConnectionUiState {
+                    self.runtime.voice_connection = Some(VoiceConnectionUiState {
                         guild_id: *guild_id,
                         channel_id: *channel_id,
                     });
@@ -692,10 +754,11 @@ impl DashboardState {
                 }
                 VoiceConnectionStatus::Disconnected => {
                     if self
+                        .runtime
                         .voice_connection
                         .is_some_and(|voice| voice.guild_id == *guild_id)
                     {
-                        self.voice_connection = None;
+                        self.runtime.voice_connection = None;
                     }
                     self.show_success_toast(
                         message.as_deref().unwrap_or("Voice leave requested"),
@@ -704,10 +767,11 @@ impl DashboardState {
                 }
                 VoiceConnectionStatus::Failed => {
                     if self
+                        .runtime
                         .voice_connection
                         .is_some_and(|voice| voice.guild_id == *guild_id)
                     {
-                        self.voice_connection = None;
+                        self.runtime.voice_connection = None;
                     }
                     self.show_error_toast(
                         message.as_deref().unwrap_or("Voice request failed"),
@@ -722,7 +786,7 @@ impl DashboardState {
         }
         if apply_discord {
             let discord_event = self.discord_event_for_apply(&event);
-            self.discord.apply_event(&discord_event);
+            self.discord.cache.apply_event(&discord_event);
             if Self::event_affects_message_row_content_metrics(&discord_event) {
                 self.clear_message_row_content_metrics_cache();
             }
@@ -751,12 +815,12 @@ impl DashboardState {
             // `clamp_message_viewport_for_image_previews` snaps to the new
             // last message even when only the viewport (not the cursor)
             // moves.
-            self.message_auto_follow = true;
+            self.messages.message_auto_follow = true;
             self.clear_new_messages_marker();
             if let Some((channel_id, _)) = active_new_message {
                 if user_just_sent {
-                    self.unread_divider_last_acked_id = None;
-                    self.pending_unread_anchor_scroll = false;
+                    self.messages.unread_divider_last_acked_id = None;
+                    self.messages.pending_unread_anchor_scroll = false;
                 } else {
                     self.schedule_channel_ack(channel_id);
                 }
@@ -764,9 +828,9 @@ impl DashboardState {
         } else if in_message_view
             && !was_at_latest
             && !user_just_sent
-            && self.new_messages_marker_message_id.is_none()
+            && self.messages.new_messages_marker_message_id.is_none()
         {
-            self.new_messages_marker_message_id =
+            self.messages.new_messages_marker_message_id =
                 active_new_message.map(|(_, message_id)| message_id);
         }
         self.clamp_list_viewports();
@@ -790,7 +854,7 @@ impl DashboardState {
             return event.clone();
         };
 
-        let Some(list) = self.forum_post_lists.get(channel_id) else {
+        let Some(list) = self.requests.forum_post_lists.get(channel_id) else {
             return event.clone();
         };
         AppEvent::ForumPostsLoaded {
@@ -834,7 +898,7 @@ impl DashboardState {
         areas: SnapshotAreas,
         restore: impl FnOnce(&mut DiscordState),
     ) {
-        let was_auto_follow = self.message_auto_follow;
+        let was_auto_follow = self.messages.message_auto_follow;
         let was_at_latest = was_auto_follow || self.is_viewport_at_latest_message();
         let was_cursor_on_last = self.cursor_on_last_message();
         let was_following_cursor = was_at_latest && was_cursor_on_last;
@@ -850,13 +914,13 @@ impl DashboardState {
         let scroll_message_id = preserve_scroll
             .then(|| {
                 self.messages()
-                    .get(self.message_scroll)
+                    .get(self.messages.message_scroll)
                     .map(|message| message.id)
             })
             .flatten();
         let channel_cursor_id = self.selected_channel_cursor_id();
 
-        restore(&mut self.discord);
+        restore(&mut self.discord.cache);
         self.clear_message_row_content_metrics_cache();
         if areas.navigation {
             self.repair_navigation_after_discord_restore(channel_cursor_id);
@@ -881,18 +945,18 @@ impl DashboardState {
         channel_cursor_id: Option<Id<ChannelMarker>>,
     ) {
         if let Some(user) = self.discord.current_user() {
-            self.current_user = Some(user.to_owned());
+            self.discord.current_user = Some(user.to_owned());
         }
         if let Some(user_id) = self.discord.current_user_id() {
-            self.current_user_id = Some(user_id);
+            self.discord.current_user_id = Some(user_id);
         }
         self.refresh_composer_emoji_candidates_for_current_query();
 
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);
-        self.selected_guild = self.selected_guild();
-        self.selected_channel = self.selected_channel();
-        self.selected_member = self.selected_member();
+        self.navigation.selected_guild = self.selected_guild();
+        self.navigation.selected_channel = self.selected_channel();
+        self.navigation.selected_member = self.selected_member();
         self.clamp_guild_viewport();
         self.clamp_channel_viewport();
         self.clamp_member_viewport();
@@ -905,14 +969,14 @@ impl DashboardState {
         should_follow: bool,
         should_scroll: bool,
     ) {
-        self.selected_message = self.selected_message();
+        self.messages.selected_message = self.selected_message();
         if should_follow {
             self.follow_latest_message();
         } else {
             self.restore_message_position(selected_message_id, scroll_message_id);
         }
         if should_scroll {
-            self.message_auto_follow = true;
+            self.messages.message_auto_follow = true;
         }
         self.clamp_message_viewport();
         if !should_scroll {
@@ -921,62 +985,62 @@ impl DashboardState {
     }
 
     pub fn quit(&mut self) {
-        self.should_quit = true;
+        self.runtime.should_quit = true;
     }
 
     pub fn should_quit(&self) -> bool {
-        self.should_quit
+        self.runtime.should_quit
     }
 
     pub fn focus(&self) -> FocusPane {
-        self.focus
+        self.navigation.focus
     }
 
     pub fn is_leader_active(&self) -> bool {
-        self.leader_mode.is_some()
+        self.popups.leader_mode.is_some()
     }
 
     pub fn is_leader_action_mode(&self) -> bool {
-        self.leader_mode == Some(LeaderMode::Actions)
+        self.popups.leader_mode == Some(LeaderMode::Actions)
     }
 
     pub fn open_leader(&mut self) {
-        self.leader_mode = Some(LeaderMode::Root);
+        self.popups.leader_mode = Some(LeaderMode::Root);
     }
 
     pub fn close_leader(&mut self) {
-        self.leader_mode = None;
+        self.popups.leader_mode = None;
     }
 
     pub fn open_leader_actions_for_focused_target(&mut self) {
         self.close_all_action_contexts();
-        match self.focus {
+        match self.navigation.focus {
             FocusPane::Guilds => self.open_selected_guild_actions(),
             FocusPane::Channels => self.open_selected_channel_actions(),
             FocusPane::Messages => self.open_selected_message_actions(),
             FocusPane::Members => self.open_selected_member_actions(),
         }
         if self.is_any_action_context_active() {
-            self.leader_mode = Some(LeaderMode::Actions);
+            self.popups.leader_mode = Some(LeaderMode::Actions);
         } else {
-            self.leader_mode = Some(LeaderMode::Root);
+            self.popups.leader_mode = Some(LeaderMode::Root);
         }
     }
 
     pub fn close_all_action_contexts(&mut self) {
-        self.message_action_menu = None;
-        self.guild_leader_action = None;
-        self.channel_leader_action = None;
-        self.member_leader_action = None;
-        self.voice_leader_action = None;
+        self.popups.message_action_menu = None;
+        self.popups.guild_leader_action = None;
+        self.popups.channel_leader_action = None;
+        self.popups.member_leader_action = None;
+        self.popups.voice_leader_action = None;
     }
 
     pub fn is_any_action_context_active(&self) -> bool {
-        self.message_action_menu.is_some()
-            || self.guild_leader_action.is_some()
-            || self.channel_leader_action.is_some()
-            || self.member_leader_action.is_some()
-            || self.voice_leader_action.is_some()
+        self.popups.message_action_menu.is_some()
+            || self.popups.guild_leader_action.is_some()
+            || self.popups.channel_leader_action.is_some()
+            || self.popups.member_leader_action.is_some()
+            || self.popups.voice_leader_action.is_some()
     }
 
     pub fn activate_leader_action_shortcut(
@@ -984,13 +1048,12 @@ impl DashboardState {
         shortcut: char,
     ) -> (bool, Option<AppCommand>) {
         let shortcut = shortcut.to_ascii_lowercase();
-        if self.message_action_menu.is_some() {
+        if self.popups.message_action_menu.is_some() {
             if self.is_message_url_picker_open() {
                 let urls = self.selected_message_url_items();
-                let matched = urls
-                    .iter()
-                    .enumerate()
-                    .any(|(index, _)| self.key_bindings.indexed_shortcut(index) == Some(shortcut));
+                let matched = urls.iter().enumerate().any(|(index, _)| {
+                    self.options.key_bindings.indexed_shortcut(index) == Some(shortcut)
+                });
                 return (
                     matched,
                     matched
@@ -1002,6 +1065,7 @@ impl DashboardState {
             let matched = actions.iter().enumerate().any(|(index, action)| {
                 action.enabled
                     && self
+                        .options
                         .key_bindings
                         .message_action_shortcut(&actions, index)
                         .is_some_and(|candidate| candidate == shortcut)
@@ -1013,17 +1077,20 @@ impl DashboardState {
                     .flatten(),
             );
         }
-        if self.guild_leader_action.is_some() {
+        if self.popups.guild_leader_action.is_some() {
             let matched = if self.is_guild_action_mute_duration_phase() {
                 self.selected_guild_mute_duration_items()
                     .iter()
                     .enumerate()
-                    .any(|(index, _)| self.key_bindings.indexed_shortcut(index) == Some(shortcut))
+                    .any(|(index, _)| {
+                        self.options.key_bindings.indexed_shortcut(index) == Some(shortcut)
+                    })
             } else {
                 let actions = self.selected_guild_action_items();
                 actions.iter().enumerate().any(|(index, action)| {
                     action.enabled
                         && self
+                            .options
                             .key_bindings
                             .guild_action_shortcut(&actions, index)
                             .is_some_and(|candidate| candidate == shortcut)
@@ -1036,13 +1103,14 @@ impl DashboardState {
                     .flatten(),
             );
         }
-        if let Some(action) = self.channel_leader_action.as_ref() {
+        if let Some(action) = self.popups.channel_leader_action.as_ref() {
             let matched = match action {
                 ChannelLeaderActionState::Actions { .. } => {
                     let actions = self.selected_channel_action_items();
                     actions.iter().enumerate().any(|(index, action)| {
                         action.enabled
                             && self
+                                .options
                                 .key_bindings
                                 .channel_action_shortcut(&actions, index)
                                 .is_some_and(|candidate| candidate == shortcut)
@@ -1052,12 +1120,16 @@ impl DashboardState {
                     .selected_channel_mute_duration_items()
                     .iter()
                     .enumerate()
-                    .any(|(index, _)| self.key_bindings.indexed_shortcut(index) == Some(shortcut)),
+                    .any(|(index, _)| {
+                        self.options.key_bindings.indexed_shortcut(index) == Some(shortcut)
+                    }),
                 ChannelLeaderActionState::Threads { .. } => self
                     .channel_action_thread_items()
                     .iter()
                     .enumerate()
-                    .any(|(index, _)| self.key_bindings.indexed_shortcut(index) == Some(shortcut)),
+                    .any(|(index, _)| {
+                        self.options.key_bindings.indexed_shortcut(index) == Some(shortcut)
+                    }),
             };
             return (
                 matched,
@@ -1066,11 +1138,12 @@ impl DashboardState {
                     .flatten(),
             );
         }
-        if self.member_leader_action.is_some() {
+        if self.popups.member_leader_action.is_some() {
             let actions = self.selected_member_action_items();
             let matched = actions.iter().enumerate().any(|(index, action)| {
                 action.enabled
                     && self
+                        .options
                         .key_bindings
                         .member_action_shortcut(&actions, index)
                         .is_some_and(|candidate| candidate == shortcut)
@@ -1082,11 +1155,12 @@ impl DashboardState {
                     .flatten(),
             );
         }
-        if self.voice_leader_action.is_some() {
+        if self.popups.voice_leader_action.is_some() {
             let actions = self.selected_voice_action_items();
             let matched = actions.iter().enumerate().any(|(index, action)| {
                 action.enabled
                     && self
+                        .options
                         .key_bindings
                         .voice_action_shortcut(&actions, index)
                         .is_some_and(|candidate| candidate == shortcut)
@@ -1103,51 +1177,57 @@ impl DashboardState {
 
     pub fn is_pane_visible(&self, pane: FocusPane) -> bool {
         match pane {
-            FocusPane::Guilds => self.guild_pane_visible,
-            FocusPane::Channels => self.channel_pane_visible,
+            FocusPane::Guilds => self.navigation.guild_pane_visible,
+            FocusPane::Channels => self.navigation.channel_pane_visible,
             FocusPane::Messages => true,
-            FocusPane::Members => self.member_pane_visible,
+            FocusPane::Members => self.navigation.member_pane_visible,
         }
     }
 
     pub fn toggle_pane_visibility(&mut self, pane: FocusPane) {
         match pane {
-            FocusPane::Guilds => self.guild_pane_visible = !self.guild_pane_visible,
-            FocusPane::Channels => self.channel_pane_visible = !self.channel_pane_visible,
-            FocusPane::Members => self.member_pane_visible = !self.member_pane_visible,
+            FocusPane::Guilds => {
+                self.navigation.guild_pane_visible = !self.navigation.guild_pane_visible
+            }
+            FocusPane::Channels => {
+                self.navigation.channel_pane_visible = !self.navigation.channel_pane_visible
+            }
+            FocusPane::Members => {
+                self.navigation.member_pane_visible = !self.navigation.member_pane_visible
+            }
             FocusPane::Messages => return,
         }
-        if !self.is_pane_visible(self.focus) {
-            self.focus = FocusPane::Messages;
+        if !self.is_pane_visible(self.navigation.focus) {
+            self.navigation.focus = FocusPane::Messages;
         }
     }
 
     pub fn channel_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
-        self.discord.channel_unread(channel_id)
+        self.discord.cache.channel_unread(channel_id)
     }
 
     pub fn sidebar_channel_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
-        self.discord.channel_sidebar_unread(channel_id)
+        self.discord.cache.channel_sidebar_unread(channel_id)
     }
 
     pub fn sidebar_guild_unread(&self, guild_id: Id<GuildMarker>) -> ChannelUnreadState {
-        self.discord.guild_sidebar_unread(guild_id)
+        self.discord.cache.guild_sidebar_unread(guild_id)
     }
 
     pub fn channel_notification_muted(&self, channel_id: Id<ChannelMarker>) -> bool {
-        self.discord.channel_notification_muted(channel_id)
+        self.discord.cache.channel_notification_muted(channel_id)
     }
 
     pub fn guild_notification_muted(&self, guild_id: Id<GuildMarker>) -> bool {
-        self.discord.guild_notification_muted(guild_id)
+        self.discord.cache.guild_notification_muted(guild_id)
     }
 
     pub fn direct_message_unread_count(&self) -> usize {
-        self.discord.direct_message_unread_count()
+        self.discord.cache.direct_message_unread_count()
     }
 
     pub fn channel_unread_message_count(&self, channel_id: Id<ChannelMarker>) -> usize {
-        self.discord.channel_unread_message_count(channel_id)
+        self.discord.cache.channel_unread_message_count(channel_id)
     }
 
     pub fn toggle_selected_guild_mute(
@@ -1160,7 +1240,7 @@ impl DashboardState {
             .guild(guild_id)
             .map(|guild| guild.name.clone())
             .unwrap_or_else(|| format!("server-{}", guild_id.get()));
-        let muted = !self.discord.guild_notification_muted(guild_id);
+        let muted = !self.discord.cache.guild_notification_muted(guild_id);
         Some(AppCommand::SetGuildMuted {
             guild_id,
             muted,
@@ -1186,16 +1266,22 @@ impl DashboardState {
         else {
             return None;
         };
-        if !self.desktop_notifications_enabled() || self.active_channel_id == Some(*channel_id) {
+        if !self.desktop_notifications_enabled()
+            || self.navigation.active_channel_id == Some(*channel_id)
+        {
             return None;
         }
-        if !self.discord.message_event_triggers_notification(event) {
+        if !self
+            .discord
+            .cache
+            .message_event_triggers_notification(event)
+        {
             return None;
         }
 
-        let channel = self.discord.channel(*channel_id);
+        let channel = self.discord.cache.channel(*channel_id);
         let guild_id = guild_id.or_else(|| channel.and_then(|channel| channel.guild_id));
-        let title = match guild_id.and_then(|guild_id| self.discord.guild(guild_id)) {
+        let title = match guild_id.and_then(|guild_id| self.discord.cache.guild(guild_id)) {
             Some(guild) => {
                 let channel_name = channel
                     .map(|channel| channel.name.as_str())
@@ -1214,38 +1300,38 @@ impl DashboardState {
     }
 
     pub fn current_user(&self) -> Option<&str> {
-        self.current_user.as_deref()
+        self.discord.current_user.as_deref()
     }
 
     pub fn current_user_id(&self) -> Option<Id<UserMarker>> {
-        self.current_user_id
+        self.discord.current_user_id
     }
 
     pub fn is_channel_leader_action_active(&self) -> bool {
-        self.channel_leader_action.is_some()
+        self.popups.channel_leader_action.is_some()
     }
 
     pub fn is_guild_leader_action_active(&self) -> bool {
-        self.guild_leader_action.is_some()
+        self.popups.guild_leader_action.is_some()
     }
 
     pub fn is_channel_action_threads_phase(&self) -> bool {
         matches!(
-            self.channel_leader_action,
+            self.popups.channel_leader_action,
             Some(ChannelLeaderActionState::Threads { .. })
         )
     }
 
     pub fn is_channel_action_mute_duration_phase(&self) -> bool {
         matches!(
-            self.channel_leader_action,
+            self.popups.channel_leader_action,
             Some(ChannelLeaderActionState::MuteDuration { .. })
         )
     }
 
     pub fn is_guild_action_mute_duration_phase(&self) -> bool {
         matches!(
-            self.guild_leader_action,
+            self.popups.guild_leader_action,
             Some(GuildLeaderActionState::MuteDuration { .. })
         )
     }
@@ -1261,14 +1347,15 @@ impl DashboardState {
             .reference
             .as_ref()
             .and_then(|reference| reference.channel_id)
-            .and_then(|channel_id| self.discord.channel(channel_id))
-            .filter(|channel| channel.is_thread() && self.discord.can_view_channel(channel));
+            .and_then(|channel_id| self.discord.cache.channel(channel_id))
+            .filter(|channel| channel.is_thread() && self.discord.cache.can_view_channel(channel));
         let thread = referenced_thread.or_else(|| {
             let thread_name = message.content.as_deref()?.trim();
             if thread_name.is_empty() {
                 return None;
             }
             self.discord
+                .cache
                 .viewable_channels_for_guild(message.guild_id)
                 .into_iter()
                 .find(|channel| {
@@ -1352,7 +1439,7 @@ impl DashboardState {
         mentions: &[MentionInfo],
         value: &str,
     ) -> RenderedText {
-        let current_user_id = self.current_user_id.map(|id| id.get());
+        let current_user_id = self.discord.current_user_id.map(|id| id.get());
         let mut rendered = render_user_mentions_with_highlights(
             value,
             |user_id| self.resolve_mention_display_name(guild_id, mentions, user_id),
@@ -1397,6 +1484,7 @@ impl DashboardState {
     ) -> Option<String> {
         let guild_id = guild_id?;
         self.discord
+            .cache
             .roles_for_guild(guild_id)
             .into_iter()
             .find(|role| role.id.get() == role_id)
@@ -1407,7 +1495,10 @@ impl DashboardState {
         // `parse_mention` already rejects zero ids, so the `Id::new` call
         // never sees the forbidden value.
         let id = Id::<ChannelMarker>::new(channel_id);
-        self.discord.channel(id).map(|channel| channel.name.clone())
+        self.discord
+            .cache
+            .channel(id)
+            .map(|channel| channel.name.clone())
     }
 
     fn resolve_mention_display_name(
@@ -1424,7 +1515,7 @@ impl DashboardState {
         }
         if let Some(display_name) = guild_id.and_then(|guild_id| {
             let user_id = Id::<UserMarker>::new(user_id);
-            self.discord.member_display_name(guild_id, user_id)
+            self.discord.cache.member_display_name(guild_id, user_id)
         }) {
             return Some(display_name.to_owned());
         }
@@ -1437,7 +1528,7 @@ impl DashboardState {
     ) -> Option<Id<GuildMarker>> {
         snapshot
             .source_channel_id
-            .and_then(|channel_id| self.discord.channel(channel_id))
+            .and_then(|channel_id| self.discord.cache.channel(channel_id))
             .and_then(|channel| channel.guild_id)
     }
 
@@ -1447,8 +1538,11 @@ impl DashboardState {
         response_before: Option<Id<MessageMarker>>,
         messages: &[MessageInfo],
     ) {
-        let Some(OlderHistoryRequestState::Requested { before }) =
-            self.older_history_requests.get(&channel_id).copied()
+        let Some(OlderHistoryRequestState::Requested { before }) = self
+            .requests
+            .older_history_requests
+            .get(&channel_id)
+            .copied()
         else {
             return;
         };
@@ -1457,10 +1551,11 @@ impl DashboardState {
         }
 
         if messages.is_empty() {
-            self.older_history_requests
+            self.requests
+                .older_history_requests
                 .insert(channel_id, OlderHistoryRequestState::Exhausted { before });
         } else {
-            self.older_history_requests.remove(&channel_id);
+            self.requests.older_history_requests.remove(&channel_id);
         }
     }
 
@@ -1475,7 +1570,7 @@ impl DashboardState {
         let Some(parent_id) = channel.parent_id else {
             return;
         };
-        let Some(list) = self.forum_post_lists.get_mut(&parent_id) else {
+        let Some(list) = self.requests.forum_post_lists.get_mut(&parent_id) else {
             return;
         };
         let id = channel.channel_id;
@@ -1497,14 +1592,18 @@ impl DashboardState {
         posts: &[crate::discord::ChannelInfo],
         has_more: bool,
     ) {
-        let list = self.forum_post_lists.entry(channel_id).or_default();
+        let list = self
+            .requests
+            .forum_post_lists
+            .entry(channel_id)
+            .or_default();
         if archive_state == ForumPostArchiveState::Active && offset == 0 {
             list.active_post_ids.clear();
-            if self.active_channel_id == Some(channel_id) {
-                self.selected_message = 0;
-                self.message_scroll = 0;
-                self.message_line_scroll = 0;
-                self.message_auto_follow = false;
+            if self.navigation.active_channel_id == Some(channel_id) {
+                self.messages.selected_message = 0;
+                self.messages.message_scroll = 0;
+                self.messages.message_line_scroll = 0;
+                self.messages.message_auto_follow = false;
             }
         } else if archive_state == ForumPostArchiveState::Archived && offset == 0 {
             list.archived_post_ids.clear();
@@ -1539,7 +1638,7 @@ impl DashboardState {
         if self.selected_channel_is_forum() {
             return Vec::new();
         }
-        if self.pinned_message_view_channel_id == self.selected_channel_id() {
+        if self.messages.pinned_message_view_channel_id == self.selected_channel_id() {
             return self.pinned_messages();
         }
         self.channel_messages()
@@ -1550,13 +1649,13 @@ impl DashboardState {
             return Vec::new();
         }
         self.selected_channel_id()
-            .map(|channel_id| self.discord.pinned_messages_for_channel(channel_id))
+            .map(|channel_id| self.discord.cache.pinned_messages_for_channel(channel_id))
             .unwrap_or_default()
     }
 
     fn channel_messages(&self) -> Vec<&MessageState> {
         self.selected_channel_id()
-            .map(|channel_id| self.discord.messages_for_channel(channel_id))
+            .map(|channel_id| self.discord.cache.messages_for_channel(channel_id))
             .unwrap_or_default()
     }
 
@@ -1564,13 +1663,13 @@ impl DashboardState {
         if !self.is_pinned_message_view_active() {
             self.record_pinned_message_view_return_target(channel_id);
         }
-        self.pinned_message_view_channel_id = Some(channel_id);
-        self.selected_message = 0;
-        self.message_scroll = 0;
-        self.message_line_scroll = 0;
-        self.message_auto_follow = false;
+        self.messages.pinned_message_view_channel_id = Some(channel_id);
+        self.messages.selected_message = 0;
+        self.messages.message_scroll = 0;
+        self.messages.message_line_scroll = 0;
+        self.messages.message_auto_follow = false;
         self.clear_new_messages_marker();
-        self.message_keep_selection_visible = true;
+        self.messages.message_keep_selection_visible = true;
         self.clamp_message_viewport();
     }
 
@@ -1578,16 +1677,16 @@ impl DashboardState {
         if self.selected_channel_id() != Some(channel_id) {
             return;
         }
-        self.pinned_message_view_return_target = Some(PinnedMessageViewReturnTarget {
+        self.messages.pinned_message_view_return_target = Some(PinnedMessageViewReturnTarget {
             channel_id,
-            selected_message: self.selected_message,
-            message_scroll: self.message_scroll,
-            message_line_scroll: self.message_line_scroll,
-            message_keep_selection_visible: self.message_keep_selection_visible,
-            message_auto_follow: self.message_auto_follow,
-            new_messages_marker_message_id: self.new_messages_marker_message_id,
-            unread_divider_last_acked_id: self.unread_divider_last_acked_id,
-            pending_unread_anchor_scroll: self.pending_unread_anchor_scroll,
+            selected_message: self.messages.selected_message,
+            message_scroll: self.messages.message_scroll,
+            message_line_scroll: self.messages.message_line_scroll,
+            message_keep_selection_visible: self.messages.message_keep_selection_visible,
+            message_auto_follow: self.messages.message_auto_follow,
+            new_messages_marker_message_id: self.messages.new_messages_marker_message_id,
+            unread_divider_last_acked_id: self.messages.unread_divider_last_acked_id,
+            pending_unread_anchor_scroll: self.messages.pending_unread_anchor_scroll,
         });
     }
 
@@ -1595,36 +1694,37 @@ impl DashboardState {
         if !self.is_pinned_message_view_active() {
             return false;
         }
-        let Some(target) = self.pinned_message_view_return_target else {
+        let Some(target) = self.messages.pinned_message_view_return_target else {
             return false;
         };
         if self.selected_channel_id() != Some(target.channel_id) {
-            self.pinned_message_view_return_target = None;
+            self.messages.pinned_message_view_return_target = None;
             return false;
         }
 
-        self.pinned_message_view_channel_id = None;
-        self.pinned_message_view_return_target = None;
-        self.selected_message = target.selected_message;
-        self.message_scroll = target.message_scroll;
-        self.message_line_scroll = target.message_line_scroll;
-        self.message_keep_selection_visible = target.message_keep_selection_visible;
-        self.message_auto_follow = target.message_auto_follow;
-        self.new_messages_marker_message_id = target.new_messages_marker_message_id;
-        self.unread_divider_last_acked_id = target.unread_divider_last_acked_id;
-        self.pending_unread_anchor_scroll = target.pending_unread_anchor_scroll;
+        self.messages.pinned_message_view_channel_id = None;
+        self.messages.pinned_message_view_return_target = None;
+        self.messages.selected_message = target.selected_message;
+        self.messages.message_scroll = target.message_scroll;
+        self.messages.message_line_scroll = target.message_line_scroll;
+        self.messages.message_keep_selection_visible = target.message_keep_selection_visible;
+        self.messages.message_auto_follow = target.message_auto_follow;
+        self.messages.new_messages_marker_message_id = target.new_messages_marker_message_id;
+        self.messages.unread_divider_last_acked_id = target.unread_divider_last_acked_id;
+        self.messages.pending_unread_anchor_scroll = target.pending_unread_anchor_scroll;
         self.clamp_message_viewport();
         true
     }
 
     fn is_pinned_message_view_active(&self) -> bool {
-        self.pinned_message_view_channel_id
+        self.messages
+            .pinned_message_view_channel_id
             .is_some_and(|channel_id| Some(channel_id) == self.selected_channel_id())
     }
 
     pub fn pinned_message_view_channel_id(&self) -> Option<Id<ChannelMarker>> {
         self.is_pinned_message_view_active()
-            .then_some(self.pinned_message_view_channel_id?)
+            .then_some(self.messages.pinned_message_view_channel_id?)
     }
 
     #[cfg(test)]
@@ -1640,7 +1740,7 @@ impl DashboardState {
     }
 
     pub(crate) fn reply_target_message_state(&self) -> Option<&MessageState> {
-        let message_id = self.reply_target_message_id?;
+        let message_id = self.composer.reply_target_message_id?;
         self.messages()
             .into_iter()
             .find(|message| message.id == message_id)
@@ -1652,7 +1752,7 @@ impl DashboardState {
         }
         let channel_id = self.selected_channel_id()?;
         let before = self.older_history_cursor()?;
-        match self.older_history_requests.get(&channel_id) {
+        match self.requests.older_history_requests.get(&channel_id) {
             Some(OlderHistoryRequestState::Requested { .. }) => return None,
             Some(OlderHistoryRequestState::Exhausted { before: exhausted })
                 if *exhausted == before =>
@@ -1662,7 +1762,8 @@ impl DashboardState {
             _ => {}
         }
 
-        self.older_history_requests
+        self.requests
+            .older_history_requests
             .insert(channel_id, OlderHistoryRequestState::Requested { before });
         Some(AppCommand::LoadMessageHistory {
             channel_id,
@@ -1671,7 +1772,7 @@ impl DashboardState {
     }
 
     fn older_history_cursor(&self) -> Option<Id<MessageMarker>> {
-        if self.focus != FocusPane::Messages
+        if self.navigation.focus != FocusPane::Messages
             || self.messages().is_empty()
             || self.selected_message() != 0
         {
@@ -1712,7 +1813,10 @@ impl DashboardState {
     }
 
     pub fn selected_member(&self) -> usize {
-        clamp_selected_index(self.selected_member, self.flattened_members().len())
+        clamp_selected_index(
+            self.navigation.selected_member,
+            self.flattened_members().len(),
+        )
     }
 
     #[cfg(test)]
@@ -1725,37 +1829,37 @@ impl DashboardState {
         &self,
         groups: &[MemberGroup<'_>],
     ) -> Option<usize> {
-        if self.focus != FocusPane::Members {
+        if self.navigation.focus != FocusPane::Members {
             return None;
         }
         let selected_line = self.selected_member_line_in_groups(groups)?;
-        if selected_line >= self.member_scroll
-            && selected_line < self.member_scroll + self.member_content_height()
+        if selected_line >= self.navigation.member_scroll
+            && selected_line < self.navigation.member_scroll + self.member_content_height()
         {
-            Some(selected_line - self.member_scroll)
+            Some(selected_line - self.navigation.member_scroll)
         } else {
             None
         }
     }
 
     pub fn member_scroll(&self) -> usize {
-        self.member_scroll
+        self.navigation.member_scroll
     }
 
     pub fn guild_horizontal_scroll(&self) -> usize {
-        self.guild_horizontal_scroll
+        self.navigation.guild_horizontal_scroll
     }
 
     pub fn channel_horizontal_scroll(&self) -> usize {
-        self.channel_horizontal_scroll
+        self.navigation.channel_horizontal_scroll
     }
 
     pub fn member_horizontal_scroll(&self) -> usize {
-        self.member_horizontal_scroll
+        self.navigation.member_horizontal_scroll
     }
 
     pub fn member_content_height(&self) -> usize {
-        pane_content_height(self.member_view_height)
+        pane_content_height(self.navigation.member_view_height)
     }
 
     #[cfg(test)]
@@ -1768,25 +1872,25 @@ impl DashboardState {
     }
 
     pub fn set_member_view_height(&mut self, height: usize) {
-        self.member_view_height = height;
+        self.navigation.member_view_height = height;
         let selected_line = self.selected_member_line();
-        let height = pane_content_height(self.member_view_height);
+        let height = pane_content_height(self.navigation.member_view_height);
         let len = self.count_member_lines();
         clamp_list_viewport(
             selected_line,
-            &mut self.member_scroll,
+            &mut self.navigation.member_scroll,
             height,
             len,
-            self.member_keep_selection_visible,
+            self.navigation.member_keep_selection_visible,
         );
     }
 
     pub fn move_down(&mut self) {
-        match self.focus {
+        match self.navigation.focus {
             FocusPane::Guilds => {
                 let len = self.guild_pane_filtered_entries().len();
-                move_index_down(&mut self.selected_guild, len);
-                self.guild_keep_selection_visible = true;
+                move_index_down(&mut self.navigation.selected_guild, len);
+                self.navigation.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
@@ -1794,212 +1898,219 @@ impl DashboardState {
             }
             FocusPane::Messages => {
                 let len = self.message_pane_item_count();
-                move_index_down(&mut self.selected_message, len);
-                self.message_keep_selection_visible = true;
+                move_index_down(&mut self.messages.selected_message, len);
+                self.messages.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
                 self.refresh_message_auto_follow();
             }
             FocusPane::Members => {
                 let len = self.flattened_members().len();
-                move_index_down(&mut self.selected_member, len);
-                self.member_keep_selection_visible = true;
+                move_index_down(&mut self.navigation.selected_member, len);
+                self.navigation.member_keep_selection_visible = true;
                 self.clamp_member_viewport();
             }
         }
     }
 
     pub fn move_up(&mut self) {
-        match self.focus {
+        match self.navigation.focus {
             FocusPane::Guilds => {
-                move_index_up(&mut self.selected_guild);
-                self.guild_keep_selection_visible = true;
+                move_index_up(&mut self.navigation.selected_guild);
+                self.navigation.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 self.move_channel_selection_up();
             }
             FocusPane::Messages => {
-                move_index_up(&mut self.selected_message);
-                self.message_keep_selection_visible = true;
+                move_index_up(&mut self.messages.selected_message);
+                self.messages.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
                 self.refresh_message_auto_follow();
             }
             FocusPane::Members => {
-                move_index_up(&mut self.selected_member);
-                self.member_keep_selection_visible = true;
+                move_index_up(&mut self.navigation.selected_member);
+                self.navigation.member_keep_selection_visible = true;
                 self.clamp_member_viewport();
             }
         }
     }
 
     pub fn jump_top(&mut self) {
-        match self.focus {
+        match self.navigation.focus {
             FocusPane::Guilds => {
-                self.selected_guild = 0;
-                self.guild_keep_selection_visible = true;
+                self.navigation.selected_guild = 0;
+                self.navigation.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 self.jump_channel_selection_top();
             }
             FocusPane::Messages => {
-                self.selected_message = 0;
-                self.message_keep_selection_visible = true;
+                self.messages.selected_message = 0;
+                self.messages.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
                 self.refresh_message_auto_follow();
             }
             FocusPane::Members => {
-                self.selected_member = 0;
-                self.member_keep_selection_visible = true;
+                self.navigation.selected_member = 0;
+                self.navigation.member_keep_selection_visible = true;
                 self.clamp_member_viewport();
             }
         }
     }
 
     pub fn jump_bottom(&mut self) {
-        match self.focus {
+        match self.navigation.focus {
             FocusPane::Guilds => {
-                self.selected_guild = last_index(self.guild_pane_filtered_entries().len());
-                self.guild_keep_selection_visible = true;
+                self.navigation.selected_guild =
+                    last_index(self.guild_pane_filtered_entries().len());
+                self.navigation.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
                 self.jump_channel_selection_bottom();
             }
             FocusPane::Messages => {
-                self.selected_message = last_index(self.message_pane_item_count());
-                self.message_keep_selection_visible = true;
+                self.messages.selected_message = last_index(self.message_pane_item_count());
+                self.messages.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
                 self.refresh_message_auto_follow();
             }
             FocusPane::Members => {
-                self.selected_member = last_index(self.flattened_members().len());
-                self.member_keep_selection_visible = true;
+                self.navigation.selected_member = last_index(self.flattened_members().len());
+                self.navigation.member_keep_selection_visible = true;
                 self.clamp_member_viewport();
             }
         }
     }
 
     pub fn half_page_down(&mut self) {
-        match self.focus {
+        match self.navigation.focus {
             FocusPane::Guilds => {
-                let distance = pane_content_height(self.guild_view_height) / 2;
+                let distance = pane_content_height(self.navigation.guild_view_height) / 2;
                 let len = self.guild_pane_filtered_entries().len();
-                move_index_down_by(&mut self.selected_guild, len, distance.max(1));
-                self.guild_keep_selection_visible = true;
+                move_index_down_by(&mut self.navigation.selected_guild, len, distance.max(1));
+                self.navigation.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
-                let distance = pane_content_height(self.channel_view_height) / 2;
+                let distance = pane_content_height(self.navigation.channel_view_height) / 2;
                 self.move_channel_selection_down_by(distance.max(1));
             }
             FocusPane::Messages => {
                 let distance = self.message_content_height() / 2;
                 let len = self.message_pane_item_count();
-                move_index_down_by(&mut self.selected_message, len, distance.max(1));
-                self.message_keep_selection_visible = true;
+                move_index_down_by(&mut self.messages.selected_message, len, distance.max(1));
+                self.messages.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
                 self.refresh_message_auto_follow();
             }
             FocusPane::Members => {
-                let distance = pane_content_height(self.member_view_height) / 2;
+                let distance = pane_content_height(self.navigation.member_view_height) / 2;
                 self.select_member_near_line(
                     self.selected_member_line().saturating_add(distance.max(1)),
                 );
-                self.member_keep_selection_visible = true;
+                self.navigation.member_keep_selection_visible = true;
                 self.clamp_member_viewport();
             }
         }
     }
 
     pub fn half_page_up(&mut self) {
-        match self.focus {
+        match self.navigation.focus {
             FocusPane::Guilds => {
-                let distance = pane_content_height(self.guild_view_height) / 2;
-                move_index_up_by(&mut self.selected_guild, distance.max(1));
-                self.guild_keep_selection_visible = true;
+                let distance = pane_content_height(self.navigation.guild_view_height) / 2;
+                move_index_up_by(&mut self.navigation.selected_guild, distance.max(1));
+                self.navigation.guild_keep_selection_visible = true;
                 self.clamp_guild_viewport();
             }
             FocusPane::Channels => {
-                let distance = pane_content_height(self.channel_view_height) / 2;
+                let distance = pane_content_height(self.navigation.channel_view_height) / 2;
                 self.move_channel_selection_up_by(distance.max(1));
             }
             FocusPane::Messages => {
                 let distance = self.message_content_height() / 2;
-                self.selected_message = self.selected_message.saturating_sub(distance.max(1));
-                self.message_keep_selection_visible = true;
+                self.messages.selected_message = self
+                    .messages
+                    .selected_message
+                    .saturating_sub(distance.max(1));
+                self.messages.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
                 self.refresh_message_auto_follow();
             }
             FocusPane::Members => {
-                let distance = pane_content_height(self.member_view_height) / 2;
+                let distance = pane_content_height(self.navigation.member_view_height) / 2;
                 self.select_member_near_line(
                     self.selected_member_line().saturating_sub(distance.max(1)),
                 );
-                self.member_keep_selection_visible = true;
+                self.navigation.member_keep_selection_visible = true;
                 self.clamp_member_viewport();
             }
         }
     }
 
     pub fn scroll_focused_pane_viewport_down(&mut self) {
-        match self.focus {
+        match self.navigation.focus {
             FocusPane::Guilds => {
-                let height = pane_content_height(self.guild_view_height);
+                let height = pane_content_height(self.navigation.guild_view_height);
                 let len = self.guild_pane_filtered_entries().len();
-                self.guild_keep_selection_visible = false;
-                scroll_list_down(&mut self.guild_scroll, height, len);
+                self.navigation.guild_keep_selection_visible = false;
+                scroll_list_down(&mut self.navigation.guild_scroll, height, len);
             }
             FocusPane::Channels => {
-                let height = pane_content_height(self.channel_view_height);
+                let height = pane_content_height(self.navigation.channel_view_height);
                 let len = self.channel_pane_filtered_entries().len();
-                self.channel_keep_selection_visible = false;
-                scroll_list_down(&mut self.channel_scroll, height, len);
+                self.navigation.channel_keep_selection_visible = false;
+                scroll_list_down(&mut self.navigation.channel_scroll, height, len);
             }
             FocusPane::Messages => self.scroll_message_viewport_down(),
             FocusPane::Members => {
-                let height = pane_content_height(self.member_view_height);
+                let height = pane_content_height(self.navigation.member_view_height);
                 let len = self.count_member_lines();
-                self.member_keep_selection_visible = false;
-                scroll_list_down(&mut self.member_scroll, height, len);
+                self.navigation.member_keep_selection_visible = false;
+                scroll_list_down(&mut self.navigation.member_scroll, height, len);
             }
         }
     }
 
     pub fn scroll_focused_pane_viewport_up(&mut self) {
-        match self.focus {
+        match self.navigation.focus {
             FocusPane::Guilds => {
-                self.guild_keep_selection_visible = false;
-                scroll_list_up(&mut self.guild_scroll);
+                self.navigation.guild_keep_selection_visible = false;
+                scroll_list_up(&mut self.navigation.guild_scroll);
             }
             FocusPane::Channels => {
-                self.channel_keep_selection_visible = false;
-                scroll_list_up(&mut self.channel_scroll);
+                self.navigation.channel_keep_selection_visible = false;
+                scroll_list_up(&mut self.navigation.channel_scroll);
             }
             FocusPane::Messages => self.scroll_message_viewport_up(),
             FocusPane::Members => {
-                self.member_keep_selection_visible = false;
-                scroll_list_up(&mut self.member_scroll);
+                self.navigation.member_keep_selection_visible = false;
+                scroll_list_up(&mut self.navigation.member_scroll);
             }
         }
     }
 
     pub fn scroll_focused_pane_horizontal_right(&mut self) {
-        match self.focus {
+        match self.navigation.focus {
             FocusPane::Guilds => {
-                self.guild_horizontal_scroll = self
+                self.navigation.guild_horizontal_scroll = self
+                    .navigation
                     .guild_horizontal_scroll
                     .saturating_add(1)
                     .min(self.max_guild_horizontal_scroll());
             }
             FocusPane::Channels => {
-                self.channel_horizontal_scroll = self
+                self.navigation.channel_horizontal_scroll = self
+                    .navigation
                     .channel_horizontal_scroll
                     .saturating_add(1)
                     .min(self.max_channel_horizontal_scroll());
             }
             FocusPane::Members => {
-                self.member_horizontal_scroll = self
+                self.navigation.member_horizontal_scroll = self
+                    .navigation
                     .member_horizontal_scroll
                     .saturating_add(1)
                     .min(self.max_member_horizontal_scroll());
@@ -2039,42 +2150,45 @@ impl DashboardState {
     }
 
     pub fn scroll_focused_pane_horizontal_left(&mut self) {
-        match self.focus {
+        match self.navigation.focus {
             FocusPane::Guilds => {
-                self.guild_horizontal_scroll = self.guild_horizontal_scroll.saturating_sub(1)
+                self.navigation.guild_horizontal_scroll =
+                    self.navigation.guild_horizontal_scroll.saturating_sub(1)
             }
             FocusPane::Channels => {
-                self.channel_horizontal_scroll = self.channel_horizontal_scroll.saturating_sub(1)
+                self.navigation.channel_horizontal_scroll =
+                    self.navigation.channel_horizontal_scroll.saturating_sub(1)
             }
             FocusPane::Members => {
-                self.member_horizontal_scroll = self.member_horizontal_scroll.saturating_sub(1)
+                self.navigation.member_horizontal_scroll =
+                    self.navigation.member_horizontal_scroll.saturating_sub(1)
             }
             FocusPane::Messages => {}
         }
     }
 
     pub fn cycle_focus(&mut self) {
-        self.focus = self.next_visible_focus(false);
+        self.navigation.focus = self.next_visible_focus(false);
     }
 
     pub fn cycle_focus_backward(&mut self) {
-        self.focus = self.next_visible_focus(true);
+        self.navigation.focus = self.next_visible_focus(true);
     }
 
     pub fn focus_pane(&mut self, pane: FocusPane) {
         if self.is_pane_visible(pane) {
-            self.focus = pane;
+            self.navigation.focus = pane;
         }
     }
 
     pub fn show_and_focus_pane(&mut self, pane: FocusPane) {
         match pane {
-            FocusPane::Guilds => self.guild_pane_visible = true,
-            FocusPane::Channels => self.channel_pane_visible = true,
-            FocusPane::Members => self.member_pane_visible = true,
+            FocusPane::Guilds => self.navigation.guild_pane_visible = true,
+            FocusPane::Channels => self.navigation.channel_pane_visible = true,
+            FocusPane::Members => self.navigation.member_pane_visible = true,
             FocusPane::Messages => {}
         }
-        self.focus = pane;
+        self.navigation.focus = pane;
     }
 
     fn next_visible_focus(&self, backward: bool) -> FocusPane {
@@ -2086,7 +2200,7 @@ impl DashboardState {
         ];
         let current = panes
             .iter()
-            .position(|pane| *pane == self.focus)
+            .position(|pane| *pane == self.navigation.focus)
             .unwrap_or(2);
         for step in 1..=panes.len() {
             let index = if backward {
@@ -2111,17 +2225,17 @@ impl DashboardState {
     }
 
     fn select_visible_guild_row(&mut self, row: usize) -> bool {
-        let index = self.guild_scroll.saturating_add(row);
+        let index = self.navigation.guild_scroll.saturating_add(row);
         if index >= self.guild_pane_filtered_entries().len() {
             return false;
         }
-        self.selected_guild = index;
-        self.guild_keep_selection_visible = true;
+        self.navigation.selected_guild = index;
+        self.navigation.guild_keep_selection_visible = true;
         true
     }
 
     fn select_visible_channel_row(&mut self, row: usize) -> bool {
-        let index = self.channel_scroll.saturating_add(row);
+        let index = self.navigation.channel_scroll.saturating_add(row);
         let entries = self.channel_pane_filtered_entries();
         if !entries
             .get(index)
@@ -2129,17 +2243,17 @@ impl DashboardState {
         {
             return false;
         }
-        self.selected_channel = index;
-        self.channel_keep_selection_visible = true;
+        self.navigation.selected_channel = index;
+        self.navigation.channel_keep_selection_visible = true;
         true
     }
 
     fn select_visible_member_line(&mut self, row: usize) -> bool {
-        let target_line = self.member_scroll.saturating_add(row);
+        let target_line = self.navigation.member_scroll.saturating_add(row);
         for (member_index, line_index) in self.member_line_indices() {
             if line_index == target_line {
-                self.selected_member = member_index;
-                self.member_keep_selection_visible = true;
+                self.navigation.selected_member = member_index;
+                self.navigation.member_keep_selection_visible = true;
                 return true;
             }
         }
@@ -2147,29 +2261,30 @@ impl DashboardState {
     }
 
     fn clamp_selection_indices(&mut self) {
-        self.selected_guild = self.selected_guild();
-        self.selected_channel = self.selected_channel();
-        self.selected_message = self.selected_message();
-        self.selected_member = self.selected_member();
+        self.navigation.selected_guild = self.selected_guild();
+        self.navigation.selected_channel = self.selected_channel();
+        self.messages.selected_message = self.selected_message();
+        self.navigation.selected_member = self.selected_member();
         self.clamp_list_viewports();
         self.clamp_message_viewport();
     }
 
     fn clamp_active_selection(&mut self) {
-        if let ActiveGuildScope::Guild(guild_id) = self.active_guild
+        if let ActiveGuildScope::Guild(guild_id) = self.navigation.active_guild
             && !self
                 .discord
                 .guilds()
                 .iter()
                 .any(|guild| guild.id == guild_id)
         {
-            self.active_guild = ActiveGuildScope::Unset;
+            self.navigation.active_guild = ActiveGuildScope::Unset;
         }
 
         let active_channel_is_valid = self
+            .navigation
             .active_channel_id
-            .and_then(|channel_id| self.discord.channel(channel_id))
-            .is_some_and(|channel| match self.active_guild {
+            .and_then(|channel_id| self.discord.cache.channel(channel_id))
+            .is_some_and(|channel| match self.navigation.active_guild {
                 ActiveGuildScope::Unset => false,
                 ActiveGuildScope::DirectMessages => {
                     channel.guild_id.is_none() && !channel.is_category()
@@ -2177,31 +2292,31 @@ impl DashboardState {
                 ActiveGuildScope::Guild(guild_id) => {
                     channel.guild_id == Some(guild_id)
                         && !channel.is_category()
-                        && self.discord.can_view_channel(channel)
+                        && self.discord.cache.can_view_channel(channel)
                 }
             });
-        if self.active_channel_id.is_some() && !active_channel_is_valid {
+        if self.navigation.active_channel_id.is_some() && !active_channel_is_valid {
             self.clear_active_channel();
         }
     }
 
     fn clear_active_channel(&mut self) {
-        self.active_channel_id = None;
-        self.selected_message = 0;
-        self.message_scroll = 0;
-        self.message_line_scroll = 0;
-        self.message_keep_selection_visible = true;
-        self.message_auto_follow = true;
+        self.navigation.active_channel_id = None;
+        self.messages.selected_message = 0;
+        self.messages.message_scroll = 0;
+        self.messages.message_line_scroll = 0;
+        self.messages.message_keep_selection_visible = true;
+        self.messages.message_auto_follow = true;
         self.clear_new_messages_marker();
-        self.channel_keep_selection_visible = true;
-        self.member_keep_selection_visible = true;
+        self.navigation.channel_keep_selection_visible = true;
+        self.navigation.member_keep_selection_visible = true;
         self.cancel_composer();
         self.close_message_action_menu();
         self.close_channel_leader_action();
         self.close_emoji_reaction_picker();
         self.close_poll_vote_picker();
         self.close_reaction_users_popup();
-        self.thread_return_target = None;
+        self.messages.thread_return_target = None;
     }
 
     fn clamp_list_viewports(&mut self) {
@@ -2212,46 +2327,48 @@ impl DashboardState {
 
     fn clamp_guild_viewport(&mut self) {
         let entries_len = self.guild_pane_filtered_entries().len();
-        self.selected_guild = clamp_selected_index(self.selected_guild, entries_len);
+        self.navigation.selected_guild =
+            clamp_selected_index(self.navigation.selected_guild, entries_len);
         clamp_list_viewport(
-            self.selected_guild,
-            &mut self.guild_scroll,
-            pane_content_height(self.guild_view_height),
+            self.navigation.selected_guild,
+            &mut self.navigation.guild_scroll,
+            pane_content_height(self.navigation.guild_view_height),
             entries_len,
-            self.guild_keep_selection_visible,
+            self.navigation.guild_keep_selection_visible,
         );
     }
 
     fn clamp_channel_viewport(&mut self) {
         let entries_len = self.channel_pane_filtered_entries().len();
-        self.selected_channel = clamp_selected_index(self.selected_channel, entries_len);
+        self.navigation.selected_channel =
+            clamp_selected_index(self.navigation.selected_channel, entries_len);
         clamp_list_viewport(
-            self.selected_channel,
-            &mut self.channel_scroll,
-            pane_content_height(self.channel_view_height),
+            self.navigation.selected_channel,
+            &mut self.navigation.channel_scroll,
+            pane_content_height(self.navigation.channel_view_height),
             entries_len,
-            self.channel_keep_selection_visible,
+            self.navigation.channel_keep_selection_visible,
         );
     }
 
     fn clamp_member_viewport(&mut self) {
         let members_len = self.flattened_members().len();
         if members_len == 0 {
-            self.selected_member = 0;
-            self.member_scroll = 0;
+            self.navigation.selected_member = 0;
+            self.navigation.member_scroll = 0;
             return;
         }
 
-        self.selected_member = self.selected_member.min(members_len - 1);
+        self.navigation.selected_member = self.navigation.selected_member.min(members_len - 1);
         let selected_line = self.selected_member_line();
-        let height = pane_content_height(self.member_view_height);
+        let height = pane_content_height(self.navigation.member_view_height);
         let len = self.count_member_lines();
         clamp_list_viewport(
             selected_line,
-            &mut self.member_scroll,
+            &mut self.navigation.member_scroll,
             height,
             len,
-            self.member_keep_selection_visible,
+            self.navigation.member_keep_selection_visible,
         );
     }
 
@@ -2266,7 +2383,7 @@ impl DashboardState {
         if members_len == 0 {
             return None;
         }
-        let selected_member = self.selected_member.min(members_len - 1);
+        let selected_member = self.navigation.selected_member.min(members_len - 1);
         let mut member_index = 0usize;
         let mut line_index = 0usize;
         for group in groups {
@@ -2292,14 +2409,14 @@ impl DashboardState {
         let mut last_member = None;
         for (member_index, line_index) in self.member_line_indices() {
             if line_index >= target_line {
-                self.selected_member = member_index;
+                self.navigation.selected_member = member_index;
                 return;
             }
             last_member = Some(member_index);
         }
 
         if let Some(member_index) = last_member {
-            self.selected_member = member_index;
+            self.navigation.selected_member = member_index;
         }
     }
 
@@ -2370,7 +2487,8 @@ impl DashboardState {
         else {
             return None;
         };
-        (Some(*channel_id) == self.active_channel_id).then_some((*channel_id, *message_id))
+        (Some(*channel_id) == self.navigation.active_channel_id)
+            .then_some((*channel_id, *message_id))
     }
 
     fn event_is_self_message_in_active_channel(&self, event: &AppEvent) -> bool {
@@ -2382,7 +2500,8 @@ impl DashboardState {
         else {
             return false;
         };
-        Some(*author_id) == self.current_user_id && Some(*channel_id) == self.active_channel_id
+        Some(*author_id) == self.discord.current_user_id
+            && Some(*channel_id) == self.navigation.active_channel_id
     }
 }
 
@@ -2395,12 +2514,6 @@ fn message_preview_text(content: Option<&str>, sticker_names: &[String]) -> Opti
                 .first()
                 .map(|name| format!("[Sticker: {name}]"))
         })
-}
-
-impl Default for DashboardState {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 #[cfg(test)]

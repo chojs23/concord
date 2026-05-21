@@ -55,28 +55,29 @@ impl ChannelSwitcherState {
 
 impl DashboardState {
     pub fn is_channel_switcher_open(&self) -> bool {
-        self.channel_switcher.is_some()
+        self.popups.channel_switcher.is_some()
     }
 
     pub fn open_channel_switcher(&mut self) {
         self.close_all_action_contexts();
         self.close_leader();
         let items = self.all_channel_switcher_items();
-        self.channel_switcher = Some(ChannelSwitcherState::new(items));
+        self.popups.channel_switcher = Some(ChannelSwitcherState::new(items));
     }
 
     pub fn close_channel_switcher(&mut self) {
-        self.channel_switcher = None;
+        self.popups.channel_switcher = None;
     }
 
     pub fn channel_switcher_query(&self) -> Option<&str> {
-        self.channel_switcher
+        self.popups
+            .channel_switcher
             .as_ref()
             .map(|switcher| switcher.query.as_str())
     }
 
     pub fn channel_switcher_query_cursor_byte_index(&self) -> Option<usize> {
-        let switcher = self.channel_switcher.as_ref()?;
+        let switcher = self.popups.channel_switcher.as_ref()?;
         Some(clamp_cursor_index(
             &switcher.query,
             switcher.query_cursor_byte_index,
@@ -84,7 +85,7 @@ impl DashboardState {
     }
 
     pub fn selected_channel_switcher_index(&self) -> Option<usize> {
-        let switcher = self.channel_switcher.as_ref()?;
+        let switcher = self.popups.channel_switcher.as_ref()?;
         Some(clamp_selected_index(
             switcher.selected,
             switcher.visible_len(),
@@ -92,7 +93,8 @@ impl DashboardState {
     }
 
     pub fn channel_switcher_items(&self) -> Vec<ChannelSwitcherItem> {
-        self.channel_switcher
+        self.popups
+            .channel_switcher
             .as_ref()
             .map(|switcher| switcher.visible_items().to_vec())
             .unwrap_or_default()
@@ -100,23 +102,24 @@ impl DashboardState {
 
     pub fn move_channel_switcher_down(&mut self) {
         let len = self
+            .popups
             .channel_switcher
             .as_ref()
             .map(ChannelSwitcherState::visible_len)
             .unwrap_or_default();
-        if let Some(switcher) = self.channel_switcher.as_mut() {
+        if let Some(switcher) = self.popups.channel_switcher.as_mut() {
             move_index_down(&mut switcher.selected, len);
         }
     }
 
     pub fn move_channel_switcher_up(&mut self) {
-        if let Some(switcher) = self.channel_switcher.as_mut() {
+        if let Some(switcher) = self.popups.channel_switcher.as_mut() {
             move_index_up(&mut switcher.selected);
         }
     }
 
     pub fn select_channel_switcher_item(&mut self, row: usize) -> bool {
-        let Some(switcher) = self.channel_switcher.as_mut() else {
+        let Some(switcher) = self.popups.channel_switcher.as_mut() else {
             return false;
         };
         if row >= switcher.visible_len() {
@@ -127,7 +130,7 @@ impl DashboardState {
     }
 
     pub fn push_channel_switcher_char(&mut self, value: char) {
-        if let Some(switcher) = self.channel_switcher.as_mut() {
+        if let Some(switcher) = self.popups.channel_switcher.as_mut() {
             let cursor = clamp_cursor_index(&switcher.query, switcher.query_cursor_byte_index);
             switcher.query.insert(cursor, value);
             switcher.query_cursor_byte_index = cursor + value.len_utf8();
@@ -137,7 +140,7 @@ impl DashboardState {
     }
 
     pub fn pop_channel_switcher_char(&mut self) {
-        if let Some(switcher) = self.channel_switcher.as_mut() {
+        if let Some(switcher) = self.popups.channel_switcher.as_mut() {
             let cursor = clamp_cursor_index(&switcher.query, switcher.query_cursor_byte_index);
             if cursor == 0 {
                 return;
@@ -151,14 +154,14 @@ impl DashboardState {
     }
 
     pub fn move_channel_switcher_query_cursor_left(&mut self) {
-        if let Some(switcher) = self.channel_switcher.as_mut() {
+        if let Some(switcher) = self.popups.channel_switcher.as_mut() {
             let cursor = clamp_cursor_index(&switcher.query, switcher.query_cursor_byte_index);
             switcher.query_cursor_byte_index = previous_char_boundary(&switcher.query, cursor);
         }
     }
 
     pub fn move_channel_switcher_query_cursor_right(&mut self) {
-        if let Some(switcher) = self.channel_switcher.as_mut() {
+        if let Some(switcher) = self.popups.channel_switcher.as_mut() {
             let cursor = clamp_cursor_index(&switcher.query, switcher.query_cursor_byte_index);
             switcher.query_cursor_byte_index = next_char_boundary(&switcher.query, cursor);
         }
@@ -166,12 +169,12 @@ impl DashboardState {
 
     pub fn activate_selected_channel_switcher_item(&mut self) -> Option<AppCommand> {
         let item = {
-            let switcher = self.channel_switcher.as_ref()?;
+            let switcher = self.popups.channel_switcher.as_ref()?;
             let selected = clamp_selected_index(switcher.selected, switcher.visible_len());
             switcher.visible_items().get(selected)?.clone()
         };
 
-        let Some(channel) = self.discord.channel(item.channel_id) else {
+        let Some(channel) = self.discord.cache.channel(item.channel_id) else {
             self.close_channel_switcher();
             return None;
         };
@@ -183,7 +186,9 @@ impl DashboardState {
             Some(guild_id) => {
                 self.activate_guild(ActiveGuildScope::Guild(guild_id));
                 if let Some(parent_id) = parent_id {
-                    self.collapsed_channel_categories.remove(&parent_id);
+                    self.navigation
+                        .collapsed_channel_categories
+                        .remove(&parent_id);
                 }
                 self.restore_channel_cursor(Some(item.channel_id));
                 self.activate_channel(item.channel_id);
@@ -238,8 +243,8 @@ impl DashboardState {
     ) -> Vec<ChannelSwitcherItem> {
         let mut recent = Vec::new();
         let mut seen = HashSet::new();
-        for channel_id in &self.recent_channel_ids {
-            if Some(*channel_id) == self.active_channel_id {
+        for channel_id in &self.navigation.recent_channel_ids {
+            if Some(*channel_id) == self.navigation.active_channel_id {
                 continue;
             }
             if !seen.insert(*channel_id) {
@@ -259,7 +264,7 @@ impl DashboardState {
     }
 
     fn push_direct_message_switcher_items(&self, items: &mut Vec<ChannelSwitcherItem>) {
-        let mut channels = self.discord.channels_for_guild(None);
+        let mut channels = self.discord.cache.channels_for_guild(None);
         channels.retain(|channel| !channel.is_category() && !channel.is_thread());
         sort_direct_message_channels(&mut channels);
         let group_order = items.len();
@@ -287,7 +292,10 @@ impl DashboardState {
         guild_id: Id<GuildMarker>,
         guild_name: &str,
     ) {
-        let mut channels = self.discord.viewable_channels_for_guild(Some(guild_id));
+        let mut channels = self
+            .discord
+            .cache
+            .viewable_channels_for_guild(Some(guild_id));
         channels.retain(|channel| !channel.is_thread());
         let category_ids: HashSet<Id<ChannelMarker>> = channels
             .iter()

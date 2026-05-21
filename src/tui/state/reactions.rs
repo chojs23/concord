@@ -12,19 +12,19 @@ use super::{DashboardState, EmojiReactionItem, EmojiReactionPickerState, Reactio
 
 impl DashboardState {
     pub fn is_emoji_reaction_picker_open(&self) -> bool {
-        self.emoji_reaction_picker.is_some()
+        self.popups.emoji_reaction_picker.is_some()
     }
 
     pub fn is_reaction_users_popup_open(&self) -> bool {
-        self.reaction_users_popup.is_some()
+        self.popups.reaction_users_popup.is_some()
     }
 
     pub fn reaction_users_popup(&self) -> Option<&ReactionUsersPopupState> {
-        self.reaction_users_popup.as_ref()
+        self.popups.reaction_users_popup.as_ref()
     }
 
     pub fn emoji_reaction_items(&self) -> Vec<EmojiReactionItem> {
-        if let Some(picker) = &self.emoji_reaction_picker {
+        if let Some(picker) = &self.popups.emoji_reaction_picker {
             return picker.items.clone();
         }
 
@@ -40,6 +40,7 @@ impl DashboardState {
         if let Some(guild_id) = guild_id {
             items.extend(
                 self.discord
+                    .cache
                     .custom_emojis_for_guild(guild_id)
                     .iter()
                     .filter(|emoji| emoji.available)
@@ -53,7 +54,7 @@ impl DashboardState {
     }
 
     pub fn filtered_emoji_reaction_items(&self) -> Vec<EmojiReactionItem> {
-        if let Some(picker) = &self.emoji_reaction_picker {
+        if let Some(picker) = &self.popups.emoji_reaction_picker {
             return picker.filtered_items.clone();
         }
 
@@ -66,19 +67,22 @@ impl DashboardState {
     }
 
     pub fn filtered_emoji_reaction_items_slice(&self) -> Option<&[EmojiReactionItem]> {
-        self.emoji_reaction_picker
+        self.popups
+            .emoji_reaction_picker
             .as_ref()
             .map(|picker| picker.filtered_items.as_slice())
     }
 
     pub fn emoji_reaction_filter(&self) -> Option<&str> {
-        self.emoji_reaction_picker
+        self.popups
+            .emoji_reaction_picker
             .as_ref()
             .and_then(|picker| picker.filter.as_deref())
     }
 
     pub fn existing_emoji_reactions(&self) -> &[crate::discord::ReactionEmoji] {
-        self.emoji_reaction_picker
+        self.popups
+            .emoji_reaction_picker
             .as_ref()
             .map(|picker| picker.existing_reactions.as_slice())
             .unwrap_or(&[])
@@ -89,41 +93,41 @@ impl DashboardState {
     }
 
     pub fn close_emoji_reaction_picker(&mut self) {
-        self.emoji_reaction_picker = None;
+        self.popups.emoji_reaction_picker = None;
     }
 
     pub fn close_reaction_users_popup(&mut self) {
-        self.reaction_users_popup = None;
+        self.popups.reaction_users_popup = None;
     }
 
     pub fn scroll_reaction_users_popup_down(&mut self) {
-        if let Some(popup) = &mut self.reaction_users_popup {
+        if let Some(popup) = &mut self.popups.reaction_users_popup {
             popup.scroll = popup.scroll.saturating_add(1);
             popup.clamp_scroll();
         }
     }
 
     pub fn scroll_reaction_users_popup_up(&mut self) {
-        if let Some(popup) = &mut self.reaction_users_popup {
+        if let Some(popup) = &mut self.popups.reaction_users_popup {
             popup.scroll = popup.scroll.saturating_sub(1);
         }
     }
 
     pub fn page_reaction_users_popup_down(&mut self) {
-        if let Some(popup) = &mut self.reaction_users_popup {
+        if let Some(popup) = &mut self.popups.reaction_users_popup {
             popup.scroll = popup.scroll.saturating_add(10);
             popup.clamp_scroll();
         }
     }
 
     pub fn page_reaction_users_popup_up(&mut self) {
-        if let Some(popup) = &mut self.reaction_users_popup {
+        if let Some(popup) = &mut self.popups.reaction_users_popup {
             popup.scroll = popup.scroll.saturating_sub(10);
         }
     }
 
     pub fn set_reaction_users_popup_view_height(&mut self, height: usize) {
-        if let Some(popup) = &mut self.reaction_users_popup {
+        if let Some(popup) = &mut self.popups.reaction_users_popup {
             popup.view_height = height;
             popup.clamp_scroll();
         }
@@ -131,19 +135,20 @@ impl DashboardState {
 
     pub fn move_emoji_reaction_down(&mut self) {
         let reactions_len = self.filtered_emoji_reaction_items().len();
-        if let Some(picker) = &mut self.emoji_reaction_picker {
+        if let Some(picker) = &mut self.popups.emoji_reaction_picker {
             move_index_down(&mut picker.selected, reactions_len);
         }
     }
 
     pub fn move_emoji_reaction_up(&mut self) {
-        if let Some(picker) = &mut self.emoji_reaction_picker {
+        if let Some(picker) = &mut self.popups.emoji_reaction_picker {
             move_index_up(&mut picker.selected);
         }
     }
 
     pub fn selected_emoji_reaction_index_for_len(&self, len: usize) -> Option<usize> {
-        self.emoji_reaction_picker
+        self.popups
+            .emoji_reaction_picker
             .as_ref()
             .map(|picker| clamp_selected_index(picker.selected, len))
     }
@@ -155,7 +160,7 @@ impl DashboardState {
     }
 
     pub fn activate_selected_emoji_reaction(&mut self) -> Option<AppCommand> {
-        let picker = self.emoji_reaction_picker.clone()?;
+        let picker = self.popups.emoji_reaction_picker.clone()?;
         let reaction = self.selected_emoji_reaction()?;
         let selected_message = self.selected_message_state().filter(|message| {
             message.channel_id == picker.channel_id && message.id == picker.message_id
@@ -193,26 +198,26 @@ impl DashboardState {
 
     pub fn activate_emoji_reaction_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
         let shortcut = shortcut.to_ascii_lowercase();
-        let picker = self.emoji_reaction_picker.as_ref()?;
+        let picker = self.popups.emoji_reaction_picker.as_ref()?;
         let index = picker
             .filtered_items
             .iter()
             .enumerate()
             .position(|(index, _)| {
-                self.key_bindings().emoji_reaction_shortcut(
+                self.options.key_bindings().emoji_reaction_shortcut(
                     &picker.filtered_items,
                     &picker.existing_reactions,
                     index,
                 ) == Some(shortcut)
             })?;
-        if let Some(picker) = &mut self.emoji_reaction_picker {
+        if let Some(picker) = &mut self.popups.emoji_reaction_picker {
             picker.selected = index;
         }
         self.activate_selected_emoji_reaction()
     }
 
     pub fn start_emoji_reaction_filter(&mut self) {
-        if let Some(picker) = &mut self.emoji_reaction_picker {
+        if let Some(picker) = &mut self.popups.emoji_reaction_picker {
             picker.filter = Some(String::new());
             picker.filtered_items = picker.items.clone();
             picker.selected = 0;
@@ -220,7 +225,7 @@ impl DashboardState {
     }
 
     pub fn push_emoji_reaction_filter_char(&mut self, value: char) {
-        if let Some(picker) = &mut self.emoji_reaction_picker
+        if let Some(picker) = &mut self.popups.emoji_reaction_picker
             && let Some(filter) = &mut picker.filter
         {
             filter.push(value);
@@ -230,7 +235,7 @@ impl DashboardState {
     }
 
     pub fn pop_emoji_reaction_filter_char(&mut self) {
-        if let Some(picker) = &mut self.emoji_reaction_picker
+        if let Some(picker) = &mut self.popups.emoji_reaction_picker
             && let Some(filter) = &mut picker.filter
         {
             filter.pop();
@@ -267,7 +272,7 @@ impl DashboardState {
                     })
                     .collect()
             };
-            self.emoji_reaction_picker = Some(EmojiReactionPickerState {
+            self.popups.emoji_reaction_picker = Some(EmojiReactionPickerState {
                 selected: 0,
                 filter: None,
                 filtered_items: items.clone(),
@@ -281,7 +286,8 @@ impl DashboardState {
     }
 
     fn picker_guild_id(&self) -> Option<Id<GuildMarker>> {
-        self.emoji_reaction_picker
+        self.popups
+            .emoji_reaction_picker
             .as_ref()
             .and_then(|picker| picker.guild_id)
             .or_else(|| {

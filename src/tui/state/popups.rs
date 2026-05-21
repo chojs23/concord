@@ -14,6 +14,15 @@ pub struct MessageActionMenuState {
     pub(super) phase: MessageActionMenuPhase,
 }
 
+impl Default for MessageActionMenuState {
+    fn default() -> Self {
+        Self {
+            selected: 0,
+            phase: MessageActionMenuPhase::Actions,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageDeleteConfirmationState {
     pub(super) channel_id: Id<ChannelMarker>,
@@ -38,7 +47,7 @@ pub enum OptionsCategory {
     Voice,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct OptionsPopupState {
     pub(super) selected: usize,
     pub(super) category: Option<OptionsCategory>,
@@ -80,7 +89,7 @@ pub(super) struct MemberLeaderActionState {
     pub(super) selected: usize,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct VoiceLeaderActionState {
     pub(super) selected: usize,
 }

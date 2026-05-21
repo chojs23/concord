@@ -22,6 +22,7 @@ struct MouseClick {
     at: Instant,
 }
 
+#[derive(Default)]
 pub struct MouseOutcome {
     pub handled: bool,
     pub command: Option<AppCommand>,
@@ -29,10 +30,7 @@ pub struct MouseOutcome {
 
 impl MouseOutcome {
     fn ignored() -> Self {
-        Self {
-            handled: false,
-            command: None,
-        }
+        Self::default()
     }
 
     fn handled(command: Option<AppCommand>) -> Self {

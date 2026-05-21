@@ -14,7 +14,7 @@ impl DashboardState {
     }
 
     fn show_toast(&mut self, text: impl Into<String>, kind: ToastKind, now: Instant) {
-        self.toast_message = Some(ToastMessage {
+        self.runtime.toast_message = Some(ToastMessage {
             text: text.into(),
             kind,
             expires_at: now + TOAST_DURATION,
@@ -23,27 +23,32 @@ impl DashboardState {
 
     pub(in crate::tui) fn clear_expired_toast(&mut self, now: Instant) -> bool {
         if self
+            .runtime
             .toast_message
             .as_ref()
             .is_some_and(|message| message.expires_at <= now)
         {
-            self.toast_message = None;
+            self.runtime.toast_message = None;
             return true;
         }
         false
     }
 
     pub(in crate::tui) fn next_toast_deadline(&self) -> Option<Instant> {
-        self.toast_message
+        self.runtime
+            .toast_message
             .as_ref()
             .map(|message| message.expires_at)
     }
 
     pub fn toast_message(&self) -> Option<ToastView<'_>> {
-        self.toast_message.as_ref().map(|message| ToastView {
-            text: &message.text,
-            kind: message.kind,
-        })
+        self.runtime
+            .toast_message
+            .as_ref()
+            .map(|message| ToastView {
+                text: &message.text,
+                kind: message.kind,
+            })
     }
 }
 

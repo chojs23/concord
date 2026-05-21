@@ -18,11 +18,11 @@ impl DashboardState {
             return self
                 .selected_forum_post_items()
                 .into_iter()
-                .take(self.message_scroll)
+                .take(self.messages.message_scroll)
                 .map(|post| post.rendered_height())
                 .sum();
         }
-        (0..self.message_scroll)
+        (0..self.messages.message_scroll)
             .map(|index| {
                 self.message_rendered_height_at(
                     index,
@@ -32,7 +32,7 @@ impl DashboardState {
                 )
             })
             .sum::<usize>()
-            .saturating_add(self.message_line_scroll)
+            .saturating_add(self.messages.message_line_scroll)
     }
 
     pub(crate) fn message_total_rendered_rows(
@@ -113,7 +113,7 @@ impl DashboardState {
     fn selected_message_extra_top_line_at(&self, index: usize) -> usize {
         usize::from(
             self.messages().get(index).is_some()
-                && index == self.selected_message
+                && index == self.messages.selected_message
                 && !self.message_starts_author_group_at(index),
         )
     }
@@ -188,7 +188,12 @@ impl DashboardState {
             max_preview_height,
             show_custom_emoji: self.show_custom_emoji(),
         };
-        if let Some(metrics) = self.message_row_content_metrics_cache.borrow().get(&key) {
+        if let Some(metrics) = self
+            .layout_cache
+            .message_row_content_metrics_cache
+            .borrow()
+            .get(&key)
+        {
             return *metrics;
         }
 
@@ -198,7 +203,8 @@ impl DashboardState {
             preview_width,
             max_preview_height,
         );
-        self.message_row_content_metrics_cache
+        self.layout_cache
+            .message_row_content_metrics_cache
             .borrow_mut()
             .insert(key, metrics);
         metrics
@@ -230,18 +236,21 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) -> usize {
-        let span = self.selected_message.saturating_sub(self.message_scroll);
+        let span = self
+            .messages
+            .selected_message
+            .saturating_sub(self.messages.message_scroll);
         let row: usize = (0..span)
             .map(|offset| {
                 self.message_rendered_height_at(
-                    self.message_scroll + offset,
+                    self.messages.message_scroll + offset,
                     content_width,
                     preview_width,
                     max_preview_height,
                 )
             })
             .sum();
-        row.saturating_sub(self.message_line_scroll)
+        row.saturating_sub(self.messages.message_line_scroll)
     }
 
     pub(super) fn selected_message_rendered_height(
@@ -250,11 +259,15 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) -> usize {
-        if self.messages().get(self.selected_message).is_none() {
+        if self
+            .messages()
+            .get(self.messages.selected_message)
+            .is_none()
+        {
             return 1;
         }
         self.message_rendered_height_at(
-            self.selected_message,
+            self.messages.selected_message,
             content_width,
             preview_width,
             max_preview_height,
@@ -269,7 +282,7 @@ impl DashboardState {
         count: usize,
     ) -> usize {
         let messages_len = self.messages().len();
-        let start = self.selected_message.saturating_add(1);
+        let start = self.messages.selected_message.saturating_add(1);
         (0..count)
             .map(|offset| start + offset)
             .take_while(|&index| index < messages_len)
@@ -335,7 +348,7 @@ impl DashboardState {
             content_width,
             preview_width,
             max_preview_height,
-            index == self.selected_message,
+            index == self.messages.selected_message,
         )
         .total_rows()
     }

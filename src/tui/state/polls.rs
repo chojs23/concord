@@ -5,33 +5,34 @@ use super::{DashboardState, PollVotePickerItem, PollVotePickerState};
 
 impl DashboardState {
     pub fn is_poll_vote_picker_open(&self) -> bool {
-        self.poll_vote_picker.is_some()
+        self.popups.poll_vote_picker.is_some()
     }
 
     pub fn poll_vote_picker_items(&self) -> Option<&[PollVotePickerItem]> {
-        self.poll_vote_picker
+        self.popups
+            .poll_vote_picker
             .as_ref()
             .map(PollVotePickerState::answers)
     }
 
     pub fn close_poll_vote_picker(&mut self) {
-        self.poll_vote_picker = None;
+        self.popups.poll_vote_picker = None;
     }
 
     pub fn move_poll_vote_picker_down(&mut self) {
-        if let Some(picker) = &mut self.poll_vote_picker {
+        if let Some(picker) = &mut self.popups.poll_vote_picker {
             move_index_down(&mut picker.selected, picker.answers.len());
         }
     }
 
     pub fn move_poll_vote_picker_up(&mut self) {
-        if let Some(picker) = &mut self.poll_vote_picker {
+        if let Some(picker) = &mut self.popups.poll_vote_picker {
             move_index_up(&mut picker.selected);
         }
     }
 
     pub fn toggle_selected_poll_vote_answer(&mut self) {
-        if let Some(picker) = &mut self.poll_vote_picker {
+        if let Some(picker) = &mut self.popups.poll_vote_picker {
             let index = clamp_selected_index(picker.selected, picker.answers.len());
             if let Some(answer) = picker.answers.get_mut(index) {
                 answer.selected = !answer.selected;
@@ -41,8 +42,8 @@ impl DashboardState {
 
     pub fn toggle_poll_vote_answer_shortcut(&mut self, shortcut: char) {
         let shortcut = shortcut.to_ascii_lowercase();
-        let key_bindings = self.key_bindings().clone();
-        let Some(picker) = &mut self.poll_vote_picker else {
+        let key_bindings = self.options.key_bindings().clone();
+        let Some(picker) = &mut self.popups.poll_vote_picker else {
             return;
         };
         let Some(index) = picker
@@ -60,13 +61,14 @@ impl DashboardState {
     }
 
     pub fn selected_poll_vote_picker_index(&self) -> Option<usize> {
-        self.poll_vote_picker
+        self.popups
+            .poll_vote_picker
             .as_ref()
             .map(|picker| clamp_selected_index(picker.selected, picker.answers.len()))
     }
 
     pub fn activate_poll_vote_picker(&mut self) -> Option<AppCommand> {
-        let picker = self.poll_vote_picker.clone()?;
+        let picker = self.popups.poll_vote_picker.clone()?;
         let answer_ids = picker
             .answers
             .iter()
@@ -85,7 +87,7 @@ impl DashboardState {
         if let Some(message) = self.selected_message_state()
             && let Some(poll) = &message.poll
         {
-            self.poll_vote_picker = Some(PollVotePickerState {
+            self.popups.poll_vote_picker = Some(PollVotePickerState {
                 selected: 0,
                 channel_id: message.channel_id,
                 message_id: message.id,

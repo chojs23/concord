@@ -1,6 +1,6 @@
 use unicode_segmentation::UnicodeSegmentation;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(super) struct PaneFilterState {
     pub(super) query: String,
     pub(super) query_cursor_byte_index: usize,
@@ -8,10 +8,7 @@ pub(super) struct PaneFilterState {
 
 impl PaneFilterState {
     pub(super) fn new() -> Self {
-        Self {
-            query: String::new(),
-            query_cursor_byte_index: 0,
-        }
+        Self::default()
     }
 
     pub(super) fn query(&self) -> &str {

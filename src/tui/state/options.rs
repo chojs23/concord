@@ -33,18 +33,16 @@ impl DashboardState {
         voice_options: VoiceOptions,
         ui_state_options: UiStateOptions,
     ) -> Self {
-        let mut state = Self {
-            display_options,
-            notification_options,
-            voice_options,
-            ..Self::new()
-        };
+        let mut state = Self::new();
+        state.options.display_options = display_options;
+        state.options.notification_options = notification_options;
+        state.options.voice_options = voice_options;
         state.apply_ui_state_options(ui_state_options);
         state
     }
 
     pub fn display_options(&self) -> DisplayOptions {
-        self.display_options
+        self.options.display_options
     }
 
     #[cfg(test)]
@@ -78,21 +76,21 @@ impl DashboardState {
     }
 
     pub fn notification_options(&self) -> NotificationOptions {
-        self.notification_options
+        self.options.notification_options
     }
 
     pub fn voice_options(&self) -> VoiceOptions {
-        self.voice_options
+        self.options.voice_options
     }
 
     pub fn key_bindings(&self) -> &crate::tui::keybindings::KeyBindings {
-        &self.key_bindings
+        &self.options.key_bindings
     }
 
     fn apply_ui_state_options(&mut self, options: UiStateOptions) {
-        self.collapsed_channel_categories =
+        self.navigation.collapsed_channel_categories =
             options.collapsed_channel_categories.into_iter().collect();
-        self.collapsed_folders = options
+        self.navigation.collapsed_folders = options
             .collapsed_server_folder_ids
             .into_iter()
             .map(FolderKey::Id)
@@ -106,13 +104,17 @@ impl DashboardState {
     }
 
     fn ui_state_options(&self) -> UiStateOptions {
-        let mut collapsed_channel_categories: Vec<_> =
-            self.collapsed_channel_categories.iter().copied().collect();
+        let mut collapsed_channel_categories: Vec<_> = self
+            .navigation
+            .collapsed_channel_categories
+            .iter()
+            .copied()
+            .collect();
         collapsed_channel_categories.sort_by_key(|id| id.get());
 
         let mut collapsed_server_folder_ids = Vec::new();
         let mut collapsed_server_folder_guilds = Vec::new();
-        for folder in &self.collapsed_folders {
+        for folder in &self.navigation.collapsed_folders {
             match folder {
                 FolderKey::Id(id) => collapsed_server_folder_ids.push(*id),
                 FolderKey::Guilds(guilds) => collapsed_server_folder_guilds.push(guilds.clone()),
@@ -133,39 +135,39 @@ impl DashboardState {
     }
 
     pub fn show_avatars(&self) -> bool {
-        self.display_options.avatars_visible()
+        self.options.display_options.avatars_visible()
     }
 
     pub fn show_images(&self) -> bool {
-        self.display_options.images_visible()
+        self.options.display_options.images_visible()
     }
 
     pub fn image_preview_quality(&self) -> ImagePreviewQualityPreset {
-        self.display_options.image_preview_quality
+        self.options.display_options.image_preview_quality
     }
 
     pub fn show_custom_emoji(&self) -> bool {
-        self.display_options.custom_emoji_visible()
+        self.options.display_options.custom_emoji_visible()
     }
 
     pub fn desktop_notifications_enabled(&self) -> bool {
-        self.notification_options.desktop_notifications
+        self.options.notification_options.desktop_notifications
     }
 
     pub fn pane_width(&self, pane: FocusPane) -> u16 {
         match pane {
-            FocusPane::Guilds => self.display_options.server_width,
-            FocusPane::Channels => self.display_options.channel_list_width,
-            FocusPane::Members => self.display_options.member_list_width,
+            FocusPane::Guilds => self.options.display_options.server_width,
+            FocusPane::Channels => self.options.display_options.channel_list_width,
+            FocusPane::Members => self.options.display_options.member_list_width,
             FocusPane::Messages => 0,
         }
     }
 
     pub fn adjust_focused_pane_width(&mut self, delta: i16) {
-        let width = match self.focus {
-            FocusPane::Guilds => &mut self.display_options.server_width,
-            FocusPane::Channels => &mut self.display_options.channel_list_width,
-            FocusPane::Members => &mut self.display_options.member_list_width,
+        let width = match self.navigation.focus {
+            FocusPane::Guilds => &mut self.options.display_options.server_width,
+            FocusPane::Channels => &mut self.options.display_options.channel_list_width,
+            FocusPane::Members => &mut self.options.display_options.member_list_width,
             FocusPane::Messages => return,
         };
 
@@ -177,12 +179,12 @@ impl DashboardState {
         let adjusted = adjusted.clamp(MIN_PANE_WIDTH, MAX_PANE_WIDTH);
         if adjusted != *width {
             *width = adjusted;
-            self.options_save_pending = true;
+            self.options.options_save_pending = true;
         }
     }
 
     pub fn is_options_popup_open(&self) -> bool {
-        self.options_popup.is_some()
+        self.popups.options_popup.is_some()
     }
 
     #[cfg(test)]
@@ -191,38 +193,35 @@ impl DashboardState {
     }
 
     pub fn open_options_category_picker(&mut self) {
-        self.options_popup = Some(OptionsPopupState {
-            selected: 0,
-            category: None,
-        });
+        self.popups.options_popup = Some(OptionsPopupState::default());
     }
 
     pub fn open_options_category(&mut self, category: OptionsCategory) {
-        self.options_popup = Some(OptionsPopupState {
-            selected: 0,
+        self.popups.options_popup = Some(OptionsPopupState {
             category: Some(category),
+            ..OptionsPopupState::default()
         });
     }
 
     pub fn close_options_popup(&mut self) {
-        self.options_popup = None;
+        self.popups.options_popup = None;
     }
 
     pub fn move_option_down(&mut self) {
         let max_selected = self.options_popup_item_count().saturating_sub(1);
-        if let Some(popup) = &mut self.options_popup {
+        if let Some(popup) = &mut self.popups.options_popup {
             popup.selected = popup.selected.saturating_add(1).min(max_selected);
         }
     }
 
     pub fn move_option_up(&mut self) {
-        if let Some(popup) = &mut self.options_popup {
+        if let Some(popup) = &mut self.popups.options_popup {
             popup.selected = popup.selected.saturating_sub(1);
         }
     }
 
     pub fn selected_option_index(&self) -> Option<usize> {
-        self.options_popup.as_ref().map(|popup| {
+        self.popups.options_popup.as_ref().map(|popup| {
             popup
                 .selected
                 .min(self.options_popup_item_count().saturating_sub(1))
@@ -230,7 +229,12 @@ impl DashboardState {
     }
 
     pub fn options_popup_title(&self) -> &'static str {
-        match self.options_popup.as_ref().and_then(|popup| popup.category) {
+        match self
+            .popups
+            .options_popup
+            .as_ref()
+            .and_then(|popup| popup.category)
+        {
             None => "Options",
             Some(OptionsCategory::Display) => "Display Options",
             Some(OptionsCategory::Notifications) => "Notification Options",
@@ -239,13 +243,19 @@ impl DashboardState {
     }
 
     pub fn is_options_category_picker_open(&self) -> bool {
-        self.options_popup
+        self.popups
+            .options_popup
             .as_ref()
             .is_some_and(|popup| popup.category.is_none())
     }
 
     fn options_popup_item_count(&self) -> usize {
-        match self.options_popup.as_ref().and_then(|popup| popup.category) {
+        match self
+            .popups
+            .options_popup
+            .as_ref()
+            .and_then(|popup| popup.category)
+        {
             None => OPTION_CATEGORY_COUNT,
             Some(OptionsCategory::Display) => DISPLAY_OPTION_COUNT,
             Some(OptionsCategory::Notifications) => NOTIFICATION_OPTION_COUNT,
@@ -254,7 +264,12 @@ impl DashboardState {
     }
 
     pub fn display_option_items(&self) -> Vec<DisplayOptionItem> {
-        match self.options_popup.as_ref().and_then(|popup| popup.category) {
+        match self
+            .popups
+            .options_popup
+            .as_ref()
+            .and_then(|popup| popup.category)
+        {
             None if self.is_options_popup_open() => return self.option_category_items(),
             Some(OptionsCategory::Display) => return self.display_option_items_for_display(),
             Some(OptionsCategory::Notifications) => {
@@ -271,7 +286,7 @@ impl DashboardState {
     }
 
     fn option_category_items(&self) -> Vec<DisplayOptionItem> {
-        let key_bindings = self.key_bindings();
+        let key_bindings = self.options.key_bindings();
         vec![
             DisplayOptionItem {
                 label: "Display",
@@ -313,7 +328,7 @@ impl DashboardState {
     }
 
     fn display_option_items_for_display(&self) -> Vec<DisplayOptionItem> {
-        let options = self.display_options;
+        let options = self.options.display_options;
         vec![
             DisplayOptionItem {
                 label: "Disable all image previews",
@@ -361,10 +376,10 @@ impl DashboardState {
     fn display_option_items_for_notifications(&self) -> Vec<DisplayOptionItem> {
         vec![DisplayOptionItem {
             label: "Desktop notifications",
-            enabled: self.notification_options.desktop_notifications,
+            enabled: self.options.notification_options.desktop_notifications,
             value: None,
             gauge_percent: None,
-            effective: self.notification_options.desktop_notifications,
+            effective: self.options.notification_options.desktop_notifications,
             description: "Show OS notifications for Discord messages that pass notification settings.",
         }]
     }
@@ -373,7 +388,7 @@ impl DashboardState {
         vec![
             DisplayOptionItem {
                 label: "Voice muted",
-                enabled: self.voice_options.self_mute,
+                enabled: self.options.voice_options.self_mute,
                 value: None,
                 gauge_percent: None,
                 effective: true,
@@ -381,7 +396,7 @@ impl DashboardState {
             },
             DisplayOptionItem {
                 label: "Voice deafened",
-                enabled: self.voice_options.self_deaf,
+                enabled: self.options.voice_options.self_deaf,
                 value: None,
                 gauge_percent: None,
                 effective: true,
@@ -389,7 +404,7 @@ impl DashboardState {
             },
             DisplayOptionItem {
                 label: "Allow microphone transmit",
-                enabled: self.voice_options.allow_microphone_transmit,
+                enabled: self.options.voice_options.allow_microphone_transmit,
                 value: None,
                 gauge_percent: None,
                 effective: true,
@@ -398,27 +413,31 @@ impl DashboardState {
             DisplayOptionItem {
                 label: "Microphone sensitivity",
                 enabled: true,
-                value: Some(self.voice_options.microphone_sensitivity.label()),
+                value: Some(self.options.voice_options.microphone_sensitivity.label()),
                 gauge_percent: Some(microphone_sensitivity_percent(
-                    self.voice_options.microphone_sensitivity,
+                    self.options.voice_options.microphone_sensitivity,
                 )),
-                effective: self.voice_options.allow_microphone_transmit,
+                effective: self.options.voice_options.allow_microphone_transmit,
                 description: "Lower dB values transmit quieter microphone input.",
             },
             DisplayOptionItem {
                 label: "Microphone volume",
                 enabled: true,
-                value: Some(self.voice_options.microphone_volume.label()),
-                gauge_percent: Some(u16::from(self.voice_options.microphone_volume.value())),
-                effective: self.voice_options.allow_microphone_transmit,
+                value: Some(self.options.voice_options.microphone_volume.label()),
+                gauge_percent: Some(u16::from(
+                    self.options.voice_options.microphone_volume.value(),
+                )),
+                effective: self.options.voice_options.allow_microphone_transmit,
                 description: "Adjust outgoing microphone audio level.",
             },
             DisplayOptionItem {
                 label: "Voice volume",
                 enabled: true,
-                value: Some(self.voice_options.voice_output_volume.label()),
-                gauge_percent: Some(u16::from(self.voice_options.voice_output_volume.value())),
-                effective: !self.voice_options.self_deaf,
+                value: Some(self.options.voice_options.voice_output_volume.label()),
+                gauge_percent: Some(u16::from(
+                    self.options.voice_options.voice_output_volume.value(),
+                )),
+                effective: !self.options.voice_options.self_deaf,
                 description: "Adjust received voice playback level.",
             },
         ]
@@ -428,7 +447,12 @@ impl DashboardState {
         let Some(selected) = self.selected_option_index() else {
             return;
         };
-        let Some(category) = self.options_popup.as_ref().and_then(|popup| popup.category) else {
+        let Some(category) = self
+            .popups
+            .options_popup
+            .as_ref()
+            .and_then(|popup| popup.category)
+        else {
             self.open_selected_options_category();
             return;
         };
@@ -438,37 +462,39 @@ impl DashboardState {
 
         match (category, selected) {
             (OptionsCategory::Display, 0) => {
-                self.display_options.disable_image_preview =
-                    !self.display_options.disable_image_preview
+                self.options.display_options.disable_image_preview =
+                    !self.options.display_options.disable_image_preview
             }
             (OptionsCategory::Display, 1) => {
-                self.display_options.show_avatars = !self.display_options.show_avatars
+                self.options.display_options.show_avatars =
+                    !self.options.display_options.show_avatars
             }
             (OptionsCategory::Display, 2) => {
-                self.display_options.show_images = !self.display_options.show_images
+                self.options.display_options.show_images = !self.options.display_options.show_images
             }
             (OptionsCategory::Display, 3) => {
-                self.display_options.image_preview_quality =
-                    self.display_options.image_preview_quality.next()
+                self.options.display_options.image_preview_quality =
+                    self.options.display_options.image_preview_quality.next()
             }
             (OptionsCategory::Display, 4) => {
-                self.display_options.show_custom_emoji = !self.display_options.show_custom_emoji
+                self.options.display_options.show_custom_emoji =
+                    !self.options.display_options.show_custom_emoji
             }
             (OptionsCategory::Notifications, 0) => {
-                self.notification_options.desktop_notifications =
-                    !self.notification_options.desktop_notifications
+                self.options.notification_options.desktop_notifications =
+                    !self.options.notification_options.desktop_notifications
             }
             (OptionsCategory::Voice, 0) => {
-                self.voice_options.self_mute = !self.voice_options.self_mute;
+                self.options.voice_options.self_mute = !self.options.voice_options.self_mute;
                 update_current_voice_state = true;
             }
             (OptionsCategory::Voice, 1) => {
-                self.voice_options.self_deaf = !self.voice_options.self_deaf;
+                self.options.voice_options.self_deaf = !self.options.voice_options.self_deaf;
                 update_current_voice_state = true;
             }
             (OptionsCategory::Voice, 2) => {
-                self.voice_options.allow_microphone_transmit =
-                    !self.voice_options.allow_microphone_transmit;
+                self.options.voice_options.allow_microphone_transmit =
+                    !self.options.voice_options.allow_microphone_transmit;
                 update_current_voice_capture_permission = true;
             }
             _ => return,
@@ -483,26 +509,30 @@ impl DashboardState {
         let Some(selected) = self.selected_option_index() else {
             return;
         };
-        if self.options_popup.as_ref().and_then(|popup| popup.category)
+        if self
+            .popups
+            .options_popup
+            .as_ref()
+            .and_then(|popup| popup.category)
             != Some(OptionsCategory::Voice)
         {
             return;
         }
         let changed = match selected {
             3 => {
-                let previous = self.voice_options.microphone_sensitivity;
-                self.voice_options.microphone_sensitivity = previous.adjust(delta);
-                self.voice_options.microphone_sensitivity != previous
+                let previous = self.options.voice_options.microphone_sensitivity;
+                self.options.voice_options.microphone_sensitivity = previous.adjust(delta);
+                self.options.voice_options.microphone_sensitivity != previous
             }
             4 => {
-                let previous = self.voice_options.microphone_volume;
-                self.voice_options.microphone_volume = previous.adjust(delta);
-                self.voice_options.microphone_volume != previous
+                let previous = self.options.voice_options.microphone_volume;
+                self.options.voice_options.microphone_volume = previous.adjust(delta);
+                self.options.voice_options.microphone_volume != previous
             }
             5 => {
-                let previous = self.voice_options.voice_output_volume;
-                self.voice_options.voice_output_volume = previous.adjust(delta);
-                self.voice_options.voice_output_volume != previous
+                let previous = self.options.voice_options.voice_output_volume;
+                self.options.voice_options.voice_output_volume = previous.adjust(delta);
+                self.options.voice_options.voice_output_volume != previous
             }
             _ => false,
         };
@@ -512,7 +542,11 @@ impl DashboardState {
     }
 
     pub fn open_options_category_shortcut(&mut self, shortcut: char) {
-        match self.key_bindings.options_category_shortcut(shortcut) {
+        match self
+            .options
+            .key_bindings
+            .options_category_shortcut(shortcut)
+        {
             Some(OptionsCategoryShortcut::Display) => {
                 self.open_options_category(OptionsCategory::Display)
             }
@@ -544,7 +578,7 @@ impl DashboardState {
             self.close_image_viewer();
         }
         self.clear_message_row_content_metrics_cache();
-        self.options_save_pending = true;
+        self.options.options_save_pending = true;
         if update_current_voice_state {
             self.queue_current_voice_state_update();
         }
@@ -554,50 +588,52 @@ impl DashboardState {
     }
 
     pub(in crate::tui::state) fn queue_current_voice_state_update(&mut self) {
-        let Some(voice) = self.voice_connection else {
+        let Some(voice) = self.runtime.voice_connection else {
             return;
         };
         let Some(channel_id) = voice.channel_id else {
             return;
         };
 
-        self.pending_commands
+        self.requests
+            .pending_commands
             .push_back(AppCommand::UpdateVoiceState {
                 guild_id: voice.guild_id,
                 channel_id,
-                self_mute: self.voice_options.self_mute,
-                self_deaf: self.voice_options.self_deaf,
+                self_mute: self.options.voice_options.self_mute,
+                self_deaf: self.options.voice_options.self_deaf,
             });
     }
 
     fn queue_current_voice_capture_permission_update(&mut self) {
-        let Some(voice) = self.voice_connection else {
+        let Some(voice) = self.runtime.voice_connection else {
             return;
         };
         let Some(channel_id) = voice.channel_id else {
             return;
         };
 
-        self.pending_commands
+        self.requests
+            .pending_commands
             .push_back(AppCommand::UpdateVoiceCapturePermission {
                 guild_id: voice.guild_id,
                 channel_id,
-                allow_microphone_transmit: self.voice_options.allow_microphone_transmit,
-                microphone_sensitivity: self.voice_options.microphone_sensitivity,
-                microphone_volume: self.voice_options.microphone_volume,
-                voice_output_volume: self.voice_options.voice_output_volume,
+                allow_microphone_transmit: self.options.voice_options.allow_microphone_transmit,
+                microphone_sensitivity: self.options.voice_options.microphone_sensitivity,
+                microphone_volume: self.options.voice_options.microphone_volume,
+                voice_output_volume: self.options.voice_options.voice_output_volume,
             });
     }
 
     pub(in crate::tui) fn take_options_save_request(&mut self) -> Option<AppOptions> {
-        if !self.options_save_pending {
+        if !self.options.options_save_pending {
             return None;
         }
-        self.options_save_pending = false;
+        self.options.options_save_pending = false;
         Some(AppOptions {
-            display: self.display_options,
-            notifications: self.notification_options,
-            voice: self.voice_options,
+            display: self.options.display_options,
+            notifications: self.options.notification_options,
+            voice: self.options.voice_options,
             ui_state: self.ui_state_options(),
         })
     }

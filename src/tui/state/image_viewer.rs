@@ -8,7 +8,7 @@ use crate::tui::state::popups::ImageViewerState;
 
 impl DashboardState {
     pub fn is_image_viewer_open(&self) -> bool {
-        self.image_viewer.is_some()
+        self.popups.image_viewer.is_some()
     }
 
     pub fn open_image_viewer_for_selected_message(&mut self) -> bool {
@@ -23,7 +23,7 @@ impl DashboardState {
             return false;
         }
 
-        self.image_viewer = Some(ImageViewerState {
+        self.popups.image_viewer = Some(ImageViewerState {
             message_id: message.id,
             selected: 0,
             download_message: None,
@@ -32,17 +32,18 @@ impl DashboardState {
     }
 
     pub fn close_image_viewer(&mut self) {
-        self.image_viewer = None;
+        self.popups.image_viewer = None;
     }
 
     pub fn move_image_viewer_previous(&mut self) {
-        if let Some(viewer) = &mut self.image_viewer {
+        if let Some(viewer) = &mut self.popups.image_viewer {
             viewer.selected = viewer.selected.saturating_sub(1);
         }
     }
 
     pub fn move_image_viewer_next(&mut self) {
         let Some((message_id, selected)) = self
+            .popups
             .image_viewer
             .as_ref()
             .map(|viewer| (viewer.message_id, viewer.selected))
@@ -54,13 +55,13 @@ impl DashboardState {
             self.close_image_viewer();
             return;
         }
-        if let Some(viewer) = &mut self.image_viewer {
+        if let Some(viewer) = &mut self.popups.image_viewer {
             viewer.selected = selected.saturating_add(1).min(count.saturating_sub(1));
         }
     }
 
     pub fn selected_image_viewer_item(&self) -> Option<ImageViewerItem> {
-        let viewer = self.image_viewer.as_ref()?;
+        let viewer = self.popups.image_viewer.as_ref()?;
         let previews = self.image_viewer_previews(viewer.message_id)?;
         let selected = clamp_selected_index(viewer.selected, previews.len());
         let preview = previews.get(selected)?;
@@ -75,7 +76,7 @@ impl DashboardState {
     pub(in crate::tui) fn selected_image_viewer_preview(
         &self,
     ) -> Option<(Id<MessageMarker>, usize, InlinePreviewInfo<'_>)> {
-        let viewer = self.image_viewer.as_ref()?;
+        let viewer = self.popups.image_viewer.as_ref()?;
         let previews = self.image_viewer_previews(viewer.message_id)?;
         let selected = clamp_selected_index(viewer.selected, previews.len());
         let preview = previews.get(selected).copied()?;
@@ -83,20 +84,21 @@ impl DashboardState {
     }
 
     pub fn image_viewer_download_message(&self) -> Option<&str> {
-        self.image_viewer
+        self.popups
+            .image_viewer
             .as_ref()
             .and_then(|viewer| viewer.download_message.as_deref())
     }
 
     pub fn record_image_viewer_download_completed(&mut self, path: &str) {
-        if let Some(viewer) = &mut self.image_viewer {
+        if let Some(viewer) = &mut self.popups.image_viewer {
             viewer.download_message = Some(format!("Downloaded to {path}"));
         }
     }
 
     pub fn download_selected_image_viewer_image(&mut self) -> Option<AppCommand> {
         let item = self.selected_image_viewer_item()?;
-        if let Some(viewer) = &mut self.image_viewer {
+        if let Some(viewer) = &mut self.popups.image_viewer {
             viewer.download_message = Some("Downloading image...".to_owned());
         }
         Some(AppCommand::DownloadAttachment {

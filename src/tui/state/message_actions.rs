@@ -17,24 +17,21 @@ impl DashboardState {
     }
 
     pub fn is_message_action_menu_open(&self) -> bool {
-        self.message_action_menu.is_some()
+        self.popups.message_action_menu.is_some()
     }
 
     pub fn open_selected_message_actions(&mut self) {
-        if self.focus == FocusPane::Messages && self.selected_message_state().is_some() {
-            self.message_action_menu = Some(MessageActionMenuState {
-                selected: 0,
-                phase: MessageActionMenuPhase::Actions,
-            });
+        if self.navigation.focus == FocusPane::Messages && self.selected_message_state().is_some() {
+            self.popups.message_action_menu = Some(MessageActionMenuState::default());
         }
     }
 
     pub fn close_message_action_menu(&mut self) {
-        self.message_action_menu = None;
+        self.popups.message_action_menu = None;
     }
 
     pub fn close_or_back_message_action_menu(&mut self) {
-        if let Some(menu) = &mut self.message_action_menu
+        if let Some(menu) = &mut self.popups.message_action_menu
             && menu.phase == MessageActionMenuPhase::Urls
         {
             menu.phase = MessageActionMenuPhase::Actions;
@@ -47,13 +44,13 @@ impl DashboardState {
 
     pub fn move_message_action_down(&mut self) {
         let actions_len = self.current_message_action_menu_len();
-        if let Some(menu) = &mut self.message_action_menu {
+        if let Some(menu) = &mut self.popups.message_action_menu {
             move_index_down(&mut menu.selected, actions_len);
         }
     }
 
     pub fn move_message_action_up(&mut self) {
-        if let Some(menu) = &mut self.message_action_menu {
+        if let Some(menu) = &mut self.popups.message_action_menu {
             move_index_up(&mut menu.selected);
         }
     }
@@ -62,7 +59,7 @@ impl DashboardState {
         if row >= self.current_message_action_menu_len() {
             return false;
         }
-        if let Some(menu) = &mut self.message_action_menu {
+        if let Some(menu) = &mut self.popups.message_action_menu {
             menu.selected = row;
             return true;
         }
@@ -80,7 +77,7 @@ impl DashboardState {
         }];
 
         let capabilities = message.capabilities();
-        let is_own_chat_message = Some(message.author_id) == self.current_user_id
+        let is_own_chat_message = Some(message.author_id) == self.discord.current_user_id
             && message.message_kind.is_regular_or_reply();
         if is_own_chat_message && message.content.is_some() {
             actions.push(MessageActionItem {
@@ -209,7 +206,8 @@ impl DashboardState {
     }
 
     pub fn selected_message_action_index(&self) -> Option<usize> {
-        self.message_action_menu
+        self.popups
+            .message_action_menu
             .as_ref()
             .filter(|menu| menu.phase == MessageActionMenuPhase::Actions)
             .map(|menu| {
@@ -218,7 +216,8 @@ impl DashboardState {
     }
 
     pub fn is_message_url_picker_open(&self) -> bool {
-        self.message_action_menu
+        self.popups
+            .message_action_menu
             .as_ref()
             .is_some_and(|menu| menu.phase == MessageActionMenuPhase::Urls)
     }
@@ -230,7 +229,8 @@ impl DashboardState {
     }
 
     pub fn selected_message_url_index(&self) -> Option<usize> {
-        self.message_action_menu
+        self.popups
+            .message_action_menu
             .as_ref()
             .filter(|menu| menu.phase == MessageActionMenuPhase::Urls)
             .map(|menu| {
@@ -387,56 +387,65 @@ impl DashboardState {
         message: &MessageState,
         emoji: &ReactionEmoji,
     ) -> bool {
-        let Some(channel) = self.discord.channel(message.channel_id) else {
+        let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
-        if !self.discord.can_read_message_history_in_channel(channel) {
+        if !self
+            .discord
+            .cache
+            .can_read_message_history_in_channel(channel)
+        {
             return false;
         }
         message
             .reactions
             .iter()
             .any(|reaction| &reaction.emoji == emoji)
-            || self.discord.can_add_reactions_in_channel(channel)
+            || self.discord.cache.can_add_reactions_in_channel(channel)
     }
 
     pub(super) fn can_open_reaction_picker(&self, message: &MessageState) -> bool {
-        let Some(channel) = self.discord.channel(message.channel_id) else {
+        let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
-        self.discord.can_read_message_history_in_channel(channel)
-            && (self.discord.can_add_reactions_in_channel(channel) || !message.reactions.is_empty())
+        self.discord
+            .cache
+            .can_read_message_history_in_channel(channel)
+            && (self.discord.cache.can_add_reactions_in_channel(channel)
+                || !message.reactions.is_empty())
     }
 
     pub(super) fn can_add_new_reaction_for_message(&self, message: &MessageState) -> bool {
-        let Some(channel) = self.discord.channel(message.channel_id) else {
+        let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
-        self.discord.can_add_reactions_in_channel(channel)
+        self.discord.cache.can_add_reactions_in_channel(channel)
     }
 
     fn can_show_reaction_users_for_message(&self, message: &MessageState) -> bool {
-        let Some(channel) = self.discord.channel(message.channel_id) else {
+        let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
-        self.discord.can_read_message_history_in_channel(channel)
+        self.discord
+            .cache
+            .can_read_message_history_in_channel(channel)
     }
 
     fn can_delete_message(&self, message: &MessageState) -> bool {
-        if Some(message.author_id) == self.current_user_id {
+        if Some(message.author_id) == self.discord.current_user_id {
             return true;
         }
-        let Some(channel) = self.discord.channel(message.channel_id) else {
+        let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
-        self.discord.can_manage_messages_in_channel(channel)
+        self.discord.cache.can_manage_messages_in_channel(channel)
     }
 
     fn can_pin_messages_for_message(&self, message: &MessageState) -> bool {
-        let Some(channel) = self.discord.channel(message.channel_id) else {
+        let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
-        self.discord.can_pin_messages_in_channel(channel)
+        self.discord.cache.can_pin_messages_in_channel(channel)
     }
 
     pub fn activate_message_action_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
@@ -448,6 +457,7 @@ impl DashboardState {
         let index = actions.iter().enumerate().position(|(index, action)| {
             action.enabled
                 && self
+                    .options
                     .key_bindings()
                     .message_action_shortcut(&actions, index)
                     .is_some_and(|candidate| candidate == shortcut)
@@ -466,7 +476,7 @@ impl DashboardState {
                 Some(AppCommand::OpenUrl { url })
             }
             _ => {
-                if let Some(menu) = &mut self.message_action_menu {
+                if let Some(menu) = &mut self.popups.message_action_menu {
                     menu.phase = MessageActionMenuPhase::Urls;
                     menu.selected = 0;
                 }
@@ -485,7 +495,8 @@ impl DashboardState {
     fn activate_message_url_shortcut(&mut self, shortcut: char) -> Option<AppCommand> {
         let urls = self.selected_message_url_items();
         let index = urls.iter().enumerate().position(|(index, _)| {
-            self.key_bindings()
+            self.options
+                .key_bindings()
                 .indexed_shortcut(index)
                 .is_some_and(|candidate| candidate == shortcut)
         })?;
@@ -508,11 +519,11 @@ impl DashboardState {
         else {
             return;
         };
-        self.copy_message_content_requested = Some(content.clone());
+        self.runtime.copy_message_content_requested = Some(content.clone());
     }
 
     pub(in crate::tui) fn take_copy_message_content_request(&mut self) -> Option<String> {
-        self.copy_message_content_requested.take()
+        self.runtime.copy_message_content_requested.take()
     }
 
     pub fn direct_open_selected_message_reaction_picker(&mut self) {
@@ -566,7 +577,7 @@ impl DashboardState {
         if !self.can_delete_message(message) {
             return;
         }
-        self.message_delete_confirmation = Some(popups::MessageDeleteConfirmationState {
+        self.popups.message_delete_confirmation = Some(popups::MessageDeleteConfirmationState {
             channel_id: message.channel_id,
             message_id: message.id,
             author: message.author.clone(),
@@ -575,15 +586,15 @@ impl DashboardState {
     }
 
     pub fn is_message_delete_confirmation_open(&self) -> bool {
-        self.message_delete_confirmation.is_some()
+        self.popups.message_delete_confirmation.is_some()
     }
 
     pub fn close_message_delete_confirmation(&mut self) {
-        self.message_delete_confirmation = None;
+        self.popups.message_delete_confirmation = None;
     }
 
     pub fn confirm_message_delete(&mut self) -> Option<AppCommand> {
-        let confirmation = self.message_delete_confirmation.take()?;
+        let confirmation = self.popups.message_delete_confirmation.take()?;
         Some(AppCommand::DeleteMessage {
             channel_id: confirmation.channel_id,
             message_id: confirmation.message_id,
@@ -591,7 +602,7 @@ impl DashboardState {
     }
 
     pub fn message_delete_confirmation_lines(&self) -> Option<(String, Option<String>)> {
-        let confirmation = self.message_delete_confirmation.as_ref()?;
+        let confirmation = self.popups.message_delete_confirmation.as_ref()?;
         Some((confirmation.author.clone(), confirmation.content.clone()))
     }
 
@@ -602,7 +613,7 @@ impl DashboardState {
         if !self.can_pin_messages_for_message(message) {
             return;
         }
-        self.message_pin_confirmation = Some(popups::MessagePinConfirmationState {
+        self.popups.message_pin_confirmation = Some(popups::MessagePinConfirmationState {
             channel_id: message.channel_id,
             message_id: message.id,
             pinned,
@@ -612,15 +623,15 @@ impl DashboardState {
     }
 
     pub fn is_message_pin_confirmation_open(&self) -> bool {
-        self.message_pin_confirmation.is_some()
+        self.popups.message_pin_confirmation.is_some()
     }
 
     pub fn close_message_pin_confirmation(&mut self) {
-        self.message_pin_confirmation = None;
+        self.popups.message_pin_confirmation = None;
     }
 
     pub fn confirm_message_pin(&mut self) -> Option<AppCommand> {
-        let confirmation = self.message_pin_confirmation.take()?;
+        let confirmation = self.popups.message_pin_confirmation.take()?;
         Some(AppCommand::SetMessagePinned {
             channel_id: confirmation.channel_id,
             message_id: confirmation.message_id,
@@ -629,7 +640,7 @@ impl DashboardState {
     }
 
     pub fn message_pin_confirmation_lines(&self) -> Option<(bool, String, Option<String>)> {
-        let confirmation = self.message_pin_confirmation.as_ref()?;
+        let confirmation = self.popups.message_pin_confirmation.as_ref()?;
         Some((
             confirmation.pinned,
             confirmation.author.clone(),

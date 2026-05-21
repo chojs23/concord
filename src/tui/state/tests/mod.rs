@@ -126,7 +126,7 @@ fn tracks_current_user_from_ready() {
         user_id: Some(Id::new(10)),
     });
     assert_eq!(state.current_user(), Some("neo"));
-    assert_eq!(state.current_user_id, Some(Id::new(10)));
+    assert_eq!(state.current_user_id(), Some(Id::new(10)));
 }
 
 #[test]
@@ -5144,16 +5144,16 @@ fn member_subscription_ranges_grow_with_viewport() {
     // Default scroll 0, viewport ends at 20 → bucket 0.
     assert_eq!(state.member_subscription_ranges(), vec![(0, 99)]);
 
-    state.member_scroll = 100;
-    state.member_view_height = 20;
+    state.navigation.member_scroll = 100;
+    state.navigation.member_view_height = 20;
     // Viewport ends at 120 → bucket 1, contiguous coverage.
     assert_eq!(
         state.member_subscription_ranges(),
         vec![(0, 99), (100, 199)]
     );
 
-    state.member_scroll = 480;
-    state.member_view_height = 30;
+    state.navigation.member_scroll = 480;
+    state.navigation.member_view_height = 30;
     // Viewport ends at 510 → bucket 5, anchor [0,99] plus the two buckets
     // around the visible end so we never exceed the four-range cap.
     assert_eq!(
@@ -8389,14 +8389,14 @@ fn restoring_discord_snapshot_recovers_missed_guilds_and_direct_messages() {
     state.restore_discord_snapshot(snapshot);
 
     assert_eq!(state.current_user(), Some("neo"));
-    assert_eq!(state.current_user_id, Some(Id::new(10)));
+    assert_eq!(state.current_user_id(), Some(Id::new(10)));
     assert_eq!(state.guild_pane_entries().len(), 2);
 
     state.confirm_selected_guild();
     assert_eq!(state.selected_guild_id(), Some(guild_id));
     assert_eq!(channel_entry_names(&state), vec!["general"]);
 
-    state.selected_guild = 0;
+    state.navigation.selected_guild = 0;
     state.confirm_selected_guild();
     assert_eq!(channel_entry_names(&state), vec!["alice"]);
 }
@@ -8491,11 +8491,11 @@ fn voice_channel_participants_render_as_child_rows_and_are_skipped_by_selection(
     ));
 
     state.move_down();
-    assert_eq!(state.selected_channel, 1);
+    assert_eq!(state.navigation.selected_channel, 1);
     assert!(!state.select_visible_pane_row(FocusPane::Channels, 2));
-    assert_eq!(state.selected_channel, 1);
+    assert_eq!(state.navigation.selected_channel, 1);
     state.move_down();
-    assert_eq!(state.selected_channel, 3);
+    assert_eq!(state.navigation.selected_channel, 3);
 }
 
 #[test]
@@ -8785,7 +8785,7 @@ fn selected_channel_category_toggles_open_and_closed() {
 #[test]
 fn selected_channel_child_can_close_parent_category() {
     let mut state = state_with_channel_tree();
-    state.selected_channel = 1;
+    state.navigation.selected_channel = 1;
 
     state.toggle_selected_channel_category();
     let entries = state.channel_pane_entries();
@@ -8854,7 +8854,12 @@ fn collapsed_category_state_is_saved_and_restored() {
         options.ui_state,
     );
 
-    assert!(restored.collapsed_channel_categories.contains(&Id::new(10)));
+    assert!(
+        restored
+            .navigation
+            .collapsed_channel_categories
+            .contains(&Id::new(10))
+    );
 }
 
 #[test]
@@ -8867,7 +8872,7 @@ fn moving_guild_cursor_does_not_activate_guild() {
     assert!(active_guild.is_some());
 
     state.move_down();
-    assert_eq!(state.selected_guild, 2);
+    assert_eq!(state.navigation.selected_guild, 2);
     assert_eq!(state.selected_guild_id(), active_guild);
 
     state.confirm_selected_guild();
@@ -8917,7 +8922,7 @@ fn moving_channel_cursor_does_not_activate_channel() {
 
     state.move_down();
     state.move_down();
-    assert_eq!(state.selected_channel, 2);
+    assert_eq!(state.navigation.selected_channel, 2);
     assert_eq!(state.selected_channel_id(), None);
 
     state.confirm_selected_channel();
@@ -9026,7 +9031,7 @@ fn folder_without_id_can_be_toggled_closed() {
 #[test]
 fn selected_folder_child_can_close_parent() {
     let mut state = state_with_folder(Some(42));
-    state.selected_guild = 2;
+    state.navigation.selected_guild = 2;
 
     state.toggle_selected_folder();
     let entries = state.guild_pane_entries();

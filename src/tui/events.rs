@@ -8,6 +8,7 @@ use crate::{
 
 use super::{input, state::DashboardState};
 
+#[derive(Default)]
 pub(super) struct TerminalEventOutcome {
     pub(super) dirty: bool,
     pub(super) command: Option<AppCommand>,
@@ -19,10 +20,7 @@ pub(super) fn handle_terminal_event(
     last_frame_area: &mut Rect,
     mouse_clicks: &mut input::MouseClickTracker,
 ) -> Result<TerminalEventOutcome> {
-    let mut outcome = TerminalEventOutcome {
-        dirty: false,
-        command: None,
-    };
+    let mut outcome = TerminalEventOutcome::default();
 
     match event {
         TerminalEvent::Key(key) => {

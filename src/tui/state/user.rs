@@ -38,23 +38,23 @@ const MAX_GUILD_MEMBER_BY_ID_REQUEST_USERS: usize = 100;
 
 impl DashboardState {
     pub fn is_user_profile_popup_open(&self) -> bool {
-        self.user_profile_popup.is_some()
+        self.popups.user_profile_popup.is_some()
     }
 
     pub fn is_member_leader_action_active(&self) -> bool {
-        self.member_leader_action.is_some()
+        self.popups.member_leader_action.is_some()
     }
 
     /// Direct shortcut from the member pane: open the profile popup for the
     /// currently selected member without going through Leader Actions.
     pub fn show_selected_member_profile(&mut self) -> Option<AppCommand> {
-        if self.focus != FocusPane::Members {
+        if self.navigation.focus != FocusPane::Members {
             return None;
         }
         let entries = self.flattened_members();
         let entry = entries.get(self.selected_member())?;
         let user_id = entry.user_id();
-        let guild_id = match self.active_guild {
+        let guild_id = match self.navigation.active_guild {
             ActiveGuildScope::Guild(guild_id) => Some(guild_id),
             ActiveGuildScope::DirectMessages | ActiveGuildScope::Unset => None,
         };
@@ -62,7 +62,7 @@ impl DashboardState {
     }
 
     pub fn open_selected_member_actions(&mut self) {
-        if self.focus != FocusPane::Members {
+        if self.navigation.focus != FocusPane::Members {
             return;
         }
         let entries = self.flattened_members();
@@ -73,11 +73,11 @@ impl DashboardState {
         // For DM/group-DM panes there is no guild context. Pass it through so
         // the profile fetch can omit `guild_id` and skip the guild_member
         // section gracefully.
-        let guild_id = match self.active_guild {
+        let guild_id = match self.navigation.active_guild {
             ActiveGuildScope::Guild(guild_id) => Some(guild_id),
             ActiveGuildScope::DirectMessages | ActiveGuildScope::Unset => None,
         };
-        self.member_leader_action = Some(MemberLeaderActionState {
+        self.popups.member_leader_action = Some(MemberLeaderActionState {
             user_id,
             guild_id,
             selected: 0,
@@ -85,11 +85,11 @@ impl DashboardState {
     }
 
     pub fn close_member_leader_action(&mut self) {
-        self.member_leader_action = None;
+        self.popups.member_leader_action = None;
     }
 
     pub fn selected_member_action_items(&self) -> Vec<MemberActionItem> {
-        if self.member_leader_action.is_none() {
+        if self.popups.member_leader_action.is_none() {
             return Vec::new();
         }
         vec![MemberActionItem {
@@ -103,7 +103,7 @@ impl DashboardState {
         if row >= self.selected_member_action_items().len() {
             return false;
         }
-        if let Some(action) = self.member_leader_action.as_mut() {
+        if let Some(action) = self.popups.member_leader_action.as_mut() {
             action.selected = row;
             return true;
         }
@@ -111,7 +111,7 @@ impl DashboardState {
     }
 
     pub fn activate_selected_member_action(&mut self) -> Option<AppCommand> {
-        let action = self.member_leader_action.clone()?;
+        let action = self.popups.member_leader_action.clone()?;
         let items = self.selected_member_action_items();
         let item = items
             .get(clamp_selected_index(action.selected, items.len()))?
@@ -133,6 +133,7 @@ impl DashboardState {
         let index = actions.iter().enumerate().position(|(index, action)| {
             action.enabled
                 && self
+                    .options
                     .key_bindings()
                     .member_action_shortcut(&actions, index)
                     .is_some_and(|candidate| candidate == shortcut)
@@ -149,7 +150,7 @@ impl DashboardState {
         user_id: Id<UserMarker>,
         guild_id: Option<Id<GuildMarker>>,
     ) -> Option<AppCommand> {
-        self.user_profile_popup = Some(UserProfilePopupState {
+        self.popups.user_profile_popup = Some(UserProfilePopupState {
             user_id,
             guild_id,
             load_error: None,
@@ -157,11 +158,12 @@ impl DashboardState {
             view_height: 0,
             total_lines: 0,
         });
-        if !self.discord.is_note_fetched(user_id) {
-            self.pending_commands
+        if !self.discord.cache.is_note_fetched(user_id) {
+            self.requests
+                .pending_commands
                 .push_back(AppCommand::LoadUserNote { user_id });
         }
-        if self.discord.user_profile(user_id, guild_id).is_some() {
+        if self.discord.cache.user_profile(user_id, guild_id).is_some() {
             None
         } else {
             Some(AppCommand::LoadUserProfile { user_id, guild_id })
@@ -169,22 +171,25 @@ impl DashboardState {
     }
 
     pub fn close_user_profile_popup(&mut self) {
-        self.user_profile_popup = None;
+        self.popups.user_profile_popup = None;
     }
 
     pub fn user_profile_popup_data(&self) -> Option<&UserProfileInfo> {
-        let popup = self.user_profile_popup.as_ref()?;
-        self.discord.user_profile(popup.user_id, popup.guild_id)
+        let popup = self.popups.user_profile_popup.as_ref()?;
+        self.discord
+            .cache
+            .user_profile(popup.user_id, popup.guild_id)
     }
 
     pub fn user_profile_popup_load_error(&self) -> Option<&str> {
-        self.user_profile_popup
+        self.popups
+            .user_profile_popup
             .as_ref()
             .and_then(|popup| popup.load_error.as_deref())
     }
 
     pub fn user_profile_popup_status(&self) -> PresenceStatus {
-        let Some(popup) = self.user_profile_popup.as_ref() else {
+        let Some(popup) = self.popups.user_profile_popup.as_ref() else {
             return PresenceStatus::Unknown;
         };
 
@@ -217,7 +222,7 @@ impl DashboardState {
 
         recipient_status
             .filter(|status| *status != PresenceStatus::Unknown)
-            .or_else(|| self.discord.user_presence(popup.user_id))
+            .or_else(|| self.discord.cache.user_presence(popup.user_id))
             .unwrap_or(PresenceStatus::Unknown)
     }
 
@@ -229,21 +234,24 @@ impl DashboardState {
     }
 
     pub fn user_profile_popup_activities(&self) -> &[ActivityInfo] {
-        let Some(popup) = self.user_profile_popup.as_ref() else {
+        let Some(popup) = self.popups.user_profile_popup.as_ref() else {
             return &[];
         };
         self.discord
+            .cache
             .user_activities_for_guild(popup.guild_id, popup.user_id)
     }
 
     pub fn user_activities(&self, user_id: Id<UserMarker>) -> &[ActivityInfo] {
         self.discord
+            .cache
             .user_activities_for_guild(self.selected_guild_id(), user_id)
     }
 
     /// Top-of-viewport row for the popup body. Used by the renderer.
     pub fn user_profile_popup_scroll(&self) -> usize {
-        self.user_profile_popup
+        self.popups
+            .user_profile_popup
             .as_ref()
             .map(|popup| popup.scroll)
             .unwrap_or(0)
@@ -252,7 +260,7 @@ impl DashboardState {
     /// Renderer hook: passes the latest viewport height back so scroll
     /// methods can clamp without snapping past the last visible row.
     pub fn set_user_profile_popup_view_height(&mut self, height: usize) {
-        if let Some(popup) = self.user_profile_popup.as_mut() {
+        if let Some(popup) = self.popups.user_profile_popup.as_mut() {
             popup.view_height = height;
             clamp_user_profile_popup_scroll(popup);
         }
@@ -261,21 +269,21 @@ impl DashboardState {
     /// Renderer hook: stash the laid-out content height so scroll
     /// clamping is a constant-time check instead of recomputing layout.
     pub fn set_user_profile_popup_total_lines(&mut self, total_lines: usize) {
-        if let Some(popup) = self.user_profile_popup.as_mut() {
+        if let Some(popup) = self.popups.user_profile_popup.as_mut() {
             popup.total_lines = total_lines;
             clamp_user_profile_popup_scroll(popup);
         }
     }
 
     pub fn scroll_user_profile_popup_down(&mut self) {
-        if let Some(popup) = self.user_profile_popup.as_mut() {
+        if let Some(popup) = self.popups.user_profile_popup.as_mut() {
             popup.scroll = popup.scroll.saturating_add(1);
             clamp_user_profile_popup_scroll(popup);
         }
     }
 
     pub fn scroll_user_profile_popup_up(&mut self) {
-        if let Some(popup) = self.user_profile_popup.as_mut() {
+        if let Some(popup) = self.popups.user_profile_popup.as_mut() {
             popup.scroll = popup.scroll.saturating_sub(1);
         }
     }
@@ -284,8 +292,8 @@ impl DashboardState {
         let Some(guild_id) = self.selected_guild_id() else {
             return self.selected_channel_recipient_group();
         };
-        let members = self.discord.members_for_guild(guild_id);
-        let roles = self.discord.roles_for_guild(guild_id);
+        let members = self.discord.cache.members_for_guild(guild_id);
+        let roles = self.discord.cache.roles_for_guild(guild_id);
         guild_member_groups(members, roles)
     }
 
@@ -294,17 +302,18 @@ impl DashboardState {
             return false;
         };
         self.discord
+            .cache
             .guild(guild_id)
             .is_some_and(|guild| guild.online_count.is_none())
     }
 
     pub fn message_author_role_color(&self, message: &MessageState) -> Option<u32> {
-        let channel = self.discord.channel(message.channel_id);
+        let channel = self.discord.cache.channel(message.channel_id);
         let guild_id = message
             .guild_id
             .or_else(|| channel.and_then(|channel| channel.guild_id));
         let guild_id = guild_id?;
-        self.discord.message_author_role_color(
+        self.discord.cache.message_author_role_color(
             guild_id,
             message.channel_id,
             message.id,
@@ -323,7 +332,7 @@ impl DashboardState {
                 continue;
             }
 
-            let channel = self.discord.channel(message.channel_id);
+            let channel = self.discord.cache.channel(message.channel_id);
             let Some(guild_id) = message
                 .guild_id
                 .or_else(|| channel.and_then(|channel| channel.guild_id))
@@ -331,7 +340,7 @@ impl DashboardState {
                 continue;
             };
 
-            if !self.discord.message_author_role_ids_known(
+            if !self.discord.cache.message_author_role_ids_known(
                 guild_id,
                 message.channel_id,
                 message.message_id,
@@ -388,7 +397,8 @@ impl DashboardState {
         let mut enqueued = false;
         for (guild_id, user_ids) in requests {
             for chunk in user_ids.chunks(MAX_GUILD_MEMBER_BY_ID_REQUEST_USERS) {
-                self.pending_commands
+                self.requests
+                    .pending_commands
                     .push_back(AppCommand::LoadGuildMembersByIds {
                         guild_id,
                         user_ids: chunk.to_vec(),
@@ -401,7 +411,9 @@ impl DashboardState {
 
     pub fn member_role_color(&self, member: MemberEntry<'_>) -> Option<u32> {
         let guild_id = self.selected_guild_id()?;
-        self.discord.member_role_color(guild_id, member.user_id())
+        self.discord
+            .cache
+            .member_role_color(guild_id, member.user_id())
     }
 
     /// Resolved display name for a member panel entry. Falls through to the
@@ -410,7 +422,11 @@ impl DashboardState {
         let name = entry.display_name();
         if entry.has_fallback_identity() {
             if let Some(guild_id) = self.selected_guild_id() {
-                if let Some(profile) = self.discord.user_profile(entry.user_id(), Some(guild_id)) {
+                if let Some(profile) = self
+                    .discord
+                    .cache
+                    .user_profile(entry.user_id(), Some(guild_id))
+                {
                     return profile.display_name().to_owned();
                 }
             }
@@ -422,7 +438,7 @@ impl DashboardState {
         let Some(guild_id) = self.selected_guild_id() else {
             return Line::from(" Members ");
         };
-        let guild = self.discord.guild(guild_id);
+        let guild = self.discord.cache.guild(guild_id);
         let Some(online) = guild.and_then(|g| g.online_count) else {
             return Line::from(" Members ");
         };

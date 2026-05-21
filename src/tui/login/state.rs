@@ -28,6 +28,20 @@ pub(super) struct LoginState {
     pub(super) qr: QrViewState,
 }
 
+impl Default for LoginState {
+    fn default() -> Self {
+        Self {
+            key_bindings: KeyBindings,
+            screen: LoginScreen::ModeSelect,
+            notice: None,
+            error: None,
+            token_input: String::new(),
+            password: PasswordViewState::default(),
+            qr: QrViewState::default(),
+        }
+    }
+}
+
 pub(super) struct PasswordViewState {
     pub(super) login: String,
     pub(super) password: String,
@@ -40,7 +54,18 @@ pub(super) struct PasswordViewState {
 }
 
 impl PasswordViewState {
-    fn new() -> Self {
+    pub(super) fn reset_sensitive(&mut self) {
+        self.password.clear();
+        self.mfa = None;
+        self.mfa_method = None;
+        self.mfa_code.clear();
+        self.status.clear();
+        self.in_progress = false;
+    }
+}
+
+impl Default for PasswordViewState {
+    fn default() -> Self {
         Self {
             login: String::new(),
             password: String::new(),
@@ -52,17 +77,9 @@ impl PasswordViewState {
             in_progress: false,
         }
     }
-
-    pub(super) fn reset_sensitive(&mut self) {
-        self.password.clear();
-        self.mfa = None;
-        self.mfa_method = None;
-        self.mfa_code.clear();
-        self.status.clear();
-        self.in_progress = false;
-    }
 }
 
+#[derive(Default)]
 pub(super) struct QrViewState {
     pub(super) status: String,
     pub(super) bitmap: Option<Vec<Vec<bool>>>,
@@ -70,14 +87,6 @@ pub(super) struct QrViewState {
 }
 
 impl QrViewState {
-    fn new() -> Self {
-        Self {
-            status: String::new(),
-            bitmap: None,
-            pending_user: None,
-        }
-    }
-
     pub(super) fn reset(&mut self) {
         self.status.clear();
         self.bitmap = None;
@@ -88,13 +97,8 @@ impl QrViewState {
 impl LoginState {
     pub(super) fn new(notice: Option<String>) -> Self {
         Self {
-            key_bindings: KeyBindings,
-            screen: LoginScreen::ModeSelect,
             notice,
-            error: None,
-            token_input: String::new(),
-            password: PasswordViewState::new(),
-            qr: QrViewState::new(),
+            ..Self::default()
         }
     }
 }
