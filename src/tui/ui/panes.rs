@@ -666,7 +666,7 @@ pub(super) fn render_composer_command_picker(
     if candidates.is_empty() {
         return;
     }
-    let Some(area) = mention_picker_area(message_areas, candidates.len()) else {
+    let Some(area) = composer_picker_area(message_areas, candidates.len()) else {
         return;
     };
     let visible_count = picker_visible_count(area, candidates.len());
@@ -752,6 +752,18 @@ pub(super) fn render_composer_emoji_picker(
 /// `None` when there isn't enough room (very short terminal) so the caller
 /// can silently skip drawing.
 fn mention_picker_area(message_areas: MessageAreas, candidate_count: usize) -> Option<Rect> {
+    picker_area(message_areas, candidate_count, true)
+}
+
+fn composer_picker_area(message_areas: MessageAreas, candidate_count: usize) -> Option<Rect> {
+    picker_area(message_areas, candidate_count, false)
+}
+
+fn picker_area(
+    message_areas: MessageAreas,
+    candidate_count: usize,
+    clamp_width: bool,
+) -> Option<Rect> {
     let composer = message_areas.composer;
     let messages = message_areas.list;
     if composer.x < messages.x || composer.width == 0 {
@@ -764,7 +776,11 @@ fn mention_picker_area(message_areas: MessageAreas, candidate_count: usize) -> O
     if height < 3 {
         return None;
     }
-    let width = composer.width.clamp(20, 48).min(messages.width);
+    let width = if clamp_width {
+        composer.width.clamp(20, 48).min(messages.width)
+    } else {
+        composer.width.min(messages.width)
+    };
     let x = composer.x;
     let y = composer.y.saturating_sub(height);
     Some(Rect {

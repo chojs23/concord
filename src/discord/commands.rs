@@ -19,6 +19,7 @@ pub struct ApplicationCommandInfo {
     pub application_id: Id<ApplicationMarker>,
     pub version: String,
     pub name: String,
+    pub application_name: Option<String>,
     pub description: String,
     pub options: Vec<ApplicationCommandOptionInfo>,
     pub raw: Value,
@@ -54,7 +55,8 @@ pub struct ApplicationCommandInteraction {
 pub struct ApplicationCommandInteractionOption {
     pub kind: u64,
     pub name: String,
-    pub value: Value,
+    pub value: Option<Value>,
+    pub options: Vec<ApplicationCommandInteractionOption>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

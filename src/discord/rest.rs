@@ -1140,23 +1140,43 @@ fn message_request_body(
 }
 
 fn parse_application_command_index(raw: &Value) -> Vec<ApplicationCommandInfo> {
+    let applications = parse_application_command_applications(raw);
     raw.get("application_commands")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(parse_application_command_info)
+        .filter_map(|command| parse_application_command_info(command, &applications))
         .collect()
 }
 
-fn parse_application_command_info(raw: &Value) -> Option<ApplicationCommandInfo> {
+fn parse_application_command_applications(
+    raw: &Value,
+) -> std::collections::HashMap<String, &Value> {
+    raw.get("applications")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|application| Some((application.get("id")?.as_str()?.to_owned(), application)))
+        .collect()
+}
+
+fn parse_application_command_info(
+    raw: &Value,
+    applications: &std::collections::HashMap<String, &Value>,
+) -> Option<ApplicationCommandInfo> {
     let id = raw.get("id")?.as_str()?.parse::<u64>().ok()?;
-    let application_id = raw.get("application_id")?.as_str()?.parse::<u64>().ok()?;
+    let application_id_raw = raw.get("application_id")?.as_str()?;
+    let application_id = application_id_raw.parse::<u64>().ok()?;
     let name = raw.get("name")?.as_str()?.to_owned();
     Some(ApplicationCommandInfo {
         id: Id::new(id),
         application_id: Id::new(application_id),
         version: raw.get("version")?.as_str()?.to_owned(),
         name,
+        application_name: parse_application_command_application_name(
+            raw,
+            applications.get(application_id_raw).copied(),
+        ),
         description: raw
             .get("description")
             .and_then(Value::as_str)
@@ -1171,6 +1191,33 @@ fn parse_application_command_info(raw: &Value) -> Option<ApplicationCommandInfo>
             .collect(),
         raw: raw.clone(),
     })
+}
+
+fn parse_application_command_application_name(
+    raw: &Value,
+    application: Option<&Value>,
+) -> Option<String> {
+    [
+        raw.get("application").and_then(|value| value.get("name")),
+        application.and_then(|value| value.get("name")),
+        raw.get("bot").and_then(|value| value.get("global_name")),
+        raw.get("bot").and_then(|value| value.get("username")),
+        application
+            .and_then(|value| value.get("bot"))
+            .and_then(|value| value.get("global_name")),
+        application
+            .and_then(|value| value.get("bot"))
+            .and_then(|value| value.get("username")),
+        raw.get("user").and_then(|value| value.get("global_name")),
+        raw.get("user").and_then(|value| value.get("username")),
+        raw.get("display_name"),
+        raw.get("application_name"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .find(|value| !value.trim().is_empty())
+    .map(str::to_owned)
 }
 
 fn parse_application_command_option_info(raw: &Value) -> Option<ApplicationCommandOptionInfo> {
@@ -1234,11 +1281,22 @@ fn application_command_interaction_body(interaction: &ApplicationCommandInteract
 }
 
 fn application_command_option_body(option: &ApplicationCommandInteractionOption) -> Value {
-    json!({
+    let mut body = json!({
         "type": option.kind,
         "name": option.name,
-        "value": option.value,
-    })
+    });
+    if let Some(value) = &option.value {
+        body["value"] = value.clone();
+    } else if !option.options.is_empty() {
+        body["options"] = Value::Array(
+            option
+                .options
+                .iter()
+                .map(application_command_option_body)
+                .collect(),
+        );
+    }
+    body
 }
 
 fn interaction_nonce() -> String {
@@ -1385,19 +1443,24 @@ mod tests {
 
     use crate::discord::ids::{
         Id,
-        marker::{ChannelMarker, EmojiMarker, GuildMarker},
+        marker::{ApplicationMarker, ChannelMarker, EmojiMarker, GuildMarker},
     };
 
     use crate::{
         AppError,
         discord::{
-            ChannelInfo, MAX_UPLOAD_FILE_BYTES, MessageAttachmentUpload, ReactionEmoji,
+            ApplicationCommandInfo, ApplicationCommandInteraction,
+            ApplicationCommandInteractionOption, ChannelInfo, MAX_UPLOAD_FILE_BYTES,
+            MessageAttachmentUpload, ReactionEmoji,
             rest::{
-                ForumPostPage, ForumSearchSort, REACTION_USERS_MAX_PAGES, is_search_index_warming,
-                merge_forum_pages, message_multipart_form, message_request_body, mute_request_body,
-                next_reaction_users_after, parse_forum_preview_messages, parse_forum_thread_page,
-                parse_user_profile_response, poll_vote_request_body, reaction_route_component,
-                upload_content_type, validate_message_content, validate_message_payload,
+                ForumPostPage, ForumSearchSort, REACTION_USERS_MAX_PAGES,
+                application_command_interaction_body, application_command_option_body,
+                is_search_index_warming, merge_forum_pages, message_multipart_form,
+                message_request_body, mute_request_body, next_reaction_users_after,
+                parse_application_command_index, parse_forum_preview_messages,
+                parse_forum_thread_page, parse_user_profile_response, poll_vote_request_body,
+                reaction_route_component, upload_content_type, validate_message_content,
+                validate_message_payload,
             },
         },
     };
@@ -1427,6 +1490,110 @@ mod tests {
         assert_eq!(body["message_reference"]["message_id"], "44");
         assert_eq!(body["attachments"][0]["id"], 0);
         assert_eq!(body["attachments"][0]["filename"], "cat.png");
+    }
+
+    #[test]
+    fn application_command_interaction_body_nests_subcommand_options() {
+        let interaction = ApplicationCommandInteraction {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            session_id: "session".to_owned(),
+            command: ApplicationCommandInfo {
+                id: Id::<ApplicationMarker>::new(100),
+                application_id: Id::<ApplicationMarker>::new(200),
+                version: "1".to_owned(),
+                name: "mod".to_owned(),
+                application_name: Some("ModBot".to_owned()),
+                description: "moderation".to_owned(),
+                options: Vec::new(),
+                raw: serde_json::json!({ "name": "mod" }),
+            },
+            options: vec![ApplicationCommandInteractionOption {
+                kind: 2,
+                name: "admin".to_owned(),
+                value: None,
+                options: vec![ApplicationCommandInteractionOption {
+                    kind: 1,
+                    name: "ban".to_owned(),
+                    value: None,
+                    options: vec![ApplicationCommandInteractionOption {
+                        kind: 6,
+                        name: "user".to_owned(),
+                        value: Some(serde_json::json!("123")),
+                        options: Vec::new(),
+                    }],
+                }],
+            }],
+        };
+
+        let body = application_command_interaction_body(&interaction);
+
+        assert_eq!(
+            body["data"]["options"],
+            serde_json::json!([
+                {
+                    "type": 2,
+                    "name": "admin",
+                    "options": [
+                        {
+                            "type": 1,
+                            "name": "ban",
+                            "options": [
+                                { "type": 6, "name": "user", "value": "123" }
+                            ]
+                        }
+                    ]
+                }
+            ])
+        );
+        assert!(body["data"]["options"][0].get("value").is_none());
+        assert!(
+            body["data"]["options"][0]["options"][0]
+                .get("value")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn application_command_index_joins_application_names() {
+        let commands = parse_application_command_index(&serde_json::json!({
+            "applications": [
+                { "id": "200", "name": "PollBot" }
+            ],
+            "application_commands": [
+                {
+                    "id": "100",
+                    "application_id": "200",
+                    "version": "1",
+                    "name": "poll",
+                    "description": "Create a poll",
+                    "options": []
+                }
+            ]
+        }));
+
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].application_name.as_deref(), Some("PollBot"));
+    }
+
+    #[test]
+    fn application_command_option_body_keeps_value_and_options_exclusive() {
+        let option = ApplicationCommandInteractionOption {
+            kind: 3,
+            name: "text".to_owned(),
+            value: Some(serde_json::json!("hello")),
+            options: vec![ApplicationCommandInteractionOption {
+                kind: 3,
+                name: "nested".to_owned(),
+                value: Some(serde_json::json!("ignored")),
+                options: Vec::new(),
+            }],
+        };
+
+        let body = application_command_option_body(&option);
+
+        assert_eq!(body["value"], serde_json::json!("hello"));
+        assert!(body.get("options").is_none());
     }
 
     #[test]

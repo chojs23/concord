@@ -67,7 +67,7 @@ pub(super) fn build_command_candidates(
                 lowered,
                 CommandPickerEntry {
                     label: format!("/{}", command.name),
-                    detail: command.description.clone(),
+                    detail: command_picker_detail(command),
                     replacement: format!("/{} ", command.name),
                 },
             ))
@@ -75,6 +75,16 @@ pub(super) fn build_command_candidates(
         .collect();
     scored.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
     scored.into_iter().map(|(_, _, entry)| entry).collect()
+}
+
+fn command_picker_detail(command: &ApplicationCommandInfo) -> String {
+    match command.application_name.as_deref() {
+        Some(name) if !command.description.is_empty() => {
+            format!("{name} - {}", command.description)
+        }
+        Some(name) => name.to_owned(),
+        None => command.description.clone(),
+    }
 }
 
 pub(super) fn build_command_option_candidates(
@@ -86,11 +96,27 @@ pub(super) fn build_command_option_candidates(
         .iter()
         .filter(|option| needle.is_empty() || option.name.to_ascii_lowercase().starts_with(&needle))
         .map(|option| CommandPickerEntry {
-            label: format!("{}:", option.name),
+            label: command_option_label(option),
             detail: option.description.clone(),
-            replacement: format!("{}:", option.name),
+            replacement: command_option_replacement(option),
         })
         .collect()
+}
+
+fn command_option_label(option: &ApplicationCommandOptionInfo) -> String {
+    if matches!(option.kind, 1 | 2) {
+        option.name.clone()
+    } else {
+        format!("{}:", option.name)
+    }
+}
+
+fn command_option_replacement(option: &ApplicationCommandOptionInfo) -> String {
+    if matches!(option.kind, 1 | 2) {
+        format!("{} ", option.name)
+    } else {
+        format!("{}:", option.name)
+    }
 }
 
 pub(super) fn build_command_choice_candidates(

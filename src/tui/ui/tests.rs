@@ -39,14 +39,14 @@ use crate::tui::message_time::{
 use crate::{
     config::{DisplayOptions, VoiceOptions},
     discord::{
-        ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, AttachmentInfo, ChannelInfo,
-        ChannelNotificationOverrideInfo, ChannelRecipientState, ChannelState, ChannelUnreadState,
-        ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, FriendStatus, GuildMemberState,
-        GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageAttachmentUpload,
-        MessageInfo, MessageKind, MessageSnapshotInfo, MessageState, MutualGuildInfo,
-        NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
-        ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
-        VoiceConnectionStatus, VoiceStateInfo,
+        ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, ApplicationCommandInfo,
+        ApplicationCommandOptionInfo, AttachmentInfo, ChannelInfo, ChannelNotificationOverrideInfo,
+        ChannelRecipientState, ChannelState, ChannelUnreadState, ChannelVisibilityStats,
+        CustomEmojiInfo, EmbedInfo, FriendStatus, GuildMemberState, GuildNotificationSettingsInfo,
+        MemberInfo, MentionInfo, MessageAttachmentUpload, MessageInfo, MessageKind,
+        MessageSnapshotInfo, MessageState, MutualGuildInfo, NotificationLevel, PollAnswerInfo,
+        PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
+        ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo, VoiceConnectionStatus, VoiceStateInfo,
     },
     tui::{
         format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
@@ -1012,6 +1012,46 @@ fn dashboard_renders_emoji_picker_above_composer() {
     assert!(
         rendered.contains(":party_time:"),
         "custom emoji picker should show current guild custom emoji:\n{rendered}"
+    );
+}
+
+#[test]
+fn dashboard_renders_command_picker_across_composer_width() {
+    let mut state = state_with_message();
+    state.push_event(AppEvent::ApplicationCommandsLoaded {
+        guild_id: Some(Id::new(1)),
+        commands: vec![ApplicationCommandInfo {
+            id: Id::new(100),
+            application_id: Id::new(200),
+            version: "1".to_owned(),
+            name: "lookup".to_owned(),
+            application_name: Some("LookupBot".to_owned()),
+            description:
+                "show details with a very long explanation visible past the old narrow picker limit"
+                    .to_owned(),
+            options: vec![ApplicationCommandOptionInfo {
+                kind: 1,
+                name: "item".to_owned(),
+                description: "item subcommand".to_owned(),
+                required: false,
+                autocomplete: false,
+                choices: Vec::new(),
+                options: Vec::new(),
+            }],
+            raw: serde_json::json!({ "name": "lookup" }),
+        }],
+    });
+    state.start_composer();
+    for ch in "/lo".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let dump = render_dashboard_dump(180, 24, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(
+        rendered.contains("past the old narrow picker limit"),
+        "command picker should use composer width for long descriptions:\n{rendered}"
     );
 }
 

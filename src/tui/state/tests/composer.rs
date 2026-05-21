@@ -1,4 +1,65 @@
 use super::*;
+use crate::discord::{
+    ApplicationCommandInfo, ApplicationCommandInteractionOption, ApplicationCommandOptionInfo,
+};
+use serde_json::{Value, json};
+
+fn application_command(
+    name: &str,
+    options: Vec<ApplicationCommandOptionInfo>,
+) -> ApplicationCommandInfo {
+    ApplicationCommandInfo {
+        id: Id::new(100),
+        application_id: Id::new(200),
+        version: "1".to_owned(),
+        name: name.to_owned(),
+        application_name: Some("TestBot".to_owned()),
+        description: format!("{name} command"),
+        options,
+        raw: json!({
+            "id": "100",
+            "application_id": "200",
+            "version": "1",
+            "name": name,
+        }),
+    }
+}
+
+fn application_command_option(
+    kind: u64,
+    name: &str,
+    required: bool,
+    options: Vec<ApplicationCommandOptionInfo>,
+) -> ApplicationCommandOptionInfo {
+    ApplicationCommandOptionInfo {
+        kind,
+        name: name.to_owned(),
+        description: format!("{name} option"),
+        required,
+        autocomplete: false,
+        choices: Vec::new(),
+        options,
+    }
+}
+
+fn state_with_application_command(command: ApplicationCommandInfo) -> DashboardState {
+    let mut state = state_with_writable_channel();
+    state.push_event(AppEvent::GatewaySessionReady {
+        session_id: "session".to_owned(),
+    });
+    state.push_event(AppEvent::ApplicationCommandsLoaded {
+        guild_id: Some(Id::new(1)),
+        commands: vec![command],
+    });
+    state.start_composer();
+    state
+}
+
+fn type_composer_text(state: &mut DashboardState, value: &str) {
+    for ch in value.chars() {
+        state.push_composer_char(ch);
+    }
+}
 
 #[test]
 fn start_composer_refused_in_read_only_channel() {
@@ -95,6 +156,260 @@ fn debug_channel_visibility_reports_active_guild_counts() {
             hidden: 1,
         }
     );
+}
+
+#[test]
+fn submit_slash_command_emits_direct_interaction_options() {
+    let command = application_command(
+        "echo",
+        vec![
+            application_command_option(3, "text", true, Vec::new()),
+            application_command_option(5, "loud", false, Vec::new()),
+        ],
+    );
+    let mut state = state_with_application_command(command);
+    type_composer_text(&mut state, "/echo text:hello world loud:true");
+
+    let Some(AppCommand::RunApplicationCommand { interaction }) = state.submit_composer() else {
+        panic!("expected slash command interaction");
+    };
+
+    assert_eq!(
+        interaction.options,
+        vec![
+            ApplicationCommandInteractionOption {
+                kind: 3,
+                name: "text".to_owned(),
+                value: Some(Value::String("hello world".to_owned())),
+                options: Vec::new(),
+            },
+            ApplicationCommandInteractionOption {
+                kind: 5,
+                name: "loud".to_owned(),
+                value: Some(Value::Bool(true)),
+                options: Vec::new(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn submit_slash_subcommand_emits_nested_interaction_options() {
+    let command = application_command(
+        "poll",
+        vec![application_command_option(
+            1,
+            "create",
+            false,
+            vec![application_command_option(3, "question", true, Vec::new())],
+        )],
+    );
+    let mut state = state_with_application_command(command);
+    type_composer_text(&mut state, "/poll create question:favorite color");
+
+    let Some(AppCommand::RunApplicationCommand { interaction }) = state.submit_composer() else {
+        panic!("expected slash command interaction");
+    };
+
+    assert_eq!(interaction.command.name, "poll");
+    assert_eq!(
+        interaction.options,
+        vec![ApplicationCommandInteractionOption {
+            kind: 1,
+            name: "create".to_owned(),
+            value: None,
+            options: vec![ApplicationCommandInteractionOption {
+                kind: 3,
+                name: "question".to_owned(),
+                value: Some(Value::String("favorite color".to_owned())),
+                options: Vec::new(),
+            }],
+        }]
+    );
+}
+
+#[test]
+fn submit_slash_subcommand_group_emits_nested_interaction_options() {
+    let command = application_command(
+        "mod",
+        vec![application_command_option(
+            2,
+            "admin",
+            false,
+            vec![application_command_option(
+                1,
+                "ban",
+                false,
+                vec![
+                    application_command_option(6, "user", true, Vec::new()),
+                    application_command_option(3, "reason", false, Vec::new()),
+                ],
+            )],
+        )],
+    );
+    let mut state = state_with_application_command(command);
+    type_composer_text(&mut state, "/mod admin ban user:<@123> reason:spam links");
+
+    let Some(AppCommand::RunApplicationCommand { interaction }) = state.submit_composer() else {
+        panic!("expected slash command interaction");
+    };
+
+    assert_eq!(
+        interaction.options,
+        vec![ApplicationCommandInteractionOption {
+            kind: 2,
+            name: "admin".to_owned(),
+            value: None,
+            options: vec![ApplicationCommandInteractionOption {
+                kind: 1,
+                name: "ban".to_owned(),
+                value: None,
+                options: vec![
+                    ApplicationCommandInteractionOption {
+                        kind: 6,
+                        name: "user".to_owned(),
+                        value: Some(Value::String("123".to_owned())),
+                        options: Vec::new(),
+                    },
+                    ApplicationCommandInteractionOption {
+                        kind: 3,
+                        name: "reason".to_owned(),
+                        value: Some(Value::String("spam links".to_owned())),
+                        options: Vec::new(),
+                    },
+                ],
+            }],
+        }]
+    );
+}
+
+#[test]
+fn submit_slash_command_waits_for_required_options() {
+    let command = application_command(
+        "poll",
+        vec![application_command_option(
+            1,
+            "create",
+            false,
+            vec![application_command_option(3, "question", true, Vec::new())],
+        )],
+    );
+    let mut state = state_with_application_command(command);
+    type_composer_text(&mut state, "/poll create");
+
+    assert_eq!(state.submit_composer(), None);
+    assert_eq!(state.composer_input(), "/poll create");
+}
+
+#[test]
+fn submit_slash_command_preserves_unparsed_free_text() {
+    let command = application_command(
+        "echo",
+        vec![application_command_option(3, "text", false, Vec::new())],
+    );
+    let mut state = state_with_application_command(command);
+    type_composer_text(&mut state, "/echo hello world");
+
+    assert_eq!(state.submit_composer(), None);
+    assert_eq!(state.composer_input(), "/echo hello world");
+}
+
+#[test]
+fn confirming_slash_command_immediately_shows_subcommands() {
+    let command = application_command(
+        "poll",
+        vec![application_command_option(
+            1,
+            "create",
+            false,
+            vec![application_command_option(3, "question", true, Vec::new())],
+        )],
+    );
+    let mut state = state_with_application_command(command);
+    type_composer_text(&mut state, "/po");
+
+    assert!(state.confirm_composer_command());
+
+    assert_eq!(state.composer_input(), "/poll ");
+    let candidates = state.composer_command_candidates();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].label, "create");
+    assert_eq!(candidates[0].replacement, "create ");
+}
+
+#[test]
+fn subcommand_picker_hides_used_leaf_options() {
+    let command = application_command(
+        "poll",
+        vec![application_command_option(
+            1,
+            "create",
+            false,
+            vec![
+                application_command_option(3, "question", true, Vec::new()),
+                application_command_option(4, "duration", false, Vec::new()),
+            ],
+        )],
+    );
+    let mut state = state_with_application_command(command);
+    type_composer_text(&mut state, "/poll create question:favorite color ");
+
+    let labels = state
+        .composer_command_candidates()
+        .into_iter()
+        .map(|candidate| candidate.label)
+        .collect::<Vec<_>>();
+
+    assert!(!labels.iter().any(|label| label == "question:"));
+    assert!(labels.iter().any(|label| label == "duration:"));
+}
+
+#[test]
+fn subcommand_group_picker_hides_used_leaf_options() {
+    let command = application_command(
+        "mod",
+        vec![application_command_option(
+            2,
+            "admin",
+            false,
+            vec![application_command_option(
+                1,
+                "ban",
+                false,
+                vec![
+                    application_command_option(6, "user", true, Vec::new()),
+                    application_command_option(3, "reason", false, Vec::new()),
+                ],
+            )],
+        )],
+    );
+    let mut state = state_with_application_command(command);
+    type_composer_text(&mut state, "/mod admin ban user:<@123> ");
+
+    let labels = state
+        .composer_command_candidates()
+        .into_iter()
+        .map(|candidate| candidate.label)
+        .collect::<Vec<_>>();
+
+    assert!(!labels.iter().any(|label| label == "user:"));
+    assert!(labels.iter().any(|label| label == "reason:"));
+}
+
+#[test]
+fn command_picker_detail_includes_application_name() {
+    let command = application_command(
+        "echo",
+        vec![application_command_option(3, "text", false, Vec::new())],
+    );
+    let mut state = state_with_application_command(command);
+    type_composer_text(&mut state, "/e");
+
+    let candidates = state.composer_command_candidates();
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].label, "/echo");
+    assert_eq!(candidates[0].detail, "TestBot - echo command");
 }
 
 #[test]
