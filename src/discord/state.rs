@@ -1239,6 +1239,12 @@ impl DiscordState {
                     .read_states
                     .entry(*channel_id)
                     .or_default();
+                if entry
+                    .last_acked_message_id
+                    .is_some_and(|acked| acked > *message_id)
+                {
+                    return;
+                }
                 entry.last_acked_message_id = Some(*message_id);
                 entry.mention_count = *mention_count;
                 entry.notification_count = 0;

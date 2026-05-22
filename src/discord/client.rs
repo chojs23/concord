@@ -39,6 +39,14 @@ const MEMBER_SEARCH_MAX_QUERY_CHARS: usize = 64;
 const MEMBER_SEARCH_MAX_LIMIT: u16 = 10;
 
 type ApplicationCommandCache = HashMap<Option<Id<GuildMarker>>, Vec<ApplicationCommandInfo>>;
+type MemberListRange = (u32, u32);
+type MemberListSubscriptionRequest = (
+    Id<GuildMarker>,
+    Id<ChannelMarker>,
+    u32,
+    Vec<MemberListRange>,
+);
+type DueMemberListSubscription = (Id<GuildMarker>, Id<ChannelMarker>, Vec<MemberListRange>);
 
 #[derive(Clone, Debug)]
 pub struct DiscordClient {
@@ -298,7 +306,7 @@ impl DiscordClient {
 
     pub(crate) fn set_member_list_subscription_target(
         &self,
-        target: Option<(Id<GuildMarker>, Id<ChannelMarker>, u32, Vec<(u32, u32)>)>,
+        target: Option<MemberListSubscriptionRequest>,
         now: std::time::Instant,
     ) {
         let target =
@@ -326,7 +334,7 @@ impl DiscordClient {
     pub(crate) fn next_due_member_list_subscription(
         &self,
         now: std::time::Instant,
-    ) -> Option<(Id<GuildMarker>, Id<ChannelMarker>, Vec<(u32, u32)>)> {
+    ) -> Option<DueMemberListSubscription> {
         self.request_lifecycle
             .lock()
             .expect("request lifecycle lock is not poisoned")

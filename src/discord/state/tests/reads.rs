@@ -148,6 +148,54 @@ fn message_ack_clears_outstanding_mentions_and_advances_pointer() {
 }
 
 #[test]
+fn stale_message_ack_does_not_reopen_unread_state() {
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(7);
+    let mut state = DiscordState::default();
+    state.apply_event(&AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
+        channel_id, 500,
+    )));
+    state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
+        settings: vec![notification_settings(
+            guild_id,
+            NotificationLevel::AllMessages,
+        )],
+    });
+    state.apply_event(&latest_history_loaded(
+        channel_id,
+        (101..=105)
+            .map(|message_id| MessageInfo {
+                guild_id: Some(guild_id),
+                ..message_info(channel_id, message_id, "hello")
+            })
+            .collect(),
+    ));
+    state.apply_event(&AppEvent::ReadStateInit {
+        entries: vec![read_state_info(channel_id, Some(Id::new(100)), 0)],
+    });
+    assert_eq!(state.channel_unread_message_count(channel_id), 5);
+
+    state.apply_event(&AppEvent::MessageAck {
+        channel_id,
+        message_id: Id::new(500),
+        mention_count: 0,
+    });
+    state.apply_event(&AppEvent::MessageAck {
+        channel_id,
+        message_id: Id::new(100),
+        mention_count: 5,
+    });
+
+    assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Seen);
+    assert_eq!(state.channel_unread_message_count(channel_id), 0);
+    assert_eq!(state.channel_ack_target(channel_id), None);
+}
+
+#[test]
 fn channel_ack_target_returns_latest_when_unread() {
     let channel_id = Id::new(7);
     let mut state = DiscordState::default();
