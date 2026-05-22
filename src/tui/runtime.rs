@@ -128,8 +128,11 @@ pub(super) async fn run_dashboard(
                     .show_avatars()
                     .then(|| state.user_profile_popup_avatar_url())
                     .flatten();
-                let (rendered_avatars, popup_avatar) =
-                    avatar_images.render_state_with_popup(&avatar_targets, popup_avatar_url);
+                let (rendered_avatars, popup_avatar) = avatar_images.render_state_with_popup(
+                    &avatar_targets,
+                    popup_avatar_url,
+                    state.circular_avatars(),
+                );
                 ui::render(
                     frame,
                     &state,

@@ -19,6 +19,7 @@ pub struct DisplayOptions {
     pub show_images: bool,
     pub image_preview_quality: ImagePreviewQualityPreset,
     pub show_custom_emoji: bool,
+    pub circular_avatars: bool,
     pub server_width: u16,
     pub channel_list_width: u16,
     pub member_list_width: u16,
@@ -212,6 +213,7 @@ impl Default for DisplayOptions {
             show_images: true,
             image_preview_quality: ImagePreviewQualityPreset::default(),
             show_custom_emoji: true,
+            circular_avatars: false,
             server_width: 20,
             channel_list_width: 24,
             member_list_width: 26,
@@ -356,6 +358,7 @@ mod tests {
             show_images: true,
             image_preview_quality: ImagePreviewQualityPreset::Balanced,
             show_custom_emoji: true,
+            circular_avatars: false,
             server_width: 20,
             channel_list_width: 24,
             member_list_width: 26,
@@ -459,6 +462,7 @@ mod tests {
             assert!(config.display.show_images);
             assert_eq!(config.display.image_preview_quality, image_preview_quality);
             assert!(config.display.show_custom_emoji);
+            assert!(!config.display.circular_avatars);
             let expected_desktop_notifications =
                 !toml.contains("[notifications]\ndesktop_notifications = false");
             assert_eq!(
@@ -506,6 +510,7 @@ mod tests {
                 show_images: false,
                 image_preview_quality: ImagePreviewQualityPreset::Original,
                 show_custom_emoji: false,
+                circular_avatars: true,
                 server_width: 12,
                 channel_list_width: 30,
                 member_list_width: 18,

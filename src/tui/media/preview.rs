@@ -469,6 +469,7 @@ impl ImagePreviewTarget {
             top_clip_rows: self.top_clip_rows,
             accent_color: self.accent_color,
             viewer: self.viewer,
+            mask_circular: false,
         }
     }
 }

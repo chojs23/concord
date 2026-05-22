@@ -767,12 +767,16 @@ mod tests {
         };
 
         assert_ne!(
-            AvatarProtocolKey::message_avatar(&full),
-            AvatarProtocolKey::message_avatar(&clipped)
+            AvatarProtocolKey::message_avatar(&full, false),
+            AvatarProtocolKey::message_avatar(&clipped, false)
         );
         assert_ne!(
-            AvatarProtocolKey::message_avatar(&full),
-            AvatarProtocolKey::profile_popup()
+            AvatarProtocolKey::message_avatar(&full, false),
+            AvatarProtocolKey::profile_popup(false)
+        );
+        assert_ne!(
+            AvatarProtocolKey::message_avatar(&full, false),
+            AvatarProtocolKey::message_avatar(&full, true)
         );
     }
 
@@ -1615,6 +1619,7 @@ mod tests {
             visible_preview_height: 3,
             top_clip_rows: 0,
             accent_color: None,
+            mask_circular: false,
         };
 
         let resized = clipped_preview_image(&image, (10, 20), render_info)

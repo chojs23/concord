@@ -45,24 +45,27 @@ pub(super) struct AvatarProtocolKey {
     preview_height: u16,
     visible_preview_height: u16,
     top_clip_rows: u16,
+    circular: bool,
 }
 
 impl AvatarProtocolKey {
-    pub(super) fn message_avatar(target: &AvatarTarget) -> Self {
+    pub(super) fn message_avatar(target: &AvatarTarget, circular: bool) -> Self {
         Self {
             preview_width: AVATAR_PREVIEW_WIDTH,
             preview_height: AVATAR_PREVIEW_HEIGHT,
             visible_preview_height: target.visible_height,
             top_clip_rows: target.top_clip_rows,
+            circular,
         }
     }
 
-    pub(super) fn profile_popup() -> Self {
+    pub(super) fn profile_popup(circular: bool) -> Self {
         Self {
             preview_width: PROFILE_POPUP_AVATAR_WIDTH,
             preview_height: PROFILE_POPUP_AVATAR_HEIGHT,
             visible_preview_height: PROFILE_POPUP_AVATAR_HEIGHT,
             top_clip_rows: 0,
+            circular,
         }
     }
 
@@ -78,6 +81,7 @@ impl AvatarProtocolKey {
             visible_preview_height: self.visible_preview_height,
             top_clip_rows: self.top_clip_rows,
             accent_color: None,
+            mask_circular: self.circular,
         }
     }
 }
@@ -156,6 +160,7 @@ impl AvatarImageCache {
         &mut self,
         targets: &[AvatarTarget],
         popup_url: Option<&str>,
+        circular: bool,
     ) -> (Vec<AvatarImage<'_>>, Option<AvatarImage<'_>>) {
         let touch_tick = self.next_tick();
         for target in targets {
@@ -182,7 +187,7 @@ impl AvatarImageCache {
             for target in targets {
                 let url =
                     avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
-                let key = AvatarProtocolKey::message_avatar(target);
+                let key = AvatarProtocolKey::message_avatar(target, circular);
                 let Some(AvatarImageEntry::Ready {
                     image, protocols, ..
                 }) = self.entries.get_mut(&url)
@@ -202,7 +207,7 @@ impl AvatarImageCache {
                     image, protocols, ..
                 }) = self.entries.get_mut(url)
             {
-                let key = AvatarProtocolKey::profile_popup();
+                let key = AvatarProtocolKey::profile_popup(circular);
                 if !protocols.contains_key(&key)
                     && let Some(protocol) =
                         clipped_preview_protocol(picker, image, key.render_info())
@@ -220,7 +225,7 @@ impl AvatarImageCache {
                 let AvatarImageEntry::Ready { protocols, .. } = self.entries.get(&url)? else {
                     return None;
                 };
-                let key = AvatarProtocolKey::message_avatar(target);
+                let key = AvatarProtocolKey::message_avatar(target, circular);
                 protocols.get(&key).map(|protocol| AvatarImage {
                     row: target.row,
                     visible_height: target.visible_height,
@@ -232,7 +237,7 @@ impl AvatarImageCache {
             let AvatarImageEntry::Ready { protocols, .. } = self.entries.get(&url)? else {
                 return None;
             };
-            let key = AvatarProtocolKey::profile_popup();
+            let key = AvatarProtocolKey::profile_popup(circular);
             protocols.get(&key).map(|protocol| AvatarImage {
                 row: 0,
                 visible_height: PROFILE_POPUP_AVATAR_HEIGHT,

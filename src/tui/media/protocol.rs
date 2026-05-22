@@ -73,6 +73,7 @@ pub(super) struct ImagePreviewRenderInfo {
     pub(super) visible_preview_height: u16,
     pub(super) top_clip_rows: u16,
     pub(super) accent_color: Option<u32>,
+    pub(super) mask_circular: bool,
 }
 
 pub(super) fn clipped_preview_image(
@@ -99,7 +100,37 @@ pub(super) fn clipped_preview_image(
     }
 
     let fitted = fit_image_to_canvas(image, full_width, full_height);
-    Some(fitted.crop_imm(0, crop_top, full_width, crop_height))
+    let mut cropped = fitted.crop_imm(0, crop_top, full_width, crop_height);
+    if render_info.mask_circular {
+        apply_circular_alpha_mask(&mut cropped, full_width, full_height, crop_top);
+    }
+    Some(cropped)
+}
+
+/// Zeroes the alpha channel for pixels outside the circle inscribed in the
+/// full (uncropped) image bounds. The mask is computed against the full image
+/// because vertical clipping (`top_clip_rows`) shifts the crop window, but the
+/// circle should stay anchored to the original avatar — otherwise scrolling
+/// would deform it.
+fn apply_circular_alpha_mask(
+    image: &mut DynamicImage,
+    full_width: u32,
+    full_height: u32,
+    crop_top: u32,
+) {
+    let mut rgba = image.to_rgba8();
+    let cx = full_width as f32 / 2.0 - 0.5;
+    let cy = full_height as f32 / 2.0 - 0.5;
+    let radius = (full_width.min(full_height) as f32 / 2.0) - 0.5;
+    let radius_sq = radius * radius;
+    for (x, y, pixel) in rgba.enumerate_pixels_mut() {
+        let dx = x as f32 - cx;
+        let dy = (y + crop_top) as f32 - cy;
+        if dx * dx + dy * dy > radius_sq {
+            pixel.0[3] = 0;
+        }
+    }
+    *image = DynamicImage::ImageRgba8(rgba);
 }
 
 pub(super) fn clipped_preview_protocol(

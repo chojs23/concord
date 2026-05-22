@@ -365,6 +365,7 @@ show_avatars = true
 show_images = true
 image_preview_quality = "balanced"
 show_custom_emoji = true
+circular_avatars = false
 
 [notifications]
 desktop_notifications = true

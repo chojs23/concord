@@ -9,7 +9,7 @@ use super::{
     popups::{OptionsCategory, OptionsPopupState},
 };
 
-const DISPLAY_OPTION_COUNT: usize = 5;
+const DISPLAY_OPTION_COUNT: usize = 6;
 const NOTIFICATION_OPTION_COUNT: usize = 1;
 const VOICE_OPTION_COUNT: usize = 6;
 const OPTION_CATEGORY_COUNT: usize = 3;
@@ -136,6 +136,10 @@ impl DashboardState {
 
     pub fn show_avatars(&self) -> bool {
         self.options.display_options.avatars_visible()
+    }
+
+    pub fn circular_avatars(&self) -> bool {
+        self.options.display_options.circular_avatars
     }
 
     pub fn show_images(&self) -> bool {
@@ -370,6 +374,14 @@ impl DashboardState {
                 effective: options.custom_emoji_visible(),
                 description: "When off, custom emoji are shown as their emoji id.",
             },
+            DisplayOptionItem {
+                label: "Circular avatars",
+                enabled: options.circular_avatars,
+                value: None,
+                gauge_percent: None,
+                effective: options.avatars_visible() && options.circular_avatars,
+                description: "Mask message and profile avatars into a circle.",
+            },
         ]
     }
 
@@ -479,6 +491,10 @@ impl DashboardState {
             (OptionsCategory::Display, 4) => {
                 self.options.display_options.show_custom_emoji =
                     !self.options.display_options.show_custom_emoji
+            }
+            (OptionsCategory::Display, 5) => {
+                self.options.display_options.circular_avatars =
+                    !self.options.display_options.circular_avatars
             }
             (OptionsCategory::Notifications, 0) => {
                 self.options.notification_options.desktop_notifications =
