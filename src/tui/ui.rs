@@ -42,7 +42,7 @@ const READ_DIM: Color = Color::Rgb(130, 130, 130);
 
 /// Explicit RGB instead of relying on `Modifier::BOLD` alone, which most
 /// monospace fonts can't apply to CJK glyphs.
-const UNREAD_BRIGHT: Color = Color::Rgb(255, 255, 255);
+const UNREAD_BRIGHT: Color = Color::Reset;
 
 mod activity;
 mod forum;
@@ -380,7 +380,7 @@ fn panel_block_owned(title: String, focused: bool) -> Block<'static> {
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(border))
-        .title_style(Style::default().fg(Color::White).bold())
+        .title_style(Style::default().fg(Color::Reset).bold())
 }
 
 pub(super) fn panel_block_line(title: Line<'static>, focused: bool) -> Block<'static> {
@@ -391,7 +391,7 @@ pub(super) fn panel_block_line(title: Line<'static>, focused: bool) -> Block<'st
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(border))
-        .title_style(Style::default().fg(Color::White).bold())
+        .title_style(Style::default().fg(Color::Reset).bold())
 }
 
 #[cfg(test)]
