@@ -495,7 +495,6 @@ impl DashboardState {
         }
 
         for (channel_id, message_id) in targets.iter().copied() {
-            self.requests.pending_read_acks.remove(&channel_id);
             self.discord.cache.apply_event(&AppEvent::MessageAck {
                 channel_id,
                 message_id,

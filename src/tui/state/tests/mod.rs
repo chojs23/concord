@@ -98,18 +98,11 @@ fn direct_message_create_event(channel_id: Id<ChannelMarker>, message_id: u64) -
 }
 
 fn drain_debounced_read_ack(state: &mut DashboardState) -> Vec<AppCommand> {
-    let deadline = state
-        .next_read_ack_deadline()
-        .expect("read ack should be scheduled");
-    state.flush_due_read_acks(deadline);
     state.drain_pending_commands()
 }
 
 fn clear_scheduled_read_ack(state: &mut DashboardState) {
-    if let Some(deadline) = state.next_read_ack_deadline() {
-        state.flush_due_read_acks(deadline);
-        state.drain_pending_commands();
-    }
+    state.drain_pending_commands();
 }
 
 fn push_reply_message_with_attachments(

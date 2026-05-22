@@ -12,7 +12,7 @@ use std::sync::Once;
 use tokio::sync::mpsc;
 
 use crate::{
-    discord::{AppEvent, SequencedAppEvent, VoiceSoundKind},
+    discord::{AppEvent, DiscordClient, SequencedAppEvent, VoiceSoundKind},
     logging,
 };
 
@@ -20,10 +20,6 @@ use super::{
     media::{
         AvatarImageCache, EmojiImageCache, ImagePreviewCache, ImagePreviewDecodeResult,
         spawn_image_preview_decode,
-    },
-    requests::{
-        ForumPostRequests, HistoryRequests, MessageAuthorMemberRequests, PinnedMessageRequests,
-        ThreadPreviewRequests,
     },
     state::{DashboardState, DesktopNotification},
 };
@@ -33,14 +29,10 @@ static NOTIFICATION_FAILURE_LOGGED: AtomicBool = AtomicBool::new(false);
 
 pub(super) struct EffectContext<'a> {
     pub(super) state: &'a mut DashboardState,
+    pub(super) client: &'a DiscordClient,
     pub(super) image_previews: &'a mut ImagePreviewCache,
     pub(super) avatar_images: &'a mut AvatarImageCache,
     pub(super) emoji_images: &'a mut EmojiImageCache,
-    pub(super) history_requests: &'a mut HistoryRequests,
-    pub(super) forum_post_requests: &'a mut ForumPostRequests,
-    pub(super) pinned_message_requests: &'a mut PinnedMessageRequests,
-    pub(super) message_author_member_requests: &'a mut MessageAuthorMemberRequests,
-    pub(super) thread_preview_requests: &'a mut ThreadPreviewRequests,
     pub(super) preview_decode_tx: &'a mpsc::UnboundedSender<ImagePreviewDecodeResult>,
 }
 
@@ -101,11 +93,6 @@ pub(super) fn process_effect_event(
     }
     ctx.avatar_images.record_event(&event);
     ctx.emoji_images.record_event(&event);
-    ctx.history_requests.record_event(&event);
-    ctx.forum_post_requests.record_event(&event);
-    ctx.pinned_message_requests.record_event(&event);
-    ctx.message_author_member_requests.record_event(&event);
-    ctx.thread_preview_requests.record_event(&event);
     if matches!(event, AppEvent::GatewayClosed) {
         handle_gateway_closed(ctx.state);
     } else {
@@ -114,8 +101,8 @@ pub(super) fn process_effect_event(
     if let Some(messages) = member_hydration_messages {
         let missing = ctx.state.missing_message_author_member_requests(&messages);
         let requests = ctx
-            .message_author_member_requests
-            .next(missing, std::time::Instant::now());
+            .client
+            .next_message_author_member_requests(missing, std::time::Instant::now());
         ctx.state.enqueue_message_author_member_requests(requests);
     }
     outcome
@@ -545,25 +532,18 @@ mod tests {
     }
 
     fn process_effect_in_default_context(state: &mut DashboardState, event: AppEvent) {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
         let mut image_previews = ImagePreviewCache::new();
         let mut avatar_images = AvatarImageCache::new();
         let mut emoji_images = EmojiImageCache::new();
-        let mut history_requests = HistoryRequests::default();
-        let mut forum_post_requests = ForumPostRequests::default();
-        let mut pinned_message_requests = PinnedMessageRequests::default();
-        let mut message_author_member_requests = MessageAuthorMemberRequests::default();
-        let mut thread_preview_requests = ThreadPreviewRequests::default();
         let (preview_decode_tx, _preview_decode_rx) = mpsc::unbounded_channel();
         let mut ctx = EffectContext {
             state,
+            client: &client,
             image_previews: &mut image_previews,
             avatar_images: &mut avatar_images,
             emoji_images: &mut emoji_images,
-            history_requests: &mut history_requests,
-            forum_post_requests: &mut forum_post_requests,
-            pinned_message_requests: &mut pinned_message_requests,
-            message_author_member_requests: &mut message_author_member_requests,
-            thread_preview_requests: &mut thread_preview_requests,
             preview_decode_tx: &preview_decode_tx,
         };
 

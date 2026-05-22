@@ -12,7 +12,6 @@ mod message_format;
 mod message_rows;
 mod message_time;
 mod redraw;
-mod requests;
 mod runtime;
 mod selection;
 mod state;
@@ -63,8 +62,8 @@ mod tests {
         marker::{AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker},
     };
     use crate::discord::{
-        AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, DownloadAttachmentSource,
-        MemberInfo, MessageKind, ReadStateInfo, SequencedAppEvent,
+        AppEvent, AttachmentInfo, AttachmentUpdate, ChannelInfo, DiscordClient,
+        DownloadAttachmentSource, MemberInfo, MessageKind, ReadStateInfo, SequencedAppEvent,
     };
 
     use super::{
@@ -73,10 +72,6 @@ mod tests {
         redraw::{
             should_redraw_after_visible_signature_change,
             should_suppress_image_redraw_for_signature_change, visible_dashboard_signature,
-        },
-        requests::{
-            ForumPostRequests, HistoryRequests, MessageAuthorMemberRequests, PinnedMessageRequests,
-            ThreadPreviewRequests,
         },
     };
     use crate::tui::state::{DashboardState, FocusPane};
@@ -87,25 +82,18 @@ mod tests {
         let mut image_previews = ImagePreviewCache::new();
         let mut avatar_images = AvatarImageCache::new();
         let mut emoji_images = EmojiImageCache::new();
-        let mut history_requests = HistoryRequests::default();
-        let mut forum_post_requests = ForumPostRequests::default();
-        let mut pinned_message_requests = PinnedMessageRequests::default();
-        let mut message_author_member_requests = MessageAuthorMemberRequests::default();
-        let mut thread_preview_requests = ThreadPreviewRequests::default();
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
         let (preview_decode_tx, _preview_decode_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut deferred_effects = VecDeque::new();
 
         {
             let mut ctx = effects::EffectContext {
                 state: &mut state,
+                client: &client,
                 image_previews: &mut image_previews,
                 avatar_images: &mut avatar_images,
                 emoji_images: &mut emoji_images,
-                history_requests: &mut history_requests,
-                forum_post_requests: &mut forum_post_requests,
-                pinned_message_requests: &mut pinned_message_requests,
-                message_author_member_requests: &mut message_author_member_requests,
-                thread_preview_requests: &mut thread_preview_requests,
                 preview_decode_tx: &preview_decode_tx,
             };
             effects::process_sequenced_effect(
@@ -128,14 +116,10 @@ mod tests {
         {
             let mut ctx = effects::EffectContext {
                 state: &mut state,
+                client: &client,
                 image_previews: &mut image_previews,
                 avatar_images: &mut avatar_images,
                 emoji_images: &mut emoji_images,
-                history_requests: &mut history_requests,
-                forum_post_requests: &mut forum_post_requests,
-                pinned_message_requests: &mut pinned_message_requests,
-                message_author_member_requests: &mut message_author_member_requests,
-                thread_preview_requests: &mut thread_preview_requests,
                 preview_decode_tx: &preview_decode_tx,
             };
             effects::process_deferred_effects(2, &mut deferred_effects, &mut ctx);

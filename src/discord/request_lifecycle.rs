@@ -8,66 +8,346 @@ use crate::discord::ids::{
 
 use crate::discord::{AppEvent, ForumPostArchiveState};
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct HistoryRequests {
     requests: HashMap<Id<ChannelMarker>, HistoryRequestState>,
     last_channel: Option<Id<ChannelMarker>>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct ForumPostRequests {
     requests: HashMap<Id<ChannelMarker>, ForumPostRequestState>,
     last_channel: Option<Id<ChannelMarker>>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct PinnedMessageRequests {
     requests: HashMap<Id<ChannelMarker>, PinnedMessageRequestState>,
     last_channel: Option<Id<ChannelMarker>>,
 }
 
-pub(super) struct ForumPostRequestTarget {
-    pub(super) guild_id: Id<GuildMarker>,
-    pub(super) channel_id: Id<ChannelMarker>,
-    pub(super) should_load_more: bool,
+#[derive(Debug, Default)]
+pub(super) struct OlderHistoryRequests {
+    requests: HashMap<Id<ChannelMarker>, OlderHistoryRequestState>,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct ReadAckRequests {
+    pending: HashMap<Id<ChannelMarker>, PendingReadAck>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ForumPostRequestTarget {
+    pub(crate) guild_id: Id<GuildMarker>,
+    pub(crate) channel_id: Id<ChannelMarker>,
+    pub(crate) should_load_more: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct MentionMemberSearchTarget {
-    pub(super) guild_id: Id<GuildMarker>,
-    pub(super) query: String,
+pub(crate) struct MentionMemberSearchTarget {
+    pub(crate) guild_id: Id<GuildMarker>,
+    pub(crate) query: String,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct MessageAuthorMemberRequests {
     requested: HashMap<MessageAuthorMemberRequestKey, Instant>,
     requested_order: VecDeque<MessageAuthorMemberRequestKey>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct InitialUnknownMemberRequests {
     requested: HashMap<InitialUnknownMemberRequestKey, Instant>,
     requested_order: VecDeque<InitialUnknownMemberRequestKey>,
 }
 
-pub(super) struct MemberListSubscriptionTarget {
-    pub(super) guild_id: Id<GuildMarker>,
-    pub(super) channel_id: Id<ChannelMarker>,
-    pub(super) bucket: u32,
-    pub(super) ranges: Vec<(u32, u32)>,
+#[derive(Debug)]
+pub(crate) struct MemberListSubscriptionTarget {
+    pub(crate) guild_id: Id<GuildMarker>,
+    pub(crate) channel_id: Id<ChannelMarker>,
+    pub(crate) bucket: u32,
+    pub(crate) ranges: Vec<(u32, u32)>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct MemberListSubscriptionRequests {
     last_sent: Option<MemberListSubscriptionKey>,
     pending: Option<PendingMemberListSubscription>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct MentionMemberSearchRequests {
     requested: HashMap<MentionMemberSearchKey, Instant>,
     requested_order: VecDeque<MentionMemberSearchKey>,
     pending: Option<PendingMentionMemberSearch>,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct UserProfileRequests {
+    in_flight: HashSet<UserProfileRequestKey>,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct UserNoteRequests {
+    in_flight: HashSet<Id<UserMarker>>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct RequestLifecycle {
+    history: HistoryRequests,
+    forum_posts: ForumPostRequests,
+    pinned_messages: PinnedMessageRequests,
+    older_history: OlderHistoryRequests,
+    read_acks: ReadAckRequests,
+    message_author_members: MessageAuthorMemberRequests,
+    initial_unknown_members: InitialUnknownMemberRequests,
+    member_list_subscriptions: MemberListSubscriptionRequests,
+    mention_member_searches: MentionMemberSearchRequests,
+    members: MemberRequests,
+    thread_previews: ThreadPreviewRequests,
+    user_profiles: UserProfileRequests,
+    user_notes: UserNoteRequests,
+}
+
+impl RequestLifecycle {
+    pub(crate) fn record_event(&mut self, event: &AppEvent) {
+        self.history.record_event(event);
+        self.older_history.record_event(event);
+        self.forum_posts.record_event(event);
+        self.pinned_messages.record_event(event);
+        self.message_author_members.record_event(event);
+        self.thread_previews.record_event(event);
+        self.user_profiles.record_event(event);
+        self.user_notes.record_event(event);
+    }
+
+    pub(crate) fn next_history_request(
+        &mut self,
+        channel_id: Option<Id<ChannelMarker>>,
+        force_reload: bool,
+    ) -> Option<Id<ChannelMarker>> {
+        self.history.next(channel_id, force_reload)
+    }
+
+    pub(crate) fn mark_history_failed(&mut self, channel_id: Id<ChannelMarker>) {
+        self.history.mark_failed(channel_id);
+    }
+
+    pub(crate) fn begin_older_history_request(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        before: Id<MessageMarker>,
+    ) -> bool {
+        self.older_history.begin_request(channel_id, before)
+    }
+
+    pub(crate) fn next_forum_post_request(
+        &mut self,
+        target: Option<ForumPostRequestTarget>,
+    ) -> Option<(
+        Id<GuildMarker>,
+        Id<ChannelMarker>,
+        ForumPostArchiveState,
+        usize,
+    )> {
+        self.forum_posts.next(target)
+    }
+
+    pub(crate) fn mark_forum_post_failed(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        archive_state: ForumPostArchiveState,
+        offset: usize,
+    ) {
+        self.forum_posts
+            .mark_failed(channel_id, archive_state, offset);
+    }
+
+    pub(crate) fn next_pinned_message_request(
+        &mut self,
+        channel_id: Option<Id<ChannelMarker>>,
+    ) -> Option<Id<ChannelMarker>> {
+        self.pinned_messages.next(channel_id)
+    }
+
+    pub(crate) fn mark_pinned_message_failed(&mut self, channel_id: Id<ChannelMarker>) {
+        self.pinned_messages.mark_failed(channel_id);
+    }
+
+    pub(crate) fn next_message_author_member_requests(
+        &mut self,
+        missing: Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)>,
+        now: Instant,
+    ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
+        self.message_author_members.next(missing, now)
+    }
+
+    pub(crate) fn next_initial_unknown_member_requests(
+        &mut self,
+        missing: Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)>,
+        now: Instant,
+    ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
+        self.initial_unknown_members.next(missing, now)
+    }
+
+    pub(crate) fn next_member_request(
+        &mut self,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> Option<Id<GuildMarker>> {
+        self.members.next(guild_id)
+    }
+
+    pub(crate) fn remove_member_request(&mut self, guild_id: Id<GuildMarker>) {
+        self.members.remove(guild_id);
+    }
+
+    pub(crate) fn set_mention_member_search_target(
+        &mut self,
+        target: Option<MentionMemberSearchTarget>,
+        now: Instant,
+    ) {
+        self.mention_member_searches.set_target(target, now);
+    }
+
+    pub(crate) fn mention_member_search_deadline(&self) -> Option<Instant> {
+        self.mention_member_searches.pending_deadline()
+    }
+
+    pub(crate) fn next_due_mention_member_search(
+        &mut self,
+        now: Instant,
+    ) -> Option<MentionMemberSearchTarget> {
+        self.mention_member_searches.next_due(now)
+    }
+
+    pub(crate) fn set_member_list_subscription_target(
+        &mut self,
+        target: Option<MemberListSubscriptionTarget>,
+        now: Instant,
+    ) {
+        self.member_list_subscriptions.set_target(target, now);
+    }
+
+    pub(crate) fn member_list_subscription_deadline(&self) -> Option<Instant> {
+        self.member_list_subscriptions.pending_deadline()
+    }
+
+    pub(crate) fn next_due_member_list_subscription(
+        &mut self,
+        now: Instant,
+    ) -> Option<MemberListSubscriptionTarget> {
+        self.member_list_subscriptions.next_due(now)
+    }
+
+    pub(crate) fn next_thread_preview_requests(
+        &mut self,
+        missing: Vec<(Id<ChannelMarker>, Id<MessageMarker>)>,
+    ) -> Vec<(Id<ChannelMarker>, Id<MessageMarker>)> {
+        self.thread_previews.next(missing)
+    }
+
+    pub(crate) fn remove_thread_preview_request(
+        &mut self,
+        key: (Id<ChannelMarker>, Id<MessageMarker>),
+    ) {
+        self.thread_previews.remove(key);
+    }
+
+    pub(crate) fn begin_user_profile_request(
+        &mut self,
+        user_id: Id<UserMarker>,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> bool {
+        self.user_profiles.begin_request(user_id, guild_id)
+    }
+
+    pub(crate) fn begin_user_note_request(&mut self, user_id: Id<UserMarker>) -> bool {
+        self.user_notes.begin_request(user_id)
+    }
+
+    pub(crate) fn mark_user_note_failed(&mut self, user_id: Id<UserMarker>) {
+        self.user_notes.mark_failed(user_id);
+    }
+
+    pub(crate) fn schedule_read_ack(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        now: Instant,
+    ) {
+        self.read_acks.schedule(channel_id, message_id, now);
+    }
+
+    pub(crate) fn clear_read_ack(&mut self, channel_id: Id<ChannelMarker>) {
+        self.read_acks.clear(channel_id);
+    }
+
+    pub(crate) fn clear_read_acks(
+        &mut self,
+        channel_ids: impl IntoIterator<Item = Id<ChannelMarker>>,
+    ) {
+        for channel_id in channel_ids {
+            self.clear_read_ack(channel_id);
+        }
+    }
+
+    pub(crate) fn next_read_ack_deadline(&self) -> Option<Instant> {
+        self.read_acks.next_deadline()
+    }
+
+    pub(crate) fn flush_due_read_acks(
+        &mut self,
+        now: Instant,
+    ) -> Vec<(Id<ChannelMarker>, Id<MessageMarker>)> {
+        self.read_acks.flush_due(now)
+    }
+}
+
+impl UserProfileRequests {
+    pub(super) fn record_event(&mut self, event: &AppEvent) {
+        match event {
+            AppEvent::UserProfileLoaded { guild_id, profile } => {
+                self.in_flight.remove(&UserProfileRequestKey {
+                    user_id: profile.user_id,
+                    guild_id: *guild_id,
+                });
+            }
+            AppEvent::UserProfileLoadFailed {
+                user_id, guild_id, ..
+            } => {
+                self.in_flight.remove(&UserProfileRequestKey {
+                    user_id: *user_id,
+                    guild_id: *guild_id,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn begin_request(
+        &mut self,
+        user_id: Id<UserMarker>,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> bool {
+        self.in_flight
+            .insert(UserProfileRequestKey { user_id, guild_id })
+    }
+}
+
+impl UserNoteRequests {
+    pub(super) fn record_event(&mut self, event: &AppEvent) {
+        if let AppEvent::UserNoteLoaded { user_id, .. } = event {
+            self.in_flight.remove(user_id);
+        }
+    }
+
+    pub(super) fn begin_request(&mut self, user_id: Id<UserMarker>) -> bool {
+        self.in_flight.insert(user_id)
+    }
+
+    pub(super) fn mark_failed(&mut self, user_id: Id<UserMarker>) {
+        self.in_flight.remove(&user_id);
+    }
 }
 
 impl HistoryRequests {
@@ -244,6 +524,60 @@ impl PinnedMessageRequests {
     }
 }
 
+impl OlderHistoryRequests {
+    fn record_event(&mut self, event: &AppEvent) {
+        match event {
+            AppEvent::MessageHistoryLoaded {
+                channel_id,
+                before: Some(response_before),
+                messages,
+            } => self.record_loaded(*channel_id, *response_before, messages.is_empty()),
+            AppEvent::MessageHistoryLoadFailed { channel_id, .. } => {
+                self.requests.remove(channel_id);
+            }
+            _ => {}
+        }
+    }
+
+    fn begin_request(&mut self, channel_id: Id<ChannelMarker>, before: Id<MessageMarker>) -> bool {
+        match self.requests.get(&channel_id) {
+            Some(OlderHistoryRequestState::Requested { .. }) => false,
+            Some(OlderHistoryRequestState::Exhausted { before: exhausted })
+                if *exhausted == before =>
+            {
+                false
+            }
+            _ => {
+                self.requests
+                    .insert(channel_id, OlderHistoryRequestState::Requested { before });
+                true
+            }
+        }
+    }
+
+    fn record_loaded(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        response_before: Id<MessageMarker>,
+        is_empty: bool,
+    ) {
+        let Some(OlderHistoryRequestState::Requested { before }) =
+            self.requests.get(&channel_id).copied()
+        else {
+            return;
+        };
+        if response_before != before {
+            return;
+        }
+        if is_empty {
+            self.requests
+                .insert(channel_id, OlderHistoryRequestState::Exhausted { before });
+        } else {
+            self.requests.remove(&channel_id);
+        }
+    }
+}
+
 impl MessageAuthorMemberRequests {
     const REQUEST_TTL: Duration = Duration::from_secs(30);
     const MAX_REQUESTED: usize = 4096;
@@ -413,12 +747,12 @@ impl MemberListSubscriptionRequests {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct MemberRequests {
     requests: HashSet<Id<GuildMarker>>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct ThreadPreviewRequests {
     requested: HashSet<(Id<ChannelMarker>, Id<MessageMarker>)>,
     failed: HashSet<(Id<ChannelMarker>, Id<MessageMarker>)>,
@@ -552,21 +886,84 @@ type MentionMemberSearchKey = (Id<GuildMarker>, String);
 type MessageAuthorMemberRequestKey = (Id<GuildMarker>, Id<UserMarker>);
 type InitialUnknownMemberRequestKey = (Id<GuildMarker>, Id<UserMarker>);
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct UserProfileRequestKey {
+    user_id: Id<UserMarker>,
+    guild_id: Option<Id<GuildMarker>>,
+}
+
+const READ_ACK_DEBOUNCE: Duration = Duration::from_millis(1000);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OlderHistoryRequestState {
+    Requested { before: Id<MessageMarker> },
+    Exhausted { before: Id<MessageMarker> },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingReadAck {
+    message_id: Id<MessageMarker>,
+    deadline: Instant,
+}
+
+#[derive(Debug, PartialEq)]
 struct MemberListSubscriptionKey {
     guild_id: Id<GuildMarker>,
     channel_id: Id<ChannelMarker>,
     bucket: u32,
 }
 
+#[derive(Debug)]
 struct PendingMentionMemberSearch {
     target: MentionMemberSearchTarget,
     ready_at: Instant,
 }
 
+#[derive(Debug)]
 struct PendingMemberListSubscription {
     target: MemberListSubscriptionTarget,
     ready_at: Instant,
+}
+
+impl ReadAckRequests {
+    fn schedule(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        now: Instant,
+    ) {
+        let deadline = now + READ_ACK_DEBOUNCE;
+        self.pending
+            .entry(channel_id)
+            .and_modify(|pending| {
+                pending.message_id = pending.message_id.max(message_id);
+            })
+            .or_insert(PendingReadAck {
+                message_id,
+                deadline,
+            });
+    }
+
+    fn clear(&mut self, channel_id: Id<ChannelMarker>) {
+        self.pending.remove(&channel_id);
+    }
+
+    fn next_deadline(&self) -> Option<Instant> {
+        self.pending.values().map(|pending| pending.deadline).min()
+    }
+
+    fn flush_due(&mut self, now: Instant) -> Vec<(Id<ChannelMarker>, Id<MessageMarker>)> {
+        let mut due = Vec::new();
+        self.pending.retain(|channel_id, pending| {
+            if pending.deadline <= now {
+                due.push((*channel_id, pending.message_id));
+                false
+            } else {
+                true
+            }
+        });
+        due
+    }
 }
 
 impl MentionMemberSearchTarget {
@@ -748,13 +1145,15 @@ enum PinnedMessageRequestState {
 mod tests {
     use crate::discord::ids::Id;
 
-    use crate::discord::{AppEvent, ChannelInfo, ForumPostArchiveState, MemberInfo};
+    use crate::discord::{
+        AppEvent, ChannelInfo, ForumPostArchiveState, FriendStatus, MemberInfo, UserProfileInfo,
+    };
 
     use super::{
         ForumPostRequestTarget, ForumPostRequests, HistoryRequests, MemberListSubscriptionRequests,
         MemberListSubscriptionTarget, MemberRequests, MentionMemberSearchRequests,
         MentionMemberSearchTarget, MessageAuthorMemberRequests, PinnedMessageRequests,
-        ThreadPreviewRequests,
+        RequestLifecycle, ThreadPreviewRequests, UserNoteRequests, UserProfileRequests,
     };
 
     #[test]
@@ -990,6 +1389,23 @@ mod tests {
         }
     }
 
+    fn user_profile(user_id: Id<crate::discord::ids::marker::UserMarker>) -> UserProfileInfo {
+        UserProfileInfo {
+            user_id,
+            username: "neo".to_owned(),
+            global_name: None,
+            guild_nick: None,
+            role_ids: Vec::new(),
+            avatar_url: None,
+            bio: None,
+            pronouns: None,
+            mutual_guilds: Vec::new(),
+            mutual_friends_count: 0,
+            friend_status: FriendStatus::None,
+            note: None,
+        }
+    }
+
     #[test]
     fn member_request_is_sent_once_per_active_guild() {
         let mut requests = MemberRequests::default();
@@ -1012,6 +1428,47 @@ mod tests {
         requests.remove(guild_id);
 
         assert_eq!(requests.next(Some(guild_id)), Some(guild_id));
+    }
+
+    #[test]
+    fn user_profile_request_dedupes_until_success_or_failure() {
+        let mut requests = UserProfileRequests::default();
+        let user_id = Id::new(10);
+        let guild_id = Some(Id::new(1));
+
+        assert!(requests.begin_request(user_id, guild_id));
+        assert!(!requests.begin_request(user_id, guild_id));
+
+        requests.record_event(&AppEvent::UserProfileLoaded {
+            guild_id,
+            profile: user_profile(user_id),
+        });
+        assert!(requests.begin_request(user_id, guild_id));
+
+        requests.record_event(&AppEvent::UserProfileLoadFailed {
+            user_id,
+            guild_id,
+            message: "temporary failure".to_owned(),
+        });
+        assert!(requests.begin_request(user_id, guild_id));
+    }
+
+    #[test]
+    fn user_note_request_dedupes_until_success_or_failure() {
+        let mut requests = UserNoteRequests::default();
+        let user_id = Id::new(10);
+
+        assert!(requests.begin_request(user_id));
+        assert!(!requests.begin_request(user_id));
+
+        requests.record_event(&AppEvent::UserNoteLoaded {
+            user_id,
+            note: Some("note".to_owned()),
+        });
+        assert!(requests.begin_request(user_id));
+
+        requests.mark_failed(user_id);
+        assert!(requests.begin_request(user_id));
     }
 
     #[test]
@@ -1205,5 +1662,57 @@ mod tests {
         assert_eq!(requests.next(vec![key]), Vec::new());
         assert_eq!(requests.next(Vec::new()), Vec::new());
         assert_eq!(requests.next(vec![key]), vec![key]);
+    }
+
+    #[test]
+    fn older_history_request_dedupes_and_tracks_exhausted_cursor() {
+        let mut requests = RequestLifecycle::default();
+        let channel_id = Id::new(10);
+        let before = Id::new(30);
+
+        assert!(requests.begin_older_history_request(channel_id, before));
+        assert!(!requests.begin_older_history_request(channel_id, before));
+
+        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
+            channel_id,
+            message: "temporary failure".to_owned(),
+        });
+        assert!(requests.begin_older_history_request(channel_id, before));
+
+        requests.record_event(&AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: Some(before),
+            messages: Vec::new(),
+        });
+        assert!(!requests.begin_older_history_request(channel_id, before));
+        assert!(requests.begin_older_history_request(channel_id, Id::new(20)));
+    }
+
+    #[test]
+    fn read_ack_request_debounces_and_coalesces_by_channel() {
+        let mut requests = RequestLifecycle::default();
+        let now = std::time::Instant::now();
+        let channel_id = Id::new(10);
+
+        requests.schedule_read_ack(channel_id, Id::new(30), now);
+        requests.schedule_read_ack(
+            channel_id,
+            Id::new(31),
+            now + std::time::Duration::from_millis(1),
+        );
+        let deadline = requests
+            .next_read_ack_deadline()
+            .expect("read ack deadline should be armed");
+
+        assert!(
+            requests
+                .flush_due_read_acks(deadline - std::time::Duration::from_millis(1))
+                .is_empty()
+        );
+        assert_eq!(
+            requests.flush_due_read_acks(deadline),
+            vec![(channel_id, Id::new(31))]
+        );
+        assert_eq!(requests.next_read_ack_deadline(), None);
     }
 }

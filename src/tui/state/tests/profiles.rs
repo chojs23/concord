@@ -11,7 +11,13 @@ fn opening_profile_uses_cache_for_same_guild() {
         profile: profile_info(user_id.get(), Some("guild nick")),
     });
 
-    assert_eq!(state.open_user_profile_popup(user_id, Some(guild_id)), None);
+    assert_eq!(
+        state.open_user_profile_popup(user_id, Some(guild_id)),
+        Some(AppCommand::LoadUserProfile {
+            user_id,
+            guild_id: Some(guild_id),
+        })
+    );
     assert_eq!(
         state
             .user_profile_popup_data()

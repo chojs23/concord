@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     ops::{Deref, DerefMut},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use crate::discord::ids::{
@@ -14,8 +14,8 @@ use crate::config::{DisplayOptions, NotificationOptions, VoiceOptions};
 use crate::discord::{
     AppCommand, AppEvent, ApplicationCommandInfo, ChannelUnreadState, DiscordSnapshot,
     DiscordState, DownloadAttachmentSource, ForumPostArchiveState, MentionInfo,
-    MessageAttachmentUpload, MessageInfo, MessageSnapshotInfo, MessageState, MuteDuration,
-    PresenceStatus, SnapshotAreas, SnapshotRevision, VoiceConnectionStatus,
+    MessageAttachmentUpload, MessageSnapshotInfo, MessageState, MuteDuration, PresenceStatus,
+    SnapshotAreas, SnapshotRevision, VoiceConnectionStatus,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -98,23 +98,9 @@ pub struct ToastView<'a> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum OlderHistoryRequestState {
-    Requested { before: Id<MessageMarker> },
-    Exhausted { before: Id<MessageMarker> },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UnreadBanner {
     pub since_message_id: Id<MessageMarker>,
     pub unread_count: usize,
-}
-
-const READ_ACK_DEBOUNCE: Duration = Duration::from_millis(1000);
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct PendingReadAck {
-    message_id: Id<MessageMarker>,
-    deadline: Instant,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -218,7 +204,6 @@ struct DiscordUiState {
     current_user: Option<String>,
     current_user_id: Option<Id<UserMarker>>,
     application_commands: HashMap<Option<Id<GuildMarker>>, Vec<ApplicationCommandInfo>>,
-    application_command_requests: HashSet<Option<Id<GuildMarker>>>,
     current_user_can_use_animated_custom_emojis: Option<bool>,
     update_available_version: Option<String>,
 }
@@ -465,9 +450,7 @@ impl OptionsUiState {
 
 #[derive(Debug, Default)]
 struct RequestTrackingState {
-    older_history_requests: HashMap<Id<ChannelMarker>, OlderHistoryRequestState>,
     forum_post_lists: HashMap<Id<ChannelMarker>, ForumPostListState>,
-    pending_read_acks: HashMap<Id<ChannelMarker>, PendingReadAck>,
     pending_commands: VecDeque<AppCommand>,
 }
 
@@ -557,37 +540,6 @@ impl DashboardState {
             .len()
     }
 
-    pub fn next_read_ack_deadline(&self) -> Option<Instant> {
-        self.requests
-            .pending_read_acks
-            .values()
-            .map(|pending| pending.deadline)
-            .min()
-    }
-
-    pub fn flush_due_read_acks(&mut self, now: Instant) {
-        let mut due = Vec::new();
-        self.requests
-            .pending_read_acks
-            .retain(|channel_id, pending| {
-                if pending.deadline <= now {
-                    due.push((*channel_id, pending.message_id));
-                    false
-                } else {
-                    true
-                }
-            });
-
-        for (channel_id, message_id) in due {
-            self.requests
-                .pending_commands
-                .push_back(AppCommand::AckChannel {
-                    channel_id,
-                    message_id,
-                });
-        }
-    }
-
     pub fn drain_pending_commands(&mut self) -> Vec<AppCommand> {
         self.requests.pending_commands.drain(..).collect()
     }
@@ -658,7 +610,6 @@ impl DashboardState {
                     Some(*can_use_animated_custom_emojis);
             }
             AppEvent::ApplicationCommandsLoaded { guild_id, commands } => {
-                self.discord.application_command_requests.remove(guild_id);
                 self.discord
                     .application_commands
                     .insert(*guild_id, commands.clone());
@@ -685,9 +636,7 @@ impl DashboardState {
                     view_height: 0,
                 });
             }
-            AppEvent::MessageHistoryLoadFailed { channel_id, .. } => {
-                self.requests.older_history_requests.remove(channel_id);
-            }
+            AppEvent::MessageHistoryLoadFailed { .. } => {}
             AppEvent::ForumPostsLoaded {
                 channel_id,
                 archive_state,
@@ -705,11 +654,7 @@ impl DashboardState {
                     *has_more,
                 );
             }
-            AppEvent::MessageHistoryLoaded {
-                channel_id,
-                before,
-                messages,
-            } => self.record_older_history_loaded(*channel_id, *before, messages),
+            AppEvent::MessageHistoryLoaded { .. } => {}
             AppEvent::UserProfileLoadFailed {
                 user_id,
                 guild_id,
@@ -1545,33 +1490,6 @@ impl DashboardState {
             .and_then(|channel| channel.guild_id)
     }
 
-    fn record_older_history_loaded(
-        &mut self,
-        channel_id: Id<ChannelMarker>,
-        response_before: Option<Id<MessageMarker>>,
-        messages: &[MessageInfo],
-    ) {
-        let Some(OlderHistoryRequestState::Requested { before }) = self
-            .requests
-            .older_history_requests
-            .get(&channel_id)
-            .copied()
-        else {
-            return;
-        };
-        if response_before != Some(before) {
-            return;
-        }
-
-        if messages.is_empty() {
-            self.requests
-                .older_history_requests
-                .insert(channel_id, OlderHistoryRequestState::Exhausted { before });
-        } else {
-            self.requests.older_history_requests.remove(&channel_id);
-        }
-    }
-
     fn record_thread_channel_upserted(&mut self, channel: &crate::discord::ChannelInfo) {
         let is_thread = matches!(
             channel.kind.as_str(),
@@ -1765,19 +1683,6 @@ impl DashboardState {
         }
         let channel_id = self.selected_channel_id()?;
         let before = self.older_history_cursor()?;
-        match self.requests.older_history_requests.get(&channel_id) {
-            Some(OlderHistoryRequestState::Requested { .. }) => return None,
-            Some(OlderHistoryRequestState::Exhausted { before: exhausted })
-                if *exhausted == before =>
-            {
-                return None;
-            }
-            _ => {}
-        }
-
-        self.requests
-            .older_history_requests
-            .insert(channel_id, OlderHistoryRequestState::Requested { before });
         Some(AppCommand::LoadMessageHistory {
             channel_id,
             before: Some(before),

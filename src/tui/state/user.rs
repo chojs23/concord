@@ -142,9 +142,9 @@ impl DashboardState {
         self.activate_selected_member_action()
     }
 
-    /// Opens the profile popup for `user_id`. Returns
-    /// `AppCommand::LoadUserProfile` to fetch fresh data when nothing is
-    /// cached yet. The popup itself shows a loading state in the meantime.
+    /// Opens the profile popup for `user_id`. The returned command is a profile
+    /// open intent. Backend request lifecycle decides whether profile or note
+    /// data is already cached or in flight.
     pub fn open_user_profile_popup(
         &mut self,
         user_id: Id<UserMarker>,
@@ -158,16 +158,7 @@ impl DashboardState {
             view_height: 0,
             total_lines: 0,
         });
-        if !self.discord.cache.is_note_fetched(user_id) {
-            self.requests
-                .pending_commands
-                .push_back(AppCommand::LoadUserNote { user_id });
-        }
-        if self.discord.cache.user_profile(user_id, guild_id).is_some() {
-            None
-        } else {
-            Some(AppCommand::LoadUserProfile { user_id, guild_id })
-        }
+        Some(AppCommand::LoadUserProfile { user_id, guild_id })
     }
 
     pub fn close_user_profile_popup(&mut self) {

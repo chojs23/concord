@@ -251,7 +251,7 @@ fn message_keys_use_scroll_controls() {
 }
 
 #[test]
-fn message_top_scroll_requests_older_history_once() {
+fn message_top_scroll_emits_older_history_target() {
     let mut state = state_with_messages(3);
     state.focus_pane(FocusPane::Messages);
 
@@ -268,7 +268,7 @@ fn message_top_scroll_requests_older_history_once() {
 
     let duplicate = handle_key(&mut state, key(KeyCode::Up));
 
-    assert_eq!(duplicate, None);
+    assert_eq!(duplicate, command);
 }
 
 #[test]

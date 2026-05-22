@@ -8,10 +8,7 @@ use crate::discord::{
     AppCommand, AppEvent, ChannelState, ChannelUnreadState, TypingUserState, VoiceParticipantState,
 };
 
-use super::{
-    ActiveGuildScope, DashboardState, PaneFilterState, PendingReadAck, READ_ACK_DEBOUNCE,
-    ThreadReturnTarget,
-};
+use super::{ActiveGuildScope, DashboardState, PaneFilterState, ThreadReturnTarget};
 use super::{
     model::{
         ChannelActionItem, ChannelActionKind, ChannelBranch, ChannelPaneEntry, ChannelThreadItem,
@@ -1404,7 +1401,6 @@ impl DashboardState {
         }
 
         for (channel_id, message_id) in targets.iter().copied() {
-            self.requests.pending_read_acks.remove(&channel_id);
             self.discord.cache.apply_event(&AppEvent::MessageAck {
                 channel_id,
                 message_id,
@@ -1422,7 +1418,6 @@ impl DashboardState {
         let Some(message_id) = self.discord.cache.channel_ack_target(channel_id) else {
             return;
         };
-        self.requests.pending_read_acks.remove(&channel_id);
         self.discord.cache.apply_event(&AppEvent::MessageAck {
             channel_id,
             message_id,
@@ -1445,16 +1440,11 @@ impl DashboardState {
             message_id,
             mention_count: 0,
         });
-        let deadline = std::time::Instant::now() + READ_ACK_DEBOUNCE;
         self.requests
-            .pending_read_acks
-            .entry(channel_id)
-            .and_modify(|pending| {
-                pending.message_id = pending.message_id.max(message_id);
-            })
-            .or_insert(PendingReadAck {
+            .pending_commands
+            .push_back(AppCommand::ScheduleAckChannel {
+                channel_id,
                 message_id,
-                deadline,
             });
     }
 

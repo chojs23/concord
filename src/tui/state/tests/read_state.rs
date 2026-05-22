@@ -32,7 +32,6 @@ fn background_channel_message_updates_unread_without_scheduling_ack() {
 
     assert_eq!(state.direct_message_unread_count(), 1);
     assert_ne!(state.channel_unread(Id::new(10)), ChannelUnreadState::Seen);
-    assert!(state.next_read_ack_deadline().is_none());
     assert!(state.drain_pending_commands().is_empty());
 }
 
@@ -52,19 +51,21 @@ fn active_channel_read_state_coalesces_when_new_messages_arrive_at_latest() {
         assert!(state.drain_pending_commands().is_empty());
 
         state.push_event(direct_message_create_event(Id::new(20), 201));
-        let first_deadline = state
-            .next_read_ack_deadline()
-            .expect("active message should schedule read ack");
+        let scheduled = state.drain_pending_commands();
         state.push_event(direct_message_create_event(Id::new(20), 202));
 
         assert_eq!(state.direct_message_unread_count(), 0);
         assert_eq!(state.channel_unread(Id::new(20)), ChannelUnreadState::Seen);
-        assert_eq!(state.next_read_ack_deadline(), Some(first_deadline));
-        assert!(state.drain_pending_commands().is_empty());
-        state.flush_due_read_acks(first_deadline);
+        assert_eq!(
+            scheduled,
+            vec![AppCommand::ScheduleAckChannel {
+                channel_id: Id::new(20),
+                message_id: Id::new(201),
+            }]
+        );
         assert_eq!(
             state.drain_pending_commands(),
-            vec![AppCommand::AckChannel {
+            vec![AppCommand::ScheduleAckChannel {
                 channel_id: Id::new(20),
                 message_id: Id::new(202),
             }]
@@ -88,10 +89,9 @@ fn active_channel_read_state_coalesces_when_new_messages_arrive_at_latest() {
         state.push_event(notification_message_event(Id::new(2), "hello"));
 
         assert_eq!(state.channel_unread(Id::new(2)), ChannelUnreadState::Seen);
-        assert!(state.drain_pending_commands().is_empty());
         assert_eq!(
             drain_debounced_read_ack(&mut state),
-            vec![AppCommand::AckChannel {
+            vec![AppCommand::ScheduleAckChannel {
                 channel_id: Id::new(2),
                 message_id: Id::new(50),
             }]

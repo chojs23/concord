@@ -26,14 +26,12 @@ use super::{
         image_surfaces_visible, should_redraw_after_visible_signature_change,
         visible_dashboard_signature,
     },
-    requests::{
-        ForumPostRequestTarget, ForumPostRequests, HistoryRequests, InitialUnknownMemberRequests,
-        MemberListSubscriptionRequests, MemberListSubscriptionTarget, MemberRequests,
-        MentionMemberSearchRequests, MentionMemberSearchTarget, MessageAuthorMemberRequests,
-        PinnedMessageRequests, ThreadPreviewRequests,
-    },
     state::DashboardState,
     ui,
+};
+
+use crate::discord::request_lifecycle::{
+    ForumPostRequestTarget, MemberListSubscriptionTarget, MentionMemberSearchTarget,
 };
 
 type ClipboardPasteResult = std::result::Result<
@@ -75,15 +73,6 @@ pub(super) async fn run_dashboard(
     let (clipboard_paste_tx, mut clipboard_paste_rx) = mpsc::unbounded_channel();
     let (clipboard_paste_indicator_tx, mut clipboard_paste_indicator_rx) =
         mpsc::unbounded_channel();
-    let mut history_requests = HistoryRequests::default();
-    let mut forum_post_requests = ForumPostRequests::default();
-    let mut pinned_message_requests = PinnedMessageRequests::default();
-    let mut message_author_member_requests = MessageAuthorMemberRequests::default();
-    let mut initial_unknown_member_requests = InitialUnknownMemberRequests::default();
-    let mut member_requests = MemberRequests::default();
-    let mut mention_member_search_requests = MentionMemberSearchRequests::default();
-    let mut member_list_subscription_requests = MemberListSubscriptionRequests::default();
-    let mut thread_preview_requests = ThreadPreviewRequests::default();
     let mut last_reported_active_guild: Option<Id<GuildMarker>> = None;
     let mut last_reported_message_channel: Option<Id<ChannelMarker>> = None;
     let mut image_targets = Vec::new();
@@ -185,12 +174,10 @@ pub(super) async fn run_dashboard(
             }
         }
 
-        let pending_read_ack_deadline = state.next_read_ack_deadline();
+        let pending_read_ack_deadline = client.next_read_ack_deadline();
         let pending_toast_deadline = state.next_toast_deadline();
-        let pending_mention_member_search_deadline =
-            mention_member_search_requests.pending_deadline();
-        let pending_member_list_subscription_deadline =
-            member_list_subscription_requests.pending_deadline();
+        let pending_mention_member_search_deadline = client.mention_member_search_deadline();
+        let pending_member_list_subscription_deadline = client.member_list_subscription_deadline();
 
         tokio::select! {
             maybe_event = terminal_events.next() => {
@@ -290,14 +277,10 @@ pub(super) async fn run_dashboard(
                         );
                         let mut ctx = effect_helpers::EffectContext {
                             state: &mut state,
+                            client: &client,
                             image_previews: &mut image_previews,
                             avatar_images: &mut avatar_images,
                             emoji_images: &mut emoji_images,
-                            history_requests: &mut history_requests,
-                            forum_post_requests: &mut forum_post_requests,
-                            pinned_message_requests: &mut pinned_message_requests,
-                            message_author_member_requests: &mut message_author_member_requests,
-                            thread_preview_requests: &mut thread_preview_requests,
                             preview_decode_tx: &preview_decode_tx,
                         };
                         let deferred_outcome = effect_helpers::process_deferred_effects(
@@ -337,14 +320,10 @@ pub(super) async fn run_dashboard(
                         let mut effect_outcome = effect_helpers::EffectProcessingOutcome::default();
                         let mut ctx = effect_helpers::EffectContext {
                             state: &mut state,
+                            client: &client,
                             image_previews: &mut image_previews,
                             avatar_images: &mut avatar_images,
                             emoji_images: &mut emoji_images,
-                            history_requests: &mut history_requests,
-                            forum_post_requests: &mut forum_post_requests,
-                            pinned_message_requests: &mut pinned_message_requests,
-                            message_author_member_requests: &mut message_author_member_requests,
-                            thread_preview_requests: &mut thread_preview_requests,
                             preview_decode_tx: &preview_decode_tx,
                         };
                         effect_outcome.combine(effect_helpers::process_sequenced_effect(
@@ -415,7 +394,19 @@ pub(super) async fn run_dashboard(
                     None => std::future::pending::<()>().await,
                 }
             } => {
-                state.flush_due_read_acks(std::time::Instant::now());
+                for (channel_id, message_id) in client.flush_due_read_acks(std::time::Instant::now()) {
+                    if commands
+                        .send(AppCommand::AckChannel {
+                            channel_id,
+                            message_id,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        command_helpers::record_command_channel_closed(&mut state);
+                        break;
+                    }
+                }
                 dirty = true;
             }
             _ = async {
@@ -451,11 +442,11 @@ pub(super) async fn run_dashboard(
             }
         }
 
-        mention_member_search_requests.set_target(
+        client.set_mention_member_search_target(
             mention_member_search_target(&state),
             std::time::Instant::now(),
         );
-        if let Some(target) = mention_member_search_requests.next_due(std::time::Instant::now())
+        if let Some(target) = client.next_due_mention_member_search(std::time::Instant::now())
             && commands
                 .send(AppCommand::SearchGuildMembers {
                     guild_id: target.guild_id,
@@ -468,7 +459,7 @@ pub(super) async fn run_dashboard(
             dirty = true;
         }
 
-        if let Some(channel_id) = history_requests.next(
+        if let Some(channel_id) = client.next_message_history_request(
             state.selected_message_history_channel_id(),
             state.selected_message_history_needs_reload(),
         ) && commands
@@ -479,7 +470,7 @@ pub(super) async fn run_dashboard(
             .await
             .is_err()
         {
-            history_requests.mark_failed(channel_id);
+            client.mark_message_history_request_failed(channel_id);
             command_helpers::record_command_channel_closed(&mut state);
             dirty = true;
         }
@@ -515,13 +506,13 @@ pub(super) async fn run_dashboard(
         }
 
         if let Some(channel_id) =
-            pinned_message_requests.next(state.pinned_message_view_channel_id())
+            client.next_pinned_message_request(state.pinned_message_view_channel_id())
             && commands
                 .send(AppCommand::LoadPinnedMessages { channel_id })
                 .await
                 .is_err()
         {
-            pinned_message_requests.mark_failed(channel_id);
+            client.mark_pinned_message_request_failed(channel_id);
             command_helpers::record_command_channel_closed(&mut state);
             dirty = true;
         }
@@ -534,7 +525,7 @@ pub(super) async fn run_dashboard(
             },
         );
         if let Some((guild_id, channel_id, archive_state, offset)) =
-            forum_post_requests.next(forum_post_target)
+            client.next_forum_post_request(forum_post_target)
             && commands
                 .send(AppCommand::LoadForumPosts {
                     guild_id,
@@ -545,18 +536,18 @@ pub(super) async fn run_dashboard(
                 .await
                 .is_err()
         {
-            forum_post_requests.mark_failed(channel_id, archive_state, offset);
+            client.mark_forum_post_request_failed(channel_id, archive_state, offset);
             command_helpers::record_command_channel_closed(&mut state);
             dirty = true;
         }
 
-        if let Some(guild_id) = member_requests.next(state.selected_guild_id()) {
+        if let Some(guild_id) = client.next_member_request(state.selected_guild_id()) {
             if commands
                 .send(AppCommand::LoadGuildMembers { guild_id })
                 .await
                 .is_err()
             {
-                member_requests.remove(guild_id);
+                client.remove_member_request(guild_id);
                 command_helpers::record_command_channel_closed(&mut state);
                 dirty = true;
             }
@@ -580,7 +571,7 @@ pub(super) async fn run_dashboard(
             }
         }
 
-        let initial_unknown_requests = initial_unknown_member_requests.next(
+        let initial_unknown_requests = client.next_initial_unknown_member_requests(
             state.initial_unknown_member_requests(),
             std::time::Instant::now(),
         );
@@ -589,7 +580,7 @@ pub(super) async fn run_dashboard(
         }
 
         for (channel_id, latest_message_id) in
-            thread_preview_requests.next(state.missing_thread_preview_load_requests())
+            client.next_thread_preview_requests(state.missing_thread_preview_load_requests())
         {
             if commands
                 .send(AppCommand::LoadThreadPreview {
@@ -599,7 +590,7 @@ pub(super) async fn run_dashboard(
                 .await
                 .is_err()
             {
-                thread_preview_requests.remove((channel_id, latest_message_id));
+                client.remove_thread_preview_request((channel_id, latest_message_id));
                 command_helpers::record_command_channel_closed(&mut state);
                 dirty = true;
             }
@@ -614,9 +605,11 @@ pub(super) async fn run_dashboard(
                     bucket: state.member_subscription_top_bucket(),
                     ranges: state.member_subscription_ranges(),
                 });
-        member_list_subscription_requests
-            .set_target(member_list_subscription_target, std::time::Instant::now());
-        if let Some(target) = member_list_subscription_requests.next_due(std::time::Instant::now())
+        client.set_member_list_subscription_target(
+            member_list_subscription_target,
+            std::time::Instant::now(),
+        );
+        if let Some(target) = client.next_due_member_list_subscription(std::time::Instant::now())
             && commands
                 .send(AppCommand::UpdateMemberListSubscription {
                     guild_id: target.guild_id,

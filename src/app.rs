@@ -112,6 +112,11 @@ fn start_command_loop(
             tokio::spawn(async move {
                 match command {
                     AppCommand::LoadMessageHistory { channel_id, before } => {
+                        if let Some(before) = before
+                            && !client.begin_older_message_history_request(channel_id, before)
+                        {
+                            return;
+                        }
                         let endpoint = format_message_history_endpoint(
                             channel_id,
                             before,
@@ -502,7 +507,7 @@ fn start_command_loop(
                     },
                     AppCommand::LoadApplicationCommands { guild_id } => {
                         match client.load_application_commands(guild_id).await {
-                            Ok(commands) => {
+                            Ok(Some(commands)) => {
                                 client
                                     .publish_event(AppEvent::ApplicationCommandsLoaded {
                                         guild_id,
@@ -510,11 +515,12 @@ fn start_command_loop(
                                     })
                                     .await;
                             }
+                            Ok(None) => {}
                             Err(error) => log_app_error("load application commands failed", &error),
                         }
                     }
-                    AppCommand::RunApplicationCommand { interaction } => {
-                        if let Err(error) = client.run_application_command(&interaction).await {
+                    AppCommand::RunApplicationCommand { invocation } => {
+                        if let Err(error) = client.run_application_command(&invocation).await {
                             log_app_error("run application command failed", &error);
                             client
                                 .publish_event(AppEvent::GatewayError {
@@ -763,33 +769,48 @@ fn start_command_loop(
                         }
                     },
                     AppCommand::LoadUserProfile { user_id, guild_id } => {
-                        let is_self = client
-                            .current_discord_snapshot()
-                            .to_state()
-                            .current_user_id()
-                            == Some(user_id);
-                        match client.load_user_profile(user_id, guild_id, is_self).await {
-                            Ok(profile) => {
-                                client
-                                    .publish_event(AppEvent::UserProfileLoaded {
-                                        guild_id,
-                                        profile,
-                                    })
-                                    .await;
+                        let profile_request = client.next_user_profile_request(user_id, guild_id);
+                        let note_request = client.next_user_note_request(user_id);
+                        if let Some((user_id, guild_id, is_self)) = profile_request {
+                            match client.load_user_profile(user_id, guild_id, is_self).await {
+                                Ok(profile) => {
+                                    client
+                                        .publish_event(AppEvent::UserProfileLoaded {
+                                            guild_id,
+                                            profile,
+                                        })
+                                        .await;
+                                }
+                                Err(error) => {
+                                    log_app_error("load user profile failed", &error);
+                                    client
+                                        .publish_event(AppEvent::UserProfileLoadFailed {
+                                            user_id,
+                                            guild_id,
+                                            message: error.to_string(),
+                                        })
+                                        .await;
+                                }
                             }
-                            Err(error) => {
-                                log_app_error("load user profile failed", &error);
-                                client
-                                    .publish_event(AppEvent::UserProfileLoadFailed {
-                                        user_id,
-                                        guild_id,
-                                        message: error.to_string(),
-                                    })
-                                    .await;
+                        }
+                        if let Some(user_id) = note_request {
+                            match client.load_user_note(user_id).await {
+                                Ok(note) => {
+                                    client
+                                        .publish_event(AppEvent::UserNoteLoaded { user_id, note })
+                                        .await;
+                                }
+                                Err(error) => {
+                                    client.mark_user_note_request_failed(user_id);
+                                    log_app_error("load user note failed", &error);
+                                }
                             }
                         }
                     }
                     AppCommand::LoadUserNote { user_id } => {
+                        let Some(user_id) = client.next_user_note_request(user_id) else {
+                            return;
+                        };
                         match client.load_user_note(user_id).await {
                             Ok(note) => {
                                 client
@@ -797,6 +818,7 @@ fn start_command_loop(
                                     .await;
                             }
                             Err(error) => {
+                                client.mark_user_note_request_failed(user_id);
                                 log_app_error("load user note failed", &error);
                             }
                         }
@@ -805,11 +827,18 @@ fn start_command_loop(
                         channel_id,
                         message_id,
                     } => {
+                        client.clear_read_ack(channel_id);
                         // Local unread state is already clear. A failure here
                         // only loses cross-client sync.
                         if let Err(error) = client.ack_channel(channel_id, message_id).await {
                             log_app_error("ack channel failed", &error);
                         }
+                    }
+                    AppCommand::ScheduleAckChannel {
+                        channel_id,
+                        message_id,
+                    } => {
+                        client.schedule_read_ack(channel_id, message_id, std::time::Instant::now());
                     }
                     AppCommand::SetGuildMuted {
                         guild_id,
@@ -889,6 +918,7 @@ fn start_command_loop(
                         }
                     }
                     AppCommand::AckChannels { targets } => {
+                        client.clear_read_acks(targets.iter().map(|(channel_id, _)| *channel_id));
                         // Local unread state is already clear. A failure here
                         // only loses cross-client sync.
                         if let Err(error) = client.ack_channels(&targets).await {

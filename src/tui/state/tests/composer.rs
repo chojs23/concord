@@ -1,8 +1,6 @@
 use super::*;
-use crate::discord::{
-    ApplicationCommandInfo, ApplicationCommandInteractionOption, ApplicationCommandOptionInfo,
-};
-use serde_json::{Value, json};
+use crate::discord::{ApplicationCommandInfo, ApplicationCommandOptionInfo};
+use serde_json::json;
 
 fn application_command(
     name: &str,
@@ -56,6 +54,16 @@ fn type_composer_text(state: &mut DashboardState, value: &str) {
     for ch in value.chars() {
         state.push_composer_char(ch);
     }
+}
+
+fn assert_slash_invocation(command: Option<AppCommand>, command_name: &str, content: &str) {
+    let Some(AppCommand::RunApplicationCommand { invocation }) = command else {
+        panic!("expected slash command invocation");
+    };
+    assert_eq!(invocation.guild_id, Some(Id::new(1)));
+    assert_eq!(invocation.channel_id, Id::new(2));
+    assert_eq!(invocation.command_name, command_name);
+    assert_eq!(invocation.content, content);
 }
 
 #[test]
@@ -143,26 +151,10 @@ fn submit_slash_command_emits_direct_interaction_options() {
     let mut state = state_with_application_command(command);
     type_composer_text(&mut state, "/echo text:hello world loud:true");
 
-    let Some(AppCommand::RunApplicationCommand { interaction }) = state.submit_composer() else {
-        panic!("expected slash command interaction");
-    };
-
-    assert_eq!(
-        interaction.options,
-        vec![
-            ApplicationCommandInteractionOption {
-                kind: 3,
-                name: "text".to_owned(),
-                value: Some(Value::String("hello world".to_owned())),
-                options: Vec::new(),
-            },
-            ApplicationCommandInteractionOption {
-                kind: 5,
-                name: "loud".to_owned(),
-                value: Some(Value::Bool(true)),
-                options: Vec::new(),
-            },
-        ]
+    assert_slash_invocation(
+        state.submit_composer(),
+        "echo",
+        "/echo text:hello world loud:true",
     );
 }
 
@@ -180,24 +172,10 @@ fn submit_slash_subcommand_emits_nested_interaction_options() {
     let mut state = state_with_application_command(command);
     type_composer_text(&mut state, "/poll create question:favorite color");
 
-    let Some(AppCommand::RunApplicationCommand { interaction }) = state.submit_composer() else {
-        panic!("expected slash command interaction");
-    };
-
-    assert_eq!(interaction.command.name, "poll");
-    assert_eq!(
-        interaction.options,
-        vec![ApplicationCommandInteractionOption {
-            kind: 1,
-            name: "create".to_owned(),
-            value: None,
-            options: vec![ApplicationCommandInteractionOption {
-                kind: 3,
-                name: "question".to_owned(),
-                value: Some(Value::String("favorite color".to_owned())),
-                options: Vec::new(),
-            }],
-        }]
+    assert_slash_invocation(
+        state.submit_composer(),
+        "poll",
+        "/poll create question:favorite color",
     );
 }
 
@@ -219,25 +197,7 @@ fn submit_slash_subcommand_accepts_single_option_shorthand() {
         let mut state = state_with_application_command(command);
         type_composer_text(&mut state, input);
 
-        let Some(AppCommand::RunApplicationCommand { interaction }) = state.submit_composer()
-        else {
-            panic!("expected slash command interaction for {input}");
-        };
-
-        assert_eq!(
-            interaction.options,
-            vec![ApplicationCommandInteractionOption {
-                kind: 1,
-                name: "search".to_owned(),
-                value: None,
-                options: vec![ApplicationCommandInteractionOption {
-                    kind: 3,
-                    name: "query".to_owned(),
-                    value: Some(Value::String("naruto uzumaki".to_owned())),
-                    options: Vec::new(),
-                }],
-            }]
-        );
+        assert_slash_invocation(state.submit_composer(), "anime", input);
     }
 }
 
@@ -281,36 +241,10 @@ fn submit_slash_subcommand_group_emits_nested_interaction_options() {
     let mut state = state_with_application_command(command);
     type_composer_text(&mut state, "/mod admin ban user:<@123> reason:spam links");
 
-    let Some(AppCommand::RunApplicationCommand { interaction }) = state.submit_composer() else {
-        panic!("expected slash command interaction");
-    };
-
-    assert_eq!(
-        interaction.options,
-        vec![ApplicationCommandInteractionOption {
-            kind: 2,
-            name: "admin".to_owned(),
-            value: None,
-            options: vec![ApplicationCommandInteractionOption {
-                kind: 1,
-                name: "ban".to_owned(),
-                value: None,
-                options: vec![
-                    ApplicationCommandInteractionOption {
-                        kind: 6,
-                        name: "user".to_owned(),
-                        value: Some(Value::String("123".to_owned())),
-                        options: Vec::new(),
-                    },
-                    ApplicationCommandInteractionOption {
-                        kind: 3,
-                        name: "reason".to_owned(),
-                        value: Some(Value::String("spam links".to_owned())),
-                        options: Vec::new(),
-                    },
-                ],
-            }],
-        }]
+    assert_slash_invocation(
+        state.submit_composer(),
+        "mod",
+        "/mod admin ban user:<@123> reason:spam links",
     );
 }
 

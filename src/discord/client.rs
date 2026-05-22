@@ -1,5 +1,5 @@
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{HashMap, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     sync::{Arc, Mutex, RwLock},
 };
@@ -19,11 +19,16 @@ use tokio::{
 use crate::{AppError, Result};
 
 use super::{
-    ApplicationCommandInfo, ApplicationCommandInteraction, MessageAttachmentUpload, MessageInfo,
+    ApplicationCommandInfo, ApplicationCommandInvocation, MessageAttachmentUpload, MessageInfo,
     ReactionEmoji, ReactionUserInfo, UserProfileInfo,
+    application_commands::application_command_interaction_from_invocation,
     commands::ForumPostArchiveState,
     events::{AppEvent, SequencedAppEvent},
     gateway::{GatewayCommand, GatewayRuntime, run_gateway},
+    request_lifecycle::{
+        ForumPostRequestTarget, MemberListSubscriptionTarget, MentionMemberSearchTarget,
+        RequestLifecycle,
+    },
     rest::{DiscordRest, ForumPostPage},
     state::{CurrentVoiceConnectionState, DiscordSnapshot, DiscordState, SnapshotRevision},
     voice::{self, VoiceRuntimeEvent},
@@ -32,6 +37,8 @@ use super::{
 const MEMBER_SEARCH_MIN_QUERY_CHARS: usize = 2;
 const MEMBER_SEARCH_MAX_QUERY_CHARS: usize = 64;
 const MEMBER_SEARCH_MAX_LIMIT: u16 = 10;
+
+type ApplicationCommandCache = HashMap<Option<Id<GuildMarker>>, Vec<ApplicationCommandInfo>>;
 
 #[derive(Clone, Debug)]
 pub struct DiscordClient {
@@ -43,6 +50,9 @@ pub struct DiscordClient {
     state: Arc<RwLock<DiscordState>>,
     requested_voice: Arc<RwLock<Option<CurrentVoiceConnectionState>>>,
     gateway_session_id: Arc<RwLock<Option<String>>>,
+    application_command_requests: Arc<Mutex<HashMap<Option<Id<GuildMarker>>, RequestState>>>,
+    application_commands: Arc<Mutex<ApplicationCommandCache>>,
+    request_lifecycle: Arc<Mutex<RequestLifecycle>>,
     revision: Arc<RwLock<SnapshotRevision>>,
     publish_lock: Arc<AsyncMutex<()>>,
     gateway_commands_tx: mpsc::UnboundedSender<GatewayCommand>,
@@ -70,6 +80,9 @@ impl DiscordClient {
             state: Arc::new(RwLock::new(initial_state)),
             requested_voice: Arc::new(RwLock::new(None)),
             gateway_session_id: Arc::new(RwLock::new(None)),
+            application_command_requests: Arc::new(Mutex::new(HashMap::new())),
+            application_commands: Arc::new(Mutex::new(HashMap::new())),
+            request_lifecycle: Arc::new(Mutex::new(RequestLifecycle::default())),
             revision: Arc::new(RwLock::new(SnapshotRevision::default())),
             publish_lock: Arc::new(AsyncMutex::new(())),
             gateway_commands_tx,
@@ -104,6 +117,7 @@ impl DiscordClient {
     }
 
     pub async fn publish_event(&self, event: AppEvent) {
+        self.record_request_lifecycle_event(&event);
         publish_app_event(
             &self.effects_tx,
             &self.snapshots_tx,
@@ -114,6 +128,293 @@ impl DiscordClient {
         )
         .await;
         voice::forward_app_event(&self.voice_events_tx, &event);
+    }
+
+    pub(crate) fn record_request_lifecycle_event(&self, event: &AppEvent) {
+        if let AppEvent::ApplicationCommandsLoaded { guild_id, .. } = event {
+            self.record_application_commands_loaded(*guild_id);
+        }
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .record_event(event);
+    }
+
+    pub(crate) fn next_message_history_request(
+        &self,
+        channel_id: Option<Id<ChannelMarker>>,
+        force_reload: bool,
+    ) -> Option<Id<ChannelMarker>> {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .next_history_request(channel_id, force_reload)
+    }
+
+    pub(crate) fn mark_message_history_request_failed(&self, channel_id: Id<ChannelMarker>) {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .mark_history_failed(channel_id);
+    }
+
+    pub(crate) fn begin_older_message_history_request(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        before: Id<MessageMarker>,
+    ) -> bool {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .begin_older_history_request(channel_id, before)
+    }
+
+    pub(crate) fn next_forum_post_request(
+        &self,
+        target: Option<ForumPostRequestTarget>,
+    ) -> Option<(
+        Id<GuildMarker>,
+        Id<ChannelMarker>,
+        ForumPostArchiveState,
+        usize,
+    )> {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .next_forum_post_request(target)
+    }
+
+    pub(crate) fn mark_forum_post_request_failed(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        archive_state: ForumPostArchiveState,
+        offset: usize,
+    ) {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .mark_forum_post_failed(channel_id, archive_state, offset);
+    }
+
+    pub(crate) fn next_pinned_message_request(
+        &self,
+        channel_id: Option<Id<ChannelMarker>>,
+    ) -> Option<Id<ChannelMarker>> {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .next_pinned_message_request(channel_id)
+    }
+
+    pub(crate) fn mark_pinned_message_request_failed(&self, channel_id: Id<ChannelMarker>) {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .mark_pinned_message_failed(channel_id);
+    }
+
+    pub(crate) fn next_message_author_member_requests(
+        &self,
+        missing: Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)>,
+        now: std::time::Instant,
+    ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .next_message_author_member_requests(missing, now)
+    }
+
+    pub(crate) fn next_initial_unknown_member_requests(
+        &self,
+        missing: Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)>,
+        now: std::time::Instant,
+    ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .next_initial_unknown_member_requests(missing, now)
+    }
+
+    pub(crate) fn next_member_request(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> Option<Id<GuildMarker>> {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .next_member_request(guild_id)
+    }
+
+    pub(crate) fn remove_member_request(&self, guild_id: Id<GuildMarker>) {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .remove_member_request(guild_id);
+    }
+
+    pub(crate) fn set_mention_member_search_target(
+        &self,
+        target: Option<MentionMemberSearchTarget>,
+        now: std::time::Instant,
+    ) {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .set_mention_member_search_target(target, now);
+    }
+
+    pub(crate) fn mention_member_search_deadline(&self) -> Option<std::time::Instant> {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .mention_member_search_deadline()
+    }
+
+    pub(crate) fn next_due_mention_member_search(
+        &self,
+        now: std::time::Instant,
+    ) -> Option<MentionMemberSearchTarget> {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .next_due_mention_member_search(now)
+    }
+
+    pub(crate) fn set_member_list_subscription_target(
+        &self,
+        target: Option<MemberListSubscriptionTarget>,
+        now: std::time::Instant,
+    ) {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .set_member_list_subscription_target(target, now);
+    }
+
+    pub(crate) fn member_list_subscription_deadline(&self) -> Option<std::time::Instant> {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .member_list_subscription_deadline()
+    }
+
+    pub(crate) fn next_due_member_list_subscription(
+        &self,
+        now: std::time::Instant,
+    ) -> Option<MemberListSubscriptionTarget> {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .next_due_member_list_subscription(now)
+    }
+
+    pub(crate) fn next_thread_preview_requests(
+        &self,
+        missing: Vec<(Id<ChannelMarker>, Id<MessageMarker>)>,
+    ) -> Vec<(Id<ChannelMarker>, Id<MessageMarker>)> {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .next_thread_preview_requests(missing)
+    }
+
+    pub(crate) fn remove_thread_preview_request(
+        &self,
+        key: (Id<ChannelMarker>, Id<MessageMarker>),
+    ) {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .remove_thread_preview_request(key);
+    }
+
+    pub(crate) fn next_user_profile_request(
+        &self,
+        user_id: Id<UserMarker>,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> Option<(Id<UserMarker>, Option<Id<GuildMarker>>, bool)> {
+        let is_self = {
+            let state = self
+                .state
+                .read()
+                .expect("discord state lock is not poisoned");
+            if state.user_profile(user_id, guild_id).is_some() {
+                return None;
+            }
+            state.current_user_id() == Some(user_id)
+        };
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .begin_user_profile_request(user_id, guild_id)
+            .then_some((user_id, guild_id, is_self))
+    }
+
+    pub(crate) fn next_user_note_request(&self, user_id: Id<UserMarker>) -> Option<Id<UserMarker>> {
+        {
+            let state = self
+                .state
+                .read()
+                .expect("discord state lock is not poisoned");
+            if state.is_note_fetched(user_id) {
+                return None;
+            }
+        }
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .begin_user_note_request(user_id)
+            .then_some(user_id)
+    }
+
+    pub(crate) fn mark_user_note_request_failed(&self, user_id: Id<UserMarker>) {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .mark_user_note_failed(user_id);
+    }
+
+    pub(crate) fn schedule_read_ack(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        now: std::time::Instant,
+    ) {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .schedule_read_ack(channel_id, message_id, now);
+    }
+
+    pub(crate) fn clear_read_ack(&self, channel_id: Id<ChannelMarker>) {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .clear_read_ack(channel_id);
+    }
+
+    pub(crate) fn clear_read_acks(&self, channel_ids: impl IntoIterator<Item = Id<ChannelMarker>>) {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .clear_read_acks(channel_ids);
+    }
+
+    pub(crate) fn next_read_ack_deadline(&self) -> Option<std::time::Instant> {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .next_read_ack_deadline()
+    }
+
+    pub(crate) fn flush_due_read_acks(
+        &self,
+        now: std::time::Instant,
+    ) -> Vec<(Id<ChannelMarker>, Id<MessageMarker>)> {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .flush_due_read_acks(now)
     }
 
     pub fn start_gateway(&self) -> JoinHandle<()> {
@@ -271,6 +572,27 @@ impl DiscordClient {
         {
             return Ok(());
         }
+        if let Some(channel_id) = channel_id {
+            let requested_same_channel = requested
+                .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                .is_some();
+            if !requested_same_channel {
+                let state = self
+                    .state
+                    .read()
+                    .expect("discord state lock is not poisoned");
+                let current_same_channel = state
+                    .current_user_voice_connection()
+                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .is_some();
+                if !current_same_channel
+                    && let Some(channel) = state.channel(channel_id)
+                    && !state.can_connect_voice_channel(channel)
+                {
+                    return Err("cannot connect to voice channel".to_owned());
+                }
+            }
+        }
 
         let result = self
             .gateway_commands_tx
@@ -397,9 +719,35 @@ impl DiscordClient {
         reply_to: Option<Id<MessageMarker>>,
         attachments: &[MessageAttachmentUpload],
     ) -> Result<MessageInfo> {
+        self.ensure_can_send_message(channel_id, attachments)?;
         self.rest
             .send_message(channel_id, content, reply_to, attachments)
             .await
+    }
+
+    fn ensure_can_send_message(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        attachments: &[MessageAttachmentUpload],
+    ) -> Result<()> {
+        let state = self
+            .state
+            .read()
+            .expect("discord state lock is not poisoned");
+        let Some(channel) = state.channel(channel_id) else {
+            return Ok(());
+        };
+        if !state.can_send_in_channel(channel) {
+            return Err(AppError::DiscordRequest(
+                "cannot send message in channel".to_owned(),
+            ));
+        }
+        if !attachments.is_empty() && !state.can_attach_in_channel(channel) {
+            return Err(AppError::DiscordRequest(
+                "cannot attach files in channel".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     pub async fn edit_message(
@@ -424,13 +772,25 @@ impl DiscordClient {
     pub async fn load_application_commands(
         &self,
         guild_id: Option<Id<GuildMarker>>,
-    ) -> Result<Vec<ApplicationCommandInfo>> {
-        self.rest.load_application_commands(guild_id).await
+    ) -> Result<Option<Vec<ApplicationCommandInfo>>> {
+        if !self.begin_application_command_request(guild_id) {
+            return Ok(None);
+        }
+        let result = self.rest.load_application_commands(guild_id).await;
+        match result {
+            Ok(commands) => Ok(Some(
+                self.record_application_commands_for_tui(guild_id, commands),
+            )),
+            Err(error) => {
+                self.clear_application_command_request(guild_id);
+                Err(error)
+            }
+        }
     }
 
     pub async fn run_application_command(
         &self,
-        interaction: &ApplicationCommandInteraction,
+        invocation: &ApplicationCommandInvocation,
     ) -> Result<()> {
         let session_id = self
             .gateway_session_id
@@ -438,9 +798,39 @@ impl DiscordClient {
             .expect("gateway session id lock is not poisoned")
             .clone()
             .ok_or_else(|| AppError::DiscordRequest("gateway session is not ready".to_owned()))?;
+        let interaction = self.application_command_interaction(invocation)?;
         self.rest
-            .run_application_command(interaction, &session_id)
+            .run_application_command(&interaction, &session_id)
             .await
+    }
+
+    fn application_command_interaction(
+        &self,
+        invocation: &ApplicationCommandInvocation,
+    ) -> Result<super::ApplicationCommandInteraction> {
+        let commands = self
+            .application_commands
+            .lock()
+            .expect("application command cache lock is not poisoned");
+        let command = commands
+            .get(&invocation.guild_id)
+            .and_then(|commands| {
+                commands
+                    .iter()
+                    .find(|command| command.name == invocation.command_name)
+            })
+            .ok_or_else(|| {
+                AppError::DiscordRequest(format!(
+                    "application command {} is not loaded",
+                    invocation.command_name
+                ))
+            })?;
+        application_command_interaction_from_invocation(invocation, command).ok_or_else(|| {
+            AppError::DiscordRequest(format!(
+                "application command {} options are incomplete or invalid",
+                invocation.command_name
+            ))
+        })
     }
 
     pub async fn ack_channel(
@@ -704,12 +1094,78 @@ fn query_hash(query: &str) -> u64 {
     hasher.finish()
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RequestState {
+    Requested,
+    Loaded,
+}
+
+impl DiscordClient {
+    fn begin_application_command_request(&self, guild_id: Option<Id<GuildMarker>>) -> bool {
+        let mut requests = self
+            .application_command_requests
+            .lock()
+            .expect("application command request lock is not poisoned");
+        if requests.contains_key(&guild_id) {
+            return false;
+        }
+        requests.insert(guild_id, RequestState::Requested);
+        true
+    }
+
+    fn record_application_commands_loaded(&self, guild_id: Option<Id<GuildMarker>>) {
+        self.application_command_requests
+            .lock()
+            .expect("application command request lock is not poisoned")
+            .insert(guild_id, RequestState::Loaded);
+    }
+
+    fn record_application_commands(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        commands: Vec<ApplicationCommandInfo>,
+    ) {
+        self.application_commands
+            .lock()
+            .expect("application command cache lock is not poisoned")
+            .insert(guild_id, commands);
+    }
+
+    fn record_application_commands_for_tui(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        commands: Vec<ApplicationCommandInfo>,
+    ) -> Vec<ApplicationCommandInfo> {
+        self.record_application_commands(guild_id, commands.clone());
+        commands
+            .into_iter()
+            .map(ApplicationCommandInfo::without_raw)
+            .collect()
+    }
+
+    fn clear_application_command_request(&self, guild_id: Option<Id<GuildMarker>>) {
+        self.application_command_requests
+            .lock()
+            .expect("application command request lock is not poisoned")
+            .remove(&guild_id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::discord::{
-        AppEvent, ChannelInfo, MentionInfo, MessageKind, VoiceSoundKind, VoiceStateInfo,
-        gateway::GatewayCommand, ids::Id,
+    use crate::{
+        AppError,
+        discord::{
+            AppEvent, ChannelInfo, FriendStatus, MemberInfo, MentionInfo, MessageAttachmentUpload,
+            MessageKind, RoleInfo, UserProfileInfo, VoiceSoundKind, VoiceStateInfo,
+            gateway::GatewayCommand,
+            ids::{
+                Id,
+                marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker},
+            },
+        },
     };
+    use serde_json::{Value, json};
 
     use super::{
         DiscordClient, MEMBER_SEARCH_MAX_LIMIT, MEMBER_SEARCH_MAX_QUERY_CHARS,
@@ -1034,6 +1490,215 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn send_message_rejects_explicit_missing_send_permission() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        publish_permission_fixture(&client, "GuildText", VIEW_CHANNEL).await;
+
+        let error = client
+            .send_message(Id::new(2), "hello", None, &[])
+            .await
+            .expect_err("missing SEND_MESSAGES should stop before REST");
+
+        assert!(matches!(
+            error,
+            AppError::DiscordRequest(message) if message == "cannot send message in channel"
+        ));
+    }
+
+    #[tokio::test]
+    async fn send_message_rejects_explicit_missing_attach_permission() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        publish_permission_fixture(&client, "GuildText", VIEW_CHANNEL | SEND_MESSAGES).await;
+        let attachment = MessageAttachmentUpload::from_bytes("note.txt".to_owned(), b"x".to_vec());
+
+        let error = client
+            .send_message(Id::new(2), "hello", None, &[attachment])
+            .await
+            .expect_err("missing ATTACH_FILES should stop before REST");
+
+        assert!(matches!(
+            error,
+            AppError::DiscordRequest(message) if message == "cannot attach files in channel"
+        ));
+    }
+
+    #[test]
+    fn send_message_guard_allows_unknown_channels_while_state_hydrates() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+
+        client
+            .ensure_can_send_message(Id::new(99), &[])
+            .expect("unknown channel should stay optimistic");
+    }
+
+    #[tokio::test]
+    async fn voice_join_rejects_explicit_missing_connect_permission() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        publish_permission_fixture(&client, "GuildVoice", VIEW_CHANNEL).await;
+        let mut gateway_commands = client
+            .gateway_commands_rx
+            .lock()
+            .expect("gateway command receiver mutex is not poisoned")
+            .take()
+            .expect("gateway commands can be taken once");
+
+        let error = client
+            .update_voice_state(Id::new(1), Some(Id::new(2)), false, false)
+            .expect_err("missing CONNECT should stop before gateway command");
+
+        assert_eq!(error, "cannot connect to voice channel");
+        assert_eq!(client.requested_voice_connection(), None);
+        assert!(matches!(
+            gateway_commands.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn voice_state_update_allows_current_channel_mute_change_without_connect_permission() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        publish_permission_fixture(&client, "GuildVoice", VIEW_CHANNEL).await;
+        client
+            .publish_event(AppEvent::VoiceStateUpdate {
+                state: VoiceStateInfo {
+                    guild_id: Id::new(1),
+                    channel_id: Some(Id::new(2)),
+                    user_id: Id::new(10),
+                    session_id: Some("current-voice-session".to_owned()),
+                    member: None,
+                    deaf: false,
+                    mute: false,
+                    self_deaf: false,
+                    self_mute: false,
+                    self_stream: false,
+                },
+            })
+            .await;
+        let mut gateway_commands = client
+            .gateway_commands_rx
+            .lock()
+            .expect("gateway command receiver mutex is not poisoned")
+            .take()
+            .expect("gateway commands can be taken once");
+
+        client
+            .update_voice_state(Id::new(1), Some(Id::new(2)), true, true)
+            .expect("current channel mute and deaf changes should still queue");
+
+        assert_voice_update(
+            &mut gateway_commands,
+            Id::new(1),
+            Some(Id::new(2)),
+            true,
+            true,
+        );
+    }
+
+    #[test]
+    fn application_command_requests_are_deduped_until_loaded() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let guild_id = Some(Id::new(1));
+
+        assert!(client.begin_application_command_request(guild_id));
+        assert!(!client.begin_application_command_request(guild_id));
+
+        client.record_application_commands_loaded(guild_id);
+        assert!(!client.begin_application_command_request(guild_id));
+
+        let retry_guild_id = Some(Id::new(2));
+        assert!(client.begin_application_command_request(retry_guild_id));
+        assert!(!client.begin_application_command_request(retry_guild_id));
+        client.clear_application_command_request(retry_guild_id);
+        assert!(client.begin_application_command_request(retry_guild_id));
+
+        assert!(client.begin_application_command_request(None));
+        assert!(!client.begin_application_command_request(None));
+        client.record_application_commands_loaded(None);
+        assert!(!client.begin_application_command_request(None));
+    }
+
+    #[test]
+    fn application_command_metadata_keeps_raw_backend_owned() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let guild_id = Some(Id::new(1));
+        let command = application_command("echo");
+
+        let tui_commands = client.record_application_commands_for_tui(guild_id, vec![command]);
+
+        assert_eq!(tui_commands[0].raw, Value::Null);
+        let commands = client
+            .application_commands
+            .lock()
+            .expect("application command cache lock is not poisoned");
+        assert_eq!(
+            commands.get(&guild_id).expect("backend cache")[0].raw["name"],
+            "echo"
+        );
+    }
+
+    #[tokio::test]
+    async fn user_profile_requests_are_gated_by_backend_lifecycle_and_cache() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let user_id = Id::new(10);
+        let guild_id = Some(Id::new(1));
+
+        assert_eq!(
+            client.next_user_profile_request(user_id, guild_id),
+            Some((user_id, guild_id, false))
+        );
+        assert_eq!(client.next_user_profile_request(user_id, guild_id), None);
+
+        client
+            .publish_event(AppEvent::UserProfileLoadFailed {
+                user_id,
+                guild_id,
+                message: "temporary failure".to_owned(),
+            })
+            .await;
+        assert_eq!(
+            client.next_user_profile_request(user_id, guild_id),
+            Some((user_id, guild_id, false))
+        );
+
+        client
+            .publish_event(AppEvent::UserProfileLoaded {
+                guild_id,
+                profile: user_profile(user_id),
+            })
+            .await;
+        assert_eq!(client.next_user_profile_request(user_id, guild_id), None);
+    }
+
+    #[tokio::test]
+    async fn user_note_requests_are_gated_by_backend_lifecycle_and_cache() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let user_id = Id::new(10);
+
+        assert_eq!(client.next_user_note_request(user_id), Some(user_id));
+        assert_eq!(client.next_user_note_request(user_id), None);
+
+        client.mark_user_note_request_failed(user_id);
+        assert_eq!(client.next_user_note_request(user_id), Some(user_id));
+
+        client
+            .publish_event(AppEvent::UserNoteLoaded {
+                user_id,
+                note: Some("note".to_owned()),
+            })
+            .await;
+        assert_eq!(client.next_user_note_request(user_id), None);
+    }
+
     #[test]
     fn guild_member_search_validates_query_and_caps_limit() {
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -1220,6 +1885,123 @@ mod tests {
             attachments: Vec::new(),
             embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
+        }
+    }
+
+    const VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
+    const SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
+
+    async fn publish_permission_fixture(
+        client: &DiscordClient,
+        channel_kind: &str,
+        everyone_permissions: u64,
+    ) {
+        client
+            .publish_event(AppEvent::Ready {
+                user: "me".to_owned(),
+                user_id: Some(Id::new(10)),
+            })
+            .await;
+        client
+            .publish_event(AppEvent::GuildCreate {
+                guild_id: Id::new(1),
+                name: "guild".to_owned(),
+                member_count: Some(1),
+                owner_id: Some(Id::new(99)),
+                channels: vec![permission_fixture_channel(
+                    Id::new(1),
+                    Id::new(2),
+                    channel_kind,
+                )],
+                members: vec![permission_fixture_member(Id::new(10))],
+                presences: Vec::new(),
+                roles: vec![permission_fixture_role(
+                    Id::new(1),
+                    "@everyone",
+                    everyone_permissions,
+                )],
+                emojis: Vec::new(),
+            })
+            .await;
+    }
+
+    fn permission_fixture_channel(
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        kind: &str,
+    ) -> ChannelInfo {
+        ChannelInfo {
+            guild_id: Some(guild_id),
+            channel_id,
+            parent_id: None,
+            position: Some(0),
+            last_message_id: None,
+            name: "guarded".to_owned(),
+            kind: kind.to_owned(),
+            message_count: None,
+            total_message_sent: None,
+            thread_archived: None,
+            thread_locked: None,
+            thread_pinned: None,
+            recipients: None,
+            permission_overwrites: Vec::new(),
+        }
+    }
+
+    fn permission_fixture_member(user_id: Id<UserMarker>) -> MemberInfo {
+        MemberInfo {
+            user_id,
+            display_name: "me".to_owned(),
+            username: Some("me".to_owned()),
+            is_bot: false,
+            avatar_url: None,
+            role_ids: Vec::new(),
+        }
+    }
+
+    fn permission_fixture_role(id: Id<RoleMarker>, name: &str, permissions: u64) -> RoleInfo {
+        RoleInfo {
+            id,
+            name: name.to_owned(),
+            color: None,
+            position: 0,
+            hoist: false,
+            permissions,
+        }
+    }
+
+    fn user_profile(user_id: Id<UserMarker>) -> UserProfileInfo {
+        UserProfileInfo {
+            user_id,
+            username: "neo".to_owned(),
+            global_name: None,
+            guild_nick: None,
+            role_ids: Vec::new(),
+            avatar_url: None,
+            bio: None,
+            pronouns: None,
+            mutual_guilds: Vec::new(),
+            mutual_friends_count: 0,
+            friend_status: FriendStatus::None,
+            note: None,
+        }
+    }
+
+    fn application_command(name: &str) -> crate::discord::ApplicationCommandInfo {
+        crate::discord::ApplicationCommandInfo {
+            id: Id::new(100),
+            application_id: Id::new(200),
+            version: "1".to_owned(),
+            name: name.to_owned(),
+            application_name: Some("TestBot".to_owned()),
+            description: format!("{name} command"),
+            options: Vec::new(),
+            raw: json!({
+                "id": "100",
+                "application_id": "200",
+                "version": "1",
+                "name": name,
+            }),
         }
     }
 

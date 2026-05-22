@@ -209,7 +209,6 @@ fn incoming_message_while_scrolled_away_sets_new_messages_marker() {
     assert_eq!(state.new_messages_count(), 1);
     assert_eq!(state.message_extra_top_lines(5), 0);
     assert_eq!(state.channel_unread(Id::new(2)), ChannelUnreadState::Unread);
-    assert!(state.next_read_ack_deadline().is_none());
     assert!(state.drain_pending_commands().is_empty());
 }
 
@@ -876,7 +875,7 @@ fn history_load_preserves_manual_scroll_position_by_message_id() {
 }
 
 #[test]
-fn older_history_request_waits_for_loaded_page() {
+fn older_history_request_emits_visible_cursor_target() {
     let channel_id: Id<ChannelMarker> = Id::new(2);
     let mut state = state_with_message_ids([10, 11, 12]);
     state.focus_pane(FocusPane::Messages);
@@ -889,7 +888,13 @@ fn older_history_request_waits_for_loaded_page() {
             before: Some(Id::new(10)),
         })
     );
-    assert_eq!(state.next_older_history_command(), None);
+    assert_eq!(
+        state.next_older_history_command(),
+        Some(AppCommand::LoadMessageHistory {
+            channel_id,
+            before: Some(Id::new(10)),
+        })
+    );
 
     state.push_event(AppEvent::MessageHistoryLoaded {
         channel_id,
@@ -944,7 +949,7 @@ fn older_history_request_advances_after_cache_limit_retention() {
 }
 
 #[test]
-fn empty_older_history_page_marks_cursor_exhausted() {
+fn older_history_request_leaves_empty_page_exhaustion_to_backend() {
     let channel_id: Id<ChannelMarker> = Id::new(2);
     let mut state = state_with_message_ids([10, 11, 12]);
     state.focus_pane(FocusPane::Messages);
@@ -964,5 +969,11 @@ fn empty_older_history_page_marks_cursor_exhausted() {
         messages: Vec::new(),
     });
 
-    assert_eq!(state.next_older_history_command(), None);
+    assert_eq!(
+        state.next_older_history_command(),
+        Some(AppCommand::LoadMessageHistory {
+            channel_id,
+            before: Some(Id::new(10)),
+        })
+    );
 }
