@@ -10,49 +10,51 @@ use crate::discord::{
     application_command_option_scope, parsed_application_command_option_names,
 };
 
-use super::composer::{
+use super::super::{
+    CommandPickerEntry, DashboardState, EmojiPickerEntry, FocusPane, MentionPickerEntry,
+};
+use super::completions::{
     ComposerEmojiImageCompletion, EmojiCompletion, MentionCompletion, build_command_candidates,
     build_command_choice_candidates, build_command_option_candidates, build_emoji_candidates,
     build_mention_candidates, expand_composer_completions, expand_emoji_shortcodes,
     is_command_query_char, is_emoji_query_char, is_mention_query_char, move_picker_selection,
     should_start_completion_query,
 };
-use super::{CommandPickerEntry, DashboardState, EmojiPickerEntry, FocusPane, MentionPickerEntry};
 use crate::discord::AppCommand;
 
 #[derive(Debug, Default)]
-pub(super) struct ComposerUiState {
-    pub(super) composer_input: String,
-    pub(super) composer_cursor_byte_index: usize,
-    pub(super) pending_composer_attachments: Vec<MessageAttachmentUpload>,
-    pub(super) composer_active: bool,
-    pub(super) reply_target_message_id: Option<Id<MessageMarker>>,
-    pub(super) edit_target_message: Option<(Id<ChannelMarker>, Id<MessageMarker>)>,
+pub(in crate::tui::state) struct ComposerUiState {
+    pub(in crate::tui::state) composer_input: String,
+    pub(in crate::tui::state) composer_cursor_byte_index: usize,
+    pub(in crate::tui::state) pending_composer_attachments: Vec<MessageAttachmentUpload>,
+    pub(in crate::tui::state) composer_active: bool,
+    pub(in crate::tui::state) reply_target_message_id: Option<Id<MessageMarker>>,
+    pub(in crate::tui::state) edit_target_message: Option<(Id<ChannelMarker>, Id<MessageMarker>)>,
     /// Set when the user is in the middle of an `@mention` autocomplete. The
     /// stored string is the characters typed *after* the `@` and is used to
     /// filter the candidate list. `None` means the picker is closed.
-    pub(super) composer_mention_query: Option<String>,
-    pub(super) composer_mention_start: Option<usize>,
-    pub(super) composer_mention_selected: usize,
+    pub(in crate::tui::state) composer_mention_query: Option<String>,
+    pub(in crate::tui::state) composer_mention_start: Option<usize>,
+    pub(in crate::tui::state) composer_mention_selected: usize,
     /// Set when the user is typing a Unicode emoji shortcode after `:`. The
     /// picker opens after two shortcode characters, mirroring Discord's
     /// threshold while avoiding noisy popups for ordinary punctuation.
-    pub(super) composer_emoji_query: Option<String>,
-    pub(super) composer_emoji_start: Option<usize>,
-    pub(super) composer_emoji_selected: usize,
-    pub(super) composer_emoji_candidates: Vec<EmojiPickerEntry>,
-    pub(super) composer_command_query: Option<String>,
-    pub(super) composer_command_start: Option<usize>,
-    pub(super) composer_command_selected: usize,
-    pub(super) composer_command_candidates: Vec<CommandPickerEntry>,
+    pub(in crate::tui::state) composer_emoji_query: Option<String>,
+    pub(in crate::tui::state) composer_emoji_start: Option<usize>,
+    pub(in crate::tui::state) composer_emoji_selected: usize,
+    pub(in crate::tui::state) composer_emoji_candidates: Vec<EmojiPickerEntry>,
+    pub(in crate::tui::state) composer_command_query: Option<String>,
+    pub(in crate::tui::state) composer_command_start: Option<usize>,
+    pub(in crate::tui::state) composer_command_selected: usize,
+    pub(in crate::tui::state) composer_command_candidates: Vec<CommandPickerEntry>,
     /// Records `@displayname` substrings that the picker inserted, so the
     /// composer can rewrite them to Discord's `<@USER_ID>` wire format on
     /// submit even though the visible text is still the friendly form.
-    pub(super) composer_mention_completions: Vec<MentionCompletion>,
+    pub(in crate::tui::state) composer_mention_completions: Vec<MentionCompletion>,
     /// Recorded custom emoji ranges inserted by the picker. The editor keeps
     /// the readable `:name:` text while submit rewrites these ranges to
     /// Discord's `<:name:id>` or `<a:name:id>` wire format.
-    pub(super) composer_emoji_completions: Vec<EmojiCompletion>,
+    pub(in crate::tui::state) composer_emoji_completions: Vec<EmojiCompletion>,
 }
 
 impl ComposerUiState {
@@ -72,7 +74,7 @@ impl DashboardState {
         self.composer.composer_active
     }
 
-    pub(super) fn start_reply_composer(&mut self) {
+    pub(in crate::tui::state) fn start_reply_composer(&mut self) {
         let Some(message_id) = self.selected_message_state().map(|message| message.id) else {
             return;
         };
@@ -92,7 +94,7 @@ impl DashboardState {
         self.navigation.focus = FocusPane::Messages;
     }
 
-    pub(super) fn start_edit_composer(&mut self) {
+    pub(in crate::tui::state) fn start_edit_composer(&mut self) {
         let Some(message) = self.selected_message_state() else {
             return;
         };
@@ -642,7 +644,7 @@ impl DashboardState {
         self.composer.composer_command_candidates.clear();
     }
 
-    pub(super) fn refresh_composer_emoji_candidates_for_current_query(&mut self) {
+    pub(in crate::tui::state) fn refresh_composer_emoji_candidates_for_current_query(&mut self) {
         let Some(query) = self.composer.composer_emoji_query.clone() else {
             self.composer.composer_emoji_candidates.clear();
             return;
@@ -678,7 +680,7 @@ impl DashboardState {
         self.refresh_active_mention_query();
     }
 
-    pub(super) fn refresh_active_mention_query(&mut self) {
+    pub(in crate::tui::state) fn refresh_active_mention_query(&mut self) {
         let cursor = self.composer.composer_cursor_byte_index();
         let mut query_start = cursor;
 

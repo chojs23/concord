@@ -26,7 +26,6 @@ use super::keybindings::OptionsCategoryShortcut;
 mod channel_switcher;
 mod channels;
 mod composer;
-mod composer_state;
 mod dashboard;
 mod diagnostics;
 mod discord_ui;
@@ -55,7 +54,7 @@ mod toast;
 mod user;
 mod voice_actions;
 
-use composer_state::ComposerUiState;
+use composer::ComposerUiState;
 use discord_ui::DiscordUiState;
 #[allow(unused_imports)]
 use layout_cache::{LayoutCacheState, MessageRowContentMetrics, MessageRowContentMetricsCacheKey};

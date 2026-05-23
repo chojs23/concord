@@ -3,12 +3,11 @@ pub mod config;
 pub mod discord;
 pub mod error;
 pub mod logging;
-pub mod paths;
-pub mod token_store;
+mod support;
 pub mod tui;
-mod url_policy;
-pub mod version_check;
 
 pub use app::App;
 pub use discord::{AppEvent, DiscordClient};
 pub use error::{AppError, Result};
+pub(crate) use support::url_policy;
+pub use support::{paths, token_store, version_check};

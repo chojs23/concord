@@ -14,6 +14,15 @@ use crate::discord::{
     RelationshipInfo, ReplyInfo, RoleInfo, UserProfileInfo, VoiceStateInfo,
 };
 
+mod channels;
+mod guilds;
+mod members;
+mod messages;
+mod notifications;
+mod permissions;
+mod profiles;
+mod reads;
+
 struct MessageCreateFixture {
     guild_id: Option<Id<GuildMarker>>,
     channel_id: Id<ChannelMarker>,
@@ -377,15 +386,6 @@ fn message_create(
         ..MessageCreateFixture::default()
     })
 }
-
-mod channels;
-mod guilds;
-mod members;
-mod messages;
-mod notifications;
-mod permissions;
-mod profiles;
-mod reads;
 
 fn message_info(channel_id: Id<ChannelMarker>, message_id: u64, content: &str) -> MessageInfo {
     MessageInfo {

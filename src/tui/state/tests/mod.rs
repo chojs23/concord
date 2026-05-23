@@ -1,21 +1,3 @@
-mod channel_switcher;
-mod composer;
-mod direct_messages;
-mod emoji_reactions;
-mod fixtures;
-mod forums;
-mod leader_actions;
-mod members;
-mod message_actions;
-mod message_layout;
-mod message_viewport;
-mod notifications;
-mod options_voice;
-mod panes;
-mod pinned_threads;
-mod profiles;
-mod read_state;
-
 use fixtures::*;
 use ratatui::text::Line;
 
@@ -43,6 +25,24 @@ use crate::discord::{
     PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo,
     RoleInfo, SnapshotRevision, UserProfileInfo, VoiceConnectionStatus, VoiceStateInfo,
 };
+
+mod channel_switcher;
+mod composer;
+mod direct_messages;
+mod emoji_reactions;
+mod fixtures;
+mod forums;
+mod leader_actions;
+mod members;
+mod message_actions;
+mod message_layout;
+mod message_viewport;
+mod notifications;
+mod options_voice;
+mod panes;
+mod pinned_threads;
+mod profiles;
+mod read_state;
 
 fn message_rendered_height(
     message: &MessageState,
