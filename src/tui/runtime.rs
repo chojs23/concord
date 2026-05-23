@@ -49,10 +49,18 @@ pub(super) async fn run_dashboard(
             config::AppOptions::default()
         }
     };
+    let keymap_options = match config::load_keymap_options() {
+        Ok(options) => options,
+        Err(error) => {
+            logging::error("config", format!("failed to load keymap config: {error}"));
+            config::KeymapOptions::default()
+        }
+    };
     let mut state = DashboardState::new_with_options(
         options.display,
         options.notifications,
         options.voice,
+        keymap_options,
         options.ui_state,
     );
     drop(snapshots.borrow_and_update());

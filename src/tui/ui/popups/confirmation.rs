@@ -66,7 +66,7 @@ pub(in crate::tui::ui) fn message_delete_confirmation_lines(
         author,
         content,
         width,
-        &crate::tui::keybindings::KeyBindings,
+        &crate::tui::keybindings::KeyBindings::default(),
     )
 }
 
@@ -121,7 +121,7 @@ pub(in crate::tui::ui) fn message_pin_confirmation_lines(
         author,
         content,
         width,
-        &crate::tui::keybindings::KeyBindings,
+        &crate::tui::keybindings::KeyBindings::default(),
     )
 }
 

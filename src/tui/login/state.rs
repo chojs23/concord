@@ -31,7 +31,7 @@ pub(super) struct LoginState {
 impl Default for LoginState {
     fn default() -> Self {
         Self {
-            key_bindings: KeyBindings,
+            key_bindings: KeyBindings::default(),
             screen: LoginScreen::ModeSelect,
             notice: None,
             error: None,

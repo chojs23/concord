@@ -77,7 +77,7 @@ pub struct ImageViewerItem {
     pub url: String,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ChannelActionKind {
     JoinVoice,
     LeaveVoice,
@@ -94,22 +94,7 @@ pub struct ChannelActionItem {
     pub enabled: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(clippy::enum_variant_names)]
-pub enum VoiceActionKind {
-    QuickDeafen,
-    QuickMute,
-    QuickLeave,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct VoiceActionItem {
-    pub kind: VoiceActionKind,
-    pub label: String,
-    pub enabled: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum GuildActionKind {
     NoActionsYet,
     MarkAsRead,
@@ -156,7 +141,7 @@ pub const MUTE_ACTION_DURATIONS: [MuteActionDurationItem; 6] = [
     },
 ];
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum MemberActionKind {
     ShowProfile,
 }

@@ -1,6 +1,6 @@
 use super::*;
 
-const LEADER_POPUP_WIDTH: u16 = 74;
+const LEADER_POPUP_MIN_WIDTH: u16 = 74;
 const LEADER_POPUP_ROWS: usize = 4;
 const LEADER_POPUP_COLUMN_GAP: usize = 4;
 
@@ -14,7 +14,7 @@ pub(in crate::tui::ui) fn render_leader_popup(
     }
 
     let lines = leader_popup_lines(state, area.height.saturating_sub(2) as usize);
-    let popup = leader_popup_area(area, lines.len() as u16);
+    let popup = leader_popup_area(area, &lines);
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(truncate_leader_lines(
@@ -27,8 +27,14 @@ pub(in crate::tui::ui) fn render_leader_popup(
     );
 }
 
-fn leader_popup_area(area: Rect, line_count: u16) -> Rect {
-    let width = LEADER_POPUP_WIDTH.min(area.width).max(1);
+fn leader_popup_area(area: Rect, lines: &[Line<'_>]) -> Rect {
+    let content_width = lines.iter().map(leader_line_width).max().unwrap_or(0);
+    let desired_width = content_width.saturating_add(2).min(u16::MAX as usize) as u16;
+    let width = LEADER_POPUP_MIN_WIDTH
+        .max(desired_width)
+        .min(area.width)
+        .max(1);
+    let line_count = lines.len() as u16;
     let height = line_count.saturating_add(2).min(area.height).max(1);
     Rect {
         x: area.x + area.width.saturating_sub(width) / 2,
@@ -39,38 +45,48 @@ fn leader_popup_area(area: Rect, line_count: u16) -> Rect {
 }
 
 fn leader_popup_title(state: &DashboardState) -> String {
-    if !state.is_leader_action_mode() {
-        return "Leader".to_owned();
+    if state.is_leader_action_mode() {
+        if state.is_message_url_picker_open() {
+            return "Open URL".to_owned();
+        }
+        if state.is_message_action_menu_open() {
+            return "Message Actions".to_owned();
+        }
+        if state.is_guild_leader_action_active() {
+            return "Server Actions".to_owned();
+        }
+        if state.is_channel_action_threads_phase() {
+            return "Threads".to_owned();
+        }
+        if state.is_channel_leader_action_active() {
+            return "Channel Actions".to_owned();
+        }
+        if state.is_member_leader_action_active() {
+            return "Member Actions".to_owned();
+        }
+        return "Actions".to_owned();
     }
 
-    if state.is_message_url_picker_open() {
-        "Open URL".to_owned()
-    } else if state.is_message_action_menu_open() {
-        "Message Actions".to_owned()
-    } else if state.is_channel_leader_action_active() {
-        "Channel Actions".to_owned()
-    } else if state.is_guild_leader_action_active() {
-        "Server Actions".to_owned()
-    } else if state.is_member_leader_action_active() {
-        "Member Actions".to_owned()
-    } else if state.is_voice_leader_action_active() {
-        "Voice Actions".to_owned()
-    } else {
-        "Actions".to_owned()
-    }
+    state.leader_keymap_title()
 }
 
 fn leader_popup_lines(state: &DashboardState, max_lines: usize) -> Vec<Line<'static>> {
-    let lines = if state.is_leader_action_mode() {
-        leader_action_lines(state)
-    } else {
-        state
-            .key_bindings()
-            .leader_root_shortcuts()
-            .into_iter()
-            .map(|(key, label)| leader_shortcut_text_line(key, label, true))
-            .collect()
-    };
+    if state.is_leader_action_mode() {
+        return leader_shortcut_grid_lines(leader_action_lines(state), max_lines);
+    }
+
+    let lines = state
+        .leader_keymap_shortcuts()
+        .into_iter()
+        .map(|item| {
+            let label = if item.has_children {
+                format!("{} ›", item.label)
+            } else {
+                item.label
+            };
+            leader_shortcut_text_line(&item.key, &label, true)
+        })
+        .collect::<Vec<_>>();
     leader_shortcut_grid_lines(lines, max_lines)
 }
 
@@ -166,12 +182,9 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .iter()
             .enumerate()
             .map(|(index, action)| {
-                leader_shortcut_line(
-                    state
-                        .key_bindings()
-                        .guild_action_shortcut(&actions, index)
-                        .unwrap_or(' '),
-                    &action.label,
+                leader_shortcut_keys_line(
+                    &state.key_bindings().guild_action_shortcuts(&actions, index),
+                    &state.key_bindings().guild_action_label(action),
                     action.enabled,
                 )
             })
@@ -211,12 +224,11 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .iter()
             .enumerate()
             .map(|(index, action)| {
-                leader_shortcut_line(
-                    state
+                leader_shortcut_keys_line(
+                    &state
                         .key_bindings()
-                        .channel_action_shortcut(&actions, index)
-                        .unwrap_or(' '),
-                    &action.label,
+                        .channel_action_shortcuts(&actions, index),
+                    &state.key_bindings().channel_action_label(action),
                     action.enabled,
                 )
             })
@@ -228,29 +240,11 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
             .iter()
             .enumerate()
             .map(|(index, action)| {
-                leader_shortcut_line(
-                    state
+                leader_shortcut_keys_line(
+                    &state
                         .key_bindings()
-                        .member_action_shortcut(&actions, index)
-                        .unwrap_or(' '),
-                    &action.label,
-                    action.enabled,
-                )
-            })
-            .collect();
-    }
-    if state.is_voice_leader_action_active() {
-        let actions = state.selected_voice_action_items();
-        return actions
-            .iter()
-            .enumerate()
-            .map(|(index, action)| {
-                leader_shortcut_line(
-                    state
-                        .key_bindings()
-                        .voice_action_shortcut(&actions, index)
-                        .unwrap_or(' '),
-                    &action.label,
+                        .member_action_shortcuts(&actions, index),
+                    &state.key_bindings().member_action_label(action),
                     action.enabled,
                 )
             })
@@ -264,6 +258,18 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
 
 fn leader_shortcut_line(key: char, label: &str, enabled: bool) -> Line<'static> {
     leader_shortcut_text_line(&key.to_string(), label, enabled)
+}
+
+fn leader_shortcut_keys_line(keys: &[char], label: &str, enabled: bool) -> Line<'static> {
+    let key_label = if keys.is_empty() {
+        " ".to_owned()
+    } else {
+        keys.iter()
+            .map(char::to_string)
+            .collect::<Vec<_>>()
+            .join("/")
+    };
+    leader_shortcut_text_line(&key_label, label, enabled)
 }
 
 fn leader_shortcut_text_line(key: &str, label: &str, enabled: bool) -> Line<'static> {
@@ -290,7 +296,7 @@ pub(in crate::tui::ui) fn render_message_action_menu(
     area: Rect,
     state: &DashboardState,
 ) {
-    if !state.is_message_action_menu_open() {
+    if !state.is_message_action_menu_open() || state.is_leader_action_mode() {
         return;
     }
 
@@ -337,7 +343,7 @@ pub(in crate::tui::ui) fn message_action_menu_lines(
     message_action_menu_lines_with_key_bindings(
         actions,
         selected,
-        &crate::tui::keybindings::KeyBindings,
+        &crate::tui::keybindings::KeyBindings::default(),
     )
 }
 
@@ -384,8 +390,9 @@ pub(in crate::tui::ui) fn message_url_picker_lines(
         .enumerate()
         .map(|(index, item)| {
             let marker = if index == selected { "› " } else { "  " };
-            let shortcut =
-                shortcut_prefix(crate::tui::keybindings::KeyBindings.indexed_shortcut(index));
+            let shortcut = shortcut_prefix(
+                crate::tui::keybindings::KeyBindings::default().indexed_shortcut(index),
+            );
             let mut style = Style::default();
             if index == selected {
                 style = style

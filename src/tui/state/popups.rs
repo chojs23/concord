@@ -1,10 +1,11 @@
+use crate::discord::ReactionEmoji;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
-use crate::discord::{AppCommand, ReactionEmoji};
 
 use crate::discord::ReactionUsersInfo;
+use crate::tui::keybindings::{KeyChord, LeaderShortcutItem};
 
 use super::{
     DashboardState, EmojiReactionItem, FocusPane, MessageActionMenuPhase, PollVotePickerItem,
@@ -27,13 +28,13 @@ pub(super) struct PopupUiState {
     pub(super) guild_leader_action: Option<GuildLeaderActionState>,
     pub(super) channel_leader_action: Option<ChannelLeaderActionState>,
     pub(super) member_leader_action: Option<MemberLeaderActionState>,
-    pub(super) voice_leader_action: Option<VoiceLeaderActionState>,
     pub(super) user_profile_popup: Option<UserProfilePopupState>,
     pub(super) emoji_reaction_picker: Option<EmojiReactionPickerState>,
     pub(super) poll_vote_picker: Option<PollVotePickerState>,
     pub(super) reaction_users_popup: Option<ReactionUsersPopupState>,
     pub(super) debug_log_popup_open: bool,
     pub(super) leader_mode: Option<LeaderMode>,
+    pub(super) leader_keymap_prefix: Vec<KeyChord>,
     pub(super) channel_switcher: Option<ChannelSwitcherState>,
 }
 
@@ -115,11 +116,6 @@ pub(super) struct UserProfilePopupState {
 pub(super) struct MemberLeaderActionState {
     pub(super) user_id: Id<UserMarker>,
     pub(super) guild_id: Option<Id<GuildMarker>>,
-    pub(super) selected: usize,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(super) struct VoiceLeaderActionState {
     pub(super) selected: usize,
 }
 
@@ -217,10 +213,37 @@ impl DashboardState {
 
     pub fn open_leader(&mut self) {
         self.popups.leader_mode = Some(LeaderMode::Root);
+        self.popups.leader_keymap_prefix = self.options.key_bindings.leader_keymap_prefix();
+    }
+
+    pub(in crate::tui) fn open_keymap_prefix(&mut self, prefix: Vec<KeyChord>) {
+        self.popups.leader_mode = Some(LeaderMode::Root);
+        self.popups.leader_keymap_prefix = prefix;
     }
 
     pub fn close_leader(&mut self) {
         self.popups.leader_mode = None;
+        self.popups.leader_keymap_prefix.clear();
+    }
+
+    pub(in crate::tui) fn leader_keymap_prefix(&self) -> &[KeyChord] {
+        &self.popups.leader_keymap_prefix
+    }
+
+    pub(in crate::tui) fn push_leader_keymap_key(&mut self, key: KeyChord) {
+        self.popups.leader_keymap_prefix.push(key);
+    }
+
+    pub fn leader_keymap_shortcuts(&self) -> Vec<LeaderShortcutItem> {
+        self.options
+            .key_bindings
+            .leader_keymap_children(&self.popups.leader_keymap_prefix)
+    }
+
+    pub(in crate::tui) fn leader_keymap_title(&self) -> String {
+        self.options
+            .key_bindings
+            .keymap_prefix_title(&self.popups.leader_keymap_prefix)
     }
 
     pub fn open_leader_actions_for_focused_target(&mut self) {
@@ -231,11 +254,7 @@ impl DashboardState {
             FocusPane::Messages => self.open_selected_message_actions(),
             FocusPane::Members => self.open_selected_member_actions(),
         }
-        if self.is_any_action_context_active() {
-            self.popups.leader_mode = Some(LeaderMode::Actions);
-        } else {
-            self.popups.leader_mode = Some(LeaderMode::Root);
-        }
+        self.popups.leader_mode = Some(LeaderMode::Actions);
     }
 
     pub fn close_all_action_contexts(&mut self) {
@@ -243,7 +262,6 @@ impl DashboardState {
         self.popups.guild_leader_action = None;
         self.popups.channel_leader_action = None;
         self.popups.member_leader_action = None;
-        self.popups.voice_leader_action = None;
     }
 
     pub fn is_any_action_context_active(&self) -> bool {
@@ -251,139 +269,6 @@ impl DashboardState {
             || self.popups.guild_leader_action.is_some()
             || self.popups.channel_leader_action.is_some()
             || self.popups.member_leader_action.is_some()
-            || self.popups.voice_leader_action.is_some()
-    }
-
-    pub fn activate_leader_action_shortcut(
-        &mut self,
-        shortcut: char,
-    ) -> (bool, Option<AppCommand>) {
-        let shortcut = shortcut.to_ascii_lowercase();
-        if self.popups.message_action_menu.is_some() {
-            if self.is_message_url_picker_open() {
-                let urls = self.selected_message_url_items();
-                let matched = urls.iter().enumerate().any(|(index, _)| {
-                    self.options.key_bindings.indexed_shortcut(index) == Some(shortcut)
-                });
-                return (
-                    matched,
-                    matched
-                        .then(|| self.activate_message_action_shortcut(shortcut))
-                        .flatten(),
-                );
-            }
-            let actions = self.selected_message_action_items();
-            let matched = actions.iter().enumerate().any(|(index, action)| {
-                action.enabled
-                    && self
-                        .options
-                        .key_bindings
-                        .message_action_shortcut(&actions, index)
-                        .is_some_and(|candidate| candidate == shortcut)
-            });
-            return (
-                matched,
-                matched
-                    .then(|| self.activate_message_action_shortcut(shortcut))
-                    .flatten(),
-            );
-        }
-        if self.popups.guild_leader_action.is_some() {
-            let matched = if self.is_guild_action_mute_duration_phase() {
-                self.selected_guild_mute_duration_items()
-                    .iter()
-                    .enumerate()
-                    .any(|(index, _)| {
-                        self.options.key_bindings.indexed_shortcut(index) == Some(shortcut)
-                    })
-            } else {
-                let actions = self.selected_guild_action_items();
-                actions.iter().enumerate().any(|(index, action)| {
-                    action.enabled
-                        && self
-                            .options
-                            .key_bindings
-                            .guild_action_shortcut(&actions, index)
-                            .is_some_and(|candidate| candidate == shortcut)
-                })
-            };
-            return (
-                matched,
-                matched
-                    .then(|| self.activate_guild_action_shortcut(shortcut))
-                    .flatten(),
-            );
-        }
-        if let Some(action) = self.popups.channel_leader_action.as_ref() {
-            let matched = match action {
-                ChannelLeaderActionState::Actions { .. } => {
-                    let actions = self.selected_channel_action_items();
-                    actions.iter().enumerate().any(|(index, action)| {
-                        action.enabled
-                            && self
-                                .options
-                                .key_bindings
-                                .channel_action_shortcut(&actions, index)
-                                .is_some_and(|candidate| candidate == shortcut)
-                    })
-                }
-                ChannelLeaderActionState::MuteDuration { .. } => self
-                    .selected_channel_mute_duration_items()
-                    .iter()
-                    .enumerate()
-                    .any(|(index, _)| {
-                        self.options.key_bindings.indexed_shortcut(index) == Some(shortcut)
-                    }),
-                ChannelLeaderActionState::Threads { .. } => self
-                    .channel_action_thread_items()
-                    .iter()
-                    .enumerate()
-                    .any(|(index, _)| {
-                        self.options.key_bindings.indexed_shortcut(index) == Some(shortcut)
-                    }),
-            };
-            return (
-                matched,
-                matched
-                    .then(|| self.activate_channel_action_shortcut(shortcut))
-                    .flatten(),
-            );
-        }
-        if self.popups.member_leader_action.is_some() {
-            let actions = self.selected_member_action_items();
-            let matched = actions.iter().enumerate().any(|(index, action)| {
-                action.enabled
-                    && self
-                        .options
-                        .key_bindings
-                        .member_action_shortcut(&actions, index)
-                        .is_some_and(|candidate| candidate == shortcut)
-            });
-            return (
-                matched,
-                matched
-                    .then(|| self.activate_member_action_shortcut(shortcut))
-                    .flatten(),
-            );
-        }
-        if self.popups.voice_leader_action.is_some() {
-            let actions = self.selected_voice_action_items();
-            let matched = actions.iter().enumerate().any(|(index, action)| {
-                action.enabled
-                    && self
-                        .options
-                        .key_bindings
-                        .voice_action_shortcut(&actions, index)
-                        .is_some_and(|candidate| candidate == shortcut)
-            });
-            return (
-                matched,
-                matched
-                    .then(|| self.activate_voice_action_shortcut(shortcut))
-                    .flatten(),
-            );
-        }
-        (false, None)
     }
 }
 

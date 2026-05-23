@@ -35,7 +35,7 @@ pub(in crate::tui::ui) fn poll_vote_picker_lines(
     poll_vote_picker_lines_with_key_bindings(
         answers,
         selected,
-        &crate::tui::keybindings::KeyBindings,
+        &crate::tui::keybindings::KeyBindings::default(),
     )
 }
 

@@ -136,8 +136,8 @@ impl DashboardState {
                 && self
                     .options
                     .key_bindings()
-                    .member_action_shortcut(&actions, index)
-                    .is_some_and(|candidate| candidate == shortcut)
+                    .member_action_shortcuts(&actions, index)
+                    .contains(&shortcut)
         })?;
         self.select_member_action_row(index);
         self.activate_selected_member_action()

@@ -28,14 +28,6 @@ fn message_keys_use_scroll_controls() {
     assert_eq!(state.selected_message(), 5);
     assert!(!state.message_auto_follow());
 
-    handle_key(&mut state, key(KeyCode::PageUp));
-    assert_eq!(state.selected_message(), 1);
-    assert!(!state.message_auto_follow());
-
-    handle_key(&mut state, ctrl_key('d'));
-    assert_eq!(state.selected_message(), 5);
-    assert!(!state.message_auto_follow());
-
     handle_key(&mut state, ctrl_key('d'));
     assert_eq!(state.selected_message(), 9);
     // Half-page-down landed the cursor on the latest message, so
@@ -79,36 +71,6 @@ fn message_viewport_scroll_keys_do_not_change_selection_or_request_history() {
     assert_eq!(command, None);
     assert_eq!(state.selected_message(), selected);
     assert_eq!(state.message_line_scroll(), 0);
-}
-
-#[test]
-fn message_home_end_scroll_viewport_without_changing_selection() {
-    let mut state = state_with_messages(10);
-    state.focus_pane(FocusPane::Messages);
-    state.set_message_view_height(5);
-    state.clamp_message_viewport_for_image_previews(200, 16, 3);
-    let selected = state.selected_message();
-
-    handle_key(&mut state, key(KeyCode::Home));
-    assert_eq!(state.selected_message(), selected);
-    assert_eq!(state.message_scroll(), 0);
-
-    handle_key(&mut state, key(KeyCode::End));
-    assert_eq!(state.selected_message(), selected);
-    assert!(state.message_scroll() > 0);
-}
-
-#[test]
-fn page_keys_scroll_non_message_panes() {
-    let mut state = state_with_channel_tree();
-    state.focus_pane(FocusPane::Channels);
-    state.set_channel_view_height(9);
-
-    handle_key(&mut state, key(KeyCode::PageDown));
-    assert_eq!(state.selected_channel(), 2);
-
-    handle_key(&mut state, key(KeyCode::PageUp));
-    assert_eq!(state.selected_channel(), 0);
 }
 
 #[test]

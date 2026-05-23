@@ -46,7 +46,7 @@ use message_viewport::{MessageViewportState, ThreadReturnTarget};
 use navigation::{ActiveGuildScope, FolderKey, NavigationState};
 use options::OptionsUiState;
 use pane_filter::PaneFilterState;
-use popups::{LeaderMode, PopupUiState};
+use popups::PopupUiState;
 use request_tracking::RequestTrackingState;
 use runtime_state::{RuntimeUiState, ToastMessage, VoiceConnectionUiState};
 use scroll::clamp_selected_index;
@@ -60,11 +60,10 @@ pub use model::{
     ChannelActionItem, ChannelPaneEntry, ChannelSwitcherItem, ChannelThreadItem, EmojiReactionItem,
     FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, ImageViewerItem,
     MemberActionItem, MessageActionItem, MessageActionKind, MuteActionDurationItem,
-    PollVotePickerItem, ThreadMessagePreview, ThreadSummary, VoiceActionItem,
+    PollVotePickerItem, ThreadMessagePreview, ThreadSummary,
 };
 pub use model::{
     ChannelActionKind, GuildActionKind, MemberActionKind, MessageActionMenuPhase, MessageUrlItem,
-    VoiceActionKind,
 };
 pub use options::DisplayOptionItem;
 pub use popups::{

@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -44,11 +45,80 @@ pub struct VoiceOptions {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
+pub struct KeymapOptions {
+    pub leader: Option<String>,
+    pub groups: BTreeMap<String, String>,
+    pub guild_actions: BTreeMap<String, KeymapBinding>,
+    pub channel_actions: BTreeMap<String, KeymapBinding>,
+    pub member_actions: BTreeMap<String, KeymapBinding>,
+    #[serde(flatten)]
+    pub mappings: BTreeMap<String, KeymapBinding>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct KeymapBinding {
+    pub keys: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum KeymapBindingInput {
+    Simple(String),
+    Structured {
+        keys: KeymapKeysInput,
+        description: Option<String>,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum KeymapKeysInput {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl KeymapBinding {
+    pub fn one(key: impl Into<String>) -> Self {
+        Self {
+            keys: vec![key.into()],
+            description: None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for KeymapBinding {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        match KeymapBindingInput::deserialize(deserializer)? {
+            KeymapBindingInput::Simple(key) => Ok(Self::one(key)),
+            KeymapBindingInput::Structured { keys, description } => {
+                let keys = match keys {
+                    KeymapKeysInput::One(key) => vec![key],
+                    KeymapKeysInput::Many(keys) => keys,
+                };
+                Ok(Self { keys, description })
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
 pub struct AppOptions {
     pub display: DisplayOptions,
     pub notifications: NotificationOptions,
     pub voice: VoiceOptions,
     pub ui_state: UiStateOptions,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize)]
+#[serde(default)]
+struct KeymapFileOptions {
+    keymap: KeymapOptions,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -240,6 +310,11 @@ pub fn load_options() -> Result<AppOptions> {
     load_options_from_path(&path)
 }
 
+pub fn load_keymap_options() -> Result<KeymapOptions> {
+    let path = keymap_path()?;
+    load_keymap_options_from_path(&path)
+}
+
 /// User-facing description of where config lives, e.g. for help text. Falls
 /// back to the legacy path string when XDG resolution fails so the message
 /// stays readable.
@@ -254,6 +329,14 @@ fn load_options_from_path(path: &Path) -> Result<AppOptions> {
     match fs::read_to_string(path) {
         Ok(content) => Ok(toml::from_str::<AppOptions>(&content)?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(AppOptions::default()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn load_keymap_options_from_path(path: &Path) -> Result<KeymapOptions> {
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(toml::from_str::<KeymapFileOptions>(&content)?.keymap),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(KeymapOptions::default()),
         Err(error) => Err(error.into()),
     }
 }
@@ -274,6 +357,16 @@ fn save_options_to_path(path: &Path, options: &AppOptions) -> Result<()> {
 
 fn config_path() -> Result<PathBuf> {
     paths::config_file().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "could not resolve user config directory",
+        )
+        .into()
+    })
+}
+
+fn keymap_path() -> Result<PathBuf> {
+    paths::keymap_file().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "could not resolve user config directory",
@@ -332,9 +425,9 @@ mod tests {
     };
 
     use super::{
-        AppOptions, DisplayOptions, ImagePreviewQualityPreset, MicrophoneSensitivityDb,
-        NotificationOptions, VoiceOptions, VoiceVolumePercent, load_options_from_path,
-        save_options_to_path,
+        AppOptions, DisplayOptions, ImagePreviewQualityPreset, KeymapFileOptions, KeymapOptions,
+        MicrophoneSensitivityDb, NotificationOptions, VoiceOptions, VoiceVolumePercent,
+        load_keymap_options_from_path, load_options_from_path, save_options_to_path,
     };
 
     #[test]
@@ -491,6 +584,107 @@ mod tests {
     }
 
     #[test]
+    fn config_options_ignore_keymap_sections() {
+        let config: AppOptions = toml::from_str(
+            "[keymap]\nStartComposer = { keys = [\"c\"] }\n\n[display]\nshow_avatars = false\n",
+        )
+        .expect("config should ignore keymap table");
+
+        assert!(!config.display.show_avatars);
+    }
+
+    #[test]
+    fn keymap_options_parse_partial_toml() {
+        let keymap = parse_keymap_options(
+            "[keymap]\nleader = \"space\"\nStartComposer = \"<leader>e\"\nReplyMessage = \"<leader>m r\"\n\n[keymap.groups]\n\"<C-w>\" = \"Window\"\n",
+        );
+
+        assert_eq!(keymap.leader.as_deref(), Some("space"));
+        assert_eq!(
+            keymap.mappings.get("StartComposer"),
+            Some(&crate::config::KeymapBinding::one("<leader>e"))
+        );
+        assert_eq!(
+            keymap.mappings.get("ReplyMessage"),
+            Some(&crate::config::KeymapBinding::one("<leader>m r"))
+        );
+        assert_eq!(
+            keymap.groups.get("<C-w>").map(String::as_str),
+            Some("Window")
+        );
+    }
+
+    #[test]
+    fn keymap_options_parse_structured_bindings() {
+        let keymap = parse_keymap_options(
+            "[keymap]\nChannelSwitcher = { keys = [\"<C-w>f\", \"<leader><C-w>\"], description = \"find channel\" }\nOpenPaneFilter = { keys = \"<C-f>\" }\n",
+        );
+
+        assert_eq!(
+            keymap.mappings.get("ChannelSwitcher"),
+            Some(&crate::config::KeymapBinding {
+                keys: vec!["<C-w>f".to_owned(), "<leader><C-w>".to_owned()],
+                description: Some("find channel".to_owned()),
+            })
+        );
+        assert_eq!(
+            keymap.mappings.get("OpenPaneFilter"),
+            Some(&crate::config::KeymapBinding::one("<C-f>"))
+        );
+    }
+
+    #[test]
+    fn keymap_options_parse_documented_start_composer_binding() {
+        let keymap = parse_keymap_options("[keymap]\nStartComposer = { keys = [\"c\"] }\n");
+
+        assert_eq!(
+            keymap.mappings.get("StartComposer"),
+            Some(&crate::config::KeymapBinding {
+                keys: vec!["c".to_owned()],
+                description: None,
+            })
+        );
+    }
+
+    #[test]
+    fn keymap_options_parse_action_table_bindings() {
+        let keymap = parse_keymap_options(
+            "[keymap.VoiceDeafen]\nkeys = [\"dd\"]\ndescription = \"deafen voice\"\n",
+        );
+
+        assert_eq!(
+            keymap.mappings.get("VoiceDeafen"),
+            Some(&crate::config::KeymapBinding {
+                keys: vec!["dd".to_owned()],
+                description: Some("deafen voice".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn keymap_options_parse_scoped_action_bindings() {
+        let keymap = parse_keymap_options(
+            "[keymap.guild_actions]\nMuteServer = { keys = [\"m\"], description = \"mute server\" }\n\n[keymap.channel_actions]\nMuteChannel = \"x\"\n\n[keymap.member_actions]\nShowProfile = \"p\"\n",
+        );
+
+        assert_eq!(
+            keymap.guild_actions.get("MuteServer"),
+            Some(&crate::config::KeymapBinding {
+                keys: vec!["m".to_owned()],
+                description: Some("mute server".to_owned()),
+            })
+        );
+        assert_eq!(
+            keymap.channel_actions.get("MuteChannel"),
+            Some(&crate::config::KeymapBinding::one("x"))
+        );
+        assert_eq!(
+            keymap.member_actions.get("ShowProfile"),
+            Some(&crate::config::KeymapBinding::one("p"))
+        );
+    }
+
+    #[test]
     fn voice_volume_config_values_are_clamped() {
         let config: AppOptions =
             toml::from_str("[voice]\nmicrophone_volume = 150\nvoice_output_volume = -10\n")
@@ -530,9 +724,44 @@ mod tests {
         };
 
         save_options_to_path(&path, &options).expect("config should save");
+        let saved = fs::read_to_string(&path).expect("config should be readable");
+        assert!(!saved.contains("[keymap"));
         let loaded = load_options_from_path(&path).expect("config should load");
 
         assert_eq!(loaded, options);
+        let _ = fs::remove_file(&path);
+        if let Some(parent) = path.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
+    }
+
+    #[test]
+    fn keymap_options_load_from_path_defaults_when_missing() {
+        let path = test_keymap_path();
+
+        let loaded = load_keymap_options_from_path(&path).expect("missing keymap should load");
+
+        assert_eq!(loaded, KeymapOptions::default());
+    }
+
+    #[test]
+    fn keymap_options_load_from_path_reads_keymap_file() {
+        let path = test_keymap_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("test keymap parent should be created");
+        }
+        fs::write(&path, "[keymap]\nStartComposer = { keys = [\"c\"] }\n")
+            .expect("test keymap should be written");
+
+        let loaded = load_keymap_options_from_path(&path).expect("keymap should load");
+
+        assert_eq!(
+            loaded.mappings.get("StartComposer"),
+            Some(&crate::config::KeymapBinding {
+                keys: vec!["c".to_owned()],
+                description: None,
+            })
+        );
         let _ = fs::remove_file(&path);
         if let Some(parent) = path.parent() {
             let _ = fs::remove_dir_all(parent);
@@ -547,5 +776,21 @@ mod tests {
         std::env::temp_dir()
             .join(format!("concord-config-test-{unique}"))
             .join("config.toml")
+    }
+
+    fn test_keymap_path() -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after Unix epoch")
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!("concord-keymap-test-{unique}"))
+            .join("keymap.toml")
+    }
+
+    fn parse_keymap_options(toml: &str) -> KeymapOptions {
+        toml::from_str::<KeymapFileOptions>(toml)
+            .expect("keymap config should parse")
+            .keymap
     }
 }

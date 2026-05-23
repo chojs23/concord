@@ -209,9 +209,7 @@ pub fn render(
     }
     render_leader_popup(frame, areas.messages, state);
     render_channel_switcher_popup(frame, areas.messages, state);
-    if !state.is_leader_action_mode() {
-        render_message_action_menu(frame, areas.messages, state);
-    }
+    render_message_action_menu(frame, areas.messages, state);
     render_message_delete_confirmation(frame, areas.messages, state);
     render_message_pin_confirmation(frame, areas.messages, state);
     render_options_popup(frame, areas.messages, state);

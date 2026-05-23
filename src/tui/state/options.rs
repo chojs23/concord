@@ -1,6 +1,6 @@
 use crate::config::{
-    AppOptions, DisplayOptions, ImagePreviewQualityPreset, NotificationOptions, UiStateOptions,
-    VoiceOptions,
+    AppOptions, DisplayOptions, ImagePreviewQualityPreset, KeymapOptions, NotificationOptions,
+    UiStateOptions, VoiceOptions,
 };
 use crate::discord::AppCommand;
 use crate::tui::keybindings::{KeyBindings, OptionsCategoryShortcut};
@@ -27,25 +27,13 @@ pub struct DisplayOptionItem {
     pub description: &'static str,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(super) struct OptionsUiState {
     pub(super) display_options: DisplayOptions,
     pub(super) notification_options: NotificationOptions,
     pub(super) voice_options: VoiceOptions,
     pub(super) key_bindings: KeyBindings,
     pub(super) options_save_pending: bool,
-}
-
-impl Default for OptionsUiState {
-    fn default() -> Self {
-        Self {
-            display_options: DisplayOptions::default(),
-            notification_options: NotificationOptions::default(),
-            voice_options: VoiceOptions::default(),
-            key_bindings: KeyBindings,
-            options_save_pending: false,
-        }
-    }
 }
 
 impl OptionsUiState {
@@ -59,12 +47,14 @@ impl DashboardState {
         display_options: DisplayOptions,
         notification_options: NotificationOptions,
         voice_options: VoiceOptions,
+        keymap_options: KeymapOptions,
         ui_state_options: UiStateOptions,
     ) -> Self {
         let mut state = Self::new();
         state.options.display_options = display_options;
         state.options.notification_options = notification_options;
         state.options.voice_options = voice_options;
+        state.options.key_bindings = KeyBindings::from_options(&keymap_options);
         state.apply_ui_state_options(ui_state_options);
         state
     }
@@ -79,6 +69,7 @@ impl DashboardState {
             display_options,
             NotificationOptions::default(),
             VoiceOptions::default(),
+            KeymapOptions::default(),
             UiStateOptions::default(),
         )
     }
@@ -89,6 +80,7 @@ impl DashboardState {
             DisplayOptions::default(),
             NotificationOptions::default(),
             voice_options,
+            KeymapOptions::default(),
             UiStateOptions::default(),
         )
     }
@@ -99,6 +91,7 @@ impl DashboardState {
             DisplayOptions::default(),
             notification_options,
             VoiceOptions::default(),
+            KeymapOptions::default(),
             UiStateOptions::default(),
         )
     }
@@ -585,22 +578,15 @@ impl DashboardState {
         }
     }
 
-    pub fn open_options_category_shortcut(&mut self, shortcut: char) {
-        match self
-            .options
-            .key_bindings
-            .options_category_shortcut(shortcut)
-        {
-            Some(OptionsCategoryShortcut::Display) => {
+    pub fn open_options_category_from_shortcut(&mut self, shortcut: OptionsCategoryShortcut) {
+        match shortcut {
+            OptionsCategoryShortcut::Display => {
                 self.open_options_category(OptionsCategory::Display)
             }
-            Some(OptionsCategoryShortcut::Notifications) => {
+            OptionsCategoryShortcut::Notifications => {
                 self.open_options_category(OptionsCategory::Notifications)
             }
-            Some(OptionsCategoryShortcut::Voice) => {
-                self.open_options_category(OptionsCategory::Voice)
-            }
-            None => {}
+            OptionsCategoryShortcut::Voice => self.open_options_category(OptionsCategory::Voice),
         }
     }
 

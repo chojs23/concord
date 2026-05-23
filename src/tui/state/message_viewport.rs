@@ -434,6 +434,7 @@ impl DashboardState {
         );
     }
 
+    #[cfg(test)]
     pub fn scroll_message_viewport_top(&mut self) {
         if self.navigation.focus != FocusPane::Messages {
             return;
@@ -444,6 +445,7 @@ impl DashboardState {
         self.messages.message_line_scroll = 0;
     }
 
+    #[cfg(test)]
     pub fn scroll_message_viewport_bottom(&mut self) {
         if self.navigation.focus != FocusPane::Messages
             || self.messages.message_content_width == usize::MAX

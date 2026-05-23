@@ -112,10 +112,6 @@ aplay -D pulse /usr/share/sounds/alsa/Front_Center.wav
 
 ## Features
 
-Concord can request joining and leaving Discord voice channels. Default builds
-do not open local audio devices, while source builds with `--features
-voice-playback` support voice playback and gated microphone transmit.
-
 ### Authentication
 
 - **Token** : paste an existing Discord token.
@@ -134,9 +130,6 @@ Tokens are saved under Concord's config directory in plain text. See the Securit
 - Load pinned messages per channel
 - Open channel actions for pinned messages, thread lists, and mark-as-read
 - Join and leave voice channels
-- Receive voice playback when built with `--features voice-playback`
-- Transmit microphone audio when built with `--features voice-playback`, joined
-  from this Concord session, explicitly allowed, and not self-muted
 - Highlight active voice speakers in voice channel participant rows
 - Track unread messages and mention counts per channel
 - Mute and unmute channels and servers
@@ -214,27 +207,30 @@ You can toggle image viewing on or off in the configuration file. When image vie
 
 ### Navigation & Keyboard shortcuts
 
+All default key settings in this section can be customized. See
+[Keymap options](#keymap-options) for the config format and supported actions.
+
 Concord has a four-pane layout like Discord.
 **Guilds (1)**, **Channels (2)**, **Messages (3)**, **Members (4)**
 
-With vim-style navigation:
+With default vim-style navigation:
 
-| Key                       | Action                                     |
-| ------------------------- | ------------------------------------------ |
-| `1` `2` `3` `4`           | Focus pane                                 |
-| `Tab` / `Shift+Tab`       | Cycle focus forward / backward             |
-| `h` / `l`, `←` / `→`      | Move focus left / right                    |
-| `j` / `k`, `↑` / `↓`      | Move down / up                             |
-| `J`, `K` / `H`, `L`       | Scroll viewport                            |
-| `Ctrl+d` / `Ctrl+u`       | Half-page scroll                           |
-| `Alt+h/l/←/→`             | Resize focused pane width                  |
-| `g` / `G`, `Home` / `End` | Jump or scroll to top / bottom             |
-| `Enter`                   | Open or activate the selected item         |
-| `/`                       | Filter the focused Guilds or Channels pane |
-| `Space`                   | Open leader shortcut window                |
-| `i`                       | Text insert mode                           |
-| `Esc`                     | Close popup, cancel mode, or go back       |
-| `q`                       | Quit                                       |
+| Key                  | Action                                     |
+| -------------------- | ------------------------------------------ |
+| `1` `2` `3` `4`      | Focus pane                                 |
+| `Tab` / `Shift+Tab`  | Cycle focus forward / backward             |
+| `h` / `l`, `←` / `→` | Move focus left / right                    |
+| `j` / `k`, `↑` / `↓` | Move down / up                             |
+| `J`, `K` / `H`, `L`  | Scroll viewport                            |
+| `Ctrl+d` / `Ctrl+u`  | Half-page scroll                           |
+| `Alt+h/l/←/→`        | Resize focused pane width                  |
+| `g` / `G`            | Jump or scroll to top / bottom             |
+| `Enter`              | Open or activate the selected item         |
+| `/`                  | Filter the focused Guilds or Channels pane |
+| `Space`              | Open leader shortcut window                |
+| `i`                  | Text insert mode                           |
+| `Esc`                | Close popup, cancel mode, or go back       |
+| `q`                  | Quit                                       |
 
 #### Leader key
 
@@ -247,7 +243,7 @@ Press `Space` to open the leader shortcut window.
 | `Space`, `4`     | Toggle the Members pane           |
 | `Space`, `a`     | Open actions for the focused pane |
 | `Space`, `o`     | Choose concord option category    |
-| `Space`, `v`     | Open voice actions                |
+| `Space`, `v`     | Voice command prefix              |
 | `Space`, `Space` | Open the fuzzy channel switcher   |
 
 #### Action menus
@@ -278,24 +274,26 @@ Server actions:
 | Shortcut | Action              | Description                                           |
 | -------- | ------------------- | ----------------------------------------------------- |
 | `m`      | Mark server as read | Mark all unread viewable channels in this server read |
+| `u`      | Mute / unmute       | Toggle server notification mute                       |
 
 Channel actions:
 
-| Shortcut | Action               | Description                                 |
-| -------- | -------------------- | ------------------------------------------- |
-| `j`      | Join voice           | Join the selected voice channel             |
-| `l`      | Leave voice          | Leave the current voice channel             |
-| `p`      | Show pinned messages | Open the selected channel's pinned messages |
-| `t`      | Show threads         | List threads for the selected channel       |
-| `m`      | Mark as read         | Mark the selected channel read              |
+| Shortcut | Action               | Description                                  |
+| -------- | -------------------- | -------------------------------------------- |
+| `j`      | Join voice           | Join the selected voice channel              |
+| `l`      | Leave voice          | Leave the current voice channel              |
+| `p`      | Show pinned messages | Open the selected channel's pinned messages  |
+| `t`      | Show threads         | List threads for the selected channel        |
+| `m`      | Mark as read         | Mark the selected channel read               |
+| `u`      | Mute / unmute        | Toggle channel or category notification mute |
 
-Voice actions:
+Voice commands:
 
-| Shortcut | Action       | Description                               |
-| -------- | ------------ | ----------------------------------------- |
-| `d`      | Deafen voice | Toggle Concord's Discord voice deaf state |
-| `m`      | Mute voice   | Toggle Concord's Discord voice mute state |
-| `l`      | Leave voice  | Leave the current Concord voice channel   |
+| Sequence          | Action       | Description                               |
+| ----------------- | ------------ | ----------------------------------------- |
+| `Space`, `v`, `d` | Deafen voice | Toggle Concord's Discord voice deaf state |
+| `Space`, `v`, `m` | Mute voice   | Toggle Concord's Discord voice mute state |
+| `Space`, `v`, `l` | Leave voice  | Leave the current Concord voice channel   |
 
 When the image viewer is open, press `d` to download the current image directly.
 
@@ -337,11 +335,12 @@ open or activate items, and use the wheel to scroll panes and popups.
 ### Configuration
 
 Concord options are stored under Concord's config directory. If
-`XDG_CONFIG_HOME` is set, Concord uses
-`$XDG_CONFIG_HOME/concord/config.toml`. Otherwise it uses the platform config
-directory. The usual fallback is `~/.config/concord/config.toml` on Linux,
-`~/Library/Application Support/concord/config.toml` on macOS, and the roaming
-AppData config directory on Windows.
+`XDG_CONFIG_HOME` is set, Concord uses `$XDG_CONFIG_HOME/concord/config.toml`
+for app options and `$XDG_CONFIG_HOME/concord/keymap.toml` for key settings.
+Otherwise it uses the platform config directory. The usual fallback is
+`~/.config/concord/config.toml` and `~/.config/concord/keymap.toml` on Linux,
+matching files under `~/Library/Application Support/concord/` on macOS, and the
+roaming AppData config directory on Windows.
 
 - Disable all image previews with one master switch
 - Toggle inline image previews
@@ -355,28 +354,51 @@ AppData config directory on Windows.
   self-muted
 
 You can change these from the in-app Options menu, and Concord saves them back
-to the config file.
+to `config.toml`. Key settings are read from `keymap.toml`.
 
 Example:
 
 ```toml
 [display]
+# Master switch that hides all image previews when true.
 disable_image_preview = false
+
+# Show user avatars next to messages and in profile views.
 show_avatars = true
+
+# Render inline image previews for attachments and embeds.
 show_images = true
+
+# Preview quality: efficient, balanced, high, or original.
 image_preview_quality = "balanced"
+
+# Render custom Discord emoji as images when possible.
 show_custom_emoji = true
+
+# Crop avatars into circles instead of showing square images.
 circular_avatars = false
 
 [notifications]
+# Show desktop notifications for Discord messages that pass notification rules.
 desktop_notifications = true
 
 [voice]
+# Join or update Discord voice with Concord self-muted.
 self_mute = false
+
+# Join or update Discord voice with Concord self-deafened.
 self_deaf = false
+
+# Allow microphone transmit while this session is joined and not self-muted.
 allow_microphone_transmit = false
+
+# Voice activity threshold in dB. Lower values transmit quieter input.
 microphone_sensitivity = -30
+
+# Microphone input volume percentage, from 0 to 100.
 microphone_volume = 100
+
+# Received voice playback volume percentage, from 0 to 100.
 voice_output_volume = 100
 ```
 
@@ -391,35 +413,249 @@ This setting only applies to attachment, embed, and image viewer previews.
 Avatars and custom emoji keep their separate small-image behavior.
 
 `desktop_notifications` under `[notifications]` controls OS notifications for Discord messages that
-pass Discord notification settings. On macOS, Concord keeps the visual
-notification and audible alert separate to avoid duplicate sounds while still
-playing a sound when the terminal app is focused.
+pass Discord notification settings.
 
-`self_mute` and `self_deaf` under `[voice]` control the voice state Concord
-sends when joining, leaving, or updating your current Discord voice channel.
-`self_deaf` also mutes Concord's local playback and clears buffered received
-audio.
-
-`allow_microphone_transmit` is a local safety gate. When built with
-`voice-playback`, turning it on may open microphone input and transmit voice
-only while this Concord session is joined to voice and `self_mute` is false.
-Microphone input is converted to Discord's 48 kHz voice format before Opus
-encoding. Concord sends Discord Speaking on/off around transmitted audio, and
-transmit stops when the gate closes, the app leaves voice, or the voice session
-ends. If Discord DAVE encryption is required but outbound encryption is not
-ready, Concord fails closed instead of sending plaintext audio.
-
-`microphone_sensitivity` controls how loud a 20 ms microphone frame must be
-before Concord transmits it. It accepts an integer dB threshold from `-100` to
-`0`. Lower values transmit quieter input. The default is `-30`, which filters
-small ambient noise so the active speaker indicator does not stay green all the
-time. `microphone_volume` and `voice_output_volume` accept `0` to `100` percent
-and default to `100`, which preserves the normal audio level. Press `Space`,
-`o`, `d` for display options, `Space`, `o`, `n` for notification options, or
-`Space`, `o`, `v` for voice options. In Voice Options, select Microphone
+`microphone_volume` and `voice_output_volume` accept `0` to `100` percent
+and default to `100`, which preserves the normal audio level. In Voice Options, select
 sensitivity and press `h`/`l` to adjust by 1 dB or `H`/`L` to adjust by 10 dB.
-The microphone and voice volume rows use the same keys to adjust by 1 or 10
-percent.
+
+#### Keymap options
+
+Concord reads key settings from the `[keymap]` section in `keymap.toml`.
+
+Example `keymap.toml`:
+
+```toml
+[keymap]
+StartComposer = { keys = ["c"] }
+ReplyMessage = "<leader>m r"
+
+[keymap.channel_actions]
+MuteChannel = { keys = ["x"], description = "mute channel" }
+```
+
+There are four kinds of keymap settings:
+
+| Config path                                                                     | What it controls                                                                            |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `[keymap] leader`                                                               | The key that opens the leader popup. Defaults to `Space`.                                   |
+| `[keymap] <ActionName>`                                                         | Directly assignable UI actions such as `StartComposer`, `ChannelSwitcher`, and `VoiceMute`. |
+| `[keymap.groups]`                                                               | Optional titles for prefix popups, such as naming `<leader>v` as `Voice`.                   |
+| `[keymap.guild_actions]`, `[keymap.channel_actions]`, `[keymap.member_actions]` | Shortcuts shown inside focused-pane action menus opened by `OpenFocusedPaneAction`.         |
+
+`[keymap]` action values can be either a string or an object with `keys` and an
+optional `description`:
+
+```toml
+[keymap]
+StartComposer = "<leader>e"
+ChannelSwitcher = { keys = ["<C-w>f", "<leader><C-w>"], description = "find channel" }
+```
+
+`keys` accepts one sequence or a list of sequences. Direct keys like `<C-f>`,
+leader sequences like `<leader><C-w>`, compact plain sequences like `fd`, and
+general multi-key prefixes like `<C-w>f` are supported. Prefix sequences show a
+which-key style popup. For example, `fd` opens an `f` popup after `f`, then runs
+the action after `d`.
+
+Scoped pane action values use the same string or object shape, but each `keys`
+entry must be a single character key because aliases are shown inside the action
+menu:
+
+```toml
+[keymap.channel_actions]
+MuteChannel = { keys = ["x", "u"], description = "mute channel" }
+```
+
+Reserved keys cannot be configured. Reserved keys include `Enter`, `Esc`,
+`Backspace`, `Delete`, and `Ctrl+c`. These stay fixed because they are used for
+submit, cancel, text editing, or terminal-safe modal behavior. Invalid,
+reserved, or conflicting values are ignored for that action, so the action keeps
+its default key and other valid mappings still work.
+
+##### Directly assignable actions
+
+These action names can be assigned directly under `[keymap]`. Defaults
+that start with `<leader>` are shown without the leading `Space` in the leader
+popup. `OpenDisplayOptions`, `OpenNotificationOptions`, and `OpenVoiceOptions`
+have contextual defaults inside the Options popup, so assign your own full
+sequence if you want direct keys for them.
+
+| Action name               | Default config                     | Action                                       |
+| ------------------------- | ---------------------------------- | -------------------------------------------- |
+| `StartComposer`           | `"i"`                              | Start the message composer.                  |
+| `OpenPaneFilter`          | `"/"`                              | Open the focused pane filter.                |
+| `FocusGuildPane`          | `"1"`                              | Show and focus the Servers pane.             |
+| `FocusChannelPane`        | `"2"`                              | Show and focus the Channels pane.            |
+| `FocusMessagePane`        | `"3"`                              | Focus the Messages pane.                     |
+| `FocusMemberPane`         | `"4"`                              | Show and focus the Members pane.             |
+| `CycleFocusNext`          | `["tab", "l", "right"]`            | Cycle focus forward.                         |
+| `CycleFocusPrevious`      | `["shift+tab", "h", "left"]`       | Cycle focus backward.                        |
+| `HalfPageDown`            | `"ctrl+d"`                         | Half-page down.                              |
+| `HalfPageUp`              | `"ctrl+u"`                         | Half-page up.                                |
+| `JumpTop`                 | `"g"`                              | Jump to the top.                             |
+| `JumpBottom`              | `"G"`                              | Jump to the bottom.                          |
+| `ScrollHorizontalLeft`    | `"H"`                              | Scroll focused pane horizontally left.       |
+| `ScrollHorizontalRight`   | `"L"`                              | Scroll focused pane horizontally right.      |
+| `CopyMessage`             | `"y"`                              | Copy selected message content.               |
+| `ReactMessage`            | `"r"`                              | Open the reaction picker.                    |
+| `ReplyMessage`            | `"R"`                              | Start a reply.                               |
+| `DeleteMessage`           | `"d"`                              | Open delete confirmation.                    |
+| `EditMessage`             | `"e"`                              | Start editing the selected message.          |
+| `OpenMessageUrl`          | `"o"`                              | Open the selected message URL.               |
+| `ViewMessageImage`        | `"v"`                              | Open the selected message image viewer.      |
+| `ShowMessageProfile`      | `"p"`                              | Open the selected message author's profile.  |
+| `PinMessage`              | `"P"`                              | Open pin or unpin confirmation.              |
+| `ToggleGuildPane`         | `"<leader>1"`                      | Toggle the Servers pane.                     |
+| `ToggleChannelPane`       | `"<leader>2"`                      | Toggle the Channels pane.                    |
+| `ToggleMemberPane`        | `"<leader>4"`                      | Toggle the Members pane.                     |
+| `OpenFocusedPaneAction`   | `"<leader>a"`                      | Open actions for the currently focused pane. |
+| `OpenOptions`             | `"<leader>o"`                      | Open the options category picker.            |
+| `ChannelSwitcher`         | `"<leader><leader>"`               | Open channel switcher.                       |
+| `OpenDisplayOptions`      | Contextual `d` after `OpenOptions` | Open Display options.                        |
+| `OpenNotificationOptions` | Contextual `n` after `OpenOptions` | Open Notification options.                   |
+| `OpenVoiceOptions`        | Contextual `v` after `OpenOptions` | Open Voice options.                          |
+| `VoiceDeafen`             | `"<leader>v d"`                    | Toggle voice deafen.                         |
+| `VoiceMute`               | `"<leader>v m"`                    | Toggle voice mute.                           |
+| `VoiceLeave`              | `"<leader>v l"`                    | Leave the current Concord voice channel.     |
+
+##### Focused pane actions
+
+`OpenFocusedPaneAction` opens the action menu for the pane that currently has
+focus. Server, channel, and member pane actions can be configured in scoped
+tables. Message pane actions are shown from the selected message state and are
+not configurable through these scoped tables yet.
+
+Server pane actions:
+
+```toml
+[keymap.guild_actions]
+MarkAsRead = { keys = ["m"], description = "mark server as read" }
+MuteServer = { keys = ["u"], description = "mute server" }
+```
+
+| Scoped action | Default | Action                                                                     |
+| ------------- | ------- | -------------------------------------------------------------------------- |
+| `MarkAsRead`  | `m`     | Mark all unread viewable channels in the selected server read.             |
+| `MuteServer`  | `u`     | Mute or unmute the selected server. Also accepts `ToggleMute` as an alias. |
+
+Channel pane actions:
+
+```toml
+[keymap.channel_actions]
+JoinVoice = { keys = ["j"], description = "join voice" }
+LeaveVoice = { keys = ["l"], description = "leave voice" }
+ShowPinnedMessages = { keys = ["p"], description = "show pinned messages" }
+ShowThreads = { keys = ["t"], description = "show threads" }
+MarkAsRead = { keys = ["m"], description = "mark as read" }
+MuteChannel = { keys = ["u"], description = "mute channel" }
+```
+
+| Scoped action        | Default | Action                                                                                      |
+| -------------------- | ------- | ------------------------------------------------------------------------------------------- |
+| `JoinVoice`          | `j`     | Join the selected voice channel.                                                            |
+| `LeaveVoice`         | `l`     | Leave the current Concord voice channel.                                                    |
+| `ShowPinnedMessages` | `p`     | Open the selected channel's pinned messages. Also accepts `LoadPinnedMessages` as an alias. |
+| `ShowThreads`        | `t`     | List threads for the selected channel.                                                      |
+| `MarkAsRead`         | `m`     | Mark the selected channel read.                                                             |
+| `MuteChannel`        | `u`     | Mute or unmute the selected channel or category. Also accepts `ToggleMute` as an alias.     |
+
+Member pane actions:
+
+```toml
+[keymap.member_actions]
+ShowProfile = { keys = ["p"], description = "show profile" }
+```
+
+| Scoped action | Default | Action                              |
+| ------------- | ------- | ----------------------------------- |
+| `ShowProfile` | `p`     | Open the selected member's profile. |
+
+Messages pane actions:
+
+| Action label                    | Default shortcut | When it appears                                               |
+| ------------------------------- | ---------------- | ------------------------------------------------------------- |
+| `Reply`                         | `R`              | A message is selected.                                        |
+| `Edit message`                  | `e`              | The selected message is editable by you.                      |
+| `Delete message`                | `d`              | You can delete the selected message.                          |
+| `Open thread`                   | `t`              | The selected message has a thread.                            |
+| `View image`                    | `v`              | The selected message has a viewable image.                    |
+| `Open URL`                      | `o`              | The selected message has one or more URLs.                    |
+| `Download {filename}`           | `f`              | The selected message has a downloadable non-image attachment. |
+| `Add reaction`                  | `r`              | Reactions can be added to the selected message.               |
+| `Show profile`                  | `p`              | A message author is available.                                |
+| `Pin message` / `Unpin message` | `P`              | Pinning is allowed for the selected message.                  |
+| `Show reacted users`            | `u`              | Reaction users can be shown.                                  |
+| `Remove {reaction} reaction`    | `x`              | You reacted with that emoji.                                  |
+| `Choose poll votes`             | `c`              | A non-finalized multiselect poll is selected.                 |
+| Poll answer vote / remove vote  | Numeric fallback | A non-finalized single-select poll is selected.               |
+
+Scoped action `description` changes the label shown in the action menu. Multiple
+configured `keys` work as aliases when they are unique in the current action
+menu, and the popup shows them together, such as `[x/u]`. If two actions in the
+same menu use the same configured key, that key is ignored for both actions. If
+an action has no unique configured key, it falls back to `1` through `9`, then
+`0`.
+
+<details>
+<summary>Default keymap config</summary>
+
+```toml
+[keymap]
+leader = "space"
+StartComposer = "i"
+OpenPaneFilter = "/"
+FocusGuildPane = "1"
+FocusChannelPane = "2"
+FocusMessagePane = "3"
+FocusMemberPane = "4"
+CycleFocusNext = { keys = ["tab", "l", "right"] }
+CycleFocusPrevious = { keys = ["shift+tab", "h", "left"] }
+HalfPageDown = "ctrl+d"
+HalfPageUp = "ctrl+u"
+JumpTop = "g"
+JumpBottom = "G"
+ScrollHorizontalLeft = "H"
+ScrollHorizontalRight = "L"
+CopyMessage = "y"
+ReactMessage = "r"
+ReplyMessage = "R"
+DeleteMessage = "d"
+EditMessage = "e"
+OpenMessageUrl = "o"
+ViewMessageImage = "v"
+ShowMessageProfile = "p"
+PinMessage = "P"
+ToggleGuildPane = "<leader>1"
+ToggleChannelPane = "<leader>2"
+ToggleMemberPane = "<leader>4"
+OpenFocusedPaneAction = "<leader>a"
+OpenOptions = "<leader>o"
+ChannelSwitcher = "<leader><leader>"
+VoiceDeafen = "<leader>v d"
+VoiceMute = "<leader>v m"
+VoiceLeave = "<leader>v l"
+
+[keymap.groups]
+"<leader>v" = "Voice"
+
+[keymap.guild_actions]
+MarkAsRead = "m"
+MuteServer = "u"
+
+[keymap.channel_actions]
+JoinVoice = "j"
+LeaveVoice = "l"
+ShowPinnedMessages = "p"
+ShowThreads = "t"
+MarkAsRead = "m"
+MuteChannel = "u"
+
+[keymap.member_actions]
+ShowProfile = "p"
+```
+
+</details>
 
 ## Performance
 
@@ -469,7 +705,7 @@ No. If Discord requires a CAPTCHA during login, use token login instead.
 
 - Tokens are stored as **plain text** in Concord's config directory. So keep that file secure and do not share it. You can use the token from that file to log in to the official Discord client, so treat it like a password.
 - On Unix, the credential's parent directory is created with `0700` and the credential file with `0600` permissions.
-- All concord state (config, credential, log) lives under a single `concord/` directory inside `XDG_CONFIG_HOME` when it is set, or inside the platform config directory otherwise.
+- All concord state (config, keymap, credential, log) lives under a single `concord/` directory inside `XDG_CONFIG_HOME` when it is set, or inside the platform config directory otherwise.
 - No system keychain integration yet.
 
 ## Contributing

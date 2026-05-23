@@ -11,12 +11,15 @@ use ratatui::layout::Rect;
 use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event, handle_paste};
 use crate::discord::AppCommand;
 use crate::{
-    config::{AppOptions, ImagePreviewQualityPreset, MicrophoneSensitivityDb, VoiceVolumePercent},
+    config::{
+        AppOptions, ImagePreviewQualityPreset, KeymapBinding, KeymapOptions,
+        MicrophoneSensitivityDb, VoiceVolumePercent,
+    },
     discord::{
         AppEvent, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
         CustomEmojiInfo, DownloadAttachmentSource, GuildFolder, GuildNotificationSettingsInfo,
         MemberInfo, MessageReferenceInfo, NotificationLevel, PollAnswerInfo, PollInfo,
-        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReactionUsersInfo,
+        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReactionUsersInfo, VoiceConnectionStatus,
     },
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };
@@ -84,6 +87,16 @@ fn message_action_row_point(row: u16) -> (u16, u16) {
 
 fn dashboard_area() -> Rect {
     Rect::new(0, 0, 120, 20)
+}
+
+fn state_with_keymap(keymap: KeymapOptions) -> DashboardState {
+    DashboardState::new_with_options(
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        keymap,
+        Default::default(),
+    )
 }
 
 fn temp_upload_file(name: &str, contents: &[u8]) -> PathBuf {
@@ -214,9 +227,12 @@ fn state_with_direct_message(kind: &str) -> DashboardState {
 }
 
 fn state_with_messages(count: u64) -> DashboardState {
+    state_with_messages_from_state(DashboardState::new(), count)
+}
+
+fn state_with_messages_from_state(mut state: DashboardState, count: u64) -> DashboardState {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
-    let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
         guild_id,

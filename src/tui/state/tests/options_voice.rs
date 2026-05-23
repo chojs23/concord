@@ -1,5 +1,6 @@
 use super::*;
 use crate::discord::AppCommand;
+use crate::tui::keybindings::OptionsCategoryShortcut;
 
 #[test]
 fn image_preview_quality_option_cycles_presets() {
@@ -75,7 +76,7 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
         message: None,
     });
     state.open_options_category_picker();
-    state.open_options_category_shortcut('v');
+    state.open_options_category_from_shortcut(OptionsCategoryShortcut::Voice);
 
     state.toggle_selected_display_option();
     assert_eq!(
@@ -224,7 +225,7 @@ fn voice_channel_action_emits_join_then_leave_command() {
 }
 
 #[test]
-fn voice_leader_actions_toggle_state_and_leave_current_voice() {
+fn voice_direct_actions_toggle_state_and_leave_current_voice() {
     let mut state = DashboardState::new();
     state.push_effect(AppEvent::VoiceConnectionStatusChanged {
         guild_id: Id::new(1),
@@ -233,9 +234,7 @@ fn voice_leader_actions_toggle_state_and_leave_current_voice() {
         message: None,
     });
 
-    state.open_voice_actions();
-    let command = state.activate_voice_action_shortcut('m');
-    assert_eq!(command, None);
+    state.toggle_voice_mute();
     assert!(state.voice_options().self_mute);
     assert_eq!(
         state.drain_pending_commands(),
@@ -247,9 +246,7 @@ fn voice_leader_actions_toggle_state_and_leave_current_voice() {
         }]
     );
 
-    state.open_voice_actions();
-    let command = state.activate_voice_action_shortcut('d');
-    assert_eq!(command, None);
+    state.toggle_voice_deafen();
     assert!(state.voice_options().self_deaf);
     assert_eq!(
         state.drain_pending_commands(),
@@ -261,8 +258,7 @@ fn voice_leader_actions_toggle_state_and_leave_current_voice() {
         }]
     );
 
-    state.open_voice_actions();
-    let command = state.activate_voice_action_shortcut('l');
+    let command = state.leave_current_voice_channel_command();
     assert_eq!(
         command,
         Some(AppCommand::LeaveVoiceChannel {

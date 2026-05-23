@@ -5,10 +5,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use crate::discord::MessageAttachmentUpload;
 use crate::tui::keybindings::{
     ChannelSwitcherAction, ComposerAction, ComposerCompletionAction, DashboardAction,
-    DebugLogPopupAction, EmojiReactionPickerAction, GlobalAction, ImageViewerAction, LeaderAction,
+    DebugLogPopupAction, EmojiReactionPickerAction, GlobalAction, ImageViewerAction, KeyMapLookup,
     LeaderActionMenuAction, MessageActionMenuAction, MessageConfirmationAction,
-    MessageShortcutAction, OptionsPopupAction, PaneFilterAction, PollVotePickerAction,
-    ProfilePopupAction, ReactionUsersPopupAction, ScrollAction, SelectionAction,
+    MessageShortcutAction, OptionsCategoryShortcut, OptionsPopupAction, PaneFilterAction,
+    PollVotePickerAction, ProfilePopupAction, ReactionUsersPopupAction, ScrollAction,
+    SelectionAction, UiAction,
 };
 
 use super::super::state::{DashboardState, FocusPane};
@@ -97,10 +98,26 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         }
     }
 
-    state
-        .key_bindings()
-        .dashboard_action(key, focus)
-        .and_then(|action| handle_dashboard_action(state, focus, action))
+    match state.key_bindings().keymap_lookup_root_key(key) {
+        Some(KeyMapLookup::Action(action)) => return execute_ui_action(state, focus, action),
+        Some(KeyMapLookup::Pending) => {
+            let prefix = vec![state.key_bindings().keymap_chord_for_event(key)];
+            state.open_keymap_prefix(prefix);
+            return None;
+        }
+        None => {}
+    }
+
+    if let Some(action) = state.key_bindings().dashboard_action(key, focus) {
+        return handle_dashboard_action(state, focus, action);
+    }
+
+    if state.key_bindings().is_leader_key(key) {
+        state.open_leader();
+        return None;
+    }
+
+    None
 }
 
 fn handle_dashboard_action(
@@ -130,10 +147,6 @@ fn handle_dashboard_action(
         }
         DashboardAction::StartComposer => {
             state.start_composer();
-            None
-        }
-        DashboardAction::OpenLeader => {
-            state.open_leader();
             None
         }
         DashboardAction::FocusPane(pane) => {
@@ -174,14 +187,6 @@ fn handle_dashboard_action(
         }
         DashboardAction::JumpBottom => {
             state.jump_bottom();
-            None
-        }
-        DashboardAction::ScrollMessageViewportTop => {
-            state.scroll_message_viewport_top();
-            None
-        }
-        DashboardAction::ScrollMessageViewportBottom => {
-            state.scroll_message_viewport_bottom();
             None
         }
         DashboardAction::ScrollMessageViewportDown => {
@@ -263,21 +268,74 @@ fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCom
         return handle_leader_action_key(state, key);
     }
 
-    match state.key_bindings().leader_action(key) {
-        LeaderAction::TogglePane(pane) => {
-            state.toggle_pane_visibility(pane);
-            state.close_leader();
-        }
-        LeaderAction::OpenActions => state.open_leader_actions_for_focused_target(),
-        LeaderAction::OpenOptions => {
-            state.open_options_category_picker();
-            state.close_leader();
-        }
-        LeaderAction::OpenVoiceActions => state.open_voice_actions(),
-        LeaderAction::OpenChannelSwitcher => state.open_channel_switcher(),
-        LeaderAction::Close => state.close_leader(),
+    if let Some(command) = handle_leader_keymap_key(state, key) {
+        return command;
     }
 
+    state.close_leader();
+
+    None
+}
+
+fn handle_leader_keymap_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<Option<AppCommand>> {
+    let focus = state.focus();
+    let lookup = state
+        .key_bindings()
+        .keymap_lookup_with_key(state.leader_keymap_prefix(), key);
+    match lookup {
+        Some(KeyMapLookup::Pending) => {
+            let chord = state.key_bindings().keymap_chord_for_event(key);
+            state.push_leader_keymap_key(chord);
+            Some(None)
+        }
+        Some(KeyMapLookup::Action(action)) => {
+            state.close_leader();
+            Some(execute_ui_action(state, focus, action))
+        }
+        None if state.leader_keymap_prefix().len() > 1 => {
+            state.close_leader();
+            Some(None)
+        }
+        None => None,
+    }
+}
+
+pub(in crate::tui) fn execute_ui_action(
+    state: &mut DashboardState,
+    focus: FocusPane,
+    action: UiAction,
+) -> Option<AppCommand> {
+    if let Some(dashboard_action) = state
+        .key_bindings()
+        .dashboard_action_for_ui_action(action, focus)
+    {
+        return handle_dashboard_action(state, focus, dashboard_action);
+    }
+
+    match action {
+        UiAction::ToggleGuildPane => state.toggle_pane_visibility(FocusPane::Guilds),
+        UiAction::ToggleChannelPane => state.toggle_pane_visibility(FocusPane::Channels),
+        UiAction::ToggleMemberPane => state.toggle_pane_visibility(FocusPane::Members),
+        UiAction::OpenFocusedPaneAction => state.open_leader_actions_for_focused_target(),
+        UiAction::OpenOptions => state.open_options_category_picker(),
+        UiAction::ChannelSwitcher => state.open_channel_switcher(),
+        UiAction::OpenDisplayOptions => {
+            state.open_options_category_from_shortcut(OptionsCategoryShortcut::Display)
+        }
+        UiAction::OpenNotificationOptions => {
+            state.open_options_category_from_shortcut(OptionsCategoryShortcut::Notifications)
+        }
+        UiAction::OpenVoiceOptions => {
+            state.open_options_category_from_shortcut(OptionsCategoryShortcut::Voice)
+        }
+        UiAction::VoiceDeafen => state.toggle_voice_deafen(),
+        UiAction::VoiceMute => state.toggle_voice_mute(),
+        UiAction::VoiceLeave => return state.leave_current_voice_channel_command(),
+        _ => {}
+    }
     None
 }
 
@@ -338,7 +396,7 @@ fn handle_leader_action_key(state: &mut DashboardState, key: KeyEvent) -> Option
             None
         }
         LeaderActionMenuAction::ActivateShortcut(shortcut) => {
-            let (matched, command) = state.activate_leader_action_shortcut(shortcut);
+            let (matched, command) = activate_leader_action_shortcut(state, shortcut);
             if !matched || !state.is_any_action_context_active() {
                 state.close_all_action_contexts();
                 state.close_leader();
@@ -351,6 +409,110 @@ fn handle_leader_action_key(state: &mut DashboardState, key: KeyEvent) -> Option
             None
         }
     }
+}
+
+fn activate_leader_action_shortcut(
+    state: &mut DashboardState,
+    shortcut: char,
+) -> (bool, Option<AppCommand>) {
+    let shortcut = shortcut.to_ascii_lowercase();
+    if leader_message_action_matches(state, shortcut) {
+        return (true, state.activate_message_action_shortcut(shortcut));
+    }
+    if leader_channel_action_matches(state, shortcut) {
+        return (true, state.activate_channel_action_shortcut(shortcut));
+    }
+    if leader_guild_action_matches(state, shortcut) {
+        return (true, state.activate_guild_action_shortcut(shortcut));
+    }
+    if leader_member_action_matches(state, shortcut) {
+        return (true, state.activate_member_action_shortcut(shortcut));
+    }
+    (false, None)
+}
+
+fn leader_message_action_matches(state: &DashboardState, shortcut: char) -> bool {
+    if state.is_message_url_picker_open() {
+        return state
+            .selected_message_url_items()
+            .iter()
+            .enumerate()
+            .any(|(index, _)| state.key_bindings().indexed_shortcut(index) == Some(shortcut));
+    }
+    if !state.is_message_action_menu_open() {
+        return false;
+    }
+    let actions = state.selected_message_action_items();
+    actions.iter().enumerate().any(|(index, action)| {
+        action.enabled
+            && state
+                .key_bindings()
+                .message_action_shortcut(&actions, index)
+                == Some(shortcut)
+    })
+}
+
+fn leader_channel_action_matches(state: &DashboardState, shortcut: char) -> bool {
+    if !state.is_channel_leader_action_active() {
+        return false;
+    }
+    if state.is_channel_action_threads_phase() {
+        return state
+            .channel_action_thread_items()
+            .iter()
+            .enumerate()
+            .any(|(index, _)| state.key_bindings().indexed_shortcut(index) == Some(shortcut));
+    }
+    if state.is_channel_action_mute_duration_phase() {
+        return state
+            .selected_channel_mute_duration_items()
+            .iter()
+            .enumerate()
+            .any(|(index, _)| state.key_bindings().indexed_shortcut(index) == Some(shortcut));
+    }
+    let actions = state.selected_channel_action_items();
+    actions.iter().enumerate().any(|(index, action)| {
+        action.enabled
+            && state
+                .key_bindings()
+                .channel_action_shortcuts(&actions, index)
+                .contains(&shortcut)
+    })
+}
+
+fn leader_guild_action_matches(state: &DashboardState, shortcut: char) -> bool {
+    if !state.is_guild_leader_action_active() {
+        return false;
+    }
+    if state.is_guild_action_mute_duration_phase() {
+        return state
+            .selected_guild_mute_duration_items()
+            .iter()
+            .enumerate()
+            .any(|(index, _)| state.key_bindings().indexed_shortcut(index) == Some(shortcut));
+    }
+    let actions = state.selected_guild_action_items();
+    actions.iter().enumerate().any(|(index, action)| {
+        action.enabled
+            && state
+                .key_bindings()
+                .guild_action_shortcuts(&actions, index)
+                .contains(&shortcut)
+    })
+}
+
+fn leader_member_action_matches(state: &DashboardState, shortcut: char) -> bool {
+    if !state.is_member_leader_action_active() {
+        return false;
+    }
+    let actions = state.selected_member_action_items();
+    actions.iter().enumerate().any(|(index, action)| {
+        action.enabled
+            && state
+                .key_bindings()
+                .member_action_shortcuts(&actions, index)
+                .contains(&shortcut)
+    })
 }
 
 pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
@@ -736,7 +898,7 @@ fn handle_options_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option
     {
         Some(OptionsPopupAction::Close) => state.close_options_popup(),
         Some(OptionsPopupAction::OpenCategory(shortcut)) => {
-            state.open_options_category_shortcut(shortcut)
+            state.open_options_category_from_shortcut(shortcut)
         }
         Some(OptionsPopupAction::Select(SelectionAction::Next)) => state.move_option_down(),
         Some(OptionsPopupAction::Select(SelectionAction::Previous)) => state.move_option_up(),

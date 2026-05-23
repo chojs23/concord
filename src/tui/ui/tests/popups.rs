@@ -1,4 +1,7 @@
 use super::*;
+use crate::tui::keybindings::OptionsCategoryShortcut;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::collections::BTreeMap;
 
 #[test]
 fn options_popup_lines_show_selected_toggle_state() {
@@ -142,7 +145,7 @@ fn options_popup_lines_keep_selected_item_visible_when_clipped() {
 fn options_popup_render_keeps_selected_row_visible_when_short() {
     let mut state = DashboardState::new();
     state.open_options_category_picker();
-    state.open_options_category_shortcut('n');
+    state.open_options_category_from_shortcut(OptionsCategoryShortcut::Notifications);
 
     let dump = render_dashboard_dump(100, 9, &mut state);
     let rendered = dump.join("\n");
@@ -829,7 +832,7 @@ fn leader_popup_renders_as_bottom_window() {
     let mut state = DashboardState::new();
     state.open_leader();
 
-    let dump = render_dashboard_dump(120, 20, &mut state);
+    let dump = render_dashboard_dump(160, 20, &mut state);
     let rendered = dump.join("\n");
 
     assert!(rendered.contains("Leader"), "{rendered}");
@@ -841,6 +844,141 @@ fn leader_popup_renders_as_bottom_window() {
     assert!(rendered.contains("toggle Channels"), "{rendered}");
     assert!(rendered.contains("toggle Members"), "{rendered}");
     assert!(rendered.contains("Actions"), "{rendered}");
+}
+
+#[test]
+fn leader_popup_shows_keymap_entries_alongside_default_entries() {
+    let mut mappings = BTreeMap::new();
+    mappings.insert(
+        "StartComposer".to_owned(),
+        crate::config::KeymapBinding::one("<leader>e"),
+    );
+    mappings.insert(
+        "ReplyMessage".to_owned(),
+        crate::config::KeymapBinding::one("<leader>m r"),
+    );
+    mappings.insert(
+        "ChannelSwitcher".to_owned(),
+        crate::config::KeymapBinding::one("<leader><C-w>"),
+    );
+    let mut state = DashboardState::new_with_options(
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        crate::config::KeymapOptions {
+            leader: Some("space".to_owned()),
+            groups: BTreeMap::new(),
+            mappings,
+            ..Default::default()
+        },
+        Default::default(),
+    );
+    state.open_leader();
+
+    let dump = render_dashboard_dump(160, 20, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(rendered.contains("[e]"), "{rendered}");
+    assert!(rendered.contains("start composer"), "{rendered}");
+    assert!(rendered.contains("[m]"), "{rendered}");
+    assert!(rendered.contains("prefix"), "{rendered}");
+    assert!(rendered.contains("[Ctrl+w]"), "{rendered}");
+    assert!(rendered.contains("Switch channels"), "{rendered}");
+    assert!(rendered.contains("[a]"), "{rendered}");
+    assert!(rendered.contains("Actions"), "{rendered}");
+    assert!(rendered.contains("[o]"), "{rendered}");
+    assert!(rendered.contains("Options"), "{rendered}");
+}
+
+#[test]
+fn leader_popup_expands_horizontally_for_many_keymap_entries() {
+    let mut mappings = BTreeMap::new();
+    for (action, key) in [
+        ("StartComposer", "<leader>b"),
+        ("OpenPaneFilter", "<leader>c"),
+        ("FocusGuildPane", "<leader>d"),
+        ("FocusChannelPane", "<leader>e"),
+        ("FocusMessagePane", "<leader>f"),
+        ("FocusMemberPane", "<leader>g"),
+        ("CycleFocusNext", "<leader>h"),
+        ("CycleFocusPrevious", "<leader>i"),
+    ] {
+        mappings.insert(
+            action.to_owned(),
+            crate::config::KeymapBinding {
+                keys: vec![key.to_owned()],
+                description: Some(format!("wide leader popup column label for {action}")),
+            },
+        );
+    }
+    mappings.insert(
+        "CycleFocusPrevious".to_owned(),
+        crate::config::KeymapBinding {
+            keys: vec!["<leader>i".to_owned()],
+            description: Some("RIGHTMOST_EXPANDED_POPUP_VISIBLE".to_owned()),
+        },
+    );
+    let mut state = DashboardState::new_with_options(
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        crate::config::KeymapOptions {
+            leader: Some("space".to_owned()),
+            groups: BTreeMap::new(),
+            mappings,
+            ..Default::default()
+        },
+        Default::default(),
+    );
+    state.toggle_pane_visibility(FocusPane::Guilds);
+    state.toggle_pane_visibility(FocusPane::Channels);
+    state.toggle_pane_visibility(FocusPane::Members);
+    state.open_leader();
+
+    let dump = render_dashboard_dump(220, 20, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(
+        rendered.contains("RIGHTMOST_EXPANDED_POPUP_VISIBLE"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn leader_popup_shows_non_leader_prefix_title_and_description() {
+    let mut mappings = BTreeMap::new();
+    mappings.insert(
+        "ChannelSwitcher".to_owned(),
+        crate::config::KeymapBinding {
+            keys: vec!["<C-w>f".to_owned()],
+            description: Some("find channel".to_owned()),
+        },
+    );
+    let mut state = DashboardState::new_with_options(
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        crate::config::KeymapOptions {
+            leader: None,
+            groups: BTreeMap::new(),
+            mappings,
+            ..Default::default()
+        },
+        Default::default(),
+    );
+    let prefix = vec![
+        state
+            .key_bindings()
+            .keymap_chord_for_event(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+    ];
+    state.open_keymap_prefix(prefix);
+
+    let dump = render_dashboard_dump(120, 20, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(rendered.contains("<C-w>"), "{rendered}");
+    assert!(rendered.contains("[f]"), "{rendered}");
+    assert!(rendered.contains("find channel"), "{rendered}");
 }
 
 #[test]
@@ -902,6 +1040,25 @@ fn leader_action_popup_from_members_uses_member_action_title() {
 
     assert!(rendered.contains("Member Actions"), "{rendered}");
     assert!(rendered.contains("Show profile"), "{rendered}");
+}
+
+#[test]
+fn leader_action_popup_for_empty_panes_does_not_fall_back_to_root_keymap() {
+    for pane in [FocusPane::Channels, FocusPane::Messages, FocusPane::Members] {
+        let mut state = DashboardState::new();
+        state.focus_pane(pane);
+        state.open_leader();
+        state.open_leader_actions_for_focused_target();
+
+        let dump = render_dashboard_dump(120, 20, &mut state);
+        let rendered = dump.join("\n");
+
+        assert!(
+            rendered.contains("No actions available"),
+            "{pane:?}: {rendered}"
+        );
+        assert!(!rendered.contains("[o] Options"), "{pane:?}: {rendered}");
+    }
 }
 
 #[test]

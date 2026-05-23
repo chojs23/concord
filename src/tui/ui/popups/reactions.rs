@@ -223,7 +223,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines(
         reactions,
         selected,
         EmojiReactionPickerRenderOptions {
-            key_bindings: &crate::tui::keybindings::KeyBindings,
+            key_bindings: &crate::tui::keybindings::KeyBindings::default(),
             max_visible_items,
             thumbnail_urls,
             existing_reactions: &[],
@@ -246,7 +246,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_for_width(
         reactions,
         selected,
         EmojiReactionPickerRenderOptions {
-            key_bindings: &crate::tui::keybindings::KeyBindings,
+            key_bindings: &crate::tui::keybindings::KeyBindings::default(),
             max_visible_items,
             thumbnail_urls,
             existing_reactions: &[],
@@ -269,7 +269,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_with_existing(
         reactions,
         selected,
         EmojiReactionPickerRenderOptions {
-            key_bindings: &crate::tui::keybindings::KeyBindings,
+            key_bindings: &crate::tui::keybindings::KeyBindings::default(),
             max_visible_items,
             thumbnail_urls,
             existing_reactions,
@@ -292,7 +292,7 @@ pub(in crate::tui::ui) fn filtered_emoji_reaction_picker_lines(
         reactions,
         selected,
         EmojiReactionPickerRenderOptions {
-            key_bindings: &crate::tui::keybindings::KeyBindings,
+            key_bindings: &crate::tui::keybindings::KeyBindings::default(),
             max_visible_items,
             thumbnail_urls,
             existing_reactions: &[],

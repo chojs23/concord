@@ -425,8 +425,8 @@ impl DashboardState {
                         && self
                             .options
                             .key_bindings()
-                            .guild_action_shortcut(&actions, index)
-                            .is_some_and(|candidate| candidate == shortcut)
+                            .guild_action_shortcuts(&actions, index)
+                            .contains(&shortcut)
                 })?;
                 self.select_guild_action_row(index);
                 self.activate_selected_guild_action()

@@ -318,6 +318,7 @@ fn collapsed_category_state_is_saved_and_restored() {
         DisplayOptions::default(),
         NotificationOptions::default(),
         VoiceOptions::default(),
+        Default::default(),
         options.ui_state,
     );
 

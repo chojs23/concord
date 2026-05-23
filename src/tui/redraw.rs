@@ -49,6 +49,8 @@ struct HeaderSignature {
 struct OverlaySignature {
     leader_active: bool,
     leader_action_mode: bool,
+    leader_title: Option<String>,
+    leader_shortcuts: Vec<(String, String, bool)>,
     channel_switcher: ChannelSwitcherSignature,
     channel_action_threads_phase: bool,
     popups: VisiblePopupSignature,
@@ -139,8 +141,6 @@ struct LeaderPopupSignature {
     channel_thread_items: DebugSignature,
     member_leader_action_open: bool,
     member_action_items: DebugSignature,
-    voice_leader_action_open: bool,
-    voice_action_items: DebugSignature,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -283,6 +283,14 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
         overlay: OverlaySignature {
             leader_active: state.is_leader_active(),
             leader_action_mode: state.is_leader_action_mode(),
+            leader_title: state
+                .is_leader_active()
+                .then(|| state.leader_keymap_title()),
+            leader_shortcuts: state
+                .leader_keymap_shortcuts()
+                .into_iter()
+                .map(|item| (item.key, item.label, item.has_children))
+                .collect(),
             channel_switcher: ChannelSwitcherSignature {
                 open: state.is_channel_switcher_open(),
                 query: state.channel_switcher_query().map(str::to_owned),
@@ -329,12 +337,6 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
                     channel_thread_items: debug_signature(&state.channel_action_thread_items()),
                     member_leader_action_open: state.is_member_leader_action_active(),
                     member_action_items: debug_signature(&state.selected_member_action_items()),
-                    voice_leader_action_open: state.is_voice_leader_action_active(),
-                    voice_action_items: if state.is_voice_leader_action_active() {
-                        debug_signature(&state.selected_voice_action_items())
-                    } else {
-                        debug_signature(&())
-                    },
                 },
                 options: OptionsPopupSignature {
                     options_open: state.is_options_popup_open(),

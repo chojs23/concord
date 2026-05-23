@@ -681,8 +681,8 @@ impl DashboardState {
                         && self
                             .options
                             .key_bindings()
-                            .channel_action_shortcut(&actions, index)
-                            .is_some_and(|candidate| candidate == shortcut)
+                            .channel_action_shortcuts(&actions, index)
+                            .contains(&shortcut)
                 })?;
                 self.select_channel_action_row(index);
                 self.activate_selected_channel_action()

@@ -222,6 +222,7 @@ fn tab_cycles_skip_hidden_panes() {
 #[test]
 fn tab_and_shift_tab_cycle_focus() {
     let mut state = DashboardState::new();
+    let shift_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT);
 
     handle_key(&mut state, key(KeyCode::Tab));
     assert_eq!(state.focus(), FocusPane::Channels);
@@ -229,13 +230,13 @@ fn tab_and_shift_tab_cycle_focus() {
     handle_key(&mut state, key(KeyCode::Tab));
     assert_eq!(state.focus(), FocusPane::Messages);
 
-    handle_key(&mut state, key(KeyCode::BackTab));
+    handle_key(&mut state, shift_tab);
     assert_eq!(state.focus(), FocusPane::Channels);
 
-    handle_key(&mut state, key(KeyCode::BackTab));
+    handle_key(&mut state, shift_tab);
     assert_eq!(state.focus(), FocusPane::Guilds);
 
-    handle_key(&mut state, key(KeyCode::BackTab));
+    handle_key(&mut state, shift_tab);
     assert_eq!(state.focus(), FocusPane::Members);
 }
 
