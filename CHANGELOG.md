@@ -2,7 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.0.7] - 2026-05-23
+## [2.1.0] - 2026-05-24
+
+### Bug Fixes
+
+- Fix clippy build errors by @chojs23
+- Fix non-Linux voice playback release builds by @chojs23
+- URL picker from message action menu and preserve case-sensitive action shortcuts by @chojs23
+- Allow key modifier for action shortcut by @chojs23
+- Handle thread chnnel update events by @chojs23
+
+### Documentation
+
+- Update readme by @chojs23
+
+### Features
+
+- Keymap customization (#126) in [#126](https://github.com/chojs23/concord/pull/126) by @chojs23
+- Support custom composer keymaps by @chojs23
+- Subcommand picker by @chojs23
+- Message pane actions by @chojs23
+- Add quit command by @chojs23
+- Add attachment viewer by @chojs23
+
+### Miscellaneous Tasks
+
+- Release cache warm by @chojs23
+
+### Refactor
+
+- Split Discord event payload types by @chojs23
+- Move Discord module tests out of large files by @chojs23
+- Move facade tests into child modules by @chojs23
+- Split tui ui tests by @chojs23
+
+## [2.0.7] - 2026-05-22
 
 ### Bug Fixes
 
