@@ -5,19 +5,22 @@ use crate::discord::ids::{
     marker::{ChannelMarker, MessageMarker},
 };
 use crate::discord::{
-    ApplicationCommandInfo, ApplicationCommandInvocation, MAX_UPLOAD_ATTACHMENT_COUNT,
-    MessageAttachmentUpload, application_command_content_is_complete,
-    application_command_option_scope, parsed_application_command_option_names,
+    APPLICATION_COMMAND_CHANNEL_KIND, APPLICATION_COMMAND_MENTIONABLE_KIND,
+    APPLICATION_COMMAND_ROLE_KIND, APPLICATION_COMMAND_USER_KIND, ApplicationCommandInfo,
+    ApplicationCommandInvocation, MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload,
+    application_command_content_is_complete, application_command_option_scope,
+    parsed_application_command_option_names,
 };
 
 use super::super::{
     CommandPickerEntry, DashboardState, EmojiPickerEntry, FocusPane, MentionPickerEntry,
 };
 use super::completions::{
-    ComposerEmojiImageCompletion, EmojiCompletion, MentionCompletion, build_command_candidates,
-    build_command_choice_candidates, build_command_option_candidates, build_emoji_candidates,
-    build_mention_candidates, expand_composer_completions, expand_emoji_shortcodes,
-    is_command_query_char, is_emoji_query_char, is_mention_query_char, move_picker_selection,
+    ComposerEmojiImageCompletion, EmojiCompletion, MentionCompletion,
+    build_channel_mention_candidates, build_command_candidates, build_command_choice_candidates,
+    build_command_option_candidates, build_emoji_candidates, build_mention_candidates,
+    expand_composer_completions, expand_emoji_shortcodes, is_command_query_char,
+    is_emoji_query_char, is_mention_query_char, move_picker_selection,
     should_start_completion_query,
 };
 use crate::discord::AppCommand;
@@ -418,7 +421,41 @@ impl DashboardState {
         let Some(query) = self.composer.composer_mention_query.as_deref() else {
             return Vec::new();
         };
-        build_mention_candidates(query, self.flattened_members())
+        if self.active_composer_mention_trigger() == Some('#') {
+            build_channel_mention_candidates(query, self.composer_channel_candidates())
+        } else {
+            build_mention_candidates(
+                query,
+                self.flattened_members(),
+                self.composer_role_candidates(),
+            )
+        }
+    }
+
+    fn active_composer_mention_trigger(&self) -> Option<char> {
+        let start = self.composer.composer_mention_start?;
+        self.composer.composer_input[start..]
+            .chars()
+            .next()
+            .filter(|value| matches!(value, '@' | '#'))
+    }
+
+    fn selected_composer_guild_id(&self) -> Option<Id<crate::discord::ids::marker::GuildMarker>> {
+        self.selected_channel_state()
+            .and_then(|channel| channel.guild_id)
+            .or_else(|| self.selected_guild_id())
+    }
+
+    fn composer_role_candidates(&self) -> Vec<&crate::discord::RoleState> {
+        self.selected_composer_guild_id()
+            .map(|guild_id| self.discord.cache.roles_for_guild(guild_id))
+            .unwrap_or_default()
+    }
+
+    fn composer_channel_candidates(&self) -> Vec<&crate::discord::ChannelState> {
+        self.discord
+            .cache
+            .viewable_channels_for_guild(self.selected_composer_guild_id())
     }
 
     pub fn move_composer_mention_selection(&mut self, delta: isize) {
@@ -452,6 +489,19 @@ impl DashboardState {
 
     pub fn composer_command_candidates(&self) -> Vec<CommandPickerEntry> {
         self.composer.composer_command_candidates.clone()
+    }
+
+    pub(in crate::tui) fn composer_command_can_submit(&self) -> bool {
+        let expanded = expand_composer_completions(
+            &self.composer.composer_input,
+            &self.composer.composer_mention_completions,
+            &self.composer.composer_emoji_completions,
+        );
+        let expanded = expand_emoji_shortcodes(&expanded);
+        matches!(
+            self.application_command_submit_for_content(expanded.trim()),
+            ApplicationCommandSubmit::Ready(_)
+        )
     }
 
     pub fn move_composer_command_selection(&mut self, delta: isize) {
@@ -495,16 +545,16 @@ impl DashboardState {
             return false;
         }
 
-        let replacement = format!("@{} ", entry.display_name);
+        let replacement = format!("{} ", entry.visible_text());
         self.replace_composer_range(mention_start..cursor, &replacement);
-        let end = mention_start + '@'.len_utf8() + entry.display_name.len();
+        let end = mention_start + entry.visible_text().len();
 
         self.composer
             .composer_mention_completions
             .push(MentionCompletion {
                 byte_start: mention_start,
                 byte_end: end,
-                user_id: entry.user_id,
+                target: entry.target,
             });
         self.close_composer_mention_query();
         true
@@ -698,8 +748,9 @@ impl DashboardState {
 
         if query_start > 0 {
             let mention_start = previous_char_boundary(&self.composer.composer_input, query_start);
-            if &self.composer.composer_input[mention_start..query_start] == "@"
-                && should_start_completion_query(&self.composer.composer_input[..mention_start])
+            let trigger = &self.composer.composer_input[mention_start..query_start];
+            if matches!(trigger, "@" | "#")
+                && self.should_start_composer_mention_query(mention_start, trigger)
             {
                 self.composer.composer_mention_query =
                     Some(self.composer.composer_input[query_start..cursor].to_owned());
@@ -771,6 +822,45 @@ impl DashboardState {
         self.close_composer_command_query();
     }
 
+    fn should_start_composer_mention_query(&self, mention_start: usize, trigger: &str) -> bool {
+        should_start_completion_query(&self.composer.composer_input[..mention_start])
+            || self.command_option_accepts_mention_trigger(mention_start, trigger)
+    }
+
+    fn command_option_accepts_mention_trigger(&self, mention_start: usize, trigger: &str) -> bool {
+        let before_marker = &self.composer.composer_input[..mention_start];
+        let token_start = before_marker
+            .rfind(char::is_whitespace)
+            .map(|index| index + before_marker[index..].chars().next().unwrap().len_utf8())
+            .unwrap_or(0);
+        let token = &before_marker[token_start..];
+        let Some((option_name, _)) = token.split_once(':') else {
+            return false;
+        };
+        let Some(command) = self.application_command_for_input() else {
+            return false;
+        };
+        let Some(option_scope) = application_command_option_scope(command, before_marker) else {
+            return false;
+        };
+        let Some(option) = option_scope
+            .iter()
+            .find(|option| option.name == option_name)
+        else {
+            return false;
+        };
+        match trigger {
+            "@" => matches!(
+                option.kind,
+                APPLICATION_COMMAND_USER_KIND
+                    | APPLICATION_COMMAND_ROLE_KIND
+                    | APPLICATION_COMMAND_MENTIONABLE_KIND
+            ),
+            "#" => option.kind == APPLICATION_COMMAND_CHANNEL_KIND,
+            _ => false,
+        }
+    }
+
     fn queue_application_commands_for_selected_channel(&mut self) {
         let guild_id = self
             .selected_channel_state()
@@ -820,6 +910,10 @@ impl DashboardState {
                     build_command_choice_candidates(value_query, option),
                 ));
             }
+            let candidates = self.command_option_value_candidates(value_query, option);
+            if !candidates.is_empty() {
+                return Some((token_start + option_name.len() + ':'.len_utf8(), candidates));
+            }
             return None;
         }
 
@@ -841,6 +935,47 @@ impl DashboardState {
         }
 
         None
+    }
+
+    fn command_option_value_candidates(
+        &self,
+        value_query: &str,
+        option: &crate::discord::ApplicationCommandOptionInfo,
+    ) -> Vec<CommandPickerEntry> {
+        let query = value_query.trim_start_matches(['@', '#']);
+        let mention_candidates = match option.kind {
+            APPLICATION_COMMAND_USER_KIND => {
+                build_mention_candidates(query, self.flattened_members(), Vec::new())
+            }
+            APPLICATION_COMMAND_ROLE_KIND => {
+                build_mention_candidates(query, Vec::new(), self.composer_role_candidates())
+            }
+            APPLICATION_COMMAND_CHANNEL_KIND => {
+                build_channel_mention_candidates(query, self.composer_channel_candidates())
+            }
+            APPLICATION_COMMAND_MENTIONABLE_KIND => build_mention_candidates(
+                query,
+                self.flattened_members(),
+                self.composer_role_candidates(),
+            ),
+            _ => return Vec::new(),
+        };
+
+        mention_candidates
+            .into_iter()
+            .map(|entry| CommandPickerEntry {
+                label: entry.visible_text(),
+                detail: match entry.target {
+                    super::completions::MentionPickerTarget::User(_) => entry
+                        .username
+                        .map(|username| format!("user @{username}"))
+                        .unwrap_or_else(|| "user".to_owned()),
+                    super::completions::MentionPickerTarget::Role(_) => "role".to_owned(),
+                    super::completions::MentionPickerTarget::Channel(_) => "channel".to_owned(),
+                },
+                replacement: format!("{} ", entry.target.wire_format()),
+            })
+            .collect()
     }
 
     fn application_commands_for_selected_channel(&self) -> &[ApplicationCommandInfo] {

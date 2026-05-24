@@ -67,12 +67,13 @@ pub struct ApplicationCommandInteractionOption {
 
 pub const APPLICATION_COMMAND_SUBCOMMAND_KIND: u64 = 1;
 pub const APPLICATION_COMMAND_SUBCOMMAND_GROUP_KIND: u64 = 2;
+pub const APPLICATION_COMMAND_STRING_KIND: u64 = 3;
 const APPLICATION_COMMAND_INTEGER_KIND: u64 = 4;
 const APPLICATION_COMMAND_BOOLEAN_KIND: u64 = 5;
-const APPLICATION_COMMAND_USER_KIND: u64 = 6;
-const APPLICATION_COMMAND_CHANNEL_KIND: u64 = 7;
-const APPLICATION_COMMAND_ROLE_KIND: u64 = 8;
-const APPLICATION_COMMAND_MENTIONABLE_KIND: u64 = 9;
+pub const APPLICATION_COMMAND_USER_KIND: u64 = 6;
+pub const APPLICATION_COMMAND_CHANNEL_KIND: u64 = 7;
+pub const APPLICATION_COMMAND_ROLE_KIND: u64 = 8;
+pub const APPLICATION_COMMAND_MENTIONABLE_KIND: u64 = 9;
 const APPLICATION_COMMAND_NUMBER_KIND: u64 = 10;
 const APPLICATION_COMMAND_ATTACHMENT_KIND: u64 = 11;
 
@@ -398,15 +399,46 @@ fn application_command_option_value(
         APPLICATION_COMMAND_USER_KIND
         | APPLICATION_COMMAND_CHANNEL_KIND
         | APPLICATION_COMMAND_ROLE_KIND
-        | APPLICATION_COMMAND_MENTIONABLE_KIND => Some(Value::String(snowflake_option_value(raw))),
+        | APPLICATION_COMMAND_MENTIONABLE_KIND => {
+            snowflake_option_value(option.kind, raw).map(Value::String)
+        }
         APPLICATION_COMMAND_ATTACHMENT_KIND => None,
         _ => Some(Value::String(raw.to_owned())),
     }
 }
 
-fn snowflake_option_value(raw: &str) -> String {
-    raw.trim_matches(|value| matches!(value, '<' | '>' | '@' | '!' | '#' | '&'))
-        .to_owned()
+fn snowflake_option_value(kind: u64, raw: &str) -> Option<String> {
+    if is_snowflake(raw) {
+        return Some(raw.to_owned());
+    }
+
+    match kind {
+        APPLICATION_COMMAND_USER_KIND => raw
+            .strip_prefix("<@")
+            .and_then(|value| value.strip_suffix('>'))
+            .map(|value| value.strip_prefix('!').unwrap_or(value))
+            .filter(|value| is_snowflake(value))
+            .map(str::to_owned),
+        APPLICATION_COMMAND_CHANNEL_KIND => raw
+            .strip_prefix("<#")
+            .and_then(|value| value.strip_suffix('>'))
+            .filter(|value| is_snowflake(value))
+            .map(str::to_owned),
+        APPLICATION_COMMAND_ROLE_KIND => raw
+            .strip_prefix("<@&")
+            .and_then(|value| value.strip_suffix('>'))
+            .filter(|value| is_snowflake(value))
+            .map(str::to_owned),
+        APPLICATION_COMMAND_MENTIONABLE_KIND => {
+            snowflake_option_value(APPLICATION_COMMAND_USER_KIND, raw)
+                .or_else(|| snowflake_option_value(APPLICATION_COMMAND_ROLE_KIND, raw))
+        }
+        _ => None,
+    }
+}
+
+fn is_snowflake(value: &str) -> bool {
+    !value.is_empty() && value.chars().all(|value| value.is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -575,5 +607,65 @@ mod tests {
             application_command_interaction_from_invocation(&invocation("roll", "/roll"), &command)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn invocation_accepts_wrapped_snowflake_options() {
+        let command = application_command(
+            "target",
+            vec![
+                application_command_option(6, "member", false, Vec::new()),
+                application_command_option(7, "channel", false, Vec::new()),
+                application_command_option(8, "role", false, Vec::new()),
+                application_command_option(9, "mentionable", false, Vec::new()),
+            ],
+        );
+
+        let interaction = application_command_interaction_from_invocation(
+            &invocation(
+                "target",
+                "/target member:<@20> channel:<#2> role:<@&30> mentionable:<@&31>",
+            ),
+            &command,
+        )
+        .expect("wrapped snowflake options should parse");
+
+        assert_eq!(
+            interaction
+                .options
+                .iter()
+                .map(|option| option.value.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                Some(Value::String("20".to_owned())),
+                Some(Value::String("2".to_owned())),
+                Some(Value::String("30".to_owned())),
+                Some(Value::String("31".to_owned())),
+            ]
+        );
+    }
+
+    #[test]
+    fn invocation_rejects_wrong_wrappers_for_snowflake_options() {
+        for (kind, name, raw) in [
+            (6, "member", "@sally"),
+            (6, "member", "<#2>"),
+            (7, "channel", "<@20>"),
+            (8, "role", "<@20>"),
+            (9, "mentionable", "<#2>"),
+        ] {
+            let command = application_command(
+                "target",
+                vec![application_command_option(kind, name, false, Vec::new())],
+            );
+            assert!(
+                application_command_interaction_from_invocation(
+                    &invocation("target", &format!("/target {name}:{raw}")),
+                    &command,
+                )
+                .is_none(),
+                "kind {kind} must reject {raw}"
+            );
+        }
     }
 }

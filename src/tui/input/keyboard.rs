@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::discord::MessageAttachmentUpload;
 use crate::tui::keybindings::{
@@ -1036,6 +1036,13 @@ fn handle_command_picker_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<Option<AppCommand>> {
+    if key.code == KeyCode::Enter
+        && key.modifiers == KeyModifiers::NONE
+        && state.composer_command_can_submit()
+    {
+        return Some(state.submit_composer());
+    }
+
     handle_composer_completion_picker_key(
         state,
         key,

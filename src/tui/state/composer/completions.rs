@@ -1,10 +1,11 @@
 use crate::discord::ids::{
     Id,
-    marker::{EmojiMarker, UserMarker},
+    marker::{ChannelMarker, EmojiMarker, RoleMarker, UserMarker},
 };
 
 use crate::discord::{
-    ApplicationCommandInfo, ApplicationCommandOptionInfo, CustomEmojiInfo, PresenceStatus,
+    ApplicationCommandInfo, ApplicationCommandOptionInfo, ChannelState, CustomEmojiInfo,
+    PresenceStatus, RoleState,
 };
 
 use super::super::MemberEntry;
@@ -14,9 +15,9 @@ use super::super::MemberEntry;
 pub const MAX_MENTION_PICKER_VISIBLE: usize = 8;
 
 /// One entry in the rendered @-mention picker list.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct MentionPickerEntry {
-    pub user_id: Id<UserMarker>,
+    pub target: MentionPickerTarget,
     pub display_name: String,
     /// Discord login handle. Shown as a hint in the picker so the user can
     /// tell which entry matches when they typed against the username instead
@@ -24,6 +25,47 @@ pub struct MentionPickerEntry {
     pub username: Option<String>,
     pub status: PresenceStatus,
     pub is_bot: bool,
+    pub role_color: Option<u32>,
+}
+
+impl MentionPickerEntry {
+    pub fn display_label(&self) -> &str {
+        self.display_name
+            .strip_prefix(self.target.visible_prefix())
+            .unwrap_or(&self.display_name)
+    }
+
+    pub fn visible_text(&self) -> String {
+        if self.display_name.starts_with(self.target.visible_prefix()) {
+            self.display_name.clone()
+        } else {
+            format!("{}{}", self.target.visible_prefix(), self.display_name)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum MentionPickerTarget {
+    User(Id<UserMarker>),
+    Role(Id<RoleMarker>),
+    Channel(Id<ChannelMarker>),
+}
+
+impl MentionPickerTarget {
+    pub fn wire_format(self) -> String {
+        match self {
+            Self::User(id) => format!("<@{}>", id.get()),
+            Self::Role(id) => format!("<@&{}>", id.get()),
+            Self::Channel(id) => format!("<#{}>", id.get()),
+        }
+    }
+
+    pub fn visible_prefix(self) -> &'static str {
+        match self {
+            Self::User(_) | Self::Role(_) => "@",
+            Self::Channel(_) => "#",
+        }
+    }
 }
 
 /// One entry in the rendered emoji shortcode picker list.
@@ -97,10 +139,27 @@ pub(super) fn build_command_option_candidates(
         .filter(|option| needle.is_empty() || option.name.to_ascii_lowercase().starts_with(&needle))
         .map(|option| CommandPickerEntry {
             label: command_option_label(option),
-            detail: option.description.clone(),
+            detail: command_option_detail(option),
             replacement: command_option_replacement(option),
         })
         .collect()
+}
+
+fn command_option_detail(option: &ApplicationCommandOptionInfo) -> String {
+    if matches!(option.kind, 1 | 2) {
+        return option.description.clone();
+    }
+
+    let requirement = if option.required {
+        "required"
+    } else {
+        "optional"
+    };
+    if option.description.is_empty() {
+        requirement.to_owned()
+    } else {
+        format!("{requirement} - {}", option.description)
+    }
 }
 
 fn command_option_label(option: &ApplicationCommandOptionInfo) -> String {
@@ -146,6 +205,7 @@ pub(super) fn build_command_choice_candidates(
 pub(super) fn build_mention_candidates(
     query: &str,
     entries: Vec<MemberEntry<'_>>,
+    roles: Vec<&RoleState>,
 ) -> Vec<MentionPickerEntry> {
     let needle = query.to_lowercase();
     let mut scored: Vec<(u8, String, MentionPickerEntry)> = entries
@@ -182,17 +242,77 @@ pub(super) fn build_mention_candidates(
                 rank,
                 lowered_display,
                 MentionPickerEntry {
-                    user_id: entry.user_id(),
+                    target: MentionPickerTarget::User(entry.user_id()),
                     display_name,
                     username,
                     status: entry.status(),
                     is_bot: entry.is_bot(),
+                    role_color: None,
+                },
+            ))
+        })
+        .collect();
+
+    scored.extend(roles.into_iter().filter_map(|role| {
+        let lowered_name = role.name.trim_start_matches('@').to_lowercase();
+        let rank = match_name(&needle, &lowered_name)?;
+        Some((
+            rank.saturating_add(1),
+            lowered_name,
+            MentionPickerEntry {
+                target: MentionPickerTarget::Role(role.id),
+                display_name: role.name.clone(),
+                username: None,
+                status: PresenceStatus::Unknown,
+                is_bot: false,
+                role_color: role.color,
+            },
+        ))
+    }));
+
+    scored.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    scored.into_iter().map(|(_, _, entry)| entry).collect()
+}
+
+pub(super) fn build_channel_mention_candidates(
+    query: &str,
+    channels: Vec<&ChannelState>,
+) -> Vec<MentionPickerEntry> {
+    let needle = query.to_lowercase();
+    let mut scored: Vec<(u8, String, MentionPickerEntry)> = channels
+        .into_iter()
+        .filter(|channel| !channel.is_category())
+        .filter_map(|channel| {
+            let lowered_name = channel.name.to_lowercase();
+            let rank = match_name(&needle, &lowered_name)?;
+            Some((
+                rank,
+                lowered_name,
+                MentionPickerEntry {
+                    target: MentionPickerTarget::Channel(channel.id),
+                    display_name: channel.name.clone(),
+                    username: None,
+                    status: PresenceStatus::Unknown,
+                    is_bot: false,
+                    role_color: None,
                 },
             ))
         })
         .collect();
     scored.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
     scored.into_iter().map(|(_, _, entry)| entry).collect()
+}
+
+fn match_name(needle: &str, lowered_name: &str) -> Option<u8> {
+    if needle.is_empty() {
+        Some(2)
+    } else if lowered_name.starts_with(needle) {
+        Some(0)
+    } else if lowered_name.contains(needle) {
+        Some(2)
+    } else {
+        None
+    }
 }
 
 pub(super) fn move_picker_selection(selected: usize, len: usize, delta: isize) -> usize {
@@ -369,7 +489,7 @@ fn starts_custom_emoji_markup(input: &str, colon_start: usize) -> bool {
 pub(in crate::tui::state) struct MentionCompletion {
     pub(super) byte_start: usize,
     pub(super) byte_end: usize,
-    pub(super) user_id: Id<UserMarker>,
+    pub(super) target: MentionPickerTarget,
 }
 
 /// Rewrites recorded mention and custom emoji ranges in one back-to-front pass.
@@ -391,7 +511,7 @@ pub(super) fn expand_composer_completions(
         .map(|completion| CompletionReplacement {
             byte_start: completion.byte_start,
             byte_end: completion.byte_end,
-            replacement: format!("<@{}>", completion.user_id.get()),
+            replacement: completion.target.wire_format(),
         })
         .collect();
 

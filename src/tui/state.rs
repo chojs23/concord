@@ -53,6 +53,7 @@ use scroll::clamp_selected_index;
 
 pub use composer::{
     CommandPickerEntry, EmojiPickerEntry, MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry,
+    MentionPickerTarget,
 };
 pub use dashboard::DashboardState;
 pub use member_grouping::{MemberEntry, MemberGroup};

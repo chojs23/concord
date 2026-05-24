@@ -16,10 +16,11 @@ use crate::{
         MicrophoneSensitivityDb, VoiceVolumePercent,
     },
     discord::{
-        AppEvent, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
-        CustomEmojiInfo, DownloadAttachmentSource, GuildFolder, GuildNotificationSettingsInfo,
-        MemberInfo, MessageReferenceInfo, NotificationLevel, PollAnswerInfo, PollInfo,
-        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReactionUsersInfo, VoiceConnectionStatus,
+        AppEvent, ApplicationCommandInfo, ApplicationCommandOptionInfo, ChannelInfo,
+        ChannelNotificationOverrideInfo, ChannelRecipientInfo, CustomEmojiInfo,
+        DownloadAttachmentSource, GuildFolder, GuildNotificationSettingsInfo, MemberInfo,
+        MessageReferenceInfo, NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus,
+        ReactionEmoji, ReactionUserInfo, ReactionUsersInfo, VoiceConnectionStatus,
     },
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };

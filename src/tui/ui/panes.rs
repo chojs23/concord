@@ -20,7 +20,7 @@ use super::super::{
     state::{
         ChannelPaneEntry, CommandPickerEntry, DashboardState, EmojiPickerEntry, FocusPane,
         GuildPaneEntry, MAX_MENTION_PICKER_VISIBLE, MemberEntry, MemberGroup, MentionPickerEntry,
-        discord_color, folder_color, presence_color, presence_marker,
+        MentionPickerTarget, discord_color, folder_color, presence_color, presence_marker,
     },
 };
 use super::{
@@ -812,22 +812,37 @@ fn mention_picker_lines(
                 .filter(|name| !name.eq_ignore_ascii_case(&entry.display_name))
                 .map(|name| format!(" @{name}"))
                 .unwrap_or_default();
-            let label = format!("{}{bot_marker}{username_hint}", entry.display_name);
+            let label = format!("{}{bot_marker}{username_hint}", entry.display_label());
             let label = truncate_display_width(&label, max_label_width);
-            let mut row_style = Style::default().fg(presence_color(entry.status));
+            let mut row_style = mention_picker_entry_style(entry);
             if index == selected {
                 row_style = row_style
                     .bg(Color::Rgb(40, 45, 90))
                     .add_modifier(Modifier::BOLD);
             }
+            let marker = match entry.target {
+                MentionPickerTarget::User(_) => presence_marker(entry.status).to_string(),
+                MentionPickerTarget::Role(_) => "@".to_owned(),
+                MentionPickerTarget::Channel(_) => "#".to_owned(),
+            };
             Line::from(vec![
                 Span::styled(cursor, Style::default().fg(ACCENT)),
-                Span::styled(presence_marker(entry.status).to_string(), row_style),
+                Span::styled(marker, row_style),
                 Span::styled(" ", row_style),
                 Span::styled(label, row_style),
             ])
         })
         .collect()
+}
+
+fn mention_picker_entry_style(entry: &MentionPickerEntry) -> Style {
+    match entry.target {
+        MentionPickerTarget::User(_) => Style::default().fg(presence_color(entry.status)),
+        MentionPickerTarget::Role(_) => {
+            Style::default().fg(discord_color(entry.role_color, Color::Magenta))
+        }
+        MentionPickerTarget::Channel(_) => Style::default().fg(Color::Cyan),
+    }
 }
 
 fn command_picker_lines(

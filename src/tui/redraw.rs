@@ -88,7 +88,7 @@ pub(super) struct MessagePaneSignature {
     typing_footer: Option<String>,
     composer_mention_query: Option<String>,
     composer_mention_selected: usize,
-    composer_mention_candidates: Vec<MemberEntrySignature>,
+    composer_mention_candidates: DebugSignature,
     pub(super) visible_messages: Vec<DebugSignature>,
     visible_forum_posts: Vec<DebugSignature>,
 }
@@ -457,17 +457,7 @@ pub(super) fn visible_dashboard_signature(state: &DashboardState) -> VisibleDash
             typing_footer: state.typing_footer_for_selected_channel(),
             composer_mention_query: state.composer_mention_query().map(str::to_owned),
             composer_mention_selected: state.composer_mention_selected(),
-            composer_mention_candidates: state
-                .composer_mention_candidates()
-                .into_iter()
-                .map(|entry| MemberEntrySignature {
-                    user_id: entry.user_id,
-                    display_name: entry.display_name,
-                    username: entry.username,
-                    is_bot: entry.is_bot,
-                    status: entry.status,
-                })
-                .collect(),
+            composer_mention_candidates: debug_signature(&state.composer_mention_candidates()),
             visible_messages: state
                 .visible_messages()
                 .into_iter()

@@ -51,6 +51,52 @@ fn state_with_application_command(command: ApplicationCommandInfo) -> DashboardS
     state
 }
 
+fn state_with_command_mentions(command: ApplicationCommandInfo) -> DashboardState {
+    let me: Id<UserMarker> = Id::new(10);
+    let guild: Id<GuildMarker> = Id::new(1);
+    let general: Id<ChannelMarker> = Id::new(2);
+    let rules: Id<ChannelMarker> = Id::new(3);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(me),
+    });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: guild,
+        name: "guild".to_owned(),
+        member_count: Some(2),
+        owner_id: Some(me),
+        channels: vec![
+            positioned_text_channel_info(guild, general, "general", 0),
+            positioned_text_channel_info(guild, rules, "rules", 1),
+        ],
+        members: vec![
+            member_with_username(me, "me", "me"),
+            member_with_username(Id::new(20), "Sally", "salamander"),
+        ],
+        presences: vec![
+            (me, PresenceStatus::Online),
+            (Id::new(20), PresenceStatus::Online),
+        ],
+        roles: vec![
+            role_info(Id::new(guild.get()), "@everyone", 0x400 | 0x800),
+            RoleInfo {
+                color: Some(0xFFAA00),
+                ..role_info(Id::new(30), "moderators", 0)
+            },
+        ],
+        emojis: Vec::new(),
+    });
+    state.activate_guild(ActiveGuildScope::Guild(guild));
+    state.activate_channel(general);
+    state.push_event(AppEvent::ApplicationCommandsLoaded {
+        guild_id: Some(guild),
+        commands: vec![command],
+    });
+    state.start_composer();
+    state
+}
+
 fn type_composer_text(state: &mut DashboardState, value: &str) {
     for ch in value.chars() {
         state.push_composer_char(ch);
@@ -260,6 +306,76 @@ fn submit_slash_subcommand_group_emits_nested_interaction_options() {
         state.submit_composer(),
         "mod",
         "/mod admin ban user:<@123> reason:spam links",
+    );
+}
+
+#[test]
+fn slash_option_value_pickers_insert_id_markup() {
+    let command = application_command(
+        "target",
+        vec![
+            application_command_option(6, "member", false, Vec::new()),
+            application_command_option(8, "role", false, Vec::new()),
+            application_command_option(7, "channel", false, Vec::new()),
+        ],
+    );
+
+    for (input, visible, submitted) in [
+        (
+            "/target member:@s",
+            "/target member:@Sally ",
+            "/target member:<@20>",
+        ),
+        (
+            "/target role:@mod",
+            "/target role:@moderators ",
+            "/target role:<@&30>",
+        ),
+        (
+            "/target channel:#ru",
+            "/target channel:#rules ",
+            "/target channel:<#3>",
+        ),
+    ] {
+        let mut state = state_with_command_mentions(command.clone());
+        type_composer_text(&mut state, input);
+
+        assert!(
+            state.confirm_composer_mention(),
+            "picker should confirm for {input}"
+        );
+        assert_eq!(state.composer_input(), visible);
+        assert_slash_invocation(state.submit_composer(), "target", submitted);
+    }
+}
+
+#[test]
+fn slash_option_picker_marks_optional_and_required_options() {
+    let command = application_command(
+        "achievements",
+        vec![
+            application_command_option(6, "member", false, Vec::new()),
+            application_command_option(3, "scope", true, Vec::new()),
+        ],
+    );
+    let mut state = state_with_command_mentions(command);
+    type_composer_text(&mut state, "/achievements ");
+
+    let details = state
+        .composer_command_candidates()
+        .into_iter()
+        .map(|candidate| (candidate.label, candidate.detail))
+        .collect::<Vec<_>>();
+
+    assert!(
+        details
+            .iter()
+            .any(|(label, detail)| { label == "member:" && detail.starts_with("optional - ") })
+    );
+    assert!(
+        details
+            .iter()
+            .any(|(label, detail)| { label == "scope:" && detail.starts_with("required - ") })
     );
 }
 
@@ -528,6 +644,61 @@ fn confirm_mention_in_middle_keeps_trailing_text() {
             attachments: Vec::new(),
         })
     );
+}
+
+#[test]
+fn role_and_channel_mentions_expand_to_wire_format() {
+    let command = application_command("noop", Vec::new());
+    for (input, query, visible, wire) in [
+        ("@mod", Some("mod"), "@moderators ", "<@&30>"),
+        ("#ru", Some("ru"), "#rules ", "<#3>"),
+    ] {
+        let mut state = state_with_command_mentions(command.clone());
+        for value in input.chars() {
+            state.push_composer_char(value);
+        }
+
+        assert_eq!(state.composer_mention_query(), query);
+        if input == "@mod" {
+            let moderator = state
+                .composer_mention_candidates()
+                .into_iter()
+                .find(|entry| entry.display_name == "moderators")
+                .expect("moderator role should be suggested");
+            assert_eq!(moderator.role_color, Some(0xFFAA00));
+            assert_eq!(moderator.visible_text(), "@moderators");
+        }
+        assert!(state.confirm_composer_mention());
+        assert_eq!(state.composer_input(), visible);
+        assert_eq!(
+            state.submit_composer(),
+            Some(AppCommand::SendMessage {
+                channel_id: Id::new(2),
+                content: wire.to_owned(),
+                reply_to: None,
+                attachments: Vec::new(),
+            })
+        );
+    }
+}
+
+#[test]
+fn role_mention_picker_avoids_duplicate_everyone_prefix() {
+    let command = application_command("noop", Vec::new());
+    let mut state = state_with_command_mentions(command);
+    for value in "@ev".chars() {
+        state.push_composer_char(value);
+    }
+
+    let everyone = state
+        .composer_mention_candidates()
+        .into_iter()
+        .find(|entry| entry.display_name == "@everyone")
+        .expect("@everyone should match without typing the second @");
+    assert_eq!(everyone.display_label(), "everyone");
+    assert_eq!(everyone.visible_text(), "@everyone");
+    assert!(state.confirm_composer_mention());
+    assert_eq!(state.composer_input(), "@everyone ");
 }
 
 #[test]

@@ -596,6 +596,54 @@ fn tab_confirms_emoji_picker() {
 }
 
 #[test]
+fn enter_submits_complete_slash_command_when_optional_options_are_suggested() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    state.push_event(AppEvent::ApplicationCommandsLoaded {
+        guild_id: Some(Id::new(1)),
+        commands: vec![ApplicationCommandInfo {
+            id: Id::new(100),
+            application_id: Id::new(200),
+            version: "1".to_owned(),
+            name: "achievements".to_owned(),
+            application_name: Some("TestBot".to_owned()),
+            description: "achievements command".to_owned(),
+            options: vec![ApplicationCommandOptionInfo {
+                kind: 6,
+                name: "member".to_owned(),
+                description: "member option".to_owned(),
+                required: false,
+                autocomplete: false,
+                choices: Vec::new(),
+                options: Vec::new(),
+            }],
+            raw: serde_json::json!({
+                "id": "100",
+                "application_id": "200",
+                "version": "1",
+                "name": "achievements",
+            }),
+        }],
+    });
+    handle_key(&mut state, char_key('i'));
+    for ch in "/achievements ".chars() {
+        handle_key(&mut state, char_key(ch));
+    }
+    assert_eq!(state.composer_command_query(), Some(""));
+
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert!(matches!(
+        command,
+        Some(AppCommand::RunApplicationCommand { ref invocation })
+            if invocation.command_name == "achievements"
+                && invocation.content == "/achievements"
+    ));
+}
+
+#[test]
 fn emoji_picker_escape_returns_to_composer_text() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
