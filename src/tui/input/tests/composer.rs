@@ -106,6 +106,52 @@ fn composer_treats_vim_keys_as_text() {
 }
 
 #[test]
+fn plus_colon_in_composer_opens_reaction_picker_for_selected_message() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, char_key('i'));
+
+    handle_key(&mut state, char_key('+'));
+    handle_key(&mut state, char_key(':'));
+
+    assert!(state.is_composing());
+    assert_eq!(state.composer_input(), "");
+    assert!(state.is_emoji_reaction_picker_open());
+    assert_eq!(state.emoji_reaction_filter(), None);
+    assert!(!state.is_editing_emoji_reaction_filter());
+
+    let command = handle_key(&mut state, char_key('2'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::AddReaction {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: ReactionEmoji::Unicode("❤️".to_owned()),
+        })
+    );
+    assert!(state.is_composing());
+    assert_eq!(state.composer_input(), "");
+    assert!(!state.is_emoji_reaction_picker_open());
+}
+
+#[test]
+fn plus_colon_without_selected_message_stays_composer_text() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+
+    handle_key(&mut state, char_key('+'));
+    handle_key(&mut state, char_key(':'));
+
+    assert!(state.is_composing());
+    assert_eq!(state.composer_input(), "+:");
+    assert!(!state.is_emoji_reaction_picker_open());
+}
+
+#[test]
 fn composer_ignores_unhandled_control_characters() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
@@ -815,6 +861,7 @@ fn emoji_picker_slash_filter_matches_name_and_implementation_case_insensitively(
     handle_key(&mut state, char_key('s'));
 
     assert_eq!(state.emoji_reaction_filter(), Some("Ts"));
+    assert!(state.is_editing_emoji_reaction_filter());
     assert_eq!(
         state.selected_emoji_reaction().map(|item| item.emoji),
         Some(ReactionEmoji::Custom {
@@ -823,6 +870,11 @@ fn emoji_picker_slash_filter_matches_name_and_implementation_case_insensitively(
             animated: false,
         })
     );
+
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+    assert_eq!(command, None);
+    assert_eq!(state.emoji_reaction_filter(), Some("Ts"));
+    assert!(!state.is_editing_emoji_reaction_filter());
 
     let command = handle_key(&mut state, key(KeyCode::Enter));
 
@@ -851,6 +903,7 @@ fn emoji_picker_filter_treats_vim_keys_as_text() {
     handle_key(&mut state, char_key('k'));
 
     assert_eq!(state.emoji_reaction_filter(), Some("jk"));
+    assert!(state.is_editing_emoji_reaction_filter());
     assert_ne!(
         state.selected_emoji_reaction().map(|item| item.emoji),
         Some(ReactionEmoji::Unicode("❤️".to_owned()))
@@ -869,9 +922,40 @@ fn emoji_picker_filter_matches_remaining_unicode_emojis() {
     }
 
     assert_eq!(state.emoji_reaction_filter(), Some("rocket"));
+    assert!(state.is_editing_emoji_reaction_filter());
     assert_eq!(
         state.selected_emoji_reaction().map(|item| item.emoji),
         Some(ReactionEmoji::Unicode("🚀".to_owned()))
+    );
+}
+
+#[test]
+fn emoji_picker_enter_locks_filter_before_activating_reaction() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    open_emoji_picker(&mut state);
+
+    handle_key(&mut state, char_key('/'));
+    for value in "heart".chars() {
+        handle_key(&mut state, char_key(value));
+    }
+
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(command, None);
+    assert!(state.is_emoji_reaction_picker_open());
+    assert_eq!(state.emoji_reaction_filter(), Some("heart"));
+    assert!(!state.is_editing_emoji_reaction_filter());
+
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::AddReaction {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: ReactionEmoji::Unicode("❤️".to_owned()),
+        })
     );
 }
 

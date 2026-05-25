@@ -259,6 +259,22 @@ impl DashboardState {
         self.replace_composer_range(cursor..cursor, value);
     }
 
+    pub fn open_composer_reaction_picker_from_plus_colon(&mut self) -> bool {
+        let cursor = self.composer.composer_cursor_byte_index();
+        if !composer_plus_colon_trigger_before_cursor(&self.composer.composer_input, cursor) {
+            return false;
+        }
+
+        self.open_emoji_reaction_picker();
+        if !self.is_emoji_reaction_picker_open() {
+            return false;
+        }
+
+        let plus_start = cursor - '+'.len_utf8();
+        self.replace_composer_range(plus_start..cursor, "");
+        true
+    }
+
     pub fn pop_composer_char(&mut self) {
         let end = self.composer.composer_cursor_byte_index();
         if end == 0 {
@@ -1223,9 +1239,25 @@ fn shift_byte_index(index: usize, delta: isize) -> usize {
     }
 }
 
+fn composer_plus_colon_trigger_before_cursor(input: &str, cursor: usize) -> bool {
+    if cursor == 0 || cursor > input.len() || !input.is_char_boundary(cursor) {
+        return false;
+    }
+    let plus_start = previous_char_boundary(input, cursor);
+    if &input[plus_start..cursor] != "+" {
+        return false;
+    }
+    input[..plus_start]
+        .chars()
+        .last()
+        .is_none_or(char::is_whitespace)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{next_word_boundary, previous_word_boundary};
+    use super::{
+        composer_plus_colon_trigger_before_cursor, next_word_boundary, previous_word_boundary,
+    };
 
     #[derive(Clone, Copy)]
     enum Dir {
@@ -1284,6 +1316,25 @@ mod tests {
                 step(*dir, before),
                 *expected,
                 "{arrow} on {before:?} should land at {expected:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn plus_colon_trigger_requires_boundary_plus_before_cursor() {
+        let cases = [
+            ("+", true),
+            ("draft +", true),
+            ("draft+", false),
+            ("", false),
+            ("draft", false),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(
+                composer_plus_colon_trigger_before_cursor(input, input.len()),
+                expected,
+                "{input:?} should return {expected}",
             );
         }
     }

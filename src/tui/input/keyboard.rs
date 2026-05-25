@@ -40,6 +40,14 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_message_pin_confirmation_key(state, key);
     }
 
+    if state.is_poll_vote_picker_open() {
+        return handle_poll_vote_picker_key(state, key);
+    }
+
+    if state.is_emoji_reaction_picker_open() {
+        return handle_emoji_reaction_picker_key(state, key);
+    }
+
     if state.is_composing() {
         return handle_composer_key(state, key);
     }
@@ -52,14 +60,6 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     ) {
         state.toggle_debug_log_popup();
         return None;
-    }
-
-    if state.is_poll_vote_picker_open() {
-        return handle_poll_vote_picker_key(state, key);
-    }
-
-    if state.is_emoji_reaction_picker_open() {
-        return handle_emoji_reaction_picker_key(state, key);
     }
 
     if state.is_channel_switcher_open() {
@@ -835,7 +835,7 @@ fn handle_emoji_reaction_picker_key(
 ) -> Option<AppCommand> {
     match state
         .key_bindings()
-        .emoji_reaction_picker_action(key, state.is_filtering_emoji_reactions())
+        .emoji_reaction_picker_action(key, state.is_editing_emoji_reaction_filter())
     {
         Some(EmojiReactionPickerAction::Select(SelectionAction::Next)) => {
             state.move_emoji_reaction_down()
@@ -849,6 +849,10 @@ fn handle_emoji_reaction_picker_key(
         }
         Some(EmojiReactionPickerAction::DeleteFilterChar) => {
             state.pop_emoji_reaction_filter_char();
+            return None;
+        }
+        Some(EmojiReactionPickerAction::CommitFilter) => {
+            state.commit_emoji_reaction_filter();
             return None;
         }
         Some(EmojiReactionPickerAction::StartFilter) => {
@@ -1028,7 +1032,9 @@ fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppC
             None
         }
         ComposerAction::InsertChar(value) => {
-            state.push_composer_char(value);
+            if value != ':' || !state.open_composer_reaction_picker_from_plus_colon() {
+                state.push_composer_char(value);
+            }
             None
         }
         ComposerAction::Ignore => None,

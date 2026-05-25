@@ -271,6 +271,7 @@ pub(in crate::tui) enum EmojiReactionPickerAction {
     Select(SelectionAction),
     Close,
     StartFilter,
+    CommitFilter,
     DeleteFilterChar,
     InsertFilterChar(char),
     ActivateSelected,
@@ -2126,9 +2127,9 @@ impl KeyBindings {
     pub(in crate::tui) fn emoji_reaction_picker_action(
         &self,
         key: KeyEvent,
-        filtering: bool,
+        filter_editing: bool,
     ) -> Option<EmojiReactionPickerAction> {
-        let key_set = if filtering {
+        let key_set = if filter_editing {
             SelectionKeySet::TextSafe
         } else {
             SelectionKeySet::Navigation
@@ -2139,11 +2140,14 @@ impl KeyBindings {
 
         match key.code {
             KeyCode::Esc => Some(EmojiReactionPickerAction::Close),
-            KeyCode::Backspace if filtering => Some(EmojiReactionPickerAction::DeleteFilterChar),
-            KeyCode::Char('/') if is_shortcut_key(key) && !filtering => {
+            KeyCode::Enter if filter_editing => Some(EmojiReactionPickerAction::CommitFilter),
+            KeyCode::Backspace if filter_editing => {
+                Some(EmojiReactionPickerAction::DeleteFilterChar)
+            }
+            KeyCode::Char('/') if is_shortcut_key(key) && !filter_editing => {
                 Some(EmojiReactionPickerAction::StartFilter)
             }
-            KeyCode::Char(value) if is_shortcut_key(key) && filtering => {
+            KeyCode::Char(value) if is_shortcut_key(key) && filter_editing => {
                 Some(EmojiReactionPickerAction::InsertFilterChar(value))
             }
             code if is_confirm_key(code) => Some(EmojiReactionPickerAction::ActivateSelected),

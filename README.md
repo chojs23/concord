@@ -326,11 +326,12 @@ When the @mention picker is open, use `Up` / `Down`,
 
 #### Emoji picker
 
-Type `:` plus at least two emoji shortcode letters, such as `:he`, to open
-Unicode emoji and current-server custom emoji suggestions. Use `Up` / `Down`,
-`Ctrl+p` / `Ctrl+n`, `Tab`, or `Enter` to choose an emoji. Complete Unicode
-shortcodes such as `:heart:` are converted to their emoji when the message is
-sent; selected custom emojis are sent using Discord's custom emoji markup.
+Type `:` plus at least two letters, such as `:he`, to pick Unicode or server
+emoji while writing a message.
+
+To react from the composer, select a message, enter insert mode, then type
+`+:`. The reaction picker opens for that message. Press `/` to search, Enter to
+lock the filter, then Enter again or use a shown shortcut to react.
 
 #### Bot commands
 
@@ -497,13 +498,10 @@ OpenEditor = { keys = ["<C-o>"], description = "open editor" }
 DeletePreviousWord = "<A-backspace>"
 ```
 
-For directly assignable `[keymap]` actions, reserved keys cannot be configured.
-Reserved keys include `Enter`, `Esc`, `Backspace`, `Delete`, and `Ctrl+c`.
-These stay fixed outside composer because they are used for submit, cancel, text
-editing, or terminal-safe modal behavior. Invalid, reserved, or conflicting
-values are ignored for that action, so the action keeps its default key and other
-valid mappings still work. Composer shortcuts can remap composer editing keys,
-including `Enter`, `Esc`, `Backspace`, `Delete`, and `Ctrl+c`.
+Direct `[keymap]` actions and `leader` cannot use reserved keys: `Enter`, `Esc`,
+`Backspace`, `Delete`, or `Ctrl+c`. Invalid, reserved, or conflicting bindings
+are ignored for that action. `[keymap.composer]` is separate and can remap those
+editing keys.
 
 ##### Directly assignable actions
 

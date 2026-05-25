@@ -100,6 +100,13 @@ impl DashboardState {
         self.emoji_reaction_filter().is_some()
     }
 
+    pub fn is_editing_emoji_reaction_filter(&self) -> bool {
+        self.popups
+            .emoji_reaction_picker
+            .as_ref()
+            .is_some_and(|picker| picker.filter_editing)
+    }
+
     pub fn close_emoji_reaction_picker(&mut self) {
         self.popups.emoji_reaction_picker = None;
     }
@@ -227,8 +234,15 @@ impl DashboardState {
     pub fn start_emoji_reaction_filter(&mut self) {
         if let Some(picker) = &mut self.popups.emoji_reaction_picker {
             picker.filter = Some(String::new());
+            picker.filter_editing = true;
             picker.filtered_items = picker.items.clone();
             picker.selected = 0;
+        }
+    }
+
+    pub fn commit_emoji_reaction_filter(&mut self) {
+        if let Some(picker) = &mut self.popups.emoji_reaction_picker {
+            picker.filter_editing = false;
         }
     }
 
@@ -289,6 +303,7 @@ impl DashboardState {
             self.popups.emoji_reaction_picker = Some(EmojiReactionPickerState {
                 selected: 0,
                 filter: None,
+                filter_editing: false,
                 filtered_items: items.clone(),
                 items,
                 existing_reactions,

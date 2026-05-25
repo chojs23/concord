@@ -136,6 +136,7 @@ pub(super) enum ChannelLeaderActionState {
 pub struct EmojiReactionPickerState {
     pub(super) selected: usize,
     pub(super) filter: Option<String>,
+    pub(super) filter_editing: bool,
     pub(super) items: Vec<EmojiReactionItem>,
     pub(super) filtered_items: Vec<EmojiReactionItem>,
     pub(super) existing_reactions: Vec<ReactionEmoji>,
