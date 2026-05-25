@@ -521,3 +521,38 @@ fn channel_delete_removes_cached_thread() {
 
     assert_eq!(state.channel(channel_id), None);
 }
+
+#[test]
+fn thread_created_by_current_user_is_marked_joined() {
+    let guild_id = Id::new(1);
+    let current_user_id = Id::new(10);
+    let own_thread = Id::new(20);
+    let other_thread = Id::new(21);
+    let mut state = DiscordState::default();
+
+    state.apply_event(&AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(current_user_id),
+    });
+    state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+        owner_id: Some(current_user_id),
+        ..guild_thread_channel(guild_id, own_thread, Id::new(2), "my thread")
+    }));
+    state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+        owner_id: Some(Id::new(99)),
+        ..guild_thread_channel(guild_id, other_thread, Id::new(2), "someone elses thread")
+    }));
+
+    assert!(
+        state
+            .channel(own_thread)
+            .unwrap()
+            .current_user_joined_thread
+    );
+    assert!(
+        !state
+            .channel(other_thread)
+            .unwrap()
+            .current_user_joined_thread
+    );
+}

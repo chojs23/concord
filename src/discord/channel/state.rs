@@ -266,6 +266,12 @@ impl DiscordState {
         let current_user_joined_thread = channel
             .current_user_joined_thread
             .or_else(|| existing.map(|existing| existing.current_user_joined_thread))
+            .or_else(|| {
+                let created_by_current_user = permissions::is_thread_kind(&channel.kind)
+                    && channel.owner_id.is_some()
+                    && channel.owner_id == self.session.current_user_id;
+                created_by_current_user.then_some(true)
+            })
             .unwrap_or(false);
 
         self.navigation.channels.insert(
