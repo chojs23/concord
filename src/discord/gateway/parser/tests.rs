@@ -1286,6 +1286,82 @@ fn guild_create_parser_keeps_string_permission_bitfields() {
 }
 
 #[test]
+fn raw_guild_role_events_patch_single_roles() {
+    let created = parse_user_account_event(
+        &json!({
+            "t": "GUILD_ROLE_CREATE",
+            "d": {
+                "guild_id": "1",
+                "role": {
+                    "id": "90",
+                    "name": "Admin",
+                    "color": 16755200,
+                    "position": 10,
+                    "hoist": true,
+                    "permissions": "1024"
+                }
+            }
+        })
+        .to_string(),
+    );
+    let updated = parse_user_account_event(
+        &json!({
+            "t": "GUILD_ROLE_UPDATE",
+            "d": {
+                "guild_id": "1",
+                "role": {
+                    "id": "90",
+                    "name": "Owner",
+                    "color": 0,
+                    "position": 11,
+                    "hoist": false,
+                    "permissions": "2048"
+                }
+            }
+        })
+        .to_string(),
+    );
+    let deleted = parse_user_account_event(
+        &json!({
+            "t": "GUILD_ROLE_DELETE",
+            "d": {
+                "guild_id": "1",
+                "role_id": "90"
+            }
+        })
+        .to_string(),
+    );
+
+    assert!(matches!(
+        created.as_slice(),
+        [AppEvent::GuildRoleUpsert { guild_id, role }]
+            if *guild_id == Id::new(1)
+                && role.id == Id::new(90)
+                && role.name == "Admin"
+                && role.color == Some(16755200)
+                && role.position == 10
+                && role.hoist
+                && role.permissions == 1024
+    ));
+    assert!(matches!(
+        updated.as_slice(),
+        [AppEvent::GuildRoleUpsert { guild_id, role }]
+            if *guild_id == Id::new(1)
+                && role.id == Id::new(90)
+                && role.name == "Owner"
+                && role.color.is_none()
+                && role.position == 11
+                && !role.hoist
+                && role.permissions == 2048
+    ));
+    assert!(matches!(
+        deleted.as_slice(),
+        [AppEvent::GuildRoleDelete { guild_id, role_id }]
+            if *guild_id == Id::new(1) && *role_id == Id::new(90)
+    ));
+}
+
+#[test]
 fn guild_create_parser_accepts_member_user_id_without_nested_user() {
     let event = parse_guild_create(&json!({
         "id": "1",

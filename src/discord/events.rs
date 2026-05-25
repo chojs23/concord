@@ -53,6 +53,14 @@ pub enum AppEvent {
         guild_id: Id<GuildMarker>,
         roles: Vec<RoleInfo>,
     },
+    GuildRoleUpsert {
+        guild_id: Id<GuildMarker>,
+        role: RoleInfo,
+    },
+    GuildRoleDelete {
+        guild_id: Id<GuildMarker>,
+        role_id: Id<RoleMarker>,
+    },
     GuildEmojisUpdate {
         guild_id: Id<GuildMarker>,
         emojis: Vec<CustomEmojiInfo>,

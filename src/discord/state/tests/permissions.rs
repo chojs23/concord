@@ -173,6 +173,82 @@ fn role_allow_overrides_everyone_deny() {
 }
 
 #[test]
+fn role_gateway_events_update_permission_checks() {
+    let me = Id::new(10);
+    let owner = Id::new(11);
+    let guild = Id::new(1);
+    let channel = Id::new(2);
+    let staff_role = Id::new(50);
+    let mut state = guild_with_permissions(
+        owner,
+        me,
+        guild,
+        channel,
+        vec![staff_role],
+        vec![role_info(Id::new(guild.get()), "@everyone", 0)],
+        Vec::new(),
+    );
+    let ch = state.channel(channel).expect("channel");
+    assert!(!state.can_view_channel(ch));
+
+    state.apply_event(&AppEvent::GuildRoleUpsert {
+        guild_id: guild,
+        role: role_info(staff_role, "Staff", VIEW_CHANNEL),
+    });
+    let ch = state.channel(channel).expect("channel");
+    assert!(state.can_view_channel(ch));
+
+    state.apply_event(&AppEvent::GuildRoleUpsert {
+        guild_id: guild,
+        role: role_info(staff_role, "Staff", 0),
+    });
+    let ch = state.channel(channel).expect("channel");
+    assert!(!state.can_view_channel(ch));
+
+    state.apply_event(&AppEvent::GuildRoleUpsert {
+        guild_id: guild,
+        role: role_info(staff_role, "Staff", VIEW_CHANNEL),
+    });
+    state.apply_event(&AppEvent::GuildRoleDelete {
+        guild_id: guild,
+        role_id: staff_role,
+    });
+    let ch = state.channel(channel).expect("channel");
+    assert!(!state.can_view_channel(ch));
+}
+
+#[test]
+fn role_delete_prunes_stale_role_ids_from_permission_overwrites() {
+    let me = Id::new(10);
+    let owner = Id::new(11);
+    let guild = Id::new(1);
+    let channel = Id::new(2);
+    let staff_role = Id::new(50);
+    let mut state = guild_with_permissions(
+        owner,
+        me,
+        guild,
+        channel,
+        vec![staff_role],
+        vec![
+            role_info(Id::new(guild.get()), "@everyone", 0),
+            role_info(staff_role, "Staff", 0),
+        ],
+        vec![perm_role(staff_role.get(), VIEW_CHANNEL, 0)],
+    );
+    let ch = state.channel(channel).expect("channel");
+    assert!(state.can_view_channel(ch));
+
+    state.apply_event(&AppEvent::GuildRoleDelete {
+        guild_id: guild,
+        role_id: staff_role,
+    });
+
+    let ch = state.channel(channel).expect("channel");
+    assert!(!state.can_view_channel(ch));
+}
+
+#[test]
 fn current_user_roles_handle_partial_and_complete_member_upserts() {
     let me = Id::new(10);
     let owner = Id::new(11);

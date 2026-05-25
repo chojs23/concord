@@ -455,20 +455,19 @@ pub(in crate::discord) fn upsert_member(
 pub(in crate::discord) fn role_map(roles: &[RoleInfo]) -> BTreeMap<Id<RoleMarker>, RoleState> {
     roles
         .iter()
-        .map(|role| {
-            (
-                role.id,
-                RoleState {
-                    id: role.id,
-                    name: role.name.clone(),
-                    color: role.color,
-                    position: role.position,
-                    hoist: role.hoist,
-                    permissions: role.permissions,
-                },
-            )
-        })
+        .map(|role| (role.id, role_state(role)))
         .collect()
+}
+
+pub(in crate::discord) fn role_state(role: &RoleInfo) -> RoleState {
+    RoleState {
+        id: role.id,
+        name: role.name.clone(),
+        color: role.color,
+        position: role.position,
+        hoist: role.hoist,
+        permissions: role.permissions,
+    }
 }
 
 pub(in crate::discord) fn selected_member_role_color(

@@ -11,8 +11,8 @@ pub(in crate::discord) const TYPING_INDICATOR_TTL: Duration = Duration::from_sec
 
 pub use super::channel::{ChannelRecipientState, ChannelState, ChannelVisibilityStats};
 pub use super::guild::GuildState;
-use super::member::role_map;
 pub use super::member::{GuildMemberState, RoleState, TypingUserState};
+use super::member::{role_map, role_state};
 use super::message::{MessageAuthorRoleIds, MessageUpdateFields};
 pub use super::message::{MessageCapabilities, MessageState};
 pub use super::notification::ChannelUnreadState;
@@ -570,6 +570,8 @@ impl DiscordState {
 
             AppEvent::SelectedGuildChanged { .. }
             | AppEvent::GuildRolesUpdate { .. }
+            | AppEvent::GuildRoleUpsert { .. }
+            | AppEvent::GuildRoleDelete { .. }
             | AppEvent::GuildEmojisUpdate { .. }
             | AppEvent::GuildMemberListCounts { .. }
             | AppEvent::GuildMemberRemove { .. }
@@ -692,6 +694,28 @@ impl DiscordState {
             }
             AppEvent::GuildRolesUpdate { guild_id, roles } => {
                 self.guild_details.roles.insert(*guild_id, role_map(roles));
+            }
+            AppEvent::GuildRoleUpsert { guild_id, role } => {
+                self.guild_details
+                    .roles
+                    .entry(*guild_id)
+                    .or_default()
+                    .insert(role.id, role_state(role));
+            }
+            AppEvent::GuildRoleDelete { guild_id, role_id } => {
+                if let Some(roles) = self.guild_details.roles.get_mut(guild_id) {
+                    roles.remove(role_id);
+                }
+                if let Some(members) = self.guild_details.members.get_mut(guild_id) {
+                    for member in members.values_mut() {
+                        member
+                            .role_ids
+                            .retain(|member_role_id| member_role_id != role_id);
+                    }
+                }
+                if let Some(role_ids) = self.guild_details.current_user_role_ids.get_mut(guild_id) {
+                    role_ids.retain(|member_role_id| member_role_id != role_id);
+                }
             }
             AppEvent::GuildEmojisUpdate { guild_id, emojis } => {
                 self.navigation

@@ -172,6 +172,20 @@ pub(super) fn parse_guild_emojis_update(data: &Value) -> Option<AppEvent> {
     Some(AppEvent::GuildEmojisUpdate { guild_id, emojis })
 }
 
+pub(super) fn parse_guild_role_upsert(data: &Value) -> Option<AppEvent> {
+    Some(AppEvent::GuildRoleUpsert {
+        guild_id: parse_id::<GuildMarker>(data.get("guild_id")?)?,
+        role: parse_role_info(data.get("role")?)?,
+    })
+}
+
+pub(super) fn parse_guild_role_delete(data: &Value) -> Option<AppEvent> {
+    Some(AppEvent::GuildRoleDelete {
+        guild_id: parse_id::<GuildMarker>(data.get("guild_id")?)?,
+        role_id: parse_id::<RoleMarker>(data.get("role_id")?)?,
+    })
+}
+
 pub(super) fn parse_guild_update(data: &Value) -> Option<AppEvent> {
     let guild_id = parse_id::<GuildMarker>(data.get("id")?)?;
     // Same lazy-mode caveat as `parse_guild_create`: with capabilities such

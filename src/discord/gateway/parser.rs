@@ -17,8 +17,8 @@ use channels::{
     parse_channel_delete, parse_channel_upsert, parse_thread_list_sync, parse_thread_members_update,
 };
 use guilds::{
-    parse_guild_create, parse_guild_delete, parse_guild_emojis_update, parse_guild_update,
-    parse_user_guild_settings_update,
+    parse_guild_create, parse_guild_delete, parse_guild_emojis_update, parse_guild_role_delete,
+    parse_guild_role_upsert, parse_guild_update, parse_user_guild_settings_update,
 };
 use members::{
     parse_member_add, parse_member_chunk, parse_member_list_update, parse_member_remove,
@@ -60,6 +60,10 @@ pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         }
         "GUILD_UPDATE" => parse_guild_update(data).into_iter().collect(),
         "GUILD_EMOJIS_UPDATE" => parse_guild_emojis_update(data).into_iter().collect(),
+        "GUILD_ROLE_CREATE" | "GUILD_ROLE_UPDATE" => {
+            parse_guild_role_upsert(data).into_iter().collect()
+        }
+        "GUILD_ROLE_DELETE" => parse_guild_role_delete(data).into_iter().collect(),
         "GUILD_DELETE" => parse_guild_delete(data).into_iter().collect(),
         "CHANNEL_CREATE" | "CHANNEL_UPDATE" | "THREAD_CREATE" | "THREAD_UPDATE" => {
             parse_channel_upsert(data).into_iter().collect()

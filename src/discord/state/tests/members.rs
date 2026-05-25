@@ -349,6 +349,51 @@ fn guild_create_caches_roles_and_member_role_ids() {
 }
 
 #[test]
+fn guild_role_events_patch_cached_roles() {
+    let guild_id = Id::new(1);
+    let role_id = Id::new(90);
+    let mut state = DiscordState::default();
+
+    state.apply_event(&guild_create_event(GuildCreateFixture::new(guild_id)));
+    state.apply_event(&AppEvent::GuildRoleUpsert {
+        guild_id,
+        role: RoleInfo {
+            color: Some(0xFFAA00),
+            position: 10,
+            hoist: true,
+            permissions: 1024,
+            ..RoleInfo::test(role_id, "Admin")
+        },
+    });
+
+    let roles = state.roles_for_guild(guild_id);
+    assert_eq!(roles.len(), 1);
+    assert_eq!(roles[0].name, "Admin");
+    assert_eq!(roles[0].color, Some(0xFFAA00));
+
+    state.apply_event(&AppEvent::GuildRoleUpsert {
+        guild_id,
+        role: RoleInfo {
+            color: Some(0x00AAFF),
+            position: 20,
+            hoist: false,
+            permissions: 2048,
+            ..RoleInfo::test(role_id, "Owner")
+        },
+    });
+
+    let roles = state.roles_for_guild(guild_id);
+    assert_eq!(roles.len(), 1);
+    assert_eq!(roles[0].name, "Owner");
+    assert_eq!(roles[0].color, Some(0x00AAFF));
+    assert_eq!(roles[0].permissions, 2048);
+
+    state.apply_event(&AppEvent::GuildRoleDelete { guild_id, role_id });
+
+    assert!(state.roles_for_guild(guild_id).is_empty());
+}
+
+#[test]
 fn message_author_role_color_uses_history_author_roles_when_member_is_missing() {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
