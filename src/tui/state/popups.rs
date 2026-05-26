@@ -111,6 +111,38 @@ pub(super) struct AttachmentViewerState {
     pub(super) message_id: Id<MessageMarker>,
     pub(super) selected: usize,
     pub(super) download_message: Option<String>,
+    pub(super) zoom: AttachmentViewerZoom,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AttachmentViewerZoom {
+    #[default]
+    Default,
+    Large,
+    Fullscreen,
+}
+
+impl AttachmentViewerZoom {
+    pub(super) fn zoom_in(self) -> Self {
+        match self {
+            Self::Default => Self::Large,
+            Self::Large | Self::Fullscreen => Self::Fullscreen,
+        }
+    }
+
+    pub(super) fn zoom_out(self) -> Self {
+        match self {
+            Self::Fullscreen => Self::Large,
+            Self::Large | Self::Default => Self::Default,
+        }
+    }
+
+    pub(super) fn toggle_fullscreen(self) -> Self {
+        match self {
+            Self::Fullscreen => Self::Default,
+            Self::Default | Self::Large => Self::Fullscreen,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

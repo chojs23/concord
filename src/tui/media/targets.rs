@@ -109,6 +109,8 @@ pub(in crate::tui) fn visible_image_preview_targets(
             layout.viewer_max_preview_height,
             preview.width,
             preview.height,
+            true,
+            layout.font_size,
         );
         if preview_height == 0 {
             return Vec::new();
@@ -210,6 +212,8 @@ fn image_preview_size_for_dimensions(
     max_preview_height: u16,
     image_width: Option<u64>,
     image_height: Option<u64>,
+    viewer: bool,
+    font_size: Option<(u16, u16)>,
 ) -> (u16, u16) {
     if max_preview_width == 0 || max_preview_height == 0 {
         return (0, 0);
@@ -222,21 +226,36 @@ fn image_preview_size_for_dimensions(
         return (max_preview_width, max_preview_height);
     }
 
-    let source_width_columns = image_width.div_ceil(IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN);
-    let width_for_height =
-        (u128::from(max_preview_height) * u128::from(image_width) * 3) / u128::from(image_height);
-    let preview_width = max_preview_width
-        .min(u16::try_from(source_width_columns).unwrap_or(u16::MAX))
+    let (cell_w, cell_h) = cell_aspect_ratio(font_size);
+    let width_for_height = (u128::from(max_preview_height) * u128::from(image_width) * cell_h)
+        / (u128::from(image_height) * cell_w);
+    let mut preview_width = max_preview_width
         .min(u16::try_from(width_for_height.max(1)).unwrap_or(u16::MAX))
         .max(1);
-    let preview_height = image_preview_height_for_dimensions(
+    if !viewer {
+        let source_width_columns = image_width.div_ceil(IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN);
+        preview_width = preview_width.min(u16::try_from(source_width_columns).unwrap_or(u16::MAX));
+    }
+    let preview_height = image_preview_height_for_dimensions_inner(
         preview_width,
         max_preview_height,
         Some(image_width),
         Some(image_height),
+        viewer,
+        font_size,
     );
 
     (preview_width, preview_height)
+}
+
+/// Returns (cell_width_px, cell_height_px) for the terminal's font cell.
+/// Falls back to the legacy 1:3 (width:height) ratio when the picker
+/// couldn't query the terminal — preserves prior behavior in that case.
+fn cell_aspect_ratio(font_size: Option<(u16, u16)>) -> (u128, u128) {
+    match font_size {
+        Some((w, h)) if w > 0 && h > 0 => (u128::from(w), u128::from(h)),
+        _ => (1, 3),
+    }
 }
 
 fn preview_request_url(
@@ -789,6 +808,24 @@ pub(in crate::tui) fn image_preview_height_for_dimensions(
     image_width: Option<u64>,
     image_height: Option<u64>,
 ) -> u16 {
+    image_preview_height_for_dimensions_inner(
+        preview_width,
+        max_preview_height,
+        image_width,
+        image_height,
+        false,
+        None,
+    )
+}
+
+fn image_preview_height_for_dimensions_inner(
+    preview_width: u16,
+    max_preview_height: u16,
+    image_width: Option<u64>,
+    image_height: Option<u64>,
+    viewer: bool,
+    font_size: Option<(u16, u16)>,
+) -> u16 {
     if preview_width == 0 || max_preview_height == 0 {
         return 0;
     }
@@ -800,11 +837,16 @@ pub(in crate::tui) fn image_preview_height_for_dimensions(
         return max_preview_height;
     }
 
-    let source_width_columns = image_width.div_ceil(IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN);
-    let preview_width = preview_width.min(u16::try_from(source_width_columns).unwrap_or(u16::MAX));
+    let preview_width = if viewer {
+        preview_width
+    } else {
+        let source_width_columns = image_width.div_ceil(IMAGE_PREVIEW_SOURCE_PIXELS_PER_COLUMN);
+        preview_width.min(u16::try_from(source_width_columns).unwrap_or(u16::MAX))
+    };
 
-    let rows = (u128::from(preview_width) * u128::from(image_height))
-        .div_ceil(u128::from(image_width) * 3);
+    let (cell_w, cell_h) = cell_aspect_ratio(font_size);
+    let rows = (u128::from(preview_width) * u128::from(image_height) * cell_w)
+        .div_ceil(u128::from(image_width) * cell_h);
     let rows = u16::try_from(rows).unwrap_or(u16::MAX);
 
     rows.clamp(3.min(max_preview_height), max_preview_height)

@@ -62,9 +62,9 @@ use crate::{
             reaction_line_test_spans, wrap_text_lines,
         },
         state::{
-            ChannelSwitcherItem, ChannelThreadItem, DashboardState, DisplayOptionItem,
-            EmojiPickerEntry, EmojiReactionItem, FocusPane, MessageActionItem, MessageActionKind,
-            PollVotePickerItem,
+            AttachmentViewerZoom, ChannelSwitcherItem, ChannelThreadItem, DashboardState,
+            DisplayOptionItem, EmojiPickerEntry, EmojiReactionItem, FocusPane, MessageActionItem,
+            MessageActionKind, PollVotePickerItem,
         },
         ui::{MouseTarget, PopupListTarget, mouse_target_at},
     },

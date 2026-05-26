@@ -256,6 +256,9 @@ pub(in crate::tui) enum AttachmentViewerAction {
     Previous,
     Next,
     DownloadSelected,
+    ToggleZoom,
+    ZoomIn,
+    ZoomOut,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2253,6 +2256,13 @@ impl KeyBindings {
             KeyCode::Char('d') if is_shortcut_key(key) => {
                 Some(AttachmentViewerAction::DownloadSelected)
             }
+            KeyCode::Char('z') if is_shortcut_key(key) => Some(AttachmentViewerAction::ToggleZoom),
+            KeyCode::Char('+') | KeyCode::Char('=') if is_shortcut_key(key) => {
+                Some(AttachmentViewerAction::ZoomIn)
+            }
+            KeyCode::Char('-') | KeyCode::Char('_') if is_shortcut_key(key) => {
+                Some(AttachmentViewerAction::ZoomOut)
+            }
             _ => None,
         }
     }
@@ -2573,7 +2583,7 @@ impl KeyBindings {
     }
 
     pub fn attachment_viewer_download_hint(&self) -> &'static str {
-        "[d] download attachment"
+        "[d] download  [z] zoom  [+/-] zoom in/out"
     }
 
     pub fn unread_mark_as_read_hint(&self) -> &'static str {

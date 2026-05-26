@@ -101,6 +101,7 @@ pub(super) async fn run_dashboard(
                 last_frame_area = frame.area();
                 ui::sync_view_heights(frame.area(), &mut state);
                 let mut preview_layout = ui::image_preview_layout(frame.area(), &state);
+                preview_layout.font_size = image_previews.font_size();
                 if !state.show_images() {
                     preview_layout.preview_width = 0;
                     preview_layout.max_preview_height = 0;

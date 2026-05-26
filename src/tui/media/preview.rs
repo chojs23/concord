@@ -83,6 +83,10 @@ impl ImagePreviewCache {
         }
     }
 
+    pub(in crate::tui) fn font_size(&self) -> Option<(u16, u16)> {
+        self.picker.as_ref().map(Picker::font_size)
+    }
+
     pub(in crate::tui) fn render_state(
         &mut self,
         targets: &[ImagePreviewTarget],

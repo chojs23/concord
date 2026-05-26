@@ -67,8 +67,8 @@ pub use model::{
 pub use model::{ChannelActionKind, GuildActionKind, MemberActionKind, MessageUrlItem};
 pub use options::DisplayOptionItem;
 pub use popups::{
-    EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState, PollVotePickerState,
-    ReactionUsersPopupState,
+    AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,
+    PollVotePickerState, ReactionUsersPopupState,
 };
 pub use presentation::{discord_color, folder_color, presence_color, presence_marker};
 

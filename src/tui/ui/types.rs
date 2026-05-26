@@ -49,6 +49,7 @@ pub struct ImagePreviewLayout {
     pub max_preview_height: u16,
     pub viewer_preview_width: u16,
     pub viewer_max_preview_height: u16,
+    pub font_size: Option<(u16, u16)>,
 }
 
 #[derive(Clone, Copy)]

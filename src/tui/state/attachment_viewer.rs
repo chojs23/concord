@@ -5,7 +5,7 @@ use crate::discord::{
 
 use super::scroll::clamp_selected_index;
 use super::{AttachmentViewerItem, DashboardState};
-use crate::tui::state::popups::AttachmentViewerState;
+use crate::tui::state::popups::{AttachmentViewerState, AttachmentViewerZoom};
 
 impl DashboardState {
     pub fn is_attachment_viewer_open(&self) -> bool {
@@ -24,12 +24,39 @@ impl DashboardState {
             message_id: message.id,
             selected: 0,
             download_message: None,
+            zoom: AttachmentViewerZoom::default(),
         });
         true
     }
 
     pub fn close_attachment_viewer(&mut self) {
         self.popups.attachment_viewer = None;
+    }
+
+    pub fn attachment_viewer_zoom(&self) -> AttachmentViewerZoom {
+        self.popups
+            .attachment_viewer
+            .as_ref()
+            .map(|viewer| viewer.zoom)
+            .unwrap_or_default()
+    }
+
+    pub fn toggle_attachment_viewer_fullscreen(&mut self) {
+        if let Some(viewer) = &mut self.popups.attachment_viewer {
+            viewer.zoom = viewer.zoom.toggle_fullscreen();
+        }
+    }
+
+    pub fn zoom_attachment_viewer_in(&mut self) {
+        if let Some(viewer) = &mut self.popups.attachment_viewer {
+            viewer.zoom = viewer.zoom.zoom_in();
+        }
+    }
+
+    pub fn zoom_attachment_viewer_out(&mut self) {
+        if let Some(viewer) = &mut self.popups.attachment_viewer {
+            viewer.zoom = viewer.zoom.zoom_out();
+        }
     }
 
     pub fn move_attachment_viewer_previous(&mut self) {
@@ -124,5 +151,44 @@ impl DashboardState {
             Some(attachments) => attachments.len(),
             None => 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AttachmentViewerZoom;
+
+    #[test]
+    fn zoom_in_steps_default_large_fullscreen_and_caps() {
+        let zoom = AttachmentViewerZoom::Default;
+        let zoom = zoom.zoom_in();
+        assert_eq!(zoom, AttachmentViewerZoom::Large);
+        let zoom = zoom.zoom_in();
+        assert_eq!(zoom, AttachmentViewerZoom::Fullscreen);
+        let zoom = zoom.zoom_in();
+        assert_eq!(zoom, AttachmentViewerZoom::Fullscreen);
+    }
+
+    #[test]
+    fn zoom_out_steps_fullscreen_large_default_and_caps() {
+        let zoom = AttachmentViewerZoom::Fullscreen;
+        let zoom = zoom.zoom_out();
+        assert_eq!(zoom, AttachmentViewerZoom::Large);
+        let zoom = zoom.zoom_out();
+        assert_eq!(zoom, AttachmentViewerZoom::Default);
+        let zoom = zoom.zoom_out();
+        assert_eq!(zoom, AttachmentViewerZoom::Default);
+    }
+
+    #[test]
+    fn toggle_fullscreen_round_trips() {
+        let zoom = AttachmentViewerZoom::Default;
+        let zoom = zoom.toggle_fullscreen();
+        assert_eq!(zoom, AttachmentViewerZoom::Fullscreen);
+        let zoom = zoom.toggle_fullscreen();
+        assert_eq!(zoom, AttachmentViewerZoom::Default);
+
+        let zoom = AttachmentViewerZoom::Large.toggle_fullscreen();
+        assert_eq!(zoom, AttachmentViewerZoom::Fullscreen);
     }
 }

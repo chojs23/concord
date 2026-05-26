@@ -168,7 +168,8 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
 pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewLayout {
     let areas = dashboard_areas(area, state);
     let list = message_list_area(areas.messages, state);
-    let viewer_image_area = attachment_viewer_image_area(areas.messages);
+    let viewer_image_area =
+        attachment_viewer_image_area(areas.messages, area, state.attachment_viewer_zoom());
     ImagePreviewLayout {
         list_height: list.height as usize,
         content_width: message_content_width(list),
@@ -176,6 +177,7 @@ pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewL
         max_preview_height: inline_image_preview_height(list, true),
         viewer_preview_width: viewer_image_area.width,
         viewer_max_preview_height: viewer_image_area.height,
+        font_size: None,
     }
 }
 
@@ -228,7 +230,13 @@ pub fn render(
     render_user_profile_popup(frame, areas.messages, state, profile_avatar, &emoji_images);
     render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
     render_reaction_users_popup(frame, areas.messages, state);
-    render_attachment_viewer(frame, areas.messages, state, viewer_image_preview);
+    render_attachment_viewer(
+        frame,
+        areas.messages,
+        frame.area(),
+        state,
+        viewer_image_preview,
+    );
     render_debug_log_popup(frame, areas.messages, state);
     render_keymap_help_popup(frame, areas.messages, state);
     render_toast(frame, frame.area(), state);

@@ -29,6 +29,7 @@ fn layout(list_height: usize) -> ImagePreviewLayout {
         max_preview_height: 3,
         viewer_preview_width: 76,
         viewer_max_preview_height: 13,
+        font_size: None,
     }
 }
 

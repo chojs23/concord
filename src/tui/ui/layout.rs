@@ -6,7 +6,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::super::{
     message_format::wrap_text_lines,
-    state::{DashboardState, FocusPane},
+    state::{AttachmentViewerZoom, DashboardState, FocusPane},
 };
 use super::types::{
     DashboardAreas, EMBED_PREVIEW_GUTTER_PREFIX, IMAGE_PREVIEW_HEIGHT, IMAGE_PREVIEW_WIDTH,
@@ -14,7 +14,8 @@ use super::types::{
     MessageAreas,
 };
 
-const ATTACHMENT_VIEWER_POPUP_PERCENT: u16 = 80;
+const ATTACHMENT_VIEWER_POPUP_PERCENT_DEFAULT: u16 = 80;
+const ATTACHMENT_VIEWER_POPUP_PERCENT_LARGE: u16 = 95;
 
 pub(super) fn dashboard_areas(area: Rect, state: &DashboardState) -> DashboardAreas {
     let [header, main] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
@@ -49,16 +50,35 @@ fn pane_width(visible: bool, width: u16) -> Constraint {
     Constraint::Length(if visible { width } else { 0 })
 }
 
-pub(super) fn attachment_viewer_popup(area: Rect) -> Rect {
-    centered_rect(
-        area,
-        percentage_of(area.width, ATTACHMENT_VIEWER_POPUP_PERCENT),
-        percentage_of(area.height, ATTACHMENT_VIEWER_POPUP_PERCENT),
-    )
+pub(super) fn attachment_viewer_popup(
+    messages_area: Rect,
+    frame_area: Rect,
+    zoom: AttachmentViewerZoom,
+) -> Rect {
+    match zoom {
+        AttachmentViewerZoom::Fullscreen => frame_area,
+        AttachmentViewerZoom::Default => centered_rect(
+            messages_area,
+            percentage_of(messages_area.width, ATTACHMENT_VIEWER_POPUP_PERCENT_DEFAULT),
+            percentage_of(
+                messages_area.height,
+                ATTACHMENT_VIEWER_POPUP_PERCENT_DEFAULT,
+            ),
+        ),
+        AttachmentViewerZoom::Large => centered_rect(
+            messages_area,
+            percentage_of(messages_area.width, ATTACHMENT_VIEWER_POPUP_PERCENT_LARGE),
+            percentage_of(messages_area.height, ATTACHMENT_VIEWER_POPUP_PERCENT_LARGE),
+        ),
+    }
 }
 
-pub(super) fn attachment_viewer_image_area(area: Rect) -> Rect {
-    let inner = attachment_viewer_popup(area).inner(Margin {
+pub(super) fn attachment_viewer_image_area(
+    messages_area: Rect,
+    frame_area: Rect,
+    zoom: AttachmentViewerZoom,
+) -> Rect {
+    let inner = attachment_viewer_popup(messages_area, frame_area, zoom).inner(Margin {
         vertical: 1,
         horizontal: 1,
     });

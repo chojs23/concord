@@ -803,6 +803,9 @@ fn handle_attachment_viewer_key(state: &mut DashboardState, key: KeyEvent) -> Op
         Some(AttachmentViewerAction::DownloadSelected) => {
             return state.download_selected_attachment_viewer_attachment();
         }
+        Some(AttachmentViewerAction::ToggleZoom) => state.toggle_attachment_viewer_fullscreen(),
+        Some(AttachmentViewerAction::ZoomIn) => state.zoom_attachment_viewer_in(),
+        Some(AttachmentViewerAction::ZoomOut) => state.zoom_attachment_viewer_out(),
         None => {}
     }
 
