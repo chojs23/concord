@@ -160,6 +160,7 @@ Tokens are saved under Concord's config directory in plain text. See the Securit
 - Highlight active voice speakers in voice channel participant rows
 - Track unread messages and mention counts per channel
 - Mute and unmute channels and servers
+- Leave the selected server after confirmation
 
 ### Messaging
 
@@ -274,6 +275,7 @@ Press `Space` to open the leader shortcut window.
 | `Space`, `4`     | Toggle the Members pane           |
 | `Space`, `a`     | Open actions for the focused pane |
 | `Space`, `o`     | Choose concord option category    |
+| `Space`, `s`     | Server management prefix          |
 | `Space`, `v`     | Voice command prefix              |
 | `Space`, `Space` | Open the fuzzy channel switcher   |
 
@@ -306,6 +308,12 @@ Server actions:
 | -------- | ------------------- | ----------------------------------------------------- |
 | `m`      | Mark server as read | Mark all unread viewable channels in this server read |
 | `u`      | Mute / unmute       | Toggle server notification mute                       |
+
+Server management commands:
+
+| Sequence          | Action               | Description                                    |
+| ----------------- | -------------------- | ---------------------------------------------- |
+| `Space`, `s`, `l` | Leave current server | Open a confirmation before leaving this server |
 
 Channel actions:
 
@@ -471,8 +479,10 @@ OpenThread = { keys = ["t"], description = "open thread" }
 VoiceDeafen = "<leader>vd"
 VoiceMute = "<leader>vm"
 VoiceLeave = "<leader>vl"
+LeaveServer = "<leader>sl"
 
 [keymap.groups]
+"<leader>s" = "Server Management"
 "<leader>v" = "Voice"
 
 [keymap.channel_actions]
@@ -583,20 +593,21 @@ Message actions:
 
 Pane, options, and voice actions:
 
-| Action name               | Default config                     | Action                                       |
-| ------------------------- | ---------------------------------- | -------------------------------------------- |
-| `ToggleGuildPane`         | `"<leader>1"`                      | Toggle the Servers pane.                     |
-| `ToggleChannelPane`       | `"<leader>2"`                      | Toggle the Channels pane.                    |
-| `ToggleMemberPane`        | `"<leader>4"`                      | Toggle the Members pane.                     |
-| `OpenFocusedPaneAction`   | `"<leader>a"`                      | Open actions for the currently focused pane. |
-| `OpenOptions`             | `"<leader>o"`                      | Open the options category picker.            |
-| `ChannelSwitcher`         | `"<leader><leader>"`               | Open channel switcher.                       |
-| `OpenDisplayOptions`      | Contextual `d` after `OpenOptions` | Open Display options.                        |
-| `OpenNotificationOptions` | Contextual `n` after `OpenOptions` | Open Notification options.                   |
-| `OpenVoiceOptions`        | Contextual `v` after `OpenOptions` | Open Voice options.                          |
-| `VoiceDeafen`             | `"<leader>vd"`                     | Toggle voice deafen.                         |
-| `VoiceMute`               | `"<leader>vm"`                     | Toggle voice mute.                           |
-| `VoiceLeave`              | `"<leader>vl"`                     | Leave the current Concord voice channel.     |
+| Action name               | Default config                     | Action                                          |
+| ------------------------- | ---------------------------------- | ----------------------------------------------- |
+| `ToggleGuildPane`         | `"<leader>1"`                      | Toggle the Servers pane.                        |
+| `ToggleChannelPane`       | `"<leader>2"`                      | Toggle the Channels pane.                       |
+| `ToggleMemberPane`        | `"<leader>4"`                      | Toggle the Members pane.                        |
+| `OpenFocusedPaneAction`   | `"<leader>a"`                      | Open actions for the currently focused pane.    |
+| `OpenOptions`             | `"<leader>o"`                      | Open the options category picker.               |
+| `ChannelSwitcher`         | `"<leader><leader>"`               | Open channel switcher.                          |
+| `OpenDisplayOptions`      | Contextual `d` after `OpenOptions` | Open Display options.                           |
+| `OpenNotificationOptions` | Contextual `n` after `OpenOptions` | Open Notification options.                      |
+| `OpenVoiceOptions`        | Contextual `v` after `OpenOptions` | Open Voice options.                             |
+| `LeaveServer`             | `"<leader>sl"`                     | Open confirmation to leave the selected server. |
+| `VoiceDeafen`             | `"<leader>vd"`                     | Toggle voice deafen.                            |
+| `VoiceMute`               | `"<leader>vm"`                     | Toggle voice mute.                              |
+| `VoiceLeave`              | `"<leader>vl"`                     | Leave the current Concord voice channel.        |
 
 ##### Composer actions
 
@@ -738,8 +749,10 @@ ChannelSwitcher = "<leader><leader>"
 VoiceDeafen = "<leader>vd"
 VoiceMute = "<leader>vm"
 VoiceLeave = "<leader>vl"
+LeaveServer = "<leader>sl"
 
 [keymap.groups]
+"<leader>s" = "Server Management"
 "<leader>v" = "Voice"
 
 [keymap.guild_actions]
