@@ -13,7 +13,7 @@ use unicode_width::UnicodeWidthStr;
 use super::model::{ChannelBranch, GuildBranch};
 use super::{
     ActiveGuildScope, AttachmentViewerItem, ChannelActionKind, ChannelPaneEntry, DashboardState,
-    FocusPane, GuildPaneEntry, MessageActionItem, MessageActionKind,
+    FocusPane, GuildActionKind, GuildPaneEntry, MessageActionItem, MessageActionKind,
 };
 use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo, AttachmentUpdate,
@@ -32,6 +32,7 @@ mod direct_messages;
 mod emoji_reactions;
 mod fixtures;
 mod forums;
+mod leader_actions;
 mod members;
 mod message_actions;
 mod message_layout;

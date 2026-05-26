@@ -836,6 +836,10 @@ impl DiscordClient {
         self.rest.delete_message(channel_id, message_id).await
     }
 
+    pub async fn leave_guild(&self, guild_id: Id<GuildMarker>) -> Result<()> {
+        self.rest.leave_guild(guild_id).await
+    }
+
     pub async fn load_application_commands(
         &self,
         guild_id: Option<Id<GuildMarker>>,

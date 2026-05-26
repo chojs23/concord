@@ -188,6 +188,10 @@ pub enum AppCommand {
     SetSelectedGuild {
         guild_id: Option<Id<GuildMarker>>,
     },
+    LeaveGuild {
+        guild_id: Id<GuildMarker>,
+        label: String,
+    },
     SetSelectedMessageChannel {
         channel_id: Option<Id<ChannelMarker>>,
     },

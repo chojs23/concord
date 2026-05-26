@@ -52,6 +52,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return handle_message_pin_confirmation_key(state, key);
     }
 
+    if state.is_guild_leave_confirmation_open() {
+        return handle_guild_leave_confirmation_key(state, key);
+    }
+
     if state.is_poll_vote_picker_open() {
         return handle_poll_vote_picker_key(state, key);
     }
@@ -359,6 +363,7 @@ pub(in crate::tui) fn execute_ui_action(
         UiAction::OpenVoiceOptions => {
             state.open_options_category_from_shortcut(OptionsCategoryShortcut::Voice)
         }
+        UiAction::LeaveServer => state.open_current_guild_leave_confirmation(),
         UiAction::VoiceDeafen => state.toggle_voice_deafen(),
         UiAction::VoiceMute => state.toggle_voice_mute(),
         UiAction::VoiceLeave => return state.leave_current_voice_channel_command(),
@@ -789,6 +794,20 @@ fn handle_message_pin_confirmation_key(
         Some(MessageConfirmationAction::Confirm) => state.confirm_message_pin(),
         Some(MessageConfirmationAction::Cancel) => {
             state.close_message_pin_confirmation();
+            None
+        }
+        None => None,
+    }
+}
+
+fn handle_guild_leave_confirmation_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    match state.key_bindings().message_confirmation_action(key) {
+        Some(MessageConfirmationAction::Confirm) => state.confirm_guild_leave(),
+        Some(MessageConfirmationAction::Cancel) => {
+            state.close_guild_leave_confirmation();
             None
         }
         None => None,

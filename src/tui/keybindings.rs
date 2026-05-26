@@ -148,6 +148,7 @@ pub(in crate::tui) enum UiAction {
     OpenDisplayOptions,
     OpenNotificationOptions,
     OpenVoiceOptions,
+    LeaveServer,
     VoiceDeafen,
     VoiceMute,
     VoiceLeave,
@@ -892,7 +893,13 @@ fn parse_keymap_groups_lossy(
 }
 
 fn default_keymap_group_titles(leader: KeyChord) -> Vec<(Vec<KeyChord>, String)> {
-    vec![(vec![leader, char_chord('v')], "Voice".to_owned())]
+    vec![
+        (
+            vec![leader, char_chord('s')],
+            "Server Management".to_owned(),
+        ),
+        (vec![leader, char_chord('v')], "Voice".to_owned()),
+    ]
 }
 
 fn keymap_group_titles_with_defaults(
@@ -1223,6 +1230,7 @@ impl UiAction {
             UiAction::OpenDisplayOptions => "OpenDisplayOptions",
             UiAction::OpenNotificationOptions => "OpenNotificationOptions",
             UiAction::OpenVoiceOptions => "OpenVoiceOptions",
+            UiAction::LeaveServer => "LeaveServer",
             UiAction::VoiceDeafen => "VoiceDeafen",
             UiAction::VoiceMute => "VoiceMute",
             UiAction::VoiceLeave => "VoiceLeave",
@@ -1273,6 +1281,7 @@ impl UiAction {
             UiAction::OpenDisplayOptions => "Display options",
             UiAction::OpenNotificationOptions => "Notification options",
             UiAction::OpenVoiceOptions => "Voice options",
+            UiAction::LeaveServer => "Leave current server",
             UiAction::VoiceDeafen => "deafen voice",
             UiAction::VoiceMute => "mute voice",
             UiAction::VoiceLeave => "leave voice",
@@ -1470,6 +1479,7 @@ fn all_ui_actions() -> &'static [UiAction] {
         UiAction::OpenDisplayOptions,
         UiAction::OpenNotificationOptions,
         UiAction::OpenVoiceOptions,
+        UiAction::LeaveServer,
         UiAction::VoiceDeafen,
         UiAction::VoiceMute,
         UiAction::VoiceLeave,
@@ -1865,6 +1875,7 @@ fn default_keymap_specs(leader: KeyChord) -> BTreeMap<UiAction, KeyMapActionSpec
             UiAction::OpenDisplayOptions
             | UiAction::OpenNotificationOptions
             | UiAction::OpenVoiceOptions => Vec::new(),
+            UiAction::LeaveServer => vec![vec![leader, char_chord('s'), char_chord('l')]],
             UiAction::VoiceDeafen => vec![vec![leader, char_chord('v'), char_chord('d')]],
             UiAction::VoiceMute => vec![vec![leader, char_chord('v'), char_chord('m')]],
             UiAction::VoiceLeave => vec![vec![leader, char_chord('v'), char_chord('l')]],

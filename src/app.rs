@@ -568,6 +568,23 @@ fn start_command_loop(
                                 .await;
                         }
                     },
+                    AppCommand::LeaveGuild { guild_id, label } => {
+                        match client.leave_guild(guild_id).await {
+                            Ok(()) => {
+                                client
+                                    .publish_event(AppEvent::GuildDelete { guild_id })
+                                    .await;
+                            }
+                            Err(error) => {
+                                log_app_error("leave guild failed", &error);
+                                client
+                                    .publish_event(AppEvent::GatewayError {
+                                        message: format!("leave server {label} failed: {error}"),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
                     AppCommand::OpenUrl { url } => {
                         if let Err(error) = open_url(&url) {
                             logging::error("app", format!("open url failed: {error}"));

@@ -234,6 +234,23 @@ impl DiscordRest {
         Ok(())
     }
 
+    pub async fn leave_guild(&self, guild_id: Id<GuildMarker>) -> Result<()> {
+        self.raw_http
+            .delete(format!(
+                "https://discord.com/api/v9/users/@me/guilds/{}",
+                guild_id.get()
+            ))
+            .header(AUTHORIZATION, &self.token)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("leave guild request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| AppError::DiscordRequest(format!("leave guild failed: {error}")))?;
+        Ok(())
+    }
+
     /// `token: null` is the legacy anti-spam echo field. Modern clients
     /// always send null.
     pub async fn ack_channel(

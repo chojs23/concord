@@ -76,6 +76,26 @@ pub(in crate::tui::ui) fn render_quit_confirmation(
     );
 }
 
+pub(in crate::tui::ui) fn render_guild_leave_confirmation(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+) {
+    let Some(name) = state.guild_leave_confirmation_name() else {
+        return;
+    };
+
+    let lines = guild_leave_confirmation_lines_with_key_bindings(&name, 56, state.key_bindings());
+    let popup = centered_rect(area, 60, (lines.len() as u16).saturating_add(2));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel_block("Remove server?", true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
 #[cfg(test)]
 pub(in crate::tui::ui) fn message_delete_confirmation_lines(
     author: &str,
@@ -162,6 +182,34 @@ fn quit_confirmation_lines_with_key_bindings(
                 Style::default().fg(ACCENT).bold(),
             ),
             Span::raw(" quit · "),
+            Span::styled(
+                key_bindings.message_confirmation_cancel_label(),
+                Style::default().fg(ACCENT).bold(),
+            ),
+            Span::raw(" cancel"),
+        ]),
+    ]
+}
+
+fn guild_leave_confirmation_lines_with_key_bindings(
+    name: &str,
+    width: usize,
+    key_bindings: &crate::tui::keybindings::KeyBindings,
+) -> Vec<Line<'static>> {
+    let name = truncate_display_width(name, width.max(1).saturating_sub(2));
+    vec![
+        Line::from(Span::raw("Remove the current server?")),
+        Line::from(Span::styled(
+            format!("Server: {name}"),
+            Style::default().fg(Color::Red),
+        )),
+        Line::from(Span::raw(String::new())),
+        Line::from(vec![
+            Span::styled(
+                key_bindings.message_confirmation_confirm_label(),
+                Style::default().fg(ACCENT).bold(),
+            ),
+            Span::raw(" remove server · "),
             Span::styled(
                 key_bindings.message_confirmation_cancel_label(),
                 Style::default().fg(ACCENT).bold(),

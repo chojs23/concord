@@ -30,6 +30,7 @@ pub(super) struct PopupUiState {
     pub(super) message_delete_confirmation: Option<MessageDeleteConfirmationState>,
     pub(super) message_pin_confirmation: Option<MessagePinConfirmationState>,
     pub(super) quit_confirmation_open: bool,
+    pub(super) guild_leave_confirmation: Option<GuildLeaveConfirmationState>,
     pub(super) options_popup: Option<OptionsPopupState>,
     pub(super) attachment_viewer: Option<AttachmentViewerState>,
     pub(super) guild_leader_action: Option<GuildLeaderActionState>,
@@ -91,6 +92,12 @@ pub struct MessagePinConfirmationState {
     pub(super) pinned: bool,
     pub(super) author: String,
     pub(super) content: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuildLeaveConfirmationState {
+    pub(super) guild_id: Id<GuildMarker>,
+    pub(super) name: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -33,7 +33,8 @@ pub(super) use confirmation::{
     message_delete_confirmation_lines, message_pin_confirmation_lines, quit_confirmation_lines,
 };
 pub(super) use confirmation::{
-    render_message_delete_confirmation, render_message_pin_confirmation, render_quit_confirmation,
+    render_guild_leave_confirmation, render_message_delete_confirmation,
+    render_message_pin_confirmation, render_quit_confirmation,
 };
 #[cfg(test)]
 pub(super) use debug_log::debug_log_popup_lines;

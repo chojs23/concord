@@ -304,6 +304,47 @@ impl DashboardState {
         self.popups.guild_leader_action = None;
     }
 
+    pub fn open_current_guild_leave_confirmation(&mut self) {
+        let guild_id = if self.navigation.focus == FocusPane::Guilds {
+            self.selected_guild_cursor_id()
+        } else {
+            self.selected_guild_id()
+        };
+        let Some(guild_id) = guild_id else {
+            return;
+        };
+        let name = self
+            .discord
+            .guild(guild_id)
+            .map(|guild| guild.name.clone())
+            .unwrap_or_else(|| format!("server-{}", guild_id.get()));
+        self.popups.guild_leave_confirmation =
+            Some(super::popups::GuildLeaveConfirmationState { guild_id, name });
+    }
+
+    pub fn is_guild_leave_confirmation_open(&self) -> bool {
+        self.popups.guild_leave_confirmation.is_some()
+    }
+
+    pub fn close_guild_leave_confirmation(&mut self) {
+        self.popups.guild_leave_confirmation = None;
+    }
+
+    pub fn confirm_guild_leave(&mut self) -> Option<AppCommand> {
+        let confirmation = self.popups.guild_leave_confirmation.take()?;
+        Some(AppCommand::LeaveGuild {
+            guild_id: confirmation.guild_id,
+            label: confirmation.name,
+        })
+    }
+
+    pub fn guild_leave_confirmation_name(&self) -> Option<String> {
+        self.popups
+            .guild_leave_confirmation
+            .as_ref()
+            .map(|confirmation| confirmation.name.clone())
+    }
+
     pub fn back_guild_leader_action(&mut self) -> bool {
         if matches!(
             self.popups.guild_leader_action,

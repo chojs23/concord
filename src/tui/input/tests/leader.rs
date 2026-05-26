@@ -639,6 +639,45 @@ fn leader_v_opens_voice_keymap_group() {
 }
 
 #[test]
+fn leader_s_opens_server_management_keymap_group() {
+    let mut state = DashboardState::new();
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('s'));
+
+    assert!(state.is_leader_active());
+    assert_eq!(state.leader_keymap_title(), "Server Management");
+    assert!(
+        state
+            .leader_keymap_shortcuts()
+            .iter()
+            .any(|item| item.key == "l" && item.label == "Leave current server")
+    );
+}
+
+#[test]
+fn leader_server_management_remove_opens_confirmation_then_leaves() {
+    let mut state = state_with_channel_tree();
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('s'));
+    handle_key(&mut state, char_key('l'));
+
+    assert!(!state.is_leader_active());
+    assert!(state.is_guild_leave_confirmation_open());
+
+    let command = handle_key(&mut state, char_key('y'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::LeaveGuild {
+            guild_id: Id::new(1),
+            label: "guild".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn leader_o_category_shortcuts_open_scoped_options() {
     let mut state = DashboardState::new();
 

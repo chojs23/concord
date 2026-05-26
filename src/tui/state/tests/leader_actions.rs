@@ -213,6 +213,57 @@ fn guild_leader_action_toggle_mute_opens_duration_then_dispatches_command() {
 }
 
 #[test]
+fn current_guild_leave_confirmation_dispatches_leave_command() {
+    let mut state = state_with_many_guilds(1);
+    state.activate_guild(super::ActiveGuildScope::Guild(Id::new(1)));
+
+    state.open_current_guild_leave_confirmation();
+
+    assert!(state.is_guild_leave_confirmation_open());
+    assert_eq!(
+        state.guild_leave_confirmation_name(),
+        Some("guild 1".to_owned())
+    );
+    assert_eq!(
+        state.confirm_guild_leave(),
+        Some(AppCommand::LeaveGuild {
+            guild_id: Id::new(1),
+            label: "guild 1".to_owned(),
+        })
+    );
+    assert!(!state.is_guild_leave_confirmation_open());
+}
+
+#[test]
+fn focused_guild_cursor_leave_confirmation_does_not_require_active_guild() {
+    let mut state = state_with_many_guilds(1);
+    state.focus_pane(FocusPane::Guilds);
+    state.move_down();
+
+    state.open_current_guild_leave_confirmation();
+
+    assert!(state.is_guild_leave_confirmation_open());
+    assert_eq!(
+        state.confirm_guild_leave(),
+        Some(AppCommand::LeaveGuild {
+            guild_id: Id::new(1),
+            label: "guild 1".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn direct_messages_do_not_open_guild_leave_confirmation() {
+    let mut state = state_with_many_guilds(1);
+    state.activate_guild(super::ActiveGuildScope::DirectMessages);
+    state.focus_pane(FocusPane::Messages);
+
+    state.open_current_guild_leave_confirmation();
+
+    assert!(!state.is_guild_leave_confirmation_open());
+}
+
+#[test]
 fn guild_leader_action_marks_unread_server_channels_as_read() {
     let guild_id: Id<GuildMarker> = Id::new(1);
     let mut state = DashboardState::new();
