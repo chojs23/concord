@@ -377,6 +377,11 @@ impl DashboardState {
                     },
                     enabled: true,
                 },
+                GuildActionItem {
+                    kind: GuildActionKind::LeaveServer,
+                    label: "Leave server".to_owned(),
+                    enabled: true,
+                },
             ],
             Some(GuildPaneEntry::DirectMessages) => vec![GuildActionItem {
                 kind: GuildActionKind::NoActionsYet,
@@ -435,6 +440,11 @@ impl DashboardState {
                                 Some(GuildLeaderActionState::MuteDuration { selected: 0 });
                             None
                         }
+                    }
+                    GuildActionKind::LeaveServer => {
+                        self.close_guild_leader_action();
+                        self.open_current_guild_leave_confirmation();
+                        None
                     }
                     GuildActionKind::NoActionsYet => None,
                 }

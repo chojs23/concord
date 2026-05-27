@@ -363,7 +363,6 @@ pub(in crate::tui) fn execute_ui_action(
         UiAction::OpenVoiceOptions => {
             state.open_options_category_from_shortcut(OptionsCategoryShortcut::Voice)
         }
-        UiAction::LeaveServer => state.open_current_guild_leave_confirmation(),
         UiAction::VoiceDeafen => state.toggle_voice_deafen(),
         UiAction::VoiceMute => state.toggle_voice_mute(),
         UiAction::VoiceLeave => return state.leave_current_voice_channel_command(),

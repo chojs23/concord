@@ -108,12 +108,14 @@ fn guild_leader_action_lists_disabled_mark_server_read_when_guild_is_read() {
 
     assert!(state.is_guild_leader_action_active());
     let actions = state.selected_guild_action_items();
-    assert_eq!(actions.len(), 2);
+    assert_eq!(actions.len(), 3);
     assert_eq!(actions[0].kind, GuildActionKind::MarkAsRead);
     assert_eq!(actions[0].label, "Mark server as read");
     assert!(!actions[0].enabled);
     assert_eq!(actions[1].kind, GuildActionKind::ToggleMute);
     assert_eq!(actions[1].label, "Mute server");
+    assert_eq!(actions[2].kind, GuildActionKind::LeaveServer);
+    assert_eq!(actions[2].label, "Leave server");
     assert_eq!(state.activate_selected_guild_action(), None);
 }
 
@@ -242,6 +244,27 @@ fn focused_guild_cursor_leave_confirmation_does_not_require_active_guild() {
 
     state.open_current_guild_leave_confirmation();
 
+    assert!(state.is_guild_leave_confirmation_open());
+    assert_eq!(
+        state.confirm_guild_leave(),
+        Some(AppCommand::LeaveGuild {
+            guild_id: Id::new(1),
+            label: "guild 1".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn guild_leader_action_leave_server_opens_confirmation() {
+    let mut state = state_with_many_guilds(1);
+    state.focus_pane(FocusPane::Guilds);
+    state.move_down();
+    state.open_selected_guild_actions();
+    state.select_guild_action_row(2);
+
+    assert_eq!(state.activate_selected_guild_action(), None);
+
+    assert!(!state.is_guild_leader_action_active());
     assert!(state.is_guild_leave_confirmation_open());
     assert_eq!(
         state.confirm_guild_leave(),

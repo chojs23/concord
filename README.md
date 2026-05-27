@@ -275,7 +275,6 @@ Press `Space` to open the leader shortcut window.
 | `Space`, `4`     | Toggle the Members pane           |
 | `Space`, `a`     | Open actions for the focused pane |
 | `Space`, `o`     | Choose concord option category    |
-| `Space`, `s`     | Server management prefix          |
 | `Space`, `v`     | Voice command prefix              |
 | `Space`, `Space` | Open the fuzzy channel switcher   |
 
@@ -308,12 +307,7 @@ Server actions:
 | -------- | ------------------- | ----------------------------------------------------- |
 | `m`      | Mark server as read | Mark all unread viewable channels in this server read |
 | `u`      | Mute / unmute       | Toggle server notification mute                       |
-
-Server management commands:
-
-| Sequence          | Action               | Description                                    |
-| ----------------- | -------------------- | ---------------------------------------------- |
-| `Space`, `s`, `l` | Leave current server | Open a confirmation before leaving this server |
+| `l`      | Leave server        | Open a confirmation before leaving this server        |
 
 Channel actions:
 
@@ -479,11 +473,12 @@ OpenThread = { keys = ["t"], description = "open thread" }
 VoiceDeafen = "<leader>vd"
 VoiceMute = "<leader>vm"
 VoiceLeave = "<leader>vl"
-LeaveServer = "<leader>sl"
 
 [keymap.groups]
-"<leader>s" = "Server Management"
 "<leader>v" = "Voice"
+
+[keymap.guild_actions]
+LeaveServer = { keys = ["l"], description = "leave server" }
 
 [keymap.channel_actions]
 MuteChannel = { keys = ["x"], description = "mute channel" }
@@ -604,7 +599,6 @@ Pane, options, and voice actions:
 | `OpenDisplayOptions`      | Contextual `d` after `OpenOptions` | Open Display options.                           |
 | `OpenNotificationOptions` | Contextual `n` after `OpenOptions` | Open Notification options.                      |
 | `OpenVoiceOptions`        | Contextual `v` after `OpenOptions` | Open Voice options.                             |
-| `LeaveServer`             | `"<leader>sl"`                     | Open confirmation to leave the selected server. |
 | `VoiceDeafen`             | `"<leader>vd"`                     | Toggle voice deafen.                            |
 | `VoiceMute`               | `"<leader>vm"`                     | Toggle voice mute.                              |
 | `VoiceLeave`              | `"<leader>vl"`                     | Leave the current Concord voice channel.        |
@@ -650,12 +644,14 @@ Server pane actions:
 [keymap.guild_actions]
 MarkAsRead = { keys = ["m"], description = "mark server as read" }
 MuteServer = { keys = ["u"], description = "mute server" }
+LeaveServer = { keys = ["l"], description = "leave server" }
 ```
 
 | Scoped action | Default | Action                                                                     |
 | ------------- | ------- | -------------------------------------------------------------------------- |
 | `MarkAsRead`  | `m`     | Mark all unread viewable channels in the selected server read.             |
 | `MuteServer`  | `u`     | Mute or unmute the selected server. Also accepts `ToggleMute` as an alias. |
+| `LeaveServer` | `l`     | Open confirmation to leave the selected server.                            |
 
 Channel pane actions:
 
@@ -749,15 +745,14 @@ ChannelSwitcher = "<leader><leader>"
 VoiceDeafen = "<leader>vd"
 VoiceMute = "<leader>vm"
 VoiceLeave = "<leader>vl"
-LeaveServer = "<leader>sl"
 
 [keymap.groups]
-"<leader>s" = "Server Management"
 "<leader>v" = "Voice"
 
 [keymap.guild_actions]
 MarkAsRead = "m"
 MuteServer = "u"
+LeaveServer = "l"
 
 [keymap.channel_actions]
 JoinVoice = "j"

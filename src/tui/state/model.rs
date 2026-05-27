@@ -141,6 +141,7 @@ pub enum GuildActionKind {
     NoActionsYet,
     MarkAsRead,
     ToggleMute,
+    LeaveServer,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
