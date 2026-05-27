@@ -90,7 +90,7 @@ pub(in crate::tui::ui) fn render_guild_leave_confirmation(
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(lines)
-            .block(panel_block("Remove server?", true))
+            .block(panel_block("Leave server?", true))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -198,7 +198,7 @@ fn guild_leave_confirmation_lines_with_key_bindings(
 ) -> Vec<Line<'static>> {
     let name = truncate_display_width(name, width.max(1).saturating_sub(2));
     vec![
-        Line::from(Span::raw("Remove the current server?")),
+        Line::from(Span::raw("Leave the current server?")),
         Line::from(Span::styled(
             format!("Server: {name}"),
             Style::default().fg(Color::Red),
@@ -209,7 +209,7 @@ fn guild_leave_confirmation_lines_with_key_bindings(
                 key_bindings.message_confirmation_confirm_label(),
                 Style::default().fg(ACCENT).bold(),
             ),
-            Span::raw(" remove server · "),
+            Span::raw(" leave server · "),
             Span::styled(
                 key_bindings.message_confirmation_cancel_label(),
                 Style::default().fg(ACCENT).bold(),
