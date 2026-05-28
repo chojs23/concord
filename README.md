@@ -535,6 +535,12 @@ general multi-key prefixes like `<C-w>f` are supported. Prefix sequences show a
 [which-key.nvim](https://github.com/folke/which-key.nvim) style popup. For example, `fd` opens an `f` popup after `f`, then runs
 the action after `d`.
 
+Scoped action tables use the same string or object shape, but each `keys` entry
+must be a single key chord. Multi-key sequences such as `gt` are only supported
+by direct `[keymap]` actions, not by `[keymap.guild_actions]`,
+`[keymap.channel_actions]`, `[keymap.message_actions]`, or
+`[keymap.member_actions]`.
+
 ```toml
 [keymap.channel_actions]
 MuteChannel = { keys = ["u", "<C-u>"], description = "mute channel" }
