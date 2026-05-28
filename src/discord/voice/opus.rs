@@ -52,10 +52,13 @@ struct VoiceDecodedAudio {
 
 impl VoiceOpusDecode {
     #[cfg(not(feature = "voice-playback"))]
-    pub(super) fn start(playback_gate: VoicePlaybackGate) -> Self {
+    pub(super) fn start(
+        playback_gate: VoicePlaybackGate,
+        audio_handle: &tokio::runtime::Handle,
+    ) -> Self {
         let _ = playback_gate;
         let (frames_tx, frames_rx) = mpsc::channel(VOICE_PLAYBACK_FRAME_QUEUE);
-        let task = tokio::spawn(run_voice_playback_decode(
+        let task = audio_handle.spawn(run_voice_playback_decode(
             frames_rx,
             VoiceDecodedAudio::decode_only(),
         ));
@@ -67,14 +70,17 @@ impl VoiceOpusDecode {
     }
 
     #[cfg(feature = "voice-playback")]
-    pub(super) fn start(playback_gate: VoicePlaybackGate) -> Self {
+    pub(super) fn start(
+        playback_gate: VoicePlaybackGate,
+        audio_handle: &tokio::runtime::Handle,
+    ) -> Self {
         let (frames_tx, frames_rx) = mpsc::channel(VOICE_PLAYBACK_FRAME_QUEUE);
         let playback_enabled = Arc::new(AtomicBool::new(playback_gate.enabled));
         let playback_volume = Arc::new(AtomicU8::new(playback_gate.volume.value()));
         match VoiceAudioOutput::start(Arc::clone(&playback_enabled), Arc::clone(&playback_volume)) {
             Ok(audio_output) => {
                 let decoded_audio = VoiceDecodedAudio::output(audio_output.samples_tx.clone());
-                let task = tokio::spawn(run_voice_playback_decode(frames_rx, decoded_audio));
+                let task = audio_handle.spawn(run_voice_playback_decode(frames_rx, decoded_audio));
                 logging::debug(
                     "voice",
                     "voice Opus playback worker started with audio output",
@@ -92,7 +98,7 @@ impl VoiceOpusDecode {
                     "voice",
                     format!("voice audio output unavailable, falling back to decode-only: {error}"),
                 );
-                let task = tokio::spawn(run_voice_playback_decode(
+                let task = audio_handle.spawn(run_voice_playback_decode(
                     frames_rx,
                     VoiceDecodedAudio::decode_only(),
                 ));

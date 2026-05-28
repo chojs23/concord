@@ -4,7 +4,7 @@ use super::*;
 
 #[cfg(feature = "voice-playback")]
 impl VoiceMicrophoneCapture {
-    pub(super) fn start(samples_tx: Option<SyncSender<Vec<i16>>>) -> Result<Self, String> {
+    pub(super) fn start(samples_tx: Option<mpsc::Sender<Vec<i16>>>) -> Result<Self, String> {
         #[cfg(target_os = "linux")]
         let alsa_error_output = alsa::Output::local_error_handler().ok();
 
@@ -17,7 +17,7 @@ impl VoiceMicrophoneCapture {
     }
 
     pub(super) fn start_with_cpal(
-        samples_tx: Option<SyncSender<Vec<i16>>>,
+        samples_tx: Option<mpsc::Sender<Vec<i16>>>,
     ) -> Result<Self, String> {
         let host = cpal::default_host();
         let device = host
@@ -59,7 +59,7 @@ impl VoiceMicrophoneCapture {
 pub(super) fn build_preferred_voice_input_stream(
     device: &cpal::Device,
     stats: Arc<VoiceMicrophoneCaptureStats>,
-    samples_tx: Option<SyncSender<Vec<i16>>>,
+    samples_tx: Option<mpsc::Sender<Vec<i16>>>,
 ) -> Result<(cpal::Stream, cpal::StreamConfig, cpal::SampleFormat), String> {
     let supported_config = select_voice_input_config(device)?;
     let sample_format = supported_config.sample_format();
@@ -93,7 +93,7 @@ pub(super) fn build_preferred_voice_input_stream(
 pub(super) fn build_default_voice_input_stream(
     device: &cpal::Device,
     stats: Arc<VoiceMicrophoneCaptureStats>,
-    samples_tx: Option<SyncSender<Vec<i16>>>,
+    samples_tx: Option<mpsc::Sender<Vec<i16>>>,
 ) -> Result<(cpal::Stream, cpal::StreamConfig, cpal::SampleFormat), String> {
     let supported_config = device
         .default_input_config()
@@ -179,7 +179,7 @@ impl Default for VoiceMicrophoneCaptureStats {
 #[cfg(feature = "voice-playback")]
 impl VoiceMicrophonePcmFrames {
     pub(super) fn new(
-        frames_tx: SyncSender<Vec<i16>>,
+        frames_tx: mpsc::Sender<Vec<i16>>,
         stats: Arc<VoiceMicrophoneCaptureStats>,
         source_sample_rate: u32,
     ) -> Self {
@@ -287,7 +287,7 @@ pub(super) fn build_voice_input_stream(
     config: &cpal::StreamConfig,
     sample_format: cpal::SampleFormat,
     stats: Arc<VoiceMicrophoneCaptureStats>,
-    samples_tx: Option<SyncSender<Vec<i16>>>,
+    samples_tx: Option<mpsc::Sender<Vec<i16>>>,
 ) -> Result<cpal::Stream, String> {
     match sample_format {
         cpal::SampleFormat::F32 => build_voice_input_stream_f32(device, config, stats, samples_tx),
@@ -305,7 +305,7 @@ pub(super) fn build_voice_input_stream_f32(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     stats: Arc<VoiceMicrophoneCaptureStats>,
-    samples_tx: Option<SyncSender<Vec<i16>>>,
+    samples_tx: Option<mpsc::Sender<Vec<i16>>>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
     let pcm_frames = samples_tx.map(|tx| {
@@ -339,7 +339,7 @@ pub(super) fn build_voice_input_stream_i16(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     stats: Arc<VoiceMicrophoneCaptureStats>,
-    samples_tx: Option<SyncSender<Vec<i16>>>,
+    samples_tx: Option<mpsc::Sender<Vec<i16>>>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
     let pcm_frames = samples_tx.map(|tx| {
@@ -373,7 +373,7 @@ pub(super) fn build_voice_input_stream_u16(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     stats: Arc<VoiceMicrophoneCaptureStats>,
-    samples_tx: Option<SyncSender<Vec<i16>>>,
+    samples_tx: Option<mpsc::Sender<Vec<i16>>>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
     let pcm_frames = samples_tx.map(|tx| {
@@ -407,7 +407,7 @@ pub(super) fn build_voice_input_stream_u8(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     stats: Arc<VoiceMicrophoneCaptureStats>,
-    samples_tx: Option<SyncSender<Vec<i16>>>,
+    samples_tx: Option<mpsc::Sender<Vec<i16>>>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
     let pcm_frames = samples_tx.map(|tx| {
@@ -769,7 +769,7 @@ impl VoiceFakeOutboundSendState {
 
 #[cfg(feature = "voice-playback")]
 pub(super) async fn run_voice_udp_transmit(
-    pcm_rx: StdReceiver<Vec<i16>>,
+    mut pcm_rx: mpsc::Receiver<Vec<i16>>,
     mut gate_rx: watch::Receiver<VoiceCaptureGate>,
     context: VoiceUdpTransmitContext,
 ) {
@@ -799,8 +799,6 @@ pub(super) async fn run_voice_udp_transmit(
             return;
         }
     };
-    let mut transmit_tick = tokio::time::interval(Duration::from_millis(20));
-    transmit_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let transmit_started_at = Instant::now();
     let mut transmit_stats = VoiceUdpTransmitStats::default();
     let mut microphone_gate = VoiceMicrophoneGateState::default();
@@ -810,7 +808,7 @@ pub(super) async fn run_voice_udp_transmit(
         tokio::select! {
             changed = gate_rx.changed() => {
                 if changed.is_err() {
-                    drain_voice_microphone_pcm_queue(&pcm_rx);
+                    drain_voice_microphone_pcm_queue(&mut pcm_rx);
                     if let Err(error) = flush_voice_outbound_events(
                         &context.udp_socket,
                         &context.writer,
@@ -828,7 +826,7 @@ pub(super) async fn run_voice_udp_transmit(
                 let gate = *gate_rx.borrow();
                 let was_enabled = sender.capture_gate_enabled();
                 if !(gate.enabled && was_enabled) {
-                    drain_voice_microphone_pcm_queue(&pcm_rx);
+                    drain_voice_microphone_pcm_queue(&mut pcm_rx);
                     microphone_gate.reset();
                 }
                 if !gate.enabled
@@ -849,92 +847,80 @@ pub(super) async fn run_voice_udp_transmit(
                 }
                 sender.set_capture_gate(gate.enabled, false);
             }
-            _ = transmit_tick.tick() => {
-                record_voice_transmit_tick(&mut transmit_stats, Instant::now());
+            received = pcm_rx.recv() => {
+                let Some(mut frame) = received else {
+                    if let Err(error) = flush_voice_outbound_events(
+                        &context.udp_socket,
+                        &context.writer,
+                        sender.stop_speaking_with_dave(&mut *context.dave_state.lock().await),
+                        &mut sender,
+                        &context.local_speaking_tx,
+                        &mut transmit_stats,
+                    ).await {
+                        logging::error("voice", error);
+                    }
+                    let _ = context.local_speaking_tx.send(false);
+                    sender.set_capture_gate(false, false);
+                    microphone_gate.reset();
+                    break;
+                };
+                record_voice_transmit_frame(&mut transmit_stats, Instant::now());
                 let gate = *gate_rx.borrow();
                 if !gate.enabled {
-                    drain_voice_microphone_pcm_queue(&pcm_rx);
                     microphone_gate.reset();
                     continue;
                 }
-                let (read, stale_frames) = latest_voice_microphone_pcm_frame_with_drain_count(&pcm_rx);
-                transmit_stats.stale_frames_drained += stale_frames;
-                match read {
-                    VoiceMicrophonePcmRead::Frame(mut frame) => {
-                        if !microphone_gate.allows_frame(&frame, gate.microphone_sensitivity) {
-                            if let Err(error) = flush_voice_outbound_events(
-                                &context.udp_socket,
-                                &context.writer,
-                                sender.stop_speaking_with_dave(&mut *context.dave_state.lock().await),
-                                &mut sender,
-                                &context.local_speaking_tx,
-                                &mut transmit_stats,
-                            ).await {
-                                logging::error("voice", error);
-                            }
-                            continue;
-                        }
-                        let raw_overload_decision = voice_microphone_overload_decision(&frame);
-                        let overload_decision = if voice_microphone_clipped_frame_needs_blank(
-                            &frame,
-                            raw_overload_decision,
-                        ) {
-                            Some(VoiceMicrophoneOverloadDecision {
-                                kind: VoiceMicrophoneOverloadKind::HandlingNoise,
-                                gain: VOICE_MIC_HANDLING_NOISE_GAIN,
-                            })
-                        } else {
-                            microphone_gate.overload_decision(&frame)
-                        };
-                        if let Some(decision) = overload_decision {
-                            transmit_stats.overload_smoothed_frames += 1;
-                            apply_voice_microphone_gain(&mut frame, decision.gain);
-                        }
-                        apply_voice_volume_to_i16_frame(&mut frame, gate.microphone_volume);
-                        apply_voice_microphone_gain(&mut frame, VOICE_MIC_TRANSMIT_BOOST_GAIN);
-                        transmit_stats.limited_samples += protect_voice_microphone_frame(&mut frame);
-                        let _ = context.local_speaking_tx.send(true);
-                        let opus = match encoder.encode_20ms_i16(&frame) {
-                            Ok(opus) => opus,
-                            Err(error) => {
-                                logging::debug("voice", error);
-                                continue;
-                            }
-                        };
-                        let outcome = sender.send_opus_frame_with_dave(&opus, &mut *context.dave_state.lock().await);
-                        if let Err(error) = flush_voice_outbound_events(
-                            &context.udp_socket,
-                            &context.writer,
-                            outcome,
-                            &mut sender,
-                            &context.local_speaking_tx,
-                            &mut transmit_stats,
-                        ).await {
-                            logging::error("voice", error);
-                            break;
-                        }
+                if !microphone_gate.allows_frame(&frame, gate.microphone_sensitivity) {
+                    if let Err(error) = flush_voice_outbound_events(
+                        &context.udp_socket,
+                        &context.writer,
+                        sender.stop_speaking_with_dave(&mut *context.dave_state.lock().await),
+                        &mut sender,
+                        &context.local_speaking_tx,
+                        &mut transmit_stats,
+                    ).await {
+                        logging::error("voice", error);
                     }
-                    VoiceMicrophonePcmRead::Empty => {
-                        if sender.speaking {
-                            transmit_stats.empty_ticks_while_speaking += 1;
-                        }
+                    continue;
+                }
+                let raw_overload_decision = voice_microphone_overload_decision(&frame);
+                let overload_decision = if voice_microphone_clipped_frame_needs_blank(
+                    &frame,
+                    raw_overload_decision,
+                ) {
+                    Some(VoiceMicrophoneOverloadDecision {
+                        kind: VoiceMicrophoneOverloadKind::HandlingNoise,
+                        gain: VOICE_MIC_HANDLING_NOISE_GAIN,
+                    })
+                } else {
+                    microphone_gate.overload_decision(&frame)
+                };
+                if let Some(decision) = overload_decision {
+                    transmit_stats.overload_smoothed_frames += 1;
+                    apply_voice_microphone_gain(&mut frame, decision.gain);
+                }
+                apply_voice_volume_to_i16_frame(&mut frame, gate.microphone_volume);
+                apply_voice_microphone_gain(&mut frame, VOICE_MIC_TRANSMIT_BOOST_GAIN);
+                transmit_stats.limited_samples += protect_voice_microphone_frame(&mut frame);
+                let _ = context.local_speaking_tx.send(true);
+                let opus = match encoder.encode_20ms_i16(&frame) {
+                    Ok(opus) => opus,
+                    Err(error) => {
+                        logging::debug("voice", error);
+                        continue;
                     }
-                    VoiceMicrophonePcmRead::Disconnected => {
-                        if let Err(error) = flush_voice_outbound_events(
-                            &context.udp_socket,
-                            &context.writer,
-                            sender.stop_speaking_with_dave(&mut *context.dave_state.lock().await),
-                            &mut sender,
-                            &context.local_speaking_tx,
-                            &mut transmit_stats,
-                        ).await {
-                            logging::error("voice", error);
-                        }
-                        let _ = context.local_speaking_tx.send(false);
-                        sender.set_capture_gate(false, false);
-                        microphone_gate.reset();
-                        break;
-                    }
+                };
+                let outcome = sender.send_opus_frame_with_dave(&opus, &mut *context.dave_state.lock().await);
+                if let Err(error) = flush_voice_outbound_events(
+                    &context.udp_socket,
+                    &context.writer,
+                    outcome,
+                    &mut sender,
+                    &context.local_speaking_tx,
+                    &mut transmit_stats,
+                ).await {
+                    logging::error("voice", error);
+                    break;
                 }
                 let now = Instant::now();
                 if now >= next_stats_log_at {
@@ -955,44 +941,6 @@ pub(super) async fn run_voice_udp_transmit(
         transmit_started_at,
         sender.rtp.timestamp,
     );
-}
-
-#[cfg(all(test, feature = "voice-playback"))]
-pub(super) fn latest_voice_microphone_pcm_frame(
-    pcm_rx: &StdReceiver<Vec<i16>>,
-) -> VoiceMicrophonePcmRead {
-    latest_voice_microphone_pcm_frame_with_drain_count(pcm_rx).0
-}
-
-#[cfg(feature = "voice-playback")]
-pub(super) fn latest_voice_microphone_pcm_frame_with_drain_count(
-    pcm_rx: &StdReceiver<Vec<i16>>,
-) -> (VoiceMicrophonePcmRead, u64) {
-    let mut latest = None;
-    let mut received_frames = 0u64;
-    loop {
-        match pcm_rx.try_recv() {
-            Ok(frame) => {
-                received_frames = received_frames.saturating_add(1);
-                latest = Some(frame);
-            }
-            Err(TryRecvError::Empty) => {
-                return (
-                    latest.map_or(VoiceMicrophonePcmRead::Empty, VoiceMicrophonePcmRead::Frame),
-                    received_frames.saturating_sub(1),
-                );
-            }
-            Err(TryRecvError::Disconnected) => {
-                return (
-                    latest.map_or(
-                        VoiceMicrophonePcmRead::Disconnected,
-                        VoiceMicrophonePcmRead::Frame,
-                    ),
-                    received_frames.saturating_sub(1),
-                );
-            }
-        }
-    }
 }
 
 #[cfg(feature = "voice-playback")]
@@ -1065,7 +1013,7 @@ impl VoiceMicrophoneGateState {
 }
 
 #[cfg(feature = "voice-playback")]
-pub(super) fn drain_voice_microphone_pcm_queue(pcm_rx: &StdReceiver<Vec<i16>>) {
+pub(super) fn drain_voice_microphone_pcm_queue(pcm_rx: &mut mpsc::Receiver<Vec<i16>>) {
     while pcm_rx.try_recv().is_ok() {}
 }
 
@@ -1115,13 +1063,13 @@ pub(super) async fn flush_voice_outbound_events(
 }
 
 #[cfg(feature = "voice-playback")]
-pub(super) fn record_voice_transmit_tick(stats: &mut VoiceUdpTransmitStats, now: Instant) {
-    if let Some(last_tick_at) = stats.last_tick_at {
-        stats.max_tick_gap_ms = stats
-            .max_tick_gap_ms
-            .max(now.duration_since(last_tick_at).as_millis());
+pub(super) fn record_voice_transmit_frame(stats: &mut VoiceUdpTransmitStats, now: Instant) {
+    if let Some(last_frame_at) = stats.last_frame_at {
+        stats.max_frame_gap_ms = stats
+            .max_frame_gap_ms
+            .max(now.duration_since(last_frame_at).as_millis());
     }
-    stats.last_tick_at = Some(now);
+    stats.last_frame_at = Some(now);
 }
 
 #[cfg(feature = "voice-playback")]
@@ -1137,16 +1085,14 @@ pub(super) fn log_voice_transmit_stats(
     logging::debug(
         "voice",
         format!(
-            "{label}: elapsed_ms={} sent_packets={} rtp_timestamp={} rtp_elapsed_ms={} stale_frames_drained={} empty_ticks_while_speaking={} overload_smoothed_frames={} limited_samples={} max_tick_gap_ms={}",
+            "{label}: elapsed_ms={} sent_packets={} rtp_timestamp={} rtp_elapsed_ms={} overload_smoothed_frames={} limited_samples={} max_frame_gap_ms={}",
             elapsed_ms,
             stats.sent_packets,
             rtp_timestamp,
             rtp_elapsed_ms,
-            stats.stale_frames_drained,
-            stats.empty_ticks_while_speaking,
             stats.overload_smoothed_frames,
             stats.limited_samples,
-            stats.max_tick_gap_ms,
+            stats.max_frame_gap_ms,
         ),
     );
 }

@@ -71,6 +71,9 @@ pub(super) async fn connect_voice_gateway(
     let (writer, mut reader) = ws.split();
     let writer = Arc::new(Mutex::new(writer));
     let mut child_tasks = VoiceChildTasks::default();
+    let audio_runtime = VoiceAudioRuntime::start()?;
+    let audio_handle = audio_runtime.handle().clone();
+    child_tasks.audio_runtime = Some(audio_runtime);
     let mut speaking_tracker = VoiceSpeakingTracker::default();
     let mut speaking_sweep = tokio::time::interval(VOICE_REMOTE_SPEAKING_SWEEP_INTERVAL);
     #[cfg_attr(not(feature = "voice-playback"), allow(unused_variables))]
@@ -188,7 +191,19 @@ pub(super) async fn connect_voice_gateway(
                         );
                         let mode = choose_encryption_mode(&ready.modes)?;
                         logging::debug("voice", format!("voice encryption mode selected: {mode}"));
-                        let (socket, discovered) = discover_voice_udp_address(&ready).await?;
+                        // Bind the UDP socket on the audio runtime so its tokio
+                        // reactor owns the I/O; subsequent send/recv stay on the
+                        // dedicated thread instead of competing with the TUI.
+                        let ready_for_discover = ready.clone();
+                        let (socket, discovered) =
+                            audio_handle
+                                .spawn(async move {
+                                    discover_voice_udp_address(&ready_for_discover).await
+                                })
+                                .await
+                                .map_err(|error| {
+                                    format!("voice UDP discovery task join failed: {error}")
+                                })??;
                         send_voice_text(&writer, voice_select_protocol_payload(&discovered, &mode))
                             .await?;
                         logging::debug(
@@ -218,25 +233,28 @@ pub(super) async fn connect_voice_gateway(
                         }
                         if let Some(socket) = udp_socket.as_ref() {
                             logging::debug("voice", "starting voice UDP receive task");
-                            let opus_decode = VoiceOpusDecode::start(current_playback_gate);
+                            let opus_decode =
+                                VoiceOpusDecode::start(current_playback_gate, &audio_handle);
                             let playback_tx = Some(opus_decode.frames_tx.clone());
                             child_tasks.replace_opus_decode(opus_decode);
                             child_tasks.set_voice_playback_gate(current_playback_gate);
                             #[cfg_attr(not(feature = "voice-playback"), allow(unused_variables))]
                             let transmit_description = description.clone();
-                            child_tasks.replace_udp_receive(tokio::spawn(run_voice_udp_receive(
-                                Arc::clone(socket),
-                                description,
-                                Arc::clone(&dave_state),
-                                playback_tx,
-                                remote_speaking_tx.clone(),
-                            )));
+                            child_tasks.replace_udp_receive(audio_handle.spawn(
+                                run_voice_udp_receive(
+                                    Arc::clone(socket),
+                                    description,
+                                    Arc::clone(&dave_state),
+                                    playback_tx,
+                                    remote_speaking_tx.clone(),
+                                ),
+                            ));
                             #[cfg(feature = "voice-playback")]
                             if let Some(ready) = voice_ready.as_ref() {
-                                let (pcm_tx, pcm_rx) = sync_channel(VOICE_MIC_PCM_FRAME_QUEUE);
+                                let (pcm_tx, pcm_rx) = mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
                                 let (gate_tx, gate_rx) = watch::channel(current_capture_gate);
                                 child_tasks.replace_udp_transmit(
-                                    tokio::spawn(run_voice_udp_transmit(
+                                    audio_handle.spawn(run_voice_udp_transmit(
                                         pcm_rx,
                                         gate_rx,
                                         VoiceUdpTransmitContext {

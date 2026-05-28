@@ -9,6 +9,7 @@ use std::{
 
 #[cfg(feature = "voice-playback")]
 mod audio_buffer;
+mod audio_runtime;
 mod dave;
 mod gateway;
 mod info;
@@ -48,6 +49,7 @@ use self::opus::mix_voice_decoded_samples;
 use ::opus::{Channels, Decoder as OpusDecoder};
 #[cfg(all(test, feature = "voice-playback"))]
 use audio_buffer::VoiceAudioBuffer;
+use audio_runtime::VoiceAudioRuntime;
 use dave::{VoiceDaveState, VoiceMediaPayload, voice_speaking_microphone_active};
 #[cfg(test)]
 use dave::{VoiceSpeakingState, looks_like_dave_media_frame};
@@ -82,10 +84,6 @@ use serde_json::{Value, json};
 use std::sync::Mutex as StdMutex;
 #[cfg(feature = "voice-playback")]
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
-#[cfg(feature = "voice-playback")]
-use std::sync::mpsc::{Receiver as StdReceiver, SyncSender, TryRecvError, sync_channel};
-#[cfg(feature = "voice-playback")]
-use tokio::time::MissedTickBehavior;
 use tokio::{
     net::UdpSocket,
     sync::{Mutex, Mutex as AsyncMutex, mpsc, watch},
@@ -142,7 +140,7 @@ const DISCORD_TRAILING_SILENCE_FRAMES: usize = 5;
 #[allow(dead_code)]
 const OPUS_MAX_ENCODED_FRAME_BYTES: usize = 4000;
 #[cfg(feature = "voice-playback")]
-const VOICE_MIC_PCM_FRAME_QUEUE: usize = 4;
+const VOICE_MIC_PCM_FRAME_QUEUE: usize = 16;
 #[cfg(feature = "voice-playback")]
 const VOICE_MIC_PREFERRED_BUFFER_FRAMES: u32 = 480;
 #[cfg(feature = "voice-playback")]
@@ -487,12 +485,15 @@ struct VoiceChildTasks {
     #[cfg(feature = "voice-playback")]
     playback_volume: Option<Arc<AtomicU8>>,
     #[cfg(feature = "voice-playback")]
-    microphone_pcm_tx: Option<SyncSender<Vec<i16>>>,
+    microphone_pcm_tx: Option<mpsc::Sender<Vec<i16>>>,
     opus_decode: Option<JoinHandle<()>>,
     #[cfg(feature = "voice-playback")]
     audio_output: Option<VoiceAudioOutput>,
     #[cfg(feature = "voice-playback")]
     microphone_capture: Option<VoiceMicrophoneCapture>,
+    // Declared last so it is dropped after the task handles above — aborting
+    // them before the runtime they ran on tears down.
+    audio_runtime: Option<VoiceAudioRuntime>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -520,7 +521,7 @@ struct VoiceMicrophoneCapture {
 
 #[cfg(feature = "voice-playback")]
 struct VoiceMicrophonePcmFrames {
-    frames_tx: SyncSender<Vec<i16>>,
+    frames_tx: mpsc::Sender<Vec<i16>>,
     stats: Arc<VoiceMicrophoneCaptureStats>,
     source_sample_rate: u32,
     source_pending: Vec<i16>,
@@ -544,12 +545,10 @@ struct VoiceMicrophoneCaptureStats {
 #[derive(Default)]
 struct VoiceUdpTransmitStats {
     sent_packets: u64,
-    stale_frames_drained: u64,
-    empty_ticks_while_speaking: u64,
     overload_smoothed_frames: u64,
     limited_samples: u64,
-    max_tick_gap_ms: u128,
-    last_tick_at: Option<Instant>,
+    max_frame_gap_ms: u128,
+    last_frame_at: Option<Instant>,
 }
 
 #[cfg(any(test, feature = "voice-playback"))]
@@ -575,14 +574,6 @@ struct VoiceMicrophoneGateState {
     hangover_frames: u8,
     overload_recovery_frames: u8,
     handling_noise_suppression_frames: u8,
-}
-
-#[cfg(feature = "voice-playback")]
-#[derive(Debug, Eq, PartialEq)]
-enum VoiceMicrophonePcmRead {
-    Frame(Vec<i16>),
-    Empty,
-    Disconnected,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -627,7 +618,7 @@ impl VoiceChildTasks {
         &mut self,
         task: JoinHandle<()>,
         gate: watch::Sender<VoiceCaptureGate>,
-        microphone_pcm_tx: SyncSender<Vec<i16>>,
+        microphone_pcm_tx: mpsc::Sender<Vec<i16>>,
     ) {
         if let Some(task) = self.udp_transmit.take() {
             logging::debug("voice", "stopping previous voice UDP transmit task");

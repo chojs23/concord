@@ -581,7 +581,7 @@ fn assert_voice_sample_near(actual: f32, expected: f32) {
 #[cfg(feature = "voice-playback")]
 #[test]
 fn voice_audio_buffer_resamples_non_48khz_output_clock() {
-    let (tx, rx) = sync_channel(1);
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
     tx.try_send(vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0])
         .expect("decoded samples should queue");
     let mut buffer = VoiceAudioBuffer::new(rx, 24_000);
@@ -598,7 +598,7 @@ fn voice_audio_buffer_resamples_non_48khz_output_clock() {
 #[cfg(feature = "voice-playback")]
 #[test]
 fn voice_audio_buffer_fades_short_underruns() {
-    let (tx, rx) = sync_channel(1);
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
     tx.try_send(vec![1.0, -1.0])
         .expect("decoded samples should queue");
     let mut buffer = VoiceAudioBuffer::new(rx, DISCORD_VOICE_SAMPLE_RATE);
@@ -1341,7 +1341,7 @@ fn microphone_input_conversion_produces_20ms_stereo_frames() {
 #[cfg(feature = "voice-playback")]
 #[test]
 fn microphone_pcm_frames_resample_44100_to_48000() {
-    let (tx, rx) = sync_channel(4);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
     let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
     let mut frames = VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), 44_100);
     let input_frames = 883;
@@ -1369,7 +1369,7 @@ fn microphone_pcm_frames_resample_44100_to_48000() {
 #[cfg(feature = "voice-playback")]
 #[test]
 fn microphone_pcm_frames_count_full_queue_drops() {
-    let (tx, rx) = sync_channel(1);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
     let mut frames =
         VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), DISCORD_VOICE_SAMPLE_RATE);
@@ -1386,58 +1386,33 @@ fn microphone_pcm_frames_count_full_queue_drops() {
 }
 
 #[cfg(feature = "voice-playback")]
-#[test]
-fn microphone_pcm_read_keeps_newest_queued_frame() {
-    let (tx, rx) = sync_channel(VOICE_MIC_PCM_FRAME_QUEUE);
+#[tokio::test]
+async fn microphone_pcm_recv_returns_frames_in_fifo_order() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
 
     tx.try_send(vec![1]).expect("first frame should queue");
     tx.try_send(vec![2]).expect("second frame should queue");
     tx.try_send(vec![3]).expect("third frame should queue");
 
-    assert_eq!(
-        latest_voice_microphone_pcm_frame(&rx),
-        VoiceMicrophonePcmRead::Frame(vec![3])
-    );
-    assert_eq!(
-        latest_voice_microphone_pcm_frame(&rx),
-        VoiceMicrophonePcmRead::Empty
-    );
+    assert_eq!(rx.recv().await, Some(vec![1]));
+    assert_eq!(rx.recv().await, Some(vec![2]));
+    assert_eq!(rx.recv().await, Some(vec![3]));
 }
 
 #[cfg(feature = "voice-playback")]
 #[test]
 fn microphone_pcm_drain_clears_backlog_before_reenable() {
-    let (tx, rx) = sync_channel(VOICE_MIC_PCM_FRAME_QUEUE);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
 
     tx.try_send(vec![10]).expect("first frame should queue");
     tx.try_send(vec![20]).expect("second frame should queue");
 
-    drain_voice_microphone_pcm_queue(&rx);
+    drain_voice_microphone_pcm_queue(&mut rx);
 
-    assert_eq!(
-        latest_voice_microphone_pcm_frame(&rx),
-        VoiceMicrophonePcmRead::Empty
-    );
-    drop(tx);
-    assert_eq!(
-        latest_voice_microphone_pcm_frame(&rx),
-        VoiceMicrophonePcmRead::Disconnected
-    );
-}
-
-#[cfg(feature = "voice-playback")]
-#[test]
-fn microphone_pcm_read_reports_stale_drained_frames() {
-    let (tx, rx) = sync_channel(VOICE_MIC_PCM_FRAME_QUEUE);
-
-    tx.try_send(vec![1]).expect("first frame should queue");
-    tx.try_send(vec![2]).expect("second frame should queue");
-    tx.try_send(vec![3]).expect("third frame should queue");
-
-    let (read, stale_frames) = latest_voice_microphone_pcm_frame_with_drain_count(&rx);
-
-    assert_eq!(read, VoiceMicrophonePcmRead::Frame(vec![3]));
-    assert_eq!(stale_frames, 2);
+    assert!(matches!(
+        rx.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
 }
 
 #[cfg(feature = "voice-playback")]
