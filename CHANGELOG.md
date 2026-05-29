@@ -2,7 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.1.5] - 2026-05-29
+## [2.1.6] - 2026-05-29
+
+### Bug Fixes
+
+- _(voice)_ Isolate audio path on a dedicated runtime and pace sends off the mic clock (#138) in [#138](https://github.com/chojs23/concord/pull/138) by @ibarrick
+- _(voice)_ Make audio transmit shutdown and pacing robust by @chojs23
+
+### Features
+
+- Add configurable real voice join and leave notification sounds (#139) in [#139](https://github.com/chojs23/concord/pull/139) by @chojs23
+
+## [2.1.5] - 2026-05-28
 
 ### Bug Fixes
 
