@@ -24,7 +24,11 @@ const PERMISSION_PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
 /// guild cached, no role cache, no membership entry, etc.). Callers that
 /// translate this into a boolean should default to "permissive" so the UI is
 /// not silently disabled while we are still hydrating state.
-const PERMISSIONS_UNKNOWN: u64 = u64::MAX;
+///
+/// This must stay distinct from `PERMISSIONS_ALL`, because guild owners and
+/// ADMINISTRATOR holders have real full permissions.
+const PERMISSIONS_UNKNOWN: u64 = u64::MAX - 1;
+const PERMISSIONS_ALL: u64 = u64::MAX;
 
 impl DiscordState {
     /// Whether the authenticated user has `VIEW_CHANNEL` for `channel`.
@@ -126,7 +130,7 @@ impl DiscordState {
     /// affordance optimistically (composer enabled) or pessimistically.
     fn effective_permissions_for_channel(&self, channel: &ChannelState) -> u64 {
         let Some(guild_id) = channel.guild_id else {
-            return u64::MAX;
+            return PERMISSIONS_ALL;
         };
         if channel.is_private_thread() {
             return self.private_thread_permissions_for_channel(guild_id);
@@ -148,7 +152,7 @@ impl DiscordState {
             return PERMISSIONS_UNKNOWN;
         };
         if guild.owner_id == Some(my_id) {
-            return u64::MAX;
+            return PERMISSIONS_ALL;
         }
         let Some(roles) = self.guild_details.roles.get(&guild_id) else {
             return PERMISSIONS_UNKNOWN;
@@ -168,7 +172,7 @@ impl DiscordState {
             }
         }
         if base_permissions & PERMISSION_ADMINISTRATOR == PERMISSION_ADMINISTRATOR {
-            return u64::MAX;
+            return PERMISSIONS_ALL;
         }
 
         let overwrites = &channel.permission_overwrites;
@@ -218,7 +222,7 @@ impl DiscordState {
             return 0;
         };
         if guild.owner_id == Some(my_id) {
-            return u64::MAX;
+            return PERMISSIONS_ALL;
         }
         let Some(roles) = self.guild_details.roles.get(&guild_id) else {
             return 0;
@@ -238,7 +242,7 @@ impl DiscordState {
             }
         }
         if base_permissions & PERMISSION_ADMINISTRATOR == PERMISSION_ADMINISTRATOR {
-            return u64::MAX;
+            return PERMISSIONS_ALL;
         }
 
         0
