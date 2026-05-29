@@ -101,6 +101,7 @@ impl DashboardState {
                 should_scroll,
             );
         }
+        self.refresh_search_popup_after_member_cache_update();
     }
 
     fn repair_navigation_after_discord_restore(

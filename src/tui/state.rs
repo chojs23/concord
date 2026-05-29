@@ -54,10 +54,12 @@ pub use composer::{
 pub use dashboard::DashboardState;
 pub use member_grouping::{MemberEntry, MemberGroup};
 pub use model::{
-    AttachmentViewerItem, ChannelActionItem, ChannelPaneEntry, ChannelSwitcherItem,
-    ChannelThreadItem, EmojiReactionItem, FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem,
-    GuildPaneEntry, MemberActionItem, MessageActionItem, MessageActionKind, MuteActionDurationItem,
-    PollVotePickerItem, ThreadMessagePreview, ThreadSummary,
+    AttachmentViewerItem, ChannelActionItem, ChannelPaneEntry, ChannelSearchSuggestionItem,
+    ChannelSwitcherItem, ChannelThreadItem, EmojiReactionItem, FORUM_POST_CARD_HEIGHT, FocusPane,
+    GuildActionItem, GuildPaneEntry, MemberActionItem, MemberSearchResultItem, MessageActionItem,
+    MessageActionKind, MessageSearchResultItem, MuteActionDurationItem, PollVotePickerItem,
+    SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem, SearchSuggestionItem,
+    ThreadMessagePreview, ThreadSummary,
 };
 pub use model::{ChannelActionKind, GuildActionKind, MemberActionKind, MessageUrlItem};
 pub use options::DisplayOptionItem;
@@ -233,6 +235,9 @@ impl DashboardState {
                     threads,
                     *has_more,
                 );
+            }
+            AppEvent::MessageSearchLoaded { .. } | AppEvent::MessageSearchLoadFailed { .. } => {
+                self.record_search_event(&event);
             }
             AppEvent::MessageHistoryLoaded { .. } => {}
             AppEvent::UserProfileLoadFailed {

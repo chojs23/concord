@@ -112,6 +112,20 @@ pub(in crate::tui) enum ChannelSwitcherAction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) enum SearchPopupAction {
+    Select(SelectionAction),
+    Page(SelectionAction),
+    Close,
+    ActivateSelected,
+    NextField,
+    PreviousField,
+    MoveCursorLeft,
+    MoveCursorRight,
+    DeleteChar,
+    InsertChar(char),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum LeaderActionMenuAction {
     BackOrClose,
     Close,

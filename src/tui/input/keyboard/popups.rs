@@ -4,7 +4,8 @@ use crate::discord::AppCommand;
 use crate::tui::keybindings::{
     AttachmentViewerAction, ChannelSwitcherAction, DebugLogPopupAction, EmojiReactionPickerAction,
     MessageConfirmationAction, OptionsPopupAction, PollVotePickerAction, PopupListAction,
-    ProfilePopupAction, ReactionUsersPopupAction, ScrollAction, SelectionAction, SelectionKeySet,
+    ProfilePopupAction, ReactionUsersPopupAction, ScrollAction, SearchPopupAction, SelectionAction,
+    SelectionKeySet,
 };
 use crate::tui::state::{ActiveModalPopupKind, DashboardState};
 
@@ -40,7 +41,8 @@ pub(super) fn handle_priority_popup_key(
         | ActiveModalPopupKind::AttachmentViewer
         | ActiveModalPopupKind::Leader
         | ActiveModalPopupKind::UserProfile
-        | ActiveModalPopupKind::ChannelSwitcher => None,
+        | ActiveModalPopupKind::ChannelSwitcher
+        | ActiveModalPopupKind::Search => None,
     }
 }
 
@@ -50,6 +52,7 @@ pub(super) fn handle_deferred_popup_key(
 ) -> Option<Option<AppCommand>> {
     match state.active_modal_popup_kind()? {
         ActiveModalPopupKind::ChannelSwitcher => Some(handle_channel_switcher_key(state, key)),
+        ActiveModalPopupKind::Search => Some(handle_search_popup_key(state, key)),
         ActiveModalPopupKind::Leader => Some(super::leader::handle_leader_key(state, key)),
         ActiveModalPopupKind::MessageUrlPicker => Some(handle_message_url_picker_key(state, key)),
         ActiveModalPopupKind::MessageActionMenu => Some(handle_message_action_menu_key(state, key)),
@@ -102,6 +105,54 @@ pub(super) fn handle_channel_switcher_key(
         }
         Some(ChannelSwitcherAction::InsertQueryChar(value)) => {
             state.push_channel_switcher_char(value);
+            None
+        }
+        None => None,
+    }
+}
+
+pub(super) fn handle_search_popup_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    match state.key_bindings().search_popup_action(key) {
+        Some(SearchPopupAction::Select(SelectionAction::Next)) => state.move_search_result_down(),
+        Some(SearchPopupAction::Select(SelectionAction::Previous)) => {
+            state.move_search_result_up();
+            None
+        }
+        Some(SearchPopupAction::Page(SelectionAction::Next)) => state.page_search_result_down(),
+        Some(SearchPopupAction::Page(SelectionAction::Previous)) => {
+            state.page_search_result_up();
+            None
+        }
+        Some(SearchPopupAction::Close) => {
+            state.close_search_popup();
+            None
+        }
+        Some(SearchPopupAction::ActivateSelected) => state.activate_search_popup(),
+        Some(SearchPopupAction::NextField) => {
+            state.cycle_search_field_next();
+            None
+        }
+        Some(SearchPopupAction::PreviousField) => {
+            state.cycle_search_field_previous();
+            None
+        }
+        Some(SearchPopupAction::MoveCursorLeft) => {
+            state.move_search_cursor_left();
+            None
+        }
+        Some(SearchPopupAction::MoveCursorRight) => {
+            state.move_search_cursor_right();
+            None
+        }
+        Some(SearchPopupAction::DeleteChar) => {
+            state.pop_search_char();
+            None
+        }
+        Some(SearchPopupAction::InsertChar(value)) => {
+            state.push_search_char(value);
             None
         }
         None => None,

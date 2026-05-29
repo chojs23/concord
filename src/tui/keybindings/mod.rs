@@ -23,8 +23,8 @@ pub(in crate::tui) use actions::{
     LeaderActionMenuAction, LoginBusyAction, LoginGlobalAction, LoginMfaSelectAction,
     LoginModeSelectAction, LoginPasswordInputAction, LoginTextInputAction,
     MessageConfirmationAction, OptionsPopupAction, PaneFilterAction, PollVotePickerAction,
-    PopupListAction, ProfilePopupAction, ReactionUsersPopupAction, ScrollAction, SelectionAction,
-    SelectionKeySet, UiAction,
+    PopupListAction, ProfilePopupAction, ReactionUsersPopupAction, ScrollAction, SearchPopupAction,
+    SelectionAction, SelectionKeySet, UiAction,
 };
 pub(in crate::tui) use chord::KeyChord;
 #[cfg(test)]
@@ -714,7 +714,7 @@ impl UiAction {
     fn label(self) -> &'static str {
         match self {
             UiAction::StartComposer => "start composer",
-            UiAction::OpenPaneFilter => "filter pane",
+            UiAction::OpenPaneFilter => "filter/search pane",
             UiAction::FocusGuildPane => "focus Servers",
             UiAction::FocusChannelPane => "focus Channels",
             UiAction::FocusMessagePane => "focus Messages",

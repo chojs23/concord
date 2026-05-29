@@ -16,10 +16,12 @@ mod message_actions;
 mod options;
 mod polls;
 mod reactions;
+mod search;
 mod user;
 
 use super::{DashboardState, EmojiReactionItem, FocusPane, MessageUrlItem, PollVotePickerItem};
 use channel_switcher::ChannelSwitcherState;
+use search::SearchPopupState;
 
 const SELECTABLE_POPUP_PAGE_STEP: usize = 10;
 
@@ -52,6 +54,7 @@ pub(super) enum ModalPopup {
     DebugLog,
     Keymap(KeymapPopupState),
     ChannelSwitcher(ChannelSwitcherState),
+    Search(SearchPopupState),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,6 +75,7 @@ pub(in crate::tui) enum ActiveModalPopupKind {
     DebugLog,
     KeymapHelp,
     ChannelSwitcher,
+    Search,
 }
 
 impl ModalPopup {
@@ -93,6 +97,7 @@ impl ModalPopup {
             Self::DebugLog => ActiveModalPopupKind::DebugLog,
             Self::Keymap(_) => ActiveModalPopupKind::KeymapHelp,
             Self::ChannelSwitcher(_) => ActiveModalPopupKind::ChannelSwitcher,
+            Self::Search(_) => ActiveModalPopupKind::Search,
         }
     }
 }
@@ -144,6 +149,7 @@ impl ActivePopupPageTarget {
             ModalPopup::MessageActionMenu(_) => {
                 Self::Selectable(SelectablePopupPageTarget::MessageActionMenu)
             }
+            ModalPopup::Search(_) => return None,
             ModalPopup::MessageDeleteConfirmation(_)
             | ModalPopup::MessagePinConfirmation(_)
             | ModalPopup::QuitConfirmation
@@ -756,6 +762,20 @@ impl PopupUiState {
     pub(super) fn channel_switcher_mut(&mut self) -> Option<&mut ChannelSwitcherState> {
         match &mut self.modal {
             Some(ModalPopup::ChannelSwitcher(switcher)) => Some(switcher),
+            _ => None,
+        }
+    }
+
+    pub(super) fn search_popup(&self) -> Option<&SearchPopupState> {
+        match &self.modal {
+            Some(ModalPopup::Search(search)) => Some(search),
+            _ => None,
+        }
+    }
+
+    pub(super) fn search_popup_mut(&mut self) -> Option<&mut SearchPopupState> {
+        match &mut self.modal {
+            Some(ModalPopup::Search(search)) => Some(search),
             _ => None,
         }
     }

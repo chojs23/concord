@@ -78,6 +78,9 @@ pub(super) fn process_effect_event(
     let outcome = EffectProcessingOutcome::processed(&event);
     let member_hydration_messages = match &event {
         AppEvent::MessageHistoryLoaded { messages, .. }
+        | AppEvent::MessageSearchLoaded {
+            page: crate::discord::MessageSearchPage { messages, .. },
+        }
         | AppEvent::PinnedMessagesLoaded { messages, .. }
         | AppEvent::ForumPostsLoaded {
             first_messages: messages,

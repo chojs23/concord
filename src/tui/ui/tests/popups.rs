@@ -101,6 +101,41 @@ fn dashboard_renders_toast_at_bottom_left() {
 }
 
 #[test]
+fn search_popup_message_results_show_sent_time() {
+    let message_id = test_message_id_for_unix_millis(discord_epoch_unix_millis());
+    let mut state = state_with_message_id(message_id, "seed");
+    state.open_search_popup_for_focus(FocusPane::Messages);
+
+    state.push_event(AppEvent::MessageSearchLoaded {
+        page: MessageSearchPage {
+            query: MessageSearchQuery {
+                guild_id: Some(Id::new(1)),
+                content: Some("needle".to_owned()),
+                ..Default::default()
+            },
+            messages: vec![MessageInfo {
+                guild_id: Some(Id::new(1)),
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                content: Some("needle result".to_owned()),
+                ..MessageInfo::test(Id::new(2), message_id)
+            }],
+            total_results: Some(1),
+            has_more: false,
+        },
+    });
+
+    let dump = render_dashboard_dump(120, 28, &mut state);
+    let rendered = dump.join("\n");
+    let expected_time = format_message_sent_time(message_id);
+
+    assert!(
+        rendered.contains(&format!("#general neo {expected_time}: needle result")),
+        "{rendered}"
+    );
+}
+
+#[test]
 fn options_popup_lines_keep_selected_item_visible_when_clipped() {
     let items = vec![
         DisplayOptionItem {

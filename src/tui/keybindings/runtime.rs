@@ -211,6 +211,32 @@ impl KeyBindings {
         }
     }
 
+    pub(in crate::tui) fn search_popup_action(&self, key: KeyEvent) -> Option<SearchPopupAction> {
+        if let Some(action) = self.selection_action(key, SelectionKeySet::TextSafe) {
+            return Some(SearchPopupAction::Select(action));
+        }
+        if let Some(action) = self.popup_page_action(key) {
+            return Some(SearchPopupAction::Page(action));
+        }
+
+        match key.code {
+            KeyCode::Esc => Some(SearchPopupAction::Close),
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(SearchPopupAction::Close)
+            }
+            KeyCode::Enter => Some(SearchPopupAction::ActivateSelected),
+            KeyCode::Tab => Some(SearchPopupAction::NextField),
+            KeyCode::BackTab => Some(SearchPopupAction::PreviousField),
+            KeyCode::Left => Some(SearchPopupAction::MoveCursorLeft),
+            KeyCode::Right => Some(SearchPopupAction::MoveCursorRight),
+            KeyCode::Backspace => Some(SearchPopupAction::DeleteChar),
+            KeyCode::Char(value) if is_shortcut_key(key) => {
+                Some(SearchPopupAction::InsertChar(value))
+            }
+            _ => None,
+        }
+    }
+
     pub(in crate::tui) fn leader_action_menu_action(
         &self,
         key: KeyEvent,

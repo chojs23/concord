@@ -4,7 +4,10 @@ use crate::discord::ids::{
 };
 
 use super::ApplicationCommandInfo;
-use super::commands::{DownloadAttachmentSource, ForumPostArchiveState, ReactionEmoji};
+use super::commands::{
+    DownloadAttachmentSource, ForumPostArchiveState, MessageSearchPage, MessageSearchQuery,
+    ReactionEmoji,
+};
 use super::{
     ActivityInfo, AttachmentInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo,
     GuildFolder, GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo,
@@ -136,6 +139,13 @@ pub enum AppEvent {
         channel_id: Id<ChannelMarker>,
         archive_state: ForumPostArchiveState,
         offset: usize,
+        message: String,
+    },
+    MessageSearchLoaded {
+        page: MessageSearchPage,
+    },
+    MessageSearchLoadFailed {
+        query: MessageSearchQuery,
         message: String,
     },
     MessageHistoryLoadFailed {
@@ -456,6 +466,7 @@ impl AppEvent {
                 | AppEvent::AttachmentPreviewLoadFailed { .. }
                 | AppEvent::ThreadPreviewLoadFailed { .. }
                 | AppEvent::ForumPostsLoadFailed { .. }
+                | AppEvent::MessageSearchLoadFailed { .. }
                 | AppEvent::MessageHistoryLoadFailed { .. }
                 | AppEvent::PinnedMessagesLoadFailed { .. }
                 | AppEvent::UserProfileLoadFailed { .. }
@@ -478,6 +489,8 @@ impl AppEvent {
             | AppEvent::ThreadPreviewLoadFailed { .. }
             | AppEvent::ForumPostsLoaded { .. }
             | AppEvent::ForumPostsLoadFailed { .. }
+            | AppEvent::MessageSearchLoaded { .. }
+            | AppEvent::MessageSearchLoadFailed { .. }
             | AppEvent::PinnedMessagesLoaded { .. }
             | AppEvent::PinnedMessagesLoadFailed { .. }
             | AppEvent::ReactionUsersLoaded { .. }

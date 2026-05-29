@@ -165,11 +165,10 @@ Tokens are saved under Concord's config directory in plain text. See the Securit
 ### Messaging
 
 - Send, edit, and delete messages
-- Reply to specific messages
-- Upload files by copying them from your file manager and pasting them into the composer
-- Upload images copied directly to the system clipboard when the terminal forwards the paste key
-- Use @mention autocomplete while composing messages
-- View full message history with pagination
+- Upload / Download attachments
+- Search messages with filters with `/`
+- Use @mention autocomplete
+- View full message history
 - Rich content display (embeds, attachments, stickers, and mentions)
 - Detect URLs in message bodies and markdown links, then open them in your default browser
 - Direct message shortcuts for copy, reply, edit, delete, reactions, URL opening,
@@ -216,7 +215,7 @@ You can toggle image viewing on or off in the configuration file. When image vie
 
 - Member list with grouping
 - Presence indicators (Online, Idle, DND, Offline)
-- User profile popups with guild-specific details
+- View User profile
 
 ### Typing Indicators & Read State
 
@@ -232,8 +231,6 @@ You can toggle image viewing on or off in the configuration file. When image vie
   the conversation you are already viewing
 - Voice join and leave notification sounds while you are connected to voice.
   You can keep the built-in tones or configure custom WAV files.
-- On macOS, Concord plays one explicit notification sound so focused terminal
-  windows do not silently swallow audible alerts
 
 ### Navigation & Keyboard shortcuts
 
@@ -247,22 +244,22 @@ Concord has a four-pane layout like Discord.
 
 With default vim-style navigation:
 
-| Key                                       | Action                                     |
-| ----------------------------------------- | ------------------------------------------ |
-| `1` `2` `3` `4`                           | Focus pane                                 |
-| `Tab` / `Shift+Tab`                       | Cycle focus forward / backward             |
-| `h` / `l`, `←` / `→`                      | Move focus left / right                    |
-| `j` / `k`, `↑` / `↓`, `Ctrl+n` / `Ctrl+p` | Move down / up                             |
-| `J`, `K` / `H`, `L`                       | Scroll viewport                            |
-| `Ctrl+d` / `Ctrl+u`                       | Half-page scroll                           |
-| `Alt+h/l/←/→`                             | Resize focused pane width                  |
-| `gg` / `G`                                | Jump or scroll to top / bottom             |
-| `Enter`                                   | Open or activate the selected item         |
-| `/`                                       | Filter the focused Guilds or Channels pane |
-| `Space`                                   | Open leader shortcut window                |
-| `i`                                       | Text insert mode                           |
-| `Esc`                                     | Close popup, cancel mode, or go back       |
-| `q`                                       | Quit Concord                               |
+| Key                                       | Action                                          |
+| ----------------------------------------- | ----------------------------------------------- |
+| `1` `2` `3` `4`                           | Focus pane                                      |
+| `Tab` / `Shift+Tab`                       | Cycle focus forward / backward                  |
+| `h` / `l`, `←` / `→`                      | Move focus left / right                         |
+| `j` / `k`, `↑` / `↓`, `Ctrl+n` / `Ctrl+p` | Move down / up                                  |
+| `J`, `K` / `H`, `L`                       | Scroll viewport                                 |
+| `Ctrl+d` / `Ctrl+u`                       | Half-page scroll                                |
+| `Alt+h/l/←/→`                             | Resize focused pane width                       |
+| `gg` / `G`                                | Jump or scroll to top / bottom                  |
+| `Enter`                                   | Open or activate the selected item              |
+| `/`                                       | Filter Guilds/Channels, search Messages/Members |
+| `Space`                                   | Open leader shortcut window                     |
+| `i`                                       | Text insert mode                                |
+| `Esc`                                     | Close popup, cancel mode, or go back            |
+| `q`                                       | Quit Concord                                    |
 
 `Ctrl+n` and `Ctrl+p` are fixed row movement keys. The default `j` and `k`
 row movement keys are `SelectNext` and `SelectPrevious` and can be changed in
@@ -585,7 +582,7 @@ Navigation and app actions:
 | Action name                 | Default config             | Action                                   |
 | --------------------------- | -------------------------- | ---------------------------------------- |
 | `StartComposer`             | `"i"`                      | Start the message composer.              |
-| `OpenPaneFilter`            | `"/"`                      | Open the focused pane filter.            |
+| `OpenPaneFilter`            | `"/"`                      | Open the focused pane filter or search.  |
 | `FocusGuildPane`            | `"1"`                      | Show and focus the Servers pane.         |
 | `FocusChannelPane`          | `"2"`                      | Show and focus the Channels pane.        |
 | `FocusMessagePane`          | `"3"`                      | Focus the Messages pane.                 |

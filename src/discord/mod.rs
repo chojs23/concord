@@ -37,7 +37,10 @@ pub use channel::{
 };
 pub use client::DiscordClient;
 pub(crate) use client::validate_token_header;
-pub use commands::{AppCommand, DownloadAttachmentSource, ForumPostArchiveState, MuteDuration};
+pub use commands::{
+    AppCommand, DownloadAttachmentSource, ForumPostArchiveState, MessageSearchAuthorType,
+    MessageSearchHas, MessageSearchPage, MessageSearchQuery, MuteDuration,
+};
 pub use commands::{
     MAX_UPLOAD_ATTACHMENT_COUNT, MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
     MessageAttachmentUpload, ReactionEmoji,

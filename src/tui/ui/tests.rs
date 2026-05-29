@@ -50,9 +50,10 @@ use crate::{
         ChannelRecipientState, ChannelState, ChannelUnreadState, ChannelVisibilityStats,
         CustomEmojiInfo, EmbedInfo, GuildMemberState, GuildNotificationSettingsInfo, MemberInfo,
         MentionInfo, MessageAttachmentUpload, MessageInfo, MessageInteractionInfo, MessageKind,
-        MessageSnapshotInfo, MessageState, MutualGuildInfo, NotificationLevel, PollAnswerInfo,
-        PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
-        ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo, VoiceConnectionStatus, VoiceStateInfo,
+        MessageSearchPage, MessageSearchQuery, MessageSnapshotInfo, MessageState, MutualGuildInfo,
+        NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
+        ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo,
+        VoiceConnectionStatus, VoiceStateInfo,
     },
     tui::{
         format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},

@@ -3,6 +3,7 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
+use crate::discord::PresenceStatus;
 use crate::discord::{
     ChannelState, ChannelUnreadState, GuildFolder, GuildState, MuteDuration, ReactionEmoji,
     ReactionInfo, VoiceParticipantState,
@@ -95,6 +96,83 @@ pub struct MessageUrlItem {
     pub url: String,
     pub label: String,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SearchFieldView {
+    pub label: String,
+    pub value: String,
+    pub placeholder: String,
+    pub active: bool,
+    pub cursor: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageSearchResultItem {
+    pub channel_id: Id<ChannelMarker>,
+    pub message_id: Id<MessageMarker>,
+    pub channel_label: String,
+    pub author: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemberSearchResultItem {
+    pub user_id: Id<UserMarker>,
+    pub guild_id: Option<Id<GuildMarker>>,
+    pub display_name: String,
+    pub username: Option<String>,
+    pub status: PresenceStatus,
+    pub is_bot: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChannelSearchSuggestionItem {
+    pub channel_id: Id<ChannelMarker>,
+    pub channel_label: String,
+    pub guild_label: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SearchSuggestionItem {
+    Member(MemberSearchResultItem),
+    Channel(ChannelSearchSuggestionItem),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SearchResultItem {
+    Message(MessageSearchResultItem),
+    Member(MemberSearchResultItem),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SearchPopupMode {
+    Message,
+    Member,
+}
+
+impl SearchPopupMode {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Message => "Message Search",
+            Self::Member => "Member Search",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SearchPopupView {
+    pub mode: SearchPopupMode,
+    pub fields: Vec<SearchFieldView>,
+    pub suggestions: Vec<SearchSuggestionItem>,
+    pub selected_suggestion: usize,
+    pub results: Vec<SearchResultItem>,
+    pub selected: usize,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub total_results: Option<usize>,
+    pub has_more: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttachmentViewerItem {
     pub index: usize,

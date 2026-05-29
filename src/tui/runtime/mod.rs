@@ -456,7 +456,9 @@ pub(super) async fn run_dashboard(
 
         client.set_mention_member_search_target(
             state.selected_guild_id(),
-            state.composer_mention_query(),
+            state
+                .composer_mention_query()
+                .or_else(|| state.search_popup_member_query()),
             std::time::Instant::now(),
         );
         if let Some((guild_id, query)) =

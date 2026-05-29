@@ -111,6 +111,7 @@ struct VisiblePopupSignature {
     message_interactions: MessageInteractionPopupSignature,
     profile: ProfilePopupSignature,
     diagnostics: DiagnosticsPopupSignature,
+    search: DebugSignature,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -439,6 +440,7 @@ pub(in crate::tui) fn visible_dashboard_signature(
                     },
                     keymap_popup_scroll: state.keymap_popup_scroll(),
                 },
+                search: debug_signature(&state.search_popup_view()),
             },
         },
         guilds: GuildPaneSignature {

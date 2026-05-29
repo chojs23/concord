@@ -25,8 +25,8 @@ use super::{
     state::{
         ActiveModalPopupKind, AttachmentViewerItem, ChannelSwitcherItem, ChannelThreadItem,
         DashboardState, DisplayOptionItem, EmojiReactionItem, FORUM_POST_CARD_HEIGHT, FocusPane,
-        MessageActionItem, MessageUrlItem, PollVotePickerItem, discord_color, presence_color,
-        presence_marker,
+        MessageActionItem, MessageUrlItem, PollVotePickerItem, SearchFieldView, SearchPopupMode,
+        SearchPopupView, SearchResultItem, discord_color, presence_color, presence_marker,
     },
 };
 use crate::discord::{
@@ -77,9 +77,9 @@ use self::popups::{
     render_guild_leave_confirmation, render_keymap_help_popup, render_leader_popup,
     render_message_action_menu, render_message_delete_confirmation,
     render_message_pin_confirmation, render_message_url_picker, render_options_popup,
-    render_poll_vote_picker, render_quit_confirmation, render_reaction_users_popup, render_toast,
-    render_user_profile_popup, user_profile_popup_has_avatar, user_profile_popup_text_geometry,
-    user_profile_popup_total_lines,
+    render_poll_vote_picker, render_quit_confirmation, render_reaction_users_popup,
+    render_search_popup, render_toast, render_user_profile_popup, user_profile_popup_has_avatar,
+    user_profile_popup_text_geometry, user_profile_popup_total_lines,
 };
 use self::types::{
     ACCENT, DIM, EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET, MESSAGE_AVATAR_PLACEHOLDER,
@@ -241,6 +241,7 @@ pub fn render(
     );
     render_debug_log_popup(frame, areas.messages, state);
     render_keymap_help_popup(frame, areas.messages, state);
+    render_search_popup(frame, areas.messages, state);
     render_toast(frame, frame.area(), state);
 }
 

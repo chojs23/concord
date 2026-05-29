@@ -544,6 +544,7 @@ impl DiscordState {
 
             AppEvent::MessageHistoryLoaded { .. }
             | AppEvent::MessageHistoryAroundLoaded { .. }
+            | AppEvent::MessageSearchLoaded { .. }
             | AppEvent::ThreadPreviewLoaded { .. }
             | AppEvent::MessageUpdate { .. }
             | AppEvent::CurrentUserReactionAdd { .. }
@@ -592,6 +593,7 @@ impl DiscordState {
             }
 
             AppEvent::MessageHistoryLoadFailed { .. }
+            | AppEvent::MessageSearchLoadFailed { .. }
             | AppEvent::PinnedMessagesLoadFailed { .. }
             | AppEvent::CurrentUserCapabilities { .. }
             | AppEvent::ApplicationCommandsLoaded { .. }
@@ -940,6 +942,19 @@ impl DiscordState {
             } => {
                 self.merge_message_history(*channel_id, Some(*message_id), messages);
             }
+            AppEvent::MessageSearchLoaded { page } => {
+                let mut by_channel: std::collections::BTreeMap<_, Vec<_>> =
+                    std::collections::BTreeMap::new();
+                for message in &page.messages {
+                    by_channel
+                        .entry(message.channel_id)
+                        .or_default()
+                        .push(message.clone());
+                }
+                for (channel_id, messages) in by_channel {
+                    self.merge_message_history(channel_id, None, &messages);
+                }
+            }
             AppEvent::ThreadPreviewLoaded {
                 channel_id,
                 message,
@@ -947,6 +962,7 @@ impl DiscordState {
                 self.merge_message_history(*channel_id, None, std::slice::from_ref(message));
             }
             AppEvent::MessageHistoryLoadFailed { .. } => {}
+            AppEvent::MessageSearchLoadFailed { .. } => {}
             AppEvent::MessageUpdate {
                 channel_id,
                 message_id,

@@ -6,6 +6,7 @@ use crate::discord::ids::{
 };
 
 use super::application_commands::ApplicationCommandInvocation;
+use super::message::MessageInfo;
 
 pub const MAX_UPLOAD_FILE_BYTES: u64 = 10 * 1024 * 1024;
 pub const MAX_UPLOAD_TOTAL_BYTES: u64 = 25 * 1024 * 1024;
@@ -95,6 +96,105 @@ pub enum MuteDuration {
     Permanent,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessageSearchHas {
+    Link,
+    Embed,
+    File,
+    Video,
+    Image,
+    Sound,
+    Sticker,
+}
+
+impl MessageSearchHas {
+    pub fn from_input(value: &str) -> Option<Self> {
+        match normalized_search_token(value).as_str() {
+            "link" | "links" => Some(Self::Link),
+            "embed" | "embeds" => Some(Self::Embed),
+            "file" | "files" | "attachment" | "attachments" => Some(Self::File),
+            "video" | "videos" => Some(Self::Video),
+            "image" | "images" | "img" => Some(Self::Image),
+            "sound" | "sounds" | "audio" => Some(Self::Sound),
+            "sticker" | "stickers" => Some(Self::Sticker),
+            _ => None,
+        }
+    }
+
+    pub fn as_query_value(self) -> &'static str {
+        match self {
+            Self::Link => "link",
+            Self::Embed => "embed",
+            Self::File => "file",
+            Self::Video => "video",
+            Self::Image => "image",
+            Self::Sound => "sound",
+            Self::Sticker => "sticker",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessageSearchAuthorType {
+    User,
+    Bot,
+    Webhook,
+}
+
+impl MessageSearchAuthorType {
+    pub fn from_input(value: &str) -> Option<Self> {
+        match normalized_search_token(value).as_str() {
+            "user" | "person" | "people" => Some(Self::User),
+            "bot" | "bots" => Some(Self::Bot),
+            "webhook" | "webhooks" => Some(Self::Webhook),
+            _ => None,
+        }
+    }
+
+    pub fn as_query_value(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Bot => "bot",
+            Self::Webhook => "webhook",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MessageSearchQuery {
+    pub guild_id: Option<Id<GuildMarker>>,
+    pub channel_id: Option<Id<ChannelMarker>>,
+    pub author_id: Option<Id<UserMarker>>,
+    pub mentions_user_id: Option<Id<UserMarker>>,
+    pub content: Option<String>,
+    pub has: Vec<MessageSearchHas>,
+    pub date: Option<String>,
+    pub author_type: Vec<MessageSearchAuthorType>,
+    pub pinned: Option<bool>,
+    pub offset: usize,
+}
+
+impl MessageSearchQuery {
+    pub fn is_empty(&self) -> bool {
+        self.channel_id.is_none()
+            && self.author_id.is_none()
+            && self.mentions_user_id.is_none()
+            && self.content.as_deref().is_none_or(str::is_empty)
+            && self.has.is_empty()
+            && self.date.as_deref().is_none_or(str::is_empty)
+            && self.author_type.is_empty()
+            && self.pinned.is_none()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageSearchPage {
+    pub query: MessageSearchQuery,
+    pub messages: Vec<MessageInfo>,
+    pub total_results: Option<usize>,
+    pub has_more: bool,
+}
+
 impl MuteDuration {
     pub fn minutes(self) -> Option<u64> {
         match self {
@@ -177,6 +277,9 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         archive_state: ForumPostArchiveState,
         offset: usize,
+    },
+    SearchMessages {
+        query: MessageSearchQuery,
     },
     LoadGuildMembers {
         guild_id: Id<GuildMarker>,
@@ -333,6 +436,10 @@ pub enum AppCommand {
     AckChannels {
         targets: Vec<(Id<ChannelMarker>, Id<MessageMarker>)>,
     },
+}
+
+fn normalized_search_token(value: &str) -> String {
+    value.trim().trim_start_matches(':').to_ascii_lowercase()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

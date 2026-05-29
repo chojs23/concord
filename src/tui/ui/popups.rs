@@ -15,6 +15,7 @@ mod options;
 mod polls;
 mod profile;
 mod reactions;
+mod search;
 mod toast;
 mod url_picker;
 
@@ -64,6 +65,7 @@ pub(super) use reactions::{
     filtered_emoji_reaction_picker_lines, reaction_users_popup_lines,
 };
 pub(super) use reactions::{render_emoji_reaction_picker, render_reaction_users_popup};
+pub(super) use search::render_search_popup;
 pub(super) use toast::render_toast;
 #[cfg(test)]
 pub(super) use toast::{toast_area, toast_line};

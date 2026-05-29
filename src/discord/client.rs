@@ -972,6 +972,13 @@ impl DiscordClient {
             .await
     }
 
+    pub async fn search_messages(
+        &self,
+        query: crate::discord::MessageSearchQuery,
+    ) -> Result<crate::discord::MessageSearchPage> {
+        self.rest.search_messages(query).await
+    }
+
     pub async fn load_forum_posts(
         &self,
         guild_id: Id<GuildMarker>,

@@ -46,7 +46,7 @@ pub(super) fn handle_dashboard_action(
             None
         }
         DashboardAction::OpenFocusedPaneFilter => {
-            state.open_pane_filter(focus);
+            state.open_search_popup_for_focus(focus);
             None
         }
         DashboardAction::ResizePaneLeft => {

@@ -308,6 +308,32 @@ fn start_command_loop(
                             }
                         }
                     }
+                    AppCommand::SearchMessages { query } => {
+                        match client.search_messages(query.clone()).await {
+                            Ok(page) => {
+                                client
+                                    .publish_event(AppEvent::MessageSearchLoaded { page })
+                                    .await;
+                            }
+                            Err(error) => {
+                                let message = format!("message search failed: {error}");
+                                let detail = error.log_detail();
+                                logging::error(
+                                    "search",
+                                    format!(
+                                        "op=message_search offset={} {message}; detail={detail}",
+                                        query.offset,
+                                    ),
+                                );
+                                client
+                                    .publish_event(AppEvent::MessageSearchLoadFailed {
+                                        query,
+                                        message,
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
                     AppCommand::LoadGuildMembers { guild_id } => {
                         if let Err(message) = client.request_guild_members(guild_id) {
                             logging::error("app", &message);

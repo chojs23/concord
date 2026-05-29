@@ -14,16 +14,18 @@ use super::model::{ChannelBranch, GuildBranch};
 use super::{
     ActiveGuildScope, AttachmentViewerItem, ChannelActionKind, ChannelPaneEntry, DashboardState,
     FocusPane, GuildActionKind, GuildPaneEntry, MessageActionItem, MessageActionKind,
+    SearchResultItem,
 };
 use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo, AttachmentUpdate,
     ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
     ChannelVisibilityStats, CustomEmojiInfo, DiscordState, DownloadAttachmentSource,
     EmbedFieldInfo, EmbedInfo, ForumPostArchiveState, GuildNotificationSettingsInfo,
-    MessageAttachmentUpload, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    MessageState, NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind,
-    PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo,
-    RoleInfo, SnapshotRevision, UserProfileInfo, VoiceConnectionStatus, VoiceStateInfo,
+    MessageAttachmentUpload, MessageInfo, MessageKind, MessageReferenceInfo, MessageSearchPage,
+    MessageSnapshotInfo, MessageState, NotificationLevel, PermissionOverwriteInfo,
+    PermissionOverwriteKind, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo,
+    ReactionUsersInfo, ReplyInfo, RoleInfo, SnapshotRevision, UserProfileInfo,
+    VoiceConnectionStatus, VoiceStateInfo,
 };
 
 mod channel_switcher;
@@ -43,6 +45,7 @@ mod panes;
 mod pinned_threads;
 mod profiles;
 mod read_state;
+mod search;
 
 fn message_rendered_height(
     message: &MessageState,
