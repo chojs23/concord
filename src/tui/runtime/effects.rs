@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     io::{Write, stdout},
+    path::Path,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -12,6 +13,7 @@ use std::sync::Once;
 use tokio::sync::mpsc;
 
 use crate::{
+    config::NotificationOptions,
     discord::{AppEvent, DiscordClient, SequencedAppEvent, VoiceSoundKind},
     logging,
 };
@@ -91,7 +93,7 @@ pub(super) fn process_effect_event(
         dispatch_desktop_notification(notification);
     }
     if let AppEvent::VoiceSound { kind } = event {
-        dispatch_voice_sound(kind);
+        dispatch_voice_sound(kind, ctx.state.notification_options());
     }
     for job in ctx.image_previews.record_event(&event) {
         spawn_image_preview_decode(job, ctx.preview_decode_tx.clone());
@@ -147,9 +149,10 @@ fn dispatch_desktop_notification(notification: DesktopNotification) {
     });
 }
 
-fn dispatch_voice_sound(kind: VoiceSoundKind) {
+fn dispatch_voice_sound(kind: VoiceSoundKind, notification_options: NotificationOptions) {
     tokio::spawn(async move {
-        let result = tokio::task::spawn_blocking(move || play_voice_sound(kind)).await;
+        let result =
+            tokio::task::spawn_blocking(move || play_voice_sound(kind, notification_options)).await;
         match result {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
@@ -181,16 +184,25 @@ fn deliver_desktop_notification(title: &str, body: &str) -> std::result::Result<
     }
 }
 
-fn play_voice_sound(kind: VoiceSoundKind) -> std::result::Result<(), String> {
+fn play_voice_sound(
+    kind: VoiceSoundKind,
+    notification_options: NotificationOptions,
+) -> std::result::Result<(), String> {
+    let custom_path = voice_sound_path(kind, &notification_options);
     #[cfg(target_os = "macos")]
     {
-        play_macos_voice_sound(kind)
+        play_macos_voice_sound(kind, custom_path)
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = kind;
-        ring_terminal_bell();
-        Ok(())
+        play_non_macos_voice_sound(kind, custom_path)
+    }
+}
+
+fn voice_sound_path(kind: VoiceSoundKind, options: &NotificationOptions) -> Option<&Path> {
+    match kind {
+        VoiceSoundKind::Join => options.voice_join_sound.as_deref(),
+        VoiceSoundKind::Leave => options.voice_leave_sound.as_deref(),
     }
 }
 
@@ -202,6 +214,25 @@ fn deliver_notify_rust_notification(title: &str, body: &str) -> std::result::Res
         .show()
         .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+fn play_non_macos_voice_sound(
+    kind: VoiceSoundKind,
+    custom_path: Option<&Path>,
+) -> std::result::Result<(), String> {
+    super::notification_audio::play_voice_sound(kind, custom_path)
+}
+
+#[cfg(all(not(feature = "voice-playback"), not(target_os = "macos")))]
+fn play_non_macos_voice_sound(
+    kind: VoiceSoundKind,
+    custom_path: Option<&Path>,
+) -> std::result::Result<(), String> {
+    let _ = kind;
+    let _ = custom_path;
+    ring_terminal_bell();
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -301,12 +332,18 @@ fn play_macos_sound_fallback() -> std::result::Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn play_macos_voice_sound(kind: VoiceSoundKind) -> std::result::Result<(), String> {
-    let path = match kind {
-        VoiceSoundKind::Join => "/System/Library/Sounds/Ping.aiff",
-        VoiceSoundKind::Leave => "/System/Library/Sounds/Pop.aiff",
+fn play_macos_voice_sound(
+    kind: VoiceSoundKind,
+    custom_path: Option<&Path>,
+) -> std::result::Result<(), String> {
+    let default_path = match kind {
+        VoiceSoundKind::Join => Path::new("/System/Library/Sounds/Ping.aiff"),
+        VoiceSoundKind::Leave => Path::new("/System/Library/Sounds/Pop.aiff"),
     };
-    command_success(Command::new("afplay").arg(path), "afplay")
+    command_success(
+        Command::new("afplay").arg(custom_path.unwrap_or(default_path)),
+        "afplay",
+    )
 }
 
 #[cfg(target_os = "macos")]

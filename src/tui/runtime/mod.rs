@@ -28,6 +28,7 @@ use super::{
 
 pub(super) mod effects;
 pub(super) mod events;
+pub(super) mod notification_audio;
 pub(super) mod redraw;
 
 use effects as effect_helpers;

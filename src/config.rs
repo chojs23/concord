@@ -26,10 +26,14 @@ pub struct DisplayOptions {
     pub member_list_width: u16,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct NotificationOptions {
     pub desktop_notifications: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice_join_sound: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice_leave_sound: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -273,6 +277,8 @@ impl Default for NotificationOptions {
     fn default() -> Self {
         Self {
             desktop_notifications: true,
+            voice_join_sound: None,
+            voice_leave_sound: None,
         }
     }
 }
@@ -539,6 +545,15 @@ mod tests {
                 false,
                 MicrophoneSensitivityDb::default(),
             ),
+            (
+                "[notifications]\nvoice_join_sound = \"/tmp/join.wav\"\nvoice_leave_sound = \"/tmp/leave.wav\"\n",
+                false,
+                ImagePreviewQualityPreset::Balanced,
+                false,
+                false,
+                false,
+                MicrophoneSensitivityDb::default(),
+            ),
         ];
 
         for (
@@ -564,6 +579,19 @@ mod tests {
                 config.notifications.desktop_notifications,
                 expected_desktop_notifications
             );
+            if toml.contains("voice_join_sound") {
+                assert_eq!(
+                    config.notifications.voice_join_sound.as_deref(),
+                    Some(std::path::Path::new("/tmp/join.wav"))
+                );
+                assert_eq!(
+                    config.notifications.voice_leave_sound.as_deref(),
+                    Some(std::path::Path::new("/tmp/leave.wav"))
+                );
+            } else {
+                assert!(config.notifications.voice_join_sound.is_none());
+                assert!(config.notifications.voice_leave_sound.is_none());
+            }
             assert_eq!(config.voice.self_mute, self_mute);
             assert_eq!(config.voice.self_deaf, self_deaf);
             assert_eq!(
@@ -736,6 +764,8 @@ mod tests {
             },
             notifications: NotificationOptions {
                 desktop_notifications: false,
+                voice_join_sound: Some(std::path::PathBuf::from("/tmp/join.wav")),
+                voice_leave_sound: Some(std::path::PathBuf::from("/tmp/leave.wav")),
             },
             voice: VoiceOptions {
                 self_mute: true,

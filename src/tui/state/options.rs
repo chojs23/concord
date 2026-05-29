@@ -105,7 +105,7 @@ impl DashboardState {
     }
 
     pub fn notification_options(&self) -> NotificationOptions {
-        self.options.notification_options
+        self.options.notification_options.clone()
     }
 
     pub fn voice_options(&self) -> VoiceOptions {
@@ -239,7 +239,7 @@ impl DashboardState {
         self.options.options_save_pending = false;
         Some(AppOptions {
             display: self.options.display_options,
-            notifications: self.options.notification_options,
+            notifications: self.options.notification_options.clone(),
             voice: self.options.voice_options,
             ui_state: self.ui_state_options(),
         })

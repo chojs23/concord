@@ -230,6 +230,8 @@ You can toggle image viewing on or off in the configuration file. When image vie
   notification settings
 - Active channel notifications are suppressed so Concord does not notify for
   the conversation you are already viewing
+- Voice join and leave notification sounds while you are connected to voice.
+  You can keep the built-in tones or configure custom WAV files.
 - On macOS, Concord plays one explicit notification sound so focused terminal
   windows do not silently swallow audible alerts
 
@@ -437,6 +439,11 @@ circular_avatars = false
 [notifications]
 # Show desktop notifications for Discord messages that pass notification rules.
 desktop_notifications = true
+
+# Optional WAV files for voice join and leave notification sounds.
+# When unset, Concord uses built-in generated tones.
+voice_join_sound = "/path/to/join.wav"
+voice_leave_sound = "/path/to/leave.wav"
 
 [voice]
 # Join or update Discord voice with Concord self-muted.

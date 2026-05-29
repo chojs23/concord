@@ -70,6 +70,7 @@ fn desktop_notification_for_event_suppresses_active_channel() {
 fn desktop_notification_for_event_respects_notification_opt_out() {
     let mut state = DashboardState::new_with_notification_options(NotificationOptions {
         desktop_notifications: false,
+        ..NotificationOptions::default()
     });
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
