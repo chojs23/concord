@@ -323,20 +323,20 @@ pub(super) fn move_picker_selection(selected: usize, len: usize, delta: isize) -
     (current + delta).clamp(0, len as isize - 1) as usize
 }
 
-pub(super) fn build_emoji_candidates(
+pub(super) fn build_emoji_candidates<'a>(
     query: &str,
-    custom_emojis: &[CustomEmojiInfo],
+    foreign_emojis: impl Iterator<Item = &'a CustomEmojiInfo>,
+    guild_emojis: impl Iterator<Item = &'a CustomEmojiInfo>,
     can_use_animated_custom_emojis: bool,
+    emojis_as_links: bool,
 ) -> Vec<EmojiPickerEntry> {
     let needle = query.to_ascii_lowercase();
     if needle.chars().count() < 2 {
         return Vec::new();
     }
 
-    let mut scored: Vec<(u8, String, EmojiPickerEntry)> = custom_emojis
-        .iter()
-        .filter(|emoji| emoji.name.to_ascii_lowercase().starts_with(&needle))
-        .map(|emoji| {
+    let make_entry = |is_foreign| {
+        move |emoji: &CustomEmojiInfo| {
             let shortcode = emoji.name.clone();
             let marker = if emoji.animated { "◇" } else { "◆" };
             let label = if emoji.animated {
@@ -351,14 +351,31 @@ pub(super) fn build_emoji_candidates(
                     emoji: marker.to_owned(),
                     shortcode: shortcode.clone(),
                     name: label.to_owned(),
-                    wire_format: Some(custom_emoji_markup(&shortcode, emoji.id, emoji.animated)),
+                    wire_format: Some(custom_emoji_markup(
+                        &shortcode,
+                        emoji.id,
+                        emoji.animated,
+                        is_foreign && emojis_as_links,
+                    )),
                     available: emoji.available
-                        && (!emoji.animated || can_use_animated_custom_emojis),
+                        && (!emoji.animated || can_use_animated_custom_emojis || emojis_as_links),
                     custom_image_url: Some(custom_emoji_image_url(emoji.id, emoji.animated)),
                 },
             )
-        })
+        }
+    };
+    let mut scored: Vec<(u8, String, EmojiPickerEntry)> = guild_emojis
+        .filter(|emoji| emoji.name.to_ascii_lowercase().starts_with(&needle))
+        .map(|emoji| make_entry(false)(emoji))
         .collect();
+
+    if emojis_as_links {
+        scored.extend(
+            foreign_emojis
+                .filter(|emoji| emoji.name.to_ascii_lowercase().starts_with(&needle))
+                .map(|emoji| make_entry(true)(emoji)),
+        );
+    }
 
     scored.extend(emojis::iter().flat_map(|emoji| {
         emoji
@@ -383,8 +400,11 @@ pub(super) fn build_emoji_candidates(
     scored.into_iter().map(|(_, _, entry)| entry).collect()
 }
 
-fn custom_emoji_markup(name: &str, id: Id<EmojiMarker>, animated: bool) -> String {
-    if animated {
+fn custom_emoji_markup(name: &str, id: Id<EmojiMarker>, animated: bool, as_link: bool) -> String {
+    if as_link {
+        let link = custom_emoji_image_url(id, animated);
+        format!("[{name}]({link}?size=48&name={name}&lossless=true)")
+    } else if animated {
         format!("<a:{name}:{}>", id.get())
     } else {
         format!("<:{name}:{}>", id.get())

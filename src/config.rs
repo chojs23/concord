@@ -24,6 +24,7 @@ pub struct DisplayOptions {
     pub server_width: u16,
     pub channel_list_width: u16,
     pub member_list_width: u16,
+    pub emojis_as_links: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -295,6 +296,7 @@ impl Default for DisplayOptions {
             server_width: 20,
             channel_list_width: 24,
             member_list_width: 26,
+            emojis_as_links: false,
         }
     }
 }
@@ -463,6 +465,7 @@ mod tests {
             server_width: 20,
             channel_list_width: 24,
             member_list_width: 26,
+            emojis_as_links: false,
         };
 
         assert!(!options.avatars_visible());
@@ -761,6 +764,7 @@ mod tests {
                 server_width: 12,
                 channel_list_width: 30,
                 member_list_width: 18,
+                emojis_as_links: false,
             },
             notifications: NotificationOptions {
                 desktop_notifications: false,

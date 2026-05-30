@@ -42,28 +42,28 @@ fn display_option_items_include_voice_state_controls() {
 
     let items = state.display_option_items();
 
-    assert_eq!(items.len(), 13);
-    assert_eq!(items[7].label, "Voice muted");
-    assert!(items[7].enabled);
-    assert!(items[7].effective);
-    assert_eq!(items[8].label, "Voice deafened");
+    assert_eq!(items.len(), 14);
+    assert_eq!(items[8].label, "Voice muted");
     assert!(items[8].enabled);
     assert!(items[8].effective);
-    assert_eq!(items[9].label, "Allow microphone transmit");
+    assert_eq!(items[9].label, "Voice deafened");
     assert!(items[9].enabled);
     assert!(items[9].effective);
-    assert_eq!(items[10].label, "Microphone sensitivity");
-    assert_eq!(items[10].value, Some("-30 dB".to_owned()));
-    assert_eq!(items[10].gauge_percent, Some(70));
+    assert_eq!(items[10].label, "Allow microphone transmit");
+    assert!(items[10].enabled);
     assert!(items[10].effective);
-    assert_eq!(items[11].label, "Microphone volume");
-    assert_eq!(items[11].value, Some("100%".to_owned()));
-    assert_eq!(items[11].gauge_percent, Some(100));
+    assert_eq!(items[11].label, "Microphone sensitivity");
+    assert_eq!(items[11].value, Some("-30 dB".to_owned()));
+    assert_eq!(items[11].gauge_percent, Some(70));
     assert!(items[11].effective);
-    assert_eq!(items[12].label, "Voice volume");
+    assert_eq!(items[12].label, "Microphone volume");
     assert_eq!(items[12].value, Some("100%".to_owned()));
     assert_eq!(items[12].gauge_percent, Some(100));
-    assert!(!items[12].effective);
+    assert!(items[12].effective);
+    assert_eq!(items[13].label, "Voice volume");
+    assert_eq!(items[13].value, Some("100%".to_owned()));
+    assert_eq!(items[13].gauge_percent, Some(100));
+    assert!(!items[13].effective);
 }
 
 #[test]

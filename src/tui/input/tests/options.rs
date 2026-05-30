@@ -138,7 +138,7 @@ fn options_popup_selection_aliases_move_selection() {
     assert_eq!(state.selected_option_index(), Some(0));
 
     handle_key(&mut state, ctrl_key('d'));
-    assert_eq!(state.selected_option_index(), Some(5));
+    assert_eq!(state.selected_option_index(), Some(6));
 
     handle_key(&mut state, ctrl_key('u'));
     assert_eq!(state.selected_option_index(), Some(0));

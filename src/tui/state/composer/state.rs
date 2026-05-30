@@ -1096,16 +1096,31 @@ impl DashboardState {
     }
 
     fn emoji_candidates_for_query(&self, query: &str) -> Vec<EmojiPickerEntry> {
-        let custom_emojis = self
+        let selected_guild_channle = self.selected_channel_guild_id();
+
+        let foreign_emojis = self
+            .discord
+            .cache
+            .all_custom_emojis()
+            .filter(|(id, _)| {
+                selected_guild_channle.is_none_or(|guild_channel| **id != guild_channel)
+            })
+            .flat_map(|(_, emojis)| emojis);
+
+        let guild_emojis = self
             .selected_channel_guild_id()
             .map(|guild_id| self.discord.cache.custom_emojis_for_guild(guild_id))
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .iter();
+
         build_emoji_candidates(
             query,
-            custom_emojis,
+            foreign_emojis,
+            guild_emojis,
             self.discord
                 .current_user_can_use_animated_custom_emojis
                 .unwrap_or(false),
+            self.options.display_options.emojis_as_links,
         )
     }
 }

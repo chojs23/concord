@@ -5,7 +5,7 @@ use crate::tui::keybindings::OptionsCategoryShortcut;
 use super::super::{DashboardState, DisplayOptionItem};
 use super::{ActiveModalPopupKind, ModalPopup, OptionsCategory, OptionsPopupState};
 
-const DISPLAY_OPTION_COUNT: usize = 6;
+const DISPLAY_OPTION_COUNT: usize = 7;
 const NOTIFICATION_OPTION_COUNT: usize = 1;
 const VOICE_OPTION_COUNT: usize = 6;
 const OPTION_CATEGORY_COUNT: usize = 3;
@@ -190,6 +190,14 @@ impl DashboardState {
                 effective: options.avatars_visible() && options.circular_avatars,
                 description: "Mask message and profile avatars into a circle.",
             },
+            DisplayOptionItem {
+                label: "Emojis as links",
+                enabled: options.emojis_as_links,
+                value: None,
+                gauge_percent: None,
+                effective: options.emojis_as_links,
+                description: "Sends unavailable emojis as a link instead.",
+            },
         ]
     }
 
@@ -298,6 +306,10 @@ impl DashboardState {
             (OptionsCategory::Display, 5) => {
                 self.options.display_options.circular_avatars =
                     !self.options.display_options.circular_avatars
+            }
+            (OptionsCategory::Display, 6) => {
+                self.options.display_options.emojis_as_links =
+                    !self.options.display_options.emojis_as_links
             }
             (OptionsCategory::Notifications, 0) => {
                 self.options.notification_options.desktop_notifications =

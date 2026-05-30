@@ -31,6 +31,15 @@ impl DiscordState {
         self.navigation.guilds.values().collect()
     }
 
+    pub fn all_custom_emojis(
+        &self,
+    ) -> impl Iterator<Item = (&Id<GuildMarker>, &Vec<CustomEmojiInfo>)> {
+        self.navigation.custom_emojis.iter()
+    }
+    pub fn custom_emojis(&self) -> impl Iterator<Item = &CustomEmojiInfo> {
+        self.navigation.custom_emojis.values().flatten()
+    }
+
     pub fn custom_emojis_for_guild(&self, guild_id: Id<GuildMarker>) -> &[CustomEmojiInfo] {
         self.navigation
             .custom_emojis
