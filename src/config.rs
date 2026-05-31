@@ -32,6 +32,8 @@ pub struct DisplayOptions {
 pub struct NotificationOptions {
     pub desktop_notifications: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub notification_icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub voice_join_sound: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub voice_leave_sound: Option<PathBuf>,
@@ -278,6 +280,7 @@ impl Default for NotificationOptions {
     fn default() -> Self {
         Self {
             desktop_notifications: true,
+            notification_icon: None,
             voice_join_sound: None,
             voice_leave_sound: None,
         }
@@ -768,6 +771,7 @@ mod tests {
             },
             notifications: NotificationOptions {
                 desktop_notifications: false,
+                notification_icon: Some("/tmp/icon.svg".to_string()),
                 voice_join_sound: Some(std::path::PathBuf::from("/tmp/join.wav")),
                 voice_leave_sound: Some(std::path::PathBuf::from("/tmp/leave.wav")),
             },

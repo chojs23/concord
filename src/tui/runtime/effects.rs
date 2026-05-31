@@ -93,7 +93,7 @@ pub(super) fn process_effect_event(
         _ => None,
     };
     if let Some(notification) = ctx.state.desktop_notification_for_event(&event) {
-        dispatch_desktop_notification(notification);
+        dispatch_desktop_notification(notification, ctx.state.desktop_notification_icon());
     }
     if let AppEvent::VoiceSound { kind } = event {
         dispatch_voice_sound(kind, ctx.state.notification_options());
@@ -125,12 +125,14 @@ pub(super) fn process_effect_event(
     outcome
 }
 
-fn dispatch_desktop_notification(notification: DesktopNotification) {
+fn dispatch_desktop_notification(notification: DesktopNotification, icon: Option<String>) {
     tokio::spawn(async move {
         let title = notification.title;
         let body = notification.body;
-        let result =
-            tokio::task::spawn_blocking(move || deliver_desktop_notification(&title, &body)).await;
+        let result = tokio::task::spawn_blocking(move || {
+            deliver_desktop_notification(&title, &body, icon.as_deref())
+        })
+        .await;
 
         match result {
             Ok(Ok(())) => {}
@@ -176,14 +178,18 @@ fn log_notification_failure_once(target: &str, message: String) {
     }
 }
 
-fn deliver_desktop_notification(title: &str, body: &str) -> std::result::Result<(), String> {
+fn deliver_desktop_notification(
+    title: &str,
+    body: &str,
+    icon: Option<&str>,
+) -> std::result::Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         deliver_macos_notification(title, body)
     }
     #[cfg(not(target_os = "macos"))]
     {
-        deliver_notify_rust_notification(title, body)
+        deliver_notify_rust_notification(title, body, icon)
     }
 }
 
@@ -210,8 +216,16 @@ fn voice_sound_path(kind: VoiceSoundKind, options: &NotificationOptions) -> Opti
 }
 
 #[cfg(not(target_os = "macos"))]
-fn deliver_notify_rust_notification(title: &str, body: &str) -> std::result::Result<(), String> {
-    notify_rust::Notification::new()
+fn deliver_notify_rust_notification(
+    title: &str,
+    body: &str,
+    icon: Option<&str>,
+) -> std::result::Result<(), String> {
+    let mut notification = notify_rust::Notification::new();
+    if let Some(icon) = icon {
+        notification.icon(icon);
+    }
+    notification
         .summary(title)
         .body(body)
         .show()

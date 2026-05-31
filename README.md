@@ -447,6 +447,11 @@ circular_avatars = false
 # Show desktop notifications for Discord messages that pass notification rules.
 desktop_notifications = true
 
+# Optional notification icon to include in notifications. May not work on all platforms.
+# When unset, no icon is used. It must either be a name of an icon (typically in /usr/share/icons)
+# or a path to an icon.
+notification_icon = "/path/to/icon.svg"
+
 # Optional WAV files for voice join and leave notification sounds.
 # When unset, Concord uses built-in generated tones.
 voice_join_sound = "/path/to/join.wav"

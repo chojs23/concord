@@ -187,6 +187,10 @@ impl DashboardState {
         self.options.notification_options.desktop_notifications
     }
 
+    pub fn desktop_notification_icon(&self) -> Option<String> {
+        self.options.notification_options.notification_icon.clone()
+    }
+
     pub fn pane_width(&self, pane: FocusPane) -> u16 {
         match pane {
             FocusPane::Guilds => self.options.display_options.server_width,
