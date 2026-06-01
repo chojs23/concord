@@ -68,7 +68,7 @@ mod tests {
     use super::{
         media::{AvatarImageCache, EmojiImageCache, ImagePreviewCache},
         runtime::{
-            effects::{self, applescript_string, effect_forces_redraw},
+            effects::{self, effect_forces_redraw},
             redraw::{
                 should_redraw_after_visible_signature_change,
                 should_suppress_image_redraw_for_signature_change, visible_dashboard_signature,
@@ -128,14 +128,6 @@ mod tests {
 
         assert!(deferred_effects.is_empty());
         assert_eq!(state.current_user(), Some("tester"));
-    }
-
-    #[test]
-    fn applescript_string_escapes_quotes_backslashes_and_newlines() {
-        assert_eq!(
-            applescript_string("hello \"neo\"\\world\nagain"),
-            "\"hello \\\"neo\\\"\\\\world again\""
-        );
     }
 
     #[test]

@@ -139,7 +139,7 @@ fn dispatch_desktop_notification(notification: DesktopNotification, icon: Option
             Ok(Err(error)) => {
                 log_notification_failure_once(
                     "notification",
-                    format!("desktop notification and fallbacks failed: {error}"),
+                    format!("desktop notification failed: {error}"),
                 );
                 ring_terminal_bell();
             }
@@ -183,14 +183,7 @@ fn deliver_desktop_notification(
     body: &str,
     icon: Option<&str>,
 ) -> std::result::Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        deliver_macos_notification(title, body)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        deliver_notify_rust_notification(title, body, icon)
-    }
+    deliver_notify_rust_notification(title, body, icon)
 }
 
 fn play_voice_sound(
@@ -215,74 +208,26 @@ fn voice_sound_path(kind: VoiceSoundKind, options: &NotificationOptions) -> Opti
     }
 }
 
-#[cfg(not(target_os = "macos"))]
 fn deliver_notify_rust_notification(
     title: &str,
     body: &str,
     icon: Option<&str>,
 ) -> std::result::Result<(), String> {
+    #[cfg(target_os = "macos")]
+    init_macos_notification_identity();
+
     let mut notification = notify_rust::Notification::new();
     if let Some(icon) = icon {
         notification.icon(icon);
     }
+    #[cfg(target_os = "macos")]
+    notification.sound_name("Ping");
     notification
         .summary(title)
         .body(body)
         .show()
         .map(|_| ())
         .map_err(|error| error.to_string())
-}
-
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
-fn play_non_macos_voice_sound(
-    kind: VoiceSoundKind,
-    custom_path: Option<&Path>,
-) -> std::result::Result<(), String> {
-    super::notification_audio::play_voice_sound(kind, custom_path)
-}
-
-#[cfg(all(not(feature = "voice-playback"), not(target_os = "macos")))]
-fn play_non_macos_voice_sound(
-    kind: VoiceSoundKind,
-    custom_path: Option<&Path>,
-) -> std::result::Result<(), String> {
-    let _ = kind;
-    let _ = custom_path;
-    ring_terminal_bell();
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn deliver_macos_notification(title: &str, body: &str) -> std::result::Result<(), String> {
-    init_macos_notification_identity();
-    // macOS can accept a notify-rust notification without presenting it or
-    // playing its sound when the terminal app is frontmost. Keep every visual
-    // notification path silent and let afplay own exactly one audible alert.
-    let visual_result = deliver_macos_visual_notification(title, body);
-    play_macos_sound_fallback().map_err(|sound_error| match visual_result {
-        Ok(()) => format!("macOS notification sound failed: {sound_error}"),
-        Err(visual_error) => {
-            format!("macOS visual notification failed: {visual_error}; sound failed: {sound_error}")
-        }
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn deliver_macos_visual_notification(title: &str, body: &str) -> std::result::Result<(), String> {
-    match notify_rust::Notification::new()
-        .summary(title)
-        .body(body)
-        .show()
-    {
-        Ok(_) => Ok(()),
-        Err(primary_error) => {
-            deliver_macos_fallback_notification(title, body).map_err(|fallback_error| {
-                format!(
-                    "notify-rust failed: {primary_error}; macOS fallback failed: {fallback_error}"
-                )
-            })
-        }
-    }
 }
 
 #[cfg(target_os = "macos")]
@@ -313,39 +258,23 @@ fn macos_terminal_app_name(term_program: &str) -> Option<&'static str> {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn deliver_macos_fallback_notification(title: &str, body: &str) -> std::result::Result<(), String> {
-    run_terminal_notifier(title, body).or_else(|terminal_error| {
-        run_osascript_notification(title, body)
-            .map_err(|osascript_error| format!("{terminal_error}; {osascript_error}"))
-    })
+#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+fn play_non_macos_voice_sound(
+    kind: VoiceSoundKind,
+    custom_path: Option<&Path>,
+) -> std::result::Result<(), String> {
+    super::notification_audio::play_voice_sound(kind, custom_path)
 }
 
-#[cfg(target_os = "macos")]
-fn run_terminal_notifier(title: &str, body: &str) -> std::result::Result<(), String> {
-    command_success(
-        Command::new("terminal-notifier")
-            .args(["-title", title, "-message", body, "-group", "concord"]),
-        "terminal-notifier",
-    )
-}
-
-#[cfg(target_os = "macos")]
-fn run_osascript_notification(title: &str, body: &str) -> std::result::Result<(), String> {
-    let script = format!(
-        "display notification {} with title {}",
-        applescript_string(body),
-        applescript_string(title),
-    );
-    command_success(Command::new("osascript").args(["-e", &script]), "osascript")
-}
-
-#[cfg(target_os = "macos")]
-fn play_macos_sound_fallback() -> std::result::Result<(), String> {
-    command_success(
-        Command::new("afplay").arg("/System/Library/Sounds/Ping.aiff"),
-        "afplay",
-    )
+#[cfg(all(not(feature = "voice-playback"), not(target_os = "macos")))]
+fn play_non_macos_voice_sound(
+    kind: VoiceSoundKind,
+    custom_path: Option<&Path>,
+) -> std::result::Result<(), String> {
+    let _ = kind;
+    let _ = custom_path;
+    ring_terminal_bell();
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -370,21 +299,6 @@ fn command_success(command: &mut Command, label: &str) -> std::result::Result<()
         Ok(status) => Err(format!("{label} exited with {status}")),
         Err(error) => Err(format!("{label} failed to start: {error}")),
     }
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(in crate::tui) fn applescript_string(value: &str) -> String {
-    let mut escaped = String::from("\"");
-    for ch in value.chars() {
-        match ch {
-            '\\' => escaped.push_str("\\\\"),
-            '"' => escaped.push_str("\\\""),
-            '\n' | '\r' => escaped.push(' '),
-            _ => escaped.push(ch),
-        }
-    }
-    escaped.push('"');
-    escaped
 }
 
 fn ring_terminal_bell() {
