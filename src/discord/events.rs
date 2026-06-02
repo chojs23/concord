@@ -113,6 +113,12 @@ pub enum AppEvent {
         before: Option<Id<MessageMarker>>,
         messages: Vec<MessageInfo>,
     },
+    MessageHistoryAfterLoaded {
+        channel_id: Id<ChannelMarker>,
+        after: Id<MessageMarker>,
+        messages: Vec<MessageInfo>,
+        has_more: bool,
+    },
     MessageHistoryAroundLoaded {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
@@ -150,6 +156,7 @@ pub enum AppEvent {
     },
     MessageHistoryLoadFailed {
         channel_id: Id<ChannelMarker>,
+        target: MessageHistoryLoadTarget,
         message: String,
     },
     MessageUpdate {
@@ -362,6 +369,14 @@ pub enum AppEvent {
     GatewayClosed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessageHistoryLoadTarget {
+    Latest,
+    Older { before: Id<MessageMarker> },
+    Newer { after: Id<MessageMarker> },
+    Around { message_id: Id<MessageMarker> },
+}
+
 #[cfg(test)]
 pub(crate) mod test_builders {
     use super::*;
@@ -483,6 +498,7 @@ impl AppEvent {
             AppEvent::ChannelUpsert(channel) => channel_upsert_needs_effect_delivery(channel),
             AppEvent::MessageCreate { .. }
             | AppEvent::MessageHistoryLoaded { .. }
+            | AppEvent::MessageHistoryAfterLoaded { .. }
             | AppEvent::MessageHistoryAroundLoaded { .. }
             | AppEvent::MessageHistoryLoadFailed { .. }
             | AppEvent::ThreadPreviewLoaded { .. }

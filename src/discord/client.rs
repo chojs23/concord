@@ -177,6 +177,17 @@ impl DiscordClient {
             .begin_older_history_request(channel_id, before)
     }
 
+    pub(crate) fn begin_newer_message_history_request(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        after: Id<MessageMarker>,
+    ) -> bool {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .begin_newer_history_request(channel_id, after)
+    }
+
     pub(crate) fn next_forum_post_request(
         &self,
         target: Option<(Id<GuildMarker>, Id<ChannelMarker>, bool)>,
@@ -969,6 +980,17 @@ impl DiscordClient {
     ) -> Result<Vec<MessageInfo>> {
         self.rest
             .load_message_history_around(channel_id, message_id, limit)
+            .await
+    }
+
+    pub async fn load_message_history_after(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        limit: u16,
+    ) -> Result<Vec<MessageInfo>> {
+        self.rest
+            .load_message_history_after(channel_id, message_id, limit)
             .await
     }
 

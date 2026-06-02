@@ -6,5 +6,5 @@ pub use info::{
     MessageInfo, MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
     PollAnswerInfo, PollInfo, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo,
 };
-pub(in crate::discord) use state::{MessageAuthorRoleIds, MessageUpdateFields};
+pub(in crate::discord) use state::{MessageAuthorRoleIds, MessageHistoryGap, MessageUpdateFields};
 pub use state::{MessageCapabilities, MessageState};

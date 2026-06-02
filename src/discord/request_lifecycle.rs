@@ -6,7 +6,7 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
-use crate::discord::{AppEvent, ForumPostArchiveState};
+use crate::discord::{AppEvent, ForumPostArchiveState, MessageHistoryLoadTarget};
 
 #[derive(Debug, Default)]
 pub(super) struct HistoryRequests {
@@ -29,6 +29,11 @@ pub(super) struct PinnedMessageRequests {
 #[derive(Debug, Default)]
 pub(super) struct OlderHistoryRequests {
     requests: HashMap<Id<ChannelMarker>, OlderHistoryRequestState>,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct NewerHistoryRequests {
+    requests: HashMap<Id<ChannelMarker>, NewerHistoryRequestState>,
 }
 
 #[derive(Debug, Default)]
@@ -98,6 +103,7 @@ pub(crate) struct RequestLifecycle {
     forum_posts: ForumPostRequests,
     pinned_messages: PinnedMessageRequests,
     older_history: OlderHistoryRequests,
+    newer_history: NewerHistoryRequests,
     read_acks: ReadAckRequests,
     message_author_members: MessageAuthorMemberRequests,
     initial_unknown_members: InitialUnknownMemberRequests,
@@ -113,6 +119,7 @@ impl RequestLifecycle {
     pub(crate) fn record_event(&mut self, event: &AppEvent) {
         self.history.record_event(event);
         self.older_history.record_event(event);
+        self.newer_history.record_event(event);
         self.forum_posts.record_event(event);
         self.pinned_messages.record_event(event);
         self.message_author_members.record_event(event);
@@ -139,6 +146,14 @@ impl RequestLifecycle {
         before: Id<MessageMarker>,
     ) -> bool {
         self.older_history.begin_request(channel_id, before)
+    }
+
+    pub(crate) fn begin_newer_history_request(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        after: Id<MessageMarker>,
+    ) -> bool {
+        self.newer_history.begin_request(channel_id, after)
     }
 
     pub(crate) fn next_forum_post_request(
@@ -353,11 +368,19 @@ impl UserNoteRequests {
 impl HistoryRequests {
     pub(super) fn record_event(&mut self, event: &AppEvent) {
         match event {
-            AppEvent::MessageHistoryLoaded { channel_id, .. } => {
+            AppEvent::MessageHistoryLoaded {
+                channel_id,
+                before: None,
+                ..
+            } => {
                 self.requests
                     .insert(*channel_id, HistoryRequestState::Loaded);
             }
-            AppEvent::MessageHistoryLoadFailed { channel_id, .. } => {
+            AppEvent::MessageHistoryLoadFailed {
+                channel_id,
+                target: MessageHistoryLoadTarget::Latest,
+                ..
+            } => {
                 self.mark_failed(*channel_id);
             }
             _ => {}
@@ -535,8 +558,12 @@ impl OlderHistoryRequests {
                 before: Some(response_before),
                 messages,
             } => self.record_loaded(*channel_id, *response_before, messages.is_empty()),
-            AppEvent::MessageHistoryLoadFailed { channel_id, .. } => {
-                self.requests.remove(channel_id);
+            AppEvent::MessageHistoryLoadFailed {
+                channel_id,
+                target: MessageHistoryLoadTarget::Older { before },
+                ..
+            } => {
+                self.record_failed(*channel_id, *before);
             }
             _ => {}
         }
@@ -576,6 +603,87 @@ impl OlderHistoryRequests {
             self.requests
                 .insert(channel_id, OlderHistoryRequestState::Exhausted { before });
         } else {
+            self.requests.remove(&channel_id);
+        }
+    }
+
+    fn record_failed(&mut self, channel_id: Id<ChannelMarker>, response_before: Id<MessageMarker>) {
+        let Some(OlderHistoryRequestState::Requested { before }) =
+            self.requests.get(&channel_id).copied()
+        else {
+            return;
+        };
+        if response_before == before {
+            self.requests.remove(&channel_id);
+        }
+    }
+}
+
+impl NewerHistoryRequests {
+    fn record_event(&mut self, event: &AppEvent) {
+        match event {
+            AppEvent::MessageHistoryAfterLoaded {
+                channel_id,
+                after: response_after,
+                messages,
+                ..
+            } => self.record_loaded(*channel_id, *response_after, messages.is_empty()),
+            AppEvent::MessageHistoryLoadFailed {
+                channel_id,
+                target: MessageHistoryLoadTarget::Newer { after },
+                ..
+            } => {
+                self.record_failed(*channel_id, *after);
+            }
+            _ => {}
+        }
+    }
+
+    fn begin_request(&mut self, channel_id: Id<ChannelMarker>, after: Id<MessageMarker>) -> bool {
+        match self.requests.get(&channel_id) {
+            Some(NewerHistoryRequestState::Requested { .. }) => false,
+            Some(NewerHistoryRequestState::Exhausted { after: exhausted })
+                if *exhausted == after =>
+            {
+                false
+            }
+            _ => {
+                self.requests
+                    .insert(channel_id, NewerHistoryRequestState::Requested { after });
+                true
+            }
+        }
+    }
+
+    fn record_loaded(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        response_after: Id<MessageMarker>,
+        is_empty: bool,
+    ) {
+        let Some(NewerHistoryRequestState::Requested { after }) =
+            self.requests.get(&channel_id).copied()
+        else {
+            return;
+        };
+        if response_after != after {
+            return;
+        }
+        if is_empty {
+            self.requests
+                .insert(channel_id, NewerHistoryRequestState::Exhausted { after });
+        } else {
+            self.requests.remove(&channel_id);
+        }
+    }
+
+    fn record_failed(&mut self, channel_id: Id<ChannelMarker>, response_after: Id<MessageMarker>) {
+        let Some(NewerHistoryRequestState::Requested { after }) =
+            self.requests.get(&channel_id).copied()
+        else {
+            return;
+        };
+        if response_after == after {
             self.requests.remove(&channel_id);
         }
     }
@@ -904,6 +1012,12 @@ enum OlderHistoryRequestState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NewerHistoryRequestState {
+    Requested { after: Id<MessageMarker> },
+    Exhausted { after: Id<MessageMarker> },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PendingReadAck {
     message_id: Id<MessageMarker>,
     deadline: Instant,
@@ -1149,7 +1263,8 @@ mod tests {
     use crate::discord::ids::Id;
 
     use crate::discord::{
-        AppEvent, ChannelInfo, ForumPostArchiveState, MemberInfo, UserProfileInfo,
+        AppEvent, ChannelInfo, ForumPostArchiveState, MemberInfo, MessageHistoryLoadTarget,
+        UserProfileInfo,
     };
 
     use super::{
@@ -1170,6 +1285,7 @@ mod tests {
         assert_eq!(requests.next(Some(first), false), None);
         requests.record_event(&AppEvent::MessageHistoryLoadFailed {
             channel_id: first,
+            target: MessageHistoryLoadTarget::Latest,
             message: "temporary failure".to_owned(),
         });
         assert_eq!(requests.next(Some(first), false), None);
@@ -1673,6 +1789,23 @@ mod tests {
 
         requests.record_event(&AppEvent::MessageHistoryLoadFailed {
             channel_id,
+            target: MessageHistoryLoadTarget::Newer { after: Id::new(40) },
+            message: "unrelated newer failure".to_owned(),
+        });
+        assert!(!requests.begin_older_history_request(channel_id, before));
+
+        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
+            channel_id,
+            target: MessageHistoryLoadTarget::Older {
+                before: Id::new(31),
+            },
+            message: "stale older failure".to_owned(),
+        });
+        assert!(!requests.begin_older_history_request(channel_id, before));
+
+        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
+            channel_id,
+            target: MessageHistoryLoadTarget::Older { before },
             message: "temporary failure".to_owned(),
         });
         assert!(requests.begin_older_history_request(channel_id, before));
@@ -1684,6 +1817,48 @@ mod tests {
         });
         assert!(!requests.begin_older_history_request(channel_id, before));
         assert!(requests.begin_older_history_request(channel_id, Id::new(20)));
+    }
+
+    #[test]
+    fn newer_history_request_dedupes_and_tracks_exhausted_cursor() {
+        let mut requests = RequestLifecycle::default();
+        let channel_id = Id::new(10);
+        let after = Id::new(30);
+
+        assert!(requests.begin_newer_history_request(channel_id, after));
+        assert!(!requests.begin_newer_history_request(channel_id, after));
+
+        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
+            channel_id,
+            target: MessageHistoryLoadTarget::Older {
+                before: Id::new(20),
+            },
+            message: "unrelated older failure".to_owned(),
+        });
+        assert!(!requests.begin_newer_history_request(channel_id, after));
+
+        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
+            channel_id,
+            target: MessageHistoryLoadTarget::Newer { after: Id::new(31) },
+            message: "stale newer failure".to_owned(),
+        });
+        assert!(!requests.begin_newer_history_request(channel_id, after));
+
+        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
+            channel_id,
+            target: MessageHistoryLoadTarget::Newer { after },
+            message: "temporary failure".to_owned(),
+        });
+        assert!(requests.begin_newer_history_request(channel_id, after));
+
+        requests.record_event(&AppEvent::MessageHistoryAfterLoaded {
+            channel_id,
+            after,
+            messages: Vec::new(),
+            has_more: false,
+        });
+        assert!(!requests.begin_newer_history_request(channel_id, after));
+        assert!(requests.begin_newer_history_request(channel_id, Id::new(31)));
     }
 
     #[test]

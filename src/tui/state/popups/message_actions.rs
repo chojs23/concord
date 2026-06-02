@@ -21,7 +21,7 @@ pub(super) struct ReferencedMessageTarget {
 
 impl DashboardState {
     pub fn activate_selected_message_pane_item(&mut self) -> Option<AppCommand> {
-        if self.selected_channel_is_forum() {
+        if self.message_pane_uses_forum_posts() {
             return self.activate_selected_forum_post();
         }
         self.open_selected_message_actions();

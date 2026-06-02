@@ -1177,6 +1177,81 @@ fn live_message_after_older_history_keeps_newer_window() {
         vec![10, 11, 12, 13]
     );
 }
+
+#[test]
+fn newer_history_gap_is_recorded_shrunk_and_closed() {
+    let channel_id: Id<ChannelMarker> = Id::new(10);
+    let mut state = DiscordState::new(3);
+
+    state.apply_event(&latest_history_loaded(
+        channel_id,
+        vec![
+            message_info(channel_id, 100, "newer 100"),
+            message_info(channel_id, 101, "newer 101"),
+        ],
+    ));
+    state.apply_event(&AppEvent::MessageHistoryAroundLoaded {
+        channel_id,
+        message_id: Id::new(11),
+        messages: vec![
+            message_info(channel_id, 10, "around 10"),
+            message_info(channel_id, 11, "around 11"),
+            message_info(channel_id, 12, "around 12"),
+        ],
+    });
+    assert_eq!(
+        state.message_history_gap_after(channel_id, Id::new(12)),
+        Some(Id::new(100))
+    );
+
+    state.apply_event(&AppEvent::MessageHistoryAfterLoaded {
+        channel_id,
+        after: Id::new(12),
+        messages: vec![
+            message_info(channel_id, 13, "gap 13"),
+            message_info(channel_id, 14, "gap 14"),
+            message_info(channel_id, 15, "gap 15"),
+            message_info(channel_id, 16, "gap 16"),
+        ],
+        has_more: true,
+    });
+    let messages = state.messages_for_channel(channel_id);
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| message.id.get())
+            .collect::<Vec<_>>(),
+        vec![13, 14, 15, 16, 100, 101]
+    );
+    assert_eq!(
+        state.message_history_gap_after(channel_id, Id::new(16)),
+        Some(Id::new(100))
+    );
+
+    state.apply_event(&AppEvent::MessageHistoryAfterLoaded {
+        channel_id,
+        after: Id::new(16),
+        messages: vec![
+            message_info(channel_id, 17, "gap 17"),
+            message_info(channel_id, 100, "upper 100"),
+        ],
+        has_more: false,
+    });
+
+    let messages = state.messages_for_channel(channel_id);
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| message.id.get())
+            .collect::<Vec<_>>(),
+        vec![14, 15, 16, 17, 100, 101]
+    );
+    assert_eq!(
+        state.message_history_gap_after(channel_id, Id::new(17)),
+        None
+    );
+}
+
 #[test]
 fn current_user_reaction_events_update_cached_reaction_summary() {
     let mut state = DiscordState::default();

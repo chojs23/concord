@@ -143,7 +143,7 @@ impl DashboardState {
             ChannelActionItem {
                 kind: ChannelActionKind::LoadPinnedMessages,
                 label: "Show pinned messages".to_owned(),
-                enabled: !channel.is_category(),
+                enabled: !channel.is_category() && !channel.is_forum(),
             },
             ChannelActionItem {
                 kind: ChannelActionKind::ShowThreads,

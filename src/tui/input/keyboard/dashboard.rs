@@ -11,6 +11,9 @@ pub(super) fn handle_dashboard_action(
 ) -> Option<AppCommand> {
     match action {
         DashboardAction::Select(SelectionAction::Next) => {
+            if let Some(command) = state.next_newer_history_command_for_down_by(1) {
+                return Some(command);
+            }
             state.move_down();
             None
         }
@@ -58,6 +61,9 @@ pub(super) fn handle_dashboard_action(
             None
         }
         DashboardAction::HalfPageDown => {
+            if let Some(command) = state.next_newer_history_command_for_half_page_down() {
+                return Some(command);
+            }
             state.half_page_down();
             None
         }

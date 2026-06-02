@@ -22,6 +22,46 @@ pub struct UnreadBanner {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessagePaneSource {
+    ChannelMessages { channel_id: Id<ChannelMarker> },
+    PinnedMessages { channel_id: Id<ChannelMarker> },
+    ForumPosts { channel_id: Id<ChannelMarker> },
+}
+
+impl MessagePaneSource {
+    pub fn channel_id(self) -> Id<ChannelMarker> {
+        match self {
+            Self::ChannelMessages { channel_id }
+            | Self::PinnedMessages { channel_id }
+            | Self::ForumPosts { channel_id } => channel_id,
+        }
+    }
+
+    fn uses_message_items(self) -> bool {
+        matches!(
+            self,
+            Self::ChannelMessages { .. } | Self::PinnedMessages { .. }
+        )
+    }
+
+    fn uses_forum_posts(self) -> bool {
+        matches!(self, Self::ForumPosts { .. })
+    }
+
+    fn can_load_message_history(self) -> bool {
+        matches!(self, Self::ChannelMessages { .. })
+    }
+
+    fn shows_unread_markers(self) -> bool {
+        matches!(self, Self::ChannelMessages { .. })
+    }
+
+    fn supports_auto_follow(self) -> bool {
+        matches!(self, Self::ChannelMessages { .. })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ThreadReturnTarget {
     pub(super) thread_channel_id: Id<ChannelMarker>,
     pub(super) channel_id: Id<ChannelMarker>,
@@ -101,6 +141,49 @@ impl Default for MessageViewportState {
 }
 
 impl DashboardState {
+    pub fn message_pane_source(&self) -> Option<MessagePaneSource> {
+        let channel = self.selected_channel_state()?;
+        if channel.is_forum() {
+            return Some(MessagePaneSource::ForumPosts {
+                channel_id: channel.id,
+            });
+        }
+        if self.messages.pinned_message_view_channel_id == Some(channel.id) {
+            Some(MessagePaneSource::PinnedMessages {
+                channel_id: channel.id,
+            })
+        } else {
+            Some(MessagePaneSource::ChannelMessages {
+                channel_id: channel.id,
+            })
+        }
+    }
+
+    pub(crate) fn message_pane_uses_message_items(&self) -> bool {
+        self.message_pane_source()
+            .is_some_and(MessagePaneSource::uses_message_items)
+    }
+
+    pub(crate) fn message_pane_uses_forum_posts(&self) -> bool {
+        self.message_pane_source()
+            .is_some_and(MessagePaneSource::uses_forum_posts)
+    }
+
+    pub(crate) fn message_pane_can_load_message_history(&self) -> bool {
+        self.message_pane_source()
+            .is_some_and(MessagePaneSource::can_load_message_history)
+    }
+
+    pub(crate) fn message_pane_shows_unread_markers(&self) -> bool {
+        self.message_pane_source()
+            .is_some_and(MessagePaneSource::shows_unread_markers)
+    }
+
+    pub(crate) fn message_pane_supports_auto_follow(&self) -> bool {
+        self.message_pane_source()
+            .is_some_and(MessagePaneSource::supports_auto_follow)
+    }
+
     pub fn selected_message(&self) -> usize {
         clamp_selected_index(
             self.messages.selected_message,
@@ -131,7 +214,7 @@ impl DashboardState {
     /// because history was trimmed). Returns `None` when no anchor is
     /// captured or every loaded message is at-or-before the anchor.
     pub(crate) fn unread_divider_message_index(&self) -> Option<usize> {
-        if self.is_pinned_message_view_active() {
+        if !self.message_pane_shows_unread_markers() {
             return None;
         }
         let last_acked = self.messages.unread_divider_last_acked_id?;
@@ -149,7 +232,7 @@ impl DashboardState {
     /// banner above the message pane. `None` when no anchor is captured
     /// or no loaded message is newer than the snapshot.
     pub(crate) fn unread_banner(&self) -> Option<UnreadBanner> {
-        if self.is_pinned_message_view_active() {
+        if !self.message_pane_shows_unread_markers() {
             return None;
         }
         let last_acked = self.messages.unread_divider_last_acked_id?;
@@ -337,10 +420,13 @@ impl DashboardState {
     }
 
     pub fn focused_message_selection(&self) -> Option<usize> {
-        if self.selected_channel_is_forum() {
+        if self.message_pane_uses_forum_posts() {
             return self.focused_forum_post_selection();
         }
-        if self.navigation.focus == FocusPane::Messages && !self.messages().is_empty() {
+        if self.navigation.focus == FocusPane::Messages
+            && self.message_pane_uses_message_items()
+            && !self.messages().is_empty()
+        {
             let selected = self.selected_message();
             let visible_count = self.visible_messages().len();
             if selected >= self.messages.message_scroll
@@ -362,7 +448,7 @@ impl DashboardState {
             return;
         }
 
-        if self.selected_channel_is_forum() {
+        if self.message_pane_uses_forum_posts() {
             let len = self.selected_forum_post_items().len();
             move_index_down(&mut self.messages.message_scroll, len);
             self.messages.message_auto_follow = false;
@@ -414,13 +500,64 @@ impl DashboardState {
         }
     }
 
+    pub fn next_newer_history_command_for_down_by(&self, distance: usize) -> Option<AppCommand> {
+        if !self.message_pane_can_load_message_history()
+            || self.navigation.focus != FocusPane::Messages
+        {
+            return None;
+        }
+        let messages = self.messages();
+        if messages.is_empty() {
+            return None;
+        }
+        let start = self.selected_message();
+        let end = start
+            .saturating_add(distance.max(1))
+            .min(messages.len() - 1);
+        let scan_end = if end > start { end - 1 } else { start };
+        self.newer_history_command_in_message_range(start, scan_end)
+    }
+
+    pub fn next_newer_history_command_for_half_page_down(&self) -> Option<AppCommand> {
+        self.next_newer_history_command_for_down_by((self.message_content_height() / 2).max(1))
+    }
+
+    fn newer_history_command_in_message_range(
+        &self,
+        start: usize,
+        end: usize,
+    ) -> Option<AppCommand> {
+        let channel_id = self.selected_message_history_channel_id()?;
+        let messages = self.messages();
+        for index in start..=end {
+            let lower_id = messages.get(index)?.id;
+            let Some(upper_id) = self
+                .discord
+                .cache
+                .message_history_gap_after(channel_id, lower_id)
+            else {
+                continue;
+            };
+            let next_cached_id = messages
+                .get(index.saturating_add(1))
+                .map(|message| message.id);
+            if next_cached_id == Some(upper_id) {
+                return Some(AppCommand::LoadMessageHistoryAfter {
+                    channel_id,
+                    after: lower_id,
+                });
+            }
+        }
+        None
+    }
+
     pub fn scroll_message_viewport_up(&mut self) {
         if self.navigation.focus != FocusPane::Messages
             || self.messages.message_content_width == usize::MAX
         {
             return;
         }
-        if self.selected_channel_is_forum() {
+        if self.message_pane_uses_forum_posts() {
             move_index_up(&mut self.messages.message_scroll);
             self.messages.message_auto_follow = false;
             self.messages.message_keep_selection_visible = false;
@@ -466,7 +603,7 @@ impl DashboardState {
     }
 
     pub(super) fn select_visible_message_row(&mut self, row: usize) -> bool {
-        if self.selected_channel_is_forum() {
+        if self.message_pane_uses_forum_posts() {
             return self.select_visible_forum_post_row(row);
         }
         if self.messages.message_content_width == usize::MAX {
@@ -505,7 +642,7 @@ impl DashboardState {
     /// arrives, follow (cursor jump + scroll) only fires if the cursor was
     /// already on the latest message and the viewport was at the latest.
     pub(super) fn cursor_on_last_message(&self) -> bool {
-        if self.selected_channel_is_forum() || self.is_pinned_message_view_active() {
+        if !self.message_pane_supports_auto_follow() {
             return false;
         }
         let messages = self.messages();
@@ -520,7 +657,7 @@ impl DashboardState {
     /// auto-scroll trigger condition. With no rendered width yet in unit tests,
     /// falls back to an item-count check against the configured view height.
     pub(super) fn is_viewport_at_latest_message(&self) -> bool {
-        if self.selected_channel_is_forum() || self.is_pinned_message_view_active() {
+        if !self.message_pane_supports_auto_follow() {
             return false;
         }
         let messages = self.messages();
@@ -635,7 +772,7 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) {
-        if self.selected_channel_is_forum() {
+        if self.message_pane_uses_forum_posts() {
             self.clamp_forum_post_viewport();
             self.messages.message_line_scroll = 0;
             return;
@@ -690,7 +827,7 @@ impl DashboardState {
 
         self.messages.selected_message = self.messages.selected_message.min(item_count - 1);
         self.messages.message_scroll = self.messages.message_scroll.min(item_count - 1);
-        if self.selected_channel_is_forum() {
+        if self.message_pane_uses_forum_posts() {
             self.clamp_forum_post_viewport();
             self.messages.message_line_scroll = 0;
             return;
@@ -857,10 +994,13 @@ impl DashboardState {
     }
 
     pub(super) fn message_pane_item_count(&self) -> usize {
-        if self.selected_channel_is_forum() {
-            self.selected_forum_post_items().len()
-        } else {
-            self.messages().len()
+        match self.message_pane_source() {
+            Some(MessagePaneSource::ForumPosts { .. }) => self.selected_forum_post_items().len(),
+            Some(
+                MessagePaneSource::ChannelMessages { .. }
+                | MessagePaneSource::PinnedMessages { .. },
+            ) => self.messages().len(),
+            _ => 0,
         }
     }
 }
@@ -1139,32 +1279,26 @@ impl DashboardState {
     }
 
     pub fn messages(&self) -> Vec<&MessageState> {
-        if self.selected_channel_is_forum() {
-            return Vec::new();
+        match self.message_pane_source() {
+            Some(MessagePaneSource::ChannelMessages { channel_id }) => {
+                self.discord.cache.messages_for_channel(channel_id)
+            }
+            Some(MessagePaneSource::PinnedMessages { channel_id }) => {
+                self.discord.cache.pinned_messages_for_channel(channel_id)
+            }
+            Some(MessagePaneSource::ForumPosts { .. }) | None => Vec::new(),
         }
-        if self.messages.pinned_message_view_channel_id == self.selected_channel_id() {
-            return self.pinned_messages();
-        }
-        self.channel_messages()
-    }
-
-    pub fn pinned_messages(&self) -> Vec<&MessageState> {
-        if self.selected_channel_is_forum() {
-            return Vec::new();
-        }
-        self.selected_channel_id()
-            .map(|channel_id| self.discord.cache.pinned_messages_for_channel(channel_id))
-            .unwrap_or_default()
-    }
-
-    fn channel_messages(&self) -> Vec<&MessageState> {
-        let Some(channel_id) = self.selected_channel_id() else {
-            return Vec::new();
-        };
-        self.discord.cache.messages_for_channel(channel_id)
     }
 
     pub fn enter_pinned_message_view(&mut self, channel_id: Id<ChannelMarker>) {
+        if self
+            .discord
+            .cache
+            .channel(channel_id)
+            .is_some_and(|channel| channel.is_forum())
+        {
+            return;
+        }
         if !self.is_pinned_message_view_active() {
             self.record_pinned_message_view_return_target(channel_id);
         }
@@ -1222,14 +1356,19 @@ impl DashboardState {
     }
 
     pub(super) fn is_pinned_message_view_active(&self) -> bool {
-        self.messages
-            .pinned_message_view_channel_id
-            .is_some_and(|channel_id| Some(channel_id) == self.selected_channel_id())
+        matches!(
+            self.message_pane_source(),
+            Some(MessagePaneSource::PinnedMessages { .. })
+        )
     }
 
     pub fn pinned_message_view_channel_id(&self) -> Option<Id<ChannelMarker>> {
-        self.is_pinned_message_view_active()
-            .then_some(self.messages.pinned_message_view_channel_id?)
+        match self.message_pane_source()? {
+            MessagePaneSource::PinnedMessages { channel_id } => Some(channel_id),
+            MessagePaneSource::ChannelMessages { .. } | MessagePaneSource::ForumPosts { .. } => {
+                None
+            }
+        }
     }
 
     #[cfg(test)]
@@ -1238,7 +1377,7 @@ impl DashboardState {
     }
 
     pub fn selected_message_state(&self) -> Option<&MessageState> {
-        if self.selected_channel_is_forum() {
+        if !self.message_pane_uses_message_items() {
             return None;
         }
         self.messages().get(self.selected_message()).copied()
@@ -1252,10 +1391,10 @@ impl DashboardState {
     }
 
     pub fn next_older_history_command(&mut self) -> Option<AppCommand> {
-        if self.is_pinned_message_view_active() {
+        if !self.message_pane_can_load_message_history() {
             return None;
         }
-        let channel_id = self.selected_channel_id()?;
+        let channel_id = self.selected_message_history_channel_id()?;
         let before = self.older_history_cursor()?;
         Some(AppCommand::LoadMessageHistory {
             channel_id,
@@ -1290,7 +1429,8 @@ impl DashboardState {
     }
 
     fn older_history_cursor(&self) -> Option<Id<MessageMarker>> {
-        if self.navigation.focus != FocusPane::Messages
+        if !self.message_pane_can_load_message_history()
+            || self.navigation.focus != FocusPane::Messages
             || self.messages().is_empty()
             || self.selected_message() != 0
         {

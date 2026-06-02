@@ -1,11 +1,17 @@
 use super::*;
 use crate::discord::AppCommand;
+use crate::tui::state::MessagePaneSource;
 
 #[test]
 fn forum_channel_renders_loaded_posts_in_message_pane() {
     let mut state = state_with_forum_channel_posts();
 
-    assert!(state.selected_channel_is_forum());
+    assert_eq!(
+        state.message_pane_source(),
+        Some(MessagePaneSource::ForumPosts {
+            channel_id: Id::new(20)
+        })
+    );
     assert!(state.messages().is_empty());
     assert_eq!(state.selected_message_history_channel_id(), None);
     assert_eq!(
@@ -1008,7 +1014,12 @@ fn returning_from_forum_post_restores_parent_post_cursor() {
     assert_eq!(state.selected_channel_id(), Some(Id::new(30)));
 
     assert!(state.return_from_opened_thread());
-    assert!(state.selected_channel_is_forum());
+    assert_eq!(
+        state.message_pane_source(),
+        Some(MessagePaneSource::ForumPosts {
+            channel_id: Id::new(20)
+        })
+    );
     assert_eq!(state.selected_forum_post(), expected_selected);
     assert_eq!(state.message_scroll(), expected_scroll);
 }
