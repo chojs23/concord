@@ -1,18 +1,18 @@
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 use std::path::Path;
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 use std::sync::Arc;
-#[cfg(any(test, all(feature = "voice-playback", not(target_os = "macos"))))]
+#[cfg(any(test, feature = "voice-playback"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(any(test, feature = "voice-playback"))]
 use std::time::Duration;
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 #[cfg(any(test, feature = "voice-playback"))]
 use crate::discord::VoiceSoundKind;
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 use crate::logging;
 
 #[cfg(any(test, feature = "voice-playback"))]
@@ -21,9 +21,9 @@ const GENERATED_VOICE_SOUND_SAMPLE_RATE: u32 = 48_000;
 const GENERATED_VOICE_SOUND_CHANNELS: u16 = 2;
 #[cfg(any(test, feature = "voice-playback"))]
 const GENERATED_VOICE_SOUND_DURATION: Duration = Duration::from_millis(180);
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 const NOTIFICATION_SOUND_STREAM_PADDING: Duration = Duration::from_millis(40);
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 const MAX_NOTIFICATION_SOUND_BYTES: usize = 4 * 1024 * 1024;
 
 #[cfg(any(test, feature = "voice-playback"))]
@@ -34,13 +34,13 @@ struct NotificationAudio {
     samples: Vec<f32>,
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 struct NotificationOutputStream {
     stream: cpal::Stream,
     failed: Arc<AtomicBool>,
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 pub(super) fn play_voice_sound(
     kind: VoiceSoundKind,
     custom_path: Option<&Path>,
@@ -52,7 +52,7 @@ pub(super) fn play_voice_sound(
     play_notification_audio(audio)
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 fn play_notification_audio(audio: NotificationAudio) -> std::result::Result<(), String> {
     if audio.channels == 0 || audio.sample_rate == 0 || audio.samples.is_empty() {
         return Err("notification sound is empty".to_owned());
@@ -85,7 +85,7 @@ fn play_notification_audio(audio: NotificationAudio) -> std::result::Result<(), 
     notification_stream_result(&stream.failed)
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 fn build_notification_output_stream(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -112,7 +112,7 @@ fn build_notification_output_stream(
     }
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 fn build_notification_output_stream_f32(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -124,7 +124,7 @@ fn build_notification_output_stream_f32(
     })
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 fn build_notification_output_stream_u8(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -136,7 +136,7 @@ fn build_notification_output_stream_u8(
     })
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 fn build_notification_output_stream_i16(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -148,7 +148,7 @@ fn build_notification_output_stream_i16(
     })
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 fn build_notification_output_stream_u16(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -160,7 +160,7 @@ fn build_notification_output_stream_u16(
     })
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 fn build_notification_output_stream_with<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -200,7 +200,7 @@ where
     Ok(NotificationOutputStream { stream, failed })
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 fn fill_notification_output<T>(
     output: &mut [T],
     output_channels: usize,
@@ -229,7 +229,7 @@ fn fill_notification_output<T>(
     }
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 fn log_notification_output_stream_error(error: cpal::StreamError) {
     logging::error(
         "voice",
@@ -237,7 +237,7 @@ fn log_notification_output_stream_error(error: cpal::StreamError) {
     );
 }
 
-#[cfg(any(test, all(feature = "voice-playback", not(target_os = "macos"))))]
+#[cfg(any(test, feature = "voice-playback"))]
 fn notification_stream_result(stream_failed: &AtomicBool) -> std::result::Result<(), String> {
     if stream_failed.load(Ordering::Relaxed) {
         Err("notification audio output stream failed during playback".to_owned())
@@ -246,7 +246,7 @@ fn notification_stream_result(stream_failed: &AtomicBool) -> std::result::Result
     }
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 fn notification_output_sample(
     audio: &NotificationAudio,
     output_frame: usize,
@@ -272,7 +272,7 @@ fn notification_output_sample(
     audio.samples[source_frame * source_channels + source_channel].clamp(-1.0, 1.0)
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 fn notification_output_frame_count(audio: &NotificationAudio, output_sample_rate: u32) -> usize {
     let source_channels = usize::from(audio.channels.max(1));
     let source_frames = audio.samples.len() / source_channels;
@@ -281,7 +281,7 @@ fn notification_output_frame_count(audio: &NotificationAudio, output_sample_rate
     ((source_frames as u128 * output_sample_rate).div_ceil(source_sample_rate)) as usize
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 fn notification_play_duration(total_output_frames: usize, output_sample_rate: u32) -> Duration {
     let audio_duration =
         Duration::from_secs_f64(total_output_frames as f64 / f64::from(output_sample_rate.max(1)));
@@ -326,7 +326,7 @@ fn generated_voice_sound_envelope(progress: f32) -> f32 {
     progress.min(1.0 - progress).min(FADE) / FADE
 }
 
-#[cfg(all(feature = "voice-playback", not(target_os = "macos")))]
+#[cfg(feature = "voice-playback")]
 fn load_notification_wav(path: &Path) -> std::result::Result<NotificationAudio, String> {
     let bytes = std::fs::read(path).map_err(|error| {
         format!(
@@ -343,7 +343,7 @@ fn load_notification_wav(path: &Path) -> std::result::Result<NotificationAudio, 
     decode_notification_wav(&bytes)
 }
 
-#[cfg(any(test, all(feature = "voice-playback", not(target_os = "macos"))))]
+#[cfg(any(test, feature = "voice-playback"))]
 fn decode_notification_wav(bytes: &[u8]) -> std::result::Result<NotificationAudio, String> {
     if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
         return Err("notification sound must be a RIFF/WAVE file".to_owned());
@@ -381,7 +381,7 @@ fn decode_notification_wav(bytes: &[u8]) -> std::result::Result<NotificationAudi
 }
 
 #[derive(Clone, Copy)]
-#[cfg(any(test, all(feature = "voice-playback", not(target_os = "macos"))))]
+#[cfg(any(test, feature = "voice-playback"))]
 struct WavFormat {
     audio_format: u16,
     channels: u16,
@@ -389,7 +389,7 @@ struct WavFormat {
     bits_per_sample: u16,
 }
 
-#[cfg(any(test, all(feature = "voice-playback", not(target_os = "macos"))))]
+#[cfg(any(test, feature = "voice-playback"))]
 fn parse_wav_format(bytes: &[u8]) -> std::result::Result<WavFormat, String> {
     if bytes.len() < 16 {
         return Err("notification sound fmt chunk is too short".to_owned());
@@ -406,7 +406,7 @@ fn parse_wav_format(bytes: &[u8]) -> std::result::Result<WavFormat, String> {
     Ok(format)
 }
 
-#[cfg(any(test, all(feature = "voice-playback", not(target_os = "macos"))))]
+#[cfg(any(test, feature = "voice-playback"))]
 fn decode_wav_samples(
     format: WavFormat,
     data: &[u8],
@@ -456,7 +456,7 @@ fn decode_wav_samples(
     })
 }
 
-#[cfg(any(test, all(feature = "voice-playback", not(target_os = "macos"))))]
+#[cfg(any(test, feature = "voice-playback"))]
 fn decode_i24_sample(sample: &[u8]) -> f32 {
     let sign = if sample[2] & 0x80 == 0 { 0x00 } else { 0xff };
     i32::from_le_bytes([sample[0], sample[1], sample[2], sign]) as f32 / 8_388_607.0

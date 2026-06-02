@@ -26,7 +26,7 @@ pub struct DisplayOptions {
     pub member_list_width: u16,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ComposerOptions {
     pub emojis_as_links: bool,
@@ -305,14 +305,6 @@ impl Default for DisplayOptions {
             server_width: 20,
             channel_list_width: 24,
             member_list_width: 26,
-        }
-    }
-}
-
-impl Default for ComposerOptions {
-    fn default() -> Self {
-        Self {
-            emojis_as_links: false,
         }
     }
 }
