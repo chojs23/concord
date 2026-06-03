@@ -65,6 +65,8 @@ pub(in crate::tui) fn effect_forces_redraw(event: &AppEvent) -> bool {
         AppEvent::AttachmentPreviewLoaded { .. }
             | AppEvent::AttachmentPreviewLoadFailed { .. }
             | AppEvent::GatewayError { .. }
+            | AppEvent::GatewayResumed
+            | AppEvent::GatewayReidentified
             | AppEvent::GatewayClosed
     )
 }
@@ -77,6 +79,7 @@ pub(super) fn process_effect_event(
     let member_hydration_messages = match &event {
         AppEvent::MessageHistoryLoaded { messages, .. }
         | AppEvent::MessageHistoryAfterLoaded { messages, .. }
+        | AppEvent::MessageHistoryCatchUpLoaded { messages, .. }
         | AppEvent::MessageHistoryAroundLoaded { messages, .. }
         | AppEvent::MessageSearchLoaded {
             page: crate::discord::MessageSearchPage { messages, .. },
@@ -106,6 +109,13 @@ pub(super) fn process_effect_event(
     if matches!(event, AppEvent::GatewayClosed) {
         handle_gateway_closed(ctx.state);
     } else {
+        if matches!(
+            event,
+            AppEvent::GatewayResumed | AppEvent::GatewayReidentified
+        ) && let Some(command) = ctx.state.selected_message_history_catch_up_command()
+        {
+            ctx.state.enqueue_pending_command(command);
+        }
         ctx.state.push_effect(event);
     }
     if let Some(messages) = member_hydration_messages {
@@ -428,6 +438,35 @@ mod tests {
             vec![AppCommand::LoadGuildMembersByIds {
                 guild_id,
                 user_ids: vec![owner_id],
+            }]
+        );
+    }
+
+    #[test]
+    fn gateway_resumed_enqueues_selected_channel_catch_up() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let mut state = DashboardState::new();
+        push_guild_with_channel(
+            &mut state,
+            guild_id,
+            channel_info(guild_id, channel_id, None, "general", "GuildText"),
+        );
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.push_event(AppEvent::MessageHistoryLoaded {
+            channel_id,
+            before: None,
+            messages: vec![message_info(guild_id, channel_id, Id::new(20), Id::new(99))],
+        });
+
+        process_effect_in_default_context(&mut state, AppEvent::GatewayResumed);
+
+        assert_eq!(
+            state.drain_pending_commands(),
+            vec![AppCommand::CatchUpMessageHistoryAfter {
+                channel_id,
+                after: Id::new(20),
             }]
         );
     }

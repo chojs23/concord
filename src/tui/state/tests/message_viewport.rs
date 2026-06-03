@@ -214,6 +214,39 @@ fn incoming_message_while_scrolled_away_sets_new_messages_marker() {
 }
 
 #[test]
+fn selected_message_history_catch_up_command_uses_newest_loaded_message() {
+    let state = state_with_message_ids([10, 11, 12]);
+
+    assert_eq!(
+        state.selected_message_history_catch_up_command(),
+        Some(AppCommand::CatchUpMessageHistoryAfter {
+            channel_id: Id::new(2),
+            after: Id::new(12),
+        })
+    );
+}
+
+#[test]
+fn catch_up_messages_while_scrolled_away_set_new_messages_marker() {
+    let mut state = state_with_messages(5);
+    clear_scheduled_read_ack(&mut state);
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(3);
+    state.jump_top();
+
+    state.push_event(AppEvent::MessageHistoryCatchUpLoaded {
+        channel_id: Id::new(2),
+        after: Id::new(5),
+        messages: vec![message_info(Id::new(2), 7), message_info(Id::new(2), 6)],
+        has_more: false,
+    });
+
+    assert_eq!(state.new_messages_marker_message_id(), Some(Id::new(6)));
+    assert_eq!(state.new_messages_count(), 2);
+    assert!(state.drain_pending_commands().is_empty());
+}
+
+#[test]
 fn new_messages_count_includes_messages_after_marker() {
     let mut state = state_with_messages(5);
     state.focus_pane(FocusPane::Messages);

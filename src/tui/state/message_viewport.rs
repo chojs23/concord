@@ -539,6 +539,12 @@ impl DashboardState {
         self.newer_history_command_in_message_range(start, scan_end)
     }
 
+    pub(in crate::tui) fn selected_message_history_catch_up_command(&self) -> Option<AppCommand> {
+        let channel_id = self.selected_message_history_channel_id()?;
+        let after = self.messages().iter().map(|message| message.id).max()?;
+        Some(AppCommand::CatchUpMessageHistoryAfter { channel_id, after })
+    }
+
     pub fn next_newer_history_command_for_half_page_down(&self) -> Option<AppCommand> {
         let distance = (self.message_content_height() / 2).max(1);
         if self.message_pane_uses_forum_posts() || self.messages.message_content_width == usize::MAX
@@ -1648,7 +1654,22 @@ impl DashboardState {
             ..
         } = event
         else {
-            return None;
+            let AppEvent::MessageHistoryCatchUpLoaded {
+                channel_id,
+                after,
+                messages,
+                ..
+            } = event
+            else {
+                return None;
+            };
+            let first_newer_message_id = messages
+                .iter()
+                .filter(|message| message.channel_id == *channel_id && message.message_id > *after)
+                .map(|message| message.message_id)
+                .min()?;
+            return (Some(*channel_id) == self.navigation.active_channel_id)
+                .then_some((*channel_id, first_newer_message_id));
         };
         (Some(*channel_id) == self.navigation.active_channel_id)
             .then_some((*channel_id, *message_id))

@@ -268,6 +268,10 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         after: Id<MessageMarker>,
     },
+    CatchUpMessageHistoryAfter {
+        channel_id: Id<ChannelMarker>,
+        after: Id<MessageMarker>,
+    },
     LoadMessageHistoryAround {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,

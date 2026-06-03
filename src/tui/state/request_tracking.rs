@@ -26,7 +26,7 @@ impl DashboardState {
         self.requests.pending_commands.drain(..).collect()
     }
 
-    pub(super) fn enqueue_pending_command(&mut self, command: AppCommand) {
+    pub(in crate::tui) fn enqueue_pending_command(&mut self, command: AppCommand) {
         self.requests.pending_commands.push_back(command);
     }
 

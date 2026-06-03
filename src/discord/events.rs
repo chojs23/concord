@@ -119,6 +119,12 @@ pub enum AppEvent {
         messages: Vec<MessageInfo>,
         has_more: bool,
     },
+    MessageHistoryCatchUpLoaded {
+        channel_id: Id<ChannelMarker>,
+        after: Id<MessageMarker>,
+        messages: Vec<MessageInfo>,
+        has_more: bool,
+    },
     MessageHistoryAroundLoaded {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
@@ -366,6 +372,8 @@ pub enum AppEvent {
         message_id: Id<MessageMarker>,
         mention_count: u32,
     },
+    GatewayResumed,
+    GatewayReidentified,
     GatewayClosed,
 }
 
@@ -489,6 +497,8 @@ impl AppEvent {
                 | AppEvent::VoiceConnectionStatusChanged { .. }
                 | AppEvent::VoiceSound { .. }
                 | AppEvent::ActivateChannel { .. }
+                | AppEvent::GatewayResumed
+                | AppEvent::GatewayReidentified
                 | AppEvent::GatewayClosed
         )
     }
@@ -499,6 +509,7 @@ impl AppEvent {
             AppEvent::MessageCreate { .. }
             | AppEvent::MessageHistoryLoaded { .. }
             | AppEvent::MessageHistoryAfterLoaded { .. }
+            | AppEvent::MessageHistoryCatchUpLoaded { .. }
             | AppEvent::MessageHistoryAroundLoaded { .. }
             | AppEvent::MessageHistoryLoadFailed { .. }
             | AppEvent::ThreadPreviewLoaded { .. }
@@ -521,6 +532,8 @@ impl AppEvent {
             | AppEvent::VoiceConnectionStatusChanged { .. }
             | AppEvent::VoiceSound { .. }
             | AppEvent::UserProfileLoadFailed { .. }
+            | AppEvent::GatewayResumed
+            | AppEvent::GatewayReidentified
             | AppEvent::GatewayClosed => true,
             _ => false,
         }

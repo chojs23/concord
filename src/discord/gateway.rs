@@ -189,8 +189,28 @@ struct GatewayPublishContext<'a> {
 #[derive(Clone, Copy)]
 struct FrameContext<'a> {
     sequence_cell: &'a Arc<Mutex<Option<u64>>>,
+    heartbeat_ack: &'a Arc<Mutex<HeartbeatAckState>>,
     writer: &'a WriterHandle,
     publish: GatewayPublishContext<'a>,
+}
+
+#[derive(Default)]
+struct HeartbeatAckState {
+    awaiting_ack: bool,
+}
+
+impl HeartbeatAckState {
+    fn mark_heartbeat_sent(&mut self) -> bool {
+        if self.awaiting_ack {
+            return false;
+        }
+        self.awaiting_ack = true;
+        true
+    }
+
+    fn mark_ack_received(&mut self) {
+        self.awaiting_ack = false;
+    }
 }
 
 /// What to do after one connection lifecycle ends.
@@ -218,6 +238,7 @@ struct SessionState {
     session_id: Option<String>,
     resume_url: Option<String>,
     last_sequence: Option<u64>,
+    has_received_ready: bool,
 }
 
 impl SessionState {
@@ -385,6 +406,9 @@ async fn connect_and_run(
     let writer_for_heartbeat = Arc::clone(&writer);
     let sequence_cell: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(session.last_sequence));
     let sequence_for_heartbeat = Arc::clone(&sequence_cell);
+    let heartbeat_ack: Arc<Mutex<HeartbeatAckState>> = Arc::default();
+    let heartbeat_ack_for_task = Arc::clone(&heartbeat_ack);
+    let (heartbeat_timeout_tx, mut heartbeat_timeout_rx) = mpsc::unbounded_channel();
     let initial_jitter = {
         let jitter_ms =
             rand::thread_rng().gen_range(0..=heartbeat_interval.as_millis().min(2_000) as u64);
@@ -393,10 +417,19 @@ async fn connect_and_run(
     let heartbeat_task = tokio::spawn(async move {
         sleep(initial_jitter).await;
         loop {
+            {
+                let mut state = heartbeat_ack_for_task.lock().await;
+                if !state.mark_heartbeat_sent() {
+                    logging::error("gateway", "heartbeat ACK timeout; reconnecting");
+                    let _ = heartbeat_timeout_tx.send(());
+                    break;
+                }
+            }
             let seq = *sequence_for_heartbeat.lock().await;
             let payload = json!({"op": 1, "d": seq}).to_string();
             if let Err(error) = send_text(&writer_for_heartbeat, payload).await {
                 logging::error("gateway", format!("heartbeat send failed: {error}"));
+                let _ = heartbeat_timeout_tx.send(());
                 break;
             }
             sleep(heartbeat_interval).await;
@@ -444,6 +477,7 @@ async fn connect_and_run(
                         };
                         let frame_context = FrameContext {
                             sequence_cell: &sequence_cell,
+                            heartbeat_ack: &heartbeat_ack,
                             writer: &writer,
                             publish,
                         };
@@ -491,6 +525,9 @@ async fn connect_and_run(
                     }
                 }
             }
+            _ = heartbeat_timeout_rx.recv() => {
+                break ConnectionOutcome::Resume;
+            }
         }
     };
 
@@ -525,11 +562,13 @@ async fn handle_frame(
                 *context.sequence_cell.lock().await = Some(seq);
             }
             let dispatch_type = value.get("t").and_then(Value::as_str).unwrap_or("");
+            let mut publish_reidentified = false;
             // Capture the session_id and resume_url from READY so a later
             // disconnect can RESUME instead of redoing the heavy initial sync.
             if dispatch_type == "READY"
                 && let Some(d) = value.get("d")
             {
+                let was_reidentify = session.has_received_ready;
                 session.session_id = d
                     .get("session_id")
                     .and_then(Value::as_str)
@@ -543,10 +582,19 @@ async fn handle_frame(
                     .gateway_session_id
                     .write()
                     .expect("gateway session id lock is not poisoned") = session.session_id.clone();
+                if was_reidentify {
+                    publish_reidentified = true;
+                }
+                session.has_received_ready = true;
+            } else if dispatch_type == "RESUMED" {
+                publish_gateway_event(context.publish, AppEvent::GatewayResumed).await;
             }
             let events = parse_user_account_event(raw);
             for app_event in events {
                 publish_gateway_event(context.publish, app_event).await;
+            }
+            if publish_reidentified {
+                publish_gateway_event(context.publish, AppEvent::GatewayReidentified).await;
             }
             FrameOutcome::Continue
         }
@@ -555,6 +603,7 @@ async fn handle_frame(
         1 => {
             let seq = *context.sequence_cell.lock().await;
             let payload = json!({"op": 1, "d": seq}).to_string();
+            context.heartbeat_ack.lock().await.mark_heartbeat_sent();
             if let Err(error) = send_text(context.writer, payload).await {
                 let message = format!("heartbeat response send failed: {error}");
                 log_and_publish_gateway_error(context.publish, message).await;
@@ -578,8 +627,10 @@ async fn handle_frame(
                 FrameOutcome::Reidentify
             }
         }
-        // Heartbeat ack. No action needed.
-        11 => FrameOutcome::Continue,
+        11 => {
+            context.heartbeat_ack.lock().await.mark_ack_received();
+            FrameOutcome::Continue
+        }
         other => {
             logging::debug("gateway", format!("unhandled gateway op={other}"));
             FrameOutcome::Continue
@@ -925,8 +976,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        ConnectionOutcome, GATEWAY_WEBSOCKET_LIMIT, GatewayCommand, SessionState,
-        SubscriptionDeduper, USER_ACCOUNT_CAPABILITIES, build_identify_payload,
+        ConnectionOutcome, GATEWAY_WEBSOCKET_LIMIT, GatewayCommand, HeartbeatAckState,
+        SessionState, SubscriptionDeduper, USER_ACCOUNT_CAPABILITIES, build_identify_payload,
         build_resume_payload, close_code_outcome, direct_message_subscribe_payload,
         gateway_websocket_config, guild_channel_subscribe_payload,
         request_guild_members_by_ids_payload, request_guild_members_payload,
@@ -1001,6 +1052,16 @@ mod tests {
         assert_eq!(payload["op"].as_u64(), Some(6));
         assert_eq!(payload["d"]["session_id"].as_str(), Some("sess-123"));
         assert_eq!(payload["d"]["seq"].as_u64(), Some(42));
+    }
+
+    #[test]
+    fn heartbeat_ack_state_detects_missing_ack_before_next_heartbeat() {
+        let mut state = HeartbeatAckState::default();
+
+        assert!(state.mark_heartbeat_sent());
+        assert!(!state.mark_heartbeat_sent());
+        state.mark_ack_received();
+        assert!(state.mark_heartbeat_sent());
     }
 
     #[test]

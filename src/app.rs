@@ -208,6 +208,53 @@ fn start_command_loop(
                             }
                         }
                     }
+                    AppCommand::CatchUpMessageHistoryAfter { channel_id, after } => {
+                        if !client.begin_catch_up_message_history_request(channel_id, after) {
+                            return;
+                        }
+                        let endpoint = format_message_history_anchor_endpoint(
+                            channel_id,
+                            "after",
+                            after,
+                            MESSAGE_HISTORY_LIMIT,
+                        );
+                        match client
+                            .load_message_history_after(channel_id, after, MESSAGE_HISTORY_LIMIT)
+                            .await
+                        {
+                            Ok(messages) => {
+                                let has_more = messages.len() >= usize::from(MESSAGE_HISTORY_LIMIT);
+                                client
+                                    .publish_event(AppEvent::MessageHistoryCatchUpLoaded {
+                                        channel_id,
+                                        after,
+                                        messages,
+                                        has_more,
+                                    })
+                                    .await;
+                            }
+                            Err(error) => {
+                                let message = format!("catch up message history failed: {error}");
+                                let detail = error.log_detail();
+                                logging::error(
+                                    "history",
+                                    format!(
+                                        "op=catch_up_message_history_after channel_id={} after={} limit={} endpoint=\"{endpoint}\" {message}; detail={detail}",
+                                        channel_id.get(),
+                                        after.get(),
+                                        MESSAGE_HISTORY_LIMIT,
+                                    ),
+                                );
+                                client
+                                    .publish_event(AppEvent::MessageHistoryLoadFailed {
+                                        channel_id,
+                                        target: MessageHistoryLoadTarget::Newer { after },
+                                        message,
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
                     AppCommand::LoadMessageHistoryAround {
                         channel_id,
                         message_id,

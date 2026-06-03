@@ -188,6 +188,17 @@ impl DiscordClient {
             .begin_newer_history_request(channel_id, after)
     }
 
+    pub(crate) fn begin_catch_up_message_history_request(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        after: Id<MessageMarker>,
+    ) -> bool {
+        self.request_lifecycle
+            .lock()
+            .expect("request lifecycle lock is not poisoned")
+            .begin_catch_up_history_request(channel_id, after)
+    }
+
     pub(crate) fn next_forum_post_request(
         &self,
         target: Option<(Id<GuildMarker>, Id<ChannelMarker>, bool)>,

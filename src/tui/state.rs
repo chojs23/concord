@@ -237,7 +237,8 @@ impl DashboardState {
             AppEvent::MessageSearchLoaded { .. } | AppEvent::MessageSearchLoadFailed { .. } => {
                 self.record_search_event(&event);
             }
-            AppEvent::MessageHistoryLoaded { .. } => {}
+            AppEvent::MessageHistoryLoaded { .. }
+            | AppEvent::MessageHistoryCatchUpLoaded { .. } => {}
             AppEvent::UserProfileLoadFailed {
                 user_id,
                 guild_id,

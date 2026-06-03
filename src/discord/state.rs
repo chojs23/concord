@@ -546,6 +546,7 @@ impl DiscordState {
 
             AppEvent::MessageHistoryLoaded { .. }
             | AppEvent::MessageHistoryAfterLoaded { .. }
+            | AppEvent::MessageHistoryCatchUpLoaded { .. }
             | AppEvent::MessageHistoryAroundLoaded { .. }
             | AppEvent::MessageSearchLoaded { .. }
             | AppEvent::ThreadPreviewLoaded { .. }
@@ -613,6 +614,8 @@ impl DiscordState {
             | AppEvent::VoiceConnectionStatusChanged { .. }
             | AppEvent::VoiceSound { .. }
             | AppEvent::ActivateChannel { .. }
+            | AppEvent::GatewayResumed
+            | AppEvent::GatewayReidentified
             | AppEvent::GatewayClosed => {
                 unreachable!("non-mutating events return before snapshot area classification")
             }
@@ -939,6 +942,14 @@ impl DiscordState {
                 }
             }
             AppEvent::MessageHistoryAfterLoaded {
+                channel_id,
+                after,
+                messages,
+                has_more,
+            } => {
+                self.merge_message_history_after(*channel_id, *after, messages, *has_more);
+            }
+            AppEvent::MessageHistoryCatchUpLoaded {
                 channel_id,
                 after,
                 messages,
@@ -1382,6 +1393,8 @@ impl DiscordState {
             | AppEvent::VoiceConnectionStatusChanged { .. }
             | AppEvent::VoiceSound { .. }
             | AppEvent::ActivateChannel { .. }
+            | AppEvent::GatewayResumed
+            | AppEvent::GatewayReidentified
             | AppEvent::GatewayClosed => {}
         }
     }
