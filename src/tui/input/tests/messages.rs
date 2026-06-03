@@ -501,6 +501,31 @@ fn goto_referenced_message_shortcut_merges_target_window_into_normal_messages() 
     assert_eq!(handle_key(&mut state, char_key('j')), None);
     assert_eq!(state.messages()[state.selected_message()].id, Id::new(6));
 
+    assert_eq!(
+        handle_key(&mut state, char_key('j')),
+        Some(AppCommand::LoadMessageHistoryAfter {
+            channel_id: Id::new(2),
+            after: Id::new(6),
+        })
+    );
+    assert_eq!(state.messages()[state.selected_message()].id, Id::new(6));
+
+    assert_eq!(handle_key(&mut state, char_key('G')), None);
+    assert_eq!(state.messages()[state.selected_message()].id, Id::new(10));
+    state.move_up();
+    assert_eq!(state.messages()[state.selected_message()].id, Id::new(6));
+
+    state.push_event(AppEvent::MessageHistoryAfterLoaded {
+        channel_id: Id::new(2),
+        after: Id::new(6),
+        messages: vec![
+            MessageInfo::test(Id::new(2), Id::new(7)),
+            MessageInfo::test(Id::new(2), Id::new(8)),
+            MessageInfo::test(Id::new(2), Id::new(9)),
+        ],
+        has_more: false,
+    });
+
     state.push_event(message_create_event(MessageCreateFixture {
         guild_id: Some(Id::new(1)),
         channel_id: Id::new(2),
@@ -513,11 +538,45 @@ fn goto_referenced_message_shortcut_merges_target_window_into_normal_messages() 
             .into_iter()
             .map(|message| message.id.get())
             .collect::<Vec<_>>(),
-        vec![4, 5, 6, 10, 11]
+        vec![4, 5, 6, 7, 8, 9, 10, 11]
     );
 
     assert_eq!(handle_key(&mut state, char_key('G')), None);
     assert_eq!(state.messages()[state.selected_message()].id, Id::new(11));
+}
+
+#[test]
+fn pinned_and_forum_down_keys_do_not_request_newer_history() {
+    let mut pinned_state = state_with_messages(0);
+    pinned_state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo::test(Id::new(2), Id::new(10))],
+    });
+    pinned_state.push_event(AppEvent::MessageHistoryAroundLoaded {
+        channel_id: Id::new(2),
+        message_id: Id::new(5),
+        messages: vec![
+            MessageInfo::test(Id::new(2), Id::new(4)),
+            MessageInfo::test(Id::new(2), Id::new(5)),
+            MessageInfo::test(Id::new(2), Id::new(6)),
+        ],
+    });
+    pinned_state.push_event(AppEvent::PinnedMessagesLoaded {
+        channel_id: Id::new(2),
+        messages: vec![MessageInfo::test(Id::new(2), Id::new(6))],
+    });
+    pinned_state.enter_pinned_message_view(Id::new(2));
+    pinned_state.focus_pane(FocusPane::Messages);
+
+    assert_eq!(handle_key(&mut pinned_state, char_key('j')), None);
+    assert_eq!(handle_key(&mut pinned_state, ctrl_key('d')), None);
+
+    let mut forum_state = state_with_forum_channel_posts();
+    forum_state.focus_pane(FocusPane::Messages);
+
+    assert_eq!(handle_key(&mut forum_state, char_key('j')), None);
+    assert_eq!(handle_key(&mut forum_state, ctrl_key('d')), None);
 }
 
 #[test]

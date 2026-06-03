@@ -80,6 +80,7 @@ pub(in crate::tui) struct ChannelPaneSignature {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::tui) struct MessagePaneSignature {
+    source: Option<state::MessagePaneSource>,
     selected_message: usize,
     message_scroll: usize,
     message_line_scroll: usize,
@@ -495,6 +496,7 @@ pub(in crate::tui) fn visible_dashboard_signature(
                 .collect(),
         },
         messages: MessagePaneSignature {
+            source: state.message_pane_source(),
             selected_message: state.selected_message(),
             message_scroll: state.message_scroll(),
             message_line_scroll: state.message_line_scroll(),
@@ -547,6 +549,7 @@ fn visible_dashboard_changes(
         guilds: before.guilds != after.guilds,
         channels: before.channels != after.channels,
         messages: before.messages.selected_message != after.messages.selected_message
+            || before.messages.source != after.messages.source
             || before.messages.message_scroll != after.messages.message_scroll
             || before.messages.message_line_scroll != after.messages.message_line_scroll
             || before.messages.message_pane_title != after.messages.message_pane_title

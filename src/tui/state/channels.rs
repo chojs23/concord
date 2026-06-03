@@ -6,7 +6,7 @@ use crate::discord::ids::{
 };
 use crate::discord::{ChannelState, ChannelUnreadState, TypingUserState, VoiceParticipantState};
 
-use super::{ActiveGuildScope, DashboardState, ThreadReturnTarget};
+use super::{ActiveGuildScope, DashboardState, MessagePaneSource, ThreadReturnTarget};
 use super::{
     model::{
         ChannelBranch, ChannelPaneEntry, ChannelThreadItem, FORUM_POST_CARD_HEIGHT, FocusPane,
@@ -23,8 +23,13 @@ const RECENT_CHANNEL_LIMIT: usize = 10;
 
 impl DashboardState {
     pub fn selected_forum_post_items(&self) -> Vec<ChannelThreadItem> {
+        let Some(MessagePaneSource::ForumPosts { channel_id }) = self.message_pane_source() else {
+            return Vec::new();
+        };
         let Some(channel) = self
-            .selected_channel_state()
+            .discord
+            .cache
+            .channel(channel_id)
             .filter(|channel| channel.is_forum())
         else {
             return Vec::new();
@@ -44,13 +49,10 @@ impl DashboardState {
     }
 
     pub fn selected_forum_posts_loading(&self) -> bool {
-        let Some(channel) = self
-            .selected_channel_state()
-            .filter(|channel| channel.is_forum())
-        else {
+        let Some(MessagePaneSource::ForumPosts { channel_id }) = self.message_pane_source() else {
             return false;
         };
-        !self.requests.forum_post_lists.contains_key(&channel.id)
+        !self.requests.forum_post_lists.contains_key(&channel_id)
     }
 
     pub fn visible_forum_post_items(&self) -> Vec<ChannelThreadItem> {
@@ -83,7 +85,7 @@ impl DashboardState {
     }
 
     pub fn focused_forum_post_selection(&self) -> Option<usize> {
-        if self.navigation.focus != FocusPane::Messages || !self.selected_channel_is_forum() {
+        if self.navigation.focus != FocusPane::Messages || !self.message_pane_uses_forum_posts() {
             return None;
         }
         let selected = self.selected_forum_post();
@@ -144,14 +146,11 @@ impl DashboardState {
         }
     }
 
-    pub fn selected_channel_is_forum(&self) -> bool {
-        self.selected_channel_state()
-            .is_some_and(|channel| channel.is_forum())
-    }
-
     pub fn selected_message_history_channel_id(&self) -> Option<Id<ChannelMarker>> {
-        let channel_id = self.selected_channel_id()?;
-        (!self.selected_channel_is_forum()).then_some(channel_id)
+        match self.message_pane_source()? {
+            MessagePaneSource::ChannelMessages { channel_id } => Some(channel_id),
+            MessagePaneSource::PinnedMessages { .. } | MessagePaneSource::ForumPosts { .. } => None,
+        }
     }
 
     pub fn selected_message_history_needs_reload(&self) -> bool {
@@ -164,10 +163,11 @@ impl DashboardState {
     }
 
     pub fn selected_forum_channel(&self) -> Option<(Id<GuildMarker>, Id<ChannelMarker>)> {
-        let channel = self
-            .selected_channel_state()
-            .filter(|channel| channel.is_forum())?;
-        Some((channel.guild_id?, channel.id))
+        let MessagePaneSource::ForumPosts { channel_id } = self.message_pane_source()? else {
+            return None;
+        };
+        let channel = self.discord.cache.channel(channel_id)?;
+        Some((channel.guild_id?, channel_id))
     }
 
     pub fn selected_forum_channel_with_load_more(
@@ -913,14 +913,12 @@ impl DashboardState {
     }
 
     pub fn message_pane_title(&self) -> String {
-        let Some(channel_id) = self.selected_channel_id() else {
-            return "no channel".to_owned();
-        };
-        let label = self.channel_label(channel_id);
-        if self.messages.pinned_message_view_channel_id == Some(channel_id) {
-            format!("{label} pinned messages")
-        } else {
-            label
+        match self.message_pane_source() {
+            Some(MessagePaneSource::PinnedMessages { channel_id }) => {
+                format!("{} pinned messages", self.channel_label(channel_id))
+            }
+            Some(source) => self.channel_label(source.channel_id()),
+            None => "no channel".to_owned(),
         }
     }
 

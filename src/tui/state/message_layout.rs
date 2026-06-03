@@ -20,7 +20,7 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) -> usize {
-        if self.selected_channel_is_forum() {
+        if self.message_pane_uses_forum_posts() {
             return self
                 .selected_forum_post_items()
                 .into_iter()
@@ -47,7 +47,7 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) -> usize {
-        if self.selected_channel_is_forum() {
+        if self.message_pane_uses_forum_posts() {
             return self
                 .selected_forum_post_items()
                 .into_iter()

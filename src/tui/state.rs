@@ -53,6 +53,7 @@ pub use composer::{
 };
 pub use dashboard::DashboardState;
 pub use member_grouping::{MemberEntry, MemberGroup};
+pub use message_viewport::MessagePaneSource;
 pub use model::{
     AttachmentViewerItem, ChannelActionItem, ChannelPaneEntry, ChannelSearchSuggestionItem,
     ChannelSwitcherItem, ChannelThreadItem, EmojiReactionItem, FORUM_POST_CARD_HEIGHT, FocusPane,
@@ -341,8 +342,7 @@ impl DashboardState {
         self.restore_channel_cursor(channel_cursor_id);
         self.clamp_selection_indices();
         self.clear_missing_new_messages_marker();
-        let in_message_view =
-            !self.selected_channel_is_forum() && !self.is_pinned_message_view_active();
+        let in_message_view = self.message_pane_supports_auto_follow();
         let should_follow = was_following_cursor && in_message_view;
         let should_scroll = should_follow || (was_at_latest && in_message_view);
         if should_follow {

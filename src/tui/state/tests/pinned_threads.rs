@@ -1,5 +1,6 @@
 use super::*;
 use crate::discord::AppCommand;
+use crate::tui::state::MessagePaneSource;
 
 #[test]
 fn channel_show_pinned_messages_action_enters_pinned_message_view() {
@@ -12,6 +13,12 @@ fn channel_show_pinned_messages_action_enters_pinned_message_view() {
 
     assert_eq!(command, None);
     assert!(state.is_pinned_message_view());
+    assert_eq!(
+        state.message_pane_source(),
+        Some(MessagePaneSource::PinnedMessages {
+            channel_id: Id::new(2)
+        })
+    );
     assert!(!state.is_channel_leader_action_active());
     assert_eq!(state.selected_message(), 0);
     assert_eq!(state.message_scroll(), 0);
@@ -95,6 +102,21 @@ fn pinned_message_view_does_not_request_older_history() {
         Some(Id::new(11))
     );
     assert_eq!(state.next_older_history_command(), None);
+}
+
+#[test]
+fn forum_channel_cannot_enter_pinned_message_view() {
+    let mut state = state_with_forum_channel_posts();
+
+    state.enter_pinned_message_view(Id::new(20));
+
+    assert!(!state.is_pinned_message_view());
+    assert_eq!(
+        state.message_pane_source(),
+        Some(MessagePaneSource::ForumPosts {
+            channel_id: Id::new(20)
+        })
+    );
 }
 
 #[test]
@@ -185,7 +207,9 @@ fn pinned_messages_loaded_does_not_update_status() {
         messages: vec![message_info(channel_id, 1)],
     });
 
-    assert_eq!(state.pinned_messages().len(), 1);
+    state.enter_pinned_message_view(channel_id);
+
+    assert_eq!(state.messages().len(), 1);
 }
 
 #[test]

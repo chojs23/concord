@@ -93,8 +93,7 @@ impl DashboardState {
             self.repair_navigation_after_discord_restore(channel_cursor_id);
         }
 
-        let in_message_view =
-            !self.selected_channel_is_forum() && !self.is_pinned_message_view_active();
+        let in_message_view = self.message_pane_supports_auto_follow();
         let should_follow = was_following_cursor && in_message_view;
         let should_scroll = should_follow || (was_at_latest && in_message_view);
         if areas.message || areas.navigation {

@@ -47,7 +47,7 @@ pub use commands::{
 };
 #[cfg(test)]
 pub(crate) use events::test_builders;
-pub use events::{AppEvent, SequencedAppEvent};
+pub use events::{AppEvent, MessageHistoryLoadTarget, SequencedAppEvent};
 pub use guild::{CustomEmojiInfo, GuildFolder};
 pub use ids::{Id, marker};
 pub use member::{MemberInfo, RoleInfo};

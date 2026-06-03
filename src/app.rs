@@ -18,8 +18,8 @@ use crate::{
     DiscordClient, Result,
     discord::{
         AppCommand, AppEvent, AttachmentUpdate, ChannelNotificationOverrideInfo,
-        GuildNotificationSettingsInfo, MessageInfo, MuteDuration, ReactionUsersInfo,
-        VoiceConnectionStatus, validate_token_header,
+        GuildNotificationSettingsInfo, MessageHistoryLoadTarget, MessageInfo, MuteDuration,
+        ReactionUsersInfo, VoiceConnectionStatus, validate_token_header,
     },
     error::AppError,
     logging, token_store, tui,
@@ -150,6 +150,58 @@ fn start_command_loop(
                                 client
                                     .publish_event(AppEvent::MessageHistoryLoadFailed {
                                         channel_id,
+                                        target: before
+                                            .map(|before| MessageHistoryLoadTarget::Older {
+                                                before,
+                                            })
+                                            .unwrap_or(MessageHistoryLoadTarget::Latest),
+                                        message,
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
+                    AppCommand::LoadMessageHistoryAfter { channel_id, after } => {
+                        if !client.begin_newer_message_history_request(channel_id, after) {
+                            return;
+                        }
+                        let endpoint = format_message_history_anchor_endpoint(
+                            channel_id,
+                            "after",
+                            after,
+                            MESSAGE_HISTORY_LIMIT,
+                        );
+                        match client
+                            .load_message_history_after(channel_id, after, MESSAGE_HISTORY_LIMIT)
+                            .await
+                        {
+                            Ok(messages) => {
+                                let has_more = messages.len() >= usize::from(MESSAGE_HISTORY_LIMIT);
+                                client
+                                    .publish_event(AppEvent::MessageHistoryAfterLoaded {
+                                        channel_id,
+                                        after,
+                                        messages,
+                                        has_more,
+                                    })
+                                    .await;
+                            }
+                            Err(error) => {
+                                let message = format!("load message history failed: {error}");
+                                let detail = error.log_detail();
+                                logging::error(
+                                    "history",
+                                    format!(
+                                        "op=load_message_history_after channel_id={} after={} limit={} endpoint=\"{endpoint}\" {message}; detail={detail}",
+                                        channel_id.get(),
+                                        after.get(),
+                                        MESSAGE_HISTORY_LIMIT,
+                                    ),
+                                );
+                                client
+                                    .publish_event(AppEvent::MessageHistoryLoadFailed {
+                                        channel_id,
+                                        target: MessageHistoryLoadTarget::Newer { after },
                                         message,
                                     })
                                     .await;
@@ -198,6 +250,7 @@ fn start_command_loop(
                                 client
                                     .publish_event(AppEvent::MessageHistoryLoadFailed {
                                         channel_id,
+                                        target: MessageHistoryLoadTarget::Around { message_id },
                                         message,
                                     })
                                     .await;

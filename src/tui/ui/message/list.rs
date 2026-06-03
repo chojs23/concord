@@ -50,7 +50,7 @@ pub(in crate::tui::ui) fn render_messages(
 
     render_unread_banner(frame, message_areas.unread_banner, state);
 
-    if state.selected_channel_is_forum() {
+    if state.message_pane_uses_forum_posts() {
         let posts = state.visible_forum_post_items();
         let selected = state.focused_forum_post_selection();
         let is_loading = state.selected_forum_posts_loading();

@@ -432,6 +432,16 @@ impl DiscordRest {
             .await
     }
 
+    pub async fn load_message_history_after(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        limit: u16,
+    ) -> Result<Vec<MessageInfo>> {
+        self.load_message_history_with_anchor(channel_id, "after", message_id, limit)
+            .await
+    }
+
     pub async fn search_messages(&self, query: MessageSearchQuery) -> Result<MessageSearchPage> {
         if query.is_empty() {
             return Ok(MessageSearchPage {

@@ -13,7 +13,7 @@ pub use super::channel::{ChannelRecipientState, ChannelState, ChannelVisibilityS
 pub use super::guild::GuildState;
 pub use super::member::{GuildMemberState, RoleState, TypingUserState};
 use super::member::{role_map, role_state};
-use super::message::{MessageAuthorRoleIds, MessageUpdateFields};
+use super::message::{MessageAuthorRoleIds, MessageHistoryGap, MessageUpdateFields};
 pub use super::message::{MessageCapabilities, MessageState};
 pub use super::notification::ChannelUnreadState;
 use super::notification::{GuildNotificationSettingsState, MessageNotificationKind};
@@ -80,6 +80,7 @@ pub struct ThreadCreatorState {
 #[derive(Clone, Debug)]
 pub(in crate::discord) struct MessageCache {
     pub(in crate::discord) messages: BTreeMap<Id<ChannelMarker>, VecDeque<MessageState>>,
+    pub(in crate::discord) message_gaps: BTreeMap<Id<ChannelMarker>, Vec<MessageHistoryGap>>,
     pub(in crate::discord) cold_message_channels: BTreeSet<Id<ChannelMarker>>,
     pub(in crate::discord) warm_message_channels: VecDeque<Id<ChannelMarker>>,
     pub(in crate::discord) pinned_messages: BTreeMap<Id<ChannelMarker>, VecDeque<MessageState>>,
@@ -92,6 +93,7 @@ impl MessageCache {
     fn new(max_messages_per_channel: usize) -> Self {
         Self {
             messages: BTreeMap::new(),
+            message_gaps: BTreeMap::new(),
             cold_message_channels: BTreeSet::new(),
             warm_message_channels: VecDeque::new(),
             pinned_messages: BTreeMap::new(),
@@ -543,6 +545,7 @@ impl DiscordState {
             AppEvent::MessageCreate { .. } => SnapshotAreas::navigation_and_message(),
 
             AppEvent::MessageHistoryLoaded { .. }
+            | AppEvent::MessageHistoryAfterLoaded { .. }
             | AppEvent::MessageHistoryAroundLoaded { .. }
             | AppEvent::MessageSearchLoaded { .. }
             | AppEvent::ThreadPreviewLoaded { .. }
@@ -935,12 +938,20 @@ impl DiscordState {
                     self.touch_warm_message_channel(*channel_id);
                 }
             }
+            AppEvent::MessageHistoryAfterLoaded {
+                channel_id,
+                after,
+                messages,
+                has_more,
+            } => {
+                self.merge_message_history_after(*channel_id, *after, messages, *has_more);
+            }
             AppEvent::MessageHistoryAroundLoaded {
                 channel_id,
                 message_id,
                 messages,
             } => {
-                self.merge_message_history(*channel_id, Some(*message_id), messages);
+                self.merge_message_history_around(*channel_id, *message_id, messages);
             }
             AppEvent::MessageSearchLoaded { page } => {
                 let mut by_channel: std::collections::BTreeMap<_, Vec<_>> =

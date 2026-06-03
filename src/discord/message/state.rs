@@ -168,6 +168,19 @@ impl MessageState {
 pub(in crate::discord) type MessageAuthorRoleIds =
     BTreeMap<(Id<ChannelMarker>, Id<MessageMarker>), Vec<Id<RoleMarker>>>;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::discord) struct MessageHistoryGap {
+    pub(in crate::discord) lower_id: Id<MessageMarker>,
+    pub(in crate::discord) upper_id: Id<MessageMarker>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MessageHistoryTrimPolicy {
+    LatestWindow,
+    OlderWindow,
+    NewerGap,
+}
+
 pub(in crate::discord) struct MessageUpdateFields {
     pub(in crate::discord) poll: Option<PollInfo>,
     pub(in crate::discord) content: Option<String>,
@@ -243,6 +256,19 @@ impl DiscordState {
             .get(&channel_id)
             .map(|messages| messages.iter().collect())
             .unwrap_or_default()
+    }
+
+    pub fn message_history_gap_after(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        lower_id: Id<MessageMarker>,
+    ) -> Option<Id<MessageMarker>> {
+        self.message_cache
+            .message_gaps
+            .get(&channel_id)?
+            .iter()
+            .find(|gap| gap.lower_id == lower_id)
+            .map(|gap| gap.upper_id)
     }
 
     pub(in crate::discord) fn redact_channel_message_bodies(
@@ -667,6 +693,20 @@ impl DiscordState {
         before: Option<Id<MessageMarker>>,
         history: &[MessageInfo],
     ) {
+        let trim_policy = if before.is_none() {
+            MessageHistoryTrimPolicy::LatestWindow
+        } else {
+            MessageHistoryTrimPolicy::OlderWindow
+        };
+        self.merge_message_history_with_trim(channel_id, trim_policy, history);
+    }
+
+    fn merge_message_history_with_trim(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        trim_policy: MessageHistoryTrimPolicy,
+        history: &[MessageInfo],
+    ) {
         let channel_guild_id = self.channel_guild_id(channel_id);
         let older_history_message_limit = self.older_history_message_limit();
         let incoming_messages = history
@@ -701,16 +741,26 @@ impl DiscordState {
 
         *messages = by_id.into_values().collect();
         let mut evicted_message_ids = Vec::new();
-        if before.is_none() {
-            while messages.len() > self.message_cache.max_messages_per_channel {
-                if let Some(evicted) = messages.pop_front() {
-                    evicted_message_ids.push(evicted.id);
+        match trim_policy {
+            MessageHistoryTrimPolicy::LatestWindow => {
+                while messages.len() > self.message_cache.max_messages_per_channel {
+                    if let Some(evicted) = messages.pop_front() {
+                        evicted_message_ids.push(evicted.id);
+                    }
                 }
             }
-        } else {
-            while messages.len() > older_history_message_limit {
-                if let Some(evicted) = messages.pop_back() {
-                    evicted_message_ids.push(evicted.id);
+            MessageHistoryTrimPolicy::OlderWindow => {
+                while messages.len() > older_history_message_limit {
+                    if let Some(evicted) = messages.pop_back() {
+                        evicted_message_ids.push(evicted.id);
+                    }
+                }
+            }
+            MessageHistoryTrimPolicy::NewerGap => {
+                while messages.len() > older_history_message_limit.max(2) {
+                    if let Some(evicted) = messages.pop_front() {
+                        evicted_message_ids.push(evicted.id);
+                    }
                 }
             }
         }
@@ -721,12 +771,199 @@ impl DiscordState {
         if let Some(last_message_id) = last_message_id {
             self.record_channel_message_id(channel_id, last_message_id);
         }
+        self.prune_message_history_gaps(channel_id);
+    }
+
+    pub(in crate::discord) fn merge_message_history_around(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        history: &[MessageInfo],
+    ) {
+        let previous_ids = self.cached_message_ids(channel_id);
+        let incoming_ids = history
+            .iter()
+            .filter(|message| message.channel_id == channel_id)
+            .map(|message| message.message_id)
+            .collect::<Vec<_>>();
+
+        self.merge_message_history(channel_id, Some(message_id), history);
+        self.record_gap_after_loaded_window(channel_id, &previous_ids, &incoming_ids);
+    }
+
+    pub(in crate::discord) fn merge_message_history_after(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        after: Id<MessageMarker>,
+        history: &[MessageInfo],
+        has_more: bool,
+    ) {
+        let upper_id = self.message_history_gap_after(channel_id, after);
+        let incoming_ids = history
+            .iter()
+            .filter(|message| message.channel_id == channel_id)
+            .map(|message| message.message_id)
+            .collect::<Vec<_>>();
+
+        self.merge_message_history_with_trim(
+            channel_id,
+            MessageHistoryTrimPolicy::NewerGap,
+            history,
+        );
+        if let Some(upper_id) = upper_id {
+            self.update_gap_after_newer_history(
+                channel_id,
+                after,
+                upper_id,
+                &incoming_ids,
+                has_more,
+            );
+        }
     }
 
     fn older_history_message_limit(&self) -> usize {
         self.message_cache
             .max_messages_per_channel
             .saturating_mul(OLDER_HISTORY_EXTRA_WINDOW_MULTIPLIER)
+    }
+
+    fn cached_message_ids(&self, channel_id: Id<ChannelMarker>) -> Vec<Id<MessageMarker>> {
+        self.message_cache
+            .messages
+            .get(&channel_id)
+            .map(|messages| messages.iter().map(|message| message.id).collect())
+            .unwrap_or_default()
+    }
+
+    fn record_gap_after_loaded_window(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        previous_ids: &[Id<MessageMarker>],
+        incoming_ids: &[Id<MessageMarker>],
+    ) {
+        let Some(lower_id) = incoming_ids.iter().max().copied() else {
+            return;
+        };
+        let Some(upper_id) = previous_ids
+            .iter()
+            .copied()
+            .filter(|message_id| *message_id > lower_id)
+            .min()
+        else {
+            return;
+        };
+        self.upsert_message_history_gap(channel_id, lower_id, upper_id);
+    }
+
+    fn update_gap_after_newer_history(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        after: Id<MessageMarker>,
+        upper_id: Id<MessageMarker>,
+        incoming_ids: &[Id<MessageMarker>],
+        has_more: bool,
+    ) {
+        self.remove_message_history_gap(channel_id, after, upper_id);
+        let reached_upper = incoming_ids
+            .iter()
+            .any(|message_id| *message_id >= upper_id);
+        if incoming_ids.is_empty() || reached_upper || !has_more {
+            self.prune_message_history_gaps(channel_id);
+            return;
+        }
+        if let Some(new_lower_id) = incoming_ids
+            .iter()
+            .copied()
+            .filter(|message_id| *message_id > after && *message_id < upper_id)
+            .max()
+        {
+            self.upsert_message_history_gap(channel_id, new_lower_id, upper_id);
+        }
+        self.prune_message_history_gaps(channel_id);
+    }
+
+    fn upsert_message_history_gap(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        lower_id: Id<MessageMarker>,
+        upper_id: Id<MessageMarker>,
+    ) {
+        if lower_id >= upper_id
+            || !self.cached_message_id_exists(channel_id, lower_id)
+            || !self.cached_message_id_exists(channel_id, upper_id)
+        {
+            return;
+        }
+        let gaps = self
+            .message_cache
+            .message_gaps
+            .entry(channel_id)
+            .or_default();
+        gaps.retain(|gap| gap.lower_id != lower_id && gap.upper_id != upper_id);
+        gaps.push(MessageHistoryGap { lower_id, upper_id });
+        gaps.sort_by_key(|gap| gap.lower_id);
+    }
+
+    fn remove_message_history_gap(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        lower_id: Id<MessageMarker>,
+        upper_id: Id<MessageMarker>,
+    ) {
+        if let Some(gaps) = self.message_cache.message_gaps.get_mut(&channel_id) {
+            gaps.retain(|gap| {
+                gap.upper_id != upper_id || gap.lower_id < lower_id || gap.lower_id >= upper_id
+            });
+        }
+    }
+
+    fn prune_message_history_gaps(&mut self, channel_id: Id<ChannelMarker>) {
+        let cached_ids = self
+            .message_cache
+            .messages
+            .get(&channel_id)
+            .map(|messages| {
+                messages
+                    .iter()
+                    .map(|message| message.id)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let mut remove_channel_gaps = false;
+        if let Some(gaps) = self.message_cache.message_gaps.get_mut(&channel_id) {
+            for gap in gaps.iter_mut() {
+                if let Some(new_lower_id) = cached_ids
+                    .iter()
+                    .copied()
+                    .filter(|message_id| *message_id > gap.lower_id && *message_id < gap.upper_id)
+                    .max()
+                {
+                    gap.lower_id = new_lower_id;
+                }
+            }
+            gaps.retain(|gap| {
+                gap.lower_id < gap.upper_id
+                    && cached_ids.contains(&gap.lower_id)
+                    && cached_ids.contains(&gap.upper_id)
+            });
+            gaps.sort_by_key(|gap| (gap.lower_id, gap.upper_id));
+            gaps.dedup();
+            remove_channel_gaps = gaps.is_empty();
+        }
+        if remove_channel_gaps {
+            self.message_cache.message_gaps.remove(&channel_id);
+        }
+    }
+
+    fn cached_message_id_exists(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    ) -> bool {
+        self.message_cache
+            .messages
+            .get(&channel_id)
+            .is_some_and(|messages| messages.iter().any(|message| message.id == message_id))
     }
 
     pub(in crate::discord) fn replace_pinned_messages(

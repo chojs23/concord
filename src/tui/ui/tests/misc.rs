@@ -68,7 +68,9 @@ fn later_history_does_not_clear_loaded_pin_state() {
         messages: vec![message_info(10, "mod", "important announcement", false)],
     });
 
-    assert_eq!(state.pinned_messages().len(), 1);
+    state.enter_pinned_message_view(Id::new(2));
+    assert_eq!(state.messages().len(), 1);
+    assert!(state.return_from_pinned_message_view());
     assert!(
         state
             .messages()
