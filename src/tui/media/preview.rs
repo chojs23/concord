@@ -33,6 +33,7 @@ pub(in crate::tui) struct ImagePreviewCache {
     pub(super) entries: HashMap<ImagePreviewKey, ImagePreviewEntry>,
     pub(super) tick: u64,
     pub(super) decode_generation: u64,
+    pub(super) protocol_generation: u64,
 }
 
 pub(in crate::tui) struct ImagePreviewDecodeJob {
@@ -63,6 +64,7 @@ pub(super) enum ImagePreviewEntry {
         filename: String,
         image: DynamicImage,
         protocol_render_info: ImagePreviewRenderInfo,
+        protocol_generation: u64,
         protocol: Box<StatefulProtocol>,
         last_used: u64,
     },
@@ -80,11 +82,16 @@ impl ImagePreviewCache {
             entries: HashMap::new(),
             tick: 0,
             decode_generation: 0,
+            protocol_generation: 0,
         }
     }
 
     pub(in crate::tui) fn font_size(&self) -> Option<(u16, u16)> {
         self.picker.as_ref().map(Picker::font_size)
+    }
+
+    pub(in crate::tui) fn refresh_protocols(&mut self) {
+        self.protocol_generation = self.protocol_generation.saturating_add(1);
     }
 
     pub(in crate::tui) fn render_state(
@@ -115,16 +122,19 @@ impl ImagePreviewCache {
                 ImagePreviewEntry::Ready {
                     image,
                     protocol,
+                    protocol_generation,
                     protocol_render_info,
                     ..
                 } => {
-                    if *protocol_render_info != render_info
+                    if (*protocol_render_info != render_info
+                        || *protocol_generation != self.protocol_generation)
                         && let Some(picker) = picker.as_ref()
                         && let Some(updated_protocol) =
                             clipped_preview_stateful_protocol(picker, image, render_info)
                     {
                         *protocol = updated_protocol;
                         *protocol_render_info = render_info;
+                        *protocol_generation = self.protocol_generation;
                     }
                     ImagePreviewState::Ready {
                         protocol: protocol.as_mut(),
@@ -345,6 +355,7 @@ impl ImagePreviewCache {
                         filename,
                         image,
                         protocol_render_info: render_info,
+                        protocol_generation: self.protocol_generation,
                         protocol,
                         last_used,
                     },

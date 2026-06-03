@@ -71,6 +71,7 @@ mod tests {
             effects::{self, effect_forces_redraw},
             redraw::{
                 should_redraw_after_visible_signature_change,
+                should_refresh_image_protocols_after_visible_signature_change,
                 should_suppress_image_redraw_for_signature_change, visible_dashboard_signature,
             },
         },
@@ -219,6 +220,33 @@ mod tests {
         assert!(should_redraw_after_visible_signature_change(
             &before, &after, false, false,
         ));
+    }
+
+    #[test]
+    fn overlay_changes_refresh_image_protocols_when_images_are_visible() {
+        let mut state = state_with_messages(1);
+        push_image_message(&mut state, 2);
+        state.focus_pane(FocusPane::Messages);
+        let before = visible_dashboard_signature(&state);
+
+        state.open_selected_message_actions();
+        let open = visible_dashboard_signature(&state);
+
+        assert_ne!(before, open);
+        assert!(
+            should_refresh_image_protocols_after_visible_signature_change(&before, &open, true)
+        );
+        assert!(
+            !should_refresh_image_protocols_after_visible_signature_change(&before, &open, false)
+        );
+
+        state.close_message_action_menu();
+        let closed = visible_dashboard_signature(&state);
+
+        assert_ne!(open, closed);
+        assert!(
+            should_refresh_image_protocols_after_visible_signature_change(&open, &closed, true)
+        );
     }
 
     #[test]
