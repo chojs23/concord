@@ -957,6 +957,7 @@ fn image_preview_request_is_created_for_draw_target() {
         entries: HashMap::new(),
         tick: 0,
         decode_generation: 0,
+        protocol_generation: 0,
     };
     let target = image_preview_target(1);
 
@@ -976,12 +977,28 @@ fn image_preview_request_is_created_for_draw_target() {
 }
 
 #[test]
+fn image_preview_refresh_protocols_advances_generation() {
+    let mut cache = ImagePreviewCache {
+        picker: None,
+        entries: HashMap::new(),
+        tick: 0,
+        decode_generation: 0,
+        protocol_generation: 0,
+    };
+
+    cache.refresh_protocols();
+
+    assert_eq!(cache.protocol_generation, 1);
+}
+
+#[test]
 fn image_preview_render_state_preserves_target_order() {
     let mut cache = ImagePreviewCache {
         picker: None,
         entries: HashMap::new(),
         tick: 0,
         decode_generation: 0,
+        protocol_generation: 0,
     };
     let first = image_preview_target(1);
     let second = ImagePreviewTarget {
@@ -1028,6 +1045,7 @@ fn image_preview_cache_keeps_duplicate_urls_as_separate_preview_instances() {
         entries: HashMap::new(),
         tick: 0,
         decode_generation: 0,
+        protocol_generation: 0,
     };
     let first = image_preview_target(1);
     let second = ImagePreviewTarget {
@@ -1061,6 +1079,7 @@ fn image_preview_cache_deduplicates_url_already_loading_from_previous_frame() {
         entries: HashMap::new(),
         tick: 0,
         decode_generation: 0,
+        protocol_generation: 0,
     };
     let first = image_preview_target(1);
     cache.next_requests(std::slice::from_ref(&first));
@@ -1083,6 +1102,7 @@ fn image_preview_cache_keeps_viewer_and_inline_entries_separate() {
         entries: HashMap::new(),
         tick: 0,
         decode_generation: 0,
+        protocol_generation: 0,
     };
     let inline = image_preview_target(1);
     let viewer = ImagePreviewTarget {
@@ -1110,6 +1130,7 @@ fn image_preview_cache_evicts_least_recently_used_entries() {
         entries: HashMap::new(),
         tick: 0,
         decode_generation: 0,
+        protocol_generation: 0,
     };
     let existing_targets = (1..=MAX_IMAGE_PREVIEW_CACHE_ENTRIES as u64)
         .map(image_preview_target)
@@ -1133,6 +1154,7 @@ fn image_preview_cache_limits_visible_requests() {
         entries: HashMap::new(),
         tick: 0,
         decode_generation: 0,
+        protocol_generation: 0,
     };
     let targets = (1..=MAX_IMAGE_PREVIEW_CACHE_ENTRIES as u64 + 2)
         .map(image_preview_target)
@@ -1157,6 +1179,7 @@ fn image_preview_store_loaded_preserves_existing_non_loading_entries() {
         entries: HashMap::new(),
         tick: 0,
         decode_generation: 0,
+        protocol_generation: 0,
     };
     let existing = image_preview_target(1).key();
     let loading = ImagePreviewTarget {
@@ -1201,6 +1224,7 @@ fn image_preview_loaded_bytes_start_decode_jobs_for_loading_entries() {
         entries: HashMap::new(),
         tick: 0,
         decode_generation: 0,
+        protocol_generation: 0,
     };
     let target = image_preview_target(1);
     let key = target.key();
@@ -1234,6 +1258,7 @@ fn image_preview_store_decoded_records_decode_failure() {
         entries: HashMap::new(),
         tick: 0,
         decode_generation: 0,
+        protocol_generation: 0,
     };
     let target = image_preview_target(1);
     let key = target.key();
@@ -1268,6 +1293,7 @@ fn image_preview_store_decoded_ignores_stale_results() {
         entries: HashMap::new(),
         tick: 0,
         decode_generation: 0,
+        protocol_generation: 0,
     };
     let key = image_preview_target(1).key();
     cache.entries.insert(
@@ -1299,6 +1325,7 @@ fn image_preview_store_decoded_ignores_replaced_decoding_generation() {
         entries: HashMap::new(),
         tick: 0,
         decode_generation: 0,
+        protocol_generation: 0,
     };
     let target = image_preview_target(1);
     let key = target.key();
@@ -1341,6 +1368,7 @@ fn image_preview_store_failed_preserves_existing_non_loading_entries() {
         entries: HashMap::new(),
         tick: 0,
         decode_generation: 0,
+        protocol_generation: 0,
     };
     let existing = image_preview_target(1).key();
     let loading = ImagePreviewTarget {

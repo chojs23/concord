@@ -34,7 +34,7 @@ pub(super) mod redraw;
 use effects as effect_helpers;
 use redraw::{
     image_surfaces_visible, should_redraw_after_visible_signature_change,
-    visible_dashboard_signature,
+    should_refresh_image_protocols_after_visible_signature_change, visible_dashboard_signature,
 };
 
 type ClipboardPasteResult = std::result::Result<
@@ -199,6 +199,8 @@ pub(super) async fn run_dashboard(
             maybe_event = terminal_events.next() => {
                 match maybe_event {
                     Some(Ok(event)) => {
+                        let before_signature = visible_dashboard_signature(&state);
+                        let image_previews_visible_before_event = !image_targets.is_empty();
                         let outcome = events::handle_terminal_event(
                             &mut state,
                             event,
@@ -242,6 +244,15 @@ pub(super) async fn run_dashboard(
                             && commands.send(command).await.is_err()
                         {
                             command_helpers::record_command_channel_closed(&mut state);
+                        }
+                        let after_signature = visible_dashboard_signature(&state);
+                        if should_refresh_image_protocols_after_visible_signature_change(
+                            &before_signature,
+                            &after_signature,
+                            image_previews_visible_before_event,
+                        ) {
+                            image_previews.refresh_protocols();
+                            dirty = true;
                         }
                         if outcome.dirty {
                             dirty = true;

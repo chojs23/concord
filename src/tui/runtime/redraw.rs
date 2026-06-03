@@ -629,6 +629,14 @@ pub(in crate::tui) fn should_redraw_after_visible_signature_change(
             ))
 }
 
+pub(in crate::tui) fn should_refresh_image_protocols_after_visible_signature_change(
+    before: &VisibleDashboardSignature,
+    after: &VisibleDashboardSignature,
+    image_previews_visible: bool,
+) -> bool {
+    image_previews_visible && before.overlay != after.overlay
+}
+
 pub(super) fn image_surfaces_visible(
     state: &DashboardState,
     image_targets_visible: bool,
