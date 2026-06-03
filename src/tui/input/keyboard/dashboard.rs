@@ -69,7 +69,7 @@ pub(super) fn handle_dashboard_action(
         }
         DashboardAction::HalfPageUp => {
             state.half_page_up();
-            state.next_older_history_command()
+            state.next_older_history_command_for_half_page_up()
         }
         DashboardAction::JumpTop => {
             state.jump_top();

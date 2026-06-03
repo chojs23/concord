@@ -23,15 +23,19 @@ fn message_keys_use_scroll_controls() {
     let mut state = state_with_messages(10);
     state.focus_pane(FocusPane::Messages);
     state.set_message_view_height(9);
+    state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
     handle_key(&mut state, ctrl_key('u'));
-    assert_eq!(state.selected_message(), 5);
+    assert_eq!(state.selected_message(), 0);
+    assert_eq!(state.message_scroll(), 0);
     assert!(!state.message_auto_follow());
 
     handle_key(&mut state, ctrl_key('d'));
     assert_eq!(state.selected_message(), 9);
-    // Half-page-down landed the cursor on the latest message, so
-    // auto-follow re-engages.
+    assert_eq!(state.message_scroll(), 2);
+    assert!(!state.message_auto_follow());
+
+    handle_key(&mut state, ctrl_key('d'));
     assert!(state.message_auto_follow());
 }
 

@@ -10,8 +10,9 @@ use crate::tui::format::{
 };
 
 use super::scroll::{
-    SCROLL_OFF, clamp_list_scroll, move_index_down, move_index_up, normalize_message_line_scroll,
-    pane_content_height, scroll_message_row_down, scroll_message_row_up,
+    SCROLL_OFF, clamp_list_scroll, move_index_down, move_index_down_by, move_index_up,
+    normalize_message_line_scroll, pane_content_height, scroll_message_row_down,
+    scroll_message_row_up,
 };
 use super::*;
 
@@ -500,6 +501,26 @@ impl DashboardState {
         }
     }
 
+    pub(super) fn half_page_message_down(&mut self, distance: usize) {
+        let distance = distance.max(1);
+        if self.message_pane_uses_forum_posts() || self.messages.message_content_width == usize::MAX
+        {
+            let len = self.message_pane_item_count();
+            move_index_down_by(&mut self.messages.selected_message, len, distance);
+            self.messages.message_keep_selection_visible = true;
+            self.clamp_message_viewport();
+            self.refresh_message_auto_follow();
+            return;
+        }
+
+        self.scroll_message_viewport_down_by_rows(distance);
+        if let Some(selected) = self.last_visible_message_index() {
+            self.messages.selected_message = selected;
+        }
+        self.messages.message_keep_selection_visible = false;
+        self.refresh_message_auto_follow();
+    }
+
     pub fn next_newer_history_command_for_down_by(&self, distance: usize) -> Option<AppCommand> {
         if !self.message_pane_can_load_message_history()
             || self.navigation.focus != FocusPane::Messages
@@ -519,7 +540,15 @@ impl DashboardState {
     }
 
     pub fn next_newer_history_command_for_half_page_down(&self) -> Option<AppCommand> {
-        self.next_newer_history_command_for_down_by((self.message_content_height() / 2).max(1))
+        let distance = (self.message_content_height() / 2).max(1);
+        if self.message_pane_uses_forum_posts() || self.messages.message_content_width == usize::MAX
+        {
+            return self.next_newer_history_command_for_down_by(distance);
+        }
+
+        self.newer_history_command_in_viewport_rows(
+            self.message_content_height().saturating_add(distance),
+        )
     }
 
     fn newer_history_command_in_message_range(
@@ -551,6 +580,45 @@ impl DashboardState {
         None
     }
 
+    fn newer_history_command_in_viewport_rows(&self, rows: usize) -> Option<AppCommand> {
+        if !self.message_pane_can_load_message_history()
+            || self.navigation.focus != FocusPane::Messages
+        {
+            return None;
+        }
+        let messages = self.messages();
+        if messages.is_empty() {
+            return None;
+        }
+
+        let mut top = self.messages.message_scroll;
+        let mut offset = self.messages.message_line_scroll;
+        for _ in 0..rows.max(1) {
+            let _ = messages.get(top)?;
+            let height = self
+                .message_rendered_height_at(
+                    top,
+                    self.messages.message_content_width,
+                    self.messages.message_preview_width,
+                    self.messages.message_max_preview_height,
+                )
+                .max(1);
+            if offset + 1 < height {
+                offset += 1;
+                continue;
+            }
+            if let Some(command) = self.newer_history_command_in_message_range(top, top) {
+                return Some(command);
+            }
+            if top + 1 >= messages.len() {
+                return None;
+            }
+            top += 1;
+            offset = 0;
+        }
+        None
+    }
+
     pub fn scroll_message_viewport_up(&mut self) {
         if self.navigation.focus != FocusPane::Messages
             || self.messages.message_content_width == usize::MAX
@@ -570,6 +638,24 @@ impl DashboardState {
             self.messages.message_preview_width,
             self.messages.message_max_preview_height,
         );
+    }
+
+    pub(super) fn half_page_message_up(&mut self, distance: usize) {
+        let distance = distance.max(1);
+        if self.message_pane_uses_forum_posts() || self.messages.message_content_width == usize::MAX
+        {
+            self.messages.selected_message =
+                self.messages.selected_message.saturating_sub(distance);
+            self.messages.message_keep_selection_visible = true;
+            self.clamp_message_viewport();
+            self.refresh_message_auto_follow();
+            return;
+        }
+
+        self.scroll_message_viewport_up_by_rows(distance);
+        self.messages.selected_message = self.messages.message_scroll;
+        self.messages.message_keep_selection_visible = false;
+        self.refresh_message_auto_follow();
     }
 
     #[cfg(test)]
@@ -944,6 +1030,23 @@ impl DashboardState {
         );
     }
 
+    fn scroll_message_viewport_down_by_rows(&mut self, rows: usize) {
+        for _ in 0..rows {
+            let before = (
+                self.messages.message_scroll,
+                self.messages.message_line_scroll,
+            );
+            self.scroll_message_viewport_down();
+            let after = (
+                self.messages.message_scroll,
+                self.messages.message_line_scroll,
+            );
+            if before == after {
+                break;
+            }
+        }
+    }
+
     fn scroll_message_viewport_up_one_row(
         &mut self,
         content_width: usize,
@@ -967,6 +1070,56 @@ impl DashboardState {
             &mut self.messages.message_line_scroll,
             previous_message_height,
         );
+    }
+
+    fn scroll_message_viewport_up_by_rows(&mut self, rows: usize) {
+        for _ in 0..rows {
+            let before = (
+                self.messages.message_scroll,
+                self.messages.message_line_scroll,
+            );
+            self.scroll_message_viewport_up();
+            let after = (
+                self.messages.message_scroll,
+                self.messages.message_line_scroll,
+            );
+            if before == after {
+                break;
+            }
+        }
+    }
+
+    fn last_visible_message_index(&self) -> Option<usize> {
+        let messages = self.messages();
+        let mut index = self.messages.message_scroll;
+        let mut remaining = self.message_content_height();
+        let mut last = messages.get(index).map(|_| index)?;
+
+        while messages.get(index).is_some() {
+            let height = self
+                .message_rendered_height_at(
+                    index,
+                    self.messages.message_content_width,
+                    self.messages.message_preview_width,
+                    self.messages.message_max_preview_height,
+                )
+                .max(1);
+            let visible_rows = if index == self.messages.message_scroll {
+                height.saturating_sub(self.messages.message_line_scroll)
+            } else {
+                height
+            }
+            .max(1);
+
+            last = index;
+            if visible_rows >= remaining {
+                break;
+            }
+            remaining = remaining.saturating_sub(visible_rows);
+            index = index.saturating_add(1);
+        }
+
+        Some(last)
     }
 
     fn normalize_message_line_scroll(
@@ -1402,6 +1555,18 @@ impl DashboardState {
         })
     }
 
+    pub fn next_older_history_command_for_half_page_up(&mut self) -> Option<AppCommand> {
+        if !self.message_pane_can_load_message_history() {
+            return None;
+        }
+        let channel_id = self.selected_message_history_channel_id()?;
+        let before = self.older_history_viewport_cursor()?;
+        Some(AppCommand::LoadMessageHistory {
+            channel_id,
+            before: Some(before),
+        })
+    }
+
     pub(super) fn select_loaded_referenced_message(
         &mut self,
         channel_id: Id<ChannelMarker>,
@@ -1433,6 +1598,19 @@ impl DashboardState {
             || self.navigation.focus != FocusPane::Messages
             || self.messages().is_empty()
             || self.selected_message() != 0
+        {
+            return None;
+        }
+
+        self.messages().first().map(|message| message.id)
+    }
+
+    fn older_history_viewport_cursor(&self) -> Option<Id<MessageMarker>> {
+        if !self.message_pane_can_load_message_history()
+            || self.navigation.focus != FocusPane::Messages
+            || self.messages().is_empty()
+            || self.messages.message_scroll != 0
+            || self.messages.message_line_scroll != 0
         {
             return None;
         }

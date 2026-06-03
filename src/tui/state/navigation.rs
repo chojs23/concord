@@ -321,11 +321,7 @@ impl DashboardState {
             }
             FocusPane::Messages => {
                 let distance = self.message_content_height() / 2;
-                let len = self.message_pane_item_count();
-                move_index_down_by(&mut self.messages.selected_message, len, distance.max(1));
-                self.messages.message_keep_selection_visible = true;
-                self.clamp_message_viewport();
-                self.refresh_message_auto_follow();
+                self.half_page_message_down(distance);
             }
             FocusPane::Members => {
                 let distance = pane_content_height(self.navigation.member_view_height) / 2;
@@ -352,13 +348,7 @@ impl DashboardState {
             }
             FocusPane::Messages => {
                 let distance = self.message_content_height() / 2;
-                self.messages.selected_message = self
-                    .messages
-                    .selected_message
-                    .saturating_sub(distance.max(1));
-                self.messages.message_keep_selection_visible = true;
-                self.clamp_message_viewport();
-                self.refresh_message_auto_follow();
+                self.half_page_message_up(distance);
             }
             FocusPane::Members => {
                 let distance = pane_content_height(self.navigation.member_view_height) / 2;

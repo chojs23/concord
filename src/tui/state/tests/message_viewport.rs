@@ -475,6 +475,30 @@ fn message_viewport_scrolls_by_rendered_line() {
 }
 
 #[test]
+fn message_half_page_scrolls_by_rendered_rows() {
+    let mut state = state_with_single_message_content("abcdefghijkl");
+    for id in 2..=5 {
+        push_text_message(&mut state, id, &format!("msg {id}"));
+    }
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(5);
+    state.jump_top();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    state.half_page_down();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+    assert_eq!(state.selected_message(), 1);
+    assert_eq!(state.message_scroll(), 0);
+    assert_eq!(state.message_line_scroll(), 2);
+
+    state.half_page_up();
+    state.clamp_message_viewport_for_image_previews(5, 16, 3);
+    assert_eq!(state.selected_message(), 0);
+    assert_eq!(state.message_line_scroll(), 0);
+}
+
+#[test]
 fn viewport_scroll_moves_to_next_message_after_current_message() {
     let mut state = state_with_single_message_content("abcdefghijkl");
     state.push_event(message_create_event(MessageCreateFixture {
@@ -820,10 +844,12 @@ fn message_half_page_up_disables_follow() {
     let mut state = state_with_messages(10);
     state.focus_pane(FocusPane::Messages);
     state.set_message_view_height(9);
+    state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
     state.half_page_up();
 
-    assert_eq!(state.selected_message(), 5);
+    assert_eq!(state.selected_message(), 0);
+    assert_eq!(state.message_scroll(), 0);
     assert!(!state.message_auto_follow());
 }
 
@@ -845,19 +871,21 @@ fn message_jump_bottom_re_engages_auto_follow() {
 }
 
 #[test]
-fn message_half_page_down_re_engages_auto_follow_when_landing_on_last() {
+fn message_half_page_down_re_engages_auto_follow_after_viewport_returns_to_latest() {
     let mut state = state_with_messages(10);
     state.focus_pane(FocusPane::Messages);
     state.set_message_view_height(9);
+    state.clamp_message_viewport_for_image_previews(200, 16, 3);
 
-    state.half_page_down();
-    assert!(state.message_auto_follow());
-
-    state.move_up();
+    state.half_page_up();
     assert!(!state.message_auto_follow());
 
     state.half_page_down();
-    // Half-page-down moved the cursor back onto the latest message.
+    assert_eq!(state.selected_message(), 9);
+    assert_eq!(state.message_scroll(), 2);
+    assert!(!state.message_auto_follow());
+
+    state.half_page_down();
     assert!(state.message_auto_follow());
 }
 
