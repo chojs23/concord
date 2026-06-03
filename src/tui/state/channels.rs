@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashSet},
+    time::Instant,
+};
 
 use crate::discord::ids::{
     Id,
@@ -159,7 +162,13 @@ impl DashboardState {
                 self.discord
                     .cache
                     .channel_message_bodies_are_cold(channel_id)
+                    || self.selected_message_history_is_stale()
             })
+    }
+
+    pub fn selected_message_history_is_stale(&self) -> bool {
+        self.selected_message_history_channel_id()
+            .is_some_and(|channel_id| self.message_history_refresh.is_stale(channel_id))
     }
 
     pub fn selected_forum_channel(&self) -> Option<(Id<GuildMarker>, Id<ChannelMarker>)> {
@@ -1033,6 +1042,11 @@ impl DashboardState {
     }
 
     pub(super) fn activate_channel(&mut self, channel_id: Id<ChannelMarker>) {
+        self.activate_channel_at(channel_id, Instant::now());
+    }
+
+    pub(super) fn activate_channel_at(&mut self, channel_id: Id<ChannelMarker>, now: Instant) {
+        self.record_message_channel_view_transition(channel_id, now);
         self.record_recent_channel(channel_id);
         let is_forum = self
             .discord
@@ -1106,6 +1120,31 @@ impl DashboardState {
         }
 
         self.refresh_composer_emoji_candidates_for_current_query();
+    }
+
+    fn record_message_channel_view_transition(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        now: Instant,
+    ) {
+        if let Some(previous_channel_id) = self.selected_message_history_channel_id()
+            && previous_channel_id != channel_id
+        {
+            self.message_history_refresh
+                .record_channel_left(previous_channel_id, now);
+        }
+        let Some(channel) = self.discord.cache.channel(channel_id) else {
+            return;
+        };
+        if channel.is_forum() || channel.is_category() || channel.is_thread() {
+            return;
+        }
+        self.message_history_refresh
+            .mark_stale_if_elapsed(channel_id, now);
+    }
+
+    pub(super) fn record_message_history_refreshed(&mut self, channel_id: Id<ChannelMarker>) {
+        self.message_history_refresh.record_refreshed(channel_id);
     }
 
     fn record_recent_channel(&mut self, channel_id: Id<ChannelMarker>) {

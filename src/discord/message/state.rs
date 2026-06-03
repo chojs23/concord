@@ -701,6 +701,25 @@ impl DiscordState {
         self.merge_message_history_with_trim(channel_id, trim_policy, history);
     }
 
+    pub(in crate::discord) fn replace_message_history(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        history: &[MessageInfo],
+    ) {
+        if let Some(messages) = self.message_cache.messages.remove(&channel_id) {
+            for message in messages {
+                self.prune_message_author_role_ids_if_unreferenced(channel_id, message.id);
+            }
+        }
+        self.message_cache.message_gaps.remove(&channel_id);
+        self.merge_message_history_with_trim(
+            channel_id,
+            MessageHistoryTrimPolicy::LatestWindow,
+            history,
+        );
+        self.touch_warm_message_channel(channel_id);
+    }
+
     fn merge_message_history_with_trim(
         &mut self,
         channel_id: Id<ChannelMarker>,

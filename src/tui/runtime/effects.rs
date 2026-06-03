@@ -78,6 +78,7 @@ pub(super) fn process_effect_event(
     let outcome = EffectProcessingOutcome::processed(&event);
     let member_hydration_messages = match &event {
         AppEvent::MessageHistoryLoaded { messages, .. }
+        | AppEvent::MessageHistoryRefreshed { messages, .. }
         | AppEvent::MessageHistoryAfterLoaded { messages, .. }
         | AppEvent::MessageHistoryCatchUpLoaded { messages, .. }
         | AppEvent::MessageHistoryAroundLoaded { messages, .. }
@@ -443,32 +444,35 @@ mod tests {
     }
 
     #[test]
-    fn gateway_resumed_enqueues_selected_channel_catch_up() {
+    fn gateway_reconnect_events_enqueue_selected_channel_catch_up() {
         let guild_id = Id::new(1);
         let channel_id = Id::new(2);
-        let mut state = DashboardState::new();
-        push_guild_with_channel(
-            &mut state,
-            guild_id,
-            channel_info(guild_id, channel_id, None, "general", "GuildText"),
-        );
-        state.confirm_selected_guild();
-        state.confirm_selected_channel();
-        state.push_event(AppEvent::MessageHistoryLoaded {
-            channel_id,
-            before: None,
-            messages: vec![message_info(guild_id, channel_id, Id::new(20), Id::new(99))],
-        });
 
-        process_effect_in_default_context(&mut state, AppEvent::GatewayResumed);
-
-        assert_eq!(
-            state.drain_pending_commands(),
-            vec![AppCommand::CatchUpMessageHistoryAfter {
+        for event in [AppEvent::GatewayResumed, AppEvent::GatewayReidentified] {
+            let mut state = DashboardState::new();
+            push_guild_with_channel(
+                &mut state,
+                guild_id,
+                channel_info(guild_id, channel_id, None, "general", "GuildText"),
+            );
+            state.confirm_selected_guild();
+            state.confirm_selected_channel();
+            state.push_event(AppEvent::MessageHistoryLoaded {
                 channel_id,
-                after: Id::new(20),
-            }]
-        );
+                before: None,
+                messages: vec![message_info(guild_id, channel_id, Id::new(20), Id::new(99))],
+            });
+
+            process_effect_in_default_context(&mut state, event);
+
+            assert_eq!(
+                state.drain_pending_commands(),
+                vec![AppCommand::CatchUpMessageHistoryAfter {
+                    channel_id,
+                    after: Id::new(20),
+                }]
+            );
+        }
     }
 
     fn push_guild_with_channel(

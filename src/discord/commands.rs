@@ -264,6 +264,9 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         before: Option<Id<MessageMarker>>,
     },
+    RefreshMessageHistory {
+        channel_id: Id<ChannelMarker>,
+    },
     LoadMessageHistoryAfter {
         channel_id: Id<ChannelMarker>,
         after: Id<MessageMarker>,

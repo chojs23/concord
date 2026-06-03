@@ -545,6 +545,7 @@ impl DiscordState {
             AppEvent::MessageCreate { .. } => SnapshotAreas::navigation_and_message(),
 
             AppEvent::MessageHistoryLoaded { .. }
+            | AppEvent::MessageHistoryRefreshed { .. }
             | AppEvent::MessageHistoryAfterLoaded { .. }
             | AppEvent::MessageHistoryCatchUpLoaded { .. }
             | AppEvent::MessageHistoryAroundLoaded { .. }
@@ -940,6 +941,12 @@ impl DiscordState {
                 if before.is_none() {
                     self.touch_warm_message_channel(*channel_id);
                 }
+            }
+            AppEvent::MessageHistoryRefreshed {
+                channel_id,
+                messages,
+            } => {
+                self.replace_message_history(*channel_id, messages);
             }
             AppEvent::MessageHistoryAfterLoaded {
                 channel_id,

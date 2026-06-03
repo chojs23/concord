@@ -17,6 +17,7 @@ mod emoji;
 mod guilds;
 mod layout_cache;
 mod member_grouping;
+mod message_history_refresh;
 mod message_layout;
 mod message_render;
 mod message_viewport;
@@ -37,6 +38,7 @@ mod voice_actions;
 use composer::ComposerUiState;
 use discord_ui::DiscordUiState;
 use layout_cache::{LayoutCacheState, MessageRowContentMetrics, MessageRowContentMetricsCacheKey};
+use message_history_refresh::MessageHistoryRefreshState;
 use message_render::{add_literal_mention_highlights, normalize_text_highlights};
 use message_viewport::{MessageViewportState, ThreadReturnTarget};
 use navigation::{ActiveGuildScope, FolderKey, NavigationState};
@@ -239,6 +241,9 @@ impl DashboardState {
             }
             AppEvent::MessageHistoryLoaded { .. }
             | AppEvent::MessageHistoryCatchUpLoaded { .. } => {}
+            AppEvent::MessageHistoryRefreshed { channel_id, .. } => {
+                self.record_message_history_refreshed(*channel_id);
+            }
             AppEvent::UserProfileLoadFailed {
                 user_id,
                 guild_id,

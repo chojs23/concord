@@ -1,12 +1,14 @@
 use super::{
-    ComposerUiState, DiscordUiState, LayoutCacheState, MessageViewportState, NavigationState,
-    OptionsUiState, PopupUiState, RequestTrackingState, RuntimeUiState,
+    ComposerUiState, DiscordUiState, LayoutCacheState, MessageHistoryRefreshState,
+    MessageViewportState, NavigationState, OptionsUiState, PopupUiState, RequestTrackingState,
+    RuntimeUiState,
 };
 
 #[derive(Debug, Default)]
 pub struct DashboardState {
     pub(super) discord: DiscordUiState,
     pub(super) navigation: NavigationState,
+    pub(super) message_history_refresh: MessageHistoryRefreshState,
     pub(super) messages: MessageViewportState,
     pub(super) composer: ComposerUiState,
     pub(super) popups: PopupUiState,

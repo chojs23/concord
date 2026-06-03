@@ -484,13 +484,19 @@ pub(super) async fn run_dashboard(
             dirty = true;
         }
 
+        let message_history_needs_reload = state.selected_message_history_needs_reload();
+        let message_history_is_stale = state.selected_message_history_is_stale();
         if let Some(channel_id) = client.next_message_history_request(
             state.selected_message_history_channel_id(),
-            state.selected_message_history_needs_reload(),
+            message_history_needs_reload,
         ) && commands
-            .send(AppCommand::LoadMessageHistory {
-                channel_id,
-                before: None,
+            .send(if message_history_is_stale {
+                AppCommand::RefreshMessageHistory { channel_id }
+            } else {
+                AppCommand::LoadMessageHistory {
+                    channel_id,
+                    before: None,
+                }
             })
             .await
             .is_err()

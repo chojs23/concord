@@ -161,6 +161,45 @@ fn start_command_loop(
                             }
                         }
                     }
+                    AppCommand::RefreshMessageHistory { channel_id } => {
+                        let endpoint = format_message_history_endpoint(
+                            channel_id,
+                            None,
+                            MESSAGE_HISTORY_LIMIT,
+                        );
+                        match client
+                            .load_message_history(channel_id, None, MESSAGE_HISTORY_LIMIT)
+                            .await
+                        {
+                            Ok(messages) => {
+                                client
+                                    .publish_event(AppEvent::MessageHistoryRefreshed {
+                                        channel_id,
+                                        messages,
+                                    })
+                                    .await;
+                            }
+                            Err(error) => {
+                                let message = format!("refresh message history failed: {error}");
+                                let detail = error.log_detail();
+                                logging::error(
+                                    "history",
+                                    format!(
+                                        "op=refresh_message_history channel_id={} limit={} endpoint=\"{endpoint}\" {message}; detail={detail}",
+                                        channel_id.get(),
+                                        MESSAGE_HISTORY_LIMIT,
+                                    ),
+                                );
+                                client
+                                    .publish_event(AppEvent::MessageHistoryLoadFailed {
+                                        channel_id,
+                                        target: MessageHistoryLoadTarget::Latest,
+                                        message,
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
                     AppCommand::LoadMessageHistoryAfter { channel_id, after } => {
                         if !client.begin_newer_message_history_request(channel_id, after) {
                             return;

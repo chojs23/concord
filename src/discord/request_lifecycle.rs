@@ -153,7 +153,8 @@ impl RequestLifecycle {
         channel_id: Id<ChannelMarker>,
         after: Id<MessageMarker>,
     ) -> bool {
-        self.newer_history.begin_request(channel_id, after, true)
+        self.newer_history
+            .begin_request(channel_id, after, NewerHistoryRequestMode::GapFill)
     }
 
     pub(crate) fn begin_catch_up_history_request(
@@ -161,7 +162,8 @@ impl RequestLifecycle {
         channel_id: Id<ChannelMarker>,
         after: Id<MessageMarker>,
     ) -> bool {
-        self.newer_history.begin_request(channel_id, after, false)
+        self.newer_history
+            .begin_request(channel_id, after, NewerHistoryRequestMode::CatchUp)
     }
 
     pub(crate) fn next_forum_post_request(
@@ -380,7 +382,8 @@ impl HistoryRequests {
                 channel_id,
                 before: None,
                 ..
-            } => {
+            }
+            | AppEvent::MessageHistoryRefreshed { channel_id, .. } => {
                 self.requests
                     .insert(*channel_id, HistoryRequestState::Loaded);
             }
@@ -657,7 +660,7 @@ impl NewerHistoryRequests {
         &mut self,
         channel_id: Id<ChannelMarker>,
         after: Id<MessageMarker>,
-        exhaust_on_empty: bool,
+        mode: NewerHistoryRequestMode,
     ) -> bool {
         match self.requests.get(&channel_id) {
             Some(NewerHistoryRequestState::Requested { .. }) => false,
@@ -669,10 +672,7 @@ impl NewerHistoryRequests {
             _ => {
                 self.requests.insert(
                     channel_id,
-                    NewerHistoryRequestState::Requested {
-                        after,
-                        exhaust_on_empty,
-                    },
+                    NewerHistoryRequestState::Requested { after, mode },
                 );
                 true
             }
@@ -685,17 +685,15 @@ impl NewerHistoryRequests {
         response_after: Id<MessageMarker>,
         is_empty: bool,
     ) {
-        let Some(NewerHistoryRequestState::Requested {
-            after,
-            exhaust_on_empty,
-        }) = self.requests.get(&channel_id).copied()
+        let Some(NewerHistoryRequestState::Requested { after, mode }) =
+            self.requests.get(&channel_id).copied()
         else {
             return;
         };
         if response_after != after {
             return;
         }
-        if is_empty && exhaust_on_empty {
+        if is_empty && mode.exhausts_on_empty() {
             self.requests
                 .insert(channel_id, NewerHistoryRequestState::Exhausted { after });
         } else {
@@ -1041,11 +1039,23 @@ enum OlderHistoryRequestState {
 enum NewerHistoryRequestState {
     Requested {
         after: Id<MessageMarker>,
-        exhaust_on_empty: bool,
+        mode: NewerHistoryRequestMode,
     },
     Exhausted {
         after: Id<MessageMarker>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NewerHistoryRequestMode {
+    GapFill,
+    CatchUp,
+}
+
+impl NewerHistoryRequestMode {
+    fn exhausts_on_empty(self) -> bool {
+        matches!(self, Self::GapFill)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
