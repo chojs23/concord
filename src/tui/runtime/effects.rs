@@ -248,12 +248,12 @@ fn deliver_notify_rust_notification(
 fn init_macos_notification_identity() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        let Some(app_name) = std::env::var("TERM_PROGRAM")
+        // macOS needs a real app bundle, so fall back to Terminal for terminals
+        // we can't identify (e.g. kitty, tmux) -- otherwise notifications vanish.
+        let app_name = std::env::var("TERM_PROGRAM")
             .ok()
             .and_then(|program| macos_terminal_app_name(&program))
-        else {
-            return;
-        };
+            .unwrap_or("Terminal");
         let bundle_id = notify_rust::get_bundle_identifier_or_default(app_name);
         if bundle_id != "com.apple.Finder" {
             let _ = notify_rust::set_application(&bundle_id);
