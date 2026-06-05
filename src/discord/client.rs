@@ -907,10 +907,13 @@ impl DiscordClient {
             .expect("application command cache lock is not poisoned");
         let command = commands
             .get(&invocation.guild_id)
-            .and_then(|commands| {
-                commands
+            .and_then(|commands| match invocation.command_identity {
+                Some(identity) => commands
                     .iter()
-                    .find(|command| command.name == invocation.command_name)
+                    .find(|command| command.identity() == identity),
+                None => commands
+                    .iter()
+                    .find(|command| command.name == invocation.command_name),
             })
             .ok_or_else(|| {
                 AppError::DiscordRequest(format!(

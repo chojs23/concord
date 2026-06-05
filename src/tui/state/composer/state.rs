@@ -6,10 +6,10 @@ use crate::discord::ids::{
 };
 use crate::discord::{
     APPLICATION_COMMAND_CHANNEL_KIND, APPLICATION_COMMAND_MENTIONABLE_KIND,
-    APPLICATION_COMMAND_ROLE_KIND, APPLICATION_COMMAND_USER_KIND, ApplicationCommandInfo,
-    ApplicationCommandInvocation, MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload,
-    application_command_content_is_complete, application_command_option_scope,
-    parsed_application_command_option_names,
+    APPLICATION_COMMAND_ROLE_KIND, APPLICATION_COMMAND_USER_KIND, ApplicationCommandIdentity,
+    ApplicationCommandInfo, ApplicationCommandInvocation, MAX_UPLOAD_ATTACHMENT_COUNT,
+    MessageAttachmentUpload, application_command_content_is_complete,
+    application_command_option_scope, parsed_application_command_option_names,
 };
 
 use super::super::{
@@ -51,6 +51,8 @@ pub(in crate::tui::state) struct ComposerUiState {
     pub(in crate::tui::state) composer_command_start: Option<usize>,
     pub(in crate::tui::state) composer_command_selected: usize,
     pub(in crate::tui::state) composer_command_candidates: Vec<CommandPickerEntry>,
+    pub(in crate::tui::state) composer_selected_command_identity:
+        Option<ApplicationCommandIdentity>,
     /// Records `@displayname` substrings that the picker inserted, so the
     /// composer can rewrite them to Discord's `<@USER_ID>` wire format on
     /// submit even though the visible text is still the friendly form.
@@ -508,6 +510,14 @@ impl DashboardState {
         self.composer.composer_command_candidates.clone()
     }
 
+    pub(in crate::tui) fn composer_command_selected_candidate_is_top_level(&self) -> bool {
+        self.composer
+            .composer_command_candidates
+            .get(self.composer.composer_command_selected)
+            .and_then(|entry| entry.command_identity)
+            .is_some()
+    }
+
     pub(in crate::tui) fn composer_command_can_submit(&self) -> bool {
         let expanded = expand_composer_completions(
             &self.composer.composer_input,
@@ -644,6 +654,9 @@ impl DashboardState {
         }
 
         self.replace_composer_range(command_start..cursor, &entry.replacement);
+        if let Some(identity) = entry.command_identity {
+            self.composer.composer_selected_command_identity = Some(identity);
+        }
         self.close_composer_command_query();
         self.refresh_active_mention_query();
         true
@@ -689,6 +702,7 @@ impl DashboardState {
         self.close_composer_command_query();
         self.composer.composer_mention_completions.clear();
         self.composer.composer_emoji_completions.clear();
+        self.composer.composer_selected_command_identity = None;
     }
 
     fn close_composer_mention_query(&mut self) {
@@ -991,6 +1005,7 @@ impl DashboardState {
                     super::completions::MentionPickerTarget::Channel(_) => "channel".to_owned(),
                 },
                 replacement: format!("{} ", entry.target.wire_format()),
+                command_identity: None,
             })
             .collect()
     }
@@ -1013,6 +1028,14 @@ impl DashboardState {
             .strip_prefix('/')?
             .split_whitespace()
             .next()?;
+        if let Some(identity) = self.composer.composer_selected_command_identity
+            && let Some(command) = self
+                .application_commands_for_selected_channel()
+                .iter()
+                .find(|command| command.identity() == identity && command.name == name)
+        {
+            return Some(command);
+        }
         self.application_commands_for_selected_channel()
             .iter()
             .find(|command| command.name == name)
@@ -1031,11 +1054,20 @@ impl DashboardState {
         else {
             return ApplicationCommandSubmit::NotCommand;
         };
-        let Some(command) = self
+        let commands = self
             .discord
             .application_commands
             .get(&guild_id)
-            .and_then(|commands| commands.iter().find(|command| command.name == command_name))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let selected_identity = self.composer.composer_selected_command_identity;
+        let Some(command) = selected_identity
+            .and_then(|identity| {
+                commands
+                    .iter()
+                    .find(|command| command.identity() == identity && command.name == command_name)
+            })
+            .or_else(|| commands.iter().find(|command| command.name == command_name))
             .cloned()
         else {
             return ApplicationCommandSubmit::NotCommand;
@@ -1046,6 +1078,7 @@ impl DashboardState {
         ApplicationCommandSubmit::Ready(ApplicationCommandInvocation {
             guild_id,
             channel_id,
+            command_identity: Some(command.identity()),
             command_name: command.name,
             content: content.to_owned(),
         })

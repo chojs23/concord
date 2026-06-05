@@ -654,28 +654,49 @@ fn enter_submits_complete_slash_command_when_optional_options_are_suggested() {
     handle_key(&mut state, key(KeyCode::Enter));
     state.push_event(AppEvent::ApplicationCommandsLoaded {
         guild_id: Some(Id::new(1)),
-        commands: vec![ApplicationCommandInfo {
-            application_id: Id::new(200),
-            version: "1".to_owned(),
-            application_name: Some("TestBot".to_owned()),
-            description: "achievements command".to_owned(),
-            options: vec![ApplicationCommandOptionInfo {
-                description: "member option".to_owned(),
-                ..ApplicationCommandOptionInfo::test(6, "member")
-            }],
-            raw: serde_json::json!({
-                "id": "100",
-                "application_id": "200",
-                "version": "1",
-                "name": "achievements",
-            }),
-            ..ApplicationCommandInfo::test(Id::new(100), "achievements")
-        }],
+        commands: vec![
+            ApplicationCommandInfo {
+                application_id: Id::new(200),
+                version: "1".to_owned(),
+                application_name: Some("WrongBot".to_owned()),
+                description: "first achievements command".to_owned(),
+                raw: serde_json::json!({
+                    "id": "100",
+                    "application_id": "200",
+                    "version": "1",
+                    "name": "achievements",
+                }),
+                ..ApplicationCommandInfo::test(Id::new(100), "achievements")
+            },
+            ApplicationCommandInfo {
+                application_id: Id::new(201),
+                version: "2".to_owned(),
+                application_name: Some("TestBot".to_owned()),
+                description: "selected achievements command".to_owned(),
+                options: vec![ApplicationCommandOptionInfo {
+                    description: "member option".to_owned(),
+                    ..ApplicationCommandOptionInfo::test(6, "member")
+                }],
+                raw: serde_json::json!({
+                    "id": "101",
+                    "application_id": "201",
+                    "version": "2",
+                    "name": "achievements",
+                }),
+                ..ApplicationCommandInfo::test(Id::new(101), "achievements")
+            },
+        ],
     });
     handle_key(&mut state, char_key('i'));
-    for ch in "/achievements ".chars() {
+    for ch in "/ach".chars() {
         handle_key(&mut state, char_key(ch));
     }
+    assert_eq!(state.composer_command_query(), Some("/ach"));
+
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(state.composer_input(), "/achievements ");
     assert_eq!(state.composer_command_query(), Some(""));
 
     let command = handle_key(&mut state, key(KeyCode::Enter));
@@ -685,6 +706,8 @@ fn enter_submits_complete_slash_command_when_optional_options_are_suggested() {
         Some(AppCommand::RunApplicationCommand { ref invocation })
             if invocation.command_name == "achievements"
                 && invocation.content == "/achievements"
+                && invocation.command_identity.map(|identity| (identity.id, identity.application_id))
+                    == Some((Id::new(101), Id::new(201)))
     ));
 }
 

@@ -465,8 +465,18 @@ fn application_command_metadata_keeps_raw_backend_owned() {
     let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
     let guild_id = Some(Id::new(1));
     let command = application_command("echo");
+    let mut selected_command = application_command("echo");
+    selected_command.id = Id::new(101);
+    selected_command.application_id = Id::new(201);
+    selected_command.raw = json!({
+        "id": "101",
+        "application_id": "201",
+        "version": "1",
+        "name": "echo",
+    });
 
-    let tui_commands = client.record_application_commands_for_tui(guild_id, vec![command]);
+    let tui_commands = client
+        .record_application_commands_for_tui(guild_id, vec![command, selected_command.clone()]);
 
     assert_eq!(tui_commands[0].raw, Value::Null);
     let commands = client
@@ -477,6 +487,18 @@ fn application_command_metadata_keeps_raw_backend_owned() {
         commands.get(&guild_id).expect("backend cache")[0].raw["name"],
         "echo"
     );
+    drop(commands);
+
+    let interaction = client
+        .application_command_interaction(&crate::discord::ApplicationCommandInvocation {
+            guild_id,
+            channel_id: Id::new(2),
+            command_identity: Some(selected_command.identity()),
+            command_name: "echo".to_owned(),
+            content: "/echo".to_owned(),
+        })
+        .expect("selected command identity should resolve");
+    assert_eq!(interaction.command.identity(), selected_command.identity());
 }
 
 #[tokio::test]

@@ -4,8 +4,8 @@ use crate::discord::ids::{
 };
 
 use crate::discord::{
-    ApplicationCommandInfo, ApplicationCommandOptionInfo, ChannelState, CustomEmojiInfo,
-    PresenceStatus, RoleState,
+    ApplicationCommandIdentity, ApplicationCommandInfo, ApplicationCommandOptionInfo, ChannelState,
+    CustomEmojiInfo, PresenceStatus, RoleState,
 };
 
 use super::super::{MemberEntry, emoji::custom_emoji_can_be_used_directly};
@@ -85,6 +85,7 @@ pub struct CommandPickerEntry {
     pub label: String,
     pub detail: String,
     pub replacement: String,
+    pub command_identity: Option<ApplicationCommandIdentity>,
 }
 
 pub(super) fn build_command_candidates(
@@ -112,6 +113,7 @@ pub(super) fn build_command_candidates(
                     label: format!("/{}", command.name),
                     detail: command_picker_detail(command),
                     replacement: format!("/{} ", command.name),
+                    command_identity: Some(command.identity()),
                 },
             ))
         })
@@ -142,6 +144,7 @@ pub(super) fn build_command_option_candidates(
             label: command_option_label(option),
             detail: command_option_detail(option),
             replacement: command_option_replacement(option),
+            command_identity: None,
         })
         .collect()
 }
@@ -199,6 +202,7 @@ pub(super) fn build_command_choice_candidates(
                     .map(str::to_owned)
                     .unwrap_or_else(|| choice.value.to_string())
             ),
+            command_identity: None,
         })
         .collect()
 }

@@ -26,10 +26,11 @@ mod voice;
 pub use application_commands::{
     APPLICATION_COMMAND_CHANNEL_KIND, APPLICATION_COMMAND_MENTIONABLE_KIND,
     APPLICATION_COMMAND_ROLE_KIND, APPLICATION_COMMAND_STRING_KIND, APPLICATION_COMMAND_USER_KIND,
-    ApplicationCommandChoiceInfo, ApplicationCommandInfo, ApplicationCommandInteraction,
-    ApplicationCommandInteractionOption, ApplicationCommandInvocation,
-    ApplicationCommandOptionInfo, application_command_content_is_complete,
-    application_command_option_scope, parsed_application_command_option_names,
+    ApplicationCommandChoiceInfo, ApplicationCommandIdentity, ApplicationCommandInfo,
+    ApplicationCommandInteraction, ApplicationCommandInteractionOption,
+    ApplicationCommandInvocation, ApplicationCommandOptionInfo,
+    application_command_content_is_complete, application_command_option_scope,
+    parsed_application_command_option_names,
 };
 pub use channel::{
     ChannelInfo, ChannelRecipientInfo, PermissionOverwriteInfo, PermissionOverwriteKind,
