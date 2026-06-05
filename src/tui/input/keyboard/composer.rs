@@ -133,6 +133,7 @@ fn handle_command_picker_key(
     if key.code == KeyCode::Enter
         && key.modifiers == KeyModifiers::NONE
         && state.composer_command_can_submit()
+        && !state.composer_command_selected_candidate_is_top_level()
     {
         return Some(state.submit_composer());
     }

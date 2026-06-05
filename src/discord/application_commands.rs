@@ -17,7 +17,20 @@ pub struct ApplicationCommandInfo {
     pub raw: Value,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApplicationCommandIdentity {
+    pub id: Id<ApplicationMarker>,
+    pub application_id: Id<ApplicationMarker>,
+}
+
 impl ApplicationCommandInfo {
+    pub fn identity(&self) -> ApplicationCommandIdentity {
+        ApplicationCommandIdentity {
+            id: self.id,
+            application_id: self.application_id,
+        }
+    }
+
     pub fn without_raw(mut self) -> Self {
         self.raw = Value::Null;
         self
@@ -87,6 +100,7 @@ pub struct ApplicationCommandInteraction {
 pub struct ApplicationCommandInvocation {
     pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,
+    pub command_identity: Option<ApplicationCommandIdentity>,
     pub command_name: String,
     pub content: String,
 }
@@ -115,6 +129,9 @@ pub fn application_command_interaction_from_invocation(
     invocation: &ApplicationCommandInvocation,
     command: &ApplicationCommandInfo,
 ) -> Option<ApplicationCommandInteraction> {
+    if let Some(identity) = invocation.command_identity {
+        (command.identity() == identity).then_some(())?;
+    }
     (invocation.command_name == command.name).then_some(())?;
     Some(ApplicationCommandInteraction {
         guild_id: invocation.guild_id,
@@ -524,6 +541,7 @@ mod tests {
         ApplicationCommandInvocation {
             guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
+            command_identity: None,
             command_name: command_name.to_owned(),
             content: content.to_owned(),
         }

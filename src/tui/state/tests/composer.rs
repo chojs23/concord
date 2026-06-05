@@ -118,6 +118,12 @@ fn assert_slash_invocation(command: Option<AppCommand>, command_name: &str, cont
     };
     assert_eq!(invocation.guild_id, Some(Id::new(1)));
     assert_eq!(invocation.channel_id, Id::new(2));
+    assert_eq!(
+        invocation
+            .command_identity
+            .map(|identity| (identity.id, identity.application_id)),
+        Some((Id::new(100), Id::new(200)))
+    );
     assert_eq!(invocation.command_name, command_name);
     assert_eq!(invocation.content, content);
 }
