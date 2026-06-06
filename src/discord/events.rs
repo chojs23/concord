@@ -28,6 +28,13 @@ pub enum AppEvent {
     CurrentUserCapabilities {
         has_nitro: bool,
     },
+    UserIdentityUpdate {
+        user_id: Id<UserMarker>,
+        username: String,
+        global_name: Option<String>,
+        avatar_url: Option<String>,
+        is_bot: bool,
+    },
     ApplicationCommandsLoaded {
         guild_id: Option<Id<GuildMarker>>,
         commands: Vec<ApplicationCommandInfo>,
@@ -346,6 +353,11 @@ pub enum AppEvent {
         guild_id: Option<Id<GuildMarker>>,
         message: String,
     },
+    UserProfileUpdateFailed {
+        user_id: Id<UserMarker>,
+        guild_id: Option<Id<GuildMarker>>,
+        message: String,
+    },
     UserNoteLoaded {
         user_id: Id<UserMarker>,
         note: Option<String>,
@@ -497,6 +509,7 @@ impl AppEvent {
                 | AppEvent::MessageHistoryLoadFailed { .. }
                 | AppEvent::PinnedMessagesLoadFailed { .. }
                 | AppEvent::UserProfileLoadFailed { .. }
+                | AppEvent::UserProfileUpdateFailed { .. }
                 | AppEvent::VoiceServerUpdate { .. }
                 | AppEvent::VoiceConnectionStatusChanged { .. }
                 | AppEvent::VoiceSound { .. }
@@ -536,7 +549,9 @@ impl AppEvent {
             | AppEvent::AttachmentPreviewLoadFailed { .. }
             | AppEvent::VoiceConnectionStatusChanged { .. }
             | AppEvent::VoiceSound { .. }
+            | AppEvent::UserProfileLoaded { .. }
             | AppEvent::UserProfileLoadFailed { .. }
+            | AppEvent::UserProfileUpdateFailed { .. }
             | AppEvent::GatewayResumed
             | AppEvent::GatewayReidentified
             | AppEvent::GatewayClosed => true,
@@ -601,6 +616,10 @@ pub(crate) fn default_avatar_url(user_id: Id<UserMarker>, discriminator: u16) ->
     };
 
     format!("https://cdn.discordapp.com/embed/avatars/{index}.png")
+}
+
+pub(crate) fn avatar_hash_extension(hash: &str) -> &'static str {
+    if hash.starts_with("a_") { "gif" } else { "png" }
 }
 
 #[cfg(test)]

@@ -109,4 +109,5 @@ pub(crate) enum PopupListTarget {
 pub(super) struct UserProfilePopupText {
     pub(super) lines: Vec<Line<'static>>,
     pub(super) emoji_overlays: Vec<(usize, String)>,
+    pub(super) cursor: Option<(usize, usize)>,
 }

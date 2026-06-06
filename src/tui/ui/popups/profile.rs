@@ -1,4 +1,6 @@
 use super::*;
+use crate::tui::media::{PROFILE_POPUP_AVATAR_HEIGHT, PROFILE_POPUP_AVATAR_WIDTH};
+use crate::tui::state::{UserProfileSettingsField, UserProfileSettingsTab};
 
 pub(in crate::tui::ui) fn render_user_profile_popup(
     frame: &mut Frame,
@@ -11,7 +13,6 @@ pub(in crate::tui::ui) fn render_user_profile_popup(
         return;
     }
 
-    const AVATAR_CELL_HEIGHT: u16 = 4;
     let popup = user_profile_popup_area(area);
     frame.render_widget(Clear, popup);
 
@@ -23,7 +24,7 @@ pub(in crate::tui::ui) fn render_user_profile_popup(
     // so the text section starts cleanly to its right.
     let has_avatar = user_profile_popup_has_avatar_inside(
         inner,
-        state.show_avatars() && state.user_profile_popup_avatar_url().is_some(),
+        state.show_avatars() && state.user_profile_popup_has_avatar_preview(),
     );
     let text_area = user_profile_popup_text_area_inside(inner, has_avatar);
 
@@ -41,6 +42,22 @@ pub(in crate::tui::ui) fn render_user_profile_popup(
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), text_area);
     render_vertical_scrollbar(frame, text_area, scroll_position, viewport, total_lines);
+
+    if let Some((line, column)) = popup_text.cursor
+        && let Some(visible_offset) = line.checked_sub(scroll_position)
+        && visible_offset < viewport
+    {
+        let x = text_area
+            .x
+            .saturating_add(u16::try_from(column).unwrap_or(u16::MAX))
+            .min(
+                text_area
+                    .x
+                    .saturating_add(text_area.width.saturating_sub(1)),
+            );
+        let y = text_area.y.saturating_add(visible_offset as u16);
+        frame.set_cursor_position(Position::new(x, y));
+    }
 
     if state.show_custom_emoji() {
         for (line_idx, url) in &popup_text.emoji_overlays {
@@ -65,8 +82,8 @@ pub(in crate::tui::ui) fn render_user_profile_popup(
         let avatar_area = Rect {
             x: inner.x,
             y: inner.y,
-            width: USER_PROFILE_POPUP_AVATAR_CELL_WIDTH.min(inner.width),
-            height: AVATAR_CELL_HEIGHT.min(inner.height),
+            width: PROFILE_POPUP_AVATAR_WIDTH.min(inner.width),
+            height: PROFILE_POPUP_AVATAR_HEIGHT.min(inner.height),
         };
         frame.render_widget(RatatuiImage::new(avatar.protocol), avatar_area);
     }
@@ -74,7 +91,6 @@ pub(in crate::tui::ui) fn render_user_profile_popup(
 
 const USER_PROFILE_POPUP_WIDTH: u16 = 60;
 const USER_PROFILE_POPUP_HEIGHT: u16 = 24;
-const USER_PROFILE_POPUP_AVATAR_CELL_WIDTH: u16 = 8;
 
 /// Centered popup rect inside the messages area. Shared so the geometry
 /// computation lives in one place and the scroll-clamping pass uses the
@@ -96,12 +112,12 @@ pub(in crate::tui::ui) fn user_profile_popup_has_avatar(area: Rect, has_avatar_u
 }
 
 fn user_profile_popup_has_avatar_inside(inner: Rect, has_avatar_url: bool) -> bool {
-    has_avatar_url && inner.width > USER_PROFILE_POPUP_AVATAR_CELL_WIDTH + 2
+    has_avatar_url && inner.width > PROFILE_POPUP_AVATAR_WIDTH + 2
 }
 
 fn user_profile_popup_text_area_inside(inner: Rect, has_avatar: bool) -> Rect {
     if has_avatar {
-        let gutter = USER_PROFILE_POPUP_AVATAR_CELL_WIDTH + 2;
+        let gutter = PROFILE_POPUP_AVATAR_WIDTH + 2;
         Rect {
             x: inner.x + gutter,
             y: inner.y,
@@ -146,6 +162,7 @@ fn user_profile_popup_text_for_render(
                 Style::default().fg(Color::Red),
             ))],
             emoji_overlays: Vec::new(),
+            cursor: None,
         }
     } else {
         UserProfilePopupText {
@@ -154,6 +171,7 @@ fn user_profile_popup_text_for_render(
                 Style::default().fg(DIM),
             ))],
             emoji_overlays: Vec::new(),
+            cursor: None,
         }
     }
 }
@@ -203,6 +221,10 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
 
     let inner_width = usize::from(width.max(8));
     let mut lines: Vec<Line<'static>> = Vec::new();
+
+    if is_self {
+        return user_profile_settings_popup_text(profile, state, inner_width);
+    }
 
     let display_name = profile.display_name().to_owned();
     lines.push(Line::from(Span::styled(
@@ -320,6 +342,198 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
     UserProfilePopupText {
         lines,
         emoji_overlays,
+        cursor: None,
+    }
+}
+
+fn user_profile_settings_popup_text(
+    profile: &UserProfileInfo,
+    state: &DashboardState,
+    width: usize,
+) -> UserProfilePopupText {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut cursor = None;
+    lines.push(Line::from(Span::styled(
+        truncate_display_width(profile.display_name(), width),
+        user_profile_display_name_style(state.user_profile_popup_status()),
+    )));
+    lines.push(Line::from(Span::styled(
+        truncate_display_width(&format!("@{}", profile.username), width),
+        Style::default().fg(DIM),
+    )));
+    lines.push(Line::from(Span::raw(String::new())));
+
+    let active_tab = state.user_profile_settings_tab();
+    lines.push(Line::from(vec![
+        profile_tab_span("g", "Global", active_tab == UserProfileSettingsTab::Global),
+        Span::raw("  "),
+        profile_tab_span(
+            "v",
+            "This Server",
+            active_tab == UserProfileSettingsTab::Guild,
+        ),
+    ]));
+    lines.push(Line::from(Span::raw(String::new())));
+
+    match active_tab {
+        UserProfileSettingsTab::Global => push_profile_settings_field_lines(
+            &mut lines,
+            &mut cursor,
+            state,
+            width,
+            &[
+                (UserProfileSettingsField::GlobalDisplayName, "Display name"),
+                (UserProfileSettingsField::GlobalPronouns, "Pronouns"),
+                (
+                    UserProfileSettingsField::GlobalAvatarPath,
+                    "Avatar image path",
+                ),
+                (UserProfileSettingsField::CurrentStatus, "Status"),
+                (UserProfileSettingsField::ManualActivity, "Activity"),
+            ],
+        ),
+        UserProfileSettingsTab::Guild => {
+            if state.user_profile_popup_guild_id().is_none() {
+                lines.push(Line::from(Span::styled(
+                    "Server profile is available only inside a server.",
+                    Style::default().fg(DIM),
+                )));
+            } else {
+                push_profile_settings_field_lines(
+                    &mut lines,
+                    &mut cursor,
+                    state,
+                    width,
+                    &[
+                        (UserProfileSettingsField::GuildNickname, "Server nickname"),
+                        (UserProfileSettingsField::GuildPronouns, "Server pronouns"),
+                    ],
+                );
+            }
+        }
+    }
+
+    let status_rows = state.user_profile_status_picker_rows();
+    if !status_rows.is_empty() {
+        push_profile_status_picker_lines(&mut lines, width, &status_rows);
+    }
+
+    lines.push(Line::from(Span::raw(String::new())));
+    let status = if state.user_profile_settings_saving() {
+        Some("Saving profile changes...".to_owned())
+    } else if let Some(status) = state.user_profile_settings_status() {
+        Some(status.to_owned())
+    } else {
+        let dirty_count = state.user_profile_settings_dirty_count();
+        (dirty_count > 0).then(|| "Unsaved changes. Press s to save.".to_owned())
+    };
+    if let Some(status) = status {
+        push_wrapped_styled_popup_text(&mut lines, &status, width, Style::default().fg(ACCENT));
+    }
+    push_wrapped_styled_popup_text(
+        &mut lines,
+        "Esc close/cancel · Enter select · s Save",
+        width,
+        Style::default().fg(DIM),
+    );
+
+    UserProfilePopupText {
+        lines,
+        emoji_overlays: Vec::new(),
+        cursor,
+    }
+}
+
+fn push_profile_status_picker_lines(
+    lines: &mut Vec<Line<'static>>,
+    width: usize,
+    rows: &[(PresenceStatus, bool)],
+) {
+    lines.push(Line::from(Span::raw(String::new())));
+    lines.push(Line::from(Span::styled(
+        "Choose status",
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+    )));
+    for (status, selected) in rows {
+        lines.push(Line::from(vec![
+            selectable_popup_marker(*selected),
+            Span::styled(
+                truncate_display_width(status.label(), width.saturating_sub(2)),
+                Style::default().fg(presence_color(*status)),
+            ),
+        ]));
+    }
+}
+
+fn profile_tab_span(shortcut: &str, label: &str, active: bool) -> Span<'static> {
+    let text = if active {
+        format!("[{shortcut}] {label}")
+    } else {
+        format!(" {shortcut}  {label}")
+    };
+    Span::styled(
+        text,
+        if active {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(DIM)
+        },
+    )
+}
+
+fn push_profile_settings_field_lines(
+    lines: &mut Vec<Line<'static>>,
+    cursor: &mut Option<(usize, usize)>,
+    state: &DashboardState,
+    width: usize,
+    fields: &[(UserProfileSettingsField, &str)],
+) {
+    let active = state.user_profile_settings_active_field();
+    let editing = state.user_profile_settings_editing_field();
+    for (field, label) in fields {
+        let selected = active == Some(*field);
+        let value = state.user_profile_settings_field_value(*field);
+        let is_editing = editing == Some(*field);
+        let label_style = if is_editing {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else if selected {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(vec![
+            selectable_popup_marker(selected),
+            Span::styled(label.to_string(), label_style),
+        ]));
+        let display = if is_editing {
+            value.as_str()
+        } else if value.is_empty() {
+            "(empty)"
+        } else {
+            &value
+        };
+        let value_style = if is_editing {
+            Style::default().fg(Color::Yellow)
+        } else if value.is_empty() {
+            Style::default().fg(DIM)
+        } else if *field == UserProfileSettingsField::CurrentStatus {
+            Style::default().fg(presence_color(
+                state.user_profile_settings_presence_status(),
+            ))
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(
+            truncate_display_width(&format!("  {display}"), width),
+            value_style,
+        )));
+        if is_editing {
+            let cursor_byte = state.user_profile_settings_edit_cursor_byte_index();
+            let cursor_prefix = value.get(..cursor_byte).unwrap_or(value.as_str());
+            *cursor = Some((lines.len() - 1, 2 + cursor_prefix.width()));
+        }
     }
 }
 
@@ -439,9 +653,7 @@ fn push_wrapped_paragraph(lines: &mut Vec<Line<'static>>, text: &str, width: usi
         if trimmed.is_empty() {
             lines.push(Line::from(Span::raw(String::new())));
         } else {
-            lines.push(Line::from(Span::raw(truncate_display_width(
-                trimmed, width,
-            ))));
+            push_wrapped_styled_popup_text(lines, trimmed, width, Style::default());
         }
     }
 }

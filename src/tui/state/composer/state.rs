@@ -25,6 +25,10 @@ use super::completions::{
     should_start_completion_query,
 };
 use crate::discord::AppCommand;
+use crate::tui::text_cursor::{
+    clamp_cursor_index, next_char_boundary, next_word_boundary, previous_char_boundary,
+    previous_word_boundary,
+};
 
 #[derive(Debug, Default)]
 pub(in crate::tui::state) struct ComposerUiState {
@@ -1156,38 +1160,10 @@ impl DashboardState {
     }
 }
 
-fn clamp_cursor_index(input: &str, index: usize) -> usize {
-    let mut index = index.min(input.len());
-    while index > 0 && !input.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
 enum ApplicationCommandSubmit {
     Ready(ApplicationCommandInvocation),
     Incomplete,
     NotCommand,
-}
-
-fn previous_char_boundary(input: &str, index: usize) -> usize {
-    let index = clamp_cursor_index(input, index);
-    if index == 0 {
-        return 0;
-    }
-    let mut previous = index - 1;
-    while previous > 0 && !input.is_char_boundary(previous) {
-        previous -= 1;
-    }
-    previous
-}
-
-fn next_char_boundary(input: &str, index: usize) -> usize {
-    let mut next = clamp_cursor_index(input, index).saturating_add(1);
-    while next < input.len() && !input.is_char_boundary(next) {
-        next += 1;
-    }
-    next.min(input.len())
 }
 
 fn vertical_cursor_target(input: &str, cursor: usize, direction: isize) -> Option<usize> {
@@ -1244,38 +1220,6 @@ fn byte_index_for_line_column(input: &str, start: usize, end: usize, column: usi
         .nth(column)
         .map(|(offset, _)| start + offset)
         .unwrap_or(end)
-}
-
-fn previous_word_boundary(input: &str, index: usize) -> usize {
-    let index = clamp_cursor_index(input, index);
-    let mut prefix = input[..index].char_indices().rev().peekable();
-    while matches!(prefix.peek(), Some((_, c)) if c.is_whitespace()) {
-        prefix.next();
-    }
-    let mut word_start = None;
-    while let Some(&(byte_idx, c)) = prefix.peek() {
-        if c.is_whitespace() {
-            break;
-        }
-        word_start = Some(byte_idx);
-        prefix.next();
-    }
-    word_start.unwrap_or(0)
-}
-
-fn next_word_boundary(input: &str, index: usize) -> usize {
-    let index = clamp_cursor_index(input, index);
-    let mut suffix = input[index..].char_indices().peekable();
-    while matches!(suffix.peek(), Some((_, c)) if !c.is_whitespace()) {
-        suffix.next();
-    }
-    while matches!(suffix.peek(), Some((_, c)) if c.is_whitespace()) {
-        suffix.next();
-    }
-    match suffix.peek() {
-        Some(&(rel, _)) => index + rel,
-        None => input.len(),
-    }
 }
 
 fn shift_byte_index(index: usize, delta: isize) -> usize {

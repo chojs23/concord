@@ -42,6 +42,66 @@ fn tracks_members_and_presences() {
             .status,
         PresenceStatus::Idle,
     );
+
+    state.apply_event(&AppEvent::UserPresenceUpdate {
+        user_id: bob,
+        status: PresenceStatus::DoNotDisturb,
+        activities: Vec::new(),
+    });
+    assert_eq!(
+        state.user_presence_for_guild(Some(guild_id), bob),
+        Some(PresenceStatus::DoNotDisturb)
+    );
+    assert_eq!(
+        state
+            .members_for_guild(guild_id)
+            .into_iter()
+            .find(|member| member.user_id == bob)
+            .map(|member| member.status),
+        Some(PresenceStatus::DoNotDisturb)
+    );
+}
+
+#[test]
+fn user_identity_update_preserves_guild_member_avatar() {
+    let guild_id = Id::new(1);
+    let user_id = Id::new(10);
+    let mut state = DiscordState::default();
+
+    state.apply_event(&AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: Some(1),
+        channels: Vec::new(),
+        members: vec![MemberInfo {
+            avatar_url: Some(
+                "https://cdn.discordapp.com/guilds/1/users/10/avatars/guild.png".to_owned(),
+            ),
+            ..member_info(user_id, "neo")
+        }],
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+
+    state.apply_event(&AppEvent::UserIdentityUpdate {
+        user_id,
+        username: "neo".to_owned(),
+        global_name: Some("Neo".to_owned()),
+        avatar_url: Some("https://cdn.discordapp.com/avatars/10/global.png".to_owned()),
+        is_bot: false,
+    });
+
+    let member = state
+        .members_for_guild(guild_id)
+        .into_iter()
+        .find(|member| member.user_id == user_id)
+        .expect("member should remain cached");
+    assert_eq!(
+        member.avatar_url.as_deref(),
+        Some("https://cdn.discordapp.com/guilds/1/users/10/avatars/guild.png")
+    );
 }
 
 #[test]

@@ -25,8 +25,14 @@ impl DashboardState {
         std::mem::take(&mut self.runtime.paste_clipboard_requested)
     }
 
+    pub fn accepts_clipboard_paste(&self) -> bool {
+        self.is_composing()
+            || self.is_user_profile_popup_editing()
+            || self.accepts_user_profile_avatar_paste()
+    }
+
     pub fn begin_clipboard_paste(&mut self) -> bool {
-        if !self.is_composing() || self.runtime.clipboard_paste_pending {
+        if !self.accepts_clipboard_paste() || self.runtime.clipboard_paste_pending {
             return false;
         }
         self.runtime.clipboard_paste_pending = true;

@@ -1,8 +1,8 @@
 use crate::{
     AppError,
     discord::{
-        AppEvent, ChannelInfo, MemberInfo, MentionInfo, MessageAttachmentUpload, RoleInfo,
-        UserProfileInfo, VoiceSoundKind, VoiceStateInfo,
+        ActivityInfo, AppEvent, ChannelInfo, MemberInfo, MentionInfo, MessageAttachmentUpload,
+        RoleInfo, UserProfileInfo, VoiceSoundKind, VoiceStateInfo,
         gateway::GatewayCommand,
         ids::{
             Id,
@@ -252,6 +252,30 @@ async fn effect_only_events_are_delivered_without_snapshots() {
         assert_eq!(format!("{:?}", effect.event), format!("{event:?}"));
         assert!(!snapshots.has_changed().expect("snapshot stream is open"));
     }
+}
+
+#[tokio::test]
+async fn current_user_activities_returns_cached_presence_activity() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+    let user_id = Id::new(10);
+    let activity = ActivityInfo::playing("Concord");
+
+    client
+        .publish_event(AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(user_id),
+        })
+        .await;
+    client
+        .publish_event(AppEvent::UserPresenceUpdate {
+            user_id,
+            status: crate::discord::PresenceStatus::Online,
+            activities: vec![activity.clone()],
+        })
+        .await;
+
+    assert_eq!(client.current_user_activities(), vec![activity]);
 }
 
 #[test]

@@ -240,7 +240,10 @@ fn parse_supplemental_guild_events(data: &Value) -> Vec<AppEvent> {
         if let Some(members) = guild.get("members").and_then(Value::as_array) {
             events.extend(guild_member_upsert_events(guild_id, members));
         }
-        if let Some(member) = guild.get("member").and_then(parse_member_info) {
+        if let Some(member) = guild
+            .get("member")
+            .and_then(|member| parse_member_info(member, Some(guild_id)))
+        {
             events.push(AppEvent::GuildMemberUpsert { guild_id, member });
         }
         if let Some(presences) = guild.get("presences").and_then(Value::as_array) {
@@ -261,7 +264,7 @@ fn parse_supplemental_guild_events(data: &Value) -> Vec<AppEvent> {
 fn guild_member_upsert_events(guild_id: Id<GuildMarker>, members: &[Value]) -> Vec<AppEvent> {
     members
         .iter()
-        .filter_map(parse_member_info)
+        .filter_map(|member| parse_member_info(member, Some(guild_id)))
         .map(|member| AppEvent::GuildMemberUpsert { guild_id, member })
         .collect()
 }

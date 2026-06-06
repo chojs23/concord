@@ -22,7 +22,7 @@ use guilds::{
 };
 use members::{
     parse_member_add, parse_member_chunk, parse_member_list_update, parse_member_remove,
-    parse_member_upsert,
+    parse_member_upsert, parse_user_update,
 };
 pub(crate) use messages::parse_message_info;
 use messages::{
@@ -53,6 +53,7 @@ pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
     match event_type {
         "READY" => parse_ready(data),
         "READY_SUPPLEMENTAL" => parse_ready_supplemental(data),
+        "USER_UPDATE" => parse_user_update(data).into_iter().collect(),
         "GUILD_CREATE" => {
             let mut result: Vec<AppEvent> = parse_guild_create(data).into_iter().collect();
             result.extend(parse_guild_voice_states(data));

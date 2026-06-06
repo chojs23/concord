@@ -69,7 +69,7 @@ pub use options::DisplayOptionItem;
 pub(in crate::tui) use popups::ActiveModalPopupKind;
 pub use popups::{
     AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,
-    PollVotePickerState, ReactionUsersPopupState,
+    PollVotePickerState, ReactionUsersPopupState, UserProfileSettingsField, UserProfileSettingsTab,
 };
 pub use presentation::{discord_color, folder_color, presence_color, presence_marker};
 
@@ -244,6 +244,9 @@ impl DashboardState {
             AppEvent::MessageHistoryRefreshed { channel_id, .. } => {
                 self.record_message_history_refreshed(*channel_id);
             }
+            AppEvent::UserProfileLoaded { guild_id, profile } => {
+                self.record_user_profile_update_succeeded(profile.user_id, *guild_id);
+            }
             AppEvent::UserProfileLoadFailed {
                 user_id,
                 guild_id,
@@ -254,7 +257,20 @@ impl DashboardState {
                     && popup.guild_id == *guild_id
                 {
                     popup.load_error = Some(message.clone());
+                    if popup.settings.saving {
+                        popup.settings.saving = false;
+                        popup.settings.status = Some(format!(
+                            "Save succeeded, but profile reload failed: {message}"
+                        ));
+                    }
                 }
+            }
+            AppEvent::UserProfileUpdateFailed {
+                user_id,
+                guild_id,
+                message,
+            } => {
+                self.record_user_profile_update_failed(*user_id, *guild_id, message);
             }
             AppEvent::ActivateChannel { channel_id } => {
                 let channel_id = *channel_id;

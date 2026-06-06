@@ -78,7 +78,7 @@ pub(in crate::tui::ui) fn search_popup_lines(
         "─".repeat(width.max(1)),
         Style::default().fg(DIM),
     )));
-    lines.push(Line::from(Span::styled(status, Style::default().fg(DIM))));
+    push_wrapped_styled_popup_text(&mut lines, &status, width, Style::default().fg(DIM));
 
     if !view.suggestions.is_empty() {
         let start = search_popup_result_start(
@@ -121,10 +121,12 @@ pub(in crate::tui::ui) fn search_popup_lines(
         lines.push(search_result_line(result, index == view.selected, width));
     }
     if view.has_more {
-        lines.push(Line::from(Span::styled(
+        push_wrapped_styled_popup_text(
+            &mut lines,
             "More results: press Down or PageDown at the end",
+            width,
             Style::default().fg(DIM),
-        )));
+        );
     }
     lines
 }

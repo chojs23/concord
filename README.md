@@ -275,6 +275,7 @@ Press `Space` to open the leader shortcut window.
 | `Space`, `2`     | Toggle the Channels pane          |
 | `Space`, `4`     | Toggle the Members pane           |
 | `Space`, `a`     | Open actions for the focused pane |
+| `Space`, `p`     | Open my profile settings          |
 | `Space`, `o`     | Choose concord option category    |
 | `Space`, `v`     | Voice command prefix              |
 | `Space`, `Space` | Open the fuzzy channel switcher   |
@@ -484,8 +485,8 @@ CycleFocusNext = { keys = ["tab", "l", "right"] }
 CycleFocusPrevious = { keys = ["<S-tab>", "h", "left"] }
 HalfPageDown = "<C-d>"
 HalfPageUp = "<C-u>"
-ScrollMessageViewportDown = "J"
-ScrollMessageViewportUp = "K"
+ScrollViewportDown = "J"
+ScrollViewportUp = "K"
 JumpTop = "gg"
 JumpBottom = "G"
 ScrollHorizontalLeft = "H"
@@ -504,6 +505,7 @@ ToggleGuildPane = "<leader>1"
 ToggleChannelPane = "<leader>2"
 ToggleMemberPane = "<leader>4"
 OpenFocusedPaneAction = "<leader>a"
+OpenCurrentUserProfile = "<leader>p"
 OpenOptions = "<leader>o"
 ChannelSwitcher = "<leader><leader>"
 VoiceDeafen = "<leader>vd"

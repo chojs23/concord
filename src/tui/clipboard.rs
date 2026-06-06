@@ -190,22 +190,13 @@ fn attachment_from_path(path: PathBuf) -> Result<MessageAttachmentUpload, Clipbo
             path.display()
         )));
     }
-    let metadata = path.metadata().map_err(|error| {
+    let path_display = path.display().to_string();
+    MessageAttachmentUpload::from_existing_path(path).map_err(|error| {
         ClipboardError::new(format!(
             "stat clipboard file {} failed: {error}",
-            path.display()
+            path_display
         ))
-    })?;
-    let filename = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("attachment")
-        .to_owned();
-    Ok(MessageAttachmentUpload::from_path(
-        path,
-        filename,
-        metadata.len(),
-    ))
+    })
 }
 
 fn arboard_file_paths() -> Result<Vec<PathBuf>, ClipboardError> {

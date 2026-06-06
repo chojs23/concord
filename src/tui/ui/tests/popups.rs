@@ -250,6 +250,117 @@ fn user_profile_popup_styles_name_by_status() {
 }
 
 #[test]
+fn current_user_profile_settings_render_contract() {
+    let mut profile = user_profile_info(10, "neo");
+    profile.global_name = Some("Neo Global".to_owned());
+    profile.pronouns = None;
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.push_event(AppEvent::UserPresenceUpdate {
+        user_id: Id::new(10),
+        status: PresenceStatus::DoNotDisturb,
+        activities: Vec::new(),
+    });
+    state.push_event(AppEvent::UserProfileLoaded {
+        guild_id: None,
+        profile: profile.clone(),
+    });
+    state.open_current_user_profile_popup();
+
+    let lines = user_profile_popup_lines(&profile, &state, 60, PresenceStatus::DoNotDisturb);
+    let texts = line_texts_from_ratatui(&lines);
+    assert_eq!(lines[0].spans[0].content, "Neo Global");
+
+    let display_value = texts
+        .iter()
+        .position(|line| line.contains("Display name"))
+        .and_then(|index| lines.get(index + 1))
+        .expect("display name value should follow label");
+    let display_label = texts
+        .iter()
+        .position(|line| line.contains("Display name"))
+        .and_then(|index| lines.get(index))
+        .expect("display name label should exist");
+    let pronouns_value = texts
+        .iter()
+        .position(|line| line.contains("Pronouns"))
+        .and_then(|index| lines.get(index + 1))
+        .expect("pronouns value should follow label");
+    let status_value = texts
+        .iter()
+        .position(|line| line.contains("Status"))
+        .and_then(|index| lines.get(index + 1))
+        .expect("status value should follow label");
+
+    assert_eq!(display_label.spans[1].style.fg, Some(ACCENT));
+    assert_eq!(display_value.spans[0].content, "  Neo Global");
+    assert_eq!(display_value.spans[0].style, Style::default());
+    assert_eq!(pronouns_value.spans[0].content, "  (empty)");
+    assert_eq!(pronouns_value.spans[0].style.fg, Some(DIM));
+    assert_eq!(status_value.spans[0].content, "  Do Not Disturb");
+    assert_eq!(status_value.spans[0].style.fg, Some(Color::Red));
+
+    let _ = state.start_or_commit_user_profile_edit();
+    let editing_lines =
+        user_profile_popup_lines(&profile, &state, 60, PresenceStatus::DoNotDisturb);
+    let editing_texts = line_texts_from_ratatui(&editing_lines);
+    let editing_label = editing_texts
+        .iter()
+        .position(|line| line.contains("Display name"))
+        .and_then(|index| editing_lines.get(index))
+        .expect("editing label should exist");
+    assert_eq!(editing_label.spans[1].content, "Display name");
+    assert_eq!(editing_label.spans[1].style.fg, Some(Color::Yellow));
+    for value in "Neo Dirty".chars() {
+        state.push_user_profile_edit_char(value);
+    }
+    let _ = state.start_or_commit_user_profile_edit();
+    let dirty_lines = user_profile_popup_lines(&profile, &state, 60, PresenceStatus::DoNotDisturb);
+    let dirty_texts = line_texts_from_ratatui(&dirty_lines);
+
+    assert!(
+        dirty_texts
+            .iter()
+            .any(|line| line == "Unsaved changes. Press s to save.")
+    );
+    assert!(dirty_texts.iter().any(|line| line.contains("Enter select")));
+    assert!(dirty_texts.iter().any(|line| line.contains(" · ")));
+    assert!(
+        !dirty_texts
+            .iter()
+            .any(|line| line.contains("select/edit/commit"))
+    );
+
+    let narrow_lines = user_profile_popup_lines(&profile, &state, 24, PresenceStatus::DoNotDisturb);
+    let narrow_texts = line_texts_from_ratatui(&narrow_lines);
+    let hint_start = narrow_texts
+        .iter()
+        .position(|line| line.contains("Esc close/cancel"))
+        .expect("wrapped helper hint should start with Esc close/cancel");
+    let wrapped_hint = narrow_texts[hint_start..].join(" ");
+    assert!(wrapped_hint.contains("Esc close/cancel"));
+    assert!(wrapped_hint.contains(" · "));
+    assert!(wrapped_hint.contains("Enter select"));
+    assert!(wrapped_hint.contains("s Save"));
+    assert!(!wrapped_hint.contains("select/edit/commit"));
+
+    state.next_user_profile_settings_field();
+    state.next_user_profile_settings_field();
+    state.next_user_profile_settings_field();
+    let _ = state.start_or_commit_user_profile_edit();
+    state.move_user_profile_status_picker_up();
+    let picker_lines = user_profile_popup_lines(&profile, &state, 60, PresenceStatus::DoNotDisturb);
+    let picker_texts = line_texts_from_ratatui(&picker_lines);
+
+    assert!(picker_texts.iter().any(|line| line.contains("Status")));
+    assert!(picker_texts.iter().any(|line| line == "Choose status"));
+    assert!(picker_texts.iter().any(|line| line == "› Idle"));
+}
+
+#[test]
 fn user_profile_popup_does_not_show_dm_hint_without_dm_context() {
     for (profile_name, current_user_id) in [("neo", 10), ("alice", 99)] {
         let profile = user_profile_info(10, profile_name);

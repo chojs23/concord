@@ -33,9 +33,18 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
         ..inner
     };
     let hint_y = popup.y.saturating_add(popup.height);
-    let hint_area = (hint_y < frame_area.y.saturating_add(frame_area.height)).then_some(Rect {
+    let hint_lines = wrapped_styled_popup_lines(
+        state.key_bindings().attachment_viewer_download_hint(),
+        usize::from(popup.width),
+        Style::default().fg(DIM),
+    );
+    let available_hint_height = frame_area
+        .y
+        .saturating_add(frame_area.height)
+        .saturating_sub(hint_y);
+    let hint_area = (available_hint_height > 0).then_some(Rect {
         y: hint_y,
-        height: 1,
+        height: available_hint_height.min(u16::try_from(hint_lines.len()).unwrap_or(u16::MAX)),
         ..popup
     });
 
@@ -72,9 +81,7 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
     }
     if let Some(hint_area) = hint_area {
         frame.render_widget(
-            Paragraph::new(state.key_bindings().attachment_viewer_download_hint())
-                .style(Style::default().fg(DIM))
-                .alignment(Alignment::Center),
+            Paragraph::new(hint_lines).alignment(Alignment::Center),
             hint_area,
         );
     }

@@ -150,7 +150,7 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
         // total-line / view-height pair consistent with what gets drawn.
         let has_avatar = user_profile_popup_has_avatar(
             areas.messages,
-            state.show_avatars() && state.user_profile_popup_avatar_url().is_some(),
+            state.show_avatars() && state.user_profile_popup_has_avatar_preview(),
         );
         let (text_width, text_height) =
             user_profile_popup_text_geometry(areas.messages, has_avatar);

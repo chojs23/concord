@@ -220,6 +220,35 @@ mod tests {
         assert!(should_redraw_after_visible_signature_change(
             &before, &after, false, false,
         ));
+
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(Id::new(10)),
+        });
+        let _ = state.open_current_user_profile_popup();
+        let before = visible_dashboard_signature(&state);
+
+        let _ = state.start_or_commit_user_profile_edit();
+        state.push_user_profile_edit_char('x');
+        let _ = state.start_or_commit_user_profile_edit();
+        let dirty = visible_dashboard_signature(&state);
+        assert_ne!(before, dirty);
+
+        assert!(state.save_user_profile_settings_command().is_some());
+        let saving = visible_dashboard_signature(&state);
+        assert_ne!(dirty, saving);
+
+        state.push_event(AppEvent::UserProfileLoadFailed {
+            user_id: Id::new(10),
+            guild_id: None,
+            message: "reload failed".to_owned(),
+        });
+        let failed = visible_dashboard_signature(&state);
+        assert_ne!(saving, failed);
+        assert!(should_redraw_after_visible_signature_change(
+            &saving, &failed, false, false,
+        ));
     }
 
     #[test]

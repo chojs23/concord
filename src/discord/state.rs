@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque, hash_map::DefaultHasher},
+    collections::{BTreeMap, BTreeSet, HashSet, VecDeque, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
 };
 
@@ -26,7 +26,7 @@ use crate::discord::ids::{
 };
 
 use super::{
-    ActivityInfo, AppEvent, ChannelInfo, CustomEmojiInfo, FriendStatus, GuildFolder,
+    ActivityInfo, AppEvent, ChannelInfo, CustomEmojiInfo, FriendStatus, GuildFolder, MemberInfo,
     PresenceStatus, RelationshipInfo, UserProfileInfo,
     display_name::display_name_from_parts_or_unknown,
 };
@@ -574,6 +574,7 @@ impl DiscordState {
             | AppEvent::UserProfileLoaded { .. }
             | AppEvent::RelationshipsLoaded { .. }
             | AppEvent::RelationshipUpsert { .. }
+            | AppEvent::UserIdentityUpdate { .. }
             | AppEvent::RelationshipRemove { .. } => SnapshotAreas::navigation_and_message(),
 
             AppEvent::SelectedGuildChanged { .. }
@@ -611,6 +612,7 @@ impl DiscordState {
             | AppEvent::ThreadPreviewLoadFailed { .. }
             | AppEvent::ForumPostsLoadFailed { .. }
             | AppEvent::UserProfileLoadFailed { .. }
+            | AppEvent::UserProfileUpdateFailed { .. }
             | AppEvent::VoiceServerUpdate { .. }
             | AppEvent::VoiceConnectionStatusChanged { .. }
             | AppEvent::VoiceSound { .. }
@@ -1116,7 +1118,9 @@ impl DiscordState {
                     .insert((*guild_id, *user_id), *status);
                 self.update_guild_user_activities(*guild_id, *user_id, activities);
                 self.presence.user_presences.insert(*user_id, *status);
-                self.update_user_activities(*user_id, activities);
+                if self.session.current_user_id != Some(*user_id) || !activities.is_empty() {
+                    self.update_user_activities(*user_id, activities);
+                }
                 let entry = self.guild_details.members.entry(*guild_id).or_default();
                 if let Some(member) = entry.get_mut(user_id) {
                     member.status = *status;
@@ -1130,6 +1134,10 @@ impl DiscordState {
             } => {
                 self.presence.user_presences.insert(*user_id, *status);
                 self.update_user_activities(*user_id, activities);
+                if self.session.current_user_id == Some(*user_id) {
+                    self.update_cached_guild_activities_for_user(*user_id, activities);
+                }
+                self.update_cached_guild_presence_for_user(*user_id, *status);
                 self.update_channel_recipient_presence(*user_id, *status);
             }
             AppEvent::VoiceStateUpdate { state } => {
@@ -1335,6 +1343,19 @@ impl DiscordState {
                         .and_then(|relationship| relationship.nickname.as_deref()),
                 );
             }
+            AppEvent::UserIdentityUpdate {
+                user_id,
+                username,
+                global_name,
+                avatar_url,
+                is_bot,
+            } => self.apply_user_identity_update(
+                *user_id,
+                username,
+                global_name.as_deref(),
+                avatar_url.as_deref(),
+                *is_bot,
+            ),
             AppEvent::Ready { user, user_id } => {
                 self.session.current_user = Some(user.clone());
                 if let Some(user_id) = user_id {
@@ -1396,6 +1417,7 @@ impl DiscordState {
             | AppEvent::ThreadPreviewLoadFailed { .. }
             | AppEvent::ForumPostsLoadFailed { .. }
             | AppEvent::UserProfileLoadFailed { .. }
+            | AppEvent::UserProfileUpdateFailed { .. }
             | AppEvent::VoiceServerUpdate { .. }
             | AppEvent::VoiceConnectionStatusChanged { .. }
             | AppEvent::VoiceSound { .. }
@@ -1474,6 +1496,104 @@ impl DiscordState {
         );
     }
 
+    fn apply_user_identity_update(
+        &mut self,
+        user_id: Id<UserMarker>,
+        username: &str,
+        global_name: Option<&str>,
+        avatar_url: Option<&str>,
+        is_bot: bool,
+    ) {
+        let mut previous_global_labels = HashSet::new();
+        for profile in self
+            .profiles
+            .user_profiles
+            .values()
+            .filter(|profile| profile.user_id == user_id)
+        {
+            if let Some(global_name) = profile.global_name.as_ref() {
+                previous_global_labels.insert(global_name.clone());
+            }
+            previous_global_labels.insert(profile.username.clone());
+        }
+        if let Some(relationship) = self.profiles.relationships.get(&user_id) {
+            if let Some(display_name) = relationship.display_name.as_ref() {
+                previous_global_labels.insert(display_name.clone());
+            }
+            if let Some(username) = relationship.username.as_ref() {
+                previous_global_labels.insert(username.clone());
+            }
+        }
+
+        let display_name = display_name_from_parts_or_unknown(None, global_name, Some(username));
+        if self.session.current_user_id == Some(user_id) {
+            self.session.current_user = Some(display_name.clone());
+        }
+
+        for profile in self
+            .profiles
+            .user_profiles
+            .values_mut()
+            .filter(|profile| profile.user_id == user_id)
+        {
+            profile.username = username.to_owned();
+            profile.global_name = global_name.map(str::to_owned);
+            profile.avatar_url = avatar_url.map(str::to_owned);
+        }
+        if let Some(relationship) = self.profiles.relationships.get_mut(&user_id) {
+            relationship.display_name = Some(display_name.clone());
+            relationship.username = Some(username.to_owned());
+        }
+
+        let mut refreshed_members = Vec::new();
+        for (guild_id, members) in &mut self.guild_details.members {
+            let Some(member) = members.get_mut(&user_id) else {
+                continue;
+            };
+            let old_display_name = member.display_name.clone();
+            let old_username = member.username.clone();
+            member.username = Some(username.to_owned());
+            member.is_bot = is_bot;
+            if !member
+                .avatar_url
+                .as_deref()
+                .is_some_and(is_guild_member_avatar_url)
+                && (avatar_url.is_some() || member.avatar_url.is_none())
+            {
+                member.avatar_url = avatar_url.map(str::to_owned);
+            }
+            if old_username.as_deref() == Some(old_display_name.as_str())
+                || previous_global_labels.contains(&old_display_name)
+            {
+                member.display_name = display_name.clone();
+            }
+            refreshed_members.push((
+                *guild_id,
+                MemberInfo {
+                    user_id: member.user_id,
+                    display_name: member.display_name.clone(),
+                    username: member.username.clone(),
+                    is_bot: member.is_bot,
+                    avatar_url: member.avatar_url.clone(),
+                    role_ids: member.role_ids.clone(),
+                },
+            ));
+        }
+        for (guild_id, member) in refreshed_members {
+            self.refresh_message_author_display_name(guild_id, &member);
+        }
+
+        let private_display_name =
+            self.private_user_display_name(user_id, Some(display_name.as_str()), Some(username));
+        self.refresh_message_author_from_profile(None, user_id, &private_display_name, avatar_url);
+        self.refresh_dm_channel_info_from_profile(
+            user_id,
+            &private_display_name,
+            Some(username),
+            avatar_url,
+        );
+    }
+
     fn current_private_recipient_identity(
         &self,
         user_id: Id<UserMarker>,
@@ -1492,6 +1612,27 @@ impl DiscordState {
             })
             .unwrap_or((None, None))
     }
+
+    fn update_cached_guild_presence_for_user(
+        &mut self,
+        user_id: Id<UserMarker>,
+        status: PresenceStatus,
+    ) {
+        for ((_, presence_user_id), presence_status) in &mut self.presence.guild_user_presences {
+            if *presence_user_id == user_id {
+                *presence_status = status;
+            }
+        }
+        for members in self.guild_details.members.values_mut() {
+            if let Some(member) = members.get_mut(&user_id) {
+                member.status = status;
+            }
+        }
+    }
+}
+
+fn is_guild_member_avatar_url(url: &str) -> bool {
+    url.contains("/guilds/") && url.contains("/users/") && url.contains("/avatars/")
 }
 
 fn merge_relationship_info(

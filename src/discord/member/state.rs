@@ -203,6 +203,24 @@ impl DiscordState {
         }
     }
 
+    pub(in crate::discord) fn update_cached_guild_activities_for_user(
+        &mut self,
+        user_id: Id<UserMarker>,
+        activities: &[ActivityInfo],
+    ) {
+        let guild_ids: Vec<_> = self
+            .presence
+            .guild_user_activities
+            .keys()
+            .filter_map(|(guild_id, activity_user_id)| {
+                (*activity_user_id == user_id).then_some(*guild_id)
+            })
+            .collect();
+        for guild_id in guild_ids {
+            self.update_guild_user_activities(guild_id, user_id, activities);
+        }
+    }
+
     pub(in crate::discord) fn upsert_guild_member(
         &mut self,
         guild_id: Id<GuildMarker>,

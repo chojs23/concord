@@ -112,12 +112,8 @@ impl KeyBindings {
             UiAction::CycleFocusPrevious => Some(DashboardAction::CycleFocusBackward),
             UiAction::HalfPageDown => Some(DashboardAction::HalfPageDown),
             UiAction::HalfPageUp => Some(DashboardAction::HalfPageUp),
-            UiAction::ScrollMessageViewportDown if focus == FocusPane::Messages => {
-                Some(DashboardAction::ScrollMessageViewportDown)
-            }
-            UiAction::ScrollMessageViewportUp if focus == FocusPane::Messages => {
-                Some(DashboardAction::ScrollMessageViewportUp)
-            }
+            UiAction::ScrollViewportDown => Some(DashboardAction::ScrollViewportDown),
+            UiAction::ScrollViewportUp => Some(DashboardAction::ScrollViewportUp),
             UiAction::JumpTop => Some(DashboardAction::JumpTop),
             UiAction::JumpBottom => Some(DashboardAction::JumpBottom),
             UiAction::ScrollHorizontalLeft => Some(DashboardAction::ScrollHorizontalLeft),
@@ -308,10 +304,61 @@ impl KeyBindings {
         }
     }
 
-    pub(in crate::tui) fn profile_popup_action(&self, key: KeyEvent) -> Option<ProfilePopupAction> {
+    pub(in crate::tui) fn profile_popup_action(
+        &self,
+        key: KeyEvent,
+        editing: bool,
+    ) -> Option<ProfilePopupAction> {
+        if editing {
+            return Self::profile_edit_action_from_composer_action(self.composer_action(key));
+        }
+
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => Some(ProfilePopupAction::Close),
-            _ => self.scroll_action(key).map(ProfilePopupAction::Scroll),
+            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(ProfilePopupAction::PasteClipboard)
+            }
+            KeyCode::Enter => Some(ProfilePopupAction::StartOrCommitEdit),
+            KeyCode::Char('g') if is_shortcut_key(key) => {
+                Some(ProfilePopupAction::SwitchTab(ProfilePopupTabAction::Global))
+            }
+            KeyCode::Char('v') if is_shortcut_key(key) => {
+                Some(ProfilePopupAction::SwitchTab(ProfilePopupTabAction::Guild))
+            }
+            KeyCode::Char('s') if is_shortcut_key(key) => Some(ProfilePopupAction::Save),
+            _ => self
+                .selection_action(key, SelectionKeySet::Navigation)
+                .map(|action| match action {
+                    SelectionAction::Next => ProfilePopupAction::NextField,
+                    SelectionAction::Previous => ProfilePopupAction::PreviousField,
+                })
+                .or_else(|| self.scroll_action(key).map(ProfilePopupAction::Scroll)),
+        }
+    }
+
+    fn profile_edit_action_from_composer_action(
+        action: ComposerAction,
+    ) -> Option<ProfilePopupAction> {
+        match action {
+            ComposerAction::PasteClipboard => Some(ProfilePopupAction::PasteClipboard),
+            ComposerAction::Submit => Some(ProfilePopupAction::StartOrCommitEdit),
+            ComposerAction::Close => Some(ProfilePopupAction::Close),
+            ComposerAction::DeletePreviousChar => Some(ProfilePopupAction::DeleteChar),
+            ComposerAction::DeletePreviousWord => Some(ProfilePopupAction::DeletePreviousWord),
+            ComposerAction::MoveCursorWordLeft => Some(ProfilePopupAction::MoveCursorWordLeft),
+            ComposerAction::MoveCursorLeft => Some(ProfilePopupAction::MoveCursorLeft),
+            ComposerAction::MoveCursorWordRight => Some(ProfilePopupAction::MoveCursorWordRight),
+            ComposerAction::MoveCursorRight => Some(ProfilePopupAction::MoveCursorRight),
+            ComposerAction::MoveCursorHome => Some(ProfilePopupAction::MoveCursorHome),
+            ComposerAction::MoveCursorEnd => Some(ProfilePopupAction::MoveCursorEnd),
+            ComposerAction::InsertChar(value) => Some(ProfilePopupAction::InsertChar(value)),
+            ComposerAction::OpenInEditor
+            | ComposerAction::InsertNewline
+            | ComposerAction::ClearInput
+            | ComposerAction::RemoveLastAttachment
+            | ComposerAction::MoveCursorUp
+            | ComposerAction::MoveCursorDown
+            | ComposerAction::Ignore => None,
         }
     }
 
@@ -604,11 +651,19 @@ impl KeyBindings {
 
     pub(in crate::tui) fn scroll_action(&self, key: KeyEvent) -> Option<ScrollAction> {
         match key.code {
-            KeyCode::Char('j') if is_shortcut_key(key) => Some(ScrollAction::Down),
-            KeyCode::Char('k') if is_shortcut_key(key) => Some(ScrollAction::Up),
             KeyCode::Down => Some(ScrollAction::Down),
             KeyCode::Up => Some(ScrollAction::Up),
-            _ => None,
+            _ => self
+                .keymap_single_key_shortcuts(UiAction::ScrollViewportDown)
+                .iter()
+                .any(|shortcut| shortcut.matches(key))
+                .then_some(ScrollAction::Down)
+                .or_else(|| {
+                    self.keymap_single_key_shortcuts(UiAction::ScrollViewportUp)
+                        .iter()
+                        .any(|shortcut| shortcut.matches(key))
+                        .then_some(ScrollAction::Up)
+                }),
         }
     }
 

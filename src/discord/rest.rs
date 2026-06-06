@@ -5,6 +5,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{DateTime, NaiveDate, SecondsFormat, TimeZone, Utc};
 use reqwest::{
     StatusCode,
@@ -18,10 +19,14 @@ use crate::{
     discord::{
         ApplicationCommandChoiceInfo, ApplicationCommandInfo, ApplicationCommandInteraction,
         ApplicationCommandInteractionOption, ApplicationCommandOptionInfo, ChannelInfo,
-        ForumPostArchiveState, FriendStatus, MAX_UPLOAD_ATTACHMENT_COUNT, MAX_UPLOAD_FILE_BYTES,
-        MAX_UPLOAD_TOTAL_BYTES, MessageAttachmentUpload, MessageInfo, MessageSearchPage,
-        MessageSearchQuery, MutualGuildInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
+        ForumPostArchiveState, FriendStatus, GlobalUserProfileUpdate, GuildUserProfileUpdate,
+        MAX_UPLOAD_ATTACHMENT_COUNT, MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
+        MessageAttachmentUpload, MessageInfo, MessageSearchPage, MessageSearchQuery,
+        MutualGuildInfo, PresenceStatus, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
+        UserProfileUpdate,
+        events::avatar_hash_extension,
         gateway::{parse_channel_info, parse_message_info},
+        read_profile_avatar_image,
     },
 };
 
@@ -944,6 +949,125 @@ impl DiscordRest {
             .map(str::to_owned))
     }
 
+    pub async fn update_user_profile(&self, update: &UserProfileUpdate) -> Result<()> {
+        if !update.global.is_empty() {
+            self.update_global_user_profile(&update.global).await?;
+        }
+        if let Some(guild) = update.guild.as_ref().filter(|guild| !guild.is_empty()) {
+            self.update_guild_user_profile(guild).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn update_current_user_status(&self, status: PresenceStatus) -> Result<()> {
+        self.raw_http
+            .patch("https://discord.com/api/v9/users/@me/settings")
+            .header(AUTHORIZATION, &self.token)
+            .json(&json!({ "status": status.gateway_status() }))
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("status settings update request failed: {error}"))
+            })?
+            .error_for_status()
+            .map_err(|error| {
+                AppError::DiscordRequest(format!("status settings update failed: {error}"))
+            })?;
+        Ok(())
+    }
+
+    async fn update_global_user_profile(&self, update: &GlobalUserProfileUpdate) -> Result<()> {
+        let mut user_body = serde_json::Map::new();
+        if let Some(display_name) = &update.display_name {
+            user_body.insert("global_name".to_owned(), nullable_text_value(display_name));
+        }
+        if let Some(avatar) = &update.avatar {
+            user_body.insert(
+                "avatar".to_owned(),
+                Value::String(profile_avatar_data_uri(avatar).await?),
+            );
+        }
+        if !user_body.is_empty() {
+            self.raw_http
+                .patch("https://discord.com/api/v9/users/@me")
+                .header(AUTHORIZATION, &self.token)
+                .json(&Value::Object(user_body))
+                .send()
+                .await
+                .map_err(|error| {
+                    AppError::DiscordRequest(format!(
+                        "global profile update request failed: {error}"
+                    ))
+                })?
+                .error_for_status()
+                .map_err(|error| {
+                    AppError::DiscordRequest(format!("global profile update failed: {error}"))
+                })?;
+        }
+        if let Some(pronouns) = &update.pronouns {
+            self.raw_http
+                .patch("https://discord.com/api/v9/users/@me/profile")
+                .header(AUTHORIZATION, &self.token)
+                .json(&json!({ "pronouns": pronouns }))
+                .send()
+                .await
+                .map_err(|error| {
+                    AppError::DiscordRequest(format!(
+                        "profile pronouns update request failed: {error}"
+                    ))
+                })?
+                .error_for_status()
+                .map_err(|error| {
+                    AppError::DiscordRequest(format!("profile pronouns update failed: {error}"))
+                })?;
+        }
+        Ok(())
+    }
+
+    async fn update_guild_user_profile(&self, update: &GuildUserProfileUpdate) -> Result<()> {
+        if let Some(nickname) = &update.nickname {
+            self.raw_http
+                .patch(format!(
+                    "https://discord.com/api/v9/guilds/{}/members/@me",
+                    update.guild_id.get()
+                ))
+                .header(AUTHORIZATION, &self.token)
+                .json(&json!({ "nick": nullable_text_value(nickname) }))
+                .send()
+                .await
+                .map_err(|error| {
+                    AppError::DiscordRequest(format!(
+                        "guild nickname update request failed: {error}"
+                    ))
+                })?
+                .error_for_status()
+                .map_err(|error| {
+                    AppError::DiscordRequest(format!("guild nickname update failed: {error}"))
+                })?;
+        }
+        if let Some(pronouns) = &update.pronouns {
+            self.raw_http
+                .patch(format!(
+                    "https://discord.com/api/v9/guilds/{}/profile/@me",
+                    update.guild_id.get()
+                ))
+                .header(AUTHORIZATION, &self.token)
+                .json(&json!({ "pronouns": pronouns }))
+                .send()
+                .await
+                .map_err(|error| {
+                    AppError::DiscordRequest(format!(
+                        "guild profile update request failed: {error}"
+                    ))
+                })?
+                .error_for_status()
+                .map_err(|error| {
+                    AppError::DiscordRequest(format!("guild profile update failed: {error}"))
+                })?;
+        }
+        Ok(())
+    }
+
     pub async fn vote_poll(
         &self,
         channel_id: Id<ChannelMarker>,
@@ -988,6 +1112,25 @@ fn mute_request_body(
 
 fn poll_vote_request_body(answer_ids: &[u8]) -> Value {
     json!({ "answer_ids": answer_ids })
+}
+
+fn nullable_text_value(value: &str) -> Value {
+    if value.trim().is_empty() {
+        Value::Null
+    } else {
+        Value::String(value.to_owned())
+    }
+}
+
+async fn profile_avatar_data_uri(avatar: &crate::discord::ProfileAvatarUpload) -> Result<String> {
+    let image = read_profile_avatar_image(avatar)
+        .await
+        .map_err(AppError::DiscordRequest)?;
+    Ok(format!(
+        "data:{};base64,{}",
+        image.content_type,
+        BASE64_STANDARD.encode(image.bytes)
+    ))
 }
 
 fn message_search_query_params(query: &MessageSearchQuery) -> Vec<(&'static str, String)> {
@@ -1180,6 +1323,12 @@ fn parse_user_profile_response(
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
+    let guild_pronouns = body
+        .get("guild_member_profile")
+        .and_then(|profile| profile.get("pronouns"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
     let mutual_guilds = body
         .get("mutual_guilds")
         .and_then(Value::as_array)
@@ -1229,6 +1378,7 @@ fn parse_user_profile_response(
         avatar_url,
         bio,
         pronouns,
+        guild_pronouns,
         mutual_guilds,
         mutual_friends_count,
         friend_status: FriendStatus::None,
@@ -1253,7 +1403,7 @@ fn profile_avatar_url(user: &Value) -> Option<String> {
         .get("avatar")
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())?;
-    let extension = if hash.starts_with("a_") { "gif" } else { "png" };
+    let extension = avatar_hash_extension(hash);
     Some(format!(
         "https://cdn.discordapp.com/avatars/{user_id}/{hash}.{extension}"
     ))

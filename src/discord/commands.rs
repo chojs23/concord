@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 use crate::discord::ids::{
     Id,
@@ -7,53 +10,165 @@ use crate::discord::ids::{
 
 use super::application_commands::ApplicationCommandInvocation;
 use super::message::MessageInfo;
+use super::{ActivityInfo, PresenceStatus};
 
 pub const MAX_UPLOAD_FILE_BYTES: u64 = 10 * 1024 * 1024;
 pub const MAX_UPLOAD_TOTAL_BYTES: u64 = 25 * 1024 * 1024;
 pub const MAX_UPLOAD_ATTACHMENT_COUNT: usize = 10;
+pub const MAX_PROFILE_AVATAR_BYTES: u64 = 10 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageAttachmentUpload {
-    source: MessageAttachmentSource,
+    source: UploadSource,
+    pub filename: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct GlobalUserProfileUpdate {
+    pub display_name: Option<String>,
+    pub pronouns: Option<String>,
+    pub avatar: Option<ProfileAvatarUpload>,
+}
+
+impl GlobalUserProfileUpdate {
+    pub fn is_empty(&self) -> bool {
+        self.display_name.is_none() && self.pronouns.is_none() && self.avatar.is_none()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProfileAvatarUpload {
+    source: UploadSource,
     pub filename: String,
     pub size_bytes: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum MessageAttachmentSource {
+enum UploadSource {
     File(PathBuf),
     Bytes(Vec<u8>),
 }
 
-impl MessageAttachmentUpload {
-    pub fn from_path(path: PathBuf, filename: String, size_bytes: u64) -> Self {
+impl UploadSource {
+    fn path(&self) -> Option<&Path> {
+        match self {
+            Self::File(path) => Some(path),
+            Self::Bytes(_) => None,
+        }
+    }
+
+    fn bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::File(_) => None,
+            Self::Bytes(bytes) => Some(bytes),
+        }
+    }
+}
+
+impl ProfileAvatarUpload {
+    pub fn from_path(path: PathBuf) -> Self {
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("avatar")
+            .to_owned();
         Self {
-            source: MessageAttachmentSource::File(path),
+            source: UploadSource::File(path),
             filename,
-            size_bytes,
+            size_bytes: 0,
         }
     }
 
     pub fn from_bytes(filename: String, bytes: Vec<u8>) -> Self {
         Self {
             size_bytes: bytes.len() as u64,
-            source: MessageAttachmentSource::Bytes(bytes),
+            source: UploadSource::Bytes(bytes),
+            filename,
+        }
+    }
+
+    pub fn from_message_attachment(upload: MessageAttachmentUpload) -> Self {
+        Self {
+            source: upload.source,
+            filename: upload.filename,
+            size_bytes: upload.size_bytes,
+        }
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        self.source.path()
+    }
+
+    pub fn bytes(&self) -> Option<&[u8]> {
+        self.source.bytes()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuildUserProfileUpdate {
+    pub guild_id: Id<GuildMarker>,
+    pub nickname: Option<String>,
+    pub pronouns: Option<String>,
+}
+
+impl GuildUserProfileUpdate {
+    pub fn is_empty(&self) -> bool {
+        self.nickname.is_none() && self.pronouns.is_none()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserProfileUpdate {
+    pub user_id: Id<UserMarker>,
+    pub guild_id: Option<Id<GuildMarker>>,
+    pub global: GlobalUserProfileUpdate,
+    pub guild: Option<GuildUserProfileUpdate>,
+}
+
+impl UserProfileUpdate {
+    pub fn is_empty(&self) -> bool {
+        self.global.is_empty()
+            && self
+                .guild
+                .as_ref()
+                .is_none_or(GuildUserProfileUpdate::is_empty)
+    }
+}
+
+impl MessageAttachmentUpload {
+    pub fn from_path(path: PathBuf, filename: String, size_bytes: u64) -> Self {
+        Self {
+            source: UploadSource::File(path),
+            filename,
+            size_bytes,
+        }
+    }
+
+    pub fn from_existing_path(path: PathBuf) -> io::Result<Self> {
+        let metadata = path.metadata()?;
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("attachment")
+            .to_owned();
+        Ok(Self::from_path(path, filename, metadata.len()))
+    }
+
+    pub fn from_bytes(filename: String, bytes: Vec<u8>) -> Self {
+        Self {
+            size_bytes: bytes.len() as u64,
+            source: UploadSource::Bytes(bytes),
             filename,
         }
     }
 
     pub fn path(&self) -> Option<&Path> {
-        match &self.source {
-            MessageAttachmentSource::File(path) => Some(path),
-            MessageAttachmentSource::Bytes(_) => None,
-        }
+        self.source.path()
     }
 
     pub fn bytes(&self) -> Option<&[u8]> {
-        match &self.source {
-            MessageAttachmentSource::File(_) => None,
-            MessageAttachmentSource::Bytes(bytes) => Some(bytes),
-        }
+        self.source.bytes()
     }
 }
 
@@ -359,6 +474,10 @@ pub enum AppCommand {
     LoadAttachmentPreview {
         url: String,
     },
+    LoadProfileAvatarPreview {
+        key: String,
+        upload: ProfileAvatarUpload,
+    },
     SendMessage {
         channel_id: Id<ChannelMarker>,
         content: String,
@@ -422,6 +541,16 @@ pub enum AppCommand {
     },
     LoadUserNote {
         user_id: Id<UserMarker>,
+    },
+    UpdateUserProfile {
+        update: UserProfileUpdate,
+    },
+    UpdateCurrentUserStatus {
+        status: PresenceStatus,
+    },
+    UpdateCurrentUserActivity {
+        status: PresenceStatus,
+        activities: Vec<ActivityInfo>,
     },
     AckChannel {
         channel_id: Id<ChannelMarker>,

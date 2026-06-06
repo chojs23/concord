@@ -19,8 +19,9 @@ use tokio::{
 use crate::{AppError, Result};
 
 use super::{
-    ApplicationCommandInfo, ApplicationCommandInvocation, MessageAttachmentUpload, MessageInfo,
-    ReactionEmoji, ReactionUserInfo, UserProfileInfo,
+    ActivityInfo, ApplicationCommandInfo, ApplicationCommandInvocation, MessageAttachmentUpload,
+    MessageInfo, PresenceStatus, ReactionEmoji, ReactionUserInfo, UserProfileInfo,
+    UserProfileUpdate,
     application_commands::application_command_interaction_from_invocation,
     commands::{AppCommand, ForumPostArchiveState},
     events::{AppEvent, SequencedAppEvent},
@@ -122,6 +123,13 @@ impl DiscordClient {
             .read()
             .expect("snapshot revision lock is not poisoned");
         state.snapshot(revision)
+    }
+
+    pub fn current_user_id(&self) -> Option<Id<UserMarker>> {
+        self.state
+            .read()
+            .expect("discord state lock is not poisoned")
+            .current_user_id()
     }
 
     pub async fn publish_event(&self, event: AppEvent) {
@@ -770,6 +778,46 @@ impl DiscordClient {
             .send(VoiceRuntimeEvent::Requested(Some(voice)));
     }
 
+    pub async fn update_presence_status(
+        &self,
+        status: PresenceStatus,
+    ) -> Result<Vec<ActivityInfo>> {
+        let activities = self.current_user_activities();
+        self.rest.update_current_user_status(status).await?;
+        self.send_presence_update(status, activities.clone())?;
+        Ok(activities)
+    }
+
+    pub fn current_user_activities(&self) -> Vec<ActivityInfo> {
+        let state = self
+            .state
+            .read()
+            .expect("discord state lock is not poisoned");
+        state
+            .current_user_id()
+            .map(|user_id| state.user_activities(user_id).to_vec())
+            .unwrap_or_default()
+    }
+
+    pub fn update_presence_activity(
+        &self,
+        status: PresenceStatus,
+        activities: Vec<ActivityInfo>,
+    ) -> Result<()> {
+        self.send_presence_update(status, activities)
+    }
+
+    fn send_presence_update(
+        &self,
+        status: PresenceStatus,
+        activities: Vec<ActivityInfo>,
+    ) -> Result<()> {
+        self.gateway_commands_tx
+            .send(GatewayCommand::UpdatePresence { status, activities })
+            .map_err(|_| AppError::DiscordRequest("gateway command channel closed".to_owned()))?;
+        Ok(())
+    }
+
     pub fn current_or_requested_voice_connection(&self) -> Option<CurrentVoiceConnectionState> {
         self.state
             .read()
@@ -1100,6 +1148,10 @@ impl DiscordClient {
 
     pub async fn load_user_note(&self, user_id: Id<UserMarker>) -> Result<Option<String>> {
         self.rest.load_user_note(user_id).await
+    }
+
+    pub async fn update_user_profile(&self, update: &UserProfileUpdate) -> Result<()> {
+        self.rest.update_user_profile(update).await
     }
 }
 

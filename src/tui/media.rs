@@ -13,10 +13,10 @@ pub(super) use targets::{
 };
 
 use protocol::{
-    AVATAR_PREVIEW_HEIGHT, AVATAR_PREVIEW_WIDTH, ImagePreviewRenderInfo,
-    PROFILE_POPUP_AVATAR_HEIGHT, PROFILE_POPUP_AVATAR_WIDTH, avatar_preview_url,
+    AVATAR_PREVIEW_HEIGHT, AVATAR_PREVIEW_WIDTH, ImagePreviewRenderInfo, avatar_preview_url,
     clipped_preview_image, clipped_preview_protocol, emoji_protocol, query_image_picker,
 };
+pub(super) use protocol::{PROFILE_POPUP_AVATAR_HEIGHT, PROFILE_POPUP_AVATAR_WIDTH};
 
 #[cfg(test)]
 use cache::{

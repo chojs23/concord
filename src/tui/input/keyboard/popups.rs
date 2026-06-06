@@ -4,8 +4,8 @@ use crate::discord::AppCommand;
 use crate::tui::keybindings::{
     AttachmentViewerAction, ChannelSwitcherAction, DebugLogPopupAction, EmojiReactionPickerAction,
     MessageConfirmationAction, OptionsPopupAction, PollVotePickerAction, PopupListAction,
-    ProfilePopupAction, ReactionUsersPopupAction, ScrollAction, SearchPopupAction, SelectionAction,
-    SelectionKeySet,
+    ProfilePopupAction, ProfilePopupTabAction, ReactionUsersPopupAction, ScrollAction,
+    SearchPopupAction, SelectionAction, SelectionKeySet,
 };
 use crate::tui::state::{ActiveModalPopupKind, DashboardState};
 
@@ -294,12 +294,69 @@ pub(super) fn handle_user_profile_popup_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    match state.key_bindings().profile_popup_action(key) {
-        Some(ProfilePopupAction::Close) => state.close_user_profile_popup(),
+    if state.is_user_profile_status_picker_open() {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+            state.close_user_profile_status_picker();
+            return None;
+        }
+        if key.code == KeyCode::Enter {
+            return state.activate_user_profile_status_picker();
+        }
+        if let Some(action) = state
+            .key_bindings()
+            .selection_action(key, SelectionKeySet::Navigation)
+        {
+            match action {
+                SelectionAction::Next => state.move_user_profile_status_picker_down(),
+                SelectionAction::Previous => state.move_user_profile_status_picker_up(),
+            }
+        }
+        return None;
+    }
+
+    match state
+        .key_bindings()
+        .profile_popup_action(key, state.is_user_profile_popup_editing())
+    {
+        Some(ProfilePopupAction::Close) => state.close_or_cancel_user_profile_popup(),
         Some(ProfilePopupAction::Scroll(ScrollAction::Down)) => {
             state.scroll_user_profile_popup_down()
         }
         Some(ProfilePopupAction::Scroll(ScrollAction::Up)) => state.scroll_user_profile_popup_up(),
+        Some(ProfilePopupAction::NextField) => state.next_user_profile_settings_field(),
+        Some(ProfilePopupAction::PreviousField) => state.previous_user_profile_settings_field(),
+        Some(ProfilePopupAction::SwitchTab(ProfilePopupTabAction::Global)) => {
+            state.switch_user_profile_settings_to_global()
+        }
+        Some(ProfilePopupAction::SwitchTab(ProfilePopupTabAction::Guild)) => {
+            state.switch_user_profile_settings_to_guild()
+        }
+        Some(ProfilePopupAction::StartOrCommitEdit) => {
+            return state.start_or_commit_user_profile_edit();
+        }
+        Some(ProfilePopupAction::PasteClipboard) => {
+            if state.is_user_profile_popup_editing() {
+                state.request_paste_clipboard();
+            } else {
+                state.request_user_profile_avatar_clipboard_paste();
+            }
+        }
+        Some(ProfilePopupAction::Save) => return state.save_user_profile_settings_command(),
+        Some(ProfilePopupAction::DeleteChar) => state.pop_user_profile_edit_char(),
+        Some(ProfilePopupAction::DeletePreviousWord) => {
+            state.delete_previous_user_profile_edit_word()
+        }
+        Some(ProfilePopupAction::MoveCursorLeft) => state.move_user_profile_edit_cursor_left(),
+        Some(ProfilePopupAction::MoveCursorRight) => state.move_user_profile_edit_cursor_right(),
+        Some(ProfilePopupAction::MoveCursorWordLeft) => {
+            state.move_user_profile_edit_cursor_word_left()
+        }
+        Some(ProfilePopupAction::MoveCursorWordRight) => {
+            state.move_user_profile_edit_cursor_word_right()
+        }
+        Some(ProfilePopupAction::MoveCursorHome) => state.move_user_profile_edit_cursor_home(),
+        Some(ProfilePopupAction::MoveCursorEnd) => state.move_user_profile_edit_cursor_end(),
+        Some(ProfilePopupAction::InsertChar(value)) => state.push_user_profile_edit_char(value),
         None => {}
     }
 

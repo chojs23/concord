@@ -17,8 +17,8 @@ pub(in crate::tui) enum UiAction {
     CycleFocusPrevious,
     HalfPageDown,
     HalfPageUp,
-    ScrollMessageViewportDown,
-    ScrollMessageViewportUp,
+    ScrollViewportDown,
+    ScrollViewportUp,
     JumpTop,
     JumpBottom,
     ScrollHorizontalLeft,
@@ -43,6 +43,7 @@ pub(in crate::tui) enum UiAction {
     ToggleChannelPane,
     ToggleMemberPane,
     OpenFocusedPaneAction,
+    OpenCurrentUserProfile,
     OpenOptions,
     ChannelSwitcher,
     OpenDisplayOptions,
@@ -94,11 +95,17 @@ pub(in crate::tui) enum DashboardAction {
     HalfPageUp,
     JumpTop,
     JumpBottom,
-    ScrollMessageViewportDown,
-    ScrollMessageViewportUp,
+    ScrollViewportDown,
+    ScrollViewportUp,
     ScrollHorizontalLeft,
     ScrollHorizontalRight,
     ActivateFocused,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) enum ProfilePopupTabAction {
+    Global,
+    Guild,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -163,6 +170,21 @@ pub(in crate::tui) enum AttachmentViewerAction {
 pub(in crate::tui) enum ProfilePopupAction {
     Close,
     Scroll(ScrollAction),
+    NextField,
+    PreviousField,
+    SwitchTab(ProfilePopupTabAction),
+    StartOrCommitEdit,
+    PasteClipboard,
+    Save,
+    DeleteChar,
+    DeletePreviousWord,
+    MoveCursorLeft,
+    MoveCursorRight,
+    MoveCursorWordLeft,
+    MoveCursorWordRight,
+    MoveCursorHome,
+    MoveCursorEnd,
+    InsertChar(char),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

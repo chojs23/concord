@@ -122,3 +122,220 @@ fn esc_closes_modal_before_returning_from_opened_thread() {
     handle_key(&mut state, key(KeyCode::Esc));
     assert_eq!(state.selected_channel_id(), Some(Id::new(2)));
 }
+
+#[test]
+fn ctrl_v_requests_clipboard_paste_on_profile_avatar_field() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.open_current_user_profile_popup();
+    state.next_user_profile_settings_field();
+    state.next_user_profile_settings_field();
+
+    handle_key(&mut state, ctrl_key('v'));
+
+    assert!(state.take_paste_clipboard_request());
+    assert!(state.accepts_clipboard_paste());
+    assert!(state.begin_clipboard_paste());
+    assert_eq!(
+        state.user_profile_settings_status(),
+        Some("Reading clipboard image...")
+    );
+}
+
+#[test]
+fn profile_status_picker_routes_selection_keys_and_enter() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.open_current_user_profile_popup();
+    handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, key(KeyCode::Enter));
+    assert!(state.is_user_profile_status_picker_open());
+
+    handle_key(&mut state, char_key('j'));
+    assert_eq!(
+        handle_key(&mut state, key(KeyCode::Enter)),
+        Some(AppCommand::UpdateCurrentUserStatus {
+            status: PresenceStatus::Idle,
+        })
+    );
+    assert!(!state.is_user_profile_status_picker_open());
+}
+
+#[test]
+fn profile_activity_edit_enter_dispatches_presence_update() {
+    let mut state = DashboardState::new();
+    let user_id = Id::new(10);
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(user_id),
+    });
+    state.push_event(AppEvent::UserPresenceUpdate {
+        user_id,
+        status: PresenceStatus::Online,
+        activities: Vec::new(),
+    });
+    state.open_current_user_profile_popup();
+    handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    for value in "Concord".chars() {
+        handle_key(&mut state, char_key(value));
+    }
+
+    assert_eq!(
+        handle_key(&mut state, key(KeyCode::Enter)),
+        Some(AppCommand::UpdateCurrentUserActivity {
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::playing("Concord")],
+        })
+    );
+}
+
+#[test]
+fn pasted_file_path_sets_profile_avatar_field() {
+    let avatar = temp_upload_file("avatar.png", &[1, 2, 3]);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.open_current_user_profile_popup();
+    state.next_user_profile_settings_field();
+    state.next_user_profile_settings_field();
+
+    assert!(handle_paste(&mut state, &avatar.to_string_lossy()));
+    assert!(state.user_profile_popup_has_avatar_preview());
+
+    assert_eq!(
+        state.user_profile_settings_field_value(
+            crate::tui::state::UserProfileSettingsField::GlobalAvatarPath,
+        ),
+        "avatar.png"
+    );
+    assert!(matches!(
+        state.save_user_profile_settings_command(),
+        Some(AppCommand::UpdateUserProfile { update })
+            if update
+                .global
+                .avatar
+                .as_ref()
+                .and_then(crate::discord::ProfileAvatarUpload::path)
+                == Some(avatar.as_path())
+    ));
+
+    remove_temp_upload_file(&avatar);
+}
+
+#[test]
+fn ctrl_v_pastes_text_into_profile_edit_field_at_cursor() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.open_current_user_profile_popup();
+
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('a'));
+    handle_key(&mut state, char_key('c'));
+    handle_key(&mut state, key(KeyCode::Left));
+    handle_key(&mut state, ctrl_key('v'));
+
+    assert!(state.take_paste_clipboard_request());
+    assert!(state.accepts_clipboard_paste());
+    assert!(state.begin_clipboard_paste());
+    assert!(handle_paste(&mut state, "b"));
+    state.finish_clipboard_paste();
+
+    assert_eq!(
+        state.user_profile_settings_field_value(
+            crate::tui::state::UserProfileSettingsField::GlobalDisplayName,
+        ),
+        "abc"
+    );
+}
+
+#[test]
+fn profile_text_editing_uses_configured_composer_keys() {
+    let mut state = state_with_keymap(KeymapOptions {
+        composer: [
+            ("Submit".to_owned(), KeymapBinding::one("<C-s>")),
+            (
+                "DeletePreviousWord".to_owned(),
+                KeymapBinding::one("<A-backspace>"),
+            ),
+            ("MoveCursorLeft".to_owned(), KeymapBinding::one("<A-left>")),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    });
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.open_current_user_profile_popup();
+
+    handle_key(&mut state, key(KeyCode::Enter));
+    for value in "hello world".chars() {
+        handle_key(&mut state, char_key(value));
+    }
+    handle_key(&mut state, alt_key(KeyCode::Backspace));
+    assert_eq!(
+        state.user_profile_settings_field_value(
+            crate::tui::state::UserProfileSettingsField::GlobalDisplayName,
+        ),
+        "hello "
+    );
+
+    handle_key(&mut state, char_key('X'));
+    handle_key(&mut state, alt_key(KeyCode::Left));
+    handle_key(&mut state, char_key('Y'));
+    handle_key(&mut state, ctrl_key('s'));
+    assert!(!state.is_user_profile_popup_editing());
+    assert_eq!(
+        state.user_profile_settings_field_value(
+            crate::tui::state::UserProfileSettingsField::GlobalDisplayName,
+        ),
+        "hello YX"
+    );
+}
+
+#[test]
+fn profile_text_editing_moves_cursor_with_arrow_keys() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.open_current_user_profile_popup();
+
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('a'));
+    handle_key(&mut state, char_key('b'));
+    handle_key(&mut state, char_key('c'));
+    handle_key(&mut state, key(KeyCode::Left));
+    handle_key(&mut state, key(KeyCode::Left));
+    handle_key(&mut state, char_key('X'));
+    handle_key(&mut state, key(KeyCode::Right));
+    handle_key(&mut state, key(KeyCode::Backspace));
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        state.user_profile_settings_field_value(
+            crate::tui::state::UserProfileSettingsField::GlobalDisplayName,
+        ),
+        "aXc"
+    );
+}

@@ -21,6 +21,7 @@ mod read;
 mod request_lifecycle;
 mod rest;
 mod state;
+mod upload;
 mod voice;
 
 pub use application_commands::{
@@ -39,12 +40,13 @@ pub use channel::{
 pub use client::DiscordClient;
 pub(crate) use client::validate_token_header;
 pub use commands::{
-    AppCommand, DownloadAttachmentSource, ForumPostArchiveState, MessageSearchAuthorType,
-    MessageSearchHas, MessageSearchPage, MessageSearchQuery, MuteDuration,
+    AppCommand, DownloadAttachmentSource, ForumPostArchiveState, GlobalUserProfileUpdate,
+    GuildUserProfileUpdate, MessageSearchAuthorType, MessageSearchHas, MessageSearchPage,
+    MessageSearchQuery, MuteDuration, ProfileAvatarUpload, UserProfileUpdate,
 };
 pub use commands::{
-    MAX_UPLOAD_ATTACHMENT_COUNT, MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
-    MessageAttachmentUpload, ReactionEmoji,
+    MAX_PROFILE_AVATAR_BYTES, MAX_UPLOAD_ATTACHMENT_COUNT, MAX_UPLOAD_FILE_BYTES,
+    MAX_UPLOAD_TOTAL_BYTES, MessageAttachmentUpload, ReactionEmoji,
 };
 #[cfg(test)]
 pub(crate) use events::test_builders;
@@ -70,4 +72,5 @@ pub use state::{
     MessageCapabilities, MessageState, RoleState, SnapshotAreas, SnapshotRevision, TypingUserState,
     VoiceParticipantState,
 };
+pub(crate) use upload::read_profile_avatar_image;
 pub use voice::{VoiceConnectionStatus, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo};

@@ -22,6 +22,7 @@ use tokio_tungstenite::{
 };
 
 use super::{
+    ActivityInfo, PresenceStatus,
     client::publish_app_event,
     events::{AppEvent, SequencedAppEvent},
     fingerprint::{
@@ -69,6 +70,10 @@ pub enum GatewayCommand {
         channel_id: Option<Id<ChannelMarker>>,
         self_mute: bool,
         self_deaf: bool,
+    },
+    UpdatePresence {
+        status: PresenceStatus,
+        activities: Vec<ActivityInfo>,
     },
     Shutdown,
 }
@@ -788,6 +793,13 @@ async fn dispatch_command(
             );
             voice_state_update_payload(guild_id, channel_id, self_mute, self_deaf)
         }
+        GatewayCommand::UpdatePresence { status, activities } => {
+            logging::debug(
+                "gateway",
+                format!("updating presence status: {}", status.label()),
+            );
+            presence_update_payload(status, &activities)
+        }
         GatewayCommand::Shutdown => return Ok(()),
     };
     send_text(writer, payload).await
@@ -835,7 +847,7 @@ fn build_identify_payload(token: &str) -> String {
                 "client_event_source": Value::Null,
             },
             "presence": {
-                "status": "unknown",
+                "status": PresenceStatus::Online.gateway_status(),
                 "since": 0,
                 "activities": [],
                 "afk": false,
@@ -963,6 +975,39 @@ fn voice_state_update_payload(
     .to_string()
 }
 
+fn presence_update_payload(status: PresenceStatus, activities: &[ActivityInfo]) -> String {
+    json!({
+        "op": 3,
+        "d": {
+            "since": 0,
+            "activities": activities.iter().map(activity_gateway_payload).collect::<Vec<_>>(),
+            "status": status.gateway_status(),
+            "afk": false,
+        },
+    })
+    .to_string()
+}
+
+fn activity_gateway_payload(activity: &ActivityInfo) -> Value {
+    let mut value = json!({
+        "name": activity.name.as_str(),
+        "type": activity.kind.gateway_code(),
+    });
+    if let Some(details) = activity.details.as_deref() {
+        value["details"] = json!(details);
+    }
+    if let Some(state) = activity.state.as_deref() {
+        value["state"] = json!(state);
+    }
+    if let Some(url) = activity.url.as_deref() {
+        value["url"] = json!(url);
+    }
+    if let Some(application_id) = activity.application_id.as_deref() {
+        value["application_id"] = json!(application_id);
+    }
+    value
+}
+
 #[cfg(test)]
 mod tests {
     use crate::discord::fingerprint::{
@@ -973,13 +1018,14 @@ mod tests {
         Id,
         marker::{ChannelMarker, GuildMarker, UserMarker},
     };
+    use crate::discord::{ActivityInfo, PresenceStatus};
     use serde_json::json;
 
     use super::{
         ConnectionOutcome, GATEWAY_WEBSOCKET_LIMIT, GatewayCommand, HeartbeatAckState,
         SessionState, SubscriptionDeduper, USER_ACCOUNT_CAPABILITIES, build_identify_payload,
         build_resume_payload, close_code_outcome, direct_message_subscribe_payload,
-        gateway_websocket_config, guild_channel_subscribe_payload,
+        gateway_websocket_config, guild_channel_subscribe_payload, presence_update_payload,
         request_guild_members_by_ids_payload, request_guild_members_payload,
         voice_state_update_payload,
     };
@@ -1027,6 +1073,50 @@ mod tests {
             Some(CLIENT_BUILD_NUMBER)
         );
         assert_eq!(payload["d"]["compress"].as_bool(), Some(false));
+        assert_eq!(payload["d"]["presence"]["status"].as_str(), Some("online"));
+    }
+
+    #[test]
+    fn presence_update_payload_maps_statuses_for_gateway() {
+        let online_payload: serde_json::Value =
+            serde_json::from_str(&presence_update_payload(PresenceStatus::Online, &[]))
+                .expect("presence payload should be valid json");
+        assert_eq!(online_payload["op"].as_u64(), Some(3));
+        assert_eq!(online_payload["d"]["status"].as_str(), Some("online"));
+        assert_eq!(online_payload["d"]["since"].as_u64(), Some(0));
+        assert_eq!(online_payload["d"]["activities"], json!([]));
+        assert_eq!(online_payload["d"]["afk"].as_bool(), Some(false));
+
+        let idle_payload: serde_json::Value =
+            serde_json::from_str(&presence_update_payload(PresenceStatus::Idle, &[]))
+                .expect("presence payload should be valid json");
+        assert_eq!(idle_payload["d"]["status"].as_str(), Some("idle"));
+
+        let dnd_payload: serde_json::Value =
+            serde_json::from_str(&presence_update_payload(PresenceStatus::DoNotDisturb, &[]))
+                .expect("presence payload should be valid json");
+        assert_eq!(dnd_payload["d"]["status"].as_str(), Some("dnd"));
+
+        let offline_payload: serde_json::Value =
+            serde_json::from_str(&presence_update_payload(PresenceStatus::Offline, &[]))
+                .expect("presence payload should be valid json");
+        assert_eq!(offline_payload["d"]["status"].as_str(), Some("invisible"));
+    }
+
+    #[test]
+    fn presence_update_payload_includes_manual_activity() {
+        let activity = ActivityInfo::playing("Concord");
+        let payload: serde_json::Value = serde_json::from_str(&presence_update_payload(
+            PresenceStatus::Online,
+            &[activity],
+        ))
+        .expect("presence payload should be valid json");
+
+        assert_eq!(
+            payload["d"]["activities"][0]["name"].as_str(),
+            Some("Concord")
+        );
+        assert_eq!(payload["d"]["activities"][0]["type"].as_u64(), Some(0));
     }
 
     #[test]

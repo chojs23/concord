@@ -47,7 +47,12 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
     let members = data
         .get("members")
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(parse_member_info).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|member| parse_member_info(member, Some(guild_id)))
+                .collect()
+        })
         .unwrap_or_default();
     let member_count = data.get("member_count").and_then(Value::as_u64);
 

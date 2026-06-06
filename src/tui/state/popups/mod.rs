@@ -1,8 +1,15 @@
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    path::PathBuf,
+};
+
 use crate::discord::ReactionEmoji;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
+use crate::discord::{PresenceStatus, ProfileAvatarUpload};
 
 use crate::discord::ReactionUsersInfo;
 use crate::tui::keybindings::{KeyChord, LeaderShortcutItem, SelectionAction};
@@ -387,10 +394,174 @@ pub(super) struct UserProfilePopupState {
     pub(super) user_id: Id<UserMarker>,
     pub(super) guild_id: Option<Id<GuildMarker>>,
     pub(super) load_error: Option<String>,
+    pub(super) settings: UserProfileSettingsState,
     /// First visible row of the popup body. Behaves like the channel/guild
     /// pane scroll: j/k and the mouse wheel adjust this, never moving a
     /// cursor that the renderer would have to chase.
     pub(super) scroll: ScrollablePopupState,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum UserProfileSettingsTab {
+    #[default]
+    Global,
+    Guild,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UserProfileSettingsField {
+    CurrentStatus,
+    ManualActivity,
+    GlobalDisplayName,
+    GlobalPronouns,
+    GlobalAvatarPath,
+    GuildNickname,
+    GuildPronouns,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct UserProfileSettingsState {
+    pub(super) tab: UserProfileSettingsTab,
+    pub(super) selected_global: usize,
+    pub(super) selected_guild: usize,
+    pub(super) editing: Option<UserProfileSettingsField>,
+    pub(super) edit_buffer: String,
+    pub(super) edit_cursor_byte_index: usize,
+    pub(super) global_display_name: Option<String>,
+    pub(super) global_pronouns: Option<String>,
+    pub(super) global_avatar_path: Option<String>,
+    pub(super) global_avatar_upload: Option<ProfileAvatarUpload>,
+    pub(super) global_avatar_preview_key: Option<String>,
+    pub(super) presence_status: Option<PresenceStatus>,
+    pub(super) manual_activity: Option<String>,
+    pub(super) status_picker: Option<SelectablePopupState>,
+    pub(super) guild_nickname: Option<String>,
+    pub(super) guild_pronouns: Option<String>,
+    pub(super) saving: bool,
+    pub(super) status: Option<String>,
+}
+
+impl UserProfileSettingsState {
+    const GLOBAL_FIELDS: [UserProfileSettingsField; 5] = [
+        UserProfileSettingsField::GlobalDisplayName,
+        UserProfileSettingsField::GlobalPronouns,
+        UserProfileSettingsField::GlobalAvatarPath,
+        UserProfileSettingsField::CurrentStatus,
+        UserProfileSettingsField::ManualActivity,
+    ];
+    const GUILD_FIELDS: [UserProfileSettingsField; 2] = [
+        UserProfileSettingsField::GuildNickname,
+        UserProfileSettingsField::GuildPronouns,
+    ];
+
+    pub(super) fn active_field(&self) -> UserProfileSettingsField {
+        match self.tab {
+            UserProfileSettingsTab::Global => {
+                Self::GLOBAL_FIELDS[self.selected_global.min(Self::GLOBAL_FIELDS.len() - 1)]
+            }
+            UserProfileSettingsTab::Guild => {
+                Self::GUILD_FIELDS[self.selected_guild.min(Self::GUILD_FIELDS.len() - 1)]
+            }
+        }
+    }
+
+    pub(super) fn next_field(&mut self) {
+        match self.tab {
+            UserProfileSettingsTab::Global => {
+                self.selected_global = (self.selected_global + 1) % Self::GLOBAL_FIELDS.len();
+            }
+            UserProfileSettingsTab::Guild => {
+                self.selected_guild = (self.selected_guild + 1) % Self::GUILD_FIELDS.len();
+            }
+        }
+    }
+
+    pub(super) fn previous_field(&mut self) {
+        match self.tab {
+            UserProfileSettingsTab::Global => {
+                self.selected_global = if self.selected_global == 0 {
+                    Self::GLOBAL_FIELDS.len() - 1
+                } else {
+                    self.selected_global - 1
+                };
+            }
+            UserProfileSettingsTab::Guild => {
+                self.selected_guild = if self.selected_guild == 0 {
+                    Self::GUILD_FIELDS.len() - 1
+                } else {
+                    self.selected_guild - 1
+                };
+            }
+        }
+    }
+
+    pub(super) fn set_field_value(&mut self, field: UserProfileSettingsField, value: String) {
+        match field {
+            UserProfileSettingsField::CurrentStatus => {}
+            UserProfileSettingsField::ManualActivity => self.manual_activity = Some(value),
+            UserProfileSettingsField::GlobalDisplayName => self.global_display_name = Some(value),
+            UserProfileSettingsField::GlobalPronouns => self.global_pronouns = Some(value),
+            UserProfileSettingsField::GlobalAvatarPath => {
+                let trimmed = value.trim();
+                let upload = (!trimmed.is_empty())
+                    .then(|| ProfileAvatarUpload::from_path(PathBuf::from(trimmed)));
+                self.global_avatar_preview_key = upload.as_ref().map(profile_avatar_preview_key);
+                self.global_avatar_path = Some(value);
+                self.global_avatar_upload = None;
+            }
+            UserProfileSettingsField::GuildNickname => self.guild_nickname = Some(value),
+            UserProfileSettingsField::GuildPronouns => self.guild_pronouns = Some(value),
+        }
+    }
+
+    pub(super) fn set_avatar_upload(&mut self, upload: ProfileAvatarUpload) {
+        self.global_avatar_preview_key = Some(profile_avatar_preview_key(&upload));
+        self.global_avatar_path = None;
+        self.global_avatar_upload = Some(upload);
+    }
+
+    pub(super) fn pending_global_avatar_upload(&self) -> Option<ProfileAvatarUpload> {
+        self.global_avatar_upload.clone().or_else(|| {
+            self.global_avatar_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .map(ProfileAvatarUpload::from_path)
+        })
+    }
+
+    pub(super) fn pending_global_avatar_preview_key(&self) -> Option<&str> {
+        self.global_avatar_preview_key.as_deref()
+    }
+
+    pub(super) fn clear_after_save(&mut self) {
+        self.global_display_name = None;
+        self.global_pronouns = None;
+        self.global_avatar_path = None;
+        self.global_avatar_upload = None;
+        self.global_avatar_preview_key = None;
+        self.guild_nickname = None;
+        self.guild_pronouns = None;
+        self.editing = None;
+        self.edit_buffer.clear();
+        self.edit_cursor_byte_index = 0;
+        self.saving = false;
+        self.status = Some("Saved profile changes".to_owned());
+    }
+}
+
+fn profile_avatar_preview_key(upload: &ProfileAvatarUpload) -> String {
+    let mut hasher = DefaultHasher::new();
+    upload.filename.hash(&mut hasher);
+    upload.size_bytes.hash(&mut hasher);
+    if let Some(path) = upload.path() {
+        path.hash(&mut hasher);
+    }
+    if let Some(bytes) = upload.bytes() {
+        bytes.hash(&mut hasher);
+    }
+    format!("concord-profile-avatar-preview://{:016x}", hasher.finish())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

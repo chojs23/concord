@@ -23,8 +23,8 @@ pub(in crate::tui) use actions::{
     LeaderActionMenuAction, LoginBusyAction, LoginGlobalAction, LoginMfaSelectAction,
     LoginModeSelectAction, LoginPasswordInputAction, LoginTextInputAction,
     MessageConfirmationAction, OptionsPopupAction, PaneFilterAction, PollVotePickerAction,
-    PopupListAction, ProfilePopupAction, ReactionUsersPopupAction, ScrollAction, SearchPopupAction,
-    SelectionAction, SelectionKeySet, UiAction,
+    PopupListAction, ProfilePopupAction, ProfilePopupTabAction, ReactionUsersPopupAction,
+    ScrollAction, SearchPopupAction, SelectionAction, SelectionKeySet, UiAction,
 };
 pub(in crate::tui) use chord::KeyChord;
 #[cfg(test)]
@@ -657,7 +657,11 @@ impl UiAction {
     }
 
     fn from_keymap_name(name: &str) -> Option<Self> {
-        Self::from_name(name)
+        match name {
+            "ScrollMessageViewportDown" => Some(Self::ScrollViewportDown),
+            "ScrollMessageViewportUp" => Some(Self::ScrollViewportUp),
+            _ => Self::from_name(name),
+        }
     }
 
     pub(in crate::tui) fn name(self) -> &'static str {
@@ -674,8 +678,8 @@ impl UiAction {
             UiAction::CycleFocusPrevious => "CycleFocusPrevious",
             UiAction::HalfPageDown => "HalfPageDown",
             UiAction::HalfPageUp => "HalfPageUp",
-            UiAction::ScrollMessageViewportDown => "ScrollMessageViewportDown",
-            UiAction::ScrollMessageViewportUp => "ScrollMessageViewportUp",
+            UiAction::ScrollViewportDown => "ScrollViewportDown",
+            UiAction::ScrollViewportUp => "ScrollViewportUp",
             UiAction::JumpTop => "JumpTop",
             UiAction::JumpBottom => "JumpBottom",
             UiAction::ScrollHorizontalLeft => "ScrollHorizontalLeft",
@@ -700,6 +704,7 @@ impl UiAction {
             UiAction::ToggleChannelPane => "ToggleChannelPane",
             UiAction::ToggleMemberPane => "ToggleMemberPane",
             UiAction::OpenFocusedPaneAction => "OpenFocusedPaneAction",
+            UiAction::OpenCurrentUserProfile => "OpenCurrentUserProfile",
             UiAction::OpenOptions => "OpenOptions",
             UiAction::ChannelSwitcher => "ChannelSwitcher",
             UiAction::OpenDisplayOptions => "OpenDisplayOptions",
@@ -726,8 +731,8 @@ impl UiAction {
             UiAction::CycleFocusPrevious => "focus previous",
             UiAction::HalfPageDown => "half page down",
             UiAction::HalfPageUp => "half page up",
-            UiAction::ScrollMessageViewportDown => "scroll message viewport down",
-            UiAction::ScrollMessageViewportUp => "scroll message viewport up",
+            UiAction::ScrollViewportDown => "scroll viewport down",
+            UiAction::ScrollViewportUp => "scroll viewport up",
             UiAction::JumpTop => "jump top",
             UiAction::JumpBottom => "jump bottom",
             UiAction::ScrollHorizontalLeft => "scroll left",
@@ -752,6 +757,7 @@ impl UiAction {
             UiAction::ToggleChannelPane => "toggle Channels",
             UiAction::ToggleMemberPane => "toggle Members",
             UiAction::OpenFocusedPaneAction => "Actions",
+            UiAction::OpenCurrentUserProfile => "My profile",
             UiAction::OpenOptions => "Options",
             UiAction::ChannelSwitcher => "Switch channels",
             UiAction::OpenDisplayOptions => "Display options",
@@ -878,8 +884,8 @@ fn all_ui_actions() -> &'static [UiAction] {
         UiAction::CycleFocusPrevious,
         UiAction::HalfPageDown,
         UiAction::HalfPageUp,
-        UiAction::ScrollMessageViewportDown,
-        UiAction::ScrollMessageViewportUp,
+        UiAction::ScrollViewportDown,
+        UiAction::ScrollViewportUp,
         UiAction::JumpTop,
         UiAction::JumpBottom,
         UiAction::ScrollHorizontalLeft,
@@ -904,6 +910,7 @@ fn all_ui_actions() -> &'static [UiAction] {
         UiAction::ToggleChannelPane,
         UiAction::ToggleMemberPane,
         UiAction::OpenFocusedPaneAction,
+        UiAction::OpenCurrentUserProfile,
         UiAction::OpenOptions,
         UiAction::ChannelSwitcher,
         UiAction::OpenDisplayOptions,
@@ -953,8 +960,8 @@ fn default_keymap_specs(leader: KeyChord) -> BTreeMap<UiAction, KeyMapActionSpec
             ],
             UiAction::HalfPageDown => vec![vec![ctrl_chord('d')]],
             UiAction::HalfPageUp => vec![vec![ctrl_chord('u')]],
-            UiAction::ScrollMessageViewportDown => vec![vec![char_chord('J')]],
-            UiAction::ScrollMessageViewportUp => vec![vec![char_chord('K')]],
+            UiAction::ScrollViewportDown => vec![vec![char_chord('J')]],
+            UiAction::ScrollViewportUp => vec![vec![char_chord('K')]],
             UiAction::JumpTop => vec![vec![char_chord('g'), char_chord('g')]],
             UiAction::JumpBottom => vec![vec![char_chord('G')]],
             UiAction::ScrollHorizontalLeft => vec![vec![char_chord('H')]],
@@ -985,6 +992,7 @@ fn default_keymap_specs(leader: KeyChord) -> BTreeMap<UiAction, KeyMapActionSpec
             UiAction::ToggleChannelPane => vec![vec![leader, char_chord('2')]],
             UiAction::ToggleMemberPane => vec![vec![leader, char_chord('4')]],
             UiAction::OpenFocusedPaneAction => vec![vec![leader, char_chord('a')]],
+            UiAction::OpenCurrentUserProfile => vec![vec![leader, char_chord('p')]],
             UiAction::OpenOptions => vec![vec![leader, char_chord('o')]],
             UiAction::ChannelSwitcher => vec![vec![leader, leader]],
             UiAction::OpenDisplayOptions
@@ -1187,12 +1195,12 @@ mod tests {
             Some(UiAction::SelectPrevious)
         );
         assert_eq!(
-            UiAction::from_name("ScrollMessageViewportDown"),
-            Some(UiAction::ScrollMessageViewportDown)
+            UiAction::from_name("ScrollViewportDown"),
+            Some(UiAction::ScrollViewportDown)
         );
         assert_eq!(
-            UiAction::from_name("ScrollMessageViewportUp"),
-            Some(UiAction::ScrollMessageViewportUp)
+            UiAction::from_name("ScrollViewportUp"),
+            Some(UiAction::ScrollViewportUp)
         );
         assert_eq!(
             UiAction::from_name("ToggleGuildPane"),
@@ -1616,6 +1624,58 @@ mod tests {
     }
 
     #[test]
+    fn profile_popup_editing_uses_configured_composer_text_keys() {
+        let keymap = KeymapOptions {
+            composer: [
+                ("PasteClipboard".to_owned(), KeymapBinding::one("<C-y>")),
+                ("Submit".to_owned(), KeymapBinding::one("<C-s>")),
+                ("Close".to_owned(), KeymapBinding::one("<C-q>")),
+                (
+                    "DeletePreviousWord".to_owned(),
+                    KeymapBinding::one("<A-backspace>"),
+                ),
+                ("MoveCursorLeft".to_owned(), KeymapBinding::one("<A-left>")),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let key_bindings = KeyBindings::try_from_options(&keymap).expect("composer keymap parses");
+
+        assert_eq!(
+            key_bindings.profile_popup_action(
+                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL),
+                true,
+            ),
+            Some(ProfilePopupAction::PasteClipboard)
+        );
+        assert_eq!(
+            key_bindings.profile_popup_action(
+                KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+                true,
+            ),
+            Some(ProfilePopupAction::StartOrCommitEdit)
+        );
+        assert_eq!(
+            key_bindings.profile_popup_action(
+                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL),
+                true,
+            ),
+            Some(ProfilePopupAction::Close)
+        );
+        assert_eq!(
+            key_bindings
+                .profile_popup_action(KeyEvent::new(KeyCode::Backspace, KeyModifiers::ALT), true),
+            Some(ProfilePopupAction::DeletePreviousWord)
+        );
+        assert_eq!(
+            key_bindings
+                .profile_popup_action(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT), true),
+            Some(ProfilePopupAction::MoveCursorLeft)
+        );
+    }
+
+    #[test]
     fn composer_keymaps_reject_unknown_actions_and_conflicts() {
         let unknown = KeymapOptions {
             composer: [("MuteChannel".to_owned(), KeymapBinding::one("<C-m>"))]
@@ -1825,6 +1885,26 @@ mod tests {
     }
 
     #[test]
+    fn default_leader_p_opens_current_user_profile() {
+        let key_bindings = KeyBindings::default();
+        let leader_prefix = key_bindings.leader_keymap_prefix();
+
+        assert_eq!(
+            key_bindings.keymap_lookup_with_key(
+                &leader_prefix,
+                KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
+            ),
+            Some(KeyMapLookup::Action(UiAction::OpenCurrentUserProfile))
+        );
+        assert!(
+            key_bindings
+                .leader_keymap_children(&leader_prefix)
+                .iter()
+                .any(|item| item.key == "p" && item.label == "My profile")
+        );
+    }
+
+    #[test]
     fn keymap_parses_compact_non_leader_prefix_sequence() {
         let keymap = KeymapOptions {
             mappings: [("ChannelSwitcher".to_owned(), KeymapBinding::one("<C-w>f"))]
@@ -2026,7 +2106,53 @@ mod tests {
     }
 
     #[test]
-    fn keymap_can_remap_message_viewport_scroll_actions() {
+    fn keymap_can_remap_viewport_scroll_actions() {
+        let keymap = KeymapOptions {
+            mappings: [
+                ("ScrollViewportDown".to_owned(), KeymapBinding::one("N")),
+                ("ScrollViewportUp".to_owned(), KeymapBinding::one("P")),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let key_bindings =
+            KeyBindings::try_from_options(&keymap).expect("viewport scroll keys should parse");
+
+        assert_eq!(
+            key_bindings
+                .keymap_lookup_root_key(KeyEvent::new(KeyCode::Char('N'), KeyModifiers::NONE)),
+            Some(KeyMapLookup::Action(UiAction::ScrollViewportDown))
+        );
+        assert_eq!(
+            key_bindings
+                .keymap_lookup_root_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::NONE)),
+            Some(KeyMapLookup::Action(UiAction::ScrollViewportUp))
+        );
+        assert_eq!(
+            key_bindings
+                .keymap_lookup_root_key(KeyEvent::new(KeyCode::Char('J'), KeyModifiers::NONE)),
+            None
+        );
+        assert_eq!(
+            key_bindings
+                .dashboard_action_for_ui_action(UiAction::ScrollViewportDown, FocusPane::Messages,),
+            Some(DashboardAction::ScrollViewportDown)
+        );
+        assert_eq!(
+            key_bindings
+                .dashboard_action_for_ui_action(UiAction::ScrollViewportUp, FocusPane::Messages),
+            Some(DashboardAction::ScrollViewportUp)
+        );
+        assert_eq!(
+            key_bindings
+                .dashboard_action_for_ui_action(UiAction::ScrollViewportDown, FocusPane::Channels,),
+            Some(DashboardAction::ScrollViewportDown)
+        );
+    }
+
+    #[test]
+    fn keymap_accepts_legacy_message_viewport_scroll_action_names() {
         let keymap = KeymapOptions {
             mappings: [
                 (
@@ -2043,43 +2169,17 @@ mod tests {
             ..Default::default()
         };
         let key_bindings =
-            KeyBindings::try_from_options(&keymap).expect("viewport scroll keys should parse");
+            KeyBindings::try_from_options(&keymap).expect("legacy scroll keys should parse");
 
         assert_eq!(
             key_bindings
                 .keymap_lookup_root_key(KeyEvent::new(KeyCode::Char('N'), KeyModifiers::NONE)),
-            Some(KeyMapLookup::Action(UiAction::ScrollMessageViewportDown))
+            Some(KeyMapLookup::Action(UiAction::ScrollViewportDown))
         );
         assert_eq!(
             key_bindings
                 .keymap_lookup_root_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::NONE)),
-            Some(KeyMapLookup::Action(UiAction::ScrollMessageViewportUp))
-        );
-        assert_eq!(
-            key_bindings
-                .keymap_lookup_root_key(KeyEvent::new(KeyCode::Char('J'), KeyModifiers::NONE)),
-            None
-        );
-        assert_eq!(
-            key_bindings.dashboard_action_for_ui_action(
-                UiAction::ScrollMessageViewportDown,
-                FocusPane::Messages,
-            ),
-            Some(DashboardAction::ScrollMessageViewportDown)
-        );
-        assert_eq!(
-            key_bindings.dashboard_action_for_ui_action(
-                UiAction::ScrollMessageViewportUp,
-                FocusPane::Messages
-            ),
-            Some(DashboardAction::ScrollMessageViewportUp)
-        );
-        assert_eq!(
-            key_bindings.dashboard_action_for_ui_action(
-                UiAction::ScrollMessageViewportDown,
-                FocusPane::Channels,
-            ),
-            None
+            Some(KeyMapLookup::Action(UiAction::ScrollViewportUp))
         );
     }
 
@@ -2335,6 +2435,68 @@ mod tests {
 
         assert!(
             key_bindings.is_leader_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+        );
+    }
+
+    #[test]
+    fn profile_popup_uses_configured_selection_and_scroll_keys() {
+        let keymap = KeymapOptions {
+            mappings: [
+                ("SelectNext".to_owned(), KeymapBinding::one("n")),
+                ("SelectPrevious".to_owned(), KeymapBinding::one("p")),
+                ("ScrollViewportDown".to_owned(), KeymapBinding::one("N")),
+                ("ScrollViewportUp".to_owned(), KeymapBinding::one("P")),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let key_bindings = KeyBindings::try_from_options(&keymap).expect("keymap should parse");
+
+        assert_eq!(
+            key_bindings.profile_popup_action(
+                KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+                false,
+            ),
+            Some(ProfilePopupAction::NextField)
+        );
+        assert_eq!(
+            key_bindings
+                .profile_popup_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), false),
+            Some(ProfilePopupAction::StartOrCommitEdit)
+        );
+        assert_eq!(
+            key_bindings.profile_popup_action(
+                KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
+                false,
+            ),
+            Some(ProfilePopupAction::PreviousField)
+        );
+        assert_eq!(
+            key_bindings
+                .profile_popup_action(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), false),
+            None
+        );
+        assert_eq!(
+            key_bindings.profile_popup_action(
+                KeyEvent::new(KeyCode::Char('N'), KeyModifiers::NONE),
+                false,
+            ),
+            Some(ProfilePopupAction::Scroll(ScrollAction::Down))
+        );
+        assert_eq!(
+            key_bindings.profile_popup_action(
+                KeyEvent::new(KeyCode::Char('P'), KeyModifiers::NONE),
+                false,
+            ),
+            Some(ProfilePopupAction::Scroll(ScrollAction::Up))
+        );
+        assert_eq!(
+            key_bindings.profile_popup_action(
+                KeyEvent::new(KeyCode::Char('J'), KeyModifiers::NONE),
+                false,
+            ),
+            None
         );
     }
 

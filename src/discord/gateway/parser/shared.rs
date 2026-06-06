@@ -2,8 +2,11 @@ use serde_json::Value;
 
 use crate::discord::{
     PresenceStatus,
-    events::default_avatar_url,
-    ids::{Id, marker::UserMarker},
+    events::{avatar_hash_extension, default_avatar_url},
+    ids::{
+        Id,
+        marker::{GuildMarker, UserMarker},
+    },
 };
 
 pub(super) use crate::discord::display_name::{
@@ -17,11 +20,32 @@ pub(super) fn raw_user_avatar_url(user_id: Id<UserMarker>, user: &Value) -> Opti
         .filter(|value| !value.is_empty());
     Some(match avatar {
         Some(hash) => {
-            let extension = if hash.starts_with("a_") { "gif" } else { "png" };
+            let extension = avatar_hash_extension(hash);
             format!("https://cdn.discordapp.com/avatars/{user_id}/{hash}.{extension}")
         }
         None => default_avatar_url(user_id, raw_discriminator(user).unwrap_or(0)),
     })
+}
+
+pub(super) fn raw_member_avatar_url(
+    guild_id: Option<Id<GuildMarker>>,
+    user_id: Id<UserMarker>,
+    member: &Value,
+    user: Option<&Value>,
+) -> Option<String> {
+    if let Some(guild_id) = guild_id
+        && let Some(hash) = member
+            .get("avatar")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+    {
+        let extension = avatar_hash_extension(hash);
+        return Some(format!(
+            "https://cdn.discordapp.com/guilds/{guild_id}/users/{user_id}/avatars/{hash}.{extension}"
+        ));
+    }
+
+    user.and_then(|user| raw_user_avatar_url(user_id, user))
 }
 
 fn raw_discriminator(user: &Value) -> Option<u16> {

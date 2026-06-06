@@ -19,7 +19,7 @@ use crate::{
     discord::{
         AppCommand, AppEvent, AttachmentUpdate, ChannelNotificationOverrideInfo,
         GuildNotificationSettingsInfo, MessageHistoryLoadTarget, MessageInfo, MuteDuration,
-        ReactionUsersInfo, VoiceConnectionStatus, validate_token_header,
+        ReactionUsersInfo, VoiceConnectionStatus, read_profile_avatar_image, validate_token_header,
     },
     error::AppError,
     logging, token_store, tui,
@@ -699,6 +699,27 @@ fn start_command_loop(
                             },
                         }
                     }
+                    AppCommand::LoadProfileAvatarPreview { key, upload } => {
+                        match read_profile_avatar_image(&upload).await {
+                            Ok(image) => {
+                                client
+                                    .publish_event(AppEvent::AttachmentPreviewLoaded {
+                                        url: key,
+                                        bytes: image.bytes,
+                                    })
+                                    .await;
+                            }
+                            Err(message) => {
+                                logging::error("preview", &message);
+                                client
+                                    .publish_event(AppEvent::AttachmentPreviewLoadFailed {
+                                        url: key,
+                                        message,
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
                     AppCommand::SendMessage {
                         channel_id,
                         content,
@@ -1051,6 +1072,100 @@ fn start_command_loop(
                                 client.mark_user_note_request_failed(user_id);
                                 log_app_error("load user note failed", &error);
                             }
+                        }
+                    }
+                    AppCommand::UpdateUserProfile { update } => {
+                        let user_id = update.user_id;
+                        let guild_id = update.guild_id;
+                        if client.current_user_id() != Some(user_id) {
+                            client
+                                .publish_event(AppEvent::UserProfileUpdateFailed {
+                                    user_id,
+                                    guild_id,
+                                    message: "profile update can only edit the current user"
+                                        .to_owned(),
+                                })
+                                .await;
+                            return;
+                        }
+                        match client.update_user_profile(&update).await {
+                            Ok(()) => match client.load_user_profile(user_id, guild_id, true).await
+                            {
+                                Ok(profile) => {
+                                    client
+                                        .publish_event(AppEvent::UserProfileLoaded {
+                                            guild_id,
+                                            profile,
+                                        })
+                                        .await;
+                                }
+                                Err(error) => {
+                                    log_app_error(
+                                        "reload user profile after update failed",
+                                        &error,
+                                    );
+                                    client
+                                        .publish_event(AppEvent::UserProfileLoadFailed {
+                                            user_id,
+                                            guild_id,
+                                            message: error.to_string(),
+                                        })
+                                        .await;
+                                }
+                            },
+                            Err(error) => {
+                                log_app_error("update user profile failed", &error);
+                                client
+                                    .publish_event(AppEvent::UserProfileUpdateFailed {
+                                        user_id,
+                                        guild_id,
+                                        message: error.to_string(),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
+                    AppCommand::UpdateCurrentUserStatus { status } => {
+                        match client.update_presence_status(status).await {
+                            Ok(activities) => {
+                                if let Some(user_id) = client.current_user_id() {
+                                    client
+                                        .publish_event(AppEvent::UserPresenceUpdate {
+                                            user_id,
+                                            status,
+                                            activities,
+                                        })
+                                        .await;
+                                }
+                            }
+                            Err(error) => {
+                                log_app_error("update presence status failed", &error);
+                                client
+                                    .publish_event(AppEvent::GatewayError {
+                                        message: error.to_string(),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
+                    AppCommand::UpdateCurrentUserActivity { status, activities } => {
+                        if let Err(error) =
+                            client.update_presence_activity(status, activities.clone())
+                        {
+                            log_app_error("update presence activity failed", &error);
+                            client
+                                .publish_event(AppEvent::GatewayError {
+                                    message: error.to_string(),
+                                })
+                                .await;
+                        } else if let Some(user_id) = client.current_user_id() {
+                            client
+                                .publish_event(AppEvent::UserPresenceUpdate {
+                                    user_id,
+                                    status,
+                                    activities,
+                                })
+                                .await;
                         }
                     }
                     AppCommand::AckChannel {

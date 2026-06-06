@@ -26,8 +26,10 @@ fn raw_member_list_update_populates_members_and_presence() {
                             "user": {
                                 "id": "20",
                                 "username": "alice",
-                                "global_name": "Alice"
+                                "global_name": "Alice",
+                                "avatar": "global_hash"
                             },
+                            "avatar": "guild_hash",
                             "nick": "Alice Nick",
                             "roles": ["30"],
                             "presence": { "status": "idle" }
@@ -45,6 +47,7 @@ fn raw_member_list_update_populates_members_and_presence() {
             if *guild_id == Id::new(10)
                 && member.user_id == Id::new(20)
                 && member.display_name == "Alice Nick"
+                && member.avatar_url.as_deref() == Some("https://cdn.discordapp.com/guilds/10/users/20/avatars/guild_hash.png")
                 && member.role_ids == vec![Id::new(30)]
     )));
     assert!(events.iter().any(|event| matches!(
@@ -2880,6 +2883,45 @@ fn message_ack_carries_channel_message_and_mention_count() {
             assert_eq!(*mention_count, 2);
         }
         other => panic!("expected one MessageAck, got {other:?}"),
+    }
+}
+
+#[test]
+fn user_update_refreshes_global_identity() {
+    let events = parse_user_account_event(
+        &json!({
+            "t": "USER_UPDATE",
+            "d": {
+                "id": "42",
+                "username": "neo",
+                "global_name": "Neo Global",
+                "avatar": "avatar_hash",
+                "discriminator": "0"
+            }
+        })
+        .to_string(),
+    );
+
+    match events.as_slice() {
+        [
+            AppEvent::UserIdentityUpdate {
+                user_id,
+                username,
+                global_name,
+                avatar_url,
+                is_bot,
+            },
+        ] => {
+            assert_eq!(*user_id, Id::new(42));
+            assert_eq!(username, "neo");
+            assert_eq!(global_name.as_deref(), Some("Neo Global"));
+            assert_eq!(
+                avatar_url.as_deref(),
+                Some("https://cdn.discordapp.com/avatars/42/avatar_hash.png"),
+            );
+            assert!(!is_bot);
+        }
+        other => panic!("expected one UserIdentityUpdate, got {other:?}"),
     }
 }
 

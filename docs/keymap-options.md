@@ -98,29 +98,29 @@ assign your own full sequence if you want direct keys for them.
 
 Navigation and app actions:
 
-| Action name                 | Default config             | Action                                   |
-| --------------------------- | -------------------------- | ---------------------------------------- |
-| `StartComposer`             | `"i"`                      | Start the message composer.              |
-| `OpenPaneFilter`            | `"/"`                      | Open the focused pane filter or search.  |
-| `FocusGuildPane`            | `"1"`                      | Show and focus the Servers pane.         |
-| `FocusChannelPane`          | `"2"`                      | Show and focus the Channels pane.        |
-| `FocusMessagePane`          | `"3"`                      | Focus the Messages pane.                 |
-| `FocusMemberPane`           | `"4"`                      | Show and focus the Members pane.         |
-| `SelectNext`                | `"j"`                      | Move selection down in navigation lists. |
-| `SelectPrevious`            | `"k"`                      | Move selection up in navigation lists.   |
-| `CycleFocusNext`            | `["tab", "l", "right"]`    | Cycle focus forward.                     |
-| `CycleFocusPrevious`        | `["<S-tab>", "h", "left"]` | Cycle focus backward.                    |
-| `HalfPageDown`              | `"<C-d>"`                  | Half-page down.                          |
-| `HalfPageUp`                | `"<C-u>"`                  | Half-page up.                            |
-| `ScrollMessageViewportDown` | `"J"`                      | Scroll the message viewport down.        |
-| `ScrollMessageViewportUp`   | `"K"`                      | Scroll the message viewport up.          |
-| `JumpTop`                   | `"gg"`                     | Jump to the top.                         |
-| `JumpBottom`                | `"G"`                      | Jump to the bottom.                      |
-| `ScrollHorizontalLeft`      | `"H"`                      | Scroll focused pane horizontally left.   |
-| `ScrollHorizontalRight`     | `"L"`                      | Scroll focused pane horizontally right.  |
-| `ResizePaneLeft`            | `["<A-h>", "<A-left>"]`    | Shrink the focused pane width.           |
-| `ResizePaneRight`           | `["<A-l>", "<A-right>"]`   | Grow the focused pane width.             |
-| `Quit`                      | `"q"`                      | Quit Concord.                            |
+| Action name             | Default config             | Action                                   |
+| ----------------------- | -------------------------- | ---------------------------------------- |
+| `StartComposer`         | `"i"`                      | Start the message composer.              |
+| `OpenPaneFilter`        | `"/"`                      | Open the focused pane filter or search.  |
+| `FocusGuildPane`        | `"1"`                      | Show and focus the Servers pane.         |
+| `FocusChannelPane`      | `"2"`                      | Show and focus the Channels pane.        |
+| `FocusMessagePane`      | `"3"`                      | Focus the Messages pane.                 |
+| `FocusMemberPane`       | `"4"`                      | Show and focus the Members pane.         |
+| `SelectNext`            | `"j"`                      | Move selection down in navigation lists. |
+| `SelectPrevious`        | `"k"`                      | Move selection up in navigation lists.   |
+| `CycleFocusNext`        | `["tab", "l", "right"]`    | Cycle focus forward.                     |
+| `CycleFocusPrevious`    | `["<S-tab>", "h", "left"]` | Cycle focus backward.                    |
+| `HalfPageDown`          | `"<C-d>"`                  | Half-page down.                          |
+| `HalfPageUp`            | `"<C-u>"`                  | Half-page up.                            |
+| `ScrollViewportDown`    | `"J"`                      | Scroll the focused pane viewport down.   |
+| `ScrollViewportUp`      | `"K"`                      | Scroll the focused pane viewport up.     |
+| `JumpTop`               | `"gg"`                     | Jump to the top.                         |
+| `JumpBottom`            | `"G"`                      | Jump to the bottom.                      |
+| `ScrollHorizontalLeft`  | `"H"`                      | Scroll focused pane horizontally left.   |
+| `ScrollHorizontalRight` | `"L"`                      | Scroll focused pane horizontally right.  |
+| `ResizePaneLeft`        | `["<A-h>", "<A-left>"]`    | Shrink the focused pane width.           |
+| `ResizePaneRight`       | `["<A-l>", "<A-right>"]`   | Grow the focused pane width.             |
+| `Quit`                  | `"q"`                      | Quit Concord.                            |
 
 Message actions:
 
@@ -148,6 +148,7 @@ Pane, options, and voice actions:
 | `ToggleChannelPane`       | `"<leader>2"`                      | Toggle the Channels pane.                    |
 | `ToggleMemberPane`        | `"<leader>4"`                      | Toggle the Members pane.                     |
 | `OpenFocusedPaneAction`   | `"<leader>a"`                      | Open actions for the currently focused pane. |
+| `OpenCurrentUserProfile`  | `"<leader>p"`                      | Open your profile settings popup.            |
 | `OpenOptions`             | `"<leader>o"`                      | Open the options category picker.            |
 | `ChannelSwitcher`         | `"<leader><leader>"`               | Open channel switcher.                       |
 | `OpenDisplayOptions`      | Contextual `d` after `OpenOptions` | Open Display options.                        |

@@ -4,6 +4,19 @@ use crate::discord::MessageAttachmentUpload;
 use crate::tui::state::DashboardState;
 
 pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
+    if handle_pasted_user_profile_avatar(state, text) {
+        return true;
+    }
+
+    if state.is_user_profile_popup_editing() {
+        let pasted: String = text.chars().filter(|value| *value != '\r').collect();
+        if pasted.is_empty() {
+            return false;
+        }
+        state.insert_user_profile_edit_text(&pasted);
+        return true;
+    }
+
     if !state.is_composing() {
         return false;
     }
@@ -18,6 +31,20 @@ pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
     }
     state.insert_composer_text_at_cursor(&pasted);
     true
+}
+
+pub fn handle_pasted_user_profile_avatar(state: &mut DashboardState, text: &str) -> bool {
+    if !state.accepts_user_profile_avatar_paste() {
+        return false;
+    }
+    let Some(mut attachments) = pasted_file_attachments(text) else {
+        return false;
+    };
+    if attachments.is_empty() {
+        return false;
+    }
+    let first = attachments.remove(0);
+    state.set_user_profile_avatar_from_attachment(first)
 }
 
 pub fn handle_pasted_file_attachments(state: &mut DashboardState, text: &str) -> bool {
@@ -44,17 +71,7 @@ fn pasted_file_attachments(text: &str) -> Option<Vec<MessageAttachmentUpload>> {
             if !path.is_file() {
                 return None;
             }
-            let metadata = path.metadata().ok()?;
-            let filename = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("attachment")
-                .to_owned();
-            attachments.push(MessageAttachmentUpload::from_path(
-                path,
-                filename,
-                metadata.len(),
-            ));
+            attachments.push(MessageAttachmentUpload::from_existing_path(path).ok()?);
         }
     }
     (!attachments.is_empty()).then_some(attachments)

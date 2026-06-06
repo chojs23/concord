@@ -381,6 +381,111 @@ fn uppercase_h_l_scroll_focused_side_panes_horizontally() {
 }
 
 #[test]
+fn uppercase_j_k_scroll_focused_pane_viewport_without_moving_selection() {
+    let mut guild_state = DashboardState::new();
+    for id in 1..=8 {
+        guild_state.push_event(AppEvent::GuildCreate {
+            guild_id: Id::new(id),
+            name: format!("guild {id}"),
+            member_count: None,
+            owner_id: None,
+            channels: Vec::new(),
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+        });
+    }
+    guild_state.focus_pane(FocusPane::Guilds);
+    guild_state.set_guild_view_height(3);
+    let selected_guild = guild_state.selected_guild();
+
+    handle_key(&mut guild_state, char_key('J'));
+    assert_eq!(guild_state.selected_guild(), selected_guild);
+    assert_eq!(guild_state.guild_scroll(), 1);
+    handle_key(&mut guild_state, char_key('K'));
+    assert_eq!(guild_state.guild_scroll(), 0);
+
+    let mut channel_state = DashboardState::new();
+    channel_state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: (1..=8)
+            .map(|id| ChannelInfo {
+                guild_id: Some(Id::new(1)),
+                position: Some(id as i32),
+                name: format!("c{id}"),
+                ..ChannelInfo::test(Id::new(10 + id), "GuildText")
+            })
+            .collect(),
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    channel_state.confirm_selected_guild();
+    channel_state.focus_pane(FocusPane::Channels);
+    channel_state.set_channel_view_height(3);
+    let selected_channel = channel_state.selected_channel();
+
+    handle_key(&mut channel_state, char_key('J'));
+    assert_eq!(channel_state.selected_channel(), selected_channel);
+    assert_eq!(channel_state.channel_scroll(), 1);
+
+    let mut member_state = state_with_members(8);
+    member_state.focus_pane(FocusPane::Members);
+    member_state.set_member_view_height(3);
+    let selected_member = member_state.selected_member();
+
+    handle_key(&mut member_state, char_key('J'));
+    assert_eq!(member_state.selected_member(), selected_member);
+    assert_eq!(member_state.member_scroll(), 1);
+}
+
+#[test]
+fn viewport_scroll_uses_configured_keys_in_side_panes() {
+    let mut state = state_with_keymap(KeymapOptions {
+        mappings: [
+            ("ScrollViewportDown".to_owned(), KeymapBinding::one("N")),
+            ("ScrollViewportUp".to_owned(), KeymapBinding::one("P")),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        member_count: None,
+        owner_id: None,
+        channels: (0..8)
+            .map(|index| ChannelInfo {
+                guild_id: Some(Id::new(1)),
+                position: Some(index as i32),
+                name: format!("c{index}"),
+                ..ChannelInfo::test(Id::new(10 + index), "GuildText")
+            })
+            .collect(),
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+    });
+    state.confirm_selected_guild();
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(3);
+
+    handle_key(&mut state, char_key('J'));
+    assert_eq!(state.channel_scroll(), 0);
+    handle_key(&mut state, char_key('N'));
+    assert_eq!(state.channel_scroll(), 1);
+    handle_key(&mut state, char_key('P'));
+    assert_eq!(state.channel_scroll(), 0);
+}
+
+#[test]
 fn enter_opens_member_actions_from_member_pane() {
     let mut state = state_with_members(1);
     state.focus_pane(FocusPane::Members);

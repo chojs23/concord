@@ -4,7 +4,7 @@ use image::DynamicImage;
 use ratatui_image::{picker::Picker, protocol::Protocol};
 
 use crate::{
-    discord::{AppCommand, AppEvent},
+    discord::{AppCommand, AppEvent, ProfileAvatarUpload},
     tui::ui::{AvatarImage, EmojiImage},
 };
 
@@ -267,6 +267,25 @@ impl AvatarImageCache {
     pub(in crate::tui) fn next_request_for_url(&mut self, url: &str) -> Option<AppCommand> {
         let url = avatar_preview_url(url, PROFILE_POPUP_AVATAR_WIDTH, PROFILE_POPUP_AVATAR_HEIGHT);
         self.next_request_for_cache_url(&url)
+    }
+
+    pub(in crate::tui) fn next_request_for_profile_upload(
+        &mut self,
+        key: &str,
+        upload: impl FnOnce() -> Option<ProfileAvatarUpload>,
+    ) -> Option<AppCommand> {
+        if self.entries.contains_key(key) {
+            return None;
+        }
+        let upload = upload()?;
+        let last_used = self.next_tick();
+        self.entries
+            .insert(key.to_owned(), AvatarImageEntry::Loading { last_used });
+        self.prune_to_limit(&[]);
+        Some(AppCommand::LoadProfileAvatarPreview {
+            key: key.to_owned(),
+            upload,
+        })
     }
 
     fn next_request_for_cache_url(&mut self, url: &str) -> Option<AppCommand> {

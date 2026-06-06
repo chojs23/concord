@@ -79,12 +79,12 @@ pub(super) fn handle_dashboard_action(
             state.jump_bottom();
             None
         }
-        DashboardAction::ScrollMessageViewportDown => {
-            state.scroll_message_viewport_down();
+        DashboardAction::ScrollViewportDown => {
+            state.scroll_focused_pane_viewport_down();
             None
         }
-        DashboardAction::ScrollMessageViewportUp => {
-            state.scroll_message_viewport_up();
+        DashboardAction::ScrollViewportUp => {
+            state.scroll_focused_pane_viewport_up();
             None
         }
         DashboardAction::ScrollHorizontalLeft => {
@@ -135,6 +135,7 @@ pub(super) fn execute_ui_action(
         UiAction::ToggleChannelPane => state.toggle_pane_visibility(FocusPane::Channels),
         UiAction::ToggleMemberPane => state.toggle_pane_visibility(FocusPane::Members),
         UiAction::OpenFocusedPaneAction => state.open_leader_actions_for_focused_target(),
+        UiAction::OpenCurrentUserProfile => return state.open_current_user_profile_popup(),
         UiAction::OpenOptions => state.open_options_category_picker(),
         UiAction::ChannelSwitcher => state.open_channel_switcher(),
         UiAction::OpenDisplayOptions => {

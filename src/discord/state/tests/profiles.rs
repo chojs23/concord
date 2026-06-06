@@ -128,6 +128,38 @@ fn relationship_nickname_update_refreshes_existing_dm_message_authors() {
 }
 
 #[test]
+fn user_identity_update_refreshes_existing_dm_message_author() {
+    let channel_id = Id::new(2);
+    let author_id = Id::new(4);
+    let mut state = DiscordState::default();
+
+    state.apply_event(&message_create_event(MessageCreateFixture {
+        guild_id: None,
+        channel_id,
+        message_id: Id::new(3),
+        author_id,
+        author: "alice".to_owned(),
+        author_avatar_url: Some("https://cdn.discordapp.com/avatars/4/old.png".to_owned()),
+        content: Some("hello".to_owned()),
+        ..MessageCreateFixture::default()
+    }));
+    state.apply_event(&AppEvent::UserIdentityUpdate {
+        user_id: author_id,
+        username: "alice".to_owned(),
+        global_name: Some("Alice New".to_owned()),
+        avatar_url: Some("https://cdn.discordapp.com/avatars/4/new.png".to_owned()),
+        is_bot: false,
+    });
+
+    let messages = state.messages_for_channel(channel_id);
+    assert_eq!(messages[0].author, "Alice New");
+    assert_eq!(
+        messages[0].author_avatar_url.as_deref(),
+        Some("https://cdn.discordapp.com/avatars/4/new.png"),
+    );
+}
+
+#[test]
 fn member_update_refreshes_existing_message_author() {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);

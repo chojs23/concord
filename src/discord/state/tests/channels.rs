@@ -365,6 +365,85 @@ fn guild_presence_activities_are_scoped_by_guild() {
 }
 
 #[test]
+fn current_user_activity_updates_profile_and_guild_views() {
+    let mut state = DiscordState::default();
+    let user_id: Id<UserMarker> = Id::new(20);
+    let stale_guild_id: Id<GuildMarker> = Id::new(1);
+    let empty_guild_id: Id<GuildMarker> = Id::new(2);
+    let old_activity = ActivityInfo::test(ActivityKind::Playing, "Old Game");
+    let activity = ActivityInfo::test(ActivityKind::Playing, "Concord");
+
+    state.apply_event(&AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(user_id),
+    });
+    state.apply_event(&AppEvent::PresenceUpdate {
+        guild_id: stale_guild_id,
+        user_id,
+        status: PresenceStatus::Online,
+        activities: vec![old_activity],
+    });
+    state.apply_event(&AppEvent::UserPresenceUpdate {
+        user_id,
+        status: PresenceStatus::Online,
+        activities: vec![activity.clone()],
+    });
+    state.apply_event(&AppEvent::PresenceUpdate {
+        guild_id: empty_guild_id,
+        user_id,
+        status: PresenceStatus::Online,
+        activities: Vec::new(),
+    });
+
+    assert_eq!(
+        state.user_activities(user_id),
+        std::slice::from_ref(&activity)
+    );
+    assert_eq!(
+        state.user_activities_for_guild(Some(stale_guild_id), user_id),
+        std::slice::from_ref(&activity)
+    );
+    assert_eq!(
+        state.user_activities_for_guild(Some(empty_guild_id), user_id),
+        std::slice::from_ref(&activity)
+    );
+}
+
+#[test]
+fn non_current_user_presence_update_preserves_guild_activity() {
+    let mut state = DiscordState::default();
+    let user_id: Id<UserMarker> = Id::new(20);
+    let guild_id: Id<GuildMarker> = Id::new(1);
+    let guild_activity = ActivityInfo::test(ActivityKind::Playing, "Guild Game");
+    let global_activity = ActivityInfo::test(ActivityKind::Playing, "Global Game");
+
+    state.apply_event(&AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.apply_event(&AppEvent::PresenceUpdate {
+        guild_id,
+        user_id,
+        status: PresenceStatus::Online,
+        activities: vec![guild_activity.clone()],
+    });
+    state.apply_event(&AppEvent::UserPresenceUpdate {
+        user_id,
+        status: PresenceStatus::Online,
+        activities: vec![global_activity.clone()],
+    });
+
+    assert_eq!(
+        state.user_activities(user_id),
+        std::slice::from_ref(&global_activity)
+    );
+    assert_eq!(
+        state.user_activities_for_guild(Some(guild_id), user_id),
+        std::slice::from_ref(&guild_activity)
+    );
+}
+
+#[test]
 fn guild_presence_update_updates_matching_channel_recipients() {
     let channel_id: Id<ChannelMarker> = Id::new(10);
     let mut state = DiscordState::default();

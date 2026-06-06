@@ -83,14 +83,8 @@ fn message_viewport_scroll_uses_configured_keys() {
     let mut state = state_with_messages_from_state(
         state_with_keymap(KeymapOptions {
             mappings: [
-                (
-                    "ScrollMessageViewportDown".to_owned(),
-                    KeymapBinding::one("N"),
-                ),
-                (
-                    "ScrollMessageViewportUp".to_owned(),
-                    KeymapBinding::one("P"),
-                ),
+                ("ScrollViewportDown".to_owned(), KeymapBinding::one("N")),
+                ("ScrollViewportUp".to_owned(), KeymapBinding::one("P")),
             ]
             .into_iter()
             .collect(),

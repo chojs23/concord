@@ -78,7 +78,9 @@ fn parse_voice_state_info(
             .and_then(Value::as_str)
             .filter(|session_id| !session_id.is_empty())
             .map(str::to_owned),
-        member: value.get("member").and_then(parse_member_info),
+        member: value
+            .get("member")
+            .and_then(|member| parse_member_info(member, Some(guild_id))),
         deaf: value.get("deaf").and_then(Value::as_bool).unwrap_or(false),
         mute: value.get("mute").and_then(Value::as_bool).unwrap_or(false),
         self_deaf: value

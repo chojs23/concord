@@ -19,7 +19,7 @@ use crate::{
         MicrophoneSensitivityDb, VoiceVolumePercent,
     },
     discord::{
-        AppEvent, ApplicationCommandInfo, ApplicationCommandOptionInfo, ChannelInfo,
+        ActivityInfo, AppEvent, ApplicationCommandInfo, ApplicationCommandOptionInfo, ChannelInfo,
         ChannelNotificationOverrideInfo, ChannelRecipientInfo, CustomEmojiInfo,
         DownloadAttachmentSource, GuildFolder, GuildNotificationSettingsInfo, MemberInfo,
         MessageInfo, MessageReferenceInfo, MessageSnapshotInfo, NotificationLevel, PollAnswerInfo,

@@ -126,9 +126,13 @@ pub(super) async fn run_dashboard(
                 emoji_targets = visible_emoji_image_targets(&state);
                 let image_previews = image_previews.render_state(&image_targets);
                 let rendered_emojis = emoji_images.render_state(&emoji_targets);
+                let pending_popup_avatar_key =
+                    state.user_profile_popup_pending_avatar_preview_key();
                 let popup_avatar_url = state
                     .show_avatars()
-                    .then(|| state.user_profile_popup_avatar_url())
+                    .then(|| {
+                        pending_popup_avatar_key.or_else(|| state.user_profile_popup_avatar_url())
+                    })
                     .flatten();
                 let (rendered_avatars, popup_avatar) = avatar_images.render_state_with_popup(
                     &avatar_targets,
@@ -172,13 +176,24 @@ pub(super) async fn run_dashboard(
             // Profile popup avatar isn't part of the message-pane targets, so
             // schedule its fetch separately. It uses a larger avatar CDN size
             // than message-pane avatars, so it may have its own cache entry.
-            if state.show_avatars()
-                && let Some(url) = state.user_profile_popup_avatar_url().map(str::to_owned)
-                && let Some(command) = avatar_images.next_request_for_url(&url)
-                && commands.send(command).await.is_err()
-            {
-                command_helpers::record_command_channel_closed(&mut state);
-                dirty = true;
+            if state.show_avatars() {
+                let command = if let Some(key) =
+                    state.user_profile_popup_pending_avatar_preview_key()
+                {
+                    avatar_images.next_request_for_profile_upload(key, || {
+                        state.user_profile_popup_pending_avatar_upload()
+                    })
+                } else if let Some(url) = state.user_profile_popup_avatar_url().map(str::to_owned) {
+                    avatar_images.next_request_for_url(&url)
+                } else {
+                    None
+                };
+                if let Some(command) = command {
+                    if commands.send(command).await.is_err() {
+                        command_helpers::record_command_channel_closed(&mut state);
+                    }
+                    dirty = true;
+                }
             }
             for command in emoji_images.next_requests(&emoji_targets) {
                 if commands.send(command).await.is_err() {
@@ -213,7 +228,7 @@ pub(super) async fn run_dashboard(
                             }
                         }
                         if state.take_paste_clipboard_request()
-                            && state.is_composing()
+                            && state.accepts_clipboard_paste()
                             && !clipboard_paste_in_flight
                         {
                             clipboard_paste_in_flight = true;
@@ -669,6 +684,25 @@ fn apply_clipboard_paste_result(state: &mut DashboardState, result: ClipboardPas
 }
 
 fn apply_clipboard_paste_data(state: &mut DashboardState, data: ClipboardPasteData) -> bool {
+    if state.accepts_user_profile_avatar_paste() {
+        if let Some(mut attachments) = data.file_attachments {
+            if attachments.is_empty() {
+                return false;
+            }
+            let first = attachments.remove(0);
+            return state.set_user_profile_avatar_from_attachment(first);
+        }
+        if let Some(text) = data.text.as_deref()
+            && input::handle_pasted_user_profile_avatar(state, text)
+        {
+            return true;
+        }
+        if let Some(attachment) = data.image_attachment {
+            return state.set_user_profile_avatar_from_attachment(attachment);
+        }
+        return false;
+    }
+
     if !state.is_composing() {
         return false;
     }

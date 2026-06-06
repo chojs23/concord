@@ -182,6 +182,7 @@ struct ProfilePopupSignature {
     user_profile_data: DebugSignature,
     user_profile_error: Option<String>,
     user_profile_status: PresenceStatus,
+    user_profile_settings: DebugSignature,
     user_profile_scroll: usize,
     user_profile_avatar_url: Option<String>,
     user_profile_activities: DebugSignature,
@@ -413,10 +414,21 @@ pub(in crate::tui) fn visible_dashboard_signature(
                     user_profile_data: debug_signature(&state.user_profile_popup_data()),
                     user_profile_error: state.user_profile_popup_load_error().map(str::to_owned),
                     user_profile_status: state.user_profile_popup_status(),
+                    user_profile_settings: debug_signature(&(
+                        state.user_profile_settings_tab(),
+                        state.user_profile_settings_active_field(),
+                        state.user_profile_settings_editing_field(),
+                        state.user_profile_settings_status(),
+                        state.user_profile_settings_presence_status(),
+                        state.user_profile_settings_dirty_count(),
+                        state.user_profile_settings_saving(),
+                        state.user_profile_status_picker_rows(),
+                    )),
                     user_profile_scroll: state.user_profile_popup_scroll(),
                     user_profile_avatar_url: state
-                        .user_profile_popup_avatar_url()
-                        .map(str::to_owned),
+                        .user_profile_popup_pending_avatar_preview_key()
+                        .map(str::to_owned)
+                        .or_else(|| state.user_profile_popup_avatar_url().map(str::to_owned)),
                     user_profile_activities: debug_signature(
                         &state.user_profile_popup_activities(),
                     ),
@@ -646,5 +658,5 @@ pub(super) fn image_surfaces_visible(
     image_targets_visible
         || avatar_targets_visible
         || emoji_targets_visible
-        || (state.show_avatars() && state.user_profile_popup_avatar_url().is_some())
+        || (state.show_avatars() && state.user_profile_popup_has_avatar_preview())
 }

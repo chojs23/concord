@@ -19,6 +19,20 @@ impl PresenceStatus {
             Self::Unknown => "Unknown",
         }
     }
+
+    pub(crate) fn gateway_status(self) -> &'static str {
+        match self {
+            Self::Online => "online",
+            Self::Idle => "idle",
+            Self::DoNotDisturb => "dnd",
+            Self::Offline => "invisible",
+            Self::Unknown => "online",
+        }
+    }
+
+    pub(crate) const fn user_selectable() -> [Self; 4] {
+        [Self::Online, Self::Idle, Self::DoNotDisturb, Self::Offline]
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -42,6 +56,18 @@ impl ActivityKind {
             4 => Self::Custom,
             5 => Self::Competing,
             _ => Self::Unknown,
+        }
+    }
+
+    pub(crate) const fn gateway_code(self) -> u8 {
+        match self {
+            Self::Playing => 0,
+            Self::Streaming => 1,
+            Self::Listening => 2,
+            Self::Watching => 3,
+            Self::Custom => 4,
+            Self::Competing => 5,
+            Self::Unknown => 0,
         }
     }
 }
@@ -77,6 +103,20 @@ pub struct ActivityInfo {
     pub url: Option<String>,
     pub application_id: Option<String>,
     pub emoji: Option<ActivityEmoji>,
+}
+
+impl ActivityInfo {
+    pub fn playing(name: impl Into<String>) -> Self {
+        Self {
+            kind: ActivityKind::Playing,
+            name: name.into(),
+            details: None,
+            state: None,
+            url: None,
+            application_id: None,
+            emoji: None,
+        }
+    }
 }
 
 #[cfg(test)]

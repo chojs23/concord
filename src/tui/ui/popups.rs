@@ -108,6 +108,49 @@ fn truncate_popup_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'st
         .collect()
 }
 
+fn wrapped_styled_popup_lines(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+    if width == 0 {
+        return vec![Line::from(Span::styled(String::new(), style))];
+    }
+
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if current.is_empty() {
+            word.to_owned()
+        } else {
+            format!("{current} {word}")
+        };
+
+        if candidate.width() <= width {
+            current = candidate;
+            continue;
+        }
+
+        if !current.is_empty() {
+            lines.push(Line::from(Span::styled(current, style)));
+        }
+        current = truncate_display_width(word, width);
+    }
+
+    if !current.is_empty() {
+        lines.push(Line::from(Span::styled(current, style)));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(String::new(), style)));
+    }
+    lines
+}
+
+fn push_wrapped_styled_popup_text(
+    lines: &mut Vec<Line<'static>>,
+    text: &str,
+    width: usize,
+    style: Style,
+) {
+    lines.extend(wrapped_styled_popup_lines(text, width, style));
+}
+
 fn selectable_popup_marker(selected: bool) -> Span<'static> {
     let marker = if selected { "› " } else { "  " };
     Span::styled(marker, Style::default().fg(ACCENT))

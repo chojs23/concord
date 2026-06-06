@@ -10,7 +10,7 @@ use crate::{
     config::{DisplayOptions, ImagePreviewQualityPreset},
     discord::{
         AppCommand, AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, EmbedInfo, MessageInfo,
-        MessageSnapshotInfo, ReactionEmoji, ReactionInfo,
+        MessageSnapshotInfo, ProfileAvatarUpload, ReactionEmoji, ReactionInfo,
     },
     tui::{
         message::time::test_message_id_for_unix_millis,
@@ -693,6 +693,28 @@ fn avatar_popup_request_prunes_cache_to_limit() {
             .entries
             .contains_key("https://cdn.discordapp.com/avatars/new.png?size=128")
     );
+}
+
+#[test]
+fn avatar_popup_upload_request_uses_local_preview_command() {
+    let mut cache = AvatarImageCache {
+        picker: None,
+        entries: HashMap::new(),
+        active_popup_avatar_url: None,
+        tick: 0,
+    };
+    let upload = ProfileAvatarUpload::from_bytes("avatar.png".to_owned(), vec![1, 2, 3]);
+
+    let request = cache.next_request_for_profile_upload("pending-avatar", || Some(upload.clone()));
+
+    assert_eq!(
+        request,
+        Some(AppCommand::LoadProfileAvatarPreview {
+            key: "pending-avatar".to_owned(),
+            upload,
+        })
+    );
+    assert!(cache.entries.contains_key("pending-avatar"));
 }
 
 #[test]

@@ -11,19 +11,38 @@ use crate::discord::{
 
 use super::{
     presence::{parse_activities, parse_presence_entry},
-    shared::{display_name_from_parts_or_unknown, parse_id, parse_status, raw_user_avatar_url},
+    shared::{
+        display_name_from_parts_or_unknown, parse_id, parse_status, raw_member_avatar_url,
+        raw_user_avatar_url,
+    },
 };
 
 pub(super) fn parse_member_upsert(data: &Value) -> Option<AppEvent> {
     let guild_id = parse_id::<GuildMarker>(data.get("guild_id")?)?;
-    let member = parse_member_info(data)?;
+    let member = parse_member_info(data, Some(guild_id))?;
     Some(AppEvent::GuildMemberUpsert { guild_id, member })
 }
 
 pub(super) fn parse_member_add(data: &Value) -> Option<AppEvent> {
     let guild_id = parse_id::<GuildMarker>(data.get("guild_id")?)?;
-    let member = parse_member_info(data)?;
+    let member = parse_member_info(data, Some(guild_id))?;
     Some(AppEvent::GuildMemberAdd { guild_id, member })
+}
+
+pub(super) fn parse_user_update(data: &Value) -> Option<AppEvent> {
+    let user_id = parse_id::<UserMarker>(data.get("id")?)?;
+    let username = data.get("username").and_then(Value::as_str)?.to_owned();
+    let global_name = data
+        .get("global_name")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    Some(AppEvent::UserIdentityUpdate {
+        user_id,
+        username,
+        global_name,
+        avatar_url: raw_user_avatar_url(user_id, data),
+        is_bot: data.get("bot").and_then(Value::as_bool).unwrap_or(false),
+    })
 }
 
 pub(super) fn parse_member_chunk(data: &Value) -> Vec<AppEvent> {
@@ -37,7 +56,7 @@ pub(super) fn parse_member_chunk(data: &Value) -> Vec<AppEvent> {
         .map(|members| {
             members
                 .iter()
-                .filter_map(parse_member_info)
+                .filter_map(|member| parse_member_info(member, Some(guild_id)))
                 .map(|member| AppEvent::GuildMemberUpsert { guild_id, member })
                 .collect()
         })
@@ -109,7 +128,7 @@ fn parse_member_list_item(guild_id: Id<GuildMarker>, item: &Value) -> Vec<AppEve
     else {
         return Vec::new();
     };
-    let Some(member_info) = parse_member_info(member) else {
+    let Some(member_info) = parse_member_info(member, Some(guild_id)) else {
         return Vec::new();
     };
     let user_id = member_info.user_id;
@@ -142,7 +161,10 @@ pub(super) fn parse_member_remove(data: &Value) -> Option<AppEvent> {
     Some(AppEvent::GuildMemberRemove { guild_id, user_id })
 }
 
-pub(super) fn parse_member_info(value: &Value) -> Option<MemberInfo> {
+pub(super) fn parse_member_info(
+    value: &Value,
+    guild_id: Option<Id<GuildMarker>>,
+) -> Option<MemberInfo> {
     let user = value.get("user");
     let user_id = user
         .and_then(|user| user.get("id"))
@@ -166,7 +188,7 @@ pub(super) fn parse_member_info(value: &Value) -> Option<MemberInfo> {
         display_name,
         username: username.map(str::to_owned),
         is_bot,
-        avatar_url: user.and_then(|user| raw_user_avatar_url(user_id, user)),
+        avatar_url: raw_member_avatar_url(guild_id, user_id, value, user),
         role_ids: value
             .get("roles")
             .and_then(Value::as_array)

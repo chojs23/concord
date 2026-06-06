@@ -6,8 +6,8 @@ use crate::logging;
 
 pub(super) const AVATAR_PREVIEW_WIDTH: u16 = 4;
 pub(super) const AVATAR_PREVIEW_HEIGHT: u16 = 2;
-pub(super) const PROFILE_POPUP_AVATAR_WIDTH: u16 = 8;
-pub(super) const PROFILE_POPUP_AVATAR_HEIGHT: u16 = 4;
+pub(in crate::tui) const PROFILE_POPUP_AVATAR_WIDTH: u16 = 8;
+pub(in crate::tui) const PROFILE_POPUP_AVATAR_HEIGHT: u16 = 4;
 const AVATAR_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
 const AVATAR_SOURCE_PIXELS_PER_ROW: u64 = AVATAR_SOURCE_PIXELS_PER_COLUMN * 3;
 const DISCORD_AVATAR_CDN_PREFIX: &str = "https://cdn.discordapp.com/avatars/";
