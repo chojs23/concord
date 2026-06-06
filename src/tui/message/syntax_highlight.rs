@@ -89,7 +89,23 @@ fn syntect_style_to_ratatui(s: syntect::highlighting::Style) -> Style {
     style
 }
 
+fn syntax_lookup_token(language: &str) -> &str {
+    let token = language.split_whitespace().next().unwrap_or(language);
+    if is_typescript_alias(token) {
+        "js"
+    } else {
+        token
+    }
+}
+
+fn is_typescript_alias(token: &str) -> bool {
+    ["ts", "tsx", "typescript", "mts", "cts"]
+        .iter()
+        .any(|alias| token.eq_ignore_ascii_case(alias))
+}
+
 fn do_highlight(lines: &[String], language: &str) -> Vec<Vec<(Style, String)>> {
+    let language = syntax_lookup_token(language);
     let syntax = SYNTAX_SET
         .find_syntax_by_token(language)
         .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
@@ -142,6 +158,31 @@ fn syntax_highlight_cache_stores_cached_elements() {
     cache.highlight(&code, "js");
     assert_eq!(cache.state.borrow().tick, 3);
     assert_eq!(cache.state.borrow().entries.len(), 2);
+}
+
+#[test]
+fn syntax_lookup_token_maps_typescript_aliases_to_javascript() {
+    for language in [
+        "ts",
+        "tsx",
+        "typescript",
+        "TypeScript",
+        "mts",
+        "cts",
+        "typescript ignore",
+    ] {
+        assert_eq!(syntax_lookup_token(language), "js");
+    }
+
+    assert_eq!(syntax_lookup_token("rust"), "rust");
+    assert_eq!(syntax_lookup_token("javascript"), "javascript");
+}
+
+#[test]
+fn syntax_highlight_uses_javascript_for_typescript_aliases() {
+    let code = ["const value: string = 'hello';".to_string()];
+    assert_eq!(do_highlight(&code, "typescript"), do_highlight(&code, "js"));
+    assert_eq!(do_highlight(&code, "tsx"), do_highlight(&code, "js"));
 }
 
 #[test]
