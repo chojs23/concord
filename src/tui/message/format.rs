@@ -355,6 +355,7 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
         let rendered =
             state.render_user_mentions_with_highlights(message.guild_id, &message.mentions, &value);
         lines.extend(wrap_markdown_message_lines_with_loaded_custom_emoji_urls(
+            state,
             rendered,
             width,
             Style::default(),
@@ -937,6 +938,7 @@ fn wrap_rendered_text_lines_with_styled_ranges(
 }
 
 fn wrap_markdown_message_lines_with_loaded_custom_emoji_urls(
+    state: &DashboardState,
     rendered: RenderedText,
     width: usize,
     style: Style,
@@ -961,7 +963,8 @@ fn wrap_markdown_message_lines_with_loaded_custom_emoji_urls(
                 if content_end > 0 {
                     code_block_lines.push(rendered_text_slice(&rendered_line, 0, content_end));
                 }
-                lines.extend(wrap_code_block_lines(
+                lines.extend(wrap_code_block_lines_and_highlight(
+                    state,
                     std::mem::take(&mut code_block_lines),
                     width,
                     code_block_label.take(),
@@ -990,7 +993,8 @@ fn wrap_markdown_message_lines_with_loaded_custom_emoji_urls(
                 lines.extend(wrap_markdown_inline_text(fence, width, style));
             }
         } else {
-            lines.extend(wrap_code_block_lines(
+            lines.extend(wrap_code_block_lines_and_highlight(
+                state,
                 code_block_lines,
                 width,
                 code_block_label,
@@ -1080,29 +1084,44 @@ fn wrap_markdown_inline_text_preserving_empty(
     lines
 }
 
-fn wrap_code_block_lines(
+fn wrap_code_block_lines_and_highlight(
+    state: &DashboardState,
     code_lines: Vec<RenderedText>,
     width: usize,
     label: Option<String>,
 ) -> Vec<MessageContentLine> {
     let style = markdown_code_style();
-    let inner_width = width.saturating_sub(4).max(1);
-    let mut body_texts = Vec::new();
-    for rendered in code_lines {
-        let wrapped = wrap_text_lines(&rendered.text, inner_width);
-        if wrapped.is_empty() {
-            body_texts.push(String::new());
+    let highlighted_lines = {
+        if let Some(language) = label.as_ref().filter(|l| !l.is_empty()) {
+            let text_lines = code_lines.into_iter().map(|rt| rt.text).collect::<Vec<_>>();
+            state
+                .syntax_highlight_cache
+                .highlight(&text_lines, language)
         } else {
-            body_texts.extend(wrapped);
+            code_lines
+                .into_iter()
+                .map(|rt| vec![(style, rt.text)])
+                .collect()
+        }
+    };
+
+    let inner_width = width.saturating_sub(4).max(1);
+    let mut body_lines = Vec::new();
+    for regions in highlighted_lines {
+        let wrapped = wrap_text_line_with_styles(regions, inner_width);
+        if wrapped.is_empty() {
+            body_lines.push(vec![(style, String::new())]);
+        } else {
+            body_lines.extend(wrapped);
         }
     }
-    if body_texts.is_empty() {
-        body_texts.push(String::new());
+    if body_lines.is_empty() {
+        body_lines.push(vec![(style, String::new())]);
     }
 
-    let content_width = body_texts
+    let content_width = body_lines
         .iter()
-        .map(|line| line.width())
+        .map(|line| line.iter().map(|region| region.1.width()).sum())
         .max()
         .unwrap_or(0)
         .max(4)
@@ -1115,9 +1134,9 @@ fn wrap_code_block_lines(
         label.as_deref(),
     )];
     lines.extend(
-        body_texts
+        body_lines
             .into_iter()
-            .map(|line| code_box_body_line(line, content_width, style)),
+            .map(|line| code_box_body_line(line, content_width)),
     );
     lines.push(code_box_border_line('╰', '╯', content_width, None));
     lines
@@ -1148,20 +1167,25 @@ fn code_box_border_line(
     MessageContentLine::dim(format!("{left}{inner}{right}"))
 }
 
-fn code_box_body_line(text: String, content_width: usize, style: Style) -> MessageContentLine {
-    let padding = content_width.saturating_sub(text.width());
+fn code_box_body_line(regions: Vec<(Style, String)>, content_width: usize) -> MessageContentLine {
     let mut line =
         MessageContentLine::styled_text("│ ".to_owned(), Style::default().fg(DIM), Vec::new());
     let content_start = line.text.len();
-    line.text.push_str(&text);
+    let mut width = 0usize;
+    let mut current_pos = content_start;
+    for (style, text) in regions {
+        line.text.push_str(&text);
+        line.styled_prefixes.push(StyledPrefix {
+            start: current_pos,
+            len: text.len(),
+            style,
+            patch_base: false,
+        });
+        width += text.width();
+        current_pos += text.len();
+    }
+    let padding = content_width.saturating_sub(width);
     line.text.push_str(&" ".repeat(padding));
-    let content_len = line.text.len().saturating_sub(content_start);
-    line.styled_prefixes.push(StyledPrefix {
-        start: content_start,
-        len: content_len,
-        style,
-        patch_base: false,
-    });
     line.append_styled_suffix(" │", Style::default().fg(DIM));
     line
 }
@@ -1716,6 +1740,48 @@ pub(in crate::tui) fn wrap_text_lines(value: &str, width: usize) -> Vec<String> 
             current.push_str(grapheme);
             current_width = current_width.saturating_add(grapheme_width);
         }
+        lines.push(current);
+    }
+    lines
+}
+
+fn wrap_text_line_with_styles(
+    value: Vec<(Style, String)>,
+    width: usize,
+) -> Vec<Vec<(Style, String)>> {
+    if value.is_empty() {
+        return Vec::new();
+    }
+
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut current = Vec::new();
+    let mut current_width = 0usize;
+    for (style, region) in value {
+        let mut current_region = String::new();
+        for grapheme in region.graphemes(true) {
+            let grapheme_width = grapheme.width();
+            if current_width > 0
+                && grapheme_width > 0
+                && current_width.saturating_add(grapheme_width) > width
+            {
+                if !current_region.is_empty() {
+                    current.push((style, current_region));
+                }
+                lines.push(current);
+                current = Vec::new();
+                current_region = String::new();
+                current_width = 0;
+            }
+
+            current_region.push_str(grapheme);
+            current_width = current_width.saturating_add(grapheme_width);
+        }
+        if !current_region.is_empty() {
+            current.push((style, current_region));
+        }
+    }
+    if !current.is_empty() {
         lines.push(current);
     }
     lines

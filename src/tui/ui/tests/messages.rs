@@ -1,3 +1,5 @@
+use ratatui::style::Stylize;
+
 use super::*;
 
 #[test]
@@ -619,24 +621,27 @@ fn message_content_applies_supported_markdown_formatting() {
     assert_eq!(lines[13].style.fg, Some(DIM));
 
     let code_line = lines[11].spans();
-    assert_eq!(code_line[0].content.as_ref(), "│ ");
-    assert_eq!(code_line[0].style.fg, Some(DIM));
-    assert_eq!(code_line[1].content.as_ref(), "let answer = 42;    ");
-    assert_eq!(code_line[1].style.fg, Some(Color::White));
-    assert_eq!(code_line[1].style.bg, None);
-    assert_eq!(code_line[2].content.as_ref(), " │");
-    assert_eq!(code_line[2].style.fg, Some(DIM));
+    assert_eq!(
+        code_line,
+        vec![
+            ratatui::text::Span::from("│ ").fg(DIM),
+            ratatui::text::Span::from("let").fg(Color::Rgb(180, 142, 173)),
+            ratatui::text::Span::from(" answer ").fg(Color::Rgb(192, 197, 206)),
+            ratatui::text::Span::from("=").fg(Color::Rgb(192, 197, 206)),
+            ratatui::text::Span::from(" ").fg(Color::Rgb(192, 197, 206)),
+            ratatui::text::Span::from("42").fg(Color::Rgb(208, 135, 112)),
+            ratatui::text::Span::from(";").fg(Color::Rgb(192, 197, 206)),
+            ratatui::text::Span::from("    ").dark_gray(),
+            ratatui::text::Span::from(" │").fg(DIM)
+        ]
+    );
 
     let literal_code_line = lines[12].spans();
-    assert_eq!(
-        literal_code_line[1].content.as_ref(),
-        "**not bold in code**"
-    );
+    assert_eq!(literal_code_line[1].content.as_ref(), "*");
     assert!(
-        !literal_code_line[1]
-            .style
-            .add_modifier
-            .contains(Modifier::BOLD)
+        !literal_code_line
+            .iter()
+            .any(|span| span.style.add_modifier.contains(Modifier::BOLD))
     );
 
     let mut quote = message_with_content(Some("> hello <@10>".to_owned()));
