@@ -41,16 +41,12 @@
           nativeBuildInputs = [ pkgs.pkg-config ];
 
           # Networking uses rustls + webpki-roots, so we do not need openssl
-          # or a system CA bundle here. Only Darwin needs Security/CoreFoundation
-          # frameworks because some indirect crates link against them.
+          # or a system CA bundle here. Darwin stdenv provides the SDK by
+          # default, so avoid legacy darwin.apple_sdk framework stubs.
           buildInputs = [
             pkgs.opus
           ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
             pkgs.alsa-lib
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.darwin.apple_sdk.frameworks.Security
-            pkgs.darwin.apple_sdk.frameworks.CoreFoundation
-            pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
           ];
 
           # The unit tests in this repo do not require network or a TTY, but
