@@ -42,7 +42,7 @@ pub(in crate::discord) const MAX_USER_PROFILE_CACHE_ENTRIES: usize = 256;
 /// Maximum cached user-note fetch results, including users with no note.
 pub(in crate::discord) const MAX_FETCHED_NOTE_CACHE_ENTRIES: usize = 256;
 /// Number of recently selected guilds whose member lists stay fully cached.
-pub(in crate::discord) const MAX_RECENT_MEMBER_GUILDS: usize = 3;
+pub(in crate::discord) const MAX_RECENT_MEMBER_GUILDS: usize = 10;
 
 pub(in crate::discord) fn is_fallback_identity(username: Option<&str>, display_name: &str) -> bool {
     username.is_none() && display_name == "unknown"
