@@ -24,6 +24,20 @@ Concord is a feature-rich TUI (terminal user interface) client for Discord, writ
 brew install chojs23/tap/concord
 ```
 
+### npm
+
+```sh
+npm install -g @chojs23/concord
+```
+
+You can also run Concord without a global install:
+
+```sh
+npx @chojs23/concord
+```
+
+The npm package installs a prebuilt binary from the GitHub Release artifacts.
+
 ### Cargo
 
 Install native audio dependencies first. On macOS with Homebrew:

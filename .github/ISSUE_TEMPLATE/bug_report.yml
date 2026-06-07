@@ -58,6 +58,7 @@ body:
       options:
         - Prebuilt release (cargo-dist)
         - Homebrew
+        - npm
         - crates.io (`cargo install concord`)
         - Built from source
         - Nix flake

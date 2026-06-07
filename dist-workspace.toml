@@ -8,7 +8,9 @@ cargo-dist-version = "0.31.0"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
-installers = ["shell", "powershell", "homebrew"]
+installers = ["shell", "powershell", "npm", "homebrew"]
+# Publish the npm installer as a scoped package to avoid global name collisions.
+npm-scope = "@chojs23"
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = [
   "aarch64-apple-darwin",
@@ -28,7 +30,7 @@ features = ["voice-playback"]
 # A GitHub repo to push Homebrew formulas to
 tap = "chojs23/homebrew-tap"
 # Publish jobs to run in CI
-publish-jobs = ["homebrew"]
+publish-jobs = ["homebrew", "npm"]
 # Skip checking whether the specified configuration files are up to date
 allow-dirty = ["ci"]
 
