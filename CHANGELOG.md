@@ -2,7 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.1.10] - 2026-06-07
+## [2.1.11] - 2026-06-07
+
+### Features
+
+- Add version flag by @chojs23
+
+### Miscellaneous Tasks
+
+- Add npm installer (#165) in [#165](https://github.com/chojs23/concord/pull/165) by @chojs23
+
+## [2.1.10] - 2026-06-06
 
 ### Bug Fixes
 
