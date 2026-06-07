@@ -1,6 +1,6 @@
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, UserMarker},
+    marker::{ChannelMarker, GuildMarker, UserMarker},
 };
 use crate::discord::{
     AppCommand, AppEvent, MessageInfo, MessageSearchAuthorType, MessageSearchHas,
@@ -362,7 +362,7 @@ impl DashboardState {
             search.selection.select(0);
         }
         if mode == Some(SearchPopupMode::Member) {
-            self.refresh_member_search_results();
+            self.refresh_member_search_results(false);
         } else {
             self.refresh_message_search_suggestions();
         }
@@ -379,7 +379,7 @@ impl DashboardState {
             search.selection.select(0);
         }
         if mode == Some(SearchPopupMode::Member) {
-            self.refresh_member_search_results();
+            self.refresh_member_search_results(false);
         } else {
             self.refresh_message_search_suggestions();
         }
@@ -437,7 +437,7 @@ impl DashboardState {
 
     pub(in crate::tui::state) fn refresh_search_popup_after_member_cache_update(&mut self) {
         match self.popups.search_popup().map(|search| search.mode) {
-            Some(SearchPopupMode::Member) => self.refresh_member_search_results(),
+            Some(SearchPopupMode::Member) => self.refresh_member_search_results(true),
             Some(SearchPopupMode::Message) => self.refresh_message_search_suggestions(),
             None => {}
         }
@@ -733,7 +733,23 @@ impl DashboardState {
         }
     }
 
-    fn refresh_member_search_results(&mut self) {
+    fn refresh_member_search_results(&mut self, preserve_selection: bool) {
+        let (previous_member, previous_index) = if preserve_selection {
+            self.popups
+                .search_popup()
+                .filter(|search| search.mode == SearchPopupMode::Member)
+                .map(|search| {
+                    let selected = search.selected();
+                    let member = search
+                        .results
+                        .get(selected)
+                        .and_then(member_search_result_identity);
+                    (member, selected)
+                })
+                .unwrap_or_default()
+        } else {
+            (None, 0)
+        };
         let query = self
             .popups
             .search_popup()
@@ -741,11 +757,22 @@ impl DashboardState {
             .unwrap_or_default()
             .to_owned();
         let results = self.member_search_results_for_query(&query);
+        let selected = if preserve_selection {
+            previous_member
+                .and_then(|member| {
+                    results
+                        .iter()
+                        .position(|result| member_search_result_identity(result) == Some(member))
+                })
+                .unwrap_or_else(|| previous_index.min(results.len().saturating_sub(1)))
+        } else {
+            0
+        };
         if let Some(search) = self.popups.search_popup_mut()
             && search.mode == SearchPopupMode::Member
         {
             search.results = results;
-            search.selection.select(0);
+            search.selection.select(selected);
             search.dirty = false;
         }
     }
@@ -856,6 +883,15 @@ impl DashboardState {
             })
             .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)))
             .map(|(_, _, id)| id)
+    }
+}
+
+fn member_search_result_identity(
+    result: &SearchResultItem,
+) -> Option<(Option<Id<GuildMarker>>, Id<UserMarker>)> {
+    match result {
+        SearchResultItem::Member(member) => Some((member.guild_id, member.user_id)),
+        SearchResultItem::Message(_) => None,
     }
 }
 

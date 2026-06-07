@@ -213,6 +213,42 @@ fn member_search_filters_loaded_members_and_opens_profile() {
 }
 
 #[test]
+fn member_search_preserves_selected_member_across_cache_refresh() {
+    let guild_id = Id::new(1);
+    let selected_user = Id::new(21);
+    let mut state = state_with_writable_channel_and_members();
+    state.focus_pane(FocusPane::Members);
+
+    state.open_search_popup_for_focus(FocusPane::Members);
+    type_search_text(&mut state, "sa");
+    state.move_search_result_down();
+
+    assert_eq!(selected_member_search_user_id(&state), Some(selected_user));
+
+    let previous_revision = SnapshotRevision {
+        global: 1,
+        navigation: 1,
+        message: 1,
+        detail: 1,
+    };
+    let mut updated_discord = state.discord.clone();
+    updated_discord.apply_event(&AppEvent::GuildMemberUpsert {
+        guild_id,
+        member: member_with_username(Id::new(30), "Sasha", "sasha"),
+    });
+    let snapshot = updated_discord.snapshot(SnapshotRevision {
+        global: 2,
+        navigation: 2,
+        message: 1,
+        detail: 1,
+    });
+
+    state.restore_discord_snapshot_areas(&snapshot, previous_revision);
+
+    assert_eq!(selected_member_search_user_id(&state), Some(selected_user));
+}
+
+#[test]
 fn blank_message_search_does_not_run_for_current_dm() {
     let channel_id = Id::new(20);
     let mut state = DashboardState::new();
@@ -322,4 +358,12 @@ fn run_search(state: &mut DashboardState) -> AppCommand {
     state
         .activate_search_popup()
         .expect("message search command")
+}
+
+fn selected_member_search_user_id(state: &DashboardState) -> Option<Id<UserMarker>> {
+    let view = state.search_popup_view()?;
+    match view.results.get(view.selected)? {
+        SearchResultItem::Member(member) => Some(member.user_id),
+        SearchResultItem::Message(_) => None,
+    }
 }
