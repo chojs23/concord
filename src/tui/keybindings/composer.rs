@@ -73,7 +73,6 @@ impl ComposerKeyBindings {
         Self::from_specs(specs)
     }
 
-    #[cfg(test)]
     pub(super) fn try_from_options(options: &KeymapOptions) -> std::result::Result<Self, String> {
         if options.composer.len() > MAX_KEYMAP_MAPPINGS {
             return Err(format!(
@@ -208,7 +207,6 @@ fn parse_composer_binding_lossy(binding: &KeymapBinding) -> Option<Vec<KeyChord>
     (!shortcuts.is_empty()).then_some(shortcuts)
 }
 
-#[cfg(test)]
 fn parse_composer_binding(
     action_name: &str,
     binding: &KeymapBinding,

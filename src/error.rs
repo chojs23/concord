@@ -33,6 +33,8 @@ pub enum AppError {
     ConfigTomlDeserialize(#[from] toml::de::Error),
     #[error("config file could not be written as TOML")]
     ConfigTomlSerialize(#[from] toml::ser::Error),
+    #[error("keymap config is invalid: {0}")]
+    InvalidKeymapConfig(String),
     #[error("QR login failed: {0}")]
     QrLogin(String),
     #[error("QR login was cancelled in the Discord mobile app")]

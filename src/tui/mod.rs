@@ -17,9 +17,17 @@ mod ui;
 use tokio::sync::{mpsc, watch};
 
 use crate::{
-    Result,
+    AppError, Result,
+    config::KeymapOptions,
     discord::{AppCommand, DiscordClient, SequencedAppEvent, SnapshotRevision},
 };
+
+pub fn validate_keymap_options(keymap_options: &KeymapOptions) -> Result<()> {
+    keybindings::KeyBindings::try_from_options(keymap_options)
+        .map(|_| ())
+        .map_err(AppError::InvalidKeymapConfig)
+}
+
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     login::prompt_login(notice).await
 }

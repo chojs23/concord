@@ -121,8 +121,9 @@ impl KeyBindings {
         }
     }
 
-    #[cfg(test)]
-    fn try_from_options(keymap_options: &KeymapOptions) -> std::result::Result<Self, String> {
+    pub(in crate::tui) fn try_from_options(
+        keymap_options: &KeymapOptions,
+    ) -> std::result::Result<Self, String> {
         let keymap = KeyMap::try_from_options(keymap_options)?;
         let action_shortcuts = ActionShortcutBindings::try_from_options(keymap_options)?;
         let composer = ComposerKeyBindings::try_from_options(keymap_options)?;
@@ -156,7 +157,6 @@ impl ActionShortcutBindings {
         }
     }
 
-    #[cfg(test)]
     fn try_from_options(options: &KeymapOptions) -> std::result::Result<Self, String> {
         Ok(Self {
             guild: parse_action_scope(
@@ -251,7 +251,6 @@ impl KeyMap {
         Self::from_specs(leader, &specs, group_titles).expect("default keymap has no conflicts")
     }
 
-    #[cfg(test)]
     fn try_from_options(options: &KeymapOptions) -> std::result::Result<Self, String> {
         let leader = keymap_leader(options)?;
         if options.mappings.len() > MAX_KEYMAP_MAPPINGS {
@@ -472,7 +471,6 @@ fn parse_keymap_binding_lossy(
     })
 }
 
-#[cfg(test)]
 fn parse_keymap_binding(
     action_name: &str,
     action: UiAction,
@@ -533,7 +531,6 @@ fn keymap_group_titles_with_defaults(
     titles
 }
 
-#[cfg(test)]
 fn parse_keymap_groups(
     groups: &BTreeMap<String, String>,
     leader: KeyChord,
@@ -581,7 +578,6 @@ fn parse_action_scope_lossy<K: Copy + Eq>(
     parsed
 }
 
-#[cfg(test)]
 fn parse_action_scope<K: Copy + Eq>(
     scope_name: &str,
     bindings: &BTreeMap<String, KeymapBinding>,
@@ -618,7 +614,6 @@ fn parse_action_shortcut_binding_lossy(
     (!shortcuts.is_empty()).then(|| (shortcuts, binding.description.clone()))
 }
 
-#[cfg(test)]
 fn parse_action_shortcut_binding(
     action_name: &str,
     binding: &KeymapBinding,
