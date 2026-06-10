@@ -947,7 +947,7 @@ impl DashboardState {
             &mut self.navigation.collapsed_channel_categories,
             category_id,
         );
-        self.options.options_save_pending = true;
+        self.options.ui_state_save_pending = true;
     }
 
     #[cfg(test)]

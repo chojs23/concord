@@ -33,6 +33,26 @@ pub enum AppError {
     ConfigTomlDeserialize(#[from] toml::de::Error),
     #[error("config file could not be written as TOML")]
     ConfigTomlSerialize(#[from] toml::ser::Error),
+    #[error("credential store file is not valid TOML")]
+    CredentialTomlDeserialize {
+        #[source]
+        source: toml::de::Error,
+    },
+    #[error("credential store file could not be written as TOML")]
+    CredentialTomlSerialize {
+        #[source]
+        source: toml::ser::Error,
+    },
+    #[error("system keychain credential store failed")]
+    CredentialKeychain {
+        #[source]
+        source: keyring::Error,
+    },
+    #[error("credential store task failed")]
+    CredentialStoreTask {
+        #[source]
+        source: tokio::task::JoinError,
+    },
     #[error("keymap config is invalid: {0}")]
     InvalidKeymapConfig(String),
     #[error("QR login failed: {0}")]

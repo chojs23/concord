@@ -1,6 +1,6 @@
 use crate::config::{
-    AppOptions, ComposerOptions, DisplayOptions, ImagePreviewQualityPreset, KeymapOptions,
-    NotificationOptions, UiStateOptions, VoiceOptions,
+    AppOptions, ComposerOptions, CredentialOptions, DisplayOptions, ImagePreviewQualityPreset,
+    KeymapOptions, NotificationOptions, UiStateOptions, VoiceOptions,
 };
 use crate::discord::AppCommand;
 use crate::tui::keybindings::KeyBindings;
@@ -39,10 +39,12 @@ impl DisplayOptionItem {
 pub(super) struct OptionsUiState {
     pub(super) display_options: DisplayOptions,
     pub(super) composer_options: ComposerOptions,
+    pub(super) credential_options: CredentialOptions,
     pub(super) notification_options: NotificationOptions,
     pub(super) voice_options: VoiceOptions,
     pub(super) key_bindings: KeyBindings,
-    pub(super) options_save_pending: bool,
+    pub(super) config_save_pending: bool,
+    pub(super) ui_state_save_pending: bool,
 }
 
 impl OptionsUiState {
@@ -55,6 +57,7 @@ impl DashboardState {
     pub fn new_with_options(
         display_options: DisplayOptions,
         composer_options: ComposerOptions,
+        credential_options: CredentialOptions,
         notification_options: NotificationOptions,
         voice_options: VoiceOptions,
         keymap_options: KeymapOptions,
@@ -63,6 +66,7 @@ impl DashboardState {
         let mut state = Self::new();
         state.options.display_options = display_options;
         state.options.composer_options = composer_options;
+        state.options.credential_options = credential_options;
         state.options.notification_options = notification_options;
         state.options.voice_options = voice_options;
         state.options.key_bindings = KeyBindings::from_options(&keymap_options);
@@ -84,6 +88,7 @@ impl DashboardState {
         Self::new_with_options(
             display_options,
             ComposerOptions::default(),
+            CredentialOptions::default(),
             NotificationOptions::default(),
             VoiceOptions::default(),
             KeymapOptions::default(),
@@ -96,6 +101,7 @@ impl DashboardState {
         Self::new_with_options(
             DisplayOptions::default(),
             ComposerOptions::default(),
+            CredentialOptions::default(),
             NotificationOptions::default(),
             voice_options,
             KeymapOptions::default(),
@@ -108,6 +114,7 @@ impl DashboardState {
         Self::new_with_options(
             DisplayOptions::default(),
             ComposerOptions::default(),
+            CredentialOptions::default(),
             notification_options,
             VoiceOptions::default(),
             KeymapOptions::default(),
@@ -227,7 +234,7 @@ impl DashboardState {
         let adjusted = adjusted.clamp(MIN_PANE_WIDTH, MAX_PANE_WIDTH);
         if adjusted != *width {
             *width = adjusted;
-            self.options.options_save_pending = true;
+            self.options.config_save_pending = true;
         }
     }
 
@@ -248,16 +255,24 @@ impl DashboardState {
     }
 
     pub(in crate::tui) fn take_options_save_request(&mut self) -> Option<AppOptions> {
-        if !self.options.options_save_pending {
+        if !self.options.config_save_pending {
             return None;
         }
-        self.options.options_save_pending = false;
+        self.options.config_save_pending = false;
         Some(AppOptions {
             display: self.options.display_options,
             composer: self.options.composer_options,
+            credentials: self.options.credential_options,
             notifications: self.options.notification_options.clone(),
             voice: self.options.voice_options,
-            ui_state: self.ui_state_options(),
         })
+    }
+
+    pub(in crate::tui) fn take_ui_state_save_request(&mut self) -> Option<UiStateOptions> {
+        if !self.options.ui_state_save_pending {
+            return None;
+        }
+        self.options.ui_state_save_pending = false;
+        Some(self.ui_state_options())
     }
 }

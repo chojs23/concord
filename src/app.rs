@@ -15,7 +15,7 @@ use tokio::sync::{Semaphore, mpsc};
 use tokio::time::{Duration, sleep, timeout};
 
 use crate::{
-    DiscordClient, Result,
+    DiscordClient, Result, config,
     discord::{
         AppCommand, AppEvent, AttachmentUpdate, ChannelNotificationOverrideInfo,
         GuildNotificationSettingsInfo, MessageHistoryLoadTarget, MessageInfo, MuteDuration,
@@ -1621,8 +1621,17 @@ struct ResolvedToken {
 
 async fn resolve_token() -> Result<ResolvedToken> {
     let mut warnings = Vec::new();
+    let credential_store = match config::load_options() {
+        Ok(options) => options.credentials.store,
+        Err(error) => {
+            warnings.push(format!(
+                "config could not be loaded for credential settings: {error}; using auto credential storage"
+            ));
+            config::CredentialStoreMode::default()
+        }
+    };
 
-    match token_store::load_token() {
+    match load_token_from_store(credential_store).await {
         Ok(Some(token)) => {
             if let Err(error) = validate_token_header(&token) {
                 warnings.push(format!(
@@ -1642,11 +1651,35 @@ async fn resolve_token() -> Result<ResolvedToken> {
 
     let token = tui::prompt_login(login_notice).await?;
     validate_token_header(&token)?;
-    if let Err(error) = token_store::save_token(&token) {
-        warnings.push(format!("token was not saved: {error}"));
+    match save_token_to_store(token.clone(), credential_store).await {
+        Ok(token_store::TokenSaveLocation::PlaintextFile)
+            if credential_store == config::CredentialStoreMode::Auto =>
+        {
+            warnings.push(
+                "system keychain is unavailable; token was saved to the plaintext fallback credential store"
+                    .to_owned(),
+            );
+        }
+        Ok(_) => {}
+        Err(error) => warnings.push(format!("token was not saved: {error}")),
     }
 
     Ok(ResolvedToken { token, warnings })
+}
+
+async fn load_token_from_store(store: config::CredentialStoreMode) -> Result<Option<String>> {
+    tokio::task::spawn_blocking(move || token_store::load_token(store))
+        .await
+        .map_err(|source| AppError::CredentialStoreTask { source })?
+}
+
+async fn save_token_to_store(
+    token: String,
+    store: config::CredentialStoreMode,
+) -> Result<token_store::TokenSaveLocation> {
+    tokio::task::spawn_blocking(move || token_store::save_token(&token, store))
+        .await
+        .map_err(|source| AppError::CredentialStoreTask { source })?
 }
 
 fn login_notice_for_token_warnings(warnings: &[String]) -> Option<String> {

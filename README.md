@@ -46,7 +46,9 @@ The npm package installs a prebuilt binary from the GitHub Release artifacts.
 
 ### Cargo
 
-Install native audio dependencies first. On macOS with Homebrew:
+Install native dependencies first.
+
+On macOS with Homebrew:
 
 ```sh
 brew install opus pkg-config
@@ -62,12 +64,6 @@ On Debian or Ubuntu:
 
 ```sh
 sudo apt install libopus-dev libasound2-dev pkg-config
-```
-
-On macOS with Homebrew:
-
-```sh
-brew install opus pkg-config
 ```
 
 ```sh
@@ -168,7 +164,9 @@ aplay -D pulse /usr/share/sounds/alsa/Front_Center.wav
 
 Email and QR code logins may trigger a CAPTCHA challenge on Discord's side. We cannot solve that, so I strongly recommend using token authentication.
 
-Tokens are saved under Concord's config directory in plain text. See the Security section below for details.
+By default, tokens are saved in the system keychain when available. In the
+default `auto` mode, Concord falls back to its state directory when keychain
+storage is unavailable. See the Security section below for details.
 
 ### Guilds & Channels
 
@@ -413,6 +411,13 @@ Otherwise it uses the platform config directory. The usual fallback is
 matching files under `~/Library/Application Support/concord/` on macOS, and the
 roaming AppData config directory on Windows.
 
+Local UI state and plaintext fallback credentials are stored under Concord's
+state directory instead. If `XDG_STATE_HOME` is set, Concord uses
+`$XDG_STATE_HOME/concord/state.toml` and
+`$XDG_STATE_HOME/concord/credentials.toml`. Otherwise it uses
+`~/.local/state/concord/state.toml` and
+`~/.local/state/concord/credentials.toml`.
+
 You can change some configuration from the in-app Options menu, and Concord saves them back
 to `config.toml`. Key settings are read from `keymap.toml`.
 
@@ -442,6 +447,11 @@ circular_avatars = false
 [composer]
 # Send custom emoji your account cannot use directly as image links.
 emojis_as_links = false
+
+[credentials]
+# Credential storage: auto, keychain, or plain.
+# auto tries the system keychain first and falls back to the state file.
+store = "auto"
 
 [notifications]
 # Show desktop notifications for Discord messages that pass notification rules.
@@ -488,6 +498,12 @@ voice_output_volume = 100
 
 This setting only applies to attachment, embed, and attachment viewer previews.
 Avatars and custom emoji keep their separate small-image behavior.
+
+`credentials.store` supports these values:
+
+- `auto`: try the system keychain first, then fall back to the state-file credential store.
+- `keychain`: use only the system keychain. If keychain storage is unavailable, the token is not saved.
+- `plain`: use only the plain-text state-file credential store.
 
 <details>
 <summary>Default keymap config</summary>
@@ -639,10 +655,10 @@ No. If Discord requires a CAPTCHA during login, use token login instead.
 
 ## Security
 
-- Tokens are stored as **plain text** in Concord's config directory. So keep that file secure and do not share it. You can use the token from that file to log in to the official Discord client, so treat it like a password.
-- On Unix, the credential's parent directory is created with `0700` and the credential file with `0600` permissions.
-- All concord state (config, keymap, credential, log) lives under a single `concord/` directory inside `XDG_CONFIG_HOME` when it is set, or inside the platform config directory otherwise.
-- No system keychain integration yet.
+- By default, tokens are stored in the system keychain when available.
+- On Linux, keychain storage uses Secret Service when a compatible service is available.
+- In `credentials.store = "auto"`, Concord falls back to **plain text** credentials under Concord's state directory when keychain storage is unavailable. In `keychain` mode, Concord does not fall back to plain storage. Keep fallback credential files secure and do not share them. You can use a token from that file to log in to the official Discord client, so treat it like a password.
+- On Unix, the fallback credential's parent directory is created with `0700` and the credential file with `0600` permissions.
 
 ## Contributing
 

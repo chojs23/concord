@@ -374,16 +374,17 @@ fn collapsed_category_state_is_saved_and_restored() {
     let mut state = state_with_channel_tree();
     state.toggle_selected_channel_category();
 
-    let options = state
-        .take_options_save_request()
-        .expect("collapse should request an options save");
+    let ui_state = state
+        .take_ui_state_save_request()
+        .expect("collapse should request a UI state save");
     let restored = DashboardState::new_with_options(
         DisplayOptions::default(),
+        Default::default(),
         Default::default(),
         NotificationOptions::default(),
         VoiceOptions::default(),
         Default::default(),
-        options.ui_state,
+        ui_state,
     );
 
     assert!(
@@ -583,8 +584,8 @@ fn collapsed_server_folder_state_is_saved() {
 
     state.toggle_selected_folder();
 
-    let options = state
-        .take_options_save_request()
-        .expect("folder collapse should request an options save");
-    assert_eq!(options.ui_state.collapsed_server_folder_ids, vec![42]);
+    let ui_state = state
+        .take_ui_state_save_request()
+        .expect("folder collapse should request a UI state save");
+    assert_eq!(ui_state.collapsed_server_folder_ids, vec![42]);
 }
