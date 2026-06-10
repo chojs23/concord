@@ -53,14 +53,19 @@ pub(super) fn handle_terminal_event(
 }
 
 fn save_options_if_needed(state: &mut DashboardState) {
-    let Some(options) = state.take_options_save_request() else {
-        return;
-    };
+    if let Some(options) = state.take_options_save_request() {
+        if let Err(error) = config::save_options(&options) {
+            state.push_effect(AppEvent::GatewayError {
+                message: format!("save options failed: {error}"),
+            });
+        }
+    }
 
-    match config::save_options(&options) {
-        Ok(()) => {}
-        Err(error) => state.push_effect(AppEvent::GatewayError {
-            message: format!("save options failed: {error}"),
-        }),
+    if let Some(ui_state) = state.take_ui_state_save_request() {
+        if let Err(error) = config::save_ui_state_options(&ui_state) {
+            state.push_effect(AppEvent::GatewayError {
+                message: format!("save UI state failed: {error}"),
+            });
+        }
     }
 }

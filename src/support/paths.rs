@@ -3,12 +3,18 @@ use std::{env, ffi::OsString, path::PathBuf};
 const APP_DIR: &str = "concord";
 const CONFIG_FILE: &str = "config.toml";
 const KEYMAP_FILE: &str = "keymap.toml";
-const CREDENTIAL_FILE: &str = "credential";
+const CREDENTIAL_FILE: &str = "credentials.toml";
 const LOG_FILE: &str = "concord.log";
+const STATE_FILE: &str = "state.toml";
 
-/// Root directory for all concord-managed files (config, credential, log).
+/// Root directory for user-managed config files.
 pub fn app_dir() -> Option<PathBuf> {
     Some(config_base_dir()?.join(APP_DIR))
+}
+
+/// Root directory for local machine state that should not be checked into dotfiles.
+pub fn state_dir() -> Option<PathBuf> {
+    Some(state_base_dir()?.join(APP_DIR))
 }
 
 pub fn config_file() -> Option<PathBuf> {
@@ -20,7 +26,11 @@ pub fn keymap_file() -> Option<PathBuf> {
 }
 
 pub fn credential_file() -> Option<PathBuf> {
-    Some(app_dir()?.join(CREDENTIAL_FILE))
+    Some(state_dir()?.join(CREDENTIAL_FILE))
+}
+
+pub fn state_file() -> Option<PathBuf> {
+    Some(state_dir()?.join(STATE_FILE))
 }
 
 pub fn log_file() -> Option<PathBuf> {
@@ -35,7 +45,16 @@ fn config_base_dir() -> Option<PathBuf> {
     xdg_config_home_from_env(env::var_os("XDG_CONFIG_HOME")).or_else(dirs::config_dir)
 }
 
+fn state_base_dir() -> Option<PathBuf> {
+    xdg_state_home_from_env(env::var_os("XDG_STATE_HOME"))
+        .or_else(|| Some(dirs::home_dir()?.join(".local").join("state")))
+}
+
 fn xdg_config_home_from_env(value: Option<OsString>) -> Option<PathBuf> {
+    value.map(PathBuf::from).filter(|path| path.is_absolute())
+}
+
+fn xdg_state_home_from_env(value: Option<OsString>) -> Option<PathBuf> {
     value.map(PathBuf::from).filter(|path| path.is_absolute())
 }
 

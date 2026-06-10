@@ -32,6 +32,21 @@ pub struct ComposerOptions {
     pub emojis_as_links: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct CredentialOptions {
+    pub store: CredentialStoreMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CredentialStoreMode {
+    #[default]
+    Auto,
+    Keychain,
+    Plain,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct NotificationOptions {
@@ -125,15 +140,21 @@ impl<'de> Deserialize<'de> for KeymapBinding {
 pub struct AppOptions {
     pub display: DisplayOptions,
     pub composer: ComposerOptions,
+    pub credentials: CredentialOptions,
     pub notifications: NotificationOptions,
     pub voice: VoiceOptions,
-    pub ui_state: UiStateOptions,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize)]
 #[serde(default)]
 struct KeymapFileOptions {
     keymap: KeymapOptions,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+struct UiStateFileOptions {
+    ui_state: UiStateOptions,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -293,6 +314,14 @@ impl Default for NotificationOptions {
     }
 }
 
+impl Default for CredentialOptions {
+    fn default() -> Self {
+        Self {
+            store: CredentialStoreMode::Auto,
+        }
+    }
+}
+
 impl Default for DisplayOptions {
     fn default() -> Self {
         Self {
@@ -333,6 +362,11 @@ pub fn load_keymap_options() -> Result<KeymapOptions> {
     load_keymap_options_from_path(&path)
 }
 
+pub fn load_ui_state_options() -> Result<UiStateOptions> {
+    let path = state_path()?;
+    load_ui_state_options_from_path(&path)
+}
+
 /// User-facing description of where config lives, e.g. for help text. Falls
 /// back to the legacy path string when XDG resolution fails so the message
 /// stays readable.
@@ -359,9 +393,22 @@ fn load_keymap_options_from_path(path: &Path) -> Result<KeymapOptions> {
     }
 }
 
+fn load_ui_state_options_from_path(path: &Path) -> Result<UiStateOptions> {
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(toml::from_str::<UiStateFileOptions>(&content)?.ui_state),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(UiStateOptions::default()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub fn save_options(options: &AppOptions) -> Result<()> {
     let path = config_path()?;
     save_options_to_path(&path, options)
+}
+
+pub fn save_ui_state_options(options: &UiStateOptions) -> Result<()> {
+    let path = state_path()?;
+    save_ui_state_options_to_path(&path, options)
 }
 
 fn save_options_to_path(path: &Path, options: &AppOptions) -> Result<()> {
@@ -371,6 +418,18 @@ fn save_options_to_path(path: &Path, options: &AppOptions) -> Result<()> {
     }
 
     write_private_file(path, &toml::to_string_pretty(options)?)
+}
+
+fn save_ui_state_options_to_path(path: &Path, options: &UiStateOptions) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+        set_private_dir_permissions(parent)?;
+    }
+
+    let file_options = UiStateFileOptions {
+        ui_state: options.clone(),
+    };
+    write_private_file(path, &toml::to_string_pretty(&file_options)?)
 }
 
 fn config_path() -> Result<PathBuf> {
@@ -388,6 +447,16 @@ fn keymap_path() -> Result<PathBuf> {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "could not resolve user config directory",
+        )
+        .into()
+    })
+}
+
+fn state_path() -> Result<PathBuf> {
+    paths::state_file().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "could not resolve user state directory",
         )
         .into()
     })
@@ -443,10 +512,10 @@ mod tests {
     };
 
     use super::{
-        AppOptions, ComposerOptions, DisplayOptions, ImagePreviewQualityPreset, KeymapFileOptions,
-        KeymapOptions, MicrophoneSensitivityDb, NotificationOptions, VoiceOptions,
-        VoiceVolumePercent, load_keymap_options_from_path, load_options_from_path,
-        save_options_to_path,
+        AppOptions, ComposerOptions, CredentialOptions, CredentialStoreMode, DisplayOptions,
+        ImagePreviewQualityPreset, KeymapFileOptions, KeymapOptions, MicrophoneSensitivityDb,
+        NotificationOptions, VoiceOptions, VoiceVolumePercent, load_keymap_options_from_path,
+        load_options_from_path, save_options_to_path,
     };
 
     #[test]
@@ -574,6 +643,15 @@ mod tests {
                 false,
                 MicrophoneSensitivityDb::default(),
             ),
+            (
+                "[credentials]\nstore = \"plain\"\n",
+                false,
+                ImagePreviewQualityPreset::Balanced,
+                false,
+                false,
+                false,
+                MicrophoneSensitivityDb::default(),
+            ),
         ];
 
         for (
@@ -634,6 +712,12 @@ mod tests {
                 config.composer.emojis_as_links,
                 toml.contains("emojis_as_links")
             );
+            let expected_credential_store = if toml.contains("store = \"plain\"") {
+                CredentialStoreMode::Plain
+            } else {
+                CredentialStoreMode::Auto
+            };
+            assert_eq!(config.credentials.store, expected_credential_store);
         }
     }
 
@@ -789,6 +873,9 @@ mod tests {
             composer: ComposerOptions {
                 emojis_as_links: true,
             },
+            credentials: CredentialOptions {
+                store: CredentialStoreMode::Plain,
+            },
             notifications: NotificationOptions {
                 desktop_notifications: false,
                 notification_icon: Some("/tmp/icon.svg".to_string()),
@@ -803,15 +890,18 @@ mod tests {
                 microphone_volume: VoiceVolumePercent::new(80),
                 voice_output_volume: VoiceVolumePercent::new(60),
             },
-            ui_state: Default::default(),
         };
 
         save_options_to_path(&path, &options).expect("config should save");
         let saved = fs::read_to_string(&path).expect("config should be readable");
         assert!(!saved.contains("[keymap"));
+        assert!(!saved.contains("[ui_state"));
         let loaded = load_options_from_path(&path).expect("config should load");
 
-        assert_eq!(loaded, options);
+        assert_eq!(loaded.display, options.display);
+        assert_eq!(loaded.composer, options.composer);
+        assert_eq!(loaded.notifications, options.notifications);
+        assert_eq!(loaded.voice, options.voice);
         let _ = fs::remove_file(&path);
         if let Some(parent) = path.parent() {
             let _ = fs::remove_dir_all(parent);

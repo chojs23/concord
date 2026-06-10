@@ -420,7 +420,7 @@ impl DashboardState {
         update_current_voice_capture_permission: bool,
     ) {
         self.clear_message_row_content_metrics_cache();
-        self.options.options_save_pending = true;
+        self.options.config_save_pending = true;
         if update_current_voice_state {
             self.queue_current_voice_state_update();
         }

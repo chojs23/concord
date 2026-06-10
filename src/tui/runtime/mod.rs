@@ -56,6 +56,13 @@ pub(super) async fn run_dashboard(
             config::AppOptions::default()
         }
     };
+    let ui_state_options = match config::load_ui_state_options() {
+        Ok(options) => options,
+        Err(error) => {
+            logging::error("config", format!("failed to load UI state: {error}"));
+            config::UiStateOptions::default()
+        }
+    };
     let keymap_options = match config::load_keymap_options() {
         Ok(options) => options,
         Err(error) => {
@@ -66,10 +73,11 @@ pub(super) async fn run_dashboard(
     let mut state = DashboardState::new_with_options(
         options.display,
         options.composer,
+        options.credentials,
         options.notifications,
         options.voice,
         keymap_options,
-        options.ui_state,
+        ui_state_options,
     );
     drop(snapshots.borrow_and_update());
     let initial_snapshot = client.current_discord_snapshot();

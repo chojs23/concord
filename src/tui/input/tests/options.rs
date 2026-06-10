@@ -15,9 +15,9 @@ fn options_popup_toggles_selected_setting() {
         Some(AppOptions {
             display: state.display_options(),
             composer: state.composer_options(),
+            credentials: Default::default(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
-            ui_state: Default::default(),
         })
     );
 }
@@ -41,9 +41,9 @@ fn options_popup_cycles_image_preview_quality() {
         Some(AppOptions {
             display: state.display_options(),
             composer: state.composer_options(),
+            credentials: Default::default(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
-            ui_state: Default::default(),
         })
     );
 }
@@ -100,9 +100,9 @@ fn options_popup_h_l_adjust_microphone_sensitivity_by_one_or_ten_db() {
         Some(AppOptions {
             display: state.display_options(),
             composer: state.composer_options(),
+            credentials: Default::default(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
-            ui_state: Default::default(),
         })
     );
 }
@@ -204,9 +204,9 @@ fn options_popup_toggles_composer_emoji_links() {
         Some(AppOptions {
             display: state.display_options(),
             composer: state.composer_options(),
+            credentials: Default::default(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
-            ui_state: Default::default(),
         })
     );
 }
