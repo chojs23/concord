@@ -379,7 +379,7 @@ are shown above the input before sending.
 | `Ctrl+e`                   | open $EDITOR      | Open $EDITOR on the current draft for long editing               |
 | `Ctrl+c`                   | clear             | Clear current draft                                              |
 | `Ctrl+Left`/ `Ctrl+Right`  | Jump word         | Jump the cursor by word                                          |
-| `Ctrl+Backspace`/ `Ctrl+w` | Delete word       | Delete the word before the cursor                                |
+| `Alt+Backspace`, `Ctrl+Backspace` / `Ctrl+w` | Delete word | Delete the word before the cursor                                |
 | `Delete`                   | Detach attachment | Removes the last pending attachment                              |
 
 #### Mention picker
@@ -572,13 +572,13 @@ ShowProfile = "p"
 [keymap.composer]
 OpenEditor = "<C-e>"
 PasteClipboard = "<C-v>"
-InsertNewline = { keys = ["<S-enter>", "<C-enter>", "<A-enter>"] }
+InsertNewline = { keys = ["<C-j>", "<S-enter>", "<C-enter>", "<A-enter>"] }
 Submit = "enter"
 Close = "esc"
 ClearInput = "<C-c>"
 RemoveLastAttachment = "delete"
 DeletePreviousChar = "backspace"
-DeletePreviousWord = { keys = ["<C-backspace>", "<C-w>"] }
+DeletePreviousWord = { keys = ["<A-backspace>", "<C-backspace>", "<C-w>"] }
 MoveCursorUp = "up"
 MoveCursorDown = "down"
 MoveCursorWordLeft = "<C-left>"

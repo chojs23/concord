@@ -169,15 +169,15 @@ but that key will run the composer action instead of inserting text.
 
 | Composer action        | Default config                            | Action                               |
 | ---------------------- | ----------------------------------------- | ------------------------------------ |
-| `OpenEditor`           | `"<C-e>"`                                 | Open the current draft in `$EDITOR`. |
+| `OpenEditor`           | `"<C-e>"`                    | Open the current draft in `$EDITOR`. |
 | `PasteClipboard`       | `"<C-v>"`                                 | Request clipboard paste.             |
-| `InsertNewline`        | `["<S-enter>", "<C-enter>", "<A-enter>"]` | Insert a newline.                    |
+| `InsertNewline`        | `["<C-j>", "<S-enter>", "<C-enter>", "<A-enter>"]` | Insert a newline.                    |
 | `Submit`               | `"enter"`                                 | Submit the composer.                 |
 | `Close`                | `"esc"`                                   | Close the composer.                  |
 | `ClearInput`           | `"<C-c>"`                                 | Clear the composer input.            |
 | `RemoveLastAttachment` | `"delete"`                                | Remove the last pending attachment.  |
 | `DeletePreviousChar`   | `"backspace"`                             | Delete the previous character.       |
-| `DeletePreviousWord`   | `["<C-backspace>", "<C-w>"]`              | Delete the word before the cursor.   |
+| `DeletePreviousWord`   | `["<A-backspace>", "<C-backspace>", "<C-w>"]` | Delete the word before the cursor.   |
 | `MoveCursorUp`         | `"up"`                                    | Move the cursor up.                  |
 | `MoveCursorDown`       | `"down"`                                  | Move the cursor down.                |
 | `MoveCursorWordLeft`   | `"<C-left>"`                              | Move the cursor one word left.       |

@@ -166,7 +166,7 @@ fn composer_ignores_unhandled_control_characters() {
     handle_key(&mut state, char_key('i'));
 
     handle_key(&mut state, ctrl_key('a'));
-    handle_key(&mut state, ctrl_key('j'));
+    handle_key(&mut state, ctrl_key('l'));
     handle_key(&mut state, ctrl_key('k'));
 
     assert!(state.is_composing());

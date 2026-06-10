@@ -246,6 +246,7 @@ fn default_composer_key_bindings() -> BTreeMap<ComposerShortcutAction, Vec<KeyCh
         (
             ComposerShortcutAction::InsertNewline,
             vec![
+                ctrl_chord('j'),
                 modified_key_chord(KeyCode::Enter, KeyModifiers::SHIFT),
                 modified_key_chord(KeyCode::Enter, KeyModifiers::CONTROL),
                 modified_key_chord(KeyCode::Enter, KeyModifiers::ALT),
@@ -268,6 +269,7 @@ fn default_composer_key_bindings() -> BTreeMap<ComposerShortcutAction, Vec<KeyCh
         (
             ComposerShortcutAction::DeletePreviousWord,
             vec![
+                modified_key_chord(KeyCode::Backspace, KeyModifiers::ALT),
                 modified_key_chord(KeyCode::Backspace, KeyModifiers::CONTROL),
                 ctrl_chord('w'),
             ],
