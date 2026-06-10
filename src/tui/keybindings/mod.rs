@@ -935,10 +935,7 @@ fn is_reserved_keymap_chord(chord: KeyChord) -> bool {
     matches!(
         chord.code,
         KeyCode::Enter | KeyCode::Esc | KeyCode::Backspace | KeyCode::Delete
-    ) || matches!(
-        (chord.code, chord.modifiers),
-        (KeyCode::Char('c' | 'n' | 'p'), KeyModifiers::CONTROL)
-    )
+    ) || matches!((chord.code, chord.modifiers), (KeyCode::Char(value), KeyModifiers::CONTROL) if matches!(value.to_ascii_lowercase(), 'c' | 'n' | 'p'))
 }
 
 fn default_keymap_specs(leader: KeyChord) -> BTreeMap<UiAction, KeyMapActionSpec> {
@@ -947,7 +944,7 @@ fn default_keymap_specs(leader: KeyChord) -> BTreeMap<UiAction, KeyMapActionSpec
         let action_sequences = match *action {
             UiAction::StartComposer => vec![vec![char_chord('i')]],
             UiAction::OpenPaneFilter => vec![vec![char_chord('/')]],
-            UiAction::ClosePopup => vec![vec![key_chord(KeyCode::Esc)], vec![char_chord('q')]],
+            UiAction::ClosePopup => vec![vec![char_chord('q')]],
             UiAction::FocusGuildPane => vec![vec![char_chord('1')]],
             UiAction::FocusChannelPane => vec![vec![char_chord('2')]],
             UiAction::FocusMessagePane => vec![vec![char_chord('3')]],
@@ -1283,6 +1280,23 @@ mod tests {
             key_bindings.is_popup_close_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
         );
 
+        let documented_keymap = KeymapOptions {
+            mappings: [("ClosePopup".to_owned(), KeymapBinding::one("q"))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        let documented_key_bindings = KeyBindings::try_from_options(&documented_keymap)
+            .expect("documented close popup keymap parses");
+        assert!(
+            documented_key_bindings
+                .is_popup_close_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        );
+        assert!(
+            documented_key_bindings
+                .is_popup_close_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
+        );
+
         let keymap = KeymapOptions {
             mappings: [(
                 "ClosePopup".to_owned(),
@@ -1298,7 +1312,7 @@ mod tests {
         let key_bindings =
             KeyBindings::try_from_options(&keymap).expect("close popup keymap parses");
 
-        assert!(!key_bindings.is_popup_close_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        assert!(key_bindings.is_popup_close_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
         assert!(
             !key_bindings.is_popup_close_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
         );
@@ -2299,7 +2313,7 @@ mod tests {
 
     #[test]
     fn keymap_rejects_fixed_control_selection_keys() {
-        for key in ["<C-n>", "<C-p>"] {
+        for key in ["<C-n>", "<C-p>", "<C-N>", "<C-P>"] {
             let keymap = KeymapOptions {
                 mappings: [("StartComposer".to_owned(), KeymapBinding::one(key))]
                     .into_iter()

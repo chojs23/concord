@@ -373,14 +373,14 @@ Voice commands:
 You can paste copied files into the composer to attach them. Pending uploads
 are shown above the input before sending.
 
-| Shortcut                   | Action            | Description                                                      |
-| -------------------------- | ----------------- | ---------------------------------------------------------------- |
-| `Ctrl+v`                   | paste clipboard   | Attach copied files or images when present, otherwise paste text |
-| `Ctrl+e`                   | open $EDITOR      | Open $EDITOR on the current draft for long editing               |
-| `Ctrl+c`                   | clear             | Clear current draft                                              |
-| `Ctrl+Left`/ `Ctrl+Right`  | Jump word         | Jump the cursor by word                                          |
-| `Alt+Backspace`, `Ctrl+Backspace` / `Ctrl+w` | Delete word | Delete the word before the cursor                                |
-| `Delete`                   | Detach attachment | Removes the last pending attachment                              |
+| Shortcut                                     | Action            | Description                                                      |
+| -------------------------------------------- | ----------------- | ---------------------------------------------------------------- |
+| `Ctrl+v`                                     | paste clipboard   | Attach copied files or images when present, otherwise paste text |
+| `Ctrl+e`                                     | open $EDITOR      | Open $EDITOR on the current draft for long editing               |
+| `Ctrl+c`                                     | clear             | Clear current draft                                              |
+| `Ctrl+Left`/ `Ctrl+Right`                    | Jump word         | Jump the cursor by word                                          |
+| `Alt+Backspace`, `Ctrl+Backspace` / `Ctrl+w` | Delete word       | Delete the word before the cursor                                |
+| `Delete`                                     | Detach attachment | Removes the last pending attachment                              |
 
 #### Mention picker
 
@@ -497,7 +497,7 @@ Avatars and custom emoji keep their separate small-image behavior.
 leader = "space"
 StartComposer = "i"
 OpenPaneFilter = "/"
-ClosePopup = { keys = ["esc", "q"] }
+ClosePopup = "q"
 FocusGuildPane = "1"
 FocusChannelPane = "2"
 FocusMessagePane = "3"

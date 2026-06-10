@@ -122,7 +122,25 @@ fn options_popup_uses_configured_close_popup_key() {
     handle_key(&mut state, char_key('q'));
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::Options));
 
+    handle_key(&mut state, key(KeyCode::Esc));
+    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::Options));
+
+    state.open_options_popup();
     handle_key(&mut state, char_key('x'));
+    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::Options));
+
+    let mut state = state_with_keymap(KeymapOptions {
+        leader: None,
+        groups: std::collections::BTreeMap::new(),
+        mappings: [("ClosePopup".to_owned(), KeymapBinding::one("pagedown"))]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    });
+    state.open_options_popup();
+
+    handle_key(&mut state, key(KeyCode::PageDown));
+
     assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::Options));
 }
 

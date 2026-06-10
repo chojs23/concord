@@ -174,7 +174,7 @@ fn composer_ignores_unhandled_control_characters() {
 }
 
 #[test]
-fn shift_enter_inserts_newline_while_composing() {
+fn modified_enter_and_ctrl_j_insert_newline_while_composing() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
     handle_key(&mut state, key(KeyCode::Down));
@@ -187,9 +187,11 @@ fn shift_enter_inserts_newline_while_composing() {
     handle_key(&mut state, char_key('j'));
     handle_key(&mut state, alt_enter());
     handle_key(&mut state, char_key('k'));
+    handle_key(&mut state, ctrl_key('j'));
+    handle_key(&mut state, char_key('l'));
 
     assert!(state.is_composing());
-    assert_eq!(state.composer_input(), "h\ni\nj\nk");
+    assert_eq!(state.composer_input(), "h\ni\nj\nk\nl");
 
     let mut completion_state = state_with_channel_tree();
     completion_state.focus_pane(FocusPane::Channels);
@@ -245,7 +247,7 @@ fn composer_cursor_edits_in_middle() {
 }
 
 #[test]
-fn ctrl_backspace_deletes_previous_composer_word() {
+fn modified_backspace_and_ctrl_w_delete_previous_composer_word() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
     handle_key(&mut state, key(KeyCode::Down));
@@ -265,6 +267,15 @@ fn ctrl_backspace_deletes_previous_composer_word() {
 
     assert_eq!(state.composer_input(), "hello ");
     assert_eq!(state.composer_cursor_byte_index(), "hello ".len());
+
+    assert!(handle_paste(&mut state, "brave world"));
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Backspace, KeyModifiers::ALT),
+    );
+
+    assert_eq!(state.composer_input(), "hello brave ");
+    assert_eq!(state.composer_cursor_byte_index(), "hello brave ".len());
 }
 
 #[test]

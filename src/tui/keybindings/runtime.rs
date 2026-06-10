@@ -256,6 +256,16 @@ impl KeyBindings {
 
     pub(in crate::tui) fn popup_list_action(&self, key: KeyEvent) -> Option<PopupListAction> {
         if let Some(action) = self.selection_action(key, SelectionKeySet::Navigation) {
+            if self.is_popup_close_key(key) {
+                // Character keys may also be popup action shortcuts, so let the
+                // handler try the shortcut first and fall back to close there.
+                return match key.code {
+                    KeyCode::Char(_) => Some(PopupListAction::ActivateShortcut(
+                        self.keymap_chord_for_event(key),
+                    )),
+                    _ => Some(PopupListAction::Close),
+                };
+            }
             return Some(PopupListAction::Select(action));
         }
 
@@ -631,6 +641,10 @@ impl KeyBindings {
     }
 
     pub(in crate::tui) fn is_popup_close_key(&self, key: KeyEvent) -> bool {
+        if key.code == KeyCode::Esc && key.modifiers.is_empty() {
+            return true;
+        }
+
         self.keymap_single_key_shortcuts(UiAction::ClosePopup)
             .iter()
             .any(|shortcut| shortcut.matches(key))
