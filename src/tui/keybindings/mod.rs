@@ -35,11 +35,12 @@ use chord::{
 };
 use composer::ComposerKeyBindings;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyBindings {
     keymap: KeyMap,
     action_shortcuts: ActionShortcutBindings,
     composer: ComposerKeyBindings,
+    popup_close: Vec<KeyChord>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -112,25 +113,41 @@ pub(in crate::tui) enum KeyMapLookup {
     Action(UiAction),
 }
 
+impl Default for KeyBindings {
+    fn default() -> Self {
+        Self {
+            keymap: KeyMap::default(),
+            action_shortcuts: ActionShortcutBindings::default(),
+            composer: ComposerKeyBindings::default(),
+            popup_close: default_popup_close_keys(),
+        }
+    }
+}
+
 impl KeyBindings {
     pub fn from_options(keymap_options: &KeymapOptions) -> Self {
+        let leader = keymap_leader(keymap_options).unwrap_or_else(|_| char_chord(' '));
         Self {
             keymap: KeyMap::from_options_lossy(keymap_options),
             action_shortcuts: ActionShortcutBindings::from_options_lossy(keymap_options),
             composer: ComposerKeyBindings::from_options_lossy(keymap_options),
+            popup_close: popup_close_keys_from_options_lossy(keymap_options, leader),
         }
     }
 
     pub(in crate::tui) fn try_from_options(
         keymap_options: &KeymapOptions,
     ) -> std::result::Result<Self, String> {
+        let leader = keymap_leader(keymap_options)?;
         let keymap = KeyMap::try_from_options(keymap_options)?;
         let action_shortcuts = ActionShortcutBindings::try_from_options(keymap_options)?;
         let composer = ComposerKeyBindings::try_from_options(keymap_options)?;
+        let popup_close = popup_close_keys_from_options(keymap_options, leader)?;
         Ok(Self {
             keymap,
             action_shortcuts,
             composer,
+            popup_close,
         })
     }
 }
@@ -232,6 +249,9 @@ impl KeyMap {
             let Some(action) = UiAction::from_keymap_name(action_name) else {
                 continue;
             };
+            if action == UiAction::ClosePopup {
+                continue;
+            }
             let Some(spec) = parse_keymap_binding_lossy(action_name, action, binding, leader)
             else {
                 continue;
@@ -267,6 +287,9 @@ impl KeyMap {
         for (action_name, binding) in &options.mappings {
             let action = UiAction::from_keymap_name(action_name)
                 .ok_or_else(|| format!("unknown keymap action `{action_name}`"))?;
+            if action == UiAction::ClosePopup {
+                continue;
+            }
             let spec = parse_keymap_binding(action_name, action, binding, leader)?;
             configured_specs.insert(action, spec);
         }
@@ -495,6 +518,55 @@ fn parse_keymap_binding(
     })
 }
 
+fn default_popup_close_keys() -> Vec<KeyChord> {
+    vec![key_chord(KeyCode::Esc), char_chord('q')]
+}
+
+fn popup_close_keys_from_options_lossy(options: &KeymapOptions, leader: KeyChord) -> Vec<KeyChord> {
+    options
+        .mappings
+        .get("ClosePopup")
+        .and_then(|binding| parse_popup_close_binding_lossy(binding, leader))
+        .unwrap_or_else(default_popup_close_keys)
+}
+
+fn parse_popup_close_binding_lossy(
+    binding: &KeymapBinding,
+    leader: KeyChord,
+) -> Option<Vec<KeyChord>> {
+    let keys = binding
+        .keys
+        .iter()
+        .filter_map(|sequence| parse_popup_close_key(sequence, leader).ok())
+        .collect::<Vec<_>>();
+    (!keys.is_empty()).then_some(keys)
+}
+
+fn popup_close_keys_from_options(
+    options: &KeymapOptions,
+    leader: KeyChord,
+) -> std::result::Result<Vec<KeyChord>, String> {
+    let Some(binding) = options.mappings.get("ClosePopup") else {
+        return Ok(default_popup_close_keys());
+    };
+    let mut keys = Vec::new();
+    for key in &binding.keys {
+        keys.push(parse_popup_close_key(key, leader)?);
+    }
+    if keys.is_empty() {
+        return Err("ClosePopup: keymap entry must include at least one key".to_owned());
+    }
+    Ok(keys)
+}
+
+fn parse_popup_close_key(value: &str, leader: KeyChord) -> std::result::Result<KeyChord, String> {
+    let sequence = parse_keymap_sequence("ClosePopup", value, leader)?;
+    let [key] = sequence.0.as_slice() else {
+        return Err("ClosePopup: popup close key must be a single key".to_owned());
+    };
+    Ok(key.canonical())
+}
+
 fn parse_keymap_groups_lossy(
     groups: &BTreeMap<String, String>,
     leader: KeyChord,
@@ -663,6 +735,7 @@ impl UiAction {
         match self {
             UiAction::StartComposer => "StartComposer",
             UiAction::OpenPaneFilter => "OpenPaneFilter",
+            UiAction::ClosePopup => "ClosePopup",
             UiAction::FocusGuildPane => "FocusGuildPane",
             UiAction::FocusChannelPane => "FocusChannelPane",
             UiAction::FocusMessagePane => "FocusMessagePane",
@@ -716,6 +789,7 @@ impl UiAction {
         match self {
             UiAction::StartComposer => "start composer",
             UiAction::OpenPaneFilter => "filter/search pane",
+            UiAction::ClosePopup => "close popup",
             UiAction::FocusGuildPane => "focus Servers",
             UiAction::FocusChannelPane => "focus Channels",
             UiAction::FocusMessagePane => "focus Messages",
@@ -869,6 +943,7 @@ fn all_ui_actions() -> &'static [UiAction] {
     &[
         UiAction::StartComposer,
         UiAction::OpenPaneFilter,
+        UiAction::ClosePopup,
         UiAction::FocusGuildPane,
         UiAction::FocusChannelPane,
         UiAction::FocusMessagePane,
@@ -934,6 +1009,7 @@ fn default_keymap_specs(leader: KeyChord) -> BTreeMap<UiAction, KeyMapActionSpec
         let action_sequences = match *action {
             UiAction::StartComposer => vec![vec![char_chord('i')]],
             UiAction::OpenPaneFilter => vec![vec![char_chord('/')]],
+            UiAction::ClosePopup => Vec::new(),
             UiAction::FocusGuildPane => vec![vec![char_chord('1')]],
             UiAction::FocusChannelPane => vec![vec![char_chord('2')]],
             UiAction::FocusMessagePane => vec![vec![char_chord('3')]],
@@ -1190,6 +1266,10 @@ mod tests {
             Some(UiAction::SelectPrevious)
         );
         assert_eq!(
+            UiAction::from_name("ClosePopup"),
+            Some(UiAction::ClosePopup)
+        );
+        assert_eq!(
             UiAction::from_name("ScrollViewportDown"),
             Some(UiAction::ScrollViewportDown)
         );
@@ -1250,6 +1330,43 @@ mod tests {
                 .leader_keymap_children(&key_bindings.leader_keymap_prefix())
                 .iter()
                 .any(|item| item.key == "v" && item.label == "Voice" && item.has_children)
+        );
+    }
+
+    #[test]
+    fn close_popup_defaults_to_esc_and_q_and_can_be_remapped() {
+        let key_bindings = KeyBindings::default();
+
+        assert!(key_bindings.is_popup_close_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        assert!(
+            key_bindings.is_popup_close_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
+        );
+
+        let keymap = KeymapOptions {
+            mappings: [(
+                "ClosePopup".to_owned(),
+                KeymapBinding {
+                    keys: vec!["x".to_owned(), "<C-g>".to_owned()],
+                    description: None,
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let key_bindings =
+            KeyBindings::try_from_options(&keymap).expect("close popup keymap parses");
+
+        assert!(!key_bindings.is_popup_close_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        assert!(
+            !key_bindings.is_popup_close_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
+        );
+        assert!(
+            key_bindings.is_popup_close_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))
+        );
+        assert!(
+            key_bindings
+                .is_popup_close_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL))
         );
     }
 
@@ -2225,6 +2342,18 @@ mod tests {
                 None
             );
         }
+    }
+
+    #[test]
+    fn close_popup_rejects_multi_key_sequences() {
+        let keymap = KeymapOptions {
+            mappings: [("ClosePopup".to_owned(), KeymapBinding::one("zz"))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+
+        assert!(KeyBindings::try_from_options(&keymap).is_err());
     }
 
     #[test]

@@ -17,6 +17,11 @@ impl KeyBindings {
             })
             .collect::<Vec<_>>();
 
+        summaries.push(KeymapBindingSummary {
+            scope: "keymap",
+            action: UiAction::ClosePopup.name().to_owned(),
+            keys: key_labels(&self.popup_close),
+        });
         summaries.extend(self.action_shortcuts.binding_summaries());
         summaries.extend(self.composer.binding_summaries());
         summaries
@@ -187,12 +192,14 @@ impl KeyBindings {
         &self,
         key: KeyEvent,
     ) -> Option<ChannelSwitcherAction> {
+        if self.is_text_entry_popup_close_key(key) {
+            return Some(ChannelSwitcherAction::Close);
+        }
         if let Some(action) = self.selection_action(key, SelectionKeySet::TextSafe) {
             return Some(ChannelSwitcherAction::Select(action));
         }
 
         match key.code {
-            KeyCode::Esc => Some(ChannelSwitcherAction::Close),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(ChannelSwitcherAction::Close)
             }
@@ -208,6 +215,9 @@ impl KeyBindings {
     }
 
     pub(in crate::tui) fn search_popup_action(&self, key: KeyEvent) -> Option<SearchPopupAction> {
+        if self.is_text_entry_popup_close_key(key) {
+            return Some(SearchPopupAction::Close);
+        }
         if let Some(action) = self.selection_action(key, SelectionKeySet::TextSafe) {
             return Some(SearchPopupAction::Select(action));
         }
@@ -216,7 +226,6 @@ impl KeyBindings {
         }
 
         match key.code {
-            KeyCode::Esc => Some(SearchPopupAction::Close),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(SearchPopupAction::Close)
             }
@@ -251,9 +260,6 @@ impl KeyBindings {
     }
 
     pub(in crate::tui) fn popup_list_action(&self, key: KeyEvent) -> Option<PopupListAction> {
-        if key.code == KeyCode::Esc {
-            return Some(PopupListAction::Close);
-        }
         if let Some(action) = self.selection_action(key, SelectionKeySet::Navigation) {
             return Some(PopupListAction::Select(action));
         }
@@ -263,6 +269,7 @@ impl KeyBindings {
             KeyCode::Char(_) => Some(PopupListAction::ActivateShortcut(
                 self.keymap_chord_for_event(key),
             )),
+            _ if self.is_popup_close_key(key) => Some(PopupListAction::Close),
             _ => None,
         }
     }
@@ -271,13 +278,14 @@ impl KeyBindings {
         &self,
         key: KeyEvent,
     ) -> Option<MessageConfirmationAction> {
+        if self.is_popup_close_key(key) {
+            return Some(MessageConfirmationAction::Cancel);
+        }
         match key.code {
             KeyCode::Enter | KeyCode::Char('y') if is_shortcut_key(key) => {
                 Some(MessageConfirmationAction::Confirm)
             }
-            KeyCode::Esc | KeyCode::Char('n') if is_shortcut_key(key) => {
-                Some(MessageConfirmationAction::Cancel)
-            }
+            KeyCode::Char('n') if is_shortcut_key(key) => Some(MessageConfirmationAction::Cancel),
             _ => None,
         }
     }
@@ -286,8 +294,10 @@ impl KeyBindings {
         &self,
         key: KeyEvent,
     ) -> Option<AttachmentViewerAction> {
+        if self.is_popup_close_key(key) {
+            return Some(AttachmentViewerAction::Close);
+        }
         match key.code {
-            KeyCode::Esc => Some(AttachmentViewerAction::Close),
             code if is_left_key(code) => Some(AttachmentViewerAction::Previous),
             code if is_right_key(code) => Some(AttachmentViewerAction::Next),
             KeyCode::Char('d') if is_shortcut_key(key) => {
@@ -313,8 +323,10 @@ impl KeyBindings {
             return Self::profile_edit_action_from_composer_action(self.composer_action(key));
         }
 
+        if self.is_popup_close_key(key) {
+            return Some(ProfilePopupAction::Close);
+        }
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => Some(ProfilePopupAction::Close),
             KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(ProfilePopupAction::PasteClipboard)
             }
@@ -397,8 +409,16 @@ impl KeyBindings {
             return Some(EmojiReactionPickerAction::Select(action));
         }
 
+        let close_key = if filter_editing {
+            self.is_text_entry_popup_close_key(key)
+        } else {
+            self.is_popup_close_key(key)
+        };
+        if close_key {
+            return Some(EmojiReactionPickerAction::Close);
+        }
+
         match key.code {
-            KeyCode::Esc => Some(EmojiReactionPickerAction::Close),
             KeyCode::Enter if filter_editing => Some(EmojiReactionPickerAction::CommitFilter),
             KeyCode::Backspace if filter_editing => {
                 Some(EmojiReactionPickerAction::DeleteFilterChar)
@@ -421,7 +441,7 @@ impl KeyBindings {
         &self,
         key: KeyEvent,
     ) -> Option<PollVotePickerAction> {
-        if key.code == KeyCode::Esc {
+        if self.is_popup_close_key(key) {
             return Some(PollVotePickerAction::Close);
         }
         if let Some(action) = self.selection_action(key, SelectionKeySet::Navigation) {
@@ -442,7 +462,7 @@ impl KeyBindings {
         &self,
         key: KeyEvent,
     ) -> Option<ReactionUsersPopupAction> {
-        if key.code == KeyCode::Esc {
+        if self.is_popup_close_key(key) {
             return Some(ReactionUsersPopupAction::Close);
         }
         if let Some(action) = self.scroll_action(key) {
@@ -456,9 +476,10 @@ impl KeyBindings {
         &self,
         key: KeyEvent,
     ) -> Option<DebugLogPopupAction> {
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('`') => Some(DebugLogPopupAction::Close),
-            _ => None,
+        if self.is_popup_close_key(key) || key.code == KeyCode::Char('`') {
+            Some(DebugLogPopupAction::Close)
+        } else {
+            None
         }
     }
 
@@ -467,10 +488,7 @@ impl KeyBindings {
         key: KeyEvent,
         category_picker_open: bool,
     ) -> Option<OptionsPopupAction> {
-        if matches!(
-            key.code,
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('o')
-        ) {
+        if self.is_popup_close_key(key) || key.code == KeyCode::Char('o') {
             return Some(OptionsPopupAction::Close);
         }
         if let Some(action) = self.selection_action(key, SelectionKeySet::Navigation) {
@@ -615,6 +633,17 @@ impl KeyBindings {
             _ if key_set == SelectionKeySet::Navigation => self.keymap_selection_action(key),
             _ => None,
         }
+    }
+
+    pub(in crate::tui) fn is_popup_close_key(&self, key: KeyEvent) -> bool {
+        self.popup_close
+            .iter()
+            .any(|shortcut| shortcut.matches(key))
+    }
+
+    fn is_text_entry_popup_close_key(&self, key: KeyEvent) -> bool {
+        self.is_popup_close_key(key)
+            && !matches!(key.code, KeyCode::Char(_) if is_shortcut_key(key))
     }
 
     pub(in crate::tui) fn popup_page_action(&self, key: KeyEvent) -> Option<SelectionAction> {

@@ -280,7 +280,7 @@ With default vim-style navigation:
 | `/`                                       | Filter Guilds/Channels, search Messages/Members |
 | `Space`                                   | Open leader shortcut window                     |
 | `i`                                       | Text insert mode                                |
-| `Esc`                                     | Close popup, cancel mode, or go back            |
+| `Esc` / `q`                               | Close popup, cancel mode, or go back            |
 | `q`                                       | Quit Concord                                    |
 
 `Ctrl+n` and `Ctrl+p` are fixed row movement keys. The default `j` and `k`
@@ -497,6 +497,7 @@ Avatars and custom emoji keep their separate small-image behavior.
 leader = "space"
 StartComposer = "i"
 OpenPaneFilter = "/"
+ClosePopup = { keys = ["esc", "q"] }
 FocusGuildPane = "1"
 FocusChannelPane = "2"
 FocusMessagePane = "3"

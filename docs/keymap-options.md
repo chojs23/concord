@@ -9,6 +9,7 @@ Example `keymap.toml`:
 ```toml
 [keymap]
 StartComposer = { keys = ["c"] }
+ClosePopup = { keys = ["esc", "q"] }
 ReplyMessage = "<leader>mr"
 VoiceDeafen = "<leader>vd"
 VoiceMute = "<leader>vm"
@@ -34,13 +35,13 @@ DeletePreviousWord = "<A-backspace>"
 
 There are several kinds of keymap settings:
 
-| Config path                                                                                                 | What it controls                                                                          |
-| ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `[keymap] leader`                                                                                           | The key that opens the leader popup. Defaults to `Space`.                                 |
-| `[keymap] <ActionName>`                                                                                     | Directly assignable UI actions such as `StartComposer`, `ReplyMessage`, and `OpenThread`. |
-| `[keymap.groups]`                                                                                           | Optional titles for prefix popups, such as naming `<leader>v` as `Voice`.                 |
-| `[keymap.guild_actions]`, `[keymap.channel_actions]`, `[keymap.message_actions]`, `[keymap.member_actions]` | Shortcuts shown inside focused-pane action menus opened by `OpenFocusedPaneAction`.       |
-| `[keymap.composer]`                                                                                         | Shortcuts used while the message composer is open, such as editor and cursor commands.    |
+| Config path                                                                                                 | What it controls                                                                                        |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `[keymap] leader`                                                                                           | The key that opens the leader popup. Defaults to `Space`.                                               |
+| `[keymap] <ActionName>`                                                                                     | Directly assignable UI actions such as `StartComposer`, `ClosePopup`, `ReplyMessage`, and `OpenThread`. |
+| `[keymap.groups]`                                                                                           | Optional titles for prefix popups, such as naming `<leader>v` as `Voice`.                               |
+| `[keymap.guild_actions]`, `[keymap.channel_actions]`, `[keymap.message_actions]`, `[keymap.member_actions]` | Shortcuts shown inside focused-pane action menus opened by `OpenFocusedPaneAction`.                     |
+| `[keymap.composer]`                                                                                         | Shortcuts used while the message composer is open, such as editor and cursor commands.                  |
 
 `[keymap]` action values can be either a string or an object with `keys` and an
 optional `description`:
@@ -102,6 +103,7 @@ Navigation and app actions:
 | ----------------------- | -------------------------- | ---------------------------------------- |
 | `StartComposer`         | `"i"`                      | Start the message composer.              |
 | `OpenPaneFilter`        | `"/"`                      | Open the focused pane filter or search.  |
+| `ClosePopup`            | `["esc", "q"]`             | Close the active popup.                  |
 | `FocusGuildPane`        | `"1"`                      | Show and focus the Servers pane.         |
 | `FocusChannelPane`      | `"2"`                      | Show and focus the Channels pane.        |
 | `FocusMessagePane`      | `"3"`                      | Focus the Messages pane.                 |

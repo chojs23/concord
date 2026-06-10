@@ -378,6 +378,31 @@ fn message_pane_copy_shortcut_requests_selected_message_content() {
 }
 
 #[test]
+fn message_action_popup_q_runs_configured_action_before_close_popup() {
+    let mut state = state_with_keymap(KeymapOptions {
+        leader: None,
+        groups: std::collections::BTreeMap::new(),
+        message_actions: [("CopyMessage".to_owned(), KeymapBinding::one("q"))]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    });
+    state = state_with_messages_from_state(state, 1);
+    state.focus_pane(FocusPane::Messages);
+
+    handle_key(&mut state, key(KeyCode::Enter));
+    assert!(state.is_message_action_context_active());
+
+    handle_key(&mut state, char_key('q'));
+
+    assert_eq!(
+        state.take_copy_message_content_request(),
+        Some("msg 1".to_owned())
+    );
+    assert!(!state.is_message_action_context_active());
+}
+
+#[test]
 fn message_pane_delete_shortcut_requires_confirmation() {
     let mut state = state_with_own_message();
     state.focus_pane(FocusPane::Messages);

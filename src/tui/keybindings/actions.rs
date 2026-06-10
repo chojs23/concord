@@ -7,6 +7,7 @@ use super::KeyChord;
 pub(in crate::tui) enum UiAction {
     StartComposer,
     OpenPaneFilter,
+    ClosePopup,
     FocusGuildPane,
     FocusChannelPane,
     FocusMessagePane,

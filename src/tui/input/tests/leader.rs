@@ -1004,6 +1004,31 @@ fn leader_a_opens_message_actions_from_message_pane() {
 }
 
 #[test]
+fn leader_action_popup_q_runs_configured_action_before_close_popup() {
+    let mut state = state_with_keymap(KeymapOptions {
+        leader: None,
+        groups: BTreeMap::new(),
+        message_actions: [("CopyMessage".to_owned(), KeymapBinding::one("q"))]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    });
+    state = state_with_messages_from_state(state, 1);
+    state.focus_pane(FocusPane::Messages);
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+    handle_key(&mut state, char_key('q'));
+
+    assert_eq!(
+        state.take_copy_message_content_request(),
+        Some("msg 1".to_owned())
+    );
+    assert!(!state.is_leader_active());
+    assert!(!state.is_message_action_context_active());
+}
+
+#[test]
 fn leader_a_opens_server_actions_from_guild_pane() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Guilds);

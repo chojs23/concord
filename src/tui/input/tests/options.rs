@@ -108,13 +108,49 @@ fn options_popup_h_l_adjust_microphone_sensitivity_by_one_or_ten_db() {
 }
 
 #[test]
-fn options_popup_esc_closes_popup() {
-    let mut state = state_with_messages(1);
+fn options_popup_default_close_keys_close_popup() {
+    for close_key in [key(KeyCode::Esc), char_key('q')] {
+        let mut state = state_with_messages(1);
+
+        state.open_options_popup();
+        handle_key(&mut state, close_key);
+
+        assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::Options));
+    }
+}
+
+#[test]
+fn options_popup_uses_configured_close_popup_key() {
+    let mut state = state_with_keymap(KeymapOptions {
+        leader: None,
+        groups: std::collections::BTreeMap::new(),
+        mappings: [("ClosePopup".to_owned(), KeymapBinding::one("x"))]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    });
 
     state.open_options_popup();
-    handle_key(&mut state, key(KeyCode::Esc));
+    handle_key(&mut state, char_key('q'));
+    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::Options));
 
+    handle_key(&mut state, char_key('x'));
     assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::Options));
+}
+
+#[test]
+fn search_popup_still_accepts_printable_default_close_key_as_text() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+
+    handle_key(&mut state, char_key('/'));
+    handle_key(&mut state, char_key('q'));
+
+    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::Search));
+    let view = state
+        .search_popup_view()
+        .expect("search popup remains open");
+    assert_eq!(view.fields[0].value, "q");
 }
 
 #[test]
