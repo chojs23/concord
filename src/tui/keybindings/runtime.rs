@@ -17,11 +17,6 @@ impl KeyBindings {
             })
             .collect::<Vec<_>>();
 
-        summaries.push(KeymapBindingSummary {
-            scope: "keymap",
-            action: UiAction::ClosePopup.name().to_owned(),
-            keys: key_labels(&self.popup_close),
-        });
         summaries.extend(self.action_shortcuts.binding_summaries());
         summaries.extend(self.composer.binding_summaries());
         summaries
@@ -636,7 +631,7 @@ impl KeyBindings {
     }
 
     pub(in crate::tui) fn is_popup_close_key(&self, key: KeyEvent) -> bool {
-        self.popup_close
+        self.keymap_single_key_shortcuts(UiAction::ClosePopup)
             .iter()
             .any(|shortcut| shortcut.matches(key))
     }
