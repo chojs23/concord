@@ -214,6 +214,13 @@ struct SourceSegment {
     output_start: usize,
 }
 
+struct WrapBoundary {
+    source_start: usize,
+    byte_start: usize,
+    width: usize,
+    slot_count: usize,
+}
+
 struct InlineMarkdownText {
     rendered: RenderedText,
     styled_ranges: Vec<StyledPrefix>,
@@ -1834,6 +1841,8 @@ fn wrap_text_with_metadata(
         let mut current_start = line_start;
         let mut current_end = line_start;
         let mut current_slots: Vec<MessageContentImageSlot> = Vec::new();
+        let mut word_boundary: Option<WrapBoundary> = None;
+        let mut previous_was_whitespace = false;
         for (relative_start, grapheme) in line.grapheme_indices(true) {
             let grapheme_start = line_start.saturating_add(relative_start);
             let grapheme_end = grapheme_start.saturating_add(grapheme.len());
@@ -1841,6 +1850,19 @@ fn wrap_text_with_metadata(
             let slot_at_grapheme = emoji_slots
                 .iter()
                 .find(|slot| slot.byte_start == grapheme_start);
+            let grapheme_is_separator =
+                slot_at_grapheme.is_none() && grapheme.chars().all(char::is_whitespace);
+            if !grapheme_is_separator
+                && previous_was_whitespace
+                && current.chars().any(|ch| !ch.is_whitespace())
+            {
+                word_boundary = Some(WrapBoundary {
+                    source_start: grapheme_start,
+                    byte_start: current.len(),
+                    width: current_width,
+                    slot_count: current_slots.len(),
+                });
+            }
             // First grapheme of a slot reserves the full `:name:` width.
             let effective_width = match slot_at_grapheme {
                 Some(slot) => slot.display_width as usize,
@@ -1850,21 +1872,72 @@ fn wrap_text_with_metadata(
                 && effective_width > 0
                 && current_width.saturating_add(effective_width) > width
             {
-                let text = std::mem::take(&mut current);
-                let line_slots = std::mem::take(&mut current_slots);
-                lines.push(WrappedTextLine {
-                    text,
-                    source_start: current_start,
-                    source_end: current_end,
-                    mention_highlights: highlights_for_range(
-                        highlights,
-                        current_start,
-                        current_end,
-                    ),
-                    image_slots: line_slots,
-                });
-                current_width = 0;
-                current_start = grapheme_start;
+                if grapheme_is_separator {
+                    let text = std::mem::take(&mut current);
+                    let line_slots = std::mem::take(&mut current_slots);
+                    lines.push(WrappedTextLine {
+                        text,
+                        source_start: current_start,
+                        source_end: current_end,
+                        mention_highlights: highlights_for_range(
+                            highlights,
+                            current_start,
+                            current_end,
+                        ),
+                        image_slots: line_slots,
+                    });
+                    current_width = 0;
+                    current_start = grapheme_end;
+                    current_end = grapheme_end;
+                    word_boundary = None;
+                    previous_was_whitespace = true;
+                    continue;
+                } else if let Some(boundary) = word_boundary
+                    .take()
+                    .filter(|boundary| boundary.byte_start < current.len())
+                {
+                    let text = current[..boundary.byte_start].to_owned();
+                    let mut next = current[boundary.byte_start..].to_owned();
+                    let mut next_slots = current_slots.split_off(boundary.slot_count);
+                    for slot in &mut next_slots {
+                        slot.byte_start = slot.byte_start.saturating_sub(boundary.byte_start);
+                        slot.col = slot
+                            .col
+                            .saturating_sub(u16::try_from(boundary.width).unwrap_or(u16::MAX));
+                    }
+                    lines.push(WrappedTextLine {
+                        text,
+                        source_start: current_start,
+                        source_end: boundary.source_start,
+                        mention_highlights: highlights_for_range(
+                            highlights,
+                            current_start,
+                            boundary.source_start,
+                        ),
+                        image_slots: current_slots,
+                    });
+                    std::mem::swap(&mut current, &mut next);
+                    current_slots = next_slots;
+                    current_width = current_width.saturating_sub(boundary.width);
+                    current_start = boundary.source_start;
+                } else {
+                    let text = std::mem::take(&mut current);
+                    let line_slots = std::mem::take(&mut current_slots);
+                    lines.push(WrappedTextLine {
+                        text,
+                        source_start: current_start,
+                        source_end: current_end,
+                        mention_highlights: highlights_for_range(
+                            highlights,
+                            current_start,
+                            current_end,
+                        ),
+                        image_slots: line_slots,
+                    });
+                    current_width = 0;
+                    current_start = grapheme_start;
+                    word_boundary = None;
+                }
             }
 
             if let Some(slot) = slot_at_grapheme {
@@ -1881,6 +1954,7 @@ fn wrap_text_with_metadata(
             current.push_str(grapheme);
             current_width = current_width.saturating_add(grapheme_width);
             current_end = grapheme_end;
+            previous_was_whitespace = grapheme_is_separator;
         }
         lines.push(WrappedTextLine {
             text: current,
@@ -2691,6 +2765,32 @@ mod tests {
         assert_eq!(lines[1].2.len(), 1);
         assert_eq!(lines[1].2[0].col, 0);
         assert_eq!(lines[1].2[0].byte_start, 0);
+    }
+
+    #[test]
+    fn wrap_prefers_word_boundaries_when_possible() {
+        let cases = [
+            (
+                "this is a line where the last word spills",
+                37,
+                vec!["this is a line where the last word ", "spills"],
+            ),
+            ("hello world again", 11, vec!["hello world", "again"]),
+            (
+                "supercalifragilistic",
+                6,
+                vec!["superc", "alifra", "gilist", "ic"],
+            ),
+        ];
+
+        for (text, width, expected) in cases {
+            let lines = wrap_text_with_extras(text, &[], &[], width)
+                .into_iter()
+                .map(|line| line.0)
+                .collect::<Vec<_>>();
+
+            assert_eq!(lines, expected);
+        }
     }
 
     #[test]
