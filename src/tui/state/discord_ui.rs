@@ -201,7 +201,7 @@ impl DashboardState {
             return None;
         };
         if !self.desktop_notifications_enabled()
-            || self.navigation.active_channel_id == Some(*channel_id)
+            || (self.terminal_focused() && self.navigation.active_channel_id == Some(*channel_id))
         {
             return None;
         }
