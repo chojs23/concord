@@ -2,8 +2,9 @@ use std::io::stdout;
 
 use crossterm::{
     event::{
-        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
 };
@@ -14,6 +15,7 @@ pub(in crate::tui) struct TerminalRestoreGuard {
     keyboard_enhancement_enabled: bool,
     mouse_capture_enabled: bool,
     bracketed_paste_enabled: bool,
+    focus_change_enabled: bool,
 }
 
 impl TerminalRestoreGuard {
@@ -28,10 +30,12 @@ impl TerminalRestoreGuard {
         .is_ok();
         let mouse_capture_enabled = execute!(stdout(), EnableMouseCapture).is_ok();
         let bracketed_paste_enabled = execute!(stdout(), EnableBracketedPaste).is_ok();
+        let focus_change_enabled = execute!(stdout(), EnableFocusChange).is_ok();
         Ok(Self {
             keyboard_enhancement_enabled,
             mouse_capture_enabled,
             bracketed_paste_enabled,
+            focus_change_enabled,
         })
     }
 }
@@ -51,6 +55,9 @@ impl Drop for TerminalRestoreGuard {
         }
         if self.bracketed_paste_enabled {
             let _ = execute!(stdout(), DisableBracketedPaste);
+        }
+        if self.focus_change_enabled {
+            let _ = execute!(stdout(), DisableFocusChange);
         }
         ratatui::restore();
     }
