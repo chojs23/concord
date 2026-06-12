@@ -7,9 +7,11 @@ use crate::discord::ids::{
 use crate::discord::{
     APPLICATION_COMMAND_CHANNEL_KIND, APPLICATION_COMMAND_MENTIONABLE_KIND,
     APPLICATION_COMMAND_ROLE_KIND, APPLICATION_COMMAND_USER_KIND, ApplicationCommandIdentity,
-    ApplicationCommandInfo, ApplicationCommandInvocation, MAX_UPLOAD_ATTACHMENT_COUNT,
-    MessageAttachmentUpload, application_command_content_is_complete,
-    application_command_option_scope, parsed_application_command_option_names,
+    ApplicationCommandInfo, ApplicationCommandInvocation, BuiltinSlashCommandParse,
+    BuiltinSlashCommandSubmit, GlobalUserProfileUpdate, GuildUserProfileUpdate,
+    MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload, UserProfileUpdate,
+    application_command_content_is_complete, application_command_option_scope,
+    parse_builtin_slash_command, parsed_application_command_option_names,
 };
 
 use super::super::{
@@ -18,10 +20,10 @@ use super::super::{
 };
 use super::completions::{
     ComposerEmojiImageCompletion, EmojiCompletion, MentionCompletion,
-    build_channel_mention_candidates, build_command_candidates, build_command_choice_candidates,
-    build_command_option_candidates, build_emoji_candidates, build_mention_candidates,
-    expand_composer_completions, expand_emoji_shortcodes, is_command_query_char,
-    is_emoji_query_char, is_mention_query_char, move_picker_selection,
+    build_builtin_command_candidates, build_channel_mention_candidates, build_command_candidates,
+    build_command_choice_candidates, build_command_option_candidates, build_emoji_candidates,
+    build_mention_candidates, expand_composer_completions, expand_emoji_shortcodes,
+    is_command_query_char, is_emoji_query_char, is_mention_query_char, move_picker_selection,
     should_start_completion_query,
 };
 use crate::discord::AppCommand;
@@ -180,6 +182,14 @@ impl DashboardState {
         match self.selected_channel_state() {
             Some(channel) if channel.is_forum() => false,
             Some(channel) => self.discord.cache.can_send_in_channel(channel),
+            None => true,
+        }
+    }
+
+    fn can_send_tts_in_selected_channel(&self) -> bool {
+        match self.selected_channel_state() {
+            Some(channel) if channel.is_forum() => false,
+            Some(channel) => self.discord.cache.can_send_tts_in_channel(channel),
             None => true,
         }
     }
@@ -392,6 +402,20 @@ impl DashboardState {
         }
 
         if !has_attachments && self.composer.reply_target_message_id.is_none() {
+            match self.builtin_slash_command_submit_for_content(&content, channel_id) {
+                BuiltinCommandSubmit::Ready(command) => {
+                    self.clear_submitted_composer_text();
+                    self.composer.reply_target_message_id = None;
+                    self.composer.pending_composer_attachments.clear();
+                    return Some(command);
+                }
+                BuiltinCommandSubmit::Incomplete => return None,
+                BuiltinCommandSubmit::Error(message) => {
+                    self.show_error_toast(message, std::time::Instant::now());
+                    return None;
+                }
+                BuiltinCommandSubmit::NotCommand => {}
+            }
             match self.application_command_submit_for_content(&content) {
                 ApplicationCommandSubmit::Ready(interaction) => {
                     self.clear_submitted_composer_text();
@@ -518,8 +542,7 @@ impl DashboardState {
         self.composer
             .composer_command_candidates
             .get(self.composer.composer_command_selected)
-            .and_then(|entry| entry.command_identity)
-            .is_some()
+            .is_some_and(|entry| entry.top_level)
     }
 
     pub(in crate::tui) fn composer_command_can_submit(&self) -> bool {
@@ -658,8 +681,8 @@ impl DashboardState {
         }
 
         self.replace_composer_range(command_start..cursor, &entry.replacement);
-        if let Some(identity) = entry.command_identity {
-            self.composer.composer_selected_command_identity = Some(identity);
+        if entry.top_level {
+            self.composer.composer_selected_command_identity = entry.command_identity;
         }
         self.close_composer_command_query();
         self.refresh_active_mention_query();
@@ -928,7 +951,9 @@ impl DashboardState {
         if token_start == 0 {
             let query = token.strip_prefix('/')?;
             if query.chars().all(is_command_query_char) {
-                return Some((0, build_command_candidates(query, commands)));
+                let mut candidates = build_builtin_command_candidates(query);
+                candidates.extend(build_command_candidates(query, commands));
+                return Some((0, candidates));
             }
             return None;
         }
@@ -1009,6 +1034,7 @@ impl DashboardState {
                     super::completions::MentionPickerTarget::Channel(_) => "channel".to_owned(),
                 },
                 replacement: format!("{} ", entry.target.wire_format()),
+                top_level: false,
                 command_identity: None,
             })
             .collect()
@@ -1043,6 +1069,71 @@ impl DashboardState {
         self.application_commands_for_selected_channel()
             .iter()
             .find(|command| command.name == name)
+    }
+
+    fn builtin_slash_command_submit_for_content(
+        &self,
+        content: &str,
+        channel_id: Id<ChannelMarker>,
+    ) -> BuiltinCommandSubmit {
+        match parse_builtin_slash_command(content) {
+            BuiltinSlashCommandParse::Ready(BuiltinSlashCommandSubmit::Message {
+                content,
+                tts,
+            }) => {
+                if tts {
+                    if !self.can_send_tts_in_selected_channel() {
+                        return BuiltinCommandSubmit::Error(
+                            "Cannot send text-to-speech messages in this channel".to_owned(),
+                        );
+                    }
+                    BuiltinCommandSubmit::Ready(AppCommand::SendTtsMessage {
+                        channel_id,
+                        content,
+                    })
+                } else {
+                    BuiltinCommandSubmit::Ready(AppCommand::SendMessage {
+                        channel_id,
+                        content,
+                        reply_to: None,
+                        attachments: Vec::new(),
+                    })
+                }
+            }
+            BuiltinSlashCommandParse::Ready(BuiltinSlashCommandSubmit::Nickname { nickname }) => {
+                let Some(user_id) = self.current_user_id() else {
+                    return BuiltinCommandSubmit::Error(
+                        "Cannot change nickname before the current user is loaded".to_owned(),
+                    );
+                };
+                let Some(guild_id) = self
+                    .selected_channel_state()
+                    .and_then(|channel| channel.guild_id)
+                else {
+                    return BuiltinCommandSubmit::Error(
+                        "/nick can only be used in a server channel".to_owned(),
+                    );
+                };
+
+                BuiltinCommandSubmit::Ready(AppCommand::UpdateUserProfile {
+                    update: UserProfileUpdate {
+                        user_id,
+                        guild_id: Some(guild_id),
+                        global: GlobalUserProfileUpdate::default(),
+                        guild: Some(GuildUserProfileUpdate {
+                            guild_id,
+                            nickname: Some(nickname),
+                            pronouns: None,
+                        }),
+                    },
+                })
+            }
+            BuiltinSlashCommandParse::Ready(BuiltinSlashCommandSubmit::Unsupported { message }) => {
+                BuiltinCommandSubmit::Error(message)
+            }
+            BuiltinSlashCommandParse::Incomplete => BuiltinCommandSubmit::Incomplete,
+            BuiltinSlashCommandParse::NotBuiltin => BuiltinCommandSubmit::NotCommand,
+        }
     }
 
     fn application_command_submit_for_content(&self, content: &str) -> ApplicationCommandSubmit {
@@ -1163,6 +1254,13 @@ impl DashboardState {
 enum ApplicationCommandSubmit {
     Ready(ApplicationCommandInvocation),
     Incomplete,
+    NotCommand,
+}
+
+enum BuiltinCommandSubmit {
+    Ready(AppCommand),
+    Incomplete,
+    Error(String),
     NotCommand,
 }
 

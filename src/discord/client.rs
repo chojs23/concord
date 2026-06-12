@@ -38,6 +38,8 @@ use super::{
 const MEMBER_SEARCH_MIN_QUERY_CHARS: usize = 2;
 const MEMBER_SEARCH_MAX_QUERY_CHARS: usize = 64;
 const MEMBER_SEARCH_MAX_LIMIT: u16 = 10;
+const OFFICIAL_WORDLE_APPLICATION_ID: u64 = 1_211_781_489_931_452_447;
+const DISCORD_LOCAL_APPLICATION_ID: &str = "-1";
 
 type ApplicationCommandCache = HashMap<Option<Id<GuildMarker>>, Vec<ApplicationCommandInfo>>;
 type MemberListRange = (u32, u32);
@@ -862,6 +864,15 @@ impl DiscordClient {
             .await
     }
 
+    pub async fn send_tts_message(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        content: &str,
+    ) -> Result<MessageInfo> {
+        self.ensure_can_send_tts_message(channel_id)?;
+        self.rest.send_tts_message(channel_id, content).await
+    }
+
     fn ensure_can_send_message(
         &self,
         channel_id: Id<ChannelMarker>,
@@ -882,6 +893,22 @@ impl DiscordClient {
         if !attachments.is_empty() && !state.can_attach_in_channel(channel) {
             return Err(AppError::DiscordRequest(
                 "cannot attach files in channel".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn ensure_can_send_tts_message(&self, channel_id: Id<ChannelMarker>) -> Result<()> {
+        let state = self
+            .state
+            .read()
+            .expect("discord state lock is not poisoned");
+        let Some(channel) = state.channel(channel_id) else {
+            return Ok(());
+        };
+        if !state.can_send_tts_in_channel(channel) {
+            return Err(AppError::DiscordRequest(
+                "cannot send text-to-speech messages in channel".to_owned(),
             ));
         }
         Ok(())
@@ -1313,6 +1340,10 @@ impl DiscordClient {
         guild_id: Option<Id<GuildMarker>>,
         commands: Vec<ApplicationCommandInfo>,
     ) -> Vec<ApplicationCommandInfo> {
+        let commands = commands
+            .into_iter()
+            .filter(|command| !is_hidden_default_application_command(command))
+            .collect::<Vec<_>>();
         self.record_application_commands(guild_id, commands.clone());
         commands
             .into_iter()
@@ -1326,6 +1357,26 @@ impl DiscordClient {
             .expect("application command request lock is not poisoned")
             .remove(&guild_id);
     }
+}
+
+fn is_hidden_default_application_command(command: &ApplicationCommandInfo) -> bool {
+    match command.name.as_str() {
+        "giphy" | "msg" | "play" => is_discord_default_application(command),
+        "wordle" => command.application_id.get() == OFFICIAL_WORDLE_APPLICATION_ID,
+        _ => false,
+    }
+}
+
+fn is_discord_default_application(command: &ApplicationCommandInfo) -> bool {
+    command
+        .raw
+        .get("application_id")
+        .and_then(|value| value.as_str())
+        .is_some_and(|id| id == DISCORD_LOCAL_APPLICATION_ID)
+        || command
+            .application_name
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case("Discord"))
 }
 
 #[cfg(test)]

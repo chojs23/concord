@@ -484,6 +484,10 @@ pub enum AppCommand {
         reply_to: Option<Id<MessageMarker>>,
         attachments: Vec<MessageAttachmentUpload>,
     },
+    SendTtsMessage {
+        channel_id: Id<ChannelMarker>,
+        content: String,
+    },
     LoadApplicationCommands {
         guild_id: Option<Id<GuildMarker>>,
     },

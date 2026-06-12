@@ -17,11 +17,12 @@ use crate::{
             ForumPostPage, ForumSearchSort, REACTION_USERS_MAX_PAGES,
             application_command_interaction_body, application_command_option_body,
             is_search_index_warming, merge_forum_pages, message_multipart_form,
-            message_request_body, message_search_date_snowflake_bounds,
-            message_search_query_params, mute_request_body, next_reaction_users_after,
-            parse_application_command_index, parse_forum_first_messages, parse_forum_threads,
-            parse_user_profile_response, poll_vote_request_body, reaction_route_component,
-            upload_content_type, validate_message_content, validate_message_payload,
+            message_request_body, message_request_body_with_tts,
+            message_search_date_snowflake_bounds, message_search_query_params, mute_request_body,
+            next_reaction_users_after, parse_application_command_index, parse_forum_first_messages,
+            parse_forum_threads, parse_user_profile_response, poll_vote_request_body,
+            reaction_route_component, upload_content_type, validate_message_content,
+            validate_message_payload,
         },
     },
 };
@@ -51,6 +52,12 @@ fn validates_attachment_only_message_payload() {
     assert_eq!(body["message_reference"]["message_id"], "44");
     assert_eq!(body["attachments"][0]["id"], 0);
     assert_eq!(body["attachments"][0]["filename"], "cat.png");
+}
+
+#[test]
+fn message_request_body_sets_tts_only_when_requested() {
+    let tts = message_request_body_with_tts("hello", None, &[], true);
+    assert_eq!(tts["tts"], true);
 }
 
 #[test]

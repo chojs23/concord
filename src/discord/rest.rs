@@ -97,6 +97,26 @@ impl DiscordRest {
         validate_message_payload(content, attachments)?;
         let body = message_request_body(content, reply_to, attachments);
 
+        self.send_message_body(channel_id, body, attachments).await
+    }
+
+    pub async fn send_tts_message(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        content: &str,
+    ) -> Result<MessageInfo> {
+        validate_message_content(content)?;
+        let body = message_request_body_with_tts(content, None, &[], true);
+
+        self.send_message_body(channel_id, body, &[]).await
+    }
+
+    async fn send_message_body(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        body: Value,
+        attachments: &[MessageAttachmentUpload],
+    ) -> Result<MessageInfo> {
         let request = self
             .raw_http
             .post(format!(
@@ -1541,7 +1561,19 @@ fn message_request_body(
     reply_to: Option<Id<MessageMarker>>,
     attachments: &[MessageAttachmentUpload],
 ) -> Value {
+    message_request_body_with_tts(content, reply_to, attachments, false)
+}
+
+fn message_request_body_with_tts(
+    content: &str,
+    reply_to: Option<Id<MessageMarker>>,
+    attachments: &[MessageAttachmentUpload],
+    tts: bool,
+) -> Value {
     let mut body = json!({ "content": content });
+    if tts {
+        body["tts"] = Value::Bool(true);
+    }
     if let Some(message_id) = reply_to {
         body["message_reference"] = json!({ "message_id": message_id.to_string() });
     }

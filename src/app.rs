@@ -739,6 +739,20 @@ fn start_command_loop(
                                 .await;
                         }
                     },
+                    AppCommand::SendTtsMessage {
+                        channel_id,
+                        content,
+                    } => match client.send_tts_message(channel_id, &content).await {
+                        Ok(message) => client.publish_event(message_create_event(message)).await,
+                        Err(error) => {
+                            log_app_error("send tts message failed", &error);
+                            client
+                                .publish_event(AppEvent::GatewayError {
+                                    message: format!("send tts message failed: {error}"),
+                                })
+                                .await;
+                        }
+                    },
                     AppCommand::LoadApplicationCommands { guild_id } => {
                         match client.load_application_commands(guild_id).await {
                             Ok(Some(commands)) => {

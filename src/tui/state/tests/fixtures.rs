@@ -16,6 +16,8 @@ use crate::discord::{
 
 pub(super) const PERM_ADD_REACTIONS: u64 = 0x0000_0000_0000_0040;
 pub(super) const PERM_VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
+pub(super) const PERM_SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
+pub(super) const PERM_SEND_TTS_MESSAGES: u64 = 0x0000_0000_0000_1000;
 pub(super) const PERM_MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
 pub(super) const PERM_READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
 pub(super) const PERM_PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
@@ -226,7 +228,7 @@ pub(super) fn state_with_view_denied_channel() -> DashboardState {
     }])
 }
 
-/// Build a guild with a single channel where @everyone has VIEW + SEND
+/// Build a guild with a single channel where @everyone has VIEW + SEND + TTS
 /// (no overwrites), so the composer should open and submit normally.
 pub(super) fn state_with_writable_channel() -> DashboardState {
     guild_state_with_overwrites(Vec::new())
@@ -349,7 +351,11 @@ pub(super) fn guild_state_with_overwrites(
         }],
         members: vec![member_info(me, "me")],
         presences: Vec::new(),
-        roles: vec![role_info(Id::new(guild.get()), "@everyone", 0x400 | 0x800)], // VIEW + SEND
+        roles: vec![role_info(
+            Id::new(guild.get()),
+            "@everyone",
+            PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_SEND_TTS_MESSAGES,
+        )],
         emojis: Vec::new(),
     });
     state.activate_guild(ActiveGuildScope::Guild(guild));
@@ -387,7 +393,11 @@ pub(super) fn state_with_writable_channel_and_members() -> DashboardState {
             (Id::new(22), PresenceStatus::Online),
             (Id::new(23), PresenceStatus::Online),
         ],
-        roles: vec![role_info(Id::new(guild.get()), "@everyone", 0x400 | 0x800)],
+        roles: vec![role_info(
+            Id::new(guild.get()),
+            "@everyone",
+            PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_SEND_TTS_MESSAGES,
+        )],
         emojis: Vec::new(),
     });
     state.activate_guild(ActiveGuildScope::Guild(guild));

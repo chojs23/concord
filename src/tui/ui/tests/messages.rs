@@ -521,7 +521,7 @@ fn message_content_preserves_explicit_newlines() {
 #[test]
 fn message_content_applies_supported_markdown_formatting() {
     let message = message_with_content(Some(
-            "# Project Update\n## Highlights\n### Detail\nMessage body\n> Keep the layout calm\n>\nNext paragraph\n- First action\n* Alternate action\nUse **bold**, *italic*, ***both***, and `code` text\n```rust\nlet answer = 42;\n**not bold in code**\n```\nAfter\n```css\nTEST```\n\n```cs\nsadfasdf\n```\n\n```css\nzdasfffaewfewf\n\n```"
+            "# Project Update\n## Highlights\n### Detail\nMessage body\n> Keep the layout calm\n>\nNext paragraph\n- First action\n* Alternate action\nUse **bold**, *italic*, _under italic_, ***both***, `code`, and snake_case text\n```rust\nlet answer = 42;\n**not bold in code**\n```\nAfter\n```css\nTEST```\n\n```cs\nsadfasdf\n```\n\n```css\nzdasfffaewfewf\n\n```"
             .to_owned(),
     ));
 
@@ -539,7 +539,7 @@ fn message_content_applies_supported_markdown_formatting() {
             "Next paragraph",
             "• First action",
             "• Alternate action",
-            "Use bold, italic, both, and code text",
+            "Use bold, italic, under italic, both, code, and snake_case text",
             "╭─ rust ───────────────╮",
             "│ let answer = 42;     │",
             "│ **not bold in code** │",
@@ -602,6 +602,12 @@ fn message_content_applies_supported_markdown_formatting() {
         .find(|span| span.content == "italic")
         .expect("italic span should be present");
     assert!(italic.style.add_modifier.contains(Modifier::ITALIC));
+
+    let under_italic = inline_spans
+        .iter()
+        .find(|span| span.content == "under italic")
+        .expect("underscore italic span should be present");
+    assert!(under_italic.style.add_modifier.contains(Modifier::ITALIC));
 
     let bold_italic = inline_spans
         .iter()

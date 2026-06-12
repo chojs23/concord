@@ -1,5 +1,6 @@
 mod application_commands;
 mod auth_http;
+mod builtin_commands;
 mod channel;
 mod client;
 mod commands;
@@ -32,6 +33,10 @@ pub use application_commands::{
     ApplicationCommandInvocation, ApplicationCommandOptionInfo,
     application_command_content_is_complete, application_command_option_scope,
     parsed_application_command_option_names,
+};
+pub use builtin_commands::{
+    BuiltinSlashCommandInfo, BuiltinSlashCommandParse, BuiltinSlashCommandSubmit,
+    builtin_slash_commands, parse_builtin_slash_command,
 };
 pub use channel::{
     ChannelInfo, ChannelRecipientInfo, PermissionOverwriteInfo, PermissionOverwriteKind,

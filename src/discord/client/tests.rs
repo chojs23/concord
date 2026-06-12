@@ -17,7 +17,8 @@ use crate::{
 use serde_json::{Value, json};
 
 use super::{
-    DiscordClient, MEMBER_SEARCH_MAX_LIMIT, MEMBER_SEARCH_MAX_QUERY_CHARS, validate_token_header,
+    DiscordClient, MEMBER_SEARCH_MAX_LIMIT, MEMBER_SEARCH_MAX_QUERY_CHARS,
+    OFFICIAL_WORDLE_APPLICATION_ID, validate_token_header,
 };
 
 #[tokio::test]
@@ -489,27 +490,49 @@ fn application_command_metadata_keeps_raw_backend_owned() {
     let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
     let guild_id = Some(Id::new(1));
     let command = application_command("echo");
-    let mut selected_command = application_command("echo");
-    selected_command.id = Id::new(101);
-    selected_command.application_id = Id::new(201);
-    selected_command.raw = json!({
-        "id": "101",
-        "application_id": "201",
-        "version": "1",
-        "name": "echo",
-    });
+    let selected_command = application_command_with_ids("echo", "TestBot", 101, 201);
+    let third_party_play = application_command_with_ids("play", "MusicBot", 102, 202);
+    let third_party_wordle = application_command_with_ids("wordle", "WordleBot", 103, 203);
+    let discord_play = application_command_with_ids("play", "Discord", 104, 204);
+    let official_wordle =
+        application_command_with_ids("wordle", "Wordle", 105, OFFICIAL_WORDLE_APPLICATION_ID);
 
-    let tui_commands = client
-        .record_application_commands_for_tui(guild_id, vec![command, selected_command.clone()]);
+    let tui_commands = client.record_application_commands_for_tui(
+        guild_id,
+        vec![
+            command,
+            selected_command.clone(),
+            third_party_play,
+            third_party_wordle,
+            discord_play,
+            official_wordle,
+        ],
+    );
 
     assert_eq!(tui_commands[0].raw, Value::Null);
+    assert_eq!(
+        command_sources(&tui_commands),
+        vec![
+            ("echo", Some("TestBot")),
+            ("echo", Some("TestBot")),
+            ("play", Some("MusicBot")),
+            ("wordle", Some("WordleBot")),
+        ]
+    );
     let commands = client
         .application_commands
         .lock()
         .expect("application command cache lock is not poisoned");
+    let cached_commands = commands.get(&guild_id).expect("backend cache");
+    assert_eq!(cached_commands[0].raw["name"], "echo");
     assert_eq!(
-        commands.get(&guild_id).expect("backend cache")[0].raw["name"],
-        "echo"
+        command_sources(cached_commands),
+        vec![
+            ("echo", Some("TestBot")),
+            ("echo", Some("TestBot")),
+            ("play", Some("MusicBot")),
+            ("wordle", Some("WordleBot")),
+        ]
     );
     drop(commands);
 
@@ -814,19 +837,44 @@ fn user_profile(user_id: Id<UserMarker>) -> UserProfileInfo {
 }
 
 fn application_command(name: &str) -> crate::discord::ApplicationCommandInfo {
+    application_command_with_app_name(name, "TestBot")
+}
+
+fn application_command_with_app_name(
+    name: &str,
+    application_name: &str,
+) -> crate::discord::ApplicationCommandInfo {
+    application_command_with_ids(name, application_name, 100, 200)
+}
+
+fn application_command_with_ids(
+    name: &str,
+    application_name: &str,
+    command_id: u64,
+    application_id: u64,
+) -> crate::discord::ApplicationCommandInfo {
     crate::discord::ApplicationCommandInfo {
-        application_id: Id::new(200),
+        application_id: Id::new(application_id),
         version: "1".to_owned(),
-        application_name: Some("TestBot".to_owned()),
+        application_name: Some(application_name.to_owned()),
         description: format!("{name} command"),
         raw: json!({
-            "id": "100",
-            "application_id": "200",
+            "id": command_id.to_string(),
+            "application_id": application_id.to_string(),
             "version": "1",
             "name": name,
         }),
-        ..crate::discord::ApplicationCommandInfo::test(Id::new(100), name)
+        ..crate::discord::ApplicationCommandInfo::test(Id::new(command_id), name)
     }
+}
+
+fn command_sources(
+    commands: &[crate::discord::ApplicationCommandInfo],
+) -> Vec<(&str, Option<&str>)> {
+    commands
+        .iter()
+        .map(|command| (command.name.as_str(), command.application_name.as_deref()))
+        .collect()
 }
 
 fn channel_upsert_event() -> AppEvent {

@@ -4,6 +4,7 @@ use super::*;
 // verify Discord's documented bit values instead of reusing the code under test.
 const VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
 const SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
+const SEND_TTS_MESSAGES: u64 = 0x0000_0000_0000_1000;
 const MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
 const ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
 const READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
@@ -507,6 +508,29 @@ fn cannot_attach_when_role_overwrite_denies_attach_files() {
     let ch = state.channel(channel).expect("channel");
     assert!(state.can_send_in_channel(ch));
     assert!(!state.can_attach_in_channel(ch));
+}
+
+#[test]
+fn cannot_send_tts_when_role_overwrite_denies_send_tts_messages() {
+    let me = Id::new(10);
+    let owner = Id::new(11);
+    let guild = Id::new(1);
+    let channel = Id::new(2);
+    let state = guild_with_permissions(
+        owner,
+        me,
+        guild,
+        channel,
+        vec![],
+        vec![RoleInfo {
+            permissions: VIEW_CHANNEL | SEND_MESSAGES | SEND_TTS_MESSAGES,
+            ..RoleInfo::test(Id::new(guild.get()), "@everyone")
+        }],
+        vec![perm_role(guild.get(), 0, SEND_TTS_MESSAGES)],
+    );
+    let ch = state.channel(channel).expect("channel");
+    assert!(state.can_send_in_channel(ch));
+    assert!(!state.can_send_tts_in_channel(ch));
 }
 
 #[test]

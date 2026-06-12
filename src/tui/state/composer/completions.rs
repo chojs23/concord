@@ -5,7 +5,7 @@ use crate::discord::ids::{
 
 use crate::discord::{
     ApplicationCommandIdentity, ApplicationCommandInfo, ApplicationCommandOptionInfo, ChannelState,
-    CustomEmojiInfo, PresenceStatus, RoleState,
+    CustomEmojiInfo, PresenceStatus, RoleState, builtin_slash_commands,
 };
 
 use super::super::{MemberEntry, emoji::custom_emoji_can_be_used_directly};
@@ -85,7 +85,23 @@ pub struct CommandPickerEntry {
     pub label: String,
     pub detail: String,
     pub replacement: String,
+    pub top_level: bool,
     pub command_identity: Option<ApplicationCommandIdentity>,
+}
+
+pub(super) fn build_builtin_command_candidates(query: &str) -> Vec<CommandPickerEntry> {
+    let needle = query.to_ascii_lowercase();
+    builtin_slash_commands()
+        .iter()
+        .filter(|command| needle.is_empty() || command.name.starts_with(&needle))
+        .map(|command| CommandPickerEntry {
+            label: format!("/{}", command.name),
+            detail: command.description.to_owned(),
+            replacement: command.replacement.to_owned(),
+            top_level: true,
+            command_identity: None,
+        })
+        .collect()
 }
 
 pub(super) fn build_command_candidates(
@@ -113,6 +129,7 @@ pub(super) fn build_command_candidates(
                     label: format!("/{}", command.name),
                     detail: command_picker_detail(command),
                     replacement: format!("/{} ", command.name),
+                    top_level: true,
                     command_identity: Some(command.identity()),
                 },
             ))
@@ -144,6 +161,7 @@ pub(super) fn build_command_option_candidates(
             label: command_option_label(option),
             detail: command_option_detail(option),
             replacement: command_option_replacement(option),
+            top_level: false,
             command_identity: None,
         })
         .collect()
@@ -202,6 +220,7 @@ pub(super) fn build_command_choice_candidates(
                     .map(str::to_owned)
                     .unwrap_or_else(|| choice.value.to_string())
             ),
+            top_level: false,
             command_identity: None,
         })
         .collect()

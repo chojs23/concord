@@ -47,6 +47,15 @@ fn state_with_application_command(command: ApplicationCommandInfo) -> DashboardS
     state
 }
 
+fn submit_composer_text(input: &str) -> Option<AppCommand> {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    for value in input.chars() {
+        state.push_composer_char(value);
+    }
+    state.submit_composer()
+}
+
 fn state_with_command_mentions(command: ApplicationCommandInfo) -> DashboardState {
     let me: Id<UserMarker> = Id::new(10);
     let guild: Id<GuildMarker> = Id::new(1);
@@ -208,6 +217,71 @@ fn debug_channel_visibility_reports_active_guild_counts() {
             visible: 0,
             hidden: 1,
         }
+    );
+}
+
+#[test]
+fn submit_builtin_text_slash_commands_as_messages() {
+    for (input, expected) in [
+        ("/me waves", "_waves_"),
+        ("/spoiler secret words", "||secret words||"),
+        ("/shrug hello", r"hello ¯\_(ツ)_/¯"),
+    ] {
+        assert_eq!(
+            submit_composer_text(input),
+            Some(AppCommand::SendMessage {
+                channel_id: Id::new(2),
+                content: expected.to_owned(),
+                reply_to: None,
+                attachments: Vec::new(),
+            }),
+            "{input:?} should send transformed content",
+        );
+    }
+}
+
+#[test]
+fn submit_builtin_tts_and_nick_commands_use_specific_app_commands() {
+    assert_eq!(
+        submit_composer_text("/tts hello there"),
+        Some(AppCommand::SendTtsMessage {
+            channel_id: Id::new(2),
+            content: "hello there".to_owned(),
+        })
+    );
+
+    for (input, expected_nick) in [("/nick Neo Prime", "Neo Prime"), ("/nick", "")] {
+        let Some(AppCommand::UpdateUserProfile { update }) = submit_composer_text(input) else {
+            panic!("{input:?} should update the current user's guild nickname");
+        };
+        assert_eq!(update.user_id, Id::new(10));
+        assert_eq!(update.guild_id, Some(Id::new(1)));
+        assert_eq!(
+            update.guild.and_then(|guild| guild.nickname),
+            Some(expected_nick.to_owned())
+        );
+    }
+}
+
+#[test]
+fn builtin_command_picker_precedes_app_commands_and_blocks_gif_send() {
+    let mut state = state_with_application_command(application_command("gif", Vec::new()));
+    type_composer_text(&mut state, "/gi");
+    let labels = state
+        .composer_command_candidates()
+        .into_iter()
+        .map(|entry| entry.label)
+        .collect::<Vec<_>>();
+
+    assert_eq!(labels.first().map(String::as_str), Some("/gif"));
+
+    state.clear_composer_input();
+    type_composer_text(&mut state, "/gif cats");
+
+    assert_eq!(state.submit_composer(), None);
+    assert_eq!(
+        state.toast_message().map(|toast| toast.text),
+        Some("GIF slash commands are not supported in Concord yet")
     );
 }
 

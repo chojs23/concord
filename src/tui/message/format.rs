@@ -1358,14 +1358,22 @@ fn parse_inline_markdown(rendered: RenderedText) -> InlineMarkdownText {
 }
 
 fn next_inline_markdown_marker(value: &str, cursor: usize) -> Option<usize> {
-    ["`", "***", "**", "*"]
+    ["`", "***", "**", "*", "_"]
         .into_iter()
-        .filter_map(|marker| {
-            value[cursor..]
-                .find(marker)
-                .map(|relative| cursor.saturating_add(relative))
-        })
+        .filter_map(|marker| next_inline_markdown_marker_for(value, cursor, marker))
         .min()
+}
+
+fn next_inline_markdown_marker_for(value: &str, cursor: usize, marker: &str) -> Option<usize> {
+    let mut search_start = cursor;
+    while let Some(relative) = value[search_start..].find(marker) {
+        let index = search_start.saturating_add(relative);
+        if marker != "_" || should_open_underscore_marker(value, index) {
+            return Some(index);
+        }
+        search_start = index.saturating_add(marker.len());
+    }
+    None
 }
 
 fn inline_markdown_marker_at(value: &str, cursor: usize) -> Option<(&'static str, Style)> {
@@ -1381,17 +1389,23 @@ fn inline_markdown_marker_at(value: &str, cursor: usize) -> Option<(&'static str
         Some(("**", Style::default().add_modifier(Modifier::BOLD)))
     } else if rest.starts_with('*') {
         Some(("*", Style::default().add_modifier(Modifier::ITALIC)))
+    } else if rest.starts_with('_') && should_open_underscore_marker(value, cursor) {
+        Some(("_", Style::default().add_modifier(Modifier::ITALIC)))
     } else {
         None
     }
 }
 
 fn find_inline_markdown_closer(value: &str, start: usize, marker: &str) -> Option<usize> {
-    if marker == "*" {
+    if matches!(marker, "*" | "_") {
         let mut search_start = start;
-        while let Some(relative) = value[search_start..].find('*') {
+        while let Some(relative) = value[search_start..].find(marker) {
             let index = search_start.saturating_add(relative);
-            if !value[index..].starts_with("**") {
+            if marker == "_" && !should_close_underscore_marker(value, index) {
+                search_start = index.saturating_add(1);
+                continue;
+            }
+            if marker == "_" || !value[index..].starts_with("**") {
                 return (start < index).then_some(index);
             }
             search_start = index.saturating_add(1);
@@ -1403,6 +1417,24 @@ fn find_inline_markdown_closer(value: &str, start: usize, marker: &str) -> Optio
             .map(|relative| start.saturating_add(relative))
             .filter(|index| start < *index)
     }
+}
+
+fn should_open_underscore_marker(value: &str, index: usize) -> bool {
+    let previous = value[..index].chars().next_back();
+    let next = value[index + '_'.len_utf8()..].chars().next();
+    previous.is_none_or(|value| !is_inline_markdown_word_char(value))
+        && next.is_some_and(|value| !value.is_whitespace())
+}
+
+fn should_close_underscore_marker(value: &str, index: usize) -> bool {
+    let previous = value[..index].chars().next_back();
+    let next = value[index + '_'.len_utf8()..].chars().next();
+    previous.is_some_and(|value| !value.is_whitespace())
+        && next.is_none_or(|value| !is_inline_markdown_word_char(value))
+}
+
+fn is_inline_markdown_word_char(value: char) -> bool {
+    value.is_alphanumeric()
 }
 
 fn push_source_segment(
