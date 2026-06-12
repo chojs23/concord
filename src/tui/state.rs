@@ -42,7 +42,7 @@ use message_history_refresh::MessageHistoryRefreshState;
 use message_render::{add_literal_mention_highlights, normalize_text_highlights};
 use message_viewport::{MessageViewportState, ThreadReturnTarget};
 use navigation::{ActiveGuildScope, FolderKey, NavigationState};
-use options::OptionsUiState;
+use options::SettingsState;
 use pane_filter::PaneFilterState;
 use popups::{ModalPopup, PopupUiState};
 use request_tracking::RequestTrackingState;

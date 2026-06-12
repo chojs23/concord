@@ -396,6 +396,34 @@ fn collapsed_category_state_is_saved_and_restored() {
 }
 
 #[test]
+fn pane_layout_state_is_saved_and_restored() {
+    let mut state = DashboardState::new();
+    state.toggle_pane_visibility(FocusPane::Guilds);
+    state.toggle_pane_visibility(FocusPane::Members);
+    state.focus_pane(FocusPane::Channels);
+    state.adjust_focused_pane_width(6);
+
+    let ui_state = state
+        .take_ui_state_save_request()
+        .expect("pane layout changes should request a UI state save");
+    let restored = DashboardState::new_with_options(
+        DisplayOptions::default(),
+        Default::default(),
+        Default::default(),
+        NotificationOptions::default(),
+        VoiceOptions::default(),
+        Default::default(),
+        ui_state,
+    );
+
+    assert!(!restored.is_pane_visible(FocusPane::Guilds));
+    assert!(restored.is_pane_visible(FocusPane::Channels));
+    assert!(!restored.is_pane_visible(FocusPane::Members));
+    assert_eq!(restored.pane_width(FocusPane::Channels), 30);
+    assert_eq!(restored.focus(), FocusPane::Messages);
+}
+
+#[test]
 fn moving_guild_cursor_does_not_activate_guild() {
     let mut state = state_with_two_guilds();
     state.focus_pane(FocusPane::Guilds);

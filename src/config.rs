@@ -12,6 +12,10 @@ use crate::discord::ids::{
 };
 use crate::{Result, paths};
 
+pub const DEFAULT_SERVER_WIDTH: u16 = 20;
+pub const DEFAULT_CHANNEL_LIST_WIDTH: u16 = 24;
+pub const DEFAULT_MEMBER_LIST_WIDTH: u16 = 26;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct DisplayOptions {
@@ -21,9 +25,6 @@ pub struct DisplayOptions {
     pub image_preview_quality: ImagePreviewQualityPreset,
     pub show_custom_emoji: bool,
     pub circular_avatars: bool,
-    pub server_width: u16,
-    pub channel_list_width: u16,
-    pub member_list_width: u16,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -157,12 +158,56 @@ struct UiStateFileOptions {
     ui_state: UiStateOptions,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct UiStateOptions {
+    #[serde(default = "default_pane_visible")]
+    pub guild_pane_visible: bool,
+    #[serde(default = "default_pane_visible")]
+    pub channel_pane_visible: bool,
+    #[serde(default = "default_pane_visible")]
+    pub member_pane_visible: bool,
+    #[serde(default = "default_server_width")]
+    pub server_width: u16,
+    #[serde(default = "default_channel_list_width")]
+    pub channel_list_width: u16,
+    #[serde(default = "default_member_list_width")]
+    pub member_list_width: u16,
     pub collapsed_channel_categories: Vec<Id<ChannelMarker>>,
     pub collapsed_server_folder_ids: Vec<u64>,
     pub collapsed_server_folder_guilds: Vec<Vec<Id<GuildMarker>>>,
+}
+
+impl Default for UiStateOptions {
+    fn default() -> Self {
+        Self {
+            guild_pane_visible: true,
+            channel_pane_visible: true,
+            member_pane_visible: true,
+            server_width: default_server_width(),
+            channel_list_width: default_channel_list_width(),
+            member_list_width: default_member_list_width(),
+            collapsed_channel_categories: Vec::new(),
+            collapsed_server_folder_ids: Vec::new(),
+            collapsed_server_folder_guilds: Vec::new(),
+        }
+    }
+}
+
+fn default_pane_visible() -> bool {
+    true
+}
+
+fn default_server_width() -> u16 {
+    DEFAULT_SERVER_WIDTH
+}
+
+fn default_channel_list_width() -> u16 {
+    DEFAULT_CHANNEL_LIST_WIDTH
+}
+
+fn default_member_list_width() -> u16 {
+    DEFAULT_MEMBER_LIST_WIDTH
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -331,9 +376,6 @@ impl Default for DisplayOptions {
             image_preview_quality: ImagePreviewQualityPreset::default(),
             show_custom_emoji: true,
             circular_avatars: false,
-            server_width: 20,
-            channel_list_width: 24,
-            member_list_width: 26,
         }
     }
 }
@@ -540,9 +582,6 @@ mod tests {
             image_preview_quality: ImagePreviewQualityPreset::Balanced,
             show_custom_emoji: true,
             circular_avatars: false,
-            server_width: 20,
-            channel_list_width: 24,
-            member_list_width: 26,
         };
 
         assert!(!options.avatars_visible());
@@ -705,9 +744,6 @@ mod tests {
                 config.voice.voice_output_volume,
                 VoiceVolumePercent::default()
             );
-            assert_eq!(config.display.server_width, 20);
-            assert_eq!(config.display.channel_list_width, 24);
-            assert_eq!(config.display.member_list_width, 26);
             assert_eq!(
                 config.composer.emojis_as_links,
                 toml.contains("emojis_as_links")
@@ -866,9 +902,6 @@ mod tests {
                 image_preview_quality: ImagePreviewQualityPreset::Original,
                 show_custom_emoji: false,
                 circular_avatars: true,
-                server_width: 12,
-                channel_list_width: 30,
-                member_list_width: 18,
             },
             composer: ComposerOptions {
                 emojis_as_links: true,
