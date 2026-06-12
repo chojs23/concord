@@ -43,7 +43,7 @@ use crate::tui::message::time::{
     test_message_id_for_unix_millis,
 };
 use crate::{
-    config::{DisplayOptions, VoiceOptions},
+    config::{DisplayOptions, UiStateOptions, VoiceOptions},
     discord::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, ApplicationCommandInfo,
         ApplicationCommandOptionInfo, AttachmentInfo, ChannelInfo, ChannelNotificationOverrideInfo,

@@ -7,9 +7,6 @@ use crate::tui::keybindings::KeyBindings;
 
 use super::{DashboardState, FocusPane, FolderKey};
 
-const MIN_PANE_WIDTH: u16 = 8;
-const MAX_PANE_WIDTH: u16 = 80;
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisplayOptionItem {
     pub label: &'static str,
@@ -36,7 +33,7 @@ impl DisplayOptionItem {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct OptionsUiState {
+pub(super) struct SettingsState {
     pub(super) display_options: DisplayOptions,
     pub(super) composer_options: ComposerOptions,
     pub(super) credential_options: CredentialOptions,
@@ -47,7 +44,7 @@ pub(super) struct OptionsUiState {
     pub(super) ui_state_save_pending: bool,
 }
 
-impl OptionsUiState {
+impl SettingsState {
     pub(super) fn key_bindings(&self) -> &KeyBindings {
         &self.key_bindings
     }
@@ -135,6 +132,15 @@ impl DashboardState {
     }
 
     fn apply_ui_state_options(&mut self, options: UiStateOptions) {
+        self.navigation.guild_pane_visible = options.guild_pane_visible;
+        self.navigation.channel_pane_visible = options.channel_pane_visible;
+        self.navigation.member_pane_visible = options.member_pane_visible;
+        self.navigation.server_width = options.server_width;
+        self.navigation.channel_list_width = options.channel_list_width;
+        self.navigation.member_list_width = options.member_list_width;
+        if !self.is_pane_visible(self.navigation.focus) {
+            self.navigation.focus = FocusPane::Messages;
+        }
         self.navigation.collapsed_channel_categories =
             options.collapsed_channel_categories.into_iter().collect();
         self.navigation.collapsed_folders = options
@@ -175,6 +181,12 @@ impl DashboardState {
         });
 
         UiStateOptions {
+            guild_pane_visible: self.navigation.guild_pane_visible,
+            channel_pane_visible: self.navigation.channel_pane_visible,
+            member_pane_visible: self.navigation.member_pane_visible,
+            server_width: self.navigation.server_width,
+            channel_list_width: self.navigation.channel_list_width,
+            member_list_width: self.navigation.member_list_width,
             collapsed_channel_categories,
             collapsed_server_folder_ids,
             collapsed_server_folder_guilds,
@@ -207,35 +219,6 @@ impl DashboardState {
 
     pub fn desktop_notification_icon(&self) -> Option<String> {
         self.options.notification_options.notification_icon.clone()
-    }
-
-    pub fn pane_width(&self, pane: FocusPane) -> u16 {
-        match pane {
-            FocusPane::Guilds => self.options.display_options.server_width,
-            FocusPane::Channels => self.options.display_options.channel_list_width,
-            FocusPane::Members => self.options.display_options.member_list_width,
-            FocusPane::Messages => 0,
-        }
-    }
-
-    pub fn adjust_focused_pane_width(&mut self, delta: i16) {
-        let width = match self.navigation.focus {
-            FocusPane::Guilds => &mut self.options.display_options.server_width,
-            FocusPane::Channels => &mut self.options.display_options.channel_list_width,
-            FocusPane::Members => &mut self.options.display_options.member_list_width,
-            FocusPane::Messages => return,
-        };
-
-        let adjusted = if delta.is_negative() {
-            width.saturating_sub(delta.unsigned_abs())
-        } else {
-            width.saturating_add(delta as u16)
-        };
-        let adjusted = adjusted.clamp(MIN_PANE_WIDTH, MAX_PANE_WIDTH);
-        if adjusted != *width {
-            *width = adjusted;
-            self.options.config_save_pending = true;
-        }
     }
 
     pub(in crate::tui::state) fn queue_current_voice_state_update(&mut self) {

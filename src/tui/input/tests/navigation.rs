@@ -143,10 +143,12 @@ fn number_keys_show_hidden_panes_before_focusing() {
     state.toggle_pane_visibility(FocusPane::Guilds);
     state.toggle_pane_visibility(FocusPane::Channels);
     state.toggle_pane_visibility(FocusPane::Members);
+    state.take_ui_state_save_request();
 
     handle_key(&mut state, char_key('1'));
     assert!(state.is_pane_visible(FocusPane::Guilds));
     assert_eq!(state.focus(), FocusPane::Guilds);
+    assert!(state.take_ui_state_save_request().is_some());
 
     handle_key(&mut state, char_key('2'));
     assert!(state.is_pane_visible(FocusPane::Channels));
@@ -178,21 +180,17 @@ fn alt_arrows_adjust_focused_side_pane_width() {
 
     handle_key(&mut state, alt_key(KeyCode::Left));
     assert_eq!(state.pane_width(FocusPane::Channels), 24);
-    assert_eq!(
-        state.take_options_save_request(),
-        Some(AppOptions {
-            display: state.display_options(),
-            composer: state.composer_options(),
-            credentials: Default::default(),
-            notifications: state.notification_options(),
-            voice: state.voice_options(),
-        })
-    );
+    assert_eq!(state.take_options_save_request(), None);
+    let ui_state = state
+        .take_ui_state_save_request()
+        .expect("pane resize should request a UI state save");
+    assert_eq!(ui_state.channel_list_width, 24);
 
     state.focus_pane(FocusPane::Messages);
     handle_key(&mut state, alt_key(KeyCode::Right));
     assert_eq!(state.pane_width(FocusPane::Channels), 24);
     assert_eq!(state.take_options_save_request(), None);
+    assert_eq!(state.take_ui_state_save_request(), None);
 }
 
 #[test]

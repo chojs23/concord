@@ -1,5 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
+use crate::config::{DEFAULT_CHANNEL_LIST_WIDTH, DEFAULT_MEMBER_LIST_WIDTH, DEFAULT_SERVER_WIDTH};
 use crate::discord::PresenceStatus;
 use crate::discord::ids::{
     Id,
@@ -14,6 +15,9 @@ use super::scroll::{
 use super::{
     ChannelPaneEntry, DashboardState, FocusPane, MemberEntry, MemberGroup, PaneFilterState,
 };
+
+const MIN_PANE_WIDTH: u16 = 8;
+const MAX_PANE_WIDTH: u16 = 80;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ActiveGuildScope {
@@ -48,6 +52,9 @@ pub(super) struct NavigationState {
     pub(super) guild_pane_visible: bool,
     pub(super) channel_pane_visible: bool,
     pub(super) member_pane_visible: bool,
+    pub(super) server_width: u16,
+    pub(super) channel_list_width: u16,
+    pub(super) member_list_width: u16,
     /// Folder IDs the user has collapsed in the guild pane. Single-guild
     /// "folders" (id = None) are never collapsible since they have no header.
     pub(super) collapsed_folders: HashSet<FolderKey>,
@@ -85,6 +92,9 @@ impl Default for NavigationState {
             guild_pane_visible: true,
             channel_pane_visible: true,
             member_pane_visible: true,
+            server_width: DEFAULT_SERVER_WIDTH,
+            channel_list_width: DEFAULT_CHANNEL_LIST_WIDTH,
+            member_list_width: DEFAULT_MEMBER_LIST_WIDTH,
             collapsed_folders: HashSet::new(),
             collapsed_channel_categories: HashSet::new(),
         }
@@ -126,8 +136,38 @@ impl DashboardState {
             }
             FocusPane::Messages => return,
         }
+        self.options.ui_state_save_pending = true;
         if !self.is_pane_visible(self.navigation.focus) {
             self.navigation.focus = FocusPane::Messages;
+        }
+    }
+
+    pub fn pane_width(&self, pane: FocusPane) -> u16 {
+        match pane {
+            FocusPane::Guilds => self.navigation.server_width,
+            FocusPane::Channels => self.navigation.channel_list_width,
+            FocusPane::Members => self.navigation.member_list_width,
+            FocusPane::Messages => 0,
+        }
+    }
+
+    pub fn adjust_focused_pane_width(&mut self, delta: i16) {
+        let width = match self.navigation.focus {
+            FocusPane::Guilds => &mut self.navigation.server_width,
+            FocusPane::Channels => &mut self.navigation.channel_list_width,
+            FocusPane::Members => &mut self.navigation.member_list_width,
+            FocusPane::Messages => return,
+        };
+
+        let adjusted = if delta.is_negative() {
+            width.saturating_sub(delta.unsigned_abs())
+        } else {
+            width.saturating_add(delta as u16)
+        };
+        let adjusted = adjusted.clamp(MIN_PANE_WIDTH, MAX_PANE_WIDTH);
+        if adjusted != *width {
+            *width = adjusted;
+            self.options.ui_state_save_pending = true;
         }
     }
 }
@@ -487,11 +527,15 @@ impl DashboardState {
     }
 
     pub fn show_and_focus_pane(&mut self, pane: FocusPane) {
+        let was_visible = self.is_pane_visible(pane);
         match pane {
             FocusPane::Guilds => self.navigation.guild_pane_visible = true,
             FocusPane::Channels => self.navigation.channel_pane_visible = true,
             FocusPane::Members => self.navigation.member_pane_visible = true,
             FocusPane::Messages => {}
+        }
+        if !was_visible && pane != FocusPane::Messages {
+            self.options.ui_state_save_pending = true;
         }
         self.navigation.focus = pane;
     }

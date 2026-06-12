@@ -247,13 +247,21 @@ fn focus_pane_at_expands_messages_over_hidden_panes() {
 }
 
 #[test]
-fn focus_pane_at_uses_configured_pane_widths() {
-    let state = DashboardState::new_with_display_options(DisplayOptions {
-        server_width: 10,
-        channel_list_width: 20,
-        member_list_width: 15,
-        ..DisplayOptions::default()
-    });
+fn focus_pane_at_uses_persisted_pane_widths() {
+    let state = DashboardState::new_with_options(
+        DisplayOptions::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        UiStateOptions {
+            server_width: 10,
+            channel_list_width: 20,
+            member_list_width: 15,
+            ..Default::default()
+        },
+    );
     let area = Rect::new(0, 0, 100, 20);
 
     assert_eq!(focus_pane_at(area, &state, 9, 1), Some(FocusPane::Guilds));
