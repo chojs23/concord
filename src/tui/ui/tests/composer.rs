@@ -419,7 +419,7 @@ fn dashboard_renders_scrollbar_for_overflowing_composer_pickers() {
     for ch in "@sc".chars() {
         state.push_composer_char(ch);
     }
-    state.move_composer_mention_selection(9);
+    state.move_active_composer_picker_selection(9);
 
     let dump = render_dashboard_dump(100, 24, &mut state);
     let rendered = dump.join("\n");
@@ -450,7 +450,7 @@ fn dashboard_renders_scrollbar_for_overflowing_composer_pickers() {
     for ch in ":ov".chars() {
         state.push_composer_char(ch);
     }
-    state.move_composer_emoji_selection(9);
+    state.move_active_composer_picker_selection(9);
 
     let dump = render_dashboard_dump(100, 24, &mut state);
     let rendered = dump.join("\n");

@@ -14,12 +14,13 @@ use crate::discord::{
     parse_builtin_slash_command, parsed_application_command_option_names,
 };
 
+use super::super::scroll::clamp_list_scroll;
 use super::super::{
     ActiveModalPopupKind, CommandPickerEntry, DashboardState, EmojiPickerEntry, FocusPane,
     MentionPickerEntry,
 };
 use super::completions::{
-    ComposerEmojiImageCompletion, EmojiCompletion, MentionCompletion,
+    ComposerEmojiImageCompletion, EmojiCompletion, MAX_MENTION_PICKER_VISIBLE, MentionCompletion,
     build_builtin_command_candidates, build_channel_mention_candidates, build_command_candidates,
     build_command_choice_candidates, build_command_option_candidates, build_emoji_candidates,
     build_mention_candidates, expand_composer_completions, expand_emoji_shortcodes,
@@ -40,23 +41,7 @@ pub(in crate::tui::state) struct ComposerUiState {
     pub(in crate::tui::state) composer_active: bool,
     pub(in crate::tui::state) reply_target_message_id: Option<Id<MessageMarker>>,
     pub(in crate::tui::state) edit_target_message: Option<(Id<ChannelMarker>, Id<MessageMarker>)>,
-    /// Set when the user is in the middle of an `@mention` autocomplete. The
-    /// stored string is the characters typed *after* the `@` and is used to
-    /// filter the candidate list. `None` means the picker is closed.
-    pub(in crate::tui::state) composer_mention_query: Option<String>,
-    pub(in crate::tui::state) composer_mention_start: Option<usize>,
-    pub(in crate::tui::state) composer_mention_selected: usize,
-    /// Set when the user is typing a Unicode emoji shortcode after `:`. The
-    /// picker opens after two shortcode characters, mirroring Discord's
-    /// threshold while avoiding noisy popups for ordinary punctuation.
-    pub(in crate::tui::state) composer_emoji_query: Option<String>,
-    pub(in crate::tui::state) composer_emoji_start: Option<usize>,
-    pub(in crate::tui::state) composer_emoji_selected: usize,
-    pub(in crate::tui::state) composer_emoji_candidates: Vec<EmojiPickerEntry>,
-    pub(in crate::tui::state) composer_command_query: Option<String>,
-    pub(in crate::tui::state) composer_command_start: Option<usize>,
-    pub(in crate::tui::state) composer_command_selected: usize,
-    pub(in crate::tui::state) composer_command_candidates: Vec<CommandPickerEntry>,
+    pub(in crate::tui::state) composer_picker: ComposerPickerState,
     pub(in crate::tui::state) composer_selected_command_identity:
         Option<ApplicationCommandIdentity>,
     /// Records `@displayname` substrings that the picker inserted, so the
@@ -67,6 +52,64 @@ pub(in crate::tui::state) struct ComposerUiState {
     /// the readable `:name:` text while submit rewrites these ranges to
     /// Discord's `<:name:id>` or `<a:name:id>` wire format.
     pub(in crate::tui::state) composer_emoji_completions: Vec<EmojiCompletion>,
+}
+
+#[derive(Debug, Default)]
+pub(in crate::tui::state) struct ComposerPickerState {
+    active: Option<ActiveComposerPicker>,
+    selected: usize,
+    scroll: usize,
+}
+
+#[derive(Debug)]
+enum ActiveComposerPicker {
+    Mention {
+        query: String,
+        start: usize,
+    },
+    Emoji {
+        query: String,
+        start: usize,
+        candidates: Vec<EmojiPickerEntry>,
+    },
+    Command {
+        query: String,
+        start: usize,
+        candidates: Vec<CommandPickerEntry>,
+    },
+}
+
+impl ComposerPickerState {
+    fn close(&mut self) {
+        self.active = None;
+        self.selected = 0;
+        self.scroll = 0;
+    }
+
+    fn open(&mut self, active: ActiveComposerPicker) {
+        self.active = Some(active);
+        self.selected = 0;
+        self.scroll = 0;
+    }
+
+    fn move_selection(&mut self, delta: isize, len: usize) {
+        self.selected = move_picker_selection(self.selected, len, delta);
+        self.scroll =
+            clamp_picker_scroll(self.selected, self.scroll, MAX_MENTION_PICKER_VISIBLE, len);
+    }
+
+    fn window_start_for(
+        &self,
+        matches_picker: impl FnOnce(&ActiveComposerPicker) -> bool,
+        visible_count: usize,
+        candidate_count: usize,
+    ) -> usize {
+        if self.active.as_ref().is_some_and(matches_picker) {
+            picker_window_start(self.selected, self.scroll, visible_count, candidate_count)
+        } else {
+            0
+        }
+    }
 }
 
 impl ComposerUiState {
@@ -453,11 +496,32 @@ impl DashboardState {
 
     /// Returns the characters typed after the `@` if the picker is open.
     pub fn composer_mention_query(&self) -> Option<&str> {
-        self.composer.composer_mention_query.as_deref()
+        match &self.composer.composer_picker.active {
+            Some(ActiveComposerPicker::Mention { query, .. }) => Some(query.as_str()),
+            _ => None,
+        }
     }
 
     pub fn composer_mention_selected(&self) -> usize {
-        self.composer.composer_mention_selected
+        self.composer
+            .composer_picker
+            .active
+            .as_ref()
+            .filter(|picker| matches!(picker, ActiveComposerPicker::Mention { .. }))
+            .map(|_| self.composer.composer_picker.selected)
+            .unwrap_or(0)
+    }
+
+    pub(in crate::tui) fn composer_mention_window_start(
+        &self,
+        visible_count: usize,
+        candidate_count: usize,
+    ) -> usize {
+        self.composer.composer_picker.window_start_for(
+            |picker| matches!(picker, ActiveComposerPicker::Mention { .. }),
+            visible_count,
+            candidate_count,
+        )
     }
 
     /// Builds the full suggestion list for the picker, ordered by best match
@@ -465,7 +529,7 @@ impl DashboardState {
     /// substring matches, alias matches beat username matches at the same rank,
     /// and ties are broken alphabetically by display name.
     pub fn composer_mention_candidates(&self) -> Vec<MentionPickerEntry> {
-        let Some(query) = self.composer.composer_mention_query.as_deref() else {
+        let Some(query) = self.composer_mention_query() else {
             return Vec::new();
         };
         if self.active_composer_mention_trigger() == Some('#') {
@@ -480,7 +544,10 @@ impl DashboardState {
     }
 
     fn active_composer_mention_trigger(&self) -> Option<char> {
-        let start = self.composer.composer_mention_start?;
+        let start = match &self.composer.composer_picker.active {
+            Some(ActiveComposerPicker::Mention { start, .. }) => *start,
+            _ => return None,
+        };
         self.composer.composer_input[start..]
             .chars()
             .next()
@@ -505,44 +572,85 @@ impl DashboardState {
             .viewable_channels_for_guild(self.selected_composer_guild_id())
     }
 
-    pub fn move_composer_mention_selection(&mut self, delta: isize) {
-        if self.composer.composer_mention_query.is_none() {
-            return;
-        }
-        let len = self.composer_mention_candidates().len();
-        self.composer.composer_mention_selected =
-            move_picker_selection(self.composer.composer_mention_selected, len, delta);
-    }
-
     pub fn composer_emoji_query(&self) -> Option<&str> {
-        self.composer.composer_emoji_query.as_deref()
+        match &self.composer.composer_picker.active {
+            Some(ActiveComposerPicker::Emoji { query, .. }) => Some(query.as_str()),
+            _ => None,
+        }
     }
 
     pub fn composer_emoji_selected(&self) -> usize {
-        self.composer.composer_emoji_selected
+        self.composer
+            .composer_picker
+            .active
+            .as_ref()
+            .filter(|picker| matches!(picker, ActiveComposerPicker::Emoji { .. }))
+            .map(|_| self.composer.composer_picker.selected)
+            .unwrap_or(0)
+    }
+
+    pub(in crate::tui) fn composer_emoji_window_start(
+        &self,
+        visible_count: usize,
+        candidate_count: usize,
+    ) -> usize {
+        self.composer.composer_picker.window_start_for(
+            |picker| matches!(picker, ActiveComposerPicker::Emoji { .. }),
+            visible_count,
+            candidate_count,
+        )
     }
 
     pub fn composer_emoji_candidates(&self) -> Vec<EmojiPickerEntry> {
-        self.composer.composer_emoji_candidates.clone()
+        match &self.composer.composer_picker.active {
+            Some(ActiveComposerPicker::Emoji { candidates, .. }) => candidates.clone(),
+            _ => Vec::new(),
+        }
     }
 
     pub fn composer_command_query(&self) -> Option<&str> {
-        self.composer.composer_command_query.as_deref()
+        match &self.composer.composer_picker.active {
+            Some(ActiveComposerPicker::Command { query, .. }) => Some(query.as_str()),
+            _ => None,
+        }
     }
 
     pub fn composer_command_selected(&self) -> usize {
-        self.composer.composer_command_selected
+        self.composer
+            .composer_picker
+            .active
+            .as_ref()
+            .filter(|picker| matches!(picker, ActiveComposerPicker::Command { .. }))
+            .map(|_| self.composer.composer_picker.selected)
+            .unwrap_or(0)
+    }
+
+    pub(in crate::tui) fn composer_command_window_start(
+        &self,
+        visible_count: usize,
+        candidate_count: usize,
+    ) -> usize {
+        self.composer.composer_picker.window_start_for(
+            |picker| matches!(picker, ActiveComposerPicker::Command { .. }),
+            visible_count,
+            candidate_count,
+        )
     }
 
     pub fn composer_command_candidates(&self) -> Vec<CommandPickerEntry> {
-        self.composer.composer_command_candidates.clone()
+        match &self.composer.composer_picker.active {
+            Some(ActiveComposerPicker::Command { candidates, .. }) => candidates.clone(),
+            _ => Vec::new(),
+        }
     }
 
     pub(in crate::tui) fn composer_command_selected_candidate_is_top_level(&self) -> bool {
-        self.composer
-            .composer_command_candidates
-            .get(self.composer.composer_command_selected)
-            .is_some_and(|entry| entry.top_level)
+        match &self.composer.composer_picker.active {
+            Some(ActiveComposerPicker::Command { candidates, .. }) => candidates
+                .get(self.composer.composer_picker.selected)
+                .is_some_and(|entry| entry.top_level),
+            _ => false,
+        }
     }
 
     pub(in crate::tui) fn composer_command_can_submit(&self) -> bool {
@@ -558,22 +666,38 @@ impl DashboardState {
         )
     }
 
-    pub fn move_composer_command_selection(&mut self, delta: isize) {
-        if self.composer.composer_command_query.is_none() {
-            return;
-        }
-        let len = self.composer.composer_command_candidates.len();
-        self.composer.composer_command_selected =
-            move_picker_selection(self.composer.composer_command_selected, len, delta);
+    pub(in crate::tui) fn composer_has_active_picker(&self) -> bool {
+        self.composer.composer_picker.active.is_some()
     }
 
-    pub fn move_composer_emoji_selection(&mut self, delta: isize) {
-        if self.composer.composer_emoji_query.is_none() {
-            return;
+    pub(in crate::tui) fn active_composer_picker_is_command(&self) -> bool {
+        matches!(
+            self.composer.composer_picker.active,
+            Some(ActiveComposerPicker::Command { .. })
+        )
+    }
+
+    pub fn move_active_composer_picker_selection(&mut self, delta: isize) {
+        let len = match &self.composer.composer_picker.active {
+            Some(ActiveComposerPicker::Mention { .. }) => self.composer_mention_candidates().len(),
+            Some(ActiveComposerPicker::Emoji { candidates, .. }) => candidates.len(),
+            Some(ActiveComposerPicker::Command { candidates, .. }) => candidates.len(),
+            None => return,
+        };
+        self.composer.composer_picker.move_selection(delta, len);
+    }
+
+    pub fn confirm_active_composer_picker(&mut self) -> bool {
+        match &self.composer.composer_picker.active {
+            Some(ActiveComposerPicker::Mention { .. }) => self.confirm_composer_mention(),
+            Some(ActiveComposerPicker::Emoji { .. }) => self.confirm_composer_emoji(),
+            Some(ActiveComposerPicker::Command { .. }) => self.confirm_composer_command(),
+            None => false,
         }
-        let len = self.composer.composer_emoji_candidates.len();
-        self.composer.composer_emoji_selected =
-            move_picker_selection(self.composer.composer_emoji_selected, len, delta);
+    }
+
+    pub fn cancel_active_composer_picker(&mut self) {
+        self.composer.composer_picker.close();
     }
 
     /// Confirms the currently highlighted mention. Replaces the trailing
@@ -582,14 +706,13 @@ impl DashboardState {
     /// `<@USER_ID>` later. Returns `false` when the picker has no candidate
     /// to apply.
     pub fn confirm_composer_mention(&mut self) -> bool {
-        let Some(_query) = self.composer.composer_mention_query.clone() else {
-            return false;
+        let mention_start = match &self.composer.composer_picker.active {
+            Some(ActiveComposerPicker::Mention { start, .. }) => *start,
+            _ => return false,
         };
-        let Some(mention_start) = self.composer.composer_mention_start else {
-            return false;
-        };
+        let selected = self.composer.composer_picker.selected;
         let candidates = self.composer_mention_candidates();
-        let Some(entry) = candidates.get(self.composer.composer_mention_selected) else {
+        let Some(entry) = candidates.get(selected) else {
             return false;
         };
         let entry = entry.clone();
@@ -619,20 +742,17 @@ impl DashboardState {
     /// byte range so submit can send Discord's wire markup. Unavailable custom
     /// emoji stay visible in the picker as a hint, but cannot be confirmed.
     pub fn confirm_composer_emoji(&mut self) -> bool {
-        let Some(_query) = self.composer.composer_emoji_query.clone() else {
-            return false;
+        let (emoji_start, entry) = match &self.composer.composer_picker.active {
+            Some(ActiveComposerPicker::Emoji {
+                start, candidates, ..
+            }) => {
+                let Some(entry) = candidates.get(self.composer.composer_picker.selected) else {
+                    return false;
+                };
+                (*start, entry.clone())
+            }
+            _ => return false,
         };
-        let Some(emoji_start) = self.composer.composer_emoji_start else {
-            return false;
-        };
-        let Some(entry) = self
-            .composer
-            .composer_emoji_candidates
-            .get(self.composer.composer_emoji_selected)
-        else {
-            return false;
-        };
-        let entry = entry.clone();
         if !entry.available {
             return false;
         }
@@ -664,16 +784,16 @@ impl DashboardState {
     }
 
     pub fn confirm_composer_command(&mut self) -> bool {
-        let Some(command_start) = self.composer.composer_command_start else {
-            return false;
-        };
-        let Some(entry) = self
-            .composer
-            .composer_command_candidates
-            .get(self.composer.composer_command_selected)
-            .cloned()
-        else {
-            return false;
+        let (command_start, entry) = match &self.composer.composer_picker.active {
+            Some(ActiveComposerPicker::Command {
+                start, candidates, ..
+            }) => {
+                let Some(entry) = candidates.get(self.composer.composer_picker.selected) else {
+                    return false;
+                };
+                (*start, entry.clone())
+            }
+            _ => return false,
         };
         let cursor = self.composer_cursor_byte_index();
         if command_start > cursor {
@@ -711,51 +831,44 @@ impl DashboardState {
 
     /// Closes the picker without inserting anything. The literal `@query`
     /// stays in the composer.
-    pub fn cancel_composer_mention(&mut self) {
-        self.close_composer_mention_query();
-    }
-
-    pub fn cancel_composer_emoji(&mut self) {
-        self.close_composer_emoji_query();
-    }
-
-    pub fn cancel_composer_command(&mut self) {
-        self.close_composer_command_query();
-    }
-
     fn reset_mention_picker_state(&mut self) {
-        self.close_composer_mention_query();
-        self.close_composer_emoji_query();
-        self.close_composer_command_query();
+        self.composer.composer_picker.close();
         self.composer.composer_mention_completions.clear();
         self.composer.composer_emoji_completions.clear();
         self.composer.composer_selected_command_identity = None;
     }
 
     fn close_composer_mention_query(&mut self) {
-        self.composer.composer_mention_query = None;
-        self.composer.composer_mention_start = None;
-        self.composer.composer_mention_selected = 0;
+        if matches!(
+            self.composer.composer_picker.active,
+            Some(ActiveComposerPicker::Mention { .. })
+        ) {
+            self.composer.composer_picker.close();
+        }
     }
 
     fn close_composer_emoji_query(&mut self) {
-        self.composer.composer_emoji_query = None;
-        self.composer.composer_emoji_start = None;
-        self.composer.composer_emoji_selected = 0;
-        self.composer.composer_emoji_candidates.clear();
+        if matches!(
+            self.composer.composer_picker.active,
+            Some(ActiveComposerPicker::Emoji { .. })
+        ) {
+            self.composer.composer_picker.close();
+        }
     }
 
     fn close_composer_command_query(&mut self) {
-        self.composer.composer_command_query = None;
-        self.composer.composer_command_start = None;
-        self.composer.composer_command_selected = 0;
-        self.composer.composer_command_candidates.clear();
+        if matches!(
+            self.composer.composer_picker.active,
+            Some(ActiveComposerPicker::Command { .. })
+        ) {
+            self.composer.composer_picker.close();
+        }
     }
 
     pub(in crate::tui::state) fn refresh_composer_emoji_candidates_for_current_query(&mut self) {
-        let Some(query) = self.composer.composer_emoji_query.clone() else {
-            self.composer.composer_emoji_candidates.clear();
-            return;
+        let (query, start) = match &self.composer.composer_picker.active {
+            Some(ActiveComposerPicker::Emoji { query, start, .. }) => (query.clone(), *start),
+            _ => return,
         };
 
         let candidates = self.emoji_candidates_for_query(&query);
@@ -764,11 +877,24 @@ impl DashboardState {
             return;
         }
 
-        self.composer.composer_emoji_selected = self
+        let selected = self
             .composer
-            .composer_emoji_selected
+            .composer_picker
+            .selected
             .min(candidates.len() - 1);
-        self.composer.composer_emoji_candidates = candidates;
+        let scroll = clamp_picker_scroll(
+            selected,
+            self.composer.composer_picker.scroll,
+            MAX_MENTION_PICKER_VISIBLE,
+            candidates.len(),
+        );
+        self.composer.composer_picker.active = Some(ActiveComposerPicker::Emoji {
+            query,
+            start,
+            candidates,
+        });
+        self.composer.composer_picker.selected = selected;
+        self.composer.composer_picker.scroll = scroll;
     }
 
     fn replace_composer_range(&mut self, range: Range<usize>, replacement: &str) {
@@ -810,12 +936,12 @@ impl DashboardState {
             if matches!(trigger, "@" | "#")
                 && self.should_start_composer_mention_query(mention_start, trigger)
             {
-                self.composer.composer_mention_query =
-                    Some(self.composer.composer_input[query_start..cursor].to_owned());
-                self.composer.composer_mention_start = Some(mention_start);
-                self.composer.composer_mention_selected = 0;
-                self.close_composer_emoji_query();
-                self.close_composer_command_query();
+                self.composer
+                    .composer_picker
+                    .open(ActiveComposerPicker::Mention {
+                        query: self.composer.composer_input[query_start..cursor].to_owned(),
+                        start: mention_start,
+                    });
                 return;
             }
         }
@@ -843,16 +969,16 @@ impl DashboardState {
             {
                 let candidates = self.emoji_candidates_for_query(query);
                 if candidates.is_empty() {
-                    self.close_composer_mention_query();
-                    self.close_composer_emoji_query();
+                    self.composer.composer_picker.close();
                     return;
                 }
-                self.composer.composer_emoji_query = Some(query.to_owned());
-                self.composer.composer_emoji_start = Some(emoji_start);
-                self.composer.composer_emoji_selected = 0;
-                self.composer.composer_emoji_candidates = candidates;
-                self.close_composer_mention_query();
-                self.close_composer_command_query();
+                self.composer
+                    .composer_picker
+                    .open(ActiveComposerPicker::Emoji {
+                        query: query.to_owned(),
+                        start: emoji_start,
+                        candidates,
+                    });
                 return;
             }
         }
@@ -861,23 +987,42 @@ impl DashboardState {
             if candidates.is_empty() {
                 self.close_composer_command_query();
             } else {
-                self.composer.composer_command_query =
-                    Some(self.composer.composer_input[query_start..cursor].to_owned());
-                self.composer.composer_command_start = Some(query_start);
-                self.composer.composer_command_selected = self
-                    .composer
-                    .composer_command_selected
-                    .min(candidates.len() - 1);
-                self.composer.composer_command_candidates = candidates;
-                self.close_composer_mention_query();
-                self.close_composer_emoji_query();
+                let selected = if matches!(
+                    self.composer.composer_picker.active,
+                    Some(ActiveComposerPicker::Command { .. })
+                ) {
+                    self.composer
+                        .composer_picker
+                        .selected
+                        .min(candidates.len() - 1)
+                } else {
+                    0
+                };
+                let scroll = if matches!(
+                    self.composer.composer_picker.active,
+                    Some(ActiveComposerPicker::Command { .. })
+                ) {
+                    clamp_picker_scroll(
+                        selected,
+                        self.composer.composer_picker.scroll,
+                        MAX_MENTION_PICKER_VISIBLE,
+                        candidates.len(),
+                    )
+                } else {
+                    0
+                };
+                self.composer.composer_picker.active = Some(ActiveComposerPicker::Command {
+                    query: self.composer.composer_input[query_start..cursor].to_owned(),
+                    start: query_start,
+                    candidates,
+                });
+                self.composer.composer_picker.selected = selected;
+                self.composer.composer_picker.scroll = scroll;
                 return;
             }
         }
 
-        self.close_composer_mention_query();
-        self.close_composer_emoji_query();
-        self.close_composer_command_query();
+        self.composer.composer_picker.close();
     }
 
     fn should_start_composer_mention_query(&self, mention_start: usize, trigger: &str) -> bool {
@@ -1340,6 +1485,32 @@ fn composer_plus_colon_trigger_before_cursor(input: &str, cursor: usize) -> bool
         .chars()
         .last()
         .is_none_or(char::is_whitespace)
+}
+
+fn picker_window_start(
+    selected: usize,
+    scroll: usize,
+    visible_count: usize,
+    candidate_count: usize,
+) -> usize {
+    if candidate_count == 0 {
+        return 0;
+    }
+    clamp_picker_scroll(
+        selected.min(candidate_count - 1),
+        scroll,
+        visible_count,
+        candidate_count,
+    )
+}
+
+fn clamp_picker_scroll(
+    selected: usize,
+    scroll: usize,
+    visible_count: usize,
+    candidate_count: usize,
+) -> usize {
+    clamp_list_scroll(selected, scroll, visible_count.max(1), candidate_count)
 }
 
 #[cfg(test)]

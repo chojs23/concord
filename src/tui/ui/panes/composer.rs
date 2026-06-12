@@ -110,35 +110,25 @@ pub(in crate::tui::ui) fn render_composer_mention_picker(
     if candidates.is_empty() {
         return;
     }
-    let Some(area) = composer_picker_area(message_areas, candidates.len()) else {
+    let Some(setup) = composer_picker_render_setup(
+        message_areas,
+        candidates.len(),
+        state.composer_mention_selected(),
+        |visible_count| state.composer_mention_window_start(visible_count, candidates.len()),
+    ) else {
         return;
     };
-    frame.render_widget(Clear, area);
-    let visible_count = picker_visible_count(area, candidates.len());
-    let selected = state.composer_mention_selected().min(candidates.len() - 1);
-    let window_start = picker_window_start(candidates.len(), selected, visible_count);
-    let visible_candidates = &candidates[window_start..window_start + visible_count];
-    let shows_scrollbar = candidates.len() > visible_count;
-    let inner_width = picker_inner_width(area, shows_scrollbar);
-    let lines = mention_picker_lines(
-        visible_candidates,
-        selected.saturating_sub(window_start),
-        inner_width,
-    );
+    frame.render_widget(Clear, setup.area);
+    let visible_candidates = &candidates[setup.visible_range.clone()];
+    let lines = mention_picker_lines(visible_candidates, setup.selected_offset, setup.inner_width);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(DIM))
         .title(" mention ")
         .title_style(Style::default().fg(Color::White).bold());
-    frame.render_widget(Paragraph::new(lines).block(block), area);
-    render_vertical_scrollbar(
-        frame,
-        panel_scrollbar_area(area),
-        window_start,
-        visible_count,
-        candidates.len(),
-    );
+    frame.render_widget(Paragraph::new(lines).block(block), setup.area);
+    render_composer_picker_scrollbar(frame, &setup, candidates.len());
 }
 
 pub(in crate::tui::ui) fn render_composer_command_picker(
@@ -153,33 +143,25 @@ pub(in crate::tui::ui) fn render_composer_command_picker(
     if candidates.is_empty() {
         return;
     }
-    let Some(area) = composer_picker_area(message_areas, candidates.len()) else {
+    let Some(setup) = composer_picker_render_setup(
+        message_areas,
+        candidates.len(),
+        state.composer_command_selected(),
+        |visible_count| state.composer_command_window_start(visible_count, candidates.len()),
+    ) else {
         return;
     };
-    let visible_count = picker_visible_count(area, candidates.len());
-    let selected = state.composer_command_selected().min(candidates.len() - 1);
-    let window_start = picker_window_start(candidates.len(), selected, visible_count);
-    let shows_scrollbar = candidates.len() > visible_count;
-    let inner_width = picker_inner_width(area, shows_scrollbar);
     let lines = command_picker_lines(
-        &candidates[window_start..(window_start + visible_count).min(candidates.len())],
-        selected - window_start,
-        inner_width,
+        &candidates[setup.visible_range.clone()],
+        setup.selected_offset,
+        setup.inner_width,
     );
-    frame.render_widget(Clear, area);
+    frame.render_widget(Clear, setup.area);
     frame.render_widget(
         Paragraph::new(lines).block(Block::default().title(" Commands ").borders(Borders::ALL)),
-        area,
+        setup.area,
     );
-    if shows_scrollbar {
-        render_vertical_scrollbar(
-            frame,
-            panel_scrollbar_area(area),
-            window_start,
-            visible_count,
-            candidates.len(),
-        );
-    }
+    render_composer_picker_scrollbar(frame, &setup, candidates.len());
 }
 
 pub(in crate::tui::ui) fn render_composer_emoji_picker(
@@ -195,24 +177,24 @@ pub(in crate::tui::ui) fn render_composer_emoji_picker(
     if candidates.is_empty() {
         return;
     }
-    let Some(area) = composer_picker_area(message_areas, candidates.len()) else {
+    let Some(setup) = composer_picker_render_setup(
+        message_areas,
+        candidates.len(),
+        state.composer_emoji_selected(),
+        |visible_count| state.composer_emoji_window_start(visible_count, candidates.len()),
+    ) else {
         return;
     };
-    frame.render_widget(Clear, area);
-    let visible_count = picker_visible_count(area, candidates.len());
-    let selected = state.composer_emoji_selected().min(candidates.len() - 1);
-    let window_start = picker_window_start(candidates.len(), selected, visible_count);
-    let visible_candidates = &candidates[window_start..window_start + visible_count];
-    let shows_scrollbar = candidates.len() > visible_count;
-    let inner_width = picker_inner_width(area, shows_scrollbar);
+    frame.render_widget(Clear, setup.area);
+    let visible_candidates = &candidates[setup.visible_range.clone()];
     let ready_urls = emoji_images
         .iter()
         .map(|image| image.url.clone())
         .collect::<Vec<_>>();
     let lines = emoji_picker_lines(
         visible_candidates,
-        selected.saturating_sub(window_start),
-        inner_width,
+        setup.selected_offset,
+        setup.inner_width,
         &ready_urls,
         state.show_custom_emoji(),
     );
@@ -222,16 +204,58 @@ pub(in crate::tui::ui) fn render_composer_emoji_picker(
         .border_style(Style::default().fg(DIM))
         .title(" emoji ")
         .title_style(Style::default().fg(Color::White).bold());
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    frame.render_widget(Paragraph::new(lines).block(block), setup.area);
     if state.show_custom_emoji() {
-        render_composer_emoji_picker_images(frame, area, visible_candidates, emoji_images);
+        render_composer_emoji_picker_images(frame, setup.area, visible_candidates, emoji_images);
     }
+    render_composer_picker_scrollbar(frame, &setup, candidates.len());
+}
+
+struct ComposerPickerRenderSetup {
+    area: Rect,
+    visible_range: std::ops::Range<usize>,
+    selected_offset: usize,
+    inner_width: usize,
+}
+
+fn composer_picker_render_setup(
+    message_areas: MessageAreas,
+    candidate_count: usize,
+    selected: usize,
+    window_start_for_visible_count: impl FnOnce(usize) -> usize,
+) -> Option<ComposerPickerRenderSetup> {
+    let area = composer_picker_area(message_areas, candidate_count)?;
+    let visible_count = usize::from(area.height.saturating_sub(2))
+        .min(candidate_count)
+        .max(1);
+    let selected = selected.min(candidate_count.saturating_sub(1));
+    let window_start = window_start_for_visible_count(visible_count);
+    let visible_end = (window_start + visible_count).min(candidate_count);
+    let shows_scrollbar = candidate_count > visible_count;
+    let inner_width = area
+        .width
+        .saturating_sub(2)
+        .saturating_sub(u16::from(shows_scrollbar)) as usize;
+
+    Some(ComposerPickerRenderSetup {
+        area,
+        visible_range: window_start..visible_end,
+        selected_offset: selected.saturating_sub(window_start),
+        inner_width,
+    })
+}
+
+fn render_composer_picker_scrollbar(
+    frame: &mut Frame,
+    setup: &ComposerPickerRenderSetup,
+    candidate_count: usize,
+) {
     render_vertical_scrollbar(
         frame,
-        panel_scrollbar_area(area),
-        window_start,
-        visible_count,
-        candidates.len(),
+        panel_scrollbar_area(setup.area),
+        setup.visible_range.start,
+        setup.visible_range.len(),
+        candidate_count,
     );
 }
 
@@ -260,28 +284,6 @@ fn composer_picker_area(message_areas: MessageAreas, candidate_count: usize) -> 
         width,
         height,
     })
-}
-
-fn picker_visible_count(area: Rect, candidate_count: usize) -> usize {
-    usize::from(area.height.saturating_sub(2))
-        .min(candidate_count)
-        .max(1)
-}
-
-fn picker_window_start(total: usize, selected: usize, visible_count: usize) -> usize {
-    if total <= visible_count {
-        return 0;
-    }
-    selected
-        .saturating_add(1)
-        .saturating_sub(visible_count)
-        .min(total.saturating_sub(visible_count))
-}
-
-fn picker_inner_width(area: Rect, shows_scrollbar: bool) -> usize {
-    area.width
-        .saturating_sub(2)
-        .saturating_sub(u16::from(shows_scrollbar)) as usize
 }
 
 fn mention_picker_lines(

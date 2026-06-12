@@ -563,13 +563,10 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
     if state.composer_emoji_query().is_some() {
         let candidates = state.composer_emoji_candidates();
         if !candidates.is_empty() {
-            let selected = state
-                .composer_emoji_selected()
-                .min(candidates.len().saturating_sub(1));
             let visible_items = candidates.len().clamp(1, MAX_MENTION_PICKER_VISIBLE);
-            let visible_range =
-                selection::visible_item_range(candidates.len(), selected, visible_items);
-            for candidate in &candidates[visible_range] {
+            let window_start = state.composer_emoji_window_start(visible_items, candidates.len());
+            let window_end = (window_start + visible_items).min(candidates.len());
+            for candidate in &candidates[window_start..window_end] {
                 if let Some(url) = candidate.custom_image_url.clone()
                     && seen.insert(url.clone())
                 {

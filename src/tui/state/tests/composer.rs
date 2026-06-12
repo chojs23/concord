@@ -286,6 +286,18 @@ fn builtin_command_picker_precedes_app_commands_and_blocks_gif_send() {
 }
 
 #[test]
+fn no_match_emoji_query_closes_active_command_picker() {
+    let mut state = state_with_application_command(application_command("poll", Vec::new()));
+    type_composer_text(&mut state, "/po");
+    assert_eq!(state.composer_command_query(), Some("/po"));
+
+    state.insert_composer_text_at_cursor(" :qq");
+
+    assert_eq!(state.composer_command_query(), None);
+    assert_eq!(state.composer_emoji_query(), None);
+}
+
+#[test]
 fn submit_slash_command_emits_direct_interaction_options() {
     let command = application_command(
         "echo",
@@ -844,10 +856,10 @@ fn move_selection_navigates_filtered_list() {
     let candidates = state.composer_mention_candidates();
     assert!(candidates.len() >= 2);
 
-    state.move_composer_mention_selection(1);
+    state.move_active_composer_picker_selection(1);
     assert_eq!(state.composer_mention_selected(), 1);
 
-    state.move_composer_mention_selection(-5);
+    state.move_active_composer_picker_selection(-5);
     assert_eq!(state.composer_mention_selected(), 0);
 }
 
@@ -875,11 +887,108 @@ fn mention_picker_keeps_more_than_visible_candidates_selectable() {
         "picker should keep every matching candidate, got {candidates:?}"
     );
 
-    state.move_composer_mention_selection(9);
+    state.move_active_composer_picker_selection(9);
 
     assert_eq!(state.composer_mention_selected(), 9);
     assert!(state.confirm_composer_mention());
     assert_eq!(state.composer_input(), "@Scroll 09 ");
+}
+
+#[test]
+fn composer_pickers_keep_selection_moving_when_reversing_scroll() {
+    const VISIBLE: usize = 8;
+
+    let mut mention_state = state_with_writable_channel_and_members();
+    for index in 0..16 {
+        mention_state.push_event(AppEvent::GuildMemberUpsert {
+            guild_id: Id::new(1),
+            member: member_with_username(
+                Id::new(200 + index),
+                format!("Scroll {index:02}"),
+                format!("scroll{index:02}"),
+            ),
+        });
+    }
+    mention_state.start_composer();
+    type_composer_text(&mut mention_state, "@scroll");
+
+    let mention_count = mention_state.composer_mention_candidates().len();
+    mention_state.move_active_composer_picker_selection(10);
+    let mention_start = mention_state.composer_mention_window_start(VISIBLE, mention_count);
+    mention_state.move_active_composer_picker_selection(-1);
+
+    assert_eq!(
+        mention_state.composer_mention_window_start(VISIBLE, mention_count),
+        mention_start,
+        "moving upward once should move the picker cursor before scrolling the viewport"
+    );
+    assert_eq!(
+        mention_state.composer_mention_selected() - mention_start,
+        3,
+        "mention picker cursor should not remain pinned to the bottom row"
+    );
+    let cramped_mention_start = mention_state.composer_mention_window_start(3, mention_count);
+    assert_eq!(
+        mention_state.composer_mention_selected() - cramped_mention_start,
+        1,
+        "cramped mention picker cursor should stay off the bottom row"
+    );
+
+    let mut emoji_state = state_with_writable_channel();
+    emoji_state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id: Id::new(1),
+        emojis: (0..16)
+            .map(|index| {
+                CustomEmojiInfo::test(Id::new(400 + index), format!("overflow_{index:02}"))
+            })
+            .collect(),
+    });
+    emoji_state.start_composer();
+    type_composer_text(&mut emoji_state, ":ov");
+
+    let emoji_count = emoji_state.composer_emoji_candidates().len();
+    emoji_state.move_active_composer_picker_selection(10);
+    let emoji_start = emoji_state.composer_emoji_window_start(VISIBLE, emoji_count);
+    emoji_state.move_active_composer_picker_selection(-1);
+
+    assert_eq!(
+        emoji_state.composer_emoji_window_start(VISIBLE, emoji_count),
+        emoji_start,
+        "moving upward once should move the emoji cursor before scrolling the viewport"
+    );
+    assert_eq!(
+        emoji_state.composer_emoji_selected() - emoji_start,
+        3,
+        "emoji picker cursor should not remain pinned to the bottom row"
+    );
+
+    let mut command_state = state_with_writable_channel();
+    command_state.push_event(AppEvent::ApplicationCommandsLoaded {
+        guild_id: Some(Id::new(1)),
+        commands: (0..16)
+            .map(|index| {
+                ApplicationCommandInfo::test(Id::new(300 + index), format!("scroll{index:02}"))
+            })
+            .collect(),
+    });
+    command_state.start_composer();
+    type_composer_text(&mut command_state, "/scroll");
+
+    let command_count = command_state.composer_command_candidates().len();
+    command_state.move_active_composer_picker_selection(10);
+    let command_start = command_state.composer_command_window_start(VISIBLE, command_count);
+    command_state.move_active_composer_picker_selection(-1);
+
+    assert_eq!(
+        command_state.composer_command_window_start(VISIBLE, command_count),
+        command_start,
+        "moving upward once should move the command cursor before scrolling the viewport"
+    );
+    assert_eq!(
+        command_state.composer_command_selected() - command_start,
+        3,
+        "slash command picker cursor should not remain pinned to the bottom row"
+    );
 }
 
 #[test]
@@ -889,7 +998,7 @@ fn cancel_picker_keeps_typed_text() {
     state.push_composer_char('@');
     state.push_composer_char('s');
 
-    state.cancel_composer_mention();
+    state.cancel_active_composer_picker();
     assert_eq!(state.composer_mention_query(), None);
     assert_eq!(state.composer_input(), "@s");
 }
@@ -1020,7 +1129,7 @@ fn emoji_picker_keeps_more_than_visible_candidates_selectable() {
         "picker should keep every matching candidate, got {candidates:?}"
     );
 
-    state.move_composer_emoji_selection(9);
+    state.move_active_composer_picker_selection(9);
 
     assert_eq!(state.composer_emoji_selected(), 9);
     assert!(state.confirm_composer_emoji());
@@ -1410,7 +1519,7 @@ fn cancel_emoji_picker_keeps_typed_text() {
         state.push_composer_char(ch);
     }
 
-    state.cancel_composer_emoji();
+    state.cancel_active_composer_picker();
 
     assert_eq!(state.composer_emoji_query(), None);
     assert_eq!(state.composer_input(), ":he");

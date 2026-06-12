@@ -87,11 +87,29 @@ pub(in crate::tui) struct MessagePaneSignature {
     pub(in crate::tui) new_messages_count: usize,
     message_pane_title: String,
     typing_footer: Option<String>,
-    composer_mention_query: Option<String>,
-    composer_mention_selected: usize,
-    composer_mention_candidates: DebugSignature,
+    composer_picker: ComposerPickerSignature,
     pub(in crate::tui) visible_messages: Vec<DebugSignature>,
     visible_forum_posts: Vec<DebugSignature>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ComposerPickerSignature {
+    None,
+    Mention {
+        query: String,
+        selected: usize,
+        candidates: DebugSignature,
+    },
+    Emoji {
+        query: String,
+        selected: usize,
+        candidates: DebugSignature,
+    },
+    Command {
+        query: String,
+        selected: usize,
+        candidates: DebugSignature,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -515,9 +533,7 @@ pub(in crate::tui) fn visible_dashboard_signature(
             new_messages_count: state.new_messages_count(),
             message_pane_title: state.message_pane_title(),
             typing_footer: state.typing_footer_for_selected_channel(),
-            composer_mention_query: state.composer_mention_query().map(str::to_owned),
-            composer_mention_selected: state.composer_mention_selected(),
-            composer_mention_candidates: debug_signature(&state.composer_mention_candidates()),
+            composer_picker: composer_picker_signature(state),
             visible_messages: state
                 .visible_messages()
                 .into_iter()
@@ -566,16 +582,37 @@ fn visible_dashboard_changes(
             || before.messages.message_line_scroll != after.messages.message_line_scroll
             || before.messages.message_pane_title != after.messages.message_pane_title
             || before.messages.typing_footer != after.messages.typing_footer
-            || before.messages.composer_mention_query != after.messages.composer_mention_query
-            || before.messages.composer_mention_selected
-                != after.messages.composer_mention_selected
-            || before.messages.composer_mention_candidates
-                != after.messages.composer_mention_candidates
+            || before.messages.composer_picker != after.messages.composer_picker
             || before.messages.visible_messages != after.messages.visible_messages
             || before.messages.visible_forum_posts != after.messages.visible_forum_posts,
         members: before.members != after.members,
         new_message_notice: before.messages.new_messages_count != after.messages.new_messages_count,
     }
+}
+
+fn composer_picker_signature(state: &DashboardState) -> ComposerPickerSignature {
+    if let Some(query) = state.composer_mention_query() {
+        return ComposerPickerSignature::Mention {
+            query: query.to_owned(),
+            selected: state.composer_mention_selected(),
+            candidates: debug_signature(&state.composer_mention_candidates()),
+        };
+    }
+    if let Some(query) = state.composer_emoji_query() {
+        return ComposerPickerSignature::Emoji {
+            query: query.to_owned(),
+            selected: state.composer_emoji_selected(),
+            candidates: debug_signature(&state.composer_emoji_candidates()),
+        };
+    }
+    if let Some(query) = state.composer_command_query() {
+        return ComposerPickerSignature::Command {
+            query: query.to_owned(),
+            selected: state.composer_command_selected(),
+            candidates: debug_signature(&state.composer_command_candidates()),
+        };
+    }
+    ComposerPickerSignature::None
 }
 
 fn channel_switcher_item_signature(
