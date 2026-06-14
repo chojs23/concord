@@ -122,6 +122,8 @@ pub struct InlinePreviewInfo<'a> {
     pub width: Option<u64>,
     pub height: Option<u64>,
     pub accent_color: Option<u32>,
+    pub proxy_preview_only: bool,
+    pub show_play_marker: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -508,6 +510,19 @@ impl AttachmentInfo {
     }
 
     pub fn inline_preview_info(&self) -> Option<InlinePreviewInfo<'_>> {
+        if self.is_video() && !self.proxy_url.is_empty() {
+            return Some(InlinePreviewInfo {
+                url: self.proxy_url.as_str(),
+                proxy_url: Some(self.proxy_url.as_str()),
+                filename: self.filename.as_str(),
+                width: self.width,
+                height: self.height,
+                accent_color: None,
+                proxy_preview_only: true,
+                show_play_marker: true,
+            });
+        }
+
         Some(InlinePreviewInfo {
             url: self.inline_preview_url()?,
             proxy_url: (!self.proxy_url.is_empty()).then_some(self.proxy_url.as_str()),
@@ -515,12 +530,16 @@ impl AttachmentInfo {
             width: self.width,
             height: self.height,
             accent_color: None,
+            proxy_preview_only: false,
+            show_play_marker: false,
         })
     }
 }
 
 impl EmbedInfo {
     pub fn inline_preview_info(&self) -> Option<InlinePreviewInfo<'_>> {
+        let show_play_marker = self.video_url.is_some();
+
         if let Some(url) = self.thumbnail_url.as_deref() {
             return Some(InlinePreviewInfo {
                 url,
@@ -529,6 +548,8 @@ impl EmbedInfo {
                 width: self.thumbnail_width,
                 height: self.thumbnail_height,
                 accent_color: Some(self.color.unwrap_or(0xff0000)),
+                proxy_preview_only: false,
+                show_play_marker,
             });
         }
 
@@ -539,6 +560,8 @@ impl EmbedInfo {
             width: self.image_width,
             height: self.image_height,
             accent_color: Some(self.color.unwrap_or(0xff0000)),
+            proxy_preview_only: false,
+            show_play_marker,
         })
     }
 }

@@ -1,8 +1,11 @@
 use std::time::{Duration, Instant};
 
-use super::{DashboardState, ToastKind, ToastMessage, ToastView};
+use crate::discord::MediaPlaybackRequestId;
+
+use super::{DashboardState, MediaPlaybackPreparingUiState, ToastKind, ToastMessage, ToastView};
 
 const TOAST_DURATION: Duration = Duration::from_secs(2);
+const MEDIA_PLAYBACK_PREPARING_TEXT: &str = "Preparing media playback...";
 
 impl DashboardState {
     pub(in crate::tui) fn show_success_toast(&mut self, text: impl Into<String>, now: Instant) {
@@ -14,11 +17,53 @@ impl DashboardState {
     }
 
     fn show_toast(&mut self, text: impl Into<String>, kind: ToastKind, now: Instant) {
+        self.runtime.media_playback_preparing = None;
         self.runtime.toast_message = Some(ToastMessage {
             text: text.into(),
             kind,
-            expires_at: now + TOAST_DURATION,
+            expires_at: Some(now + TOAST_DURATION),
         });
+    }
+
+    pub(in crate::tui) fn show_media_playback_preparing_toast(
+        &mut self,
+        request_id: MediaPlaybackRequestId,
+        url: String,
+    ) {
+        self.runtime.media_playback_preparing =
+            Some(MediaPlaybackPreparingUiState { request_id, url });
+        self.runtime.toast_message = Some(ToastMessage {
+            text: MEDIA_PLAYBACK_PREPARING_TEXT.to_owned(),
+            kind: ToastKind::Info,
+            expires_at: None,
+        });
+    }
+
+    pub(in crate::tui) fn clear_media_playback_preparing(
+        &mut self,
+        request_id: MediaPlaybackRequestId,
+    ) -> bool {
+        if self
+            .runtime
+            .media_playback_preparing
+            .as_ref()
+            .map(|preparing| preparing.request_id)
+            != Some(request_id)
+        {
+            return false;
+        }
+
+        self.runtime.media_playback_preparing = None;
+        if self
+            .runtime
+            .toast_message
+            .as_ref()
+            .is_some_and(|message| message.expires_at.is_none())
+        {
+            self.runtime.toast_message = None;
+            return true;
+        }
+        false
     }
 
     pub(in crate::tui) fn clear_expired_toast(&mut self, now: Instant) -> bool {
@@ -26,7 +71,8 @@ impl DashboardState {
             .runtime
             .toast_message
             .as_ref()
-            .is_some_and(|message| message.expires_at <= now)
+            .and_then(|message| message.expires_at)
+            .is_some_and(|expires_at| expires_at <= now)
         {
             self.runtime.toast_message = None;
             return true;
@@ -38,7 +84,7 @@ impl DashboardState {
         self.runtime
             .toast_message
             .as_ref()
-            .map(|message| message.expires_at)
+            .and_then(|message| message.expires_at)
     }
 
     pub fn toast_message(&self) -> Option<ToastView<'_>> {
@@ -55,6 +101,8 @@ impl DashboardState {
 #[cfg(test)]
 mod tests {
     use std::time::Instant;
+
+    use crate::discord::AppEvent;
 
     use super::*;
 
@@ -91,5 +139,34 @@ mod tests {
             state.next_toast_deadline(),
             Some(now + Duration::from_secs(1) + TOAST_DURATION)
         );
+    }
+
+    #[test]
+    fn media_playback_preparing_toast_waits_for_matching_ready_event() {
+        let mut state = DashboardState::new();
+        let now = Instant::now();
+        let first_request_id = MediaPlaybackRequestId::new(1);
+        let second_request_id = MediaPlaybackRequestId::new(2);
+
+        state.show_media_playback_preparing_toast(
+            second_request_id,
+            "https://example.com/video.mp4".to_owned(),
+        );
+
+        let toast = state.toast_message().expect("preparing toast is visible");
+        assert_eq!(toast.text, MEDIA_PLAYBACK_PREPARING_TEXT);
+        assert_eq!(toast.kind, ToastKind::Info);
+        assert_eq!(state.next_toast_deadline(), None);
+        assert!(!state.clear_expired_toast(now + TOAST_DURATION));
+        state.push_event(AppEvent::MediaPlaybackWindowReady {
+            request_id: first_request_id,
+            url: "https://example.com/video.mp4".to_owned(),
+        });
+        assert!(state.toast_message().is_some());
+        state.push_event(AppEvent::MediaPlaybackWindowReady {
+            request_id: second_request_id,
+            url: "https://example.com/video.mp4".to_owned(),
+        });
+        assert!(state.toast_message().is_none());
     }
 }

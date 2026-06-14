@@ -1,5 +1,5 @@
 use super::*;
-use crate::discord::{AppCommand, AttachmentDownloadId};
+use crate::discord::{AppCommand, AttachmentDownloadId, MediaPlaybackSource, MediaPlaybackTarget};
 
 fn message_action(actions: &[MessageActionItem], kind: MessageActionKind) -> &MessageActionItem {
     actions
@@ -31,6 +31,7 @@ fn message_action_items_reflect_selected_message_capabilities() {
             MessageActionKind::OpenDeleteConfirmation,
             MessageActionKind::Edit,
             MessageActionKind::OpenUrl,
+            MessageActionKind::PlayMedia,
             MessageActionKind::ViewAttachment,
             MessageActionKind::GoToReferencedMessage,
             MessageActionKind::ShowProfile,
@@ -48,6 +49,7 @@ fn message_action_items_reflect_selected_message_capabilities() {
     );
     assert!(message_action(&actions, MessageActionKind::ShowProfile).enabled);
     assert!(!message_action(&actions, MessageActionKind::GoToReferencedMessage).enabled);
+    assert!(!message_action(&actions, MessageActionKind::PlayMedia).enabled);
     assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
     assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
     assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
@@ -90,6 +92,7 @@ fn direct_attachment_message_action_opens_attachment_viewer() {
             url: Some("https://cdn.discordapp.com/image-10.png".to_owned()),
             size_bytes: 2048,
             is_image: true,
+            is_video: false,
         })
     );
 }
@@ -138,6 +141,37 @@ fn attachment_viewer_navigation_clamps_and_downloads_current_attachment() {
     );
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::AttachmentViewer));
     assert!(state.attachment_downloads().is_empty());
+}
+
+#[test]
+fn attachment_viewer_play_selected_attachment_only_plays_videos() {
+    let mut state = state_with_messages(1);
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![MessageInfo {
+            content: Some(String::new()),
+            attachments: vec![image_attachment(10), video_attachment(11)],
+            ..message_info(Id::new(2), 1)
+        }],
+    ));
+    state.focus_pane(FocusPane::Messages);
+    state.direct_open_selected_message_attachment_viewer();
+
+    assert_eq!(state.play_selected_attachment_viewer_attachment(), None);
+
+    state.move_attachment_viewer_next();
+
+    assert_eq!(
+        state.play_selected_attachment_viewer_attachment(),
+        Some(AppCommand::PlayMedia {
+            target: MediaPlaybackTarget {
+                url: "https://cdn.discordapp.com/clip-11.mp4".to_owned(),
+                label: "clip-11.mp4".to_owned(),
+                source: MediaPlaybackSource::AttachmentViewer,
+            },
+            request_id: None,
+        })
+    );
 }
 
 #[test]
@@ -529,6 +563,7 @@ fn reply_attachment_action_can_open_attachment_viewer() {
             url: Some("https://cdn.discordapp.com/image-1.png".to_owned()),
             size_bytes: 2048,
             is_image: true,
+            is_video: false,
         })
     );
 }
@@ -582,6 +617,72 @@ fn direct_message_url_opens_url_picker_for_multiple_urls() {
         !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageUrlPicker)
     );
     assert!(!state.is_message_action_context_active());
+}
+
+#[test]
+fn direct_play_media_prefers_video_attachment() {
+    let mut state = state_with_messages(1);
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![MessageInfo {
+            content: Some("also https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
+            attachments: vec![video_attachment(10)],
+            ..message_info(Id::new(2), 1)
+        }],
+    ));
+    state.focus_pane(FocusPane::Messages);
+
+    assert_eq!(
+        state.direct_play_selected_message_media(),
+        Some(AppCommand::PlayMedia {
+            target: MediaPlaybackTarget {
+                url: "https://cdn.discordapp.com/clip-10.mp4".to_owned(),
+                label: "clip-10.mp4".to_owned(),
+                source: MediaPlaybackSource::Message,
+            },
+            request_id: None,
+        })
+    );
+}
+
+#[test]
+fn direct_play_media_uses_youtube_url() {
+    let mut state = state_with_messages(1);
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![MessageInfo {
+            content: Some("watch https://youtu.be/dQw4w9WgXcQ".to_owned()),
+            ..message_info(Id::new(2), 1)
+        }],
+    ));
+    state.focus_pane(FocusPane::Messages);
+
+    assert_eq!(
+        state.direct_play_selected_message_media(),
+        Some(AppCommand::PlayMedia {
+            target: MediaPlaybackTarget {
+                url: "https://youtu.be/dQw4w9WgXcQ".to_owned(),
+                label: "media URL".to_owned(),
+                source: MediaPlaybackSource::Message,
+            },
+            request_id: None,
+        })
+    );
+}
+
+#[test]
+fn direct_play_media_ignores_plain_urls() {
+    let mut state = state_with_messages(1);
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![MessageInfo {
+            content: Some("read https://example.com/docs".to_owned()),
+            ..message_info(Id::new(2), 1)
+        }],
+    ));
+    state.focus_pane(FocusPane::Messages);
+
+    assert_eq!(state.direct_play_selected_message_media(), None);
 }
 
 #[test]

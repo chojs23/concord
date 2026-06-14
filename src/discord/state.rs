@@ -604,6 +604,7 @@ impl DiscordState {
             | AppEvent::CurrentUserCapabilities { .. }
             | AppEvent::ApplicationCommandsLoaded { .. }
             | AppEvent::GatewayError { .. }
+            | AppEvent::MediaPlaybackWindowReady { .. }
             | AppEvent::AttachmentDownloadStarted { .. }
             | AppEvent::AttachmentDownloadProgress { .. }
             | AppEvent::AttachmentDownloadCompleted { .. }
@@ -1411,6 +1412,7 @@ impl DiscordState {
                 self.upsert_notification_settings(settings);
             }
             AppEvent::GatewayError { .. }
+            | AppEvent::MediaPlaybackWindowReady { .. }
             | AppEvent::ApplicationCommandsLoaded { .. }
             | AppEvent::AttachmentDownloadStarted { .. }
             | AppEvent::AttachmentDownloadProgress { .. }

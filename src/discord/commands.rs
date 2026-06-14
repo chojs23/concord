@@ -519,6 +519,10 @@ pub enum AppCommand {
     OpenUrl {
         url: String,
     },
+    PlayMedia {
+        target: MediaPlaybackTarget,
+        request_id: Option<MediaPlaybackRequestId>,
+    },
     DownloadAttachment {
         id: AttachmentDownloadId,
         url: String,
@@ -603,4 +607,26 @@ fn normalized_search_token(value: &str) -> String {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DownloadAttachmentSource {
     AttachmentViewer,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MediaPlaybackSource {
+    Message,
+    AttachmentViewer,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MediaPlaybackRequestId(u64);
+
+impl MediaPlaybackRequestId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaPlaybackTarget {
+    pub url: String,
+    pub label: String,
+    pub source: MediaPlaybackSource,
 }

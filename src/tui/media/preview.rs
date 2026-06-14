@@ -482,6 +482,7 @@ impl ImagePreviewTarget {
             visible_preview_height: self.visible_preview_height,
             top_clip_rows: self.top_clip_rows,
             accent_color: self.accent_color,
+            show_play_marker: self.show_play_marker,
             viewer: self.viewer,
             mask_circular: false,
         }

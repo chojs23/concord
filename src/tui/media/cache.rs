@@ -87,6 +87,7 @@ impl AvatarProtocolKey {
             visible_preview_height: self.visible_preview_height,
             top_clip_rows: self.top_clip_rows,
             accent_color: None,
+            show_play_marker: false,
             mask_circular: self.circular,
         }
     }

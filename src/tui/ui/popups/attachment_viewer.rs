@@ -34,7 +34,8 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
         ..inner
     });
 
-    if item.is_image
+    let can_preview = item.is_image || item.is_video;
+    if can_preview
         && state.show_images()
         && let Some(image_preview) = image_preview
     {
@@ -44,7 +45,7 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
             image_preview.preview_height,
         );
         render_image_preview(frame, preview_area, image_preview.state);
-    } else if item.is_image && state.show_images() {
+    } else if can_preview && state.show_images() {
         frame.render_widget(
             Paragraph::new(format!("loading {}...", item.filename))
                 .style(Style::default().fg(DIM))

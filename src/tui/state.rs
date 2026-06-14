@@ -46,7 +46,9 @@ use options::SettingsState;
 use pane_filter::PaneFilterState;
 use popups::{ModalPopup, PopupUiState};
 use request_tracking::RequestTrackingState;
-use runtime_state::{RuntimeUiState, ToastMessage, VoiceConnectionUiState};
+use runtime_state::{
+    MediaPlaybackPreparingUiState, RuntimeUiState, ToastMessage, VoiceConnectionUiState,
+};
 use scroll::clamp_selected_index;
 
 pub use composer::{
@@ -75,6 +77,7 @@ pub use presentation::{discord_color, folder_color, presence_color, presence_mar
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToastKind {
+    Info,
     Success,
     Error,
 }
@@ -189,6 +192,9 @@ impl DashboardState {
                 logging::error("tui", message);
                 self.runtime.gateway_error = Some(message.clone());
                 self.show_error_toast(message, Instant::now());
+            }
+            AppEvent::MediaPlaybackWindowReady { request_id, .. } => {
+                self.clear_media_playback_preparing(*request_id);
             }
             AppEvent::CurrentUserCapabilities { has_nitro } => {
                 self.discord.current_user_has_nitro = Some(*has_nitro);

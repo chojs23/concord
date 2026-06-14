@@ -334,6 +334,32 @@ fn image_preview_targets_use_resized_embed_media_proxy_url() {
         )
     );
     assert_eq!(targets[0].filename, "embed-thumbnail");
+    assert!(targets[0].show_play_marker);
+}
+
+#[test]
+fn image_preview_targets_do_not_mark_plain_image_embed_thumbnail_as_playable() {
+    let mut state = state_with_image_messages(1, &[]);
+    push_media_message(
+        &mut state,
+        MessageCreateFixture {
+            message_id: Id::new(2),
+            content: Some("https://example.com/post".to_owned()),
+            embeds: vec![EmbedInfo {
+                thumbnail_url: Some("https://example.com/photo.png".to_owned()),
+                thumbnail_width: Some(640),
+                thumbnail_height: Some(480),
+                ..EmbedInfo::test()
+            }],
+            ..guild_message_create_fixture()
+        },
+    );
+
+    let targets = visible_image_preview_targets(&state, layout(8));
+
+    assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
+    assert_eq!(targets[0].filename, "embed-thumbnail");
+    assert!(!targets[0].show_play_marker);
 }
 
 #[test]
@@ -428,37 +454,59 @@ fn image_preview_targets_use_resized_images_ext_embed_proxy_url() {
 
 #[test]
 fn image_preview_targets_layout_album_grids() {
+    let portrait_album = {
+        let mut first = image_attachment(1);
+        first.width = Some(1080);
+        first.height = Some(1920);
+        let mut second = image_attachment(2);
+        second.width = Some(1080);
+        second.height = Some(1920);
+        vec![first, second]
+    };
     let cases = [
         (
-            3,
-            vec![(0, 0, 0, 8, 3), (1, 8, 0, 8, 2), (2, 8, 2, 8, 1)],
+            (1..=3).map(image_attachment).collect::<Vec<_>>(),
+            vec![(0, 0, 0, 8, 3), (1, 8, 0, 8, 2), (2, 8, 2, 4, 1)],
             vec![0, 0, 0],
         ),
         (
-            4,
+            (1..=4).map(image_attachment).collect::<Vec<_>>(),
             vec![
                 (0, 0, 0, 8, 2),
                 (1, 8, 0, 8, 2),
-                (2, 0, 2, 8, 1),
-                (3, 8, 2, 8, 1),
+                (2, 0, 2, 4, 1),
+                (3, 4, 2, 4, 1),
             ],
             vec![0, 0, 0, 0],
         ),
         (
-            5,
+            (1..=5).map(image_attachment).collect::<Vec<_>>(),
             vec![
                 (0, 0, 0, 8, 2),
                 (1, 8, 0, 8, 2),
-                (2, 0, 2, 8, 1),
-                (3, 8, 2, 8, 1),
+                (2, 0, 2, 4, 1),
+                (3, 4, 2, 4, 1),
             ],
             vec![0, 0, 0, 1],
         ),
+        (
+            portrait_album,
+            vec![(0, 0, 0, 5, 3), (1, 5, 0, 5, 3)],
+            vec![0, 0],
+        ),
     ];
 
-    for (attachment_count, expected_geometry, expected_overflow) in cases {
+    for (attachments, expected_geometry, expected_overflow) in cases {
         let mut state = state_with_image_messages(0, &[]);
-        push_album_message(&mut state, 1, attachment_count);
+        push_media_message(
+            &mut state,
+            MessageCreateFixture {
+                message_id: Id::new(1),
+                content: Some("album".to_owned()),
+                attachments,
+                ..guild_message_create_fixture()
+            },
+        );
 
         let targets = visible_image_preview_targets(&state, layout(12));
 
@@ -500,6 +548,35 @@ fn attachment_viewer_target_fits_source_image_inside_viewer_layout() {
     assert_eq!(target.preview_width, 52);
     assert_eq!(target.preview_height, 13);
     assert_eq!(target.visible_preview_height, 13);
+}
+
+#[test]
+fn attachment_viewer_target_shows_video_thumbnail_preview() {
+    let mut state = state_with_image_messages(1, &[]);
+    push_media_message(
+        &mut state,
+        MessageCreateFixture {
+            message_id: Id::new(2),
+            content: Some("clip".to_owned()),
+            attachments: vec![video_attachment(2)],
+            ..guild_message_create_fixture()
+        },
+    );
+    state.focus_pane(FocusPane::Messages);
+    state.move_down();
+    state.direct_open_selected_message_attachment_viewer();
+
+    let target = visible_image_preview_targets(&state, layout(12))
+        .into_iter()
+        .next()
+        .expect("viewer should create one video thumbnail target");
+
+    assert!(target.viewer);
+    assert!(target.show_play_marker);
+    assert_eq!(
+        target.url,
+        "https://media.discordapp.net/attachments/691/150/clip-2.mp4?format=webp&width=540&height=960"
+    );
 }
 
 #[test]
@@ -834,7 +911,7 @@ fn image_preview_targets_account_for_date_separator_rows() {
 }
 
 #[test]
-fn video_attachment_does_not_request_original_as_image_preview() {
+fn video_attachment_uses_proxy_webp_thumbnail_as_image_preview() {
     let mut state = state_with_image_messages(1, &[]);
     push_media_message(
         &mut state,
@@ -848,7 +925,47 @@ fn video_attachment_does_not_request_original_as_image_preview() {
 
     let targets = visible_image_preview_targets(&state, layout(6));
 
-    assert!(targets.is_empty());
+    assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
+    assert_eq!(
+        targets[0].url,
+        "https://media.discordapp.net/attachments/691/150/clip-2.mp4?format=webp&width=540&height=960"
+    );
+    assert_eq!(targets[0].filename, "clip-2.mp4");
+    assert!(targets[0].show_play_marker);
+    assert_eq!(targets[0].preview_width, 5);
+    assert_eq!(targets[0].preview_height, 3);
+}
+
+#[test]
+fn original_quality_video_attachment_still_uses_proxy_webp_thumbnail() {
+    let mut state = state_with_image_messages_and_display_options(
+        0,
+        &[],
+        DisplayOptions {
+            image_preview_quality: ImagePreviewQualityPreset::Original,
+            ..DisplayOptions::default()
+        },
+    );
+    let mut attachment = video_attachment(2);
+    attachment.proxy_url = concat!(
+        "https://media.discordapp.net/attachments/691/150/clip.mp4",
+        "?ex=abc&is=def&hm=123&format=png&width=4000&height=3000"
+    )
+    .to_owned();
+    push_attachment_message(&mut state, attachment);
+
+    let target = visible_image_preview_targets(&state, layout(12))
+        .into_iter()
+        .next()
+        .expect("video attachment should produce preview target");
+
+    assert_eq!(
+        target.url,
+        concat!(
+            "https://media.discordapp.net/attachments/691/150/clip.mp4",
+            "?ex=abc&is=def&hm=123&format=webp&width=563&height=1000"
+        )
+    );
 }
 
 #[test]
@@ -903,6 +1020,7 @@ fn image_preview_targets_downscale_youtube_embed_image_url() {
         "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg?token=abc"
     );
     assert_eq!(targets[0].filename, "embed-image");
+    assert!(targets[0].show_play_marker);
 }
 
 #[test]
@@ -1462,6 +1580,7 @@ fn clipped_preview_image_stays_within_preview_pixel_bounds() {
         visible_preview_height: 3,
         top_clip_rows: 0,
         accent_color: None,
+        show_play_marker: false,
         mask_circular: false,
     };
 
@@ -1472,6 +1591,45 @@ fn clipped_preview_image_stays_within_preview_pixel_bounds() {
     assert!(resized.height() <= 60);
     assert!(resized.width() < image.width());
     assert!(resized.height() < image.height());
+}
+
+#[test]
+fn clipped_video_preview_draws_play_marker_into_image_pixels() {
+    let image =
+        DynamicImage::ImageRgba8(ImageBuffer::from_pixel(200, 400, Rgba([20, 30, 40, 255])));
+    let render_info = ImagePreviewRenderInfo {
+        viewer: false,
+        message_index: 0,
+        preview_x_offset_columns: 0,
+        preview_y_offset_rows: 0,
+        preview_width: 16,
+        preview_height: 3,
+        preview_overflow_count: 0,
+        visible_preview_height: 3,
+        top_clip_rows: 0,
+        accent_color: None,
+        show_play_marker: true,
+        mask_circular: false,
+    };
+
+    let marked = clipped_preview_image(&image, (10, 20), render_info)
+        .expect("preview dimensions should produce resized image")
+        .to_rgba8();
+    let center = marked.get_pixel(marked.width() / 2, marked.height() / 2);
+
+    assert!(
+        center.0[0] > 150 && center.0[1] > 150 && center.0[2] > 150,
+        "center pixel should contain the bright play triangle, got {center:?}"
+    );
+    assert_eq!(
+        center.0[3], 255,
+        "play marker should be drawn over fitted image content, got {center:?}"
+    );
+    let left_edge = marked.get_pixel(0, marked.height() / 2);
+    assert_eq!(
+        left_edge.0[3], 0,
+        "portrait thumbnail should be centered inside transparent canvas, got {left_edge:?}"
+    );
 }
 
 #[test]
@@ -1920,6 +2078,7 @@ fn image_preview_target(id: u64) -> ImagePreviewTarget {
         visible_preview_height: 3,
         top_clip_rows: 0,
         accent_color: None,
+        show_play_marker: false,
         message_id: Id::new(id),
         url: format!("https://cdn.discordapp.com/image-{id}.png"),
         filename: format!("image-{id}.png"),
@@ -1941,11 +2100,11 @@ fn image_attachment(id: u64) -> AttachmentInfo {
 fn video_attachment(id: u64) -> AttachmentInfo {
     AttachmentInfo {
         url: format!("https://cdn.discordapp.com/clip-{id}.mp4"),
-        proxy_url: format!("https://media.discordapp.net/clip-{id}.mp4"),
+        proxy_url: format!("https://media.discordapp.net/attachments/691/150/clip-{id}.mp4"),
         content_type: Some("video/mp4".to_owned()),
         size: 78_364_758,
-        width: Some(1920),
-        height: Some(1080),
+        width: Some(1080),
+        height: Some(1920),
         ..AttachmentInfo::test(Id::new(id), format!("clip-{id}.mp4"))
     }
 }

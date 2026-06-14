@@ -231,6 +231,9 @@ If your terminal does not support any graphics protocol, images will be rendered
 
 You can toggle image viewing on or off in the configuration file. When image viewing is off, attachments and emojis will be shown as text placeholders.
 
+Video playback uses [mpv](https://mpv.io/). Make sure `mpv` is installed and in your PATH.
+YouTube playback depends on your local `mpv` setup, such as `yt-dlp` support.
+
 ### Members & Profiles
 
 - Member list with grouping
@@ -319,6 +322,7 @@ Message shortcuts:
 | `d`      | Delete              | Open a delete confirmation before deleting the message      |
 | `e`      | Edit                | Start editing the selected message when editing is allowed  |
 | `o`      | Open URL            | Open the selected message URL, or choose from multiple URLs |
+| `x`      | Play media          | Play selected video media in an external player             |
 | `v`      | View attachment     | Open the selected message's attachment viewer               |
 
 Message action menu shortcuts:
@@ -331,6 +335,7 @@ Message action menu shortcuts:
 | `d`      | Delete                      | Open a delete confirmation before deleting the message      |
 | `e`      | Edit                        | Start editing the selected message when editing is allowed  |
 | `o`      | Open URL                    | Open the selected message URL, or choose from multiple URLs |
+| `x`      | Play media                  | Play selected video media in an external player             |
 | `v`      | View attachment             | Open the selected message's attachment viewer               |
 | `g`      | Go to referenced message    | Go to the replied or forwarded message                      |
 | `p`      | show message sender profile | Open the selected message author's profile                  |
@@ -339,7 +344,8 @@ Message action menu shortcuts:
 | `u`      | Show reacted users          | Show users who reacted to the selected message              |
 | `c`      | Choose poll votes           | Choose poll votes for the selected message                  |
 
-When the attachment viewer is open, press `d` to download the current attachment directly.
+When the attachment viewer is open, press `x` to play the current video attachment
+in an external player, or `d` to download the current attachment directly.
 
 Server actions:
 
@@ -537,6 +543,7 @@ ReplyMessage = "R"
 DeleteMessage = "d"
 EditMessage = "e"
 OpenMessageUrl = "o"
+PlayMedia = "x"
 ViewMessageAttachment = "v"
 ToggleGuildPane = "<leader>1"
 ToggleChannelPane = "<leader>2"
@@ -572,6 +579,7 @@ ReplyMessage = "R"
 DeleteMessage = "d"
 EditMessage = "e"
 OpenMessageUrl = "o"
+PlayMedia = "x"
 ViewMessageAttachment = "v"
 GoToReferencedMessage = "g"
 ShowMessageProfile = "p"

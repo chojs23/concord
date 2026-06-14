@@ -73,6 +73,7 @@ pub(super) struct ImagePreviewRenderInfo {
     pub(super) visible_preview_height: u16,
     pub(super) top_clip_rows: u16,
     pub(super) accent_color: Option<u32>,
+    pub(super) show_play_marker: bool,
     pub(super) mask_circular: bool,
 }
 
@@ -99,12 +100,77 @@ pub(super) fn clipped_preview_image(
         return None;
     }
 
-    let fitted = fit_image_to_canvas(image, full_width, full_height);
+    let mut fitted = fit_image_to_canvas(image, full_width, full_height);
+    if render_info.show_play_marker {
+        apply_video_play_marker(&mut fitted);
+    }
     let mut cropped = fitted.crop_imm(0, crop_top, full_width, crop_height);
     if render_info.mask_circular {
         apply_circular_alpha_mask(&mut cropped, full_width, full_height, crop_top);
     }
     Some(cropped)
+}
+
+fn apply_video_play_marker(image: &mut DynamicImage) {
+    let mut rgba = image.to_rgba8();
+    let width = rgba.width();
+    let height = rgba.height();
+    let min_dimension = width.min(height);
+    if min_dimension < 24 {
+        return;
+    }
+
+    let cx = width as f32 / 2.0 - 0.5;
+    let cy = height as f32 / 2.0 - 0.5;
+    let radius = (min_dimension as f32 * 0.14).clamp(10.0, 56.0);
+    let radius_sq = radius * radius;
+
+    for (x, y, pixel) in rgba.enumerate_pixels_mut() {
+        let dx = x as f32 - cx;
+        let dy = y as f32 - cy;
+        if dx * dx + dy * dy <= radius_sq {
+            blend_pixel(pixel, Rgba([0, 0, 0, 135]));
+        }
+    }
+
+    let left = cx - radius * 0.24;
+    let right = cx + radius * 0.42;
+    let top = cy - radius * 0.42;
+    let bottom = cy + radius * 0.42;
+    let triangle_min_x = left.floor().max(0.0) as u32;
+    let triangle_max_x = right.ceil().min(width.saturating_sub(1) as f32) as u32;
+    let triangle_min_y = top.floor().max(0.0) as u32;
+    let triangle_max_y = bottom.ceil().min(height.saturating_sub(1) as f32) as u32;
+
+    for y in triangle_min_y..=triangle_max_y {
+        let vertical = if y as f32 <= cy {
+            ((y as f32 - top) / (cy - top)).clamp(0.0, 1.0)
+        } else {
+            ((bottom - y as f32) / (bottom - cy)).clamp(0.0, 1.0)
+        };
+        let row_left = left;
+        let row_right = left + (right - left) * vertical;
+        for x in triangle_min_x..=triangle_max_x {
+            let xf = x as f32;
+            if xf >= row_left && xf <= row_right {
+                blend_pixel(rgba.get_pixel_mut(x, y), Rgba([245, 247, 250, 230]));
+            }
+        }
+    }
+
+    *image = DynamicImage::ImageRgba8(rgba);
+}
+
+fn blend_pixel(pixel: &mut Rgba<u8>, overlay: Rgba<u8>) {
+    let alpha = u16::from(overlay.0[3]);
+    let inverse_alpha = 255u16.saturating_sub(alpha);
+    for channel in 0..3 {
+        pixel.0[channel] = ((u16::from(overlay.0[channel]) * alpha
+            + u16::from(pixel.0[channel]) * inverse_alpha
+            + 127)
+            / 255) as u8;
+    }
+    pixel.0[3] = pixel.0[3].max(overlay.0[3]);
 }
 
 /// Zeroes the alpha channel for pixels outside the circle inscribed in the
@@ -161,7 +227,14 @@ fn fit_image_to_canvas(image: &DynamicImage, width: u32, height: u32) -> Dynamic
 
     let mut canvas =
         DynamicImage::ImageRgba8(ImageBuffer::from_pixel(width, height, Rgba([0, 0, 0, 0])));
-    image::imageops::overlay(&mut canvas, &resized, 0, 0);
+    let x_offset = width.saturating_sub(resized.width()) / 2;
+    let y_offset = height.saturating_sub(resized.height()) / 2;
+    image::imageops::overlay(
+        &mut canvas,
+        &resized,
+        i64::from(x_offset),
+        i64::from(y_offset),
+    );
     canvas
 }
 

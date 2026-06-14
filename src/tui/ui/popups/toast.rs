@@ -45,6 +45,7 @@ pub(in crate::tui::ui) fn toast_line(text: &str, width: usize) -> Line<'static> 
 
 fn toast_border_color(kind: ToastKind) -> Color {
     match kind {
+        ToastKind::Info => Color::Blue,
         ToastKind::Success => Color::Green,
         ToastKind::Error => Color::Red,
     }

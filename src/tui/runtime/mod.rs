@@ -281,10 +281,28 @@ pub(super) async fn run_dashboard(
                             }
                             dirty = true;
                         }
-                        if let Some(command) = outcome.command
-                            && commands.send(command).await.is_err()
-                        {
-                            command_helpers::record_command_channel_closed(&mut state);
+                        if let Some(command) = outcome.command {
+                            match command {
+                                AppCommand::PlayMedia { target, request_id } => {
+                                    let request_id = request_id.unwrap_or_else(|| {
+                                        state.next_media_playback_request_id()
+                                    });
+                                    state.show_media_playback_preparing_toast(
+                                        request_id,
+                                        target.url.clone(),
+                                    );
+                                    state.enqueue_pending_command(AppCommand::PlayMedia {
+                                        target,
+                                        request_id: Some(request_id),
+                                    });
+                                    dirty = true;
+                                }
+                                command => {
+                                    if commands.send(command).await.is_err() {
+                                        command_helpers::record_command_channel_closed(&mut state);
+                                    }
+                                }
+                            }
                         }
                         let after_signature = visible_dashboard_signature(&state);
                         if should_refresh_image_protocols_after_visible_signature_change(

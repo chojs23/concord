@@ -5,8 +5,8 @@ use crate::discord::ids::{
 
 use super::ApplicationCommandInfo;
 use super::commands::{
-    AttachmentDownloadId, DownloadAttachmentSource, ForumPostArchiveState, MessageSearchPage,
-    MessageSearchQuery, ReactionEmoji,
+    AttachmentDownloadId, DownloadAttachmentSource, ForumPostArchiveState, MediaPlaybackRequestId,
+    MessageSearchPage, MessageSearchQuery, ReactionEmoji,
 };
 use super::{
     ActivityInfo, AttachmentInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo,
@@ -329,6 +329,10 @@ pub enum AppEvent {
     GatewayError {
         message: String,
     },
+    MediaPlaybackWindowReady {
+        request_id: MediaPlaybackRequestId,
+        url: String,
+    },
     AttachmentDownloadStarted {
         id: AttachmentDownloadId,
         filename: String,
@@ -514,6 +518,7 @@ impl AppEvent {
         !matches!(
             self,
             AppEvent::GatewayError { .. }
+                | AppEvent::MediaPlaybackWindowReady { .. }
                 | AppEvent::CurrentUserCapabilities { .. }
                 | AppEvent::ApplicationCommandsLoaded { .. }
                 | AppEvent::AttachmentDownloadStarted { .. }
@@ -561,6 +566,7 @@ impl AppEvent {
             | AppEvent::PinnedMessagesLoadFailed { .. }
             | AppEvent::ReactionUsersLoaded { .. }
             | AppEvent::GatewayError { .. }
+            | AppEvent::MediaPlaybackWindowReady { .. }
             | AppEvent::CurrentUserCapabilities { .. }
             | AppEvent::ApplicationCommandsLoaded { .. }
             | AppEvent::AttachmentDownloadStarted { .. }
@@ -656,6 +662,18 @@ mod tests {
         assert!(!video.is_image());
         assert!(video.is_video());
         assert_eq!(video.inline_preview_url(), None);
+        assert_eq!(
+            video.inline_preview_info().map(|info| (
+                info.url,
+                info.proxy_url,
+                info.proxy_preview_only,
+            )),
+            Some((
+                "https://media.discordapp.net/clip.mp4",
+                Some("https://media.discordapp.net/clip.mp4"),
+                true,
+            ))
+        );
 
         let image = attachment_info("cat.png", Some("image/png"));
         assert!(image.is_image());

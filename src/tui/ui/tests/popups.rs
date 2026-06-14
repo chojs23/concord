@@ -229,13 +229,12 @@ fn attachment_viewer_render_shows_download_hint_inside_popup() {
     let rendered = dump.join("\n");
     let hint_row = dump
         .iter()
-        .find(|row| row.contains("[d] download"))
-        .expect("download hint should render");
+        .find(|row| row.contains("[x] play") && row.contains("[d] download"))
+        .expect("attachment viewer hint should render");
 
     assert!(rendered.contains("File: notes.txt"), "{rendered}");
     assert!(rendered.contains("Size: 42 B"), "{rendered}");
     assert!(hint_row.contains('│'), "{rendered}");
-    assert!(rendered.contains("[z] zoom"), "{rendered}");
 }
 
 #[test]

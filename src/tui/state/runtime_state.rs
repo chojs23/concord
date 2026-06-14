@@ -4,7 +4,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker},
 };
-use crate::discord::{AttachmentDownloadId, DownloadAttachmentSource};
+use crate::discord::{AttachmentDownloadId, DownloadAttachmentSource, MediaPlaybackRequestId};
 
 use super::{AttachmentDownloadProgressView, DashboardState, ToastKind};
 
@@ -12,7 +12,7 @@ use super::{AttachmentDownloadProgressView, DashboardState, ToastKind};
 pub(super) struct ToastMessage {
     pub(super) text: String,
     pub(super) kind: ToastKind,
-    pub(super) expires_at: Instant,
+    pub(super) expires_at: Option<Instant>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,9 +30,16 @@ pub(super) struct AttachmentDownloadUiState {
     pub(super) source: DownloadAttachmentSource,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct MediaPlaybackPreparingUiState {
+    pub(super) request_id: MediaPlaybackRequestId,
+    pub(super) url: String,
+}
+
 #[derive(Debug, Default)]
 pub(super) struct RuntimeUiState {
     pub(super) toast_message: Option<ToastMessage>,
+    pub(super) media_playback_preparing: Option<MediaPlaybackPreparingUiState>,
     pub(super) gateway_error: Option<String>,
     pub(super) voice_connection: Option<VoiceConnectionUiState>,
     pub(super) open_composer_in_editor_requested: bool,
@@ -41,6 +48,7 @@ pub(super) struct RuntimeUiState {
     pub(super) copy_message_content_requested: Option<String>,
     pub(super) attachment_downloads: Vec<AttachmentDownloadUiState>,
     pub(super) next_attachment_download_id: u64,
+    pub(super) next_media_playback_request_id: u64,
     pub(super) should_quit: bool,
     /// Inverted so the `Default` of `false` means "focused"; terminals that
     /// never report focus events keep the current notification behavior.
@@ -68,6 +76,15 @@ impl DashboardState {
         let id = AttachmentDownloadId::new(self.runtime.next_attachment_download_id);
         self.runtime.next_attachment_download_id =
             self.runtime.next_attachment_download_id.saturating_add(1);
+        id
+    }
+
+    pub(in crate::tui) fn next_media_playback_request_id(&mut self) -> MediaPlaybackRequestId {
+        let id = MediaPlaybackRequestId::new(self.runtime.next_media_playback_request_id);
+        self.runtime.next_media_playback_request_id = self
+            .runtime
+            .next_media_playback_request_id
+            .saturating_add(1);
         id
     }
 

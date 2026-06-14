@@ -1,11 +1,11 @@
 use super::*;
 
 #[test]
-fn video_attachment_does_not_reserve_image_preview_rows() {
+fn video_attachment_thumbnail_reserves_image_preview_rows() {
     let mut message = height_test_message("clip");
     message.attachments = vec![video_attachment(1)];
 
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
 }
 
 #[test]

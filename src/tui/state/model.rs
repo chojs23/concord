@@ -71,6 +71,7 @@ pub enum MessageActionKind {
     OpenDeleteConfirmation,
     Edit,
     OpenUrl,
+    PlayMedia,
     ViewAttachment,
     ShowProfile,
     OpenPinConfirmation,
@@ -190,6 +191,7 @@ pub struct AttachmentViewerItem {
     pub url: Option<String>,
     pub size_bytes: u64,
     pub is_image: bool,
+    pub is_video: bool,
 }
 
 #[cfg(test)]
@@ -203,6 +205,7 @@ impl AttachmentViewerItem {
             url: None,
             size_bytes: 0,
             is_image: false,
+            is_video: false,
         }
     }
 }

@@ -2,7 +2,9 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, MessageMarker},
 };
-use crate::discord::{EmbedInfo, MessageState, ReactionEmoji};
+use crate::discord::{
+    AppCommand, EmbedInfo, MediaPlaybackSource, MediaPlaybackTarget, MessageState, ReactionEmoji,
+};
 use crate::tui::format::detected_urls;
 use crate::tui::keybindings::KeyChord;
 
@@ -10,8 +12,9 @@ use super::super::{
     ActiveGuildScope, DashboardState, FocusPane, MessageActionItem, MessageActionKind,
     MessageActionMenuState, MessageUrlItem, MessageUrlPickerState, popups,
 };
-use crate::discord::AppCommand;
 use crate::tui::state::popups::{ActiveModalPopupKind, LeaderActionState, ModalPopup};
+
+const PLAYABLE_VIDEO_EXTENSIONS: &[&str] = &["m4v", "mov", "mp4", "webm"];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ReferencedMessageTarget {
@@ -111,6 +114,11 @@ impl DashboardState {
                 kind: MessageActionKind::OpenUrl,
                 label: "open URL".to_owned(),
                 enabled: !message_url_items(message).is_empty(),
+            },
+            MessageActionItem {
+                kind: MessageActionKind::PlayMedia,
+                label: "play media".to_owned(),
+                enabled: !message_media_playback_items(message).is_empty(),
             },
             MessageActionItem {
                 kind: MessageActionKind::ViewAttachment,
@@ -348,6 +356,7 @@ impl DashboardState {
                 None
             }
             MessageActionKind::OpenUrl => self.direct_open_selected_message_url(),
+            MessageActionKind::PlayMedia => self.direct_play_selected_message_media(),
             MessageActionKind::ViewAttachment => {
                 self.direct_open_selected_message_attachment_viewer();
                 None
@@ -473,6 +482,17 @@ impl DashboardState {
         }
     }
 
+    pub fn direct_play_selected_message_media(&mut self) -> Option<AppCommand> {
+        let message = self.selected_message_state()?;
+        message_media_playback_items(message)
+            .into_iter()
+            .next()
+            .map(|target| AppCommand::PlayMedia {
+                target,
+                request_id: None,
+            })
+    }
+
     pub fn go_to_selected_referenced_message(&mut self) -> Option<AppCommand> {
         let target = self
             .selected_message_state()
@@ -595,6 +615,49 @@ fn message_url_items(message: &MessageState) -> Vec<MessageUrlItem> {
         .collect()
 }
 
+fn message_media_playback_items(message: &MessageState) -> Vec<MediaPlaybackTarget> {
+    let mut targets = message
+        .attachments_in_display_order()
+        .filter(|attachment| attachment.is_video())
+        .filter_map(|attachment| {
+            Some(MediaPlaybackTarget {
+                url: attachment.preferred_url()?.to_owned(),
+                label: attachment.filename.clone(),
+                source: MediaPlaybackSource::Message,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    targets.extend(message_playable_media_urls(message).into_iter().map(|url| {
+        MediaPlaybackTarget {
+            label: "media URL".to_owned(),
+            url,
+            source: MediaPlaybackSource::Message,
+        }
+    }));
+    dedupe_media_targets(targets)
+}
+
+fn message_playable_media_urls(message: &MessageState) -> Vec<String> {
+    let mut urls = message_urls(message)
+        .into_iter()
+        .filter(|url| is_playable_media_url(url))
+        .collect::<Vec<_>>();
+    urls.extend(playable_embed_video_urls(&message.embeds));
+    for snapshot in &message.forwarded_snapshots {
+        urls.extend(playable_embed_video_urls(&snapshot.embeds));
+    }
+    dedupe_urls(urls)
+}
+
+fn playable_embed_video_urls(embeds: &[EmbedInfo]) -> Vec<String> {
+    embeds
+        .iter()
+        .filter_map(|embed| embed.video_url.clone())
+        .filter(|url| is_playable_media_url(url))
+        .collect()
+}
+
 fn message_urls(message: &MessageState) -> Vec<String> {
     let mut urls = Vec::new();
     if let Some(content) = &message.content {
@@ -631,4 +694,43 @@ fn dedupe_urls(urls: Vec<String>) -> Vec<String> {
         }
     }
     unique
+}
+
+fn dedupe_media_targets(targets: Vec<MediaPlaybackTarget>) -> Vec<MediaPlaybackTarget> {
+    let mut unique = Vec::new();
+    for target in targets {
+        if !unique
+            .iter()
+            .any(|candidate: &MediaPlaybackTarget| candidate.url == target.url)
+        {
+            unique.push(target);
+        }
+    }
+    unique
+}
+
+fn is_playable_media_url(url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    if is_youtube_host(&host) {
+        return true;
+    }
+    let path = url.path().to_ascii_lowercase();
+    PLAYABLE_VIDEO_EXTENSIONS
+        .iter()
+        .any(|extension| path.ends_with(&format!(".{extension}")))
+}
+
+fn is_youtube_host(host: &str) -> bool {
+    matches!(
+        host,
+        "youtu.be" | "youtube.com" | "www.youtube.com" | "m.youtube.com"
+    ) || host.ends_with(".youtube.com")
+        || host == "youtube-nocookie.com"
+        || host.ends_with(".youtube-nocookie.com")
 }

@@ -134,6 +134,7 @@ Message actions:
 | `DeleteMessage`         | `"d"`          | Open delete confirmation.                       |
 | `EditMessage`           | `"e"`          | Start editing the selected message.             |
 | `OpenMessageUrl`        | `"o"`          | Open the selected message URL.                  |
+| `PlayMedia`             | `"x"`          | Play selected video media in an external player. |
 | `ViewMessageAttachment` | `"v"`          | Open the selected message attachment viewer.    |
 | `GoToReferencedMessage` | none           | Go to the replied or forwarded message.         |
 | `ShowMessageProfile`    | none           | Open the selected message author's profile.     |
@@ -251,6 +252,7 @@ ReplyMessage = "R"
 DeleteMessage = "d"
 EditMessage = "e"
 OpenMessageUrl = "o"
+PlayMedia = "x"
 ViewMessageAttachment = "v"
 GoToReferencedMessage = "g"
 ShowMessageProfile = "p"
@@ -268,6 +270,7 @@ OpenPollVotePicker = "c"
 | `DeleteMessage`         | `d`     | Open delete confirmation.                       |
 | `EditMessage`           | `e`     | Start editing the selected message.             |
 | `OpenMessageUrl`        | `o`     | Open the selected message URL.                  |
+| `PlayMedia`             | `x`     | Play selected video media in an external player. |
 | `ViewMessageAttachment` | `v`     | Open the selected message attachment viewer.    |
 | `GoToReferencedMessage` | `g`     | Go to the replied or forwarded message.         |
 | `ShowMessageProfile`    | `p`     | Open the selected message author's profile.     |

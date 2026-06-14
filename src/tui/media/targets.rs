@@ -60,6 +60,7 @@ pub(in crate::tui) struct ImagePreviewTarget {
     pub(super) visible_preview_height: u16,
     pub(super) top_clip_rows: u16,
     pub(super) accent_color: Option<u32>,
+    pub(super) show_play_marker: bool,
     pub(super) message_id: Id<MessageMarker>,
     pub(super) url: String,
     pub(super) filename: String,
@@ -127,6 +128,7 @@ pub(in crate::tui) fn visible_image_preview_targets(
             visible_preview_height: preview_height,
             top_clip_rows: 0,
             accent_color: preview.accent_color,
+            show_play_marker: preview.show_play_marker,
             message_id,
             url: preview_request_url(preview, preview_width, preview_height, quality),
             filename: preview.filename.to_owned(),
@@ -193,6 +195,7 @@ pub(in crate::tui) fn visible_image_preview_targets(
                         .unwrap_or(u16::MAX),
                     top_clip_rows: u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX),
                     accent_color: album_accent_color,
+                    show_play_marker: preview.show_play_marker,
                     message_id: message.id,
                     url: preview_request_url(preview, cell.width, cell.height, quality),
                     filename: preview.filename.to_owned(),
@@ -264,7 +267,7 @@ fn preview_request_url(
     height_rows: u16,
     quality: ImagePreviewQualityPreset,
 ) -> String {
-    if quality == ImagePreviewQualityPreset::Original {
+    if quality == ImagePreviewQualityPreset::Original && !preview.proxy_preview_only {
         return preview.url.to_owned();
     }
 
@@ -663,13 +666,15 @@ pub(in crate::tui) fn image_preview_album_layout(
 
     if previews.len() == 1 {
         let preview = previews[0];
-        let height = image_preview_height_for_dimensions(
+        let (width, height) = image_preview_size_for_dimensions(
             preview_width,
             max_preview_height,
             preview.width,
             preview.height,
+            false,
+            None,
         );
-        if height == 0 {
+        if width == 0 || height == 0 {
             return ImagePreviewAlbumLayout::default();
         }
         return ImagePreviewAlbumLayout {
@@ -677,7 +682,7 @@ pub(in crate::tui) fn image_preview_album_layout(
                 preview_index: 0,
                 x_offset_columns: 0,
                 y_offset_rows: 0,
-                width: preview_width,
+                width,
                 height,
             }],
             height: height as usize,
@@ -689,105 +694,170 @@ pub(in crate::tui) fn image_preview_album_layout(
     let overflow_count = previews.len().saturating_sub(MAX_ALBUM_PREVIEW_TILES);
     match previews.len().min(MAX_ALBUM_PREVIEW_TILES) {
         2 => {
-            let height = previews
-                .iter()
-                .take(2)
-                .zip([left_width, right_width])
-                .map(|(preview, width)| {
-                    image_preview_height_for_dimensions(
-                        width,
-                        max_preview_height,
-                        preview.width,
-                        preview.height,
-                    )
-                })
-                .max()
-                .unwrap_or(0);
+            let (first_width, first_height) = image_preview_size_for_dimensions(
+                left_width,
+                max_preview_height,
+                previews[0].width,
+                previews[0].height,
+                false,
+                None,
+            );
+            let (second_width, second_height) = image_preview_size_for_dimensions(
+                right_width,
+                max_preview_height,
+                previews[1].width,
+                previews[1].height,
+                false,
+                None,
+            );
+            let row_height = first_height.max(second_height);
             ImagePreviewAlbumLayout {
                 cells: vec![
                     ImagePreviewAlbumCell {
                         preview_index: 0,
                         x_offset_columns: 0,
                         y_offset_rows: 0,
-                        width: left_width,
-                        height,
+                        width: first_width,
+                        height: first_height,
                     },
                     ImagePreviewAlbumCell {
                         preview_index: 1,
-                        x_offset_columns: left_width,
+                        x_offset_columns: first_width,
                         y_offset_rows: 0,
-                        width: right_width,
-                        height,
+                        width: second_width,
+                        height: second_height,
                     },
                 ],
-                height: height as usize,
+                height: row_height as usize,
                 overflow_count,
             }
         }
         3 => {
             let (top_height, bottom_height) = split_cells(max_preview_height);
+            let (left_actual_width, left_actual_height) = image_preview_size_for_dimensions(
+                left_width,
+                max_preview_height,
+                previews[0].width,
+                previews[0].height,
+                false,
+                None,
+            );
+            let right_capacity = preview_width.saturating_sub(left_actual_width).max(1);
+            let (top_width, top_actual_height) = image_preview_size_for_dimensions(
+                right_capacity,
+                top_height,
+                previews[1].width,
+                previews[1].height,
+                false,
+                None,
+            );
+            let (bottom_width, bottom_actual_height) = image_preview_size_for_dimensions(
+                right_capacity,
+                bottom_height,
+                previews[2].width,
+                previews[2].height,
+                false,
+                None,
+            );
+            let right_stack_height =
+                usize::from(top_actual_height).saturating_add(usize::from(bottom_actual_height));
+            let height = usize::from(left_actual_height).max(right_stack_height);
             ImagePreviewAlbumLayout {
                 cells: vec![
                     ImagePreviewAlbumCell {
                         preview_index: 0,
                         x_offset_columns: 0,
                         y_offset_rows: 0,
-                        width: left_width,
-                        height: max_preview_height,
+                        width: left_actual_width,
+                        height: left_actual_height,
                     },
                     ImagePreviewAlbumCell {
                         preview_index: 1,
-                        x_offset_columns: left_width,
+                        x_offset_columns: left_actual_width,
                         y_offset_rows: 0,
-                        width: right_width,
-                        height: top_height,
+                        width: top_width,
+                        height: top_actual_height,
                     },
                     ImagePreviewAlbumCell {
                         preview_index: 2,
-                        x_offset_columns: left_width,
-                        y_offset_rows: top_height as usize,
-                        width: right_width,
-                        height: bottom_height,
+                        x_offset_columns: left_actual_width,
+                        y_offset_rows: top_actual_height as usize,
+                        width: bottom_width,
+                        height: bottom_actual_height,
                     },
                 ],
-                height: max_preview_height as usize,
+                height,
                 overflow_count,
             }
         }
         _ => {
             let (top_height, bottom_height) = split_cells(max_preview_height);
+            let (top_left_width, top_left_height) = image_preview_size_for_dimensions(
+                left_width,
+                top_height,
+                previews[0].width,
+                previews[0].height,
+                false,
+                None,
+            );
+            let (top_right_width, top_right_height) = image_preview_size_for_dimensions(
+                right_width,
+                top_height,
+                previews[1].width,
+                previews[1].height,
+                false,
+                None,
+            );
+            let (bottom_left_width, bottom_left_height) = image_preview_size_for_dimensions(
+                left_width,
+                bottom_height,
+                previews[2].width,
+                previews[2].height,
+                false,
+                None,
+            );
+            let (bottom_right_width, bottom_right_height) = image_preview_size_for_dimensions(
+                right_width,
+                bottom_height,
+                previews[3].width,
+                previews[3].height,
+                false,
+                None,
+            );
+            let top_row_height = top_left_height.max(top_right_height);
+            let bottom_row_height = bottom_left_height.max(bottom_right_height);
             ImagePreviewAlbumLayout {
                 cells: vec![
                     ImagePreviewAlbumCell {
                         preview_index: 0,
                         x_offset_columns: 0,
                         y_offset_rows: 0,
-                        width: left_width,
-                        height: top_height,
+                        width: top_left_width,
+                        height: top_left_height,
                     },
                     ImagePreviewAlbumCell {
                         preview_index: 1,
-                        x_offset_columns: left_width,
+                        x_offset_columns: top_left_width,
                         y_offset_rows: 0,
-                        width: right_width,
-                        height: top_height,
+                        width: top_right_width,
+                        height: top_right_height,
                     },
                     ImagePreviewAlbumCell {
                         preview_index: 2,
                         x_offset_columns: 0,
-                        y_offset_rows: top_height as usize,
-                        width: left_width,
-                        height: bottom_height,
+                        y_offset_rows: top_row_height as usize,
+                        width: bottom_left_width,
+                        height: bottom_left_height,
                     },
                     ImagePreviewAlbumCell {
                         preview_index: 3,
-                        x_offset_columns: left_width,
-                        y_offset_rows: top_height as usize,
-                        width: right_width,
-                        height: bottom_height,
+                        x_offset_columns: bottom_left_width,
+                        y_offset_rows: top_row_height as usize,
+                        width: bottom_right_width,
+                        height: bottom_right_height,
                     },
                 ],
-                height: max_preview_height as usize,
+                height: usize::from(top_row_height).saturating_add(usize::from(bottom_row_height)),
                 overflow_count,
             }
         }
@@ -799,6 +869,7 @@ fn split_cells(value: u16) -> (u16, u16) {
     (first, value.saturating_sub(first))
 }
 
+#[cfg(test)]
 pub(in crate::tui) fn image_preview_height_for_dimensions(
     preview_width: u16,
     max_preview_height: u16,

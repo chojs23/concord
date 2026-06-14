@@ -67,6 +67,7 @@ tokio = { version = "1.52.1", features = [
   "macros",
   "rt-multi-thread",
   "fs",
+  "process",
   "signal",
   "net",
   "sync",

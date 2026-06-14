@@ -1,5 +1,6 @@
 use crate::discord::{
-    AppCommand, AttachmentInfo, DownloadAttachmentSource, InlinePreviewInfo,
+    AppCommand, AttachmentInfo, DownloadAttachmentSource, InlinePreviewInfo, MediaPlaybackSource,
+    MediaPlaybackTarget,
     ids::{Id, marker::MessageMarker},
 };
 
@@ -94,6 +95,7 @@ impl DashboardState {
             url: attachment.preferred_url().map(str::to_owned),
             size_bytes: attachment.size,
             is_image: attachment.is_image(),
+            is_video: attachment.is_video(),
         })
     }
 
@@ -117,6 +119,21 @@ impl DashboardState {
             url,
             filename: item.filename,
             source: DownloadAttachmentSource::AttachmentViewer,
+        })
+    }
+
+    pub fn play_selected_attachment_viewer_attachment(&mut self) -> Option<AppCommand> {
+        let item = self.selected_attachment_viewer_item()?;
+        if !item.is_video {
+            return None;
+        }
+        Some(AppCommand::PlayMedia {
+            target: MediaPlaybackTarget {
+                url: item.url?,
+                label: item.filename,
+                source: MediaPlaybackSource::AttachmentViewer,
+            },
+            request_id: None,
         })
     }
 

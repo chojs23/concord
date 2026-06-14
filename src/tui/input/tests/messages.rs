@@ -1,4 +1,5 @@
 use super::*;
+use crate::discord::{MediaPlaybackSource, MediaPlaybackTarget};
 
 #[test]
 fn enter_on_direct_message_kinds_subscribes_channel() {
@@ -362,6 +363,31 @@ fn open_url_shortcut_opens_url_or_url_picker() {
         !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageUrlPicker)
     );
     assert!(!state.is_message_action_context_active());
+}
+
+#[test]
+fn play_media_shortcut_returns_media_command() {
+    let mut state = state_with_messages(0);
+    state.push_event(message_create_event(MessageCreateFixture {
+        message_id: Id::new(1),
+        content: Some("watch https://youtu.be/dQw4w9WgXcQ".to_owned()),
+        ..guild_message_create_fixture()
+    }));
+    state.focus_pane(FocusPane::Messages);
+
+    let command = handle_key(&mut state, char_key('x'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::PlayMedia {
+            target: MediaPlaybackTarget {
+                url: "https://youtu.be/dQw4w9WgXcQ".to_owned(),
+                label: "media URL".to_owned(),
+                source: MediaPlaybackSource::Message,
+            },
+            request_id: None,
+        })
+    );
 }
 
 #[test]
@@ -797,6 +823,43 @@ fn attachment_viewer_d_shortcut_downloads_attachment() {
         })
     );
     assert!(state.attachment_downloads().is_empty());
+}
+
+#[test]
+fn attachment_viewer_x_shortcut_plays_video_attachment() {
+    let mut state = state_with_messages(0);
+    state.push_event(message_create_event(MessageCreateFixture {
+        message_id: Id::new(1),
+        content: Some(String::new()),
+        attachments: vec![crate::discord::AttachmentInfo {
+            id: Id::new(3),
+            filename: "clip.mp4".to_owned(),
+            url: "https://cdn.discordapp.com/clip.mp4".to_owned(),
+            proxy_url: "https://media.discordapp.net/clip.mp4".to_owned(),
+            content_type: Some("video/mp4".to_owned()),
+            size: 2048,
+            width: Some(640),
+            height: Some(480),
+            description: None,
+        }],
+        ..guild_message_create_fixture()
+    }));
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, char_key('v'));
+
+    let command = handle_key(&mut state, char_key('x'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::PlayMedia {
+            target: MediaPlaybackTarget {
+                url: "https://cdn.discordapp.com/clip.mp4".to_owned(),
+                label: "clip.mp4".to_owned(),
+                source: MediaPlaybackSource::AttachmentViewer,
+            },
+            request_id: None,
+        })
+    );
 }
 
 #[test]

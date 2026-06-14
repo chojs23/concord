@@ -69,6 +69,7 @@ pub(in crate::tui) fn effect_forces_redraw(event: &AppEvent) -> bool {
             | AppEvent::AttachmentDownloadCompleted { .. }
             | AppEvent::AttachmentDownloadFailed { .. }
             | AppEvent::GatewayError { .. }
+            | AppEvent::MediaPlaybackWindowReady { .. }
             | AppEvent::GatewayResumed
             | AppEvent::GatewayReidentified
             | AppEvent::GatewayClosed

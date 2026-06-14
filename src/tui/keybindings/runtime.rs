@@ -139,6 +139,9 @@ impl KeyBindings {
             UiAction::OpenMessageUrl if focus == FocusPane::Messages => {
                 Some(DashboardAction::MessageShortcut(MessageActionKind::OpenUrl))
             }
+            UiAction::PlayMedia if focus == FocusPane::Messages => Some(
+                DashboardAction::MessageShortcut(MessageActionKind::PlayMedia),
+            ),
             UiAction::ViewMessageAttachment if focus == FocusPane::Messages => Some(
                 DashboardAction::MessageShortcut(MessageActionKind::ViewAttachment),
             ),
@@ -305,6 +308,9 @@ impl KeyBindings {
         match key.code {
             code if is_left_key(code) => Some(AttachmentViewerAction::Previous),
             code if is_right_key(code) => Some(AttachmentViewerAction::Next),
+            KeyCode::Char('x') if is_shortcut_key(key) => {
+                Some(AttachmentViewerAction::PlaySelected)
+            }
             KeyCode::Char('d') if is_shortcut_key(key) => {
                 Some(AttachmentViewerAction::DownloadSelected)
             }
@@ -714,7 +720,7 @@ impl KeyBindings {
     }
 
     pub fn attachment_viewer_download_hint(&self) -> &'static str {
-        "[d] download  [z] zoom  [+/-] zoom in/out"
+        "[x] play  [d] download  [z] zoom  [+/-] zoom in/out"
     }
 
     pub fn unread_mark_as_read_hint(&self) -> &'static str {
@@ -902,6 +908,7 @@ impl KeyBindings {
             MessageActionKind::OpenDeleteConfirmation => 'd',
             MessageActionKind::Edit => 'e',
             MessageActionKind::OpenUrl => 'o',
+            MessageActionKind::PlayMedia => 'x',
             MessageActionKind::ViewAttachment => 'v',
             MessageActionKind::GoToReferencedMessage => 'g',
             MessageActionKind::ShowProfile => 'p',
