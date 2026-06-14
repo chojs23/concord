@@ -2,7 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.2.1] - 2026-06-13
+## [2.2.2] - 2026-06-14
+
+### Documentation
+
+- Update readme by @chojs23
+
+### Features
+
+- Stream attachment saves with progress UI by @chojs23
+- Add mpv video play (#182) in [#182](https://github.com/chojs23/concord/pull/182) by @chojs23
+
+## [2.2.1] - 2026-06-12
 
 ### Bug Fixes
 
