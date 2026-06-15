@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    ImagePreviewRenderInfo, ImagePreviewTarget, clipped_preview_image, query_image_picker,
+    ImagePreviewRenderInfo, ImagePreviewTarget, clipped_preview_image, lru, query_image_picker,
 };
 
 pub(super) const MAX_IMAGE_PREVIEW_CACHE_ENTRIES: usize = 16;
@@ -206,7 +206,7 @@ impl ImagePreviewCache {
             }
 
             let url = target.url.clone();
-            let last_used = self.next_tick();
+            let last_used = lru::next_tick(&mut self.tick);
             self.entries.insert(
                 key,
                 ImagePreviewEntry::Loading {
@@ -243,7 +243,7 @@ impl ImagePreviewCache {
         let Some(_) = self.picker.as_ref() else {
             for key in keys {
                 let filename = self.filename_for_key(&key);
-                let last_used = self.next_tick();
+                let last_used = lru::next_tick(&mut self.tick);
                 self.entries.insert(
                     key,
                     ImagePreviewEntry::Failed {
@@ -269,7 +269,7 @@ impl ImagePreviewCache {
         for key in keys {
             let filename = self.filename_for_key(&key);
             let Some(render_info) = self.render_info_for_key(&key) else {
-                let last_used = self.next_tick();
+                let last_used = lru::next_tick(&mut self.tick);
                 self.entries.insert(
                     key,
                     ImagePreviewEntry::Failed {
@@ -280,7 +280,7 @@ impl ImagePreviewCache {
                 );
                 continue;
             };
-            let last_used = self.next_tick();
+            let last_used = lru::next_tick(&mut self.tick);
             let generation = self.next_decode_generation();
             self.entries.insert(
                 key.clone(),
@@ -323,7 +323,7 @@ impl ImagePreviewCache {
             return;
         }
 
-        let last_used = self.next_tick();
+        let last_used = lru::next_tick(&mut self.tick);
         match result.result {
             Ok(image) => {
                 let Some(picker) = self.picker.as_ref() else {
@@ -382,46 +382,29 @@ impl ImagePreviewCache {
         }
     }
 
-    fn next_tick(&mut self) -> u64 {
-        self.tick = self.tick.saturating_add(1);
-        self.tick
-    }
-
     fn next_decode_generation(&mut self) -> u64 {
         self.decode_generation = self.decode_generation.saturating_add(1);
         self.decode_generation
     }
 
     fn prune_to_limit(&mut self, targets: &[ImagePreviewTarget]) {
-        if self.entries.len() <= MAX_IMAGE_PREVIEW_CACHE_ENTRIES {
-            return;
-        }
-
         let protected = targets
             .iter()
             .take(MAX_IMAGE_PREVIEW_CACHE_ENTRIES)
             .map(ImagePreviewTarget::key)
             .collect::<HashSet<_>>();
-        let mut removable = self
-            .entries
-            .iter()
-            .filter(|(key, _)| !protected.contains(*key))
-            .map(|(key, entry)| (key.clone(), entry.last_used()))
-            .collect::<Vec<_>>();
-        removable.sort_by_key(|(_, last_used)| *last_used);
-
-        for (key, _) in removable {
-            if self.entries.len() <= MAX_IMAGE_PREVIEW_CACHE_ENTRIES {
-                break;
-            }
-            self.entries.remove(&key);
-        }
+        lru::prune_to_limit(
+            &mut self.entries,
+            MAX_IMAGE_PREVIEW_CACHE_ENTRIES,
+            |key| protected.contains(key),
+            ImagePreviewEntry::last_used,
+        );
     }
 
     pub(super) fn store_failed(&mut self, url: &str, message: String) {
         for key in self.loading_keys_for_url(url) {
             let filename = self.filename_for_key(&key);
-            let last_used = self.next_tick();
+            let last_used = lru::next_tick(&mut self.tick);
             self.entries.insert(
                 key,
                 ImagePreviewEntry::Failed {
@@ -510,8 +493,7 @@ impl ImagePreviewEntry {
 }
 
 fn tick_entry(entry: &mut ImagePreviewEntry, tick: &mut u64) {
-    *tick = tick.saturating_add(1);
-    let last_used = *tick;
+    let last_used = lru::next_tick(tick);
     match entry {
         ImagePreviewEntry::Loading {
             last_used: value, ..
