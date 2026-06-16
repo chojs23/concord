@@ -66,11 +66,13 @@ use playback::write_voice_output_frame;
 use playback::{VoicePlaybackFrame, VoicePlaybackGate};
 #[cfg(test)]
 use playback::{VoicePlaybackPostProcess, VoicePlayoutFrame};
+#[cfg(any(test, feature = "voice-playback"))]
+use rtp::VoiceOutboundRtpState;
+#[cfg(test)]
+use rtp::VoiceRtpEncryptor;
 use rtp::{
     RtpHeader, VoiceRtpDecryptor, looks_like_rtcp_packet, parse_rtp_header, rtcp_sender_ssrc,
 };
-#[cfg(any(test, feature = "voice-playback"))]
-use rtp::{VoiceOutboundRtpState, VoiceRtpEncryptor};
 
 #[cfg(test)]
 use aes_gcm::{

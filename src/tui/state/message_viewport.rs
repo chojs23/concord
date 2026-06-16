@@ -1,10 +1,10 @@
 mod events;
 
-use crate::discord::MessageState;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, MessageMarker},
 };
+use crate::discord::{MessageState, is_thread_kind};
 use crate::tui::format;
 use crate::tui::format::{
     MentionTarget, RenderedText, TextHighlightKind, render_user_mentions,
@@ -1364,11 +1364,7 @@ impl DashboardState {
     }
 
     pub(super) fn record_thread_channel_upserted(&mut self, channel: &crate::discord::ChannelInfo) {
-        let is_thread = matches!(
-            channel.kind.as_str(),
-            "thread" | "GuildPublicThread" | "GuildPrivateThread" | "GuildNewsThread"
-        );
-        if !is_thread {
+        if !is_thread_kind(&channel.kind) {
             return;
         }
         let Some(parent_id) = channel.parent_id else {
