@@ -24,6 +24,8 @@ use super::{
 use crate::config::VoiceVolumePercent;
 #[cfg(feature = "voice-playback")]
 use crate::logging;
+#[cfg(feature = "voice-playback")]
+use crate::support::audio_output::{self, F32OutputSource};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct VoicePlaybackFrame {
@@ -420,240 +422,46 @@ fn build_voice_output_stream(
     playback_enabled: Arc<AtomicBool>,
     playback_volume: Arc<AtomicU8>,
 ) -> Result<cpal::Stream, String> {
-    match sample_format {
-        cpal::SampleFormat::F32 => build_voice_output_stream_f32(
-            device,
-            config,
-            samples_rx,
+    audio_output::build_f32_output_stream(
+        device,
+        config,
+        sample_format,
+        VoiceOutputSource {
+            buffer: VoiceAudioBuffer::new(samples_rx, config.sample_rate),
             playback_enabled,
             playback_volume,
-        ),
-        cpal::SampleFormat::U8 => build_voice_output_stream_u8(
-            device,
-            config,
-            samples_rx,
-            playback_enabled,
-            playback_volume,
-        ),
-        cpal::SampleFormat::I16 => build_voice_output_stream_i16(
-            device,
-            config,
-            samples_rx,
-            playback_enabled,
-            playback_volume,
-        ),
-        cpal::SampleFormat::U16 => build_voice_output_stream_u16(
-            device,
-            config,
-            samples_rx,
-            playback_enabled,
-            playback_volume,
-        ),
-        other => Err(format!(
-            "unsupported voice audio output sample format: {other:?}"
-        )),
-    }
+        },
+        log_voice_output_stream_error,
+        "voice audio output",
+        "voice audio",
+    )
 }
 
 #[cfg(feature = "voice-playback")]
-fn build_voice_output_stream_f32(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    samples_rx: StdReceiver<Vec<f32>>,
+struct VoiceOutputSource {
+    buffer: VoiceAudioBuffer,
     playback_enabled: Arc<AtomicBool>,
     playback_volume: Arc<AtomicU8>,
-) -> Result<cpal::Stream, String> {
-    let channels = usize::from(config.channels);
-    let mut buffer = VoiceAudioBuffer::new(samples_rx, config.sample_rate);
-    device
-        .build_output_stream(
-            config,
-            move |output: &mut [f32], _| {
-                fill_voice_output_f32(
-                    output,
-                    channels,
-                    &mut buffer,
-                    &playback_enabled,
-                    &playback_volume,
-                )
-            },
-            log_voice_output_stream_error,
-            None,
-        )
-        .map_err(|error| format!("voice f32 audio output stream build failed: {error}"))
 }
 
 #[cfg(feature = "voice-playback")]
-fn build_voice_output_stream_u8(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    samples_rx: StdReceiver<Vec<f32>>,
-    playback_enabled: Arc<AtomicBool>,
-    playback_volume: Arc<AtomicU8>,
-) -> Result<cpal::Stream, String> {
-    let channels = usize::from(config.channels);
-    let mut buffer = VoiceAudioBuffer::new(samples_rx, config.sample_rate);
-    device
-        .build_output_stream(
-            config,
-            move |output: &mut [u8], _| {
-                fill_voice_output_u8(
-                    output,
-                    channels,
-                    &mut buffer,
-                    &playback_enabled,
-                    &playback_volume,
-                )
-            },
-            log_voice_output_stream_error,
-            None,
-        )
-        .map_err(|error| format!("voice u8 audio output stream build failed: {error}"))
-}
-
-#[cfg(feature = "voice-playback")]
-fn build_voice_output_stream_i16(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    samples_rx: StdReceiver<Vec<f32>>,
-    playback_enabled: Arc<AtomicBool>,
-    playback_volume: Arc<AtomicU8>,
-) -> Result<cpal::Stream, String> {
-    let channels = usize::from(config.channels);
-    let mut buffer = VoiceAudioBuffer::new(samples_rx, config.sample_rate);
-    device
-        .build_output_stream(
-            config,
-            move |output: &mut [i16], _| {
-                fill_voice_output_i16(
-                    output,
-                    channels,
-                    &mut buffer,
-                    &playback_enabled,
-                    &playback_volume,
-                )
-            },
-            log_voice_output_stream_error,
-            None,
-        )
-        .map_err(|error| format!("voice i16 audio output stream build failed: {error}"))
-}
-
-#[cfg(feature = "voice-playback")]
-fn build_voice_output_stream_u16(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    samples_rx: StdReceiver<Vec<f32>>,
-    playback_enabled: Arc<AtomicBool>,
-    playback_volume: Arc<AtomicU8>,
-) -> Result<cpal::Stream, String> {
-    let channels = usize::from(config.channels);
-    let mut buffer = VoiceAudioBuffer::new(samples_rx, config.sample_rate);
-    device
-        .build_output_stream(
-            config,
-            move |output: &mut [u16], _| {
-                fill_voice_output_u16(
-                    output,
-                    channels,
-                    &mut buffer,
-                    &playback_enabled,
-                    &playback_volume,
-                )
-            },
-            log_voice_output_stream_error,
-            None,
-        )
-        .map_err(|error| format!("voice u16 audio output stream build failed: {error}"))
-}
-
-#[cfg(feature = "voice-playback")]
-fn fill_voice_output_f32(
-    output: &mut [f32],
-    channels: usize,
-    buffer: &mut VoiceAudioBuffer,
-    playback_enabled: &AtomicBool,
-    playback_volume: &AtomicU8,
-) {
-    if !playback_enabled.load(Ordering::Relaxed) {
-        buffer.clear_pending();
-        fill_voice_output_silence(output, channels, clamp_voice_sample);
-        return;
-    }
-    let gain = f32::from(playback_volume.load(Ordering::Relaxed).min(100)) / 100.0;
-    for frame in output.chunks_mut(channels) {
-        let [left, right] = buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
-        write_voice_output_frame(frame, left * gain, right * gain, clamp_voice_sample);
-    }
-}
-
-#[cfg(feature = "voice-playback")]
-fn fill_voice_output_u8(
-    output: &mut [u8],
-    channels: usize,
-    buffer: &mut VoiceAudioBuffer,
-    playback_enabled: &AtomicBool,
-    playback_volume: &AtomicU8,
-) {
-    if !playback_enabled.load(Ordering::Relaxed) {
-        buffer.clear_pending();
-        fill_voice_output_silence(output, channels, voice_sample_to_u8);
-        return;
-    }
-    let gain = f32::from(playback_volume.load(Ordering::Relaxed).min(100)) / 100.0;
-    for frame in output.chunks_mut(channels) {
-        let [left, right] = buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
-        write_voice_output_frame(frame, left * gain, right * gain, voice_sample_to_u8);
-    }
-}
-
-#[cfg(feature = "voice-playback")]
-fn fill_voice_output_i16(
-    output: &mut [i16],
-    channels: usize,
-    buffer: &mut VoiceAudioBuffer,
-    playback_enabled: &AtomicBool,
-    playback_volume: &AtomicU8,
-) {
-    if !playback_enabled.load(Ordering::Relaxed) {
-        buffer.clear_pending();
-        fill_voice_output_silence(output, channels, voice_sample_to_i16);
-        return;
-    }
-    let gain = f32::from(playback_volume.load(Ordering::Relaxed).min(100)) / 100.0;
-    for frame in output.chunks_mut(channels) {
-        let [left, right] = buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
-        write_voice_output_frame(frame, left * gain, right * gain, voice_sample_to_i16);
-    }
-}
-
-#[cfg(feature = "voice-playback")]
-fn fill_voice_output_u16(
-    output: &mut [u16],
-    channels: usize,
-    buffer: &mut VoiceAudioBuffer,
-    playback_enabled: &AtomicBool,
-    playback_volume: &AtomicU8,
-) {
-    if !playback_enabled.load(Ordering::Relaxed) {
-        buffer.clear_pending();
-        fill_voice_output_silence(output, channels, voice_sample_to_u16);
-        return;
-    }
-    let gain = f32::from(playback_volume.load(Ordering::Relaxed).min(100)) / 100.0;
-    for frame in output.chunks_mut(channels) {
-        let [left, right] = buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
-        write_voice_output_frame(frame, left * gain, right * gain, voice_sample_to_u16);
-    }
-}
-
-#[cfg(feature = "voice-playback")]
-fn fill_voice_output_silence<T>(output: &mut [T], channels: usize, convert: fn(f32) -> T)
-where
-    T: Default + Copy,
-{
-    for frame in output.chunks_mut(channels) {
-        write_voice_output_frame(frame, 0.0, 0.0, convert);
+impl F32OutputSource for VoiceOutputSource {
+    fn fill<T>(&mut self, output: &mut [T], channels: usize, convert: fn(f32) -> T)
+    where
+        T: Default + Copy,
+    {
+        if !self.playback_enabled.load(Ordering::Relaxed) {
+            self.buffer.clear_pending();
+            for frame in output.chunks_mut(channels) {
+                write_voice_output_frame(frame, 0.0, 0.0, convert);
+            }
+            return;
+        }
+        let gain = f32::from(self.playback_volume.load(Ordering::Relaxed).min(100)) / 100.0;
+        for frame in output.chunks_mut(channels) {
+            let [left, right] = self.buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
+            write_voice_output_frame(frame, left * gain, right * gain, convert);
+        }
     }
 }
 
@@ -681,21 +489,6 @@ pub(super) fn write_voice_output_frame<T>(
 
 pub(super) fn clamp_voice_sample(sample: f32) -> f32 {
     sample.clamp(-1.0, 1.0)
-}
-
-#[cfg(feature = "voice-playback")]
-pub(super) fn voice_sample_to_u8(sample: f32) -> u8 {
-    ((clamp_voice_sample(sample) + 1.0) * 0.5 * f32::from(u8::MAX)).round() as u8
-}
-
-#[cfg(feature = "voice-playback")]
-pub(super) fn voice_sample_to_i16(sample: f32) -> i16 {
-    (clamp_voice_sample(sample) * f32::from(i16::MAX)).round() as i16
-}
-
-#[cfg(feature = "voice-playback")]
-pub(super) fn voice_sample_to_u16(sample: f32) -> u16 {
-    ((clamp_voice_sample(sample) + 1.0) * 0.5 * f32::from(u16::MAX)).round() as u16
 }
 
 #[cfg(feature = "voice-playback")]

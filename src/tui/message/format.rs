@@ -1,8 +1,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod attachments;
 mod embed;
 mod reactions;
 
+pub(in crate::tui) use attachments::format_attachment_summary;
+use attachments::format_attachment_summary_lines;
 pub(in crate::tui) use embed::embed_color;
 use embed::format_embed_lines;
 pub(in crate::tui) use reactions::format_message_reaction_lines;
@@ -24,9 +27,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::time as message_time;
-use crate::discord::{
-    AttachmentInfo, MessageKind, MessageSnapshotInfo, MessageState, PollInfo, ReplyInfo,
-};
+use crate::discord::{MessageKind, MessageSnapshotInfo, MessageState, PollInfo, ReplyInfo};
 use crate::tui::{
     format::{
         InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, detected_url_ranges,
@@ -2199,30 +2200,6 @@ fn format_forwarded_time(timestamp: &str) -> String {
         .and_then(|(_, time)| time.get(0..5))
         .unwrap_or(timestamp)
         .to_owned()
-}
-
-pub(in crate::tui) fn format_attachment_summary(attachments: &[AttachmentInfo]) -> String {
-    format_attachment_summary_lines(attachments).join(" | ")
-}
-
-fn format_attachment_summary_lines(attachments: &[AttachmentInfo]) -> Vec<String> {
-    attachments.iter().map(format_attachment).collect()
-}
-
-fn format_attachment(attachment: &AttachmentInfo) -> String {
-    let kind = if attachment.is_image() {
-        "image"
-    } else if attachment.is_video() {
-        "video"
-    } else {
-        "file"
-    };
-    let dimensions = match (attachment.width, attachment.height) {
-        (Some(width), Some(height)) => format!(" {width}x{height}"),
-        _ => String::new(),
-    };
-
-    format!("[{kind}: {}]{}", attachment.filename, dimensions)
 }
 
 pub(in crate::tui) fn mention_highlight_style(kind: TextHighlightKind) -> Style {

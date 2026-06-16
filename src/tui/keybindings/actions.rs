@@ -3,58 +3,153 @@ use crate::tui::state::{FocusPane, MessageActionKind};
 
 use super::KeyChord;
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(in crate::tui) enum UiAction {
-    StartComposer,
-    OpenPaneFilter,
-    ClosePopup,
-    FocusGuildPane,
-    FocusChannelPane,
-    FocusMessagePane,
-    FocusMemberPane,
-    SelectNext,
-    SelectPrevious,
-    CycleFocusNext,
-    CycleFocusPrevious,
-    HalfPageDown,
-    HalfPageUp,
-    ScrollViewportDown,
-    ScrollViewportUp,
-    JumpTop,
-    JumpBottom,
-    ScrollHorizontalLeft,
-    ScrollHorizontalRight,
-    ResizePaneLeft,
-    ResizePaneRight,
-    Quit,
-    CopyMessage,
-    ReactMessage,
-    ReplyMessage,
-    DeleteMessage,
-    EditMessage,
-    OpenMessageUrl,
-    PlayMedia,
-    ViewMessageAttachment,
-    ShowMessageProfile,
-    PinMessage,
-    OpenThread,
-    ShowReactionUsers,
-    OpenPollVotePicker,
-    GoToReferencedMessage,
-    ToggleGuildPane,
-    ToggleChannelPane,
-    ToggleMemberPane,
-    OpenFocusedPaneAction,
-    OpenCurrentUserProfile,
-    OpenOptions,
-    ChannelSwitcher,
-    OpenDisplayOptions,
-    OpenComposerOptions,
-    OpenNotificationOptions,
-    OpenVoiceOptions,
-    VoiceDeafen,
-    VoiceMute,
-    VoiceLeave,
+macro_rules! define_ui_actions {
+    ($($variant:ident => ($name:literal, $label:literal),)*) => {
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub(in crate::tui) enum UiAction {
+            $($variant,)*
+        }
+
+        impl UiAction {
+            pub(in crate::tui) const ALL: &'static [Self] = &[$(Self::$variant,)*];
+
+            pub(in crate::tui) fn from_name(name: &str) -> Option<Self> {
+                Self::ALL
+                    .iter()
+                    .copied()
+                    .find(|action| action.name() == name)
+            }
+
+            pub(in crate::tui) fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)*
+                }
+            }
+
+            pub(in crate::tui) fn label(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $label,)*
+                }
+            }
+        }
+    };
+}
+
+define_ui_actions! {
+    StartComposer => ("StartComposer", "start composer"),
+    OpenPaneFilter => ("OpenPaneFilter", "filter/search pane"),
+    ClosePopup => ("ClosePopup", "close popup"),
+    FocusGuildPane => ("FocusGuildPane", "focus Servers"),
+    FocusChannelPane => ("FocusChannelPane", "focus Channels"),
+    FocusMessagePane => ("FocusMessagePane", "focus Messages"),
+    FocusMemberPane => ("FocusMemberPane", "focus Members"),
+    SelectNext => ("SelectNext", "select next"),
+    SelectPrevious => ("SelectPrevious", "select previous"),
+    CycleFocusNext => ("CycleFocusNext", "focus next"),
+    CycleFocusPrevious => ("CycleFocusPrevious", "focus previous"),
+    HalfPageDown => ("HalfPageDown", "half page down"),
+    HalfPageUp => ("HalfPageUp", "half page up"),
+    ScrollViewportDown => ("ScrollViewportDown", "scroll viewport down"),
+    ScrollViewportUp => ("ScrollViewportUp", "scroll viewport up"),
+    JumpTop => ("JumpTop", "jump top"),
+    JumpBottom => ("JumpBottom", "jump bottom"),
+    ScrollHorizontalLeft => ("ScrollHorizontalLeft", "scroll left"),
+    ScrollHorizontalRight => ("ScrollHorizontalRight", "scroll right"),
+    ResizePaneLeft => ("ResizePaneLeft", "resize pane left"),
+    ResizePaneRight => ("ResizePaneRight", "resize pane right"),
+    Quit => ("Quit", "quit"),
+    CopyMessage => ("CopyMessage", "copy message"),
+    ReactMessage => ("ReactMessage", "react"),
+    ReplyMessage => ("ReplyMessage", "reply"),
+    DeleteMessage => ("DeleteMessage", "delete message"),
+    EditMessage => ("EditMessage", "edit message"),
+    OpenMessageUrl => ("OpenMessageUrl", "open URL"),
+    PlayMedia => ("PlayMedia", "play media"),
+    ViewMessageAttachment => ("ViewMessageAttachment", "view attachment"),
+    ShowMessageProfile => ("ShowMessageProfile", "show message sender profile"),
+    PinMessage => ("PinMessage", "pin message"),
+    OpenThread => ("OpenThread", "open thread"),
+    ShowReactionUsers => ("ShowReactionUsers", "show reacted users"),
+    OpenPollVotePicker => ("OpenPollVotePicker", "choose poll votes"),
+    GoToReferencedMessage => ("GoToReferencedMessage", "go to referenced message"),
+    ToggleGuildPane => ("ToggleGuildPane", "toggle Servers"),
+    ToggleChannelPane => ("ToggleChannelPane", "toggle Channels"),
+    ToggleMemberPane => ("ToggleMemberPane", "toggle Members"),
+    OpenFocusedPaneAction => ("OpenFocusedPaneAction", "Actions"),
+    OpenCurrentUserProfile => ("OpenCurrentUserProfile", "My profile"),
+    OpenOptions => ("OpenOptions", "Options"),
+    ChannelSwitcher => ("ChannelSwitcher", "Switch channels"),
+    OpenDisplayOptions => ("OpenDisplayOptions", "Display options"),
+    OpenComposerOptions => ("OpenComposerOptions", "Composer options"),
+    OpenNotificationOptions => ("OpenNotificationOptions", "Notification options"),
+    OpenVoiceOptions => ("OpenVoiceOptions", "Voice options"),
+    VoiceDeafen => ("VoiceDeafen", "deafen voice"),
+    VoiceMute => ("VoiceMute", "mute voice"),
+    VoiceLeave => ("VoiceLeave", "leave voice"),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) struct MessageActionBinding {
+    pub ui_action: UiAction,
+    pub message_action: MessageActionKind,
+    pub keymap_name: &'static str,
+}
+
+macro_rules! define_message_action_bindings {
+    ($($message_action:ident => ($ui_action:ident, $keymap_name:literal),)*) => {
+        const MESSAGE_ACTION_BINDINGS: &[MessageActionBinding] = &[
+            $(MessageActionBinding {
+                ui_action: UiAction::$ui_action,
+                message_action: MessageActionKind::$message_action,
+                keymap_name: $keymap_name,
+            },)*
+        ];
+
+        impl MessageActionKind {
+            #[cfg(test)]
+            pub(in crate::tui) const KEYMAP_BINDINGS: &'static [MessageActionBinding] =
+                MESSAGE_ACTION_BINDINGS;
+
+            pub(in crate::tui) fn from_keymap_name(name: &str) -> Option<Self> {
+                match name {
+                    $($keymap_name => Some(Self::$message_action),)*
+                    _ => None,
+                }
+            }
+
+            pub(in crate::tui) fn name(self) -> &'static str {
+                match self {
+                    $(Self::$message_action => $keymap_name,)*
+                }
+            }
+        }
+    };
+}
+
+define_message_action_bindings! {
+    CopyContent => (CopyMessage, "CopyMessage"),
+    OpenReactionPicker => (ReactMessage, "ReactMessage"),
+    Reply => (ReplyMessage, "ReplyMessage"),
+    OpenDeleteConfirmation => (DeleteMessage, "DeleteMessage"),
+    Edit => (EditMessage, "EditMessage"),
+    OpenUrl => (OpenMessageUrl, "OpenMessageUrl"),
+    PlayMedia => (PlayMedia, "PlayMedia"),
+    ViewAttachment => (ViewMessageAttachment, "ViewMessageAttachment"),
+    ShowProfile => (ShowMessageProfile, "ShowMessageProfile"),
+    OpenPinConfirmation => (PinMessage, "PinMessage"),
+    OpenThread => (OpenThread, "OpenThread"),
+    ShowReactionUsers => (ShowReactionUsers, "ShowReactionUsers"),
+    OpenPollVotePicker => (OpenPollVotePicker, "OpenPollVotePicker"),
+    GoToReferencedMessage => (GoToReferencedMessage, "GoToReferencedMessage"),
+}
+
+impl UiAction {
+    pub(in crate::tui) fn message_action_kind(self) -> Option<MessageActionKind> {
+        MESSAGE_ACTION_BINDINGS
+            .iter()
+            .find(|binding| binding.ui_action == self)
+            .map(|binding| binding.message_action)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -13,9 +13,7 @@ use super::{
         ChannelBranch, ChannelPaneEntry, ChannelThreadItem, FORUM_POST_CARD_HEIGHT, FocusPane,
     },
     presentation::{is_direct_message_channel, sort_direct_message_channels},
-    scroll::{
-        clamp_list_viewport, clamp_selected_index, pane_content_height, toggle_collapsed_key,
-    },
+    scroll::{clamp_selected_index, toggle_collapsed_key},
 };
 use crate::discord::AppCommand;
 use crate::tui::fuzzy::{FuzzyMatchQuality, FuzzyScore, fuzzy_name_match_score};
@@ -608,7 +606,7 @@ impl DashboardState {
         };
         if let Some(channel_id) = channel_id {
             let command = self.activate_channel_command(channel_id);
-            self.navigation.channel_keep_selection_visible = true;
+            self.navigation.channels.keep_selection_visible();
             return command;
         }
         None
@@ -623,56 +621,57 @@ impl DashboardState {
         &self,
         entries: &[ChannelPaneEntry<'_>],
     ) -> usize {
-        selectable_channel_index_near(entries, self.navigation.selected_channel, false).unwrap_or(0)
+        selectable_channel_index_near(entries, self.navigation.channels.selected, false)
+            .unwrap_or(0)
     }
 
     pub(super) fn move_channel_selection_down(&mut self) {
         let selected = self.selected_channel();
         self.select_channel_entry_near(selected.saturating_add(1), true);
-        self.navigation.channel_keep_selection_visible = true;
+        self.navigation.channels.keep_selection_visible();
         self.clamp_channel_viewport();
     }
 
     pub(super) fn move_channel_selection_up(&mut self) {
         let selected = self.selected_channel();
         self.select_channel_entry_near(selected.saturating_sub(1), false);
-        self.navigation.channel_keep_selection_visible = true;
+        self.navigation.channels.keep_selection_visible();
         self.clamp_channel_viewport();
     }
 
     pub(super) fn move_channel_selection_down_by(&mut self, distance: usize) {
         let selected = self.selected_channel();
         self.select_channel_entry_near(selected.saturating_add(distance), true);
-        self.navigation.channel_keep_selection_visible = true;
+        self.navigation.channels.keep_selection_visible();
         self.clamp_channel_viewport();
     }
 
     pub(super) fn move_channel_selection_up_by(&mut self, distance: usize) {
         let selected = self.selected_channel();
         self.select_channel_entry_near(selected.saturating_sub(distance), false);
-        self.navigation.channel_keep_selection_visible = true;
+        self.navigation.channels.keep_selection_visible();
         self.clamp_channel_viewport();
     }
 
     pub(super) fn jump_channel_selection_top(&mut self) {
         self.select_channel_entry_near(0, true);
-        self.navigation.channel_keep_selection_visible = true;
+        self.navigation.channels.keep_selection_visible();
         self.clamp_channel_viewport();
     }
 
     pub(super) fn jump_channel_selection_bottom(&mut self) {
         let entries = self.channel_pane_filtered_entries();
-        self.navigation.selected_channel = entries
+        self.navigation.channels.selected = entries
             .iter()
             .rposition(ChannelPaneEntry::is_selectable)
             .unwrap_or(0);
-        self.navigation.channel_keep_selection_visible = true;
+        self.navigation.channels.keep_selection_visible();
         self.clamp_channel_viewport();
     }
 
     fn select_channel_entry_near(&mut self, index: usize, prefer_forward: bool) {
         let entries = self.channel_pane_filtered_entries();
-        self.navigation.selected_channel =
+        self.navigation.channels.selected =
             selectable_channel_index_near(&entries, index, prefer_forward).unwrap_or(0);
     }
 
@@ -683,28 +682,23 @@ impl DashboardState {
     }
 
     pub fn channel_scroll(&self) -> usize {
-        self.navigation.channel_scroll
+        self.navigation.channels.scroll
     }
 
     pub fn visible_channel_pane_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
         self.channel_pane_filtered_entries()
             .into_iter()
-            .skip(self.navigation.channel_scroll)
-            .take(pane_content_height(self.navigation.channel_view_height))
+            .skip(self.navigation.channels.scroll)
+            .take(self.navigation.channels.content_height())
             .collect()
     }
 
     pub fn set_channel_view_height(&mut self, height: usize) {
-        self.navigation.channel_view_height = height;
-        let height = pane_content_height(self.navigation.channel_view_height);
         let len = self.channel_pane_filtered_entries().len();
-        clamp_list_viewport(
-            self.navigation.selected_channel,
-            &mut self.navigation.channel_scroll,
-            height,
-            len,
-            self.navigation.channel_keep_selection_visible,
-        );
+        let selected = self.navigation.channels.selected;
+        self.navigation
+            .channels
+            .set_view_height_and_clamp(height, selected, len);
     }
 
     pub(super) fn restore_channel_cursor(&mut self, channel_id: Option<Id<ChannelMarker>>) {
@@ -716,7 +710,7 @@ impl DashboardState {
             .iter()
             .position(|entry| entry.channel_id() == Some(channel_id))
         {
-            self.navigation.selected_channel = index;
+            self.navigation.channels.selected = index;
         }
     }
 

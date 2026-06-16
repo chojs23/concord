@@ -18,15 +18,11 @@ pub(in crate::tui::ui) fn render_search_popup(
     let popup = search_popup_area(area, &view);
     let max_result_lines = search_popup_result_capacity(popup, &view);
     frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(search_popup_lines(
-            &view,
-            max_result_lines,
-            popup.width as usize - 2,
-        ))
-        .block(panel_block(view.mode.title(), true))
-        .wrap(Wrap { trim: false }),
+    render_modal_paragraph(
+        frame,
         popup,
+        view.mode.title(),
+        search_popup_lines(&view, max_result_lines, popup.width as usize - 2),
     );
     if let Some(position) = search_popup_cursor_position(popup, &view) {
         frame.set_cursor_position(position);

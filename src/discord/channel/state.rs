@@ -4,7 +4,22 @@ use crate::discord::ids::{
 };
 use crate::discord::{ChannelInfo, ChannelRecipientInfo, PermissionOverwriteInfo, PresenceStatus};
 
-use crate::discord::{permission::state as permissions, state::DiscordState};
+use crate::discord::state::DiscordState;
+
+pub(crate) fn is_thread_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "thread"
+            | "GuildPublicThread"
+            | "GuildPrivateThread"
+            | "GuildNewsThread"
+            | "private-thread"
+    )
+}
+
+pub(crate) fn is_private_thread_kind(kind: &str) -> bool {
+    matches!(kind, "GuildPrivateThread" | "private-thread")
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelState {
@@ -35,10 +50,7 @@ impl ChannelState {
     }
 
     pub fn is_thread(&self) -> bool {
-        matches!(
-            self.kind.as_str(),
-            "thread" | "GuildPublicThread" | "GuildPrivateThread" | "GuildNewsThread"
-        )
+        is_thread_kind(&self.kind)
     }
 
     pub fn is_forum(&self) -> bool {
@@ -50,7 +62,7 @@ impl ChannelState {
     }
 
     pub fn is_private_thread(&self) -> bool {
-        matches!(self.kind.as_str(), "GuildPrivateThread" | "private-thread")
+        is_private_thread_kind(&self.kind)
     }
 
     pub fn thread_archived(&self) -> Option<bool> {
@@ -256,7 +268,7 @@ impl DiscordState {
         // Threads do not own channel-level overwrites. `permitted` is decided
         // by the parent. For everything else, take the newest payload as
         // authoritative because CHANNEL_UPDATE always carries the full array.
-        let permission_overwrites = if permissions::is_thread_kind(&channel.kind) {
+        let permission_overwrites = if is_thread_kind(&channel.kind) {
             existing
                 .map(|existing| existing.permission_overwrites.clone())
                 .unwrap_or_default()
@@ -267,7 +279,7 @@ impl DiscordState {
             .current_user_joined_thread
             .or_else(|| existing.map(|existing| existing.current_user_joined_thread))
             .or_else(|| {
-                let created_by_current_user = permissions::is_thread_kind(&channel.kind)
+                let created_by_current_user = is_thread_kind(&channel.kind)
                     && channel.owner_id.is_some()
                     && channel.owner_id == self.session.current_user_id;
                 created_by_current_user.then_some(true)
@@ -430,5 +442,41 @@ pub(super) fn refresh_private_channel_name_from_recipients(
     let new_name = joined_recipient_display_names(&channel.recipients);
     if !new_name.is_empty() {
         channel.name = new_name;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_private_thread_kind, is_thread_kind};
+
+    #[test]
+    fn classifies_all_thread_channel_kinds() {
+        for kind in [
+            "thread",
+            "GuildPublicThread",
+            "GuildPrivateThread",
+            "GuildNewsThread",
+            "private-thread",
+        ] {
+            assert!(is_thread_kind(kind), "{kind} should be a thread kind");
+        }
+
+        for kind in [
+            "dm",
+            "Private",
+            "voice",
+            "GuildVoice",
+            "forum",
+            "GuildForum",
+        ] {
+            assert!(!is_thread_kind(kind), "{kind} should not be a thread kind");
+        }
+    }
+
+    #[test]
+    fn classifies_private_thread_channel_kinds() {
+        assert!(is_private_thread_kind("GuildPrivateThread"));
+        assert!(is_private_thread_kind("private-thread"));
+        assert!(!is_private_thread_kind("GuildPublicThread"));
     }
 }

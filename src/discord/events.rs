@@ -14,7 +14,7 @@ use super::{
     MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PollInfo,
     PresenceStatus, ReactionUsersInfo, ReadStateInfo, RelationshipInfo, ReplyInfo, RoleInfo,
     SnapshotAreas, UserProfileInfo, VoiceConnectionStatus, VoiceServerInfo, VoiceSoundKind,
-    VoiceStateInfo,
+    VoiceStateInfo, is_thread_kind,
 };
 
 #[cfg(test)]
@@ -416,6 +416,107 @@ pub enum AppEvent {
     GatewayClosed,
 }
 
+macro_rules! define_app_event_kinds {
+    ($($kind:ident: $pattern:pat,)*) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub(crate) enum AppEventKind {
+            $($kind,)*
+        }
+
+        impl AppEvent {
+            pub(crate) fn kind(&self) -> AppEventKind {
+                match self {
+                    $($pattern => AppEventKind::$kind,)*
+                }
+            }
+        }
+    };
+}
+
+define_app_event_kinds! {
+    Ready: AppEvent::Ready { .. },
+    CurrentUserCapabilities: AppEvent::CurrentUserCapabilities { .. },
+    UserIdentityUpdate: AppEvent::UserIdentityUpdate { .. },
+    ApplicationCommandsLoaded: AppEvent::ApplicationCommandsLoaded { .. },
+    GuildCreate: AppEvent::GuildCreate { .. },
+    GuildUpdate: AppEvent::GuildUpdate { .. },
+    GuildRolesUpdate: AppEvent::GuildRolesUpdate { .. },
+    GuildRoleUpsert: AppEvent::GuildRoleUpsert { .. },
+    GuildRoleDelete: AppEvent::GuildRoleDelete { .. },
+    GuildEmojisUpdate: AppEvent::GuildEmojisUpdate { .. },
+    GuildDelete: AppEvent::GuildDelete { .. },
+    SelectedGuildChanged: AppEvent::SelectedGuildChanged { .. },
+    SelectedMessageChannelChanged: AppEvent::SelectedMessageChannelChanged { .. },
+    ChannelUpsert: AppEvent::ChannelUpsert(_),
+    ChannelDelete: AppEvent::ChannelDelete { .. },
+    ThreadMembersUpdate: AppEvent::ThreadMembersUpdate { .. },
+    MessageCreate: AppEvent::MessageCreate { .. },
+    MessageHistoryLoaded: AppEvent::MessageHistoryLoaded { .. },
+    MessageHistoryRefreshed: AppEvent::MessageHistoryRefreshed { .. },
+    MessageHistoryAfterLoaded: AppEvent::MessageHistoryAfterLoaded { .. },
+    MessageHistoryCatchUpLoaded: AppEvent::MessageHistoryCatchUpLoaded { .. },
+    MessageHistoryAroundLoaded: AppEvent::MessageHistoryAroundLoaded { .. },
+    ThreadPreviewLoaded: AppEvent::ThreadPreviewLoaded { .. },
+    ThreadPreviewLoadFailed: AppEvent::ThreadPreviewLoadFailed { .. },
+    ForumPostsLoaded: AppEvent::ForumPostsLoaded { .. },
+    ForumPostsLoadFailed: AppEvent::ForumPostsLoadFailed { .. },
+    MessageSearchLoaded: AppEvent::MessageSearchLoaded { .. },
+    MessageSearchLoadFailed: AppEvent::MessageSearchLoadFailed { .. },
+    MessageHistoryLoadFailed: AppEvent::MessageHistoryLoadFailed { .. },
+    MessageUpdate: AppEvent::MessageUpdate { .. },
+    MessageDelete: AppEvent::MessageDelete { .. },
+    MessageDeleteBulk: AppEvent::MessageDeleteBulk { .. },
+    GuildMemberListCounts: AppEvent::GuildMemberListCounts { .. },
+    GuildMemberUpsert: AppEvent::GuildMemberUpsert { .. },
+    GuildMemberAdd: AppEvent::GuildMemberAdd { .. },
+    GuildMemberRemove: AppEvent::GuildMemberRemove { .. },
+    PresenceUpdate: AppEvent::PresenceUpdate { .. },
+    UserPresenceUpdate: AppEvent::UserPresenceUpdate { .. },
+    VoiceStateUpdate: AppEvent::VoiceStateUpdate { .. },
+    VoiceSpeakingUpdate: AppEvent::VoiceSpeakingUpdate { .. },
+    VoiceServerUpdate: AppEvent::VoiceServerUpdate { .. },
+    VoiceConnectionStatusChanged: AppEvent::VoiceConnectionStatusChanged { .. },
+    VoiceSound: AppEvent::VoiceSound { .. },
+    TypingStart: AppEvent::TypingStart { .. },
+    CurrentUserReactionAdd: AppEvent::CurrentUserReactionAdd { .. },
+    CurrentUserReactionRemove: AppEvent::CurrentUserReactionRemove { .. },
+    MessageReactionAdd: AppEvent::MessageReactionAdd { .. },
+    MessageReactionRemove: AppEvent::MessageReactionRemove { .. },
+    MessageReactionRemoveAll: AppEvent::MessageReactionRemoveAll { .. },
+    MessageReactionRemoveEmoji: AppEvent::MessageReactionRemoveEmoji { .. },
+    MessagePinnedUpdate: AppEvent::MessagePinnedUpdate { .. },
+    ChannelPinsUpdate: AppEvent::ChannelPinsUpdate { .. },
+    PinnedMessagesLoaded: AppEvent::PinnedMessagesLoaded { .. },
+    PinnedMessagesLoadFailed: AppEvent::PinnedMessagesLoadFailed { .. },
+    CurrentUserPollVoteUpdate: AppEvent::CurrentUserPollVoteUpdate { .. },
+    ReactionUsersLoaded: AppEvent::ReactionUsersLoaded { .. },
+    GuildFoldersUpdate: AppEvent::GuildFoldersUpdate { .. },
+    UserGuildNotificationSettingsInit: AppEvent::UserGuildNotificationSettingsInit { .. },
+    UserGuildNotificationSettingsUpdate: AppEvent::UserGuildNotificationSettingsUpdate { .. },
+    GatewayError: AppEvent::GatewayError { .. },
+    MediaPlaybackWindowReady: AppEvent::MediaPlaybackWindowReady { .. },
+    AttachmentDownloadStarted: AppEvent::AttachmentDownloadStarted { .. },
+    AttachmentDownloadProgress: AppEvent::AttachmentDownloadProgress { .. },
+    AttachmentDownloadCompleted: AppEvent::AttachmentDownloadCompleted { .. },
+    AttachmentDownloadFailed: AppEvent::AttachmentDownloadFailed { .. },
+    UpdateAvailable: AppEvent::UpdateAvailable { .. },
+    AttachmentPreviewLoaded: AppEvent::AttachmentPreviewLoaded { .. },
+    AttachmentPreviewLoadFailed: AppEvent::AttachmentPreviewLoadFailed { .. },
+    UserProfileLoaded: AppEvent::UserProfileLoaded { .. },
+    UserProfileLoadFailed: AppEvent::UserProfileLoadFailed { .. },
+    UserProfileUpdateFailed: AppEvent::UserProfileUpdateFailed { .. },
+    UserNoteLoaded: AppEvent::UserNoteLoaded { .. },
+    RelationshipsLoaded: AppEvent::RelationshipsLoaded { .. },
+    RelationshipUpsert: AppEvent::RelationshipUpsert { .. },
+    RelationshipRemove: AppEvent::RelationshipRemove { .. },
+    ActivateChannel: AppEvent::ActivateChannel { .. },
+    ReadStateInit: AppEvent::ReadStateInit { .. },
+    MessageAck: AppEvent::MessageAck { .. },
+    GatewayResumed: AppEvent::GatewayResumed,
+    GatewayReidentified: AppEvent::GatewayReidentified,
+    GatewayClosed: AppEvent::GatewayClosed,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MessageHistoryLoadTarget {
     Latest,
@@ -618,125 +719,129 @@ impl AppEventMetadata {
     }
 }
 
-impl AppEvent {
-    pub(crate) fn metadata(&self) -> AppEventMetadata {
+impl AppEventKind {
+    const fn metadata(self) -> AppEventMetadata {
         match self {
-            AppEvent::GuildCreate { .. }
-            | AppEvent::GuildUpdate { .. }
-            | AppEvent::GuildDelete { .. }
-            | AppEvent::ThreadMembersUpdate { .. }
-            | AppEvent::ChannelDelete { .. }
-            | AppEvent::Ready { .. } => AppEventMetadata::mutating(SnapshotAreas::all()),
+            AppEventKind::GuildCreate
+            | AppEventKind::GuildUpdate
+            | AppEventKind::GuildDelete
+            | AppEventKind::ThreadMembersUpdate
+            | AppEventKind::ChannelUpsert
+            | AppEventKind::ChannelDelete
+            | AppEventKind::Ready => AppEventMetadata::mutating(SnapshotAreas::all()),
 
-            AppEvent::ChannelUpsert(channel) => {
-                if channel_upsert_needs_effect_delivery(channel) {
-                    AppEventMetadata::mutating_effect(SnapshotAreas::all())
-                } else {
-                    AppEventMetadata::mutating(SnapshotAreas::all())
-                }
-            }
-
-            AppEvent::ForumPostsLoaded { .. } => {
+            AppEventKind::ForumPostsLoaded => {
                 AppEventMetadata::mutating_effect(SnapshotAreas::all())
             }
 
-            AppEvent::MessageCreate { .. } => {
+            AppEventKind::MessageCreate => {
                 AppEventMetadata::mutating_effect(SnapshotAreas::navigation_and_message())
             }
 
-            AppEvent::MessageHistoryLoaded { .. }
-            | AppEvent::MessageHistoryRefreshed { .. }
-            | AppEvent::MessageHistoryAfterLoaded { .. }
-            | AppEvent::MessageHistoryCatchUpLoaded { .. }
-            | AppEvent::MessageHistoryAroundLoaded { .. }
-            | AppEvent::MessageSearchLoaded { .. }
-            | AppEvent::ThreadPreviewLoaded { .. }
-            | AppEvent::PinnedMessagesLoaded { .. } => {
+            AppEventKind::MessageHistoryLoaded
+            | AppEventKind::MessageHistoryRefreshed
+            | AppEventKind::MessageHistoryAfterLoaded
+            | AppEventKind::MessageHistoryCatchUpLoaded
+            | AppEventKind::MessageHistoryAroundLoaded
+            | AppEventKind::MessageSearchLoaded
+            | AppEventKind::ThreadPreviewLoaded
+            | AppEventKind::PinnedMessagesLoaded => {
                 AppEventMetadata::mutating_effect(SnapshotAreas::message())
             }
 
-            AppEvent::MessageUpdate { .. }
-            | AppEvent::CurrentUserReactionAdd { .. }
-            | AppEvent::CurrentUserReactionRemove { .. }
-            | AppEvent::MessageReactionAdd { .. }
-            | AppEvent::MessageReactionRemove { .. }
-            | AppEvent::MessageReactionRemoveAll { .. }
-            | AppEvent::MessageReactionRemoveEmoji { .. }
-            | AppEvent::MessagePinnedUpdate { .. }
-            | AppEvent::ChannelPinsUpdate { .. }
-            | AppEvent::CurrentUserPollVoteUpdate { .. }
-            | AppEvent::MessageDelete { .. }
-            | AppEvent::MessageDeleteBulk { .. } => {
+            AppEventKind::MessageUpdate
+            | AppEventKind::CurrentUserReactionAdd
+            | AppEventKind::CurrentUserReactionRemove
+            | AppEventKind::MessageReactionAdd
+            | AppEventKind::MessageReactionRemove
+            | AppEventKind::MessageReactionRemoveAll
+            | AppEventKind::MessageReactionRemoveEmoji
+            | AppEventKind::MessagePinnedUpdate
+            | AppEventKind::ChannelPinsUpdate
+            | AppEventKind::CurrentUserPollVoteUpdate
+            | AppEventKind::MessageDelete
+            | AppEventKind::MessageDeleteBulk => {
                 AppEventMetadata::mutating(SnapshotAreas::message())
             }
 
-            AppEvent::SelectedMessageChannelChanged { .. } => {
+            AppEventKind::SelectedMessageChannelChanged => {
                 AppEventMetadata::mutating(SnapshotAreas::navigation_and_message())
             }
 
-            AppEvent::UserProfileLoaded { .. } => {
+            AppEventKind::UserProfileLoaded => {
                 AppEventMetadata::mutating_effect(SnapshotAreas::navigation_and_message())
             }
 
-            AppEvent::GuildMemberAdd { .. }
-            | AppEvent::GuildMemberUpsert { .. }
-            | AppEvent::RelationshipsLoaded { .. }
-            | AppEvent::RelationshipUpsert { .. }
-            | AppEvent::UserIdentityUpdate { .. }
-            | AppEvent::RelationshipRemove { .. } => {
+            AppEventKind::GuildMemberAdd
+            | AppEventKind::GuildMemberUpsert
+            | AppEventKind::RelationshipsLoaded
+            | AppEventKind::RelationshipUpsert
+            | AppEventKind::UserIdentityUpdate
+            | AppEventKind::RelationshipRemove => {
                 AppEventMetadata::mutating(SnapshotAreas::navigation_and_message())
             }
 
-            AppEvent::SelectedGuildChanged { .. }
-            | AppEvent::GuildRolesUpdate { .. }
-            | AppEvent::GuildRoleUpsert { .. }
-            | AppEvent::GuildRoleDelete { .. }
-            | AppEvent::GuildEmojisUpdate { .. }
-            | AppEvent::GuildMemberListCounts { .. }
-            | AppEvent::GuildMemberRemove { .. }
-            | AppEvent::PresenceUpdate { .. }
-            | AppEvent::UserPresenceUpdate { .. }
-            | AppEvent::VoiceStateUpdate { .. }
-            | AppEvent::VoiceSpeakingUpdate { .. }
-            | AppEvent::TypingStart { .. }
-            | AppEvent::GuildFoldersUpdate { .. }
-            | AppEvent::UserNoteLoaded { .. }
-            | AppEvent::UserGuildNotificationSettingsInit { .. }
-            | AppEvent::UserGuildNotificationSettingsUpdate { .. } => {
+            AppEventKind::SelectedGuildChanged
+            | AppEventKind::GuildRolesUpdate
+            | AppEventKind::GuildRoleUpsert
+            | AppEventKind::GuildRoleDelete
+            | AppEventKind::GuildEmojisUpdate
+            | AppEventKind::GuildMemberListCounts
+            | AppEventKind::GuildMemberRemove
+            | AppEventKind::PresenceUpdate
+            | AppEventKind::UserPresenceUpdate
+            | AppEventKind::VoiceStateUpdate
+            | AppEventKind::VoiceSpeakingUpdate
+            | AppEventKind::TypingStart
+            | AppEventKind::GuildFoldersUpdate
+            | AppEventKind::UserNoteLoaded
+            | AppEventKind::UserGuildNotificationSettingsInit
+            | AppEventKind::UserGuildNotificationSettingsUpdate => {
                 AppEventMetadata::mutating(SnapshotAreas::navigation())
             }
 
-            AppEvent::ReadStateInit { .. } | AppEvent::MessageAck { .. } => {
+            AppEventKind::ReadStateInit | AppEventKind::MessageAck => {
                 AppEventMetadata::mutating(SnapshotAreas::navigation_and_detail())
             }
 
-            AppEvent::GatewayError { .. }
-            | AppEvent::MediaPlaybackWindowReady { .. }
-            | AppEvent::CurrentUserCapabilities { .. }
-            | AppEvent::ApplicationCommandsLoaded { .. }
-            | AppEvent::AttachmentDownloadStarted { .. }
-            | AppEvent::AttachmentDownloadProgress { .. }
-            | AppEvent::AttachmentDownloadCompleted { .. }
-            | AppEvent::AttachmentDownloadFailed { .. }
-            | AppEvent::UpdateAvailable { .. }
-            | AppEvent::ReactionUsersLoaded { .. }
-            | AppEvent::AttachmentPreviewLoaded { .. }
-            | AppEvent::AttachmentPreviewLoadFailed { .. }
-            | AppEvent::ThreadPreviewLoadFailed { .. }
-            | AppEvent::ForumPostsLoadFailed { .. }
-            | AppEvent::MessageSearchLoadFailed { .. }
-            | AppEvent::MessageHistoryLoadFailed { .. }
-            | AppEvent::PinnedMessagesLoadFailed { .. }
-            | AppEvent::UserProfileLoadFailed { .. }
-            | AppEvent::UserProfileUpdateFailed { .. }
-            | AppEvent::VoiceConnectionStatusChanged { .. }
-            | AppEvent::VoiceSound { .. }
-            | AppEvent::ActivateChannel { .. }
-            | AppEvent::GatewayResumed
-            | AppEvent::GatewayReidentified
-            | AppEvent::GatewayClosed => AppEventMetadata::effect_only(),
+            AppEventKind::GatewayError
+            | AppEventKind::MediaPlaybackWindowReady
+            | AppEventKind::CurrentUserCapabilities
+            | AppEventKind::ApplicationCommandsLoaded
+            | AppEventKind::AttachmentDownloadStarted
+            | AppEventKind::AttachmentDownloadProgress
+            | AppEventKind::AttachmentDownloadCompleted
+            | AppEventKind::AttachmentDownloadFailed
+            | AppEventKind::UpdateAvailable
+            | AppEventKind::ReactionUsersLoaded
+            | AppEventKind::AttachmentPreviewLoaded
+            | AppEventKind::AttachmentPreviewLoadFailed
+            | AppEventKind::ThreadPreviewLoadFailed
+            | AppEventKind::ForumPostsLoadFailed
+            | AppEventKind::MessageSearchLoadFailed
+            | AppEventKind::MessageHistoryLoadFailed
+            | AppEventKind::PinnedMessagesLoadFailed
+            | AppEventKind::UserProfileLoadFailed
+            | AppEventKind::UserProfileUpdateFailed
+            | AppEventKind::VoiceConnectionStatusChanged
+            | AppEventKind::VoiceSound
+            | AppEventKind::ActivateChannel
+            | AppEventKind::GatewayResumed
+            | AppEventKind::GatewayReidentified
+            | AppEventKind::GatewayClosed => AppEventMetadata::effect_only(),
 
-            AppEvent::VoiceServerUpdate { .. } => AppEventMetadata::inert(),
+            AppEventKind::VoiceServerUpdate => AppEventMetadata::inert(),
+        }
+    }
+}
+
+impl AppEvent {
+    pub(crate) fn metadata(&self) -> AppEventMetadata {
+        match self {
+            AppEvent::ChannelUpsert(channel) if channel_upsert_needs_effect_delivery(channel) => {
+                AppEventMetadata::mutating_effect(SnapshotAreas::all())
+            }
+            _ => self.kind().metadata(),
         }
     }
 
@@ -754,11 +859,7 @@ impl AppEvent {
 }
 
 fn channel_upsert_needs_effect_delivery(channel: &ChannelInfo) -> bool {
-    channel.parent_id.is_some()
-        && matches!(
-            channel.kind.as_str(),
-            "thread" | "GuildPublicThread" | "GuildPrivateThread" | "GuildNewsThread"
-        )
+    channel.parent_id.is_some() && is_thread_kind(&channel.kind)
 }
 
 #[cfg(test)]

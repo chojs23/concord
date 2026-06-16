@@ -415,16 +415,16 @@ fn member_subscription_ranges_grow_with_viewport() {
     // Default scroll 0, viewport ends at 20 → bucket 0.
     assert_eq!(state.member_subscription_ranges(), vec![(0, 99)]);
 
-    state.navigation.member_scroll = 100;
-    state.navigation.member_view_height = 20;
+    state.navigation.members.scroll = 100;
+    state.navigation.members.view_height = 20;
     // Viewport ends at 120 → bucket 1, contiguous coverage.
     assert_eq!(
         state.member_subscription_ranges(),
         vec![(0, 99), (100, 199)]
     );
 
-    state.navigation.member_scroll = 480;
-    state.navigation.member_view_height = 30;
+    state.navigation.members.scroll = 480;
+    state.navigation.members.view_height = 30;
     // Viewport ends at 510 → bucket 5, anchor [0,99] plus the two buckets
     // around the visible end so we never exceed the four-range cap.
     assert_eq!(

@@ -26,26 +26,28 @@ pub(super) enum ActiveGuildScope {
     Guild(Id<GuildMarker>),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FocusedNavigationAction {
+    MoveDown,
+    MoveUp,
+    JumpTop,
+    JumpBottom,
+    HalfPageDown,
+    HalfPageUp,
+    ScrollViewportDown,
+    ScrollViewportUp,
+    ScrollHorizontalRight,
+    ScrollHorizontalLeft,
+}
+
 #[derive(Debug)]
 pub(super) struct NavigationState {
     pub(super) focus: FocusPane,
     pub(super) active_guild: ActiveGuildScope,
     pub(super) active_channel_id: Option<Id<ChannelMarker>>,
-    pub(super) selected_guild: usize,
-    pub(super) guild_scroll: usize,
-    pub(super) guild_horizontal_scroll: usize,
-    pub(super) guild_keep_selection_visible: bool,
-    pub(super) guild_view_height: usize,
-    pub(super) selected_channel: usize,
-    pub(super) channel_scroll: usize,
-    pub(super) channel_horizontal_scroll: usize,
-    pub(super) channel_keep_selection_visible: bool,
-    pub(super) channel_view_height: usize,
-    pub(super) selected_member: usize,
-    pub(super) member_scroll: usize,
-    pub(super) member_horizontal_scroll: usize,
-    pub(super) member_keep_selection_visible: bool,
-    pub(super) member_view_height: usize,
+    pub(super) guilds: PaneListState,
+    pub(super) channels: PaneListState,
+    pub(super) members: PaneListState,
     pub(super) recent_channel_ids: VecDeque<Id<ChannelMarker>>,
     pub(super) guild_pane_filter: Option<PaneFilterState>,
     pub(super) channel_pane_filter: Option<PaneFilterState>,
@@ -61,6 +63,114 @@ pub(super) struct NavigationState {
     pub(super) collapsed_channel_categories: HashSet<Id<ChannelMarker>>,
 }
 
+#[derive(Debug)]
+pub(super) struct PaneListState {
+    pub(super) selected: usize,
+    pub(super) scroll: usize,
+    pub(super) horizontal_scroll: usize,
+    pub(super) keep_selection_visible: bool,
+    pub(super) view_height: usize,
+}
+
+impl PaneListState {
+    fn new(selected: usize) -> Self {
+        Self {
+            selected,
+            scroll: 0,
+            horizontal_scroll: 0,
+            keep_selection_visible: true,
+            view_height: 1,
+        }
+    }
+
+    pub(super) fn content_height(&self) -> usize {
+        pane_content_height(self.view_height)
+    }
+
+    pub(super) fn keep_selection_visible(&mut self) {
+        self.keep_selection_visible = true;
+    }
+
+    pub(super) fn allow_detached_scroll(&mut self) {
+        self.keep_selection_visible = false;
+    }
+
+    pub(super) fn reset_selection_and_scroll(&mut self) {
+        self.selected = 0;
+        self.scroll = 0;
+        self.keep_selection_visible();
+    }
+
+    pub(super) fn set_view_height_and_clamp(&mut self, height: usize, cursor: usize, len: usize) {
+        self.view_height = height;
+        self.clamp_viewport(cursor, len);
+    }
+
+    pub(super) fn clamp_selected(&mut self, len: usize) {
+        self.selected = clamp_selected_index(self.selected, len);
+    }
+
+    pub(super) fn clamp_viewport(&mut self, cursor: usize, len: usize) {
+        let height = self.content_height();
+        clamp_list_viewport(
+            cursor,
+            &mut self.scroll,
+            height,
+            len,
+            self.keep_selection_visible,
+        );
+    }
+
+    fn move_down(&mut self, len: usize) {
+        move_index_down(&mut self.selected, len);
+        self.keep_selection_visible();
+    }
+
+    fn move_up(&mut self) {
+        move_index_up(&mut self.selected);
+        self.keep_selection_visible();
+    }
+
+    fn move_down_by(&mut self, len: usize, distance: usize) {
+        move_index_down_by(&mut self.selected, len, distance);
+        self.keep_selection_visible();
+    }
+
+    fn move_up_by(&mut self, distance: usize) {
+        move_index_up_by(&mut self.selected, distance);
+        self.keep_selection_visible();
+    }
+
+    fn jump_top(&mut self) {
+        self.selected = 0;
+        self.keep_selection_visible();
+    }
+
+    fn jump_bottom(&mut self, len: usize) {
+        self.selected = last_index(len);
+        self.keep_selection_visible();
+    }
+
+    fn scroll_down(&mut self, len: usize) {
+        self.allow_detached_scroll();
+        let height = self.content_height();
+        scroll_list_down(&mut self.scroll, height, len);
+    }
+
+    fn scroll_up(&mut self) {
+        self.allow_detached_scroll();
+        scroll_list_up(&mut self.scroll);
+    }
+
+    fn scroll_horizontal_right(&mut self, max: usize) {
+        self.horizontal_scroll = self.horizontal_scroll.saturating_add(1).min(max);
+    }
+
+    fn scroll_horizontal_left(&mut self) {
+        self.horizontal_scroll = self.horizontal_scroll.saturating_sub(1);
+    }
+}
+
 impl Default for NavigationState {
     fn default() -> Self {
         Self {
@@ -71,21 +181,9 @@ impl Default for NavigationState {
             // first real guild when one exists. The bounds clamp inside
             // `selected_guild()` falls back to the DM entry while the guild
             // list is still empty.
-            selected_guild: 1,
-            guild_scroll: 0,
-            guild_horizontal_scroll: 0,
-            guild_keep_selection_visible: true,
-            guild_view_height: 1,
-            selected_channel: 0,
-            channel_scroll: 0,
-            channel_horizontal_scroll: 0,
-            channel_keep_selection_visible: true,
-            channel_view_height: 1,
-            selected_member: 0,
-            member_scroll: 0,
-            member_horizontal_scroll: 0,
-            member_keep_selection_visible: true,
-            member_view_height: 1,
+            guilds: PaneListState::new(1),
+            channels: PaneListState::new(0),
+            members: PaneListState::new(0),
             recent_channel_ids: VecDeque::new(),
             guild_pane_filter: None,
             channel_pane_filter: None,
@@ -97,6 +195,44 @@ impl Default for NavigationState {
             member_list_width: DEFAULT_MEMBER_LIST_WIDTH,
             collapsed_folders: HashSet::new(),
             collapsed_channel_categories: HashSet::new(),
+        }
+    }
+}
+
+impl NavigationState {
+    fn pane_visible(&self, pane: FocusPane) -> bool {
+        match pane {
+            FocusPane::Guilds => self.guild_pane_visible,
+            FocusPane::Channels => self.channel_pane_visible,
+            FocusPane::Messages => true,
+            FocusPane::Members => self.member_pane_visible,
+        }
+    }
+
+    fn pane_visible_mut(&mut self, pane: FocusPane) -> Option<&mut bool> {
+        match pane {
+            FocusPane::Guilds => Some(&mut self.guild_pane_visible),
+            FocusPane::Channels => Some(&mut self.channel_pane_visible),
+            FocusPane::Members => Some(&mut self.member_pane_visible),
+            FocusPane::Messages => None,
+        }
+    }
+
+    fn pane_width(&self, pane: FocusPane) -> u16 {
+        match pane {
+            FocusPane::Guilds => self.server_width,
+            FocusPane::Channels => self.channel_list_width,
+            FocusPane::Members => self.member_list_width,
+            FocusPane::Messages => 0,
+        }
+    }
+
+    fn pane_width_mut(&mut self, pane: FocusPane) -> Option<&mut u16> {
+        match pane {
+            FocusPane::Guilds => Some(&mut self.server_width),
+            FocusPane::Channels => Some(&mut self.channel_list_width),
+            FocusPane::Members => Some(&mut self.member_list_width),
+            FocusPane::Messages => None,
         }
     }
 }
@@ -115,27 +251,14 @@ impl DashboardState {
 
 impl DashboardState {
     pub fn is_pane_visible(&self, pane: FocusPane) -> bool {
-        match pane {
-            FocusPane::Guilds => self.navigation.guild_pane_visible,
-            FocusPane::Channels => self.navigation.channel_pane_visible,
-            FocusPane::Messages => true,
-            FocusPane::Members => self.navigation.member_pane_visible,
-        }
+        self.navigation.pane_visible(pane)
     }
 
     pub fn toggle_pane_visibility(&mut self, pane: FocusPane) {
-        match pane {
-            FocusPane::Guilds => {
-                self.navigation.guild_pane_visible = !self.navigation.guild_pane_visible
-            }
-            FocusPane::Channels => {
-                self.navigation.channel_pane_visible = !self.navigation.channel_pane_visible
-            }
-            FocusPane::Members => {
-                self.navigation.member_pane_visible = !self.navigation.member_pane_visible
-            }
-            FocusPane::Messages => return,
-        }
+        let Some(visible) = self.navigation.pane_visible_mut(pane) else {
+            return;
+        };
+        *visible = !*visible;
         self.options.ui_state_save_pending = true;
         if !self.is_pane_visible(self.navigation.focus) {
             self.navigation.focus = FocusPane::Messages;
@@ -143,20 +266,12 @@ impl DashboardState {
     }
 
     pub fn pane_width(&self, pane: FocusPane) -> u16 {
-        match pane {
-            FocusPane::Guilds => self.navigation.server_width,
-            FocusPane::Channels => self.navigation.channel_list_width,
-            FocusPane::Members => self.navigation.member_list_width,
-            FocusPane::Messages => 0,
-        }
+        self.navigation.pane_width(pane)
     }
 
     pub fn adjust_focused_pane_width(&mut self, delta: i16) {
-        let width = match self.navigation.focus {
-            FocusPane::Guilds => &mut self.navigation.server_width,
-            FocusPane::Channels => &mut self.navigation.channel_list_width,
-            FocusPane::Members => &mut self.navigation.member_list_width,
-            FocusPane::Messages => return,
+        let Some(width) = self.navigation.pane_width_mut(self.navigation.focus) else {
+            return;
         };
 
         let adjusted = if delta.is_negative() {
@@ -175,7 +290,7 @@ impl DashboardState {
 impl DashboardState {
     pub fn selected_member(&self) -> usize {
         clamp_selected_index(
-            self.navigation.selected_member,
+            self.navigation.members.selected,
             self.flattened_members().len(),
         )
     }
@@ -194,33 +309,33 @@ impl DashboardState {
             return None;
         }
         let selected_line = self.selected_member_line_in_groups(groups)?;
-        if selected_line >= self.navigation.member_scroll
-            && selected_line < self.navigation.member_scroll + self.member_content_height()
+        if selected_line >= self.navigation.members.scroll
+            && selected_line < self.navigation.members.scroll + self.member_content_height()
         {
-            Some(selected_line - self.navigation.member_scroll)
+            Some(selected_line - self.navigation.members.scroll)
         } else {
             None
         }
     }
 
     pub fn member_scroll(&self) -> usize {
-        self.navigation.member_scroll
+        self.navigation.members.scroll
     }
 
     pub fn guild_horizontal_scroll(&self) -> usize {
-        self.navigation.guild_horizontal_scroll
+        self.navigation.guilds.horizontal_scroll
     }
 
     pub fn channel_horizontal_scroll(&self) -> usize {
-        self.navigation.channel_horizontal_scroll
+        self.navigation.channels.horizontal_scroll
     }
 
     pub fn member_horizontal_scroll(&self) -> usize {
-        self.navigation.member_horizontal_scroll
+        self.navigation.members.horizontal_scroll
     }
 
     pub fn member_content_height(&self) -> usize {
-        pane_content_height(self.navigation.member_view_height)
+        self.navigation.members.content_height()
     }
 
     #[cfg(test)]
@@ -233,240 +348,227 @@ impl DashboardState {
     }
 
     pub fn set_member_view_height(&mut self, height: usize) {
-        self.navigation.member_view_height = height;
         let selected_line = self.selected_member_line();
-        let height = pane_content_height(self.navigation.member_view_height);
         let len = self.count_member_lines();
-        clamp_list_viewport(
-            selected_line,
-            &mut self.navigation.member_scroll,
-            height,
-            len,
-            self.navigation.member_keep_selection_visible,
-        );
+        self.navigation
+            .members
+            .set_view_height_and_clamp(height, selected_line, len);
     }
 
     pub fn move_down(&mut self) {
+        self.apply_focused_navigation(FocusedNavigationAction::MoveDown);
+    }
+
+    pub fn move_up(&mut self) {
+        self.apply_focused_navigation(FocusedNavigationAction::MoveUp);
+    }
+
+    pub fn jump_top(&mut self) {
+        self.apply_focused_navigation(FocusedNavigationAction::JumpTop);
+    }
+
+    pub fn jump_bottom(&mut self) {
+        self.apply_focused_navigation(FocusedNavigationAction::JumpBottom);
+    }
+
+    pub fn half_page_down(&mut self) {
+        self.apply_focused_navigation(FocusedNavigationAction::HalfPageDown);
+    }
+
+    pub fn half_page_up(&mut self) {
+        self.apply_focused_navigation(FocusedNavigationAction::HalfPageUp);
+    }
+
+    pub fn scroll_focused_pane_viewport_down(&mut self) {
+        self.apply_focused_navigation(FocusedNavigationAction::ScrollViewportDown);
+    }
+
+    pub fn scroll_focused_pane_viewport_up(&mut self) {
+        self.apply_focused_navigation(FocusedNavigationAction::ScrollViewportUp);
+    }
+
+    pub fn scroll_focused_pane_horizontal_right(&mut self) {
+        self.apply_focused_navigation(FocusedNavigationAction::ScrollHorizontalRight);
+    }
+
+    pub fn scroll_focused_pane_horizontal_left(&mut self) {
+        self.apply_focused_navigation(FocusedNavigationAction::ScrollHorizontalLeft);
+    }
+
+    fn apply_focused_navigation(&mut self, action: FocusedNavigationAction) {
         match self.navigation.focus {
-            FocusPane::Guilds => {
+            FocusPane::Guilds => self.apply_guild_navigation(action),
+            FocusPane::Channels => self.apply_channel_navigation(action),
+            FocusPane::Messages => self.apply_message_navigation(action),
+            FocusPane::Members => self.apply_member_navigation(action),
+        }
+    }
+
+    fn apply_guild_navigation(&mut self, action: FocusedNavigationAction) {
+        match action {
+            FocusedNavigationAction::MoveDown => {
                 let len = self.guild_pane_filtered_entries().len();
-                move_index_down(&mut self.navigation.selected_guild, len);
-                self.navigation.guild_keep_selection_visible = true;
+                self.navigation.guilds.move_down(len);
                 self.clamp_guild_viewport();
             }
-            FocusPane::Channels => {
-                self.move_channel_selection_down();
+            FocusedNavigationAction::MoveUp => {
+                self.navigation.guilds.move_up();
+                self.clamp_guild_viewport();
             }
-            FocusPane::Messages => {
+            FocusedNavigationAction::JumpTop => {
+                self.navigation.guilds.jump_top();
+                self.clamp_guild_viewport();
+            }
+            FocusedNavigationAction::JumpBottom => {
+                let len = self.guild_pane_filtered_entries().len();
+                self.navigation.guilds.jump_bottom(len);
+                self.clamp_guild_viewport();
+            }
+            FocusedNavigationAction::HalfPageDown => {
+                let distance = self.navigation.guilds.content_height() / 2;
+                let len = self.guild_pane_filtered_entries().len();
+                self.navigation.guilds.move_down_by(len, distance.max(1));
+                self.clamp_guild_viewport();
+            }
+            FocusedNavigationAction::HalfPageUp => {
+                let distance = self.navigation.guilds.content_height() / 2;
+                self.navigation.guilds.move_up_by(distance.max(1));
+                self.clamp_guild_viewport();
+            }
+            FocusedNavigationAction::ScrollViewportDown => {
+                let len = self.guild_pane_filtered_entries().len();
+                self.navigation.guilds.scroll_down(len);
+            }
+            FocusedNavigationAction::ScrollViewportUp => self.navigation.guilds.scroll_up(),
+            FocusedNavigationAction::ScrollHorizontalRight => {
+                let max = self.max_guild_horizontal_scroll();
+                self.navigation.guilds.scroll_horizontal_right(max);
+            }
+            FocusedNavigationAction::ScrollHorizontalLeft => {
+                self.navigation.guilds.scroll_horizontal_left();
+            }
+        }
+    }
+
+    fn apply_channel_navigation(&mut self, action: FocusedNavigationAction) {
+        match action {
+            FocusedNavigationAction::MoveDown => self.move_channel_selection_down(),
+            FocusedNavigationAction::MoveUp => self.move_channel_selection_up(),
+            FocusedNavigationAction::JumpTop => self.jump_channel_selection_top(),
+            FocusedNavigationAction::JumpBottom => self.jump_channel_selection_bottom(),
+            FocusedNavigationAction::HalfPageDown => {
+                let distance = self.navigation.channels.content_height() / 2;
+                self.move_channel_selection_down_by(distance.max(1));
+            }
+            FocusedNavigationAction::HalfPageUp => {
+                let distance = self.navigation.channels.content_height() / 2;
+                self.move_channel_selection_up_by(distance.max(1));
+            }
+            FocusedNavigationAction::ScrollViewportDown => {
+                let len = self.channel_pane_filtered_entries().len();
+                self.navigation.channels.scroll_down(len);
+            }
+            FocusedNavigationAction::ScrollViewportUp => self.navigation.channels.scroll_up(),
+            FocusedNavigationAction::ScrollHorizontalRight => {
+                let max = self.max_channel_horizontal_scroll();
+                self.navigation.channels.scroll_horizontal_right(max);
+            }
+            FocusedNavigationAction::ScrollHorizontalLeft => {
+                self.navigation.channels.scroll_horizontal_left();
+            }
+        }
+    }
+
+    fn apply_message_navigation(&mut self, action: FocusedNavigationAction) {
+        match action {
+            FocusedNavigationAction::MoveDown => {
                 let len = self.message_pane_item_count();
                 move_index_down(&mut self.messages.selected_message, len);
                 self.messages.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
                 self.refresh_message_auto_follow();
             }
-            FocusPane::Members => {
-                let len = self.flattened_members().len();
-                move_index_down(&mut self.navigation.selected_member, len);
-                self.navigation.member_keep_selection_visible = true;
-                self.clamp_member_viewport();
-            }
-        }
-    }
-
-    pub fn move_up(&mut self) {
-        match self.navigation.focus {
-            FocusPane::Guilds => {
-                move_index_up(&mut self.navigation.selected_guild);
-                self.navigation.guild_keep_selection_visible = true;
-                self.clamp_guild_viewport();
-            }
-            FocusPane::Channels => {
-                self.move_channel_selection_up();
-            }
-            FocusPane::Messages => {
+            FocusedNavigationAction::MoveUp => {
                 move_index_up(&mut self.messages.selected_message);
                 self.messages.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
                 self.refresh_message_auto_follow();
             }
-            FocusPane::Members => {
-                move_index_up(&mut self.navigation.selected_member);
-                self.navigation.member_keep_selection_visible = true;
-                self.clamp_member_viewport();
-            }
-        }
-    }
-
-    pub fn jump_top(&mut self) {
-        match self.navigation.focus {
-            FocusPane::Guilds => {
-                self.navigation.selected_guild = 0;
-                self.navigation.guild_keep_selection_visible = true;
-                self.clamp_guild_viewport();
-            }
-            FocusPane::Channels => {
-                self.jump_channel_selection_top();
-            }
-            FocusPane::Messages => {
+            FocusedNavigationAction::JumpTop => {
                 self.messages.selected_message = 0;
                 self.messages.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
                 self.refresh_message_auto_follow();
             }
-            FocusPane::Members => {
-                self.navigation.selected_member = 0;
-                self.navigation.member_keep_selection_visible = true;
-                self.clamp_member_viewport();
-            }
-        }
-    }
-
-    pub fn jump_bottom(&mut self) {
-        match self.navigation.focus {
-            FocusPane::Guilds => {
-                self.navigation.selected_guild =
-                    last_index(self.guild_pane_filtered_entries().len());
-                self.navigation.guild_keep_selection_visible = true;
-                self.clamp_guild_viewport();
-            }
-            FocusPane::Channels => {
-                self.jump_channel_selection_bottom();
-            }
-            FocusPane::Messages => {
+            FocusedNavigationAction::JumpBottom => {
                 self.messages.selected_message = last_index(self.message_pane_item_count());
                 self.messages.message_keep_selection_visible = true;
                 self.clamp_message_viewport();
                 self.refresh_message_auto_follow();
             }
-            FocusPane::Members => {
-                self.navigation.selected_member = last_index(self.flattened_members().len());
-                self.navigation.member_keep_selection_visible = true;
-                self.clamp_member_viewport();
-            }
-        }
-    }
-
-    pub fn half_page_down(&mut self) {
-        match self.navigation.focus {
-            FocusPane::Guilds => {
-                let distance = pane_content_height(self.navigation.guild_view_height) / 2;
-                let len = self.guild_pane_filtered_entries().len();
-                move_index_down_by(&mut self.navigation.selected_guild, len, distance.max(1));
-                self.navigation.guild_keep_selection_visible = true;
-                self.clamp_guild_viewport();
-            }
-            FocusPane::Channels => {
-                let distance = pane_content_height(self.navigation.channel_view_height) / 2;
-                self.move_channel_selection_down_by(distance.max(1));
-            }
-            FocusPane::Messages => {
+            FocusedNavigationAction::HalfPageDown => {
                 let distance = self.message_content_height() / 2;
                 self.half_page_message_down(distance);
             }
-            FocusPane::Members => {
-                let distance = pane_content_height(self.navigation.member_view_height) / 2;
-                self.select_member_near_line(
-                    self.selected_member_line().saturating_add(distance.max(1)),
-                );
-                self.navigation.member_keep_selection_visible = true;
-                self.clamp_member_viewport();
-            }
-        }
-    }
-
-    pub fn half_page_up(&mut self) {
-        match self.navigation.focus {
-            FocusPane::Guilds => {
-                let distance = pane_content_height(self.navigation.guild_view_height) / 2;
-                move_index_up_by(&mut self.navigation.selected_guild, distance.max(1));
-                self.navigation.guild_keep_selection_visible = true;
-                self.clamp_guild_viewport();
-            }
-            FocusPane::Channels => {
-                let distance = pane_content_height(self.navigation.channel_view_height) / 2;
-                self.move_channel_selection_up_by(distance.max(1));
-            }
-            FocusPane::Messages => {
+            FocusedNavigationAction::HalfPageUp => {
                 let distance = self.message_content_height() / 2;
                 self.half_page_message_up(distance);
             }
-            FocusPane::Members => {
-                let distance = pane_content_height(self.navigation.member_view_height) / 2;
+            FocusedNavigationAction::ScrollViewportDown => self.scroll_message_viewport_down(),
+            FocusedNavigationAction::ScrollViewportUp => self.scroll_message_viewport_up(),
+            FocusedNavigationAction::ScrollHorizontalRight
+            | FocusedNavigationAction::ScrollHorizontalLeft => {}
+        }
+    }
+
+    fn apply_member_navigation(&mut self, action: FocusedNavigationAction) {
+        match action {
+            FocusedNavigationAction::MoveDown => {
+                let len = self.flattened_members().len();
+                self.navigation.members.move_down(len);
+                self.clamp_member_viewport();
+            }
+            FocusedNavigationAction::MoveUp => {
+                self.navigation.members.move_up();
+                self.clamp_member_viewport();
+            }
+            FocusedNavigationAction::JumpTop => {
+                self.navigation.members.jump_top();
+                self.clamp_member_viewport();
+            }
+            FocusedNavigationAction::JumpBottom => {
+                let len = self.flattened_members().len();
+                self.navigation.members.jump_bottom(len);
+                self.clamp_member_viewport();
+            }
+            FocusedNavigationAction::HalfPageDown => {
+                let distance = self.navigation.members.content_height() / 2;
+                self.select_member_near_line(
+                    self.selected_member_line().saturating_add(distance.max(1)),
+                );
+                self.navigation.members.keep_selection_visible();
+                self.clamp_member_viewport();
+            }
+            FocusedNavigationAction::HalfPageUp => {
+                let distance = self.navigation.members.content_height() / 2;
                 self.select_member_near_line(
                     self.selected_member_line().saturating_sub(distance.max(1)),
                 );
-                self.navigation.member_keep_selection_visible = true;
+                self.navigation.members.keep_selection_visible();
                 self.clamp_member_viewport();
             }
-        }
-    }
-
-    pub fn scroll_focused_pane_viewport_down(&mut self) {
-        match self.navigation.focus {
-            FocusPane::Guilds => {
-                let height = pane_content_height(self.navigation.guild_view_height);
-                let len = self.guild_pane_filtered_entries().len();
-                self.navigation.guild_keep_selection_visible = false;
-                scroll_list_down(&mut self.navigation.guild_scroll, height, len);
-            }
-            FocusPane::Channels => {
-                let height = pane_content_height(self.navigation.channel_view_height);
-                let len = self.channel_pane_filtered_entries().len();
-                self.navigation.channel_keep_selection_visible = false;
-                scroll_list_down(&mut self.navigation.channel_scroll, height, len);
-            }
-            FocusPane::Messages => self.scroll_message_viewport_down(),
-            FocusPane::Members => {
-                let height = pane_content_height(self.navigation.member_view_height);
+            FocusedNavigationAction::ScrollViewportDown => {
                 let len = self.count_member_lines();
-                self.navigation.member_keep_selection_visible = false;
-                scroll_list_down(&mut self.navigation.member_scroll, height, len);
+                self.navigation.members.scroll_down(len);
             }
-        }
-    }
-
-    pub fn scroll_focused_pane_viewport_up(&mut self) {
-        match self.navigation.focus {
-            FocusPane::Guilds => {
-                self.navigation.guild_keep_selection_visible = false;
-                scroll_list_up(&mut self.navigation.guild_scroll);
+            FocusedNavigationAction::ScrollViewportUp => self.navigation.members.scroll_up(),
+            FocusedNavigationAction::ScrollHorizontalRight => {
+                let max = self.max_member_horizontal_scroll();
+                self.navigation.members.scroll_horizontal_right(max);
             }
-            FocusPane::Channels => {
-                self.navigation.channel_keep_selection_visible = false;
-                scroll_list_up(&mut self.navigation.channel_scroll);
+            FocusedNavigationAction::ScrollHorizontalLeft => {
+                self.navigation.members.scroll_horizontal_left();
             }
-            FocusPane::Messages => self.scroll_message_viewport_up(),
-            FocusPane::Members => {
-                self.navigation.member_keep_selection_visible = false;
-                scroll_list_up(&mut self.navigation.member_scroll);
-            }
-        }
-    }
-
-    pub fn scroll_focused_pane_horizontal_right(&mut self) {
-        match self.navigation.focus {
-            FocusPane::Guilds => {
-                self.navigation.guild_horizontal_scroll = self
-                    .navigation
-                    .guild_horizontal_scroll
-                    .saturating_add(1)
-                    .min(self.max_guild_horizontal_scroll());
-            }
-            FocusPane::Channels => {
-                self.navigation.channel_horizontal_scroll = self
-                    .navigation
-                    .channel_horizontal_scroll
-                    .saturating_add(1)
-                    .min(self.max_channel_horizontal_scroll());
-            }
-            FocusPane::Members => {
-                self.navigation.member_horizontal_scroll = self
-                    .navigation
-                    .member_horizontal_scroll
-                    .saturating_add(1)
-                    .min(self.max_member_horizontal_scroll());
-            }
-            FocusPane::Messages => {}
         }
     }
 
@@ -494,24 +596,6 @@ impl DashboardState {
             .unwrap_or_default()
     }
 
-    pub fn scroll_focused_pane_horizontal_left(&mut self) {
-        match self.navigation.focus {
-            FocusPane::Guilds => {
-                self.navigation.guild_horizontal_scroll =
-                    self.navigation.guild_horizontal_scroll.saturating_sub(1)
-            }
-            FocusPane::Channels => {
-                self.navigation.channel_horizontal_scroll =
-                    self.navigation.channel_horizontal_scroll.saturating_sub(1)
-            }
-            FocusPane::Members => {
-                self.navigation.member_horizontal_scroll =
-                    self.navigation.member_horizontal_scroll.saturating_sub(1)
-            }
-            FocusPane::Messages => {}
-        }
-    }
-
     pub fn cycle_focus(&mut self) {
         self.navigation.focus = self.next_visible_focus(false);
     }
@@ -528,11 +612,8 @@ impl DashboardState {
 
     pub fn show_and_focus_pane(&mut self, pane: FocusPane) {
         let was_visible = self.is_pane_visible(pane);
-        match pane {
-            FocusPane::Guilds => self.navigation.guild_pane_visible = true,
-            FocusPane::Channels => self.navigation.channel_pane_visible = true,
-            FocusPane::Members => self.navigation.member_pane_visible = true,
-            FocusPane::Messages => {}
+        if let Some(visible) = self.navigation.pane_visible_mut(pane) {
+            *visible = true;
         }
         if !was_visible && pane != FocusPane::Messages {
             self.options.ui_state_save_pending = true;
@@ -574,17 +655,17 @@ impl DashboardState {
     }
 
     fn select_visible_guild_row(&mut self, row: usize) -> bool {
-        let index = self.navigation.guild_scroll.saturating_add(row);
+        let index = self.navigation.guilds.scroll.saturating_add(row);
         if index >= self.guild_pane_filtered_entries().len() {
             return false;
         }
-        self.navigation.selected_guild = index;
-        self.navigation.guild_keep_selection_visible = true;
+        self.navigation.guilds.selected = index;
+        self.navigation.guilds.keep_selection_visible();
         true
     }
 
     fn select_visible_channel_row(&mut self, row: usize) -> bool {
-        let index = self.navigation.channel_scroll.saturating_add(row);
+        let index = self.navigation.channels.scroll.saturating_add(row);
         let entries = self.channel_pane_filtered_entries();
         if !entries
             .get(index)
@@ -592,17 +673,17 @@ impl DashboardState {
         {
             return false;
         }
-        self.navigation.selected_channel = index;
-        self.navigation.channel_keep_selection_visible = true;
+        self.navigation.channels.selected = index;
+        self.navigation.channels.keep_selection_visible();
         true
     }
 
     fn select_visible_member_line(&mut self, row: usize) -> bool {
-        let target_line = self.navigation.member_scroll.saturating_add(row);
+        let target_line = self.navigation.members.scroll.saturating_add(row);
         for (member_index, line_index) in self.member_line_indices() {
             if line_index == target_line {
-                self.navigation.selected_member = member_index;
-                self.navigation.member_keep_selection_visible = true;
+                self.navigation.members.selected = member_index;
+                self.navigation.members.keep_selection_visible();
                 return true;
             }
         }
@@ -610,10 +691,10 @@ impl DashboardState {
     }
 
     pub(super) fn clamp_selection_indices(&mut self) {
-        self.navigation.selected_guild = self.selected_guild();
-        self.navigation.selected_channel = self.selected_channel();
+        self.navigation.guilds.selected = self.selected_guild();
+        self.navigation.channels.selected = self.selected_channel();
         self.messages.selected_message = self.selected_message();
-        self.navigation.selected_member = self.selected_member();
+        self.navigation.members.selected = self.selected_member();
         self.clamp_list_viewports();
         self.clamp_message_viewport();
     }
@@ -657,8 +738,8 @@ impl DashboardState {
         self.messages.message_keep_selection_visible = true;
         self.messages.message_auto_follow = true;
         self.clear_new_messages_marker();
-        self.navigation.channel_keep_selection_visible = true;
-        self.navigation.member_keep_selection_visible = true;
+        self.navigation.channels.keep_selection_visible();
+        self.navigation.members.keep_selection_visible();
         self.cancel_composer();
         self.close_message_action_menu();
         self.close_channel_leader_action();
@@ -676,49 +757,32 @@ impl DashboardState {
 
     pub(super) fn clamp_guild_viewport(&mut self) {
         let entries_len = self.guild_pane_filtered_entries().len();
-        self.navigation.selected_guild =
-            clamp_selected_index(self.navigation.selected_guild, entries_len);
-        clamp_list_viewport(
-            self.navigation.selected_guild,
-            &mut self.navigation.guild_scroll,
-            pane_content_height(self.navigation.guild_view_height),
-            entries_len,
-            self.navigation.guild_keep_selection_visible,
-        );
+        self.navigation.guilds.clamp_selected(entries_len);
+        let selected = self.navigation.guilds.selected;
+        self.navigation.guilds.clamp_viewport(selected, entries_len);
     }
 
     pub(super) fn clamp_channel_viewport(&mut self) {
         let entries_len = self.channel_pane_filtered_entries().len();
-        self.navigation.selected_channel =
-            clamp_selected_index(self.navigation.selected_channel, entries_len);
-        clamp_list_viewport(
-            self.navigation.selected_channel,
-            &mut self.navigation.channel_scroll,
-            pane_content_height(self.navigation.channel_view_height),
-            entries_len,
-            self.navigation.channel_keep_selection_visible,
-        );
+        self.navigation.channels.clamp_selected(entries_len);
+        let selected = self.navigation.channels.selected;
+        self.navigation
+            .channels
+            .clamp_viewport(selected, entries_len);
     }
 
     pub(super) fn clamp_member_viewport(&mut self) {
         let members_len = self.flattened_members().len();
         if members_len == 0 {
-            self.navigation.selected_member = 0;
-            self.navigation.member_scroll = 0;
+            self.navigation.members.selected = 0;
+            self.navigation.members.scroll = 0;
             return;
         }
 
-        self.navigation.selected_member = self.navigation.selected_member.min(members_len - 1);
+        self.navigation.members.selected = self.navigation.members.selected.min(members_len - 1);
         let selected_line = self.selected_member_line();
-        let height = pane_content_height(self.navigation.member_view_height);
         let len = self.count_member_lines();
-        clamp_list_viewport(
-            selected_line,
-            &mut self.navigation.member_scroll,
-            height,
-            len,
-            self.navigation.member_keep_selection_visible,
-        );
+        self.navigation.members.clamp_viewport(selected_line, len);
     }
 
     pub(super) fn selected_member_line(&self) -> usize {
@@ -732,7 +796,7 @@ impl DashboardState {
         if members_len == 0 {
             return None;
         }
-        let selected_member = self.navigation.selected_member.min(members_len - 1);
+        let selected_member = self.navigation.members.selected.min(members_len - 1);
         let mut member_index = 0usize;
         let mut line_index = 0usize;
         for group in groups {
@@ -758,14 +822,14 @@ impl DashboardState {
         let mut last_member = None;
         for (member_index, line_index) in self.member_line_indices() {
             if line_index >= target_line {
-                self.navigation.selected_member = member_index;
+                self.navigation.members.selected = member_index;
                 return;
             }
             last_member = Some(member_index);
         }
 
         if let Some(member_index) = last_member {
-            self.navigation.selected_member = member_index;
+            self.navigation.members.selected = member_index;
         }
     }
 

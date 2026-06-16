@@ -1,7 +1,7 @@
 mod avatar;
+mod cache;
 mod decode;
 mod emoji;
-mod lru;
 mod preview;
 mod protocol;
 mod targets;

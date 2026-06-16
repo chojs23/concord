@@ -11,9 +11,9 @@ use crate::{
 use super::{
     AVATAR_PREVIEW_HEIGHT, AVATAR_PREVIEW_WIDTH, AvatarTarget, ImagePreviewRenderInfo,
     PROFILE_POPUP_AVATAR_HEIGHT, PROFILE_POPUP_AVATAR_WIDTH, avatar_preview_url,
+    cache::{MediaImageCacheCore, MediaImageCacheEntry},
     clipped_preview_protocol,
     decode::{MediaImageDecodeJob, MediaImageDecodeKey},
-    lru::{self, TrackedCacheEntry},
     query_image_picker,
 };
 
@@ -23,11 +23,8 @@ pub(super) const MAX_AVATAR_IMAGE_CACHE_ENTRIES: usize = 32;
 
 pub(in crate::tui) struct AvatarImageCache {
     pub(super) picker: Option<Picker>,
-    pub(super) entries: HashMap<String, AvatarImageEntry>,
+    pub(super) cache: MediaImageCacheCore<String, AvatarImageEntry>,
     pub(super) active_popup_avatar_url: Option<String>,
-    pub(super) tick: u64,
-    pub(super) decode_generation: u64,
-    pub(super) protocol_generation: u64,
 }
 
 pub(super) enum AvatarImageEntry {
@@ -101,7 +98,7 @@ impl AvatarProtocolKey {
     }
 }
 
-impl TrackedCacheEntry for AvatarImageEntry {
+impl MediaImageCacheEntry for AvatarImageEntry {
     fn last_used(&self) -> u64 {
         match self {
             AvatarImageEntry::Loading { last_used }
@@ -119,22 +116,32 @@ impl TrackedCacheEntry for AvatarImageEntry {
             | AvatarImageEntry::Failed { last_used } => *last_used = tick,
         }
     }
+
+    fn is_loading(&self) -> bool {
+        matches!(self, AvatarImageEntry::Loading { .. })
+    }
+
+    fn decoding_generation(&self) -> Option<u64> {
+        match self {
+            AvatarImageEntry::Decoding { generation, .. } => Some(*generation),
+            AvatarImageEntry::Loading { .. }
+            | AvatarImageEntry::Ready { .. }
+            | AvatarImageEntry::Failed { .. } => None,
+        }
+    }
 }
 
 impl AvatarImageCache {
     pub(in crate::tui) fn new() -> Self {
         Self {
             picker: query_image_picker("avatar", "avatar image picker unavailable"),
-            entries: HashMap::new(),
+            cache: MediaImageCacheCore::new(),
             active_popup_avatar_url: None,
-            tick: 0,
-            decode_generation: 0,
-            protocol_generation: 0,
         }
     }
 
     pub(in crate::tui) fn refresh_protocols(&mut self) {
-        self.protocol_generation = self.protocol_generation.saturating_add(1);
+        self.cache.refresh_protocols();
     }
 
     pub(in crate::tui) fn render_state_with_popup(
@@ -143,28 +150,23 @@ impl AvatarImageCache {
         popup_url: Option<&str>,
         circular: bool,
     ) -> (Vec<AvatarImage<'_>>, Option<AvatarImage<'_>>) {
-        let touch_tick = lru::next_tick(&mut self.tick);
         for target in targets {
             let url = avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
-            if let Some(entry) = self.entries.get_mut(&url) {
-                entry.touch(touch_tick);
-            }
+            self.cache.touch(&url);
         }
         let popup_cache_url = popup_url.map(|url| {
             avatar_preview_url(url, PROFILE_POPUP_AVATAR_WIDTH, PROFILE_POPUP_AVATAR_HEIGHT)
         });
         self.active_popup_avatar_url = popup_cache_url.clone();
-        if let Some(url) = popup_cache_url.as_deref()
-            && let Some(entry) = self.entries.get_mut(url)
-        {
-            entry.touch(touch_tick);
+        if let Some(url) = popup_cache_url.as_deref() {
+            self.cache.touch(&url.to_owned());
         }
 
         {
             let Some(picker) = self.picker.as_ref() else {
                 return (Vec::new(), None);
             };
-            let protocol_generation = self.protocol_generation;
+            let protocol_generation = self.cache.protocol_generation;
 
             for target in targets {
                 let url =
@@ -172,7 +174,7 @@ impl AvatarImageCache {
                 let key = AvatarProtocolKey::message_avatar(target, circular);
                 let Some(AvatarImageEntry::Ready {
                     image, protocols, ..
-                }) = self.entries.get_mut(&url)
+                }) = self.cache.entries.get_mut(&url)
                 else {
                     continue;
                 };
@@ -195,7 +197,7 @@ impl AvatarImageCache {
             if let Some(url) = popup_cache_url.as_deref()
                 && let Some(AvatarImageEntry::Ready {
                     image, protocols, ..
-                }) = self.entries.get_mut(url)
+                }) = self.cache.entries.get_mut(url)
             {
                 let key = AvatarProtocolKey::profile_popup(circular);
                 if protocols
@@ -220,7 +222,8 @@ impl AvatarImageCache {
             .filter_map(|target| {
                 let url =
                     avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
-                let AvatarImageEntry::Ready { protocols, .. } = self.entries.get(&url)? else {
+                let AvatarImageEntry::Ready { protocols, .. } = self.cache.entries.get(&url)?
+                else {
                     return None;
                 };
                 let key = AvatarProtocolKey::message_avatar(target, circular);
@@ -232,7 +235,7 @@ impl AvatarImageCache {
             })
             .collect();
         let popup_avatar = popup_cache_url.and_then(|url| {
-            let AvatarImageEntry::Ready { protocols, .. } = self.entries.get(&url)? else {
+            let AvatarImageEntry::Ready { protocols, .. } = self.cache.entries.get(&url)? else {
                 return None;
             };
             let key = AvatarProtocolKey::profile_popup(circular);
@@ -272,12 +275,13 @@ impl AvatarImageCache {
         key: &str,
         upload: impl FnOnce() -> Option<ProfileAvatarUpload>,
     ) -> Option<AppCommand> {
-        if self.entries.contains_key(key) {
+        if self.cache.entries.contains_key(key) {
             return None;
         }
         let upload = upload()?;
-        let last_used = lru::next_tick(&mut self.tick);
-        self.entries
+        let last_used = self.cache.next_tick();
+        self.cache
+            .entries
             .insert(key.to_owned(), AvatarImageEntry::Loading { last_used });
         self.prune_to_limit(&[]);
         Some(AppCommand::LoadProfileAvatarPreview {
@@ -287,17 +291,18 @@ impl AvatarImageCache {
     }
 
     fn next_request_for_cache_url(&mut self, url: &str) -> Option<AppCommand> {
-        let intent = lru::insert_loading_request(
-            &mut self.entries,
-            &mut self.tick,
-            url.to_owned(),
-            |last_used| AvatarImageEntry::Loading { last_used },
-            |url| AppCommand::LoadAttachmentPreview { url },
-        );
-        if intent.is_some() {
+        if self
+            .cache
+            .insert_loading(url.to_owned(), |last_used| AvatarImageEntry::Loading {
+                last_used,
+            })
+        {
             self.prune_to_limit(&[]);
+            return Some(AppCommand::LoadAttachmentPreview {
+                url: url.to_owned(),
+            });
         }
-        intent
+        None
     }
 
     pub(in crate::tui) fn record_event(&mut self, event: &AppEvent) -> Option<MediaImageDecodeJob> {
@@ -312,15 +317,10 @@ impl AvatarImageCache {
     }
 
     fn store_loaded(&mut self, url: &str, bytes: &[u8]) -> Option<MediaImageDecodeJob> {
-        lru::start_url_decode_job(
-            (
-                &mut self.entries,
-                &mut self.tick,
-                &mut self.decode_generation,
-            ),
-            (url, bytes),
+        self.cache.start_decode_job(
+            url.to_owned(),
+            std::sync::Arc::from(bytes.to_vec()),
             self.picker.is_some(),
-            |entry| matches!(entry, AvatarImageEntry::Loading { .. }),
             |generation, last_used| AvatarImageEntry::Decoding {
                 generation,
                 last_used,
@@ -336,24 +336,17 @@ impl AvatarImageCache {
         result_generation: u64,
         result: std::result::Result<DynamicImage, String>,
     ) {
-        let Some(generation) = self.entries.get(&key).and_then(|entry| {
-            if let AvatarImageEntry::Decoding { generation, .. } = entry {
-                Some(*generation)
-            } else {
-                None
-            }
-        }) else {
-            return;
-        };
-
-        if generation != result_generation {
+        if !self
+            .cache
+            .decoded_generation_matches(&key, result_generation)
+        {
             return;
         }
 
-        let last_used = lru::next_tick(&mut self.tick);
+        let last_used = self.cache.next_tick();
         match result {
             Ok(image) => {
-                self.entries.insert(
+                self.cache.entries.insert(
                     key,
                     AvatarImageEntry::Ready {
                         image,
@@ -363,18 +356,18 @@ impl AvatarImageCache {
                 );
             }
             Err(_) => {
-                self.entries
+                self.cache
+                    .entries
                     .insert(key, AvatarImageEntry::Failed { last_used });
             }
         }
     }
 
     fn store_failed(&mut self, url: &str) {
-        if self.entries.contains_key(url) {
-            let last_used = lru::next_tick(&mut self.tick);
-            self.entries
-                .insert(url.to_owned(), AvatarImageEntry::Failed { last_used });
-        }
+        self.cache
+            .store_failed_if_present(url.to_owned(), |last_used| AvatarImageEntry::Failed {
+                last_used,
+            });
     }
 
     pub(super) fn prune_to_limit(&mut self, targets: &[AvatarTarget]) {
@@ -386,11 +379,9 @@ impl AvatarImageCache {
             })
             .chain(self.active_popup_avatar_url.iter().cloned())
             .collect::<HashSet<_>>();
-        lru::prune_to_limit(
-            &mut self.entries,
-            MAX_AVATAR_IMAGE_CACHE_ENTRIES,
-            |url| protected.contains(url.as_str()),
-            TrackedCacheEntry::last_used,
-        );
+        self.cache
+            .prune_to_limit(MAX_AVATAR_IMAGE_CACHE_ENTRIES, |url| {
+                protected.contains(url.as_str())
+            });
     }
 }

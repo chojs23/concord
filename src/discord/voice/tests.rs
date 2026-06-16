@@ -2,6 +2,8 @@ use super::dave::VoiceDaveOutboundPayload;
 use super::rtp::build_voice_rtp_packet;
 use super::runtime::stop_voice_connection_task;
 use super::*;
+#[cfg(feature = "voice-playback")]
+use crate::support::audio_output::{f32_sample_to_i16, f32_sample_to_u8, f32_sample_to_u16};
 
 fn requested_voice() -> CurrentVoiceConnectionState {
     CurrentVoiceConnectionState {
@@ -322,13 +324,13 @@ fn voice_dave_outbound_opus_fails_closed_unless_ready() {
     state.protocol_version = NonZeroU16::new(1);
     assert_eq!(
         state.prepare_outbound_opus(b"opus-frame"),
-        VoiceDaveOutboundPayload::Blocked(VoiceFakeSendBlockReason::DaveOutboundMissingSession)
+        VoiceDaveOutboundPayload::Blocked(VoiceOutboundSendBlockReason::DaveOutboundMissingSession)
     );
 
     state.reinit(1).expect("DAVE session should initialize");
     assert_eq!(
         state.prepare_outbound_opus(b"opus-frame"),
-        VoiceDaveOutboundPayload::Blocked(VoiceFakeSendBlockReason::DaveOutboundNotReady)
+        VoiceDaveOutboundPayload::Blocked(VoiceOutboundSendBlockReason::DaveOutboundNotReady)
     );
 
     state.reinit(0).expect("DAVE should disable cleanly");
@@ -549,26 +551,21 @@ fn voice_post_process_reduces_alternating_high_frequency_noise() {
 #[test]
 fn extra_output_channels_use_converted_silence() {
     let mut u8_output = [0u8; 4];
-    write_voice_output_frame(&mut u8_output, 1.0, -1.0, voice_sample_to_u8);
+    write_voice_output_frame(&mut u8_output, 1.0, -1.0, f32_sample_to_u8);
     assert_eq!(
         u8_output,
-        [255, 0, voice_sample_to_u8(0.0), voice_sample_to_u8(0.0)]
+        [255, 0, f32_sample_to_u8(0.0), f32_sample_to_u8(0.0)]
     );
 
     let mut u16_output = [0u16; 4];
-    write_voice_output_frame(&mut u16_output, 1.0, -1.0, voice_sample_to_u16);
+    write_voice_output_frame(&mut u16_output, 1.0, -1.0, f32_sample_to_u16);
     assert_eq!(
         u16_output,
-        [
-            u16::MAX,
-            0,
-            voice_sample_to_u16(0.0),
-            voice_sample_to_u16(0.0),
-        ]
+        [u16::MAX, 0, f32_sample_to_u16(0.0), f32_sample_to_u16(0.0),]
     );
 
     let mut i16_output = [1i16; 4];
-    write_voice_output_frame(&mut i16_output, 1.0, -1.0, voice_sample_to_i16);
+    write_voice_output_frame(&mut i16_output, 1.0, -1.0, f32_sample_to_i16);
     assert_eq!(i16_output, [i16::MAX, i16::MIN + 1, 0, 0]);
 }
 
@@ -1613,7 +1610,7 @@ fn fake_outbound_noops_when_capture_gate_is_closed() {
         state
             .send_opus_frame(b"opus-frame")
             .expect("send should no-op"),
-        VoiceFakeSendOutcome::Noop
+        VoiceOutboundSendOutcome::Noop
     );
     assert!(state.events().is_empty());
     assert_eq!(state.rtp, rtp);
@@ -1624,7 +1621,7 @@ fn fake_outbound_noops_when_capture_gate_is_closed() {
         state
             .send_opus_frame(b"opus-frame")
             .expect("muted send should no-op"),
-        VoiceFakeSendOutcome::Noop
+        VoiceOutboundSendOutcome::Noop
     );
     assert!(state.events().is_empty());
     assert_eq!(state.rtp, rtp);
@@ -1642,7 +1639,7 @@ fn fake_outbound_blocks_dave_active_plaintext_fallback() {
         state
             .send_opus_frame(b"opus-frame")
             .expect("DAVE block should be reported"),
-        VoiceFakeSendOutcome::Blocked(VoiceFakeSendBlockReason::DaveOutboundUnsupported)
+        VoiceOutboundSendOutcome::Blocked(VoiceOutboundSendBlockReason::DaveOutboundUnsupported)
     );
     assert!(state.events().is_empty());
     assert_eq!(state.rtp, rtp);
@@ -1659,7 +1656,7 @@ fn fake_outbound_uses_dave_outbound_policy_before_transport_encrypt() {
         state
             .send_opus_frame_with_dave(b"opus-frame", &mut dave)
             .expect("DAVE inactive frame should send"),
-        VoiceFakeSendOutcome::Sent
+        VoiceOutboundSendOutcome::Sent
     );
     assert_fake_packet(
         AEAD_AES256_GCM_RTPSIZE,
@@ -1681,7 +1678,7 @@ fn fake_outbound_uses_dave_outbound_policy_before_transport_encrypt() {
         blocked
             .send_opus_frame_with_dave(b"opus-frame", &mut dave)
             .expect("DAVE not-ready frame should block"),
-        VoiceFakeSendOutcome::Blocked(VoiceFakeSendBlockReason::DaveOutboundNotReady)
+        VoiceOutboundSendOutcome::Blocked(VoiceOutboundSendBlockReason::DaveOutboundNotReady)
     );
     assert!(blocked.events().is_empty());
     assert_eq!(blocked.rtp, rtp);
@@ -1698,12 +1695,12 @@ fn fake_outbound_sends_encrypted_packets_without_live_io() {
             state
                 .send_opus_frame(b"opus-frame")
                 .expect("first frame should send"),
-            VoiceFakeSendOutcome::Sent
+            VoiceOutboundSendOutcome::Sent
         );
         assert_eq!(state.events().len(), 2);
         assert_eq!(
             state.events()[0],
-            VoiceFakeOutboundEvent::Speaking {
+            VoiceOutboundSendEvent::Speaking {
                 speaking: true,
                 ssrc: 42,
             }
@@ -1725,7 +1722,7 @@ fn fake_outbound_sends_encrypted_packets_without_live_io() {
             state
                 .send_opus_frame(b"next-frame")
                 .expect("second frame should send"),
-            VoiceFakeSendOutcome::Sent
+            VoiceOutboundSendOutcome::Sent
         );
         assert_eq!(state.events().len(), 3);
         assert_fake_packet(
@@ -1752,11 +1749,11 @@ fn fake_outbound_stop_sends_finite_silence_then_speaking_off() {
         state
             .send_opus_frame(b"opus-frame")
             .expect("frame should send"),
-        VoiceFakeSendOutcome::Sent
+        VoiceOutboundSendOutcome::Sent
     );
     assert_eq!(
         state.stop_speaking().expect("stop should send silence"),
-        VoiceFakeSendOutcome::Sent
+        VoiceOutboundSendOutcome::Sent
     );
 
     assert_eq!(state.events().len(), DISCORD_TRAILING_SILENCE_FRAMES + 3);
@@ -1773,7 +1770,7 @@ fn fake_outbound_stop_sends_finite_silence_then_speaking_off() {
     }
     assert_eq!(
         state.events()[DISCORD_TRAILING_SILENCE_FRAMES + 2],
-        VoiceFakeOutboundEvent::Speaking {
+        VoiceOutboundSendEvent::Speaking {
             speaking: false,
             ssrc: 42,
         }
@@ -1791,7 +1788,7 @@ fn fake_outbound_stop_sends_speaking_off_when_capture_gate_closes() {
         state
             .send_opus_frame(b"opus-frame")
             .expect("frame should send"),
-        VoiceFakeSendOutcome::Sent
+        VoiceOutboundSendOutcome::Sent
     );
     let event_count = state.events().len();
     let rtp = state.rtp;
@@ -1802,12 +1799,12 @@ fn fake_outbound_stop_sends_speaking_off_when_capture_gate_closes() {
         state
             .stop_speaking()
             .expect("muted stop should send speaking off"),
-        VoiceFakeSendOutcome::Sent
+        VoiceOutboundSendOutcome::Sent
     );
     assert_eq!(state.events().len(), event_count + 1);
     assert_eq!(
         state.events()[event_count],
-        VoiceFakeOutboundEvent::Speaking {
+        VoiceOutboundSendEvent::Speaking {
             speaking: false,
             ssrc: 42,
         }
@@ -1821,12 +1818,12 @@ fn fake_outbound_stop_sends_speaking_off_when_capture_gate_closes() {
         state
             .stop_speaking()
             .expect("disallowed stop should send speaking off"),
-        VoiceFakeSendOutcome::Sent
+        VoiceOutboundSendOutcome::Sent
     );
     assert_eq!(state.events().len(), event_count + 2);
     assert_eq!(
         state.events()[event_count + 1],
-        VoiceFakeOutboundEvent::Speaking {
+        VoiceOutboundSendEvent::Speaking {
             speaking: false,
             ssrc: 42,
         }
@@ -1848,11 +1845,11 @@ fn fake_outbound_stop_uses_dave_policy_for_silence_frames() {
         state
             .stop_speaking_with_dave(&mut dave)
             .expect("DAVE not-ready silence should still send speaking off"),
-        VoiceFakeSendOutcome::Sent
+        VoiceOutboundSendOutcome::Sent
     );
     assert_eq!(
         state.events(),
-        &[VoiceFakeOutboundEvent::Speaking {
+        &[VoiceOutboundSendEvent::Speaking {
             speaking: false,
             ssrc: 42,
         }]
@@ -1886,11 +1883,11 @@ fn fake_outbound_nonce_exhaustion_fails_without_state_change() {
         stopping
             .stop_speaking()
             .expect("stop should still clear speaking"),
-        VoiceFakeSendOutcome::Sent
+        VoiceOutboundSendOutcome::Sent
     );
     assert_eq!(
         stopping.events(),
-        &[VoiceFakeOutboundEvent::Speaking {
+        &[VoiceOutboundSendEvent::Speaking {
             speaking: false,
             ssrc: 42,
         }]
@@ -1937,8 +1934,8 @@ fn rtp_header_rejects_rtcp_reports_before_payload_type_masking() {
     );
 }
 
-fn fake_outbound_state(mode: &str, nonce_suffix: u32) -> VoiceFakeOutboundSendState {
-    VoiceFakeOutboundSendState::new(
+fn fake_outbound_state(mode: &str, nonce_suffix: u32) -> VoiceOutboundSendState {
+    VoiceOutboundSendState::new(
         mode,
         &[9u8; 32],
         VoiceOutboundRtpState {
@@ -1964,14 +1961,14 @@ fn test_voice_gateway_session() -> VoiceGatewaySession {
 
 fn assert_fake_packet(
     mode: &str,
-    event: &VoiceFakeOutboundEvent,
+    event: &VoiceOutboundSendEvent,
     sequence: u16,
     timestamp: u32,
     ssrc: u32,
     expected_payload: &[u8],
     nonce_suffix: [u8; RTP_AEAD_NONCE_SUFFIX_BYTES],
 ) {
-    let VoiceFakeOutboundEvent::Packet { bytes } = event else {
+    let VoiceOutboundSendEvent::Packet { bytes } = event else {
         panic!("expected fake packet event, got {event:?}");
     };
     let packet_bytes = bytes.as_slice();

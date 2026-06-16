@@ -77,6 +77,26 @@ pub(super) use toast::{toast_area, toast_line};
 pub(super) use url_picker::message_url_picker_lines_for_width;
 pub(super) use url_picker::render_message_url_picker;
 
+fn clear_centered_popup_area(frame: &mut Frame, area: Rect, width: u16, height: u16) -> Rect {
+    let popup = centered_rect(area, width, height);
+    frame.render_widget(Clear, popup);
+    popup
+}
+
+fn render_modal_paragraph(
+    frame: &mut Frame,
+    popup: Rect,
+    title: &'static str,
+    lines: Vec<Line<'static>>,
+) {
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel_block(title, true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
 fn truncate_line_to_display_width(line: Line<'static>, max_width: usize) -> Line<'static> {
     if max_width == 0 {
         return Line::default();

@@ -10,7 +10,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker},
 };
-use crate::{Result, paths};
+use crate::{Result, paths, support::private_file};
 
 pub const DEFAULT_SERVER_WIDTH: u16 = 20;
 pub const DEFAULT_CHANNEL_LIST_WIDTH: u16 = 24;
@@ -456,22 +456,22 @@ pub fn save_ui_state_options(options: &UiStateOptions) -> Result<()> {
 fn save_options_to_path(path: &Path, options: &AppOptions) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
-        set_private_dir_permissions(parent)?;
+        private_file::set_private_dir_permissions(parent)?;
     }
 
-    write_private_file(path, &toml::to_string_pretty(options)?)
+    private_file::write_private_file(path, &toml::to_string_pretty(options)?)
 }
 
 fn save_ui_state_options_to_path(path: &Path, options: &UiStateOptions) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
-        set_private_dir_permissions(parent)?;
+        private_file::set_private_dir_permissions(parent)?;
     }
 
     let file_options = UiStateFileOptions {
         ui_state: options.clone(),
     };
-    write_private_file(path, &toml::to_string_pretty(&file_options)?)
+    private_file::write_private_file(path, &toml::to_string_pretty(&file_options)?)
 }
 
 fn config_path() -> Result<PathBuf> {
@@ -502,48 +502,6 @@ fn state_path() -> Result<PathBuf> {
         )
         .into()
     })
-}
-
-#[cfg(unix)]
-fn set_private_dir_permissions(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(path, permissions)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_private_dir_permissions(_path: &Path) -> Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn write_private_file(path: &Path, content: &str) -> Result<()> {
-    use std::{
-        io::Write,
-        os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    };
-
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(content.as_bytes())?;
-
-    let mut permissions = file.metadata()?.permissions();
-    permissions.set_mode(0o600);
-    fs::set_permissions(path, permissions)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn write_private_file(path: &Path, content: &str) -> Result<()> {
-    fs::write(path, content)?;
-    Ok(())
 }
 
 #[cfg(test)]

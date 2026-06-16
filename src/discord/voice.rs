@@ -16,6 +16,7 @@ mod info;
 #[cfg(any(test, feature = "voice-playback"))]
 mod microphone;
 mod opus;
+mod outbound;
 mod playback;
 mod rtp;
 mod runtime;
@@ -45,6 +46,9 @@ use self::opus::VoiceOpusDecode;
 use self::opus::VoiceOpusEncode;
 #[cfg(test)]
 use self::opus::mix_voice_decoded_samples;
+use self::outbound::VoiceOutboundSendBlockReason;
+#[cfg(any(test, feature = "voice-playback"))]
+use self::outbound::{VoiceOutboundSendEvent, VoiceOutboundSendOutcome, VoiceOutboundSendState};
 #[cfg(test)]
 use ::opus::{Channels, Decoder as OpusDecoder};
 #[cfg(all(test, feature = "voice-playback"))]
@@ -57,17 +61,16 @@ use dave::{VoiceSpeakingState, looks_like_dave_media_frame};
 use playback::VoiceAudioOutput;
 #[cfg(test)]
 use playback::VoicePlaybackPlayoutBuffer;
+#[cfg(all(test, feature = "voice-playback"))]
+use playback::write_voice_output_frame;
 use playback::{VoicePlaybackFrame, VoicePlaybackGate};
 #[cfg(test)]
 use playback::{VoicePlaybackPostProcess, VoicePlayoutFrame};
-#[cfg(all(test, feature = "voice-playback"))]
-use playback::{
-    voice_sample_to_i16, voice_sample_to_u8, voice_sample_to_u16, write_voice_output_frame,
-};
 use rtp::{
-    RtpHeader, VoiceOutboundRtpState, VoiceRtpDecryptor, VoiceRtpEncryptor, looks_like_rtcp_packet,
-    parse_rtp_header, rtcp_sender_ssrc,
+    RtpHeader, VoiceRtpDecryptor, looks_like_rtcp_packet, parse_rtp_header, rtcp_sender_ssrc,
 };
+#[cfg(any(test, feature = "voice-playback"))]
+use rtp::{VoiceOutboundRtpState, VoiceRtpEncryptor};
 
 #[cfg(test)]
 use aes_gcm::{
@@ -429,44 +432,6 @@ impl fmt::Debug for VoiceSessionDescription {
             .field("dave_protocol_version", &self.dave_protocol_version)
             .finish()
     }
-}
-
-#[allow(dead_code)]
-struct VoiceFakeOutboundSendState {
-    rtp: VoiceOutboundRtpState,
-    encryptor: VoiceRtpEncryptor,
-    nonce_suffix: u32,
-    allow_microphone_transmit: bool,
-    self_mute: bool,
-    dave_active: bool,
-    speaking: bool,
-    logged_block_reason: Option<VoiceFakeSendBlockReason>,
-    events: Vec<VoiceFakeOutboundEvent>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(dead_code)]
-enum VoiceFakeOutboundEvent {
-    Speaking { speaking: bool, ssrc: u32 },
-    Packet { bytes: Vec<u8> },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code)]
-enum VoiceFakeSendOutcome {
-    Noop,
-    Sent,
-    Blocked(VoiceFakeSendBlockReason),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code)]
-#[allow(clippy::enum_variant_names)]
-enum VoiceFakeSendBlockReason {
-    DaveOutboundUnsupported,
-    DaveOutboundMissingSession,
-    DaveOutboundNotReady,
-    DaveOutboundEncryptFailed,
 }
 
 #[derive(Default)]

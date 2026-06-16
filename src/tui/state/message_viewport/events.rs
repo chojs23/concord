@@ -1,0 +1,56 @@
+use crate::discord::AppEvent;
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, MessageMarker},
+};
+
+use super::DashboardState;
+
+impl DashboardState {
+    pub(in crate::tui::state) fn active_channel_message_create(
+        &self,
+        event: &AppEvent,
+    ) -> Option<(Id<ChannelMarker>, Id<MessageMarker>)> {
+        let AppEvent::MessageCreate {
+            channel_id,
+            message_id,
+            ..
+        } = event
+        else {
+            let AppEvent::MessageHistoryCatchUpLoaded {
+                channel_id,
+                after,
+                messages,
+                ..
+            } = event
+            else {
+                return None;
+            };
+            let first_newer_message_id = messages
+                .iter()
+                .filter(|message| message.channel_id == *channel_id && message.message_id > *after)
+                .map(|message| message.message_id)
+                .min()?;
+            return (Some(*channel_id) == self.navigation.active_channel_id)
+                .then_some((*channel_id, first_newer_message_id));
+        };
+        (Some(*channel_id) == self.navigation.active_channel_id)
+            .then_some((*channel_id, *message_id))
+    }
+
+    pub(in crate::tui::state) fn event_is_self_message_in_active_channel(
+        &self,
+        event: &AppEvent,
+    ) -> bool {
+        let AppEvent::MessageCreate {
+            author_id,
+            channel_id,
+            ..
+        } = event
+        else {
+            return false;
+        };
+        Some(*author_id) == self.discord.current_user_id
+            && Some(*channel_id) == self.navigation.active_channel_id
+    }
+}

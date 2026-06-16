@@ -47,15 +47,15 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                             MESSAGE_HISTORY_LIMIT,
                         ),
                     );
-                    client
-                        .publish_event(AppEvent::MessageHistoryLoadFailed {
-                            channel_id,
-                            target: before
-                                .map(|before| MessageHistoryLoadTarget::Older { before })
-                                .unwrap_or(MessageHistoryLoadTarget::Latest),
-                            message,
-                        })
-                        .await;
+                    publish_message_history_load_failed(
+                        &client,
+                        channel_id,
+                        before
+                            .map(|before| MessageHistoryLoadTarget::Older { before })
+                            .unwrap_or(MessageHistoryLoadTarget::Latest),
+                        message,
+                    )
+                    .await;
                 }
             }
         }
@@ -84,13 +84,13 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                             MESSAGE_HISTORY_LIMIT,
                         ),
                     );
-                    client
-                        .publish_event(AppEvent::MessageHistoryLoadFailed {
-                            channel_id,
-                            target: MessageHistoryLoadTarget::Latest,
-                            message,
-                        })
-                        .await;
+                    publish_message_history_load_failed(
+                        &client,
+                        channel_id,
+                        MessageHistoryLoadTarget::Latest,
+                        message,
+                    )
+                    .await;
                 }
             }
         }
@@ -131,13 +131,13 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                             MESSAGE_HISTORY_LIMIT,
                         ),
                     );
-                    client
-                        .publish_event(AppEvent::MessageHistoryLoadFailed {
-                            channel_id,
-                            target: MessageHistoryLoadTarget::Newer { after },
-                            message,
-                        })
-                        .await;
+                    publish_message_history_load_failed(
+                        &client,
+                        channel_id,
+                        MessageHistoryLoadTarget::Newer { after },
+                        message,
+                    )
+                    .await;
                 }
             }
         }
@@ -178,13 +178,13 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                             MESSAGE_HISTORY_LIMIT,
                         ),
                     );
-                    client
-                        .publish_event(AppEvent::MessageHistoryLoadFailed {
-                            channel_id,
-                            target: MessageHistoryLoadTarget::Newer { after },
-                            message,
-                        })
-                        .await;
+                    publish_message_history_load_failed(
+                        &client,
+                        channel_id,
+                        MessageHistoryLoadTarget::Newer { after },
+                        message,
+                    )
+                    .await;
                 }
             }
         }
@@ -223,13 +223,13 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                             MESSAGE_HISTORY_LIMIT,
                         ),
                     );
-                    client
-                        .publish_event(AppEvent::MessageHistoryLoadFailed {
-                            channel_id,
-                            target: MessageHistoryLoadTarget::Around { message_id },
-                            message,
-                        })
-                        .await;
+                    publish_message_history_load_failed(
+                        &client,
+                        channel_id,
+                        MessageHistoryLoadTarget::Around { message_id },
+                        message,
+                    )
+                    .await;
                 }
             }
         }
@@ -358,6 +358,21 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
         },
         _ => unreachable!("non-history command routed to history handler"),
     }
+}
+
+async fn publish_message_history_load_failed(
+    client: &DiscordClient,
+    channel_id: Id<ChannelMarker>,
+    target: MessageHistoryLoadTarget,
+    message: String,
+) {
+    client
+        .publish_event(AppEvent::MessageHistoryLoadFailed {
+            channel_id,
+            target,
+            message,
+        })
+        .await;
 }
 
 /// Builds the Discord REST endpoint string for a message-history request so

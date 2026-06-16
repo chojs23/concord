@@ -33,7 +33,7 @@ use super::{
 };
 use crate::discord::{
     ActivityInfo, ChannelState, ChannelUnreadState, ChannelVisibilityStats, FriendStatus,
-    MessageState, PresenceStatus, ReactionInfo, ReactionUsersInfo, UserProfileInfo,
+    MessageState, PresenceStatus, ReactionInfo, ReactionUsersInfo, UserProfileInfo, is_thread_kind,
 };
 
 /// Discord's "you were mentioned" orange, `#FFA500`.
@@ -354,7 +354,7 @@ fn channel_prefix(kind: &str) -> &'static str {
         "voice" | "GuildVoice" => "🔈 ",
         "category" | "GuildCategory" => "▾ ",
         "forum" | "GuildForum" => "💬 ",
-        "thread" | "GuildPublicThread" | "GuildPrivateThread" | "GuildNewsThread" => "» ",
+        kind if is_thread_kind(kind) => "» ",
         _ => "# ",
     }
 }

@@ -602,6 +602,24 @@ fn reaction_users_line_count(reactions: &[ReactionUsersInfo]) -> usize {
         .sum()
 }
 
+macro_rules! modal_popup_accessors {
+    ($get:ident, $get_mut:ident, $variant:ident, $state:ty, $binding:ident) => {
+        pub(super) fn $get(&self) -> Option<&$state> {
+            match &self.modal {
+                Some(ModalPopup::$variant($binding)) => Some($binding),
+                _ => None,
+            }
+        }
+
+        pub(super) fn $get_mut(&mut self) -> Option<&mut $state> {
+            match &mut self.modal {
+                Some(ModalPopup::$variant($binding)) => Some($binding),
+                _ => None,
+            }
+        }
+    };
+}
+
 impl PopupUiState {
     pub(super) fn clear_modal(&mut self) {
         self.modal = None;
@@ -629,19 +647,13 @@ impl PopupUiState {
         }
     }
 
-    pub(super) fn message_url_picker(&self) -> Option<&MessageUrlPickerState> {
-        match &self.modal {
-            Some(ModalPopup::MessageUrlPicker(picker)) => Some(picker),
-            _ => None,
-        }
-    }
-
-    pub(super) fn message_url_picker_mut(&mut self) -> Option<&mut MessageUrlPickerState> {
-        match &mut self.modal {
-            Some(ModalPopup::MessageUrlPicker(picker)) => Some(picker),
-            _ => None,
-        }
-    }
+    modal_popup_accessors!(
+        message_url_picker,
+        message_url_picker_mut,
+        MessageUrlPicker,
+        MessageUrlPickerState,
+        picker
+    );
 
     pub(super) fn message_delete_confirmation(&self) -> Option<&MessageDeleteConfirmationState> {
         match &self.modal {
@@ -696,47 +708,21 @@ impl PopupUiState {
         }
     }
 
-    pub(super) fn options_popup(&self) -> Option<&OptionsPopupState> {
-        match &self.modal {
-            Some(ModalPopup::Options(popup)) => Some(popup),
-            _ => None,
-        }
-    }
-
-    pub(super) fn options_popup_mut(&mut self) -> Option<&mut OptionsPopupState> {
-        match &mut self.modal {
-            Some(ModalPopup::Options(popup)) => Some(popup),
-            _ => None,
-        }
-    }
-
-    pub(super) fn attachment_viewer(&self) -> Option<&AttachmentViewerState> {
-        match &self.modal {
-            Some(ModalPopup::AttachmentViewer(viewer)) => Some(viewer),
-            _ => None,
-        }
-    }
-
-    pub(super) fn attachment_viewer_mut(&mut self) -> Option<&mut AttachmentViewerState> {
-        match &mut self.modal {
-            Some(ModalPopup::AttachmentViewer(viewer)) => Some(viewer),
-            _ => None,
-        }
-    }
-
-    pub(super) fn leader(&self) -> Option<&LeaderPopupState> {
-        match &self.modal {
-            Some(ModalPopup::Leader(leader)) => Some(leader),
-            _ => None,
-        }
-    }
-
-    pub(super) fn leader_mut(&mut self) -> Option<&mut LeaderPopupState> {
-        match &mut self.modal {
-            Some(ModalPopup::Leader(leader)) => Some(leader),
-            _ => None,
-        }
-    }
+    modal_popup_accessors!(
+        options_popup,
+        options_popup_mut,
+        Options,
+        OptionsPopupState,
+        popup
+    );
+    modal_popup_accessors!(
+        attachment_viewer,
+        attachment_viewer_mut,
+        AttachmentViewer,
+        AttachmentViewerState,
+        viewer
+    );
+    modal_popup_accessors!(leader, leader_mut, Leader, LeaderPopupState, leader);
 
     pub(super) fn guild_leader_action(&self) -> Option<&GuildLeaderActionState> {
         match self.leader().and_then(|leader| leader.action.as_ref()) {
@@ -780,47 +766,27 @@ impl PopupUiState {
         }
     }
 
-    pub(super) fn user_profile_popup(&self) -> Option<&UserProfilePopupState> {
-        match &self.modal {
-            Some(ModalPopup::UserProfile(popup)) => Some(popup),
-            _ => None,
-        }
-    }
-
-    pub(super) fn user_profile_popup_mut(&mut self) -> Option<&mut UserProfilePopupState> {
-        match &mut self.modal {
-            Some(ModalPopup::UserProfile(popup)) => Some(popup),
-            _ => None,
-        }
-    }
-
-    pub(super) fn emoji_reaction_picker(&self) -> Option<&EmojiReactionPickerState> {
-        match &self.modal {
-            Some(ModalPopup::EmojiReactionPicker(picker)) => Some(picker),
-            _ => None,
-        }
-    }
-
-    pub(super) fn emoji_reaction_picker_mut(&mut self) -> Option<&mut EmojiReactionPickerState> {
-        match &mut self.modal {
-            Some(ModalPopup::EmojiReactionPicker(picker)) => Some(picker),
-            _ => None,
-        }
-    }
-
-    pub(super) fn poll_vote_picker(&self) -> Option<&PollVotePickerState> {
-        match &self.modal {
-            Some(ModalPopup::PollVotePicker(picker)) => Some(picker),
-            _ => None,
-        }
-    }
-
-    pub(super) fn poll_vote_picker_mut(&mut self) -> Option<&mut PollVotePickerState> {
-        match &mut self.modal {
-            Some(ModalPopup::PollVotePicker(picker)) => Some(picker),
-            _ => None,
-        }
-    }
+    modal_popup_accessors!(
+        user_profile_popup,
+        user_profile_popup_mut,
+        UserProfile,
+        UserProfilePopupState,
+        popup
+    );
+    modal_popup_accessors!(
+        emoji_reaction_picker,
+        emoji_reaction_picker_mut,
+        EmojiReactionPicker,
+        EmojiReactionPickerState,
+        picker
+    );
+    modal_popup_accessors!(
+        poll_vote_picker,
+        poll_vote_picker_mut,
+        PollVotePicker,
+        PollVotePickerState,
+        picker
+    );
 
     pub(super) fn take_poll_vote_picker(&mut self) -> Option<PollVotePickerState> {
         match self.modal.take() {
@@ -832,61 +798,34 @@ impl PopupUiState {
         }
     }
 
-    pub(super) fn reaction_users_popup(&self) -> Option<&ReactionUsersPopupState> {
-        match &self.modal {
-            Some(ModalPopup::ReactionUsers(popup)) => Some(popup),
-            _ => None,
-        }
-    }
-
-    pub(super) fn reaction_users_popup_mut(&mut self) -> Option<&mut ReactionUsersPopupState> {
-        match &mut self.modal {
-            Some(ModalPopup::ReactionUsers(popup)) => Some(popup),
-            _ => None,
-        }
-    }
-
-    pub(super) fn keymap_popup(&self) -> Option<&KeymapPopupState> {
-        match &self.modal {
-            Some(ModalPopup::Keymap(popup)) => Some(popup),
-            _ => None,
-        }
-    }
-
-    pub(super) fn keymap_popup_mut(&mut self) -> Option<&mut KeymapPopupState> {
-        match &mut self.modal {
-            Some(ModalPopup::Keymap(popup)) => Some(popup),
-            _ => None,
-        }
-    }
-
-    pub(super) fn channel_switcher(&self) -> Option<&ChannelSwitcherState> {
-        match &self.modal {
-            Some(ModalPopup::ChannelSwitcher(switcher)) => Some(switcher),
-            _ => None,
-        }
-    }
-
-    pub(super) fn channel_switcher_mut(&mut self) -> Option<&mut ChannelSwitcherState> {
-        match &mut self.modal {
-            Some(ModalPopup::ChannelSwitcher(switcher)) => Some(switcher),
-            _ => None,
-        }
-    }
-
-    pub(super) fn search_popup(&self) -> Option<&SearchPopupState> {
-        match &self.modal {
-            Some(ModalPopup::Search(search)) => Some(search),
-            _ => None,
-        }
-    }
-
-    pub(super) fn search_popup_mut(&mut self) -> Option<&mut SearchPopupState> {
-        match &mut self.modal {
-            Some(ModalPopup::Search(search)) => Some(search),
-            _ => None,
-        }
-    }
+    modal_popup_accessors!(
+        reaction_users_popup,
+        reaction_users_popup_mut,
+        ReactionUsers,
+        ReactionUsersPopupState,
+        popup
+    );
+    modal_popup_accessors!(
+        keymap_popup,
+        keymap_popup_mut,
+        Keymap,
+        KeymapPopupState,
+        popup
+    );
+    modal_popup_accessors!(
+        channel_switcher,
+        channel_switcher_mut,
+        ChannelSwitcher,
+        ChannelSwitcherState,
+        switcher
+    );
+    modal_popup_accessors!(
+        search_popup,
+        search_popup_mut,
+        Search,
+        SearchPopupState,
+        search
+    );
 }
 
 impl DashboardState {

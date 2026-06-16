@@ -33,8 +33,8 @@ impl DashboardState {
     /// Highest 100-member bucket the user has scrolled the member sidebar
     /// into. Bucket 0 covers indexes 0..=99, bucket 1 covers 100..=199, etc.
     pub fn member_subscription_top_bucket(&self) -> u32 {
-        let scroll = u32::try_from(self.navigation.member_scroll).unwrap_or(u32::MAX);
-        let view = u32::try_from(self.navigation.member_view_height).unwrap_or(0);
+        let scroll = u32::try_from(self.navigation.members.scroll).unwrap_or(u32::MAX);
+        let view = u32::try_from(self.navigation.members.view_height).unwrap_or(0);
         scroll.saturating_add(view) / 100
     }
 

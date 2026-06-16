@@ -558,7 +558,7 @@ pub(super) fn log_captured_alsa_errors(
     logging::error("voice", format!("captured ALSA diagnostics: {message}"));
 }
 
-impl VoiceFakeOutboundSendState {
+impl VoiceOutboundSendState {
     pub(super) fn new(
         mode: &str,
         secret_key: &[u8],
@@ -589,17 +589,17 @@ impl VoiceFakeOutboundSendState {
     }
 
     #[allow(dead_code)]
-    pub(super) fn events(&self) -> &[VoiceFakeOutboundEvent] {
+    pub(super) fn events(&self) -> &[VoiceOutboundSendEvent] {
         &self.events
     }
 
     #[allow(dead_code)]
-    pub(super) fn take_events(&mut self) -> Vec<VoiceFakeOutboundEvent> {
+    pub(super) fn take_events(&mut self) -> Vec<VoiceOutboundSendEvent> {
         std::mem::take(&mut self.events)
     }
 
     #[allow(dead_code)]
-    pub(super) fn record_blocked_transmit(&mut self, reason: VoiceFakeSendBlockReason) -> bool {
+    pub(super) fn record_blocked_transmit(&mut self, reason: VoiceOutboundSendBlockReason) -> bool {
         if self.logged_block_reason == Some(reason) {
             return false;
         }
@@ -608,7 +608,7 @@ impl VoiceFakeOutboundSendState {
     }
 
     #[allow(dead_code)]
-    pub(super) fn take_logged_block_reason(&mut self) -> Option<VoiceFakeSendBlockReason> {
+    pub(super) fn take_logged_block_reason(&mut self) -> Option<VoiceOutboundSendBlockReason> {
         self.logged_block_reason.take()
     }
 
@@ -616,7 +616,7 @@ impl VoiceFakeOutboundSendState {
     pub(super) fn send_opus_frame(
         &mut self,
         opus_payload: &[u8],
-    ) -> Result<VoiceFakeSendOutcome, String> {
+    ) -> Result<VoiceOutboundSendOutcome, String> {
         self.send_opus_frame_with_dave_payload(VoiceDaveOutboundPayload::Plain(
             opus_payload.to_vec(),
         ))
@@ -626,7 +626,7 @@ impl VoiceFakeOutboundSendState {
         &mut self,
         opus_payload: &[u8],
         dave: &mut VoiceDaveState,
-    ) -> Result<VoiceFakeSendOutcome, String> {
+    ) -> Result<VoiceOutboundSendOutcome, String> {
         let dave_payload = dave.prepare_outbound_opus(opus_payload);
         self.send_opus_frame_with_dave_payload(dave_payload)
     }
@@ -634,13 +634,13 @@ impl VoiceFakeOutboundSendState {
     pub(super) fn send_opus_frame_with_dave_payload(
         &mut self,
         dave_payload: VoiceDaveOutboundPayload,
-    ) -> Result<VoiceFakeSendOutcome, String> {
+    ) -> Result<VoiceOutboundSendOutcome, String> {
         if !self.capture_gate_enabled() {
-            return Ok(VoiceFakeSendOutcome::Noop);
+            return Ok(VoiceOutboundSendOutcome::Noop);
         }
         if self.dave_active {
-            return Ok(VoiceFakeSendOutcome::Blocked(
-                VoiceFakeSendBlockReason::DaveOutboundUnsupported,
+            return Ok(VoiceOutboundSendOutcome::Blocked(
+                VoiceOutboundSendBlockReason::DaveOutboundUnsupported,
             ));
         }
         let opus_payload = match dave_payload {
@@ -648,26 +648,26 @@ impl VoiceFakeOutboundSendState {
                 opus
             }
             VoiceDaveOutboundPayload::Blocked(reason) => {
-                return Ok(VoiceFakeSendOutcome::Blocked(reason));
+                return Ok(VoiceOutboundSendOutcome::Blocked(reason));
             }
         };
 
         let encrypted = self.encrypt_current_packet(&opus_payload)?;
         if !self.speaking {
-            self.events.push(VoiceFakeOutboundEvent::Speaking {
+            self.events.push(VoiceOutboundSendEvent::Speaking {
                 speaking: true,
                 ssrc: self.rtp.ssrc,
             });
             self.speaking = true;
         }
         self.events
-            .push(VoiceFakeOutboundEvent::Packet { bytes: encrypted });
+            .push(VoiceOutboundSendEvent::Packet { bytes: encrypted });
         self.advance_packet_state();
-        Ok(VoiceFakeSendOutcome::Sent)
+        Ok(VoiceOutboundSendOutcome::Sent)
     }
 
     #[allow(dead_code)]
-    pub(super) fn stop_speaking(&mut self) -> Result<VoiceFakeSendOutcome, String> {
+    pub(super) fn stop_speaking(&mut self) -> Result<VoiceOutboundSendOutcome, String> {
         self.stop_speaking_with_dave_payload(|| {
             VoiceDaveOutboundPayload::Plain(DISCORD_OPUS_SILENCE_FRAME.to_vec())
         })
@@ -676,7 +676,7 @@ impl VoiceFakeOutboundSendState {
     pub(super) fn stop_speaking_with_dave(
         &mut self,
         dave: &mut VoiceDaveState,
-    ) -> Result<VoiceFakeSendOutcome, String> {
+    ) -> Result<VoiceOutboundSendOutcome, String> {
         self.stop_speaking_with_dave_payload(|| {
             dave.prepare_outbound_opus(&DISCORD_OPUS_SILENCE_FRAME)
         })
@@ -685,9 +685,9 @@ impl VoiceFakeOutboundSendState {
     pub(super) fn stop_speaking_with_dave_payload(
         &mut self,
         mut next_silence: impl FnMut() -> VoiceDaveOutboundPayload,
-    ) -> Result<VoiceFakeSendOutcome, String> {
+    ) -> Result<VoiceOutboundSendOutcome, String> {
         if !self.speaking {
-            return Ok(VoiceFakeSendOutcome::Noop);
+            return Ok(VoiceOutboundSendOutcome::Noop);
         }
         if !self.capture_gate_enabled() {
             return Ok(self.queue_speaking_off());
@@ -712,19 +712,19 @@ impl VoiceFakeOutboundSendState {
             };
             let encrypted = self.encrypt_current_packet(&opus_payload)?;
             self.events
-                .push(VoiceFakeOutboundEvent::Packet { bytes: encrypted });
+                .push(VoiceOutboundSendEvent::Packet { bytes: encrypted });
             self.advance_packet_state();
         }
         Ok(self.queue_speaking_off())
     }
 
-    pub(super) fn queue_speaking_off(&mut self) -> VoiceFakeSendOutcome {
-        self.events.push(VoiceFakeOutboundEvent::Speaking {
+    pub(super) fn queue_speaking_off(&mut self) -> VoiceOutboundSendOutcome {
+        self.events.push(VoiceOutboundSendEvent::Speaking {
             speaking: false,
             ssrc: self.rtp.ssrc,
         });
         self.speaking = false;
-        VoiceFakeSendOutcome::Sent
+        VoiceOutboundSendOutcome::Sent
     }
 
     pub(super) fn capture_gate_enabled(&self) -> bool {
@@ -832,7 +832,7 @@ pub(super) async fn run_voice_udp_transmit(
         timestamp: 0,
         ssrc: context.ssrc,
     };
-    let mut sender = match VoiceFakeOutboundSendState::new(
+    let mut sender = match VoiceOutboundSendState::new(
         &context.description.mode,
         &context.description.secret_key,
         rtp,
@@ -1128,20 +1128,20 @@ pub(super) fn drain_voice_microphone_pcm_queue(pcm_rx: &mut mpsc::Receiver<Vec<i
 pub(super) async fn flush_voice_outbound_events(
     udp_socket: &UdpSocket,
     writer: &VoiceWriter,
-    outcome: Result<VoiceFakeSendOutcome, String>,
-    sender: &mut VoiceFakeOutboundSendState,
+    outcome: Result<VoiceOutboundSendOutcome, String>,
+    sender: &mut VoiceOutboundSendState,
     local_speaking_tx: &mpsc::UnboundedSender<bool>,
     transmit_stats: &mut VoiceUdpTransmitStats,
 ) -> Result<(), String> {
     match outcome? {
-        VoiceFakeSendOutcome::Sent => {
+        VoiceOutboundSendOutcome::Sent => {
             for event in sender.take_events() {
                 match event {
-                    VoiceFakeOutboundEvent::Speaking { speaking, ssrc } => {
+                    VoiceOutboundSendEvent::Speaking { speaking, ssrc } => {
                         send_voice_text(writer, voice_speaking_payload(ssrc, speaking)).await?;
                         let _ = local_speaking_tx.send(speaking);
                     }
-                    VoiceFakeOutboundEvent::Packet { bytes } => {
+                    VoiceOutboundSendEvent::Packet { bytes } => {
                         udp_socket
                             .send(&bytes)
                             .await
@@ -1157,10 +1157,10 @@ pub(super) async fn flush_voice_outbound_events(
                 );
             }
         }
-        VoiceFakeSendOutcome::Noop => {
+        VoiceOutboundSendOutcome::Noop => {
             let _ = sender.take_logged_block_reason();
         }
-        VoiceFakeSendOutcome::Blocked(reason) => {
+        VoiceOutboundSendOutcome::Blocked(reason) => {
             if sender.record_blocked_transmit(reason) {
                 logging::debug("voice", format!("voice UDP transmit blocked: {reason:?}"));
             }

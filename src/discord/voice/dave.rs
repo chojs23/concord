@@ -17,7 +17,7 @@ use super::{
     VOICE_OP_DAVE_MLS_INVALID_COMMIT_WELCOME, VOICE_OP_DAVE_MLS_KEY_PACKAGE,
     VOICE_OP_DAVE_MLS_PROPOSALS, VOICE_OP_DAVE_MLS_WELCOME, VOICE_OP_DAVE_PREPARE_EPOCH,
     VOICE_OP_DAVE_PREPARE_TRANSITION, VOICE_OP_DAVE_TRANSITION_READY, VOICE_OP_MEDIA_SINK_WANTS,
-    VOICE_OP_SPEAKING, VoiceBinaryFrame, VoiceFakeSendBlockReason, VoiceGatewaySession,
+    VOICE_OP_SPEAKING, VoiceBinaryFrame, VoiceGatewaySession, VoiceOutboundSendBlockReason,
     VoiceWriter, send_voice_binary, send_voice_text,
 };
 
@@ -26,7 +26,7 @@ use super::{
 pub(super) enum VoiceDaveOutboundPayload {
     Plain(Vec<u8>),
     Encrypted(Vec<u8>),
-    Blocked(VoiceFakeSendBlockReason),
+    Blocked(VoiceOutboundSendBlockReason),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -453,18 +453,18 @@ impl VoiceDaveState {
         }
         let Some(session) = self.session.as_mut() else {
             return VoiceDaveOutboundPayload::Blocked(
-                VoiceFakeSendBlockReason::DaveOutboundMissingSession,
+                VoiceOutboundSendBlockReason::DaveOutboundMissingSession,
             );
         };
         if !session.is_ready() {
             return VoiceDaveOutboundPayload::Blocked(
-                VoiceFakeSendBlockReason::DaveOutboundNotReady,
+                VoiceOutboundSendBlockReason::DaveOutboundNotReady,
             );
         }
         match session.encrypt_opus(opus) {
             Ok(encrypted) => VoiceDaveOutboundPayload::Encrypted(encrypted.into_owned()),
             Err(_) => VoiceDaveOutboundPayload::Blocked(
-                VoiceFakeSendBlockReason::DaveOutboundEncryptFailed,
+                VoiceOutboundSendBlockReason::DaveOutboundEncryptFailed,
             ),
         }
     }

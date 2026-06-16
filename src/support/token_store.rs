@@ -1,12 +1,9 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::PathBuf};
 
 use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
 
-use crate::{AppError, Result, config::CredentialStoreMode, paths};
+use crate::{AppError, Result, config::CredentialStoreMode, paths, support::private_file};
 
 const KEYCHAIN_SERVICE: &str = "io.github.chojs23.concord.discord-token.v1";
 const DEFAULT_ACCOUNT_ID: &str = "default";
@@ -181,12 +178,12 @@ fn write_credential_file(credentials: &CredentialFile) -> Result<()> {
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
-        set_private_dir_permissions(parent)?;
+        private_file::set_private_dir_permissions(parent)?;
     }
 
     let content = toml::to_string_pretty(credentials)
         .map_err(|source| AppError::CredentialTomlSerialize { source })?;
-    write_private_file(&path, &content)
+    private_file::write_private_file(&path, &content)
 }
 
 fn normalize_token(token: &str) -> std::result::Result<String, AppError> {
@@ -209,48 +206,6 @@ fn normalized_account_id(account_id: &str) -> Option<String> {
 
 fn default_account_id() -> String {
     DEFAULT_ACCOUNT_ID.to_owned()
-}
-
-#[cfg(unix)]
-fn set_private_dir_permissions(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(path, permissions)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_private_dir_permissions(_path: &Path) -> Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn write_private_file(path: &Path, token: &str) -> Result<()> {
-    use std::{
-        io::Write,
-        os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    };
-
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(token.as_bytes())?;
-
-    let mut permissions = file.metadata()?.permissions();
-    permissions.set_mode(0o600);
-    fs::set_permissions(path, permissions)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn write_private_file(path: &Path, token: &str) -> Result<()> {
-    fs::write(path, token)?;
-    Ok(())
 }
 
 #[cfg(test)]

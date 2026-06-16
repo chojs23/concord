@@ -70,31 +70,27 @@ impl DashboardState {
         }
         match self.guild_pane_entries().get(self.selected_guild()) {
             Some(GuildPaneEntry::Guild { state, .. }) => vec![
-                GuildActionItem {
-                    kind: GuildActionKind::MarkAsRead,
-                    label: "Mark server as read".to_owned(),
-                    enabled: self.guild_ack_targets(state.id).next().is_some(),
-                },
-                GuildActionItem {
-                    kind: GuildActionKind::ToggleMute,
-                    label: if self.discord.cache.guild_notification_muted(state.id) {
-                        "Unmute server".to_owned()
+                GuildActionItem::new(
+                    GuildActionKind::MarkAsRead,
+                    "Mark server as read",
+                    self.guild_ack_targets(state.id).next().is_some(),
+                ),
+                GuildActionItem::new(
+                    GuildActionKind::ToggleMute,
+                    if self.discord.cache.guild_notification_muted(state.id) {
+                        "Unmute server"
                     } else {
-                        "Mute server".to_owned()
+                        "Mute server"
                     },
-                    enabled: true,
-                },
-                GuildActionItem {
-                    kind: GuildActionKind::LeaveServer,
-                    label: "Leave server".to_owned(),
-                    enabled: true,
-                },
+                    true,
+                ),
+                GuildActionItem::new(GuildActionKind::LeaveServer, "Leave server", true),
             ],
-            Some(GuildPaneEntry::DirectMessages) => vec![GuildActionItem {
-                kind: GuildActionKind::NoActionsYet,
-                label: "No server actions yet".to_owned(),
-                enabled: false,
-            }],
+            Some(GuildPaneEntry::DirectMessages) => vec![GuildActionItem::new(
+                GuildActionKind::NoActionsYet,
+                "No server actions yet",
+                false,
+            )],
             Some(GuildPaneEntry::FolderHeader { .. }) | None => Vec::new(),
         }
     }

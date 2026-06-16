@@ -292,20 +292,6 @@ impl DiscordState {
     }
 }
 
-/// Whether a Discord channel kind string represents a thread. Mirrors
-/// `ChannelState::is_thread` so that bare `ChannelInfo` inputs can be
-/// classified before they become a `ChannelState`.
-pub(in crate::discord) fn is_thread_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "thread"
-            | "GuildPublicThread"
-            | "GuildPrivateThread"
-            | "GuildNewsThread"
-            | "private-thread"
-    )
-}
-
 /// Test whether a permission bit is set in `bitfield`. Encapsulated so the
 /// permission-check call sites stay readable.
 fn permission_set(bitfield: u64, bit: u64) -> bool {

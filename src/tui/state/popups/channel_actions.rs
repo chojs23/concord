@@ -126,36 +126,24 @@ impl DashboardState {
         };
 
         vec![
-            ChannelActionItem {
-                kind: ChannelActionKind::JoinVoice,
-                label: "Join voice".to_owned(),
-                enabled: can_join_voice,
-            },
-            ChannelActionItem {
-                kind: ChannelActionKind::LeaveVoice,
-                label: "Leave voice".to_owned(),
-                enabled: joined_here,
-            },
-            ChannelActionItem {
-                kind: ChannelActionKind::LoadPinnedMessages,
-                label: "Show pinned messages".to_owned(),
-                enabled: !channel.is_category() && !channel.is_forum(),
-            },
-            ChannelActionItem {
-                kind: ChannelActionKind::ShowThreads,
-                label: thread_label,
-                enabled: thread_count > 0,
-            },
-            ChannelActionItem {
-                kind: ChannelActionKind::MarkAsRead,
-                label: "Mark as read".to_owned(),
-                enabled: mark_as_read_enabled,
-            },
-            ChannelActionItem {
-                kind: ChannelActionKind::ToggleMute,
-                label: mute_label.to_owned(),
-                enabled: true,
-            },
+            ChannelActionItem::new(ChannelActionKind::JoinVoice, "Join voice", can_join_voice),
+            ChannelActionItem::new(ChannelActionKind::LeaveVoice, "Leave voice", joined_here),
+            ChannelActionItem::new(
+                ChannelActionKind::LoadPinnedMessages,
+                "Show pinned messages",
+                !channel.is_category() && !channel.is_forum(),
+            ),
+            ChannelActionItem::new(
+                ChannelActionKind::ShowThreads,
+                thread_label,
+                thread_count > 0,
+            ),
+            ChannelActionItem::new(
+                ChannelActionKind::MarkAsRead,
+                "Mark as read",
+                mark_as_read_enabled,
+            ),
+            ChannelActionItem::new(ChannelActionKind::ToggleMute, mute_label, true),
         ]
     }
 

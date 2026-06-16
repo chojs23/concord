@@ -163,11 +163,11 @@ fn voice_channel_participants_render_as_child_rows_and_are_skipped_by_selection(
     ));
 
     state.move_down();
-    assert_eq!(state.navigation.selected_channel, 1);
+    assert_eq!(state.navigation.channels.selected, 1);
     assert!(!state.select_visible_pane_row(FocusPane::Channels, 2));
-    assert_eq!(state.navigation.selected_channel, 1);
+    assert_eq!(state.navigation.channels.selected, 1);
     state.move_down();
-    assert_eq!(state.navigation.selected_channel, 3);
+    assert_eq!(state.navigation.channels.selected, 3);
 }
 
 #[test]

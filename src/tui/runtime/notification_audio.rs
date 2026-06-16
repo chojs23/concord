@@ -14,6 +14,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crate::discord::VoiceSoundKind;
 #[cfg(feature = "voice-playback")]
 use crate::logging;
+#[cfg(feature = "voice-playback")]
+use crate::support::audio_output::{self, F32OutputSource};
 
 #[cfg(any(test, feature = "voice-playback"))]
 const GENERATED_VOICE_SOUND_SAMPLE_RATE: u32 = 48_000;
@@ -93,111 +95,52 @@ fn build_notification_output_stream(
     audio: NotificationAudio,
     total_output_frames: usize,
 ) -> std::result::Result<NotificationOutputStream, String> {
-    match sample_format {
-        cpal::SampleFormat::F32 => {
-            build_notification_output_stream_f32(device, config, audio, total_output_frames)
-        }
-        cpal::SampleFormat::U8 => {
-            build_notification_output_stream_u8(device, config, audio, total_output_frames)
-        }
-        cpal::SampleFormat::I16 => {
-            build_notification_output_stream_i16(device, config, audio, total_output_frames)
-        }
-        cpal::SampleFormat::U16 => {
-            build_notification_output_stream_u16(device, config, audio, total_output_frames)
-        }
-        other => Err(format!(
-            "unsupported notification audio output sample format: {other:?}"
-        )),
-    }
-}
-
-#[cfg(feature = "voice-playback")]
-fn build_notification_output_stream_f32(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    audio: NotificationAudio,
-    total_output_frames: usize,
-) -> std::result::Result<NotificationOutputStream, String> {
-    build_notification_output_stream_with(device, config, audio, total_output_frames, |sample| {
-        sample.clamp(-1.0, 1.0)
-    })
-}
-
-#[cfg(feature = "voice-playback")]
-fn build_notification_output_stream_u8(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    audio: NotificationAudio,
-    total_output_frames: usize,
-) -> std::result::Result<NotificationOutputStream, String> {
-    build_notification_output_stream_with(device, config, audio, total_output_frames, |sample| {
-        ((sample.clamp(-1.0, 1.0) + 1.0) * 0.5 * f32::from(u8::MAX)).round() as u8
-    })
-}
-
-#[cfg(feature = "voice-playback")]
-fn build_notification_output_stream_i16(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    audio: NotificationAudio,
-    total_output_frames: usize,
-) -> std::result::Result<NotificationOutputStream, String> {
-    build_notification_output_stream_with(device, config, audio, total_output_frames, |sample| {
-        (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16
-    })
-}
-
-#[cfg(feature = "voice-playback")]
-fn build_notification_output_stream_u16(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    audio: NotificationAudio,
-    total_output_frames: usize,
-) -> std::result::Result<NotificationOutputStream, String> {
-    build_notification_output_stream_with(device, config, audio, total_output_frames, |sample| {
-        ((sample.clamp(-1.0, 1.0) + 1.0) * 0.5 * f32::from(u16::MAX)).round() as u16
-    })
-}
-
-#[cfg(feature = "voice-playback")]
-fn build_notification_output_stream_with<T>(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    audio: NotificationAudio,
-    total_output_frames: usize,
-    convert: fn(f32) -> T,
-) -> std::result::Result<NotificationOutputStream, String>
-where
-    T: cpal::SizedSample + Default + Copy + 'static,
-{
-    let output_channels = usize::from(config.channels.max(1));
-    let output_sample_rate = config.sample_rate.max(1);
-    let mut output_frame = 0usize;
     let failed = Arc::new(AtomicBool::new(false));
     let callback_failed = Arc::clone(&failed);
-    let stream = device
-        .build_output_stream(
-            config,
-            move |output: &mut [T], _| {
-                fill_notification_output(
-                    output,
-                    output_channels,
-                    output_sample_rate,
-                    &audio,
-                    total_output_frames,
-                    &mut output_frame,
-                    convert,
-                );
-            },
-            move |error| {
-                callback_failed.store(true, Ordering::Relaxed);
-                log_notification_output_stream_error(error);
-            },
-            None,
-        )
-        .map_err(|error| format!("notification audio output stream build failed: {error}"))?;
+    let stream = audio_output::build_f32_output_stream(
+        device,
+        config,
+        sample_format,
+        NotificationOutputSource {
+            audio,
+            total_output_frames,
+            output_sample_rate: config.sample_rate.max(1),
+            output_frame: 0,
+        },
+        move |error| {
+            callback_failed.store(true, Ordering::Relaxed);
+            log_notification_output_stream_error(error);
+        },
+        "notification audio output",
+        "notification audio",
+    )?;
     Ok(NotificationOutputStream { stream, failed })
+}
+
+#[cfg(feature = "voice-playback")]
+struct NotificationOutputSource {
+    audio: NotificationAudio,
+    total_output_frames: usize,
+    output_sample_rate: u32,
+    output_frame: usize,
+}
+
+#[cfg(feature = "voice-playback")]
+impl F32OutputSource for NotificationOutputSource {
+    fn fill<T>(&mut self, output: &mut [T], output_channels: usize, convert: fn(f32) -> T)
+    where
+        T: Default + Copy,
+    {
+        fill_notification_output(
+            output,
+            output_channels,
+            self.output_sample_rate,
+            &self.audio,
+            self.total_output_frames,
+            &mut self.output_frame,
+            convert,
+        );
+    }
 }
 
 #[cfg(feature = "voice-playback")]

@@ -38,6 +38,7 @@ pub use builtin_commands::{
     BuiltinSlashCommandInfo, BuiltinSlashCommandParse, BuiltinSlashCommandSubmit,
     builtin_slash_commands, parse_builtin_slash_command,
 };
+pub(crate) use channel::is_thread_kind;
 pub use channel::{
     ChannelInfo, ChannelRecipientInfo, PermissionOverwriteInfo, PermissionOverwriteKind,
     ThreadMetadataInfo,

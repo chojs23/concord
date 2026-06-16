@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use image::DynamicImage;
 use ratatui_image::{picker::Picker, protocol::Protocol};
@@ -10,10 +10,9 @@ use crate::{
 
 use super::{
     EmojiImageTarget,
+    cache::{MediaImageCacheCore, MediaImageCacheEntry},
     decode::{MediaImageDecodeJob, MediaImageDecodeKey},
-    emoji_protocol,
-    lru::{self, TrackedCacheEntry},
-    query_image_picker,
+    emoji_protocol, query_image_picker,
 };
 
 /// Cap on the URL-keyed emoji image cache. Each entry is a small terminal
@@ -23,10 +22,7 @@ pub(super) const MAX_EMOJI_IMAGE_CACHE_ENTRIES: usize = 128;
 
 pub(in crate::tui) struct EmojiImageCache {
     pub(super) picker: Option<Picker>,
-    pub(super) entries: HashMap<String, EmojiImageEntry>,
-    pub(super) tick: u64,
-    pub(super) decode_generation: u64,
-    pub(super) protocol_generation: u64,
+    pub(super) cache: MediaImageCacheCore<String, EmojiImageEntry>,
 }
 
 pub(super) enum EmojiImageEntry {
@@ -48,7 +44,7 @@ pub(super) enum EmojiImageEntry {
     },
 }
 
-impl TrackedCacheEntry for EmojiImageEntry {
+impl MediaImageCacheEntry for EmojiImageEntry {
     fn last_used(&self) -> u64 {
         match self {
             EmojiImageEntry::Loading { last_used }
@@ -66,21 +62,31 @@ impl TrackedCacheEntry for EmojiImageEntry {
             | EmojiImageEntry::Failed { last_used } => *last_used = tick,
         }
     }
+
+    fn is_loading(&self) -> bool {
+        matches!(self, EmojiImageEntry::Loading { .. })
+    }
+
+    fn decoding_generation(&self) -> Option<u64> {
+        match self {
+            EmojiImageEntry::Decoding { generation, .. } => Some(*generation),
+            EmojiImageEntry::Loading { .. }
+            | EmojiImageEntry::Ready { .. }
+            | EmojiImageEntry::Failed { .. } => None,
+        }
+    }
 }
 
 impl EmojiImageCache {
     pub(in crate::tui) fn new() -> Self {
         Self {
             picker: query_image_picker("emoji", "emoji image picker unavailable"),
-            entries: HashMap::new(),
-            tick: 0,
-            decode_generation: 0,
-            protocol_generation: 0,
+            cache: MediaImageCacheCore::new(),
         }
     }
 
     pub(in crate::tui) fn refresh_protocols(&mut self) {
-        self.protocol_generation = self.protocol_generation.saturating_add(1);
+        self.cache.refresh_protocols();
     }
 
     /// Returns decoded protocols for visible targets and refreshes their
@@ -89,11 +95,11 @@ impl EmojiImageCache {
         &mut self,
         targets: &[EmojiImageTarget],
     ) -> Vec<EmojiImage<'_>> {
-        let touch_tick = lru::next_tick(&mut self.tick);
         let picker = self.picker.clone();
-        let protocol_generation = self.protocol_generation;
+        let protocol_generation = self.cache.protocol_generation;
         for target in targets {
-            if let Some(entry) = self.entries.get_mut(&target.url) {
+            let touch_tick = self.cache.next_tick();
+            if let Some(entry) = self.cache.entries.get_mut(&target.url) {
                 entry.touch(touch_tick);
                 if let EmojiImageEntry::Ready {
                     image,
@@ -113,7 +119,9 @@ impl EmojiImageCache {
         targets
             .iter()
             .filter_map(|target| {
-                let EmojiImageEntry::Ready { protocol, .. } = self.entries.get(&target.url)? else {
+                let EmojiImageEntry::Ready { protocol, .. } =
+                    self.cache.entries.get(&target.url)?
+                else {
                     return None;
                 };
                 Some(EmojiImage {
@@ -134,14 +142,15 @@ impl EmojiImageCache {
 
         let mut intents = Vec::new();
         for target in targets.iter().take(MAX_EMOJI_IMAGE_CACHE_ENTRIES) {
-            if let Some(intent) = lru::insert_loading_request(
-                &mut self.entries,
-                &mut self.tick,
-                target.url.clone(),
-                |last_used| EmojiImageEntry::Loading { last_used },
-                |url| AppCommand::LoadAttachmentPreview { url },
-            ) {
-                intents.push(intent);
+            if self
+                .cache
+                .insert_loading(target.url.clone(), |last_used| EmojiImageEntry::Loading {
+                    last_used,
+                })
+            {
+                intents.push(AppCommand::LoadAttachmentPreview {
+                    url: target.url.clone(),
+                });
             }
         }
         self.prune_to_limit(targets);
@@ -167,24 +176,17 @@ impl EmojiImageCache {
             .take(MAX_EMOJI_IMAGE_CACHE_ENTRIES)
             .map(|target| target.url.as_str())
             .collect();
-        lru::prune_to_limit(
-            &mut self.entries,
-            MAX_EMOJI_IMAGE_CACHE_ENTRIES,
-            |url| protected.contains(url.as_str()),
-            TrackedCacheEntry::last_used,
-        );
+        self.cache
+            .prune_to_limit(MAX_EMOJI_IMAGE_CACHE_ENTRIES, |url| {
+                protected.contains(url.as_str())
+            });
     }
 
     fn store_loaded(&mut self, url: &str, bytes: &[u8]) -> Option<MediaImageDecodeJob> {
-        lru::start_url_decode_job(
-            (
-                &mut self.entries,
-                &mut self.tick,
-                &mut self.decode_generation,
-            ),
-            (url, bytes),
+        self.cache.start_decode_job(
+            url.to_owned(),
+            std::sync::Arc::from(bytes.to_vec()),
             self.picker.is_some(),
-            |entry| matches!(entry, EmojiImageEntry::Loading { .. }),
             |generation, last_used| EmojiImageEntry::Decoding {
                 generation,
                 last_used,
@@ -200,55 +202,50 @@ impl EmojiImageCache {
         result_generation: u64,
         result: std::result::Result<DynamicImage, String>,
     ) {
-        let Some(generation) = self.entries.get(&url).and_then(|entry| {
-            if let EmojiImageEntry::Decoding { generation, .. } = entry {
-                Some(*generation)
-            } else {
-                None
-            }
-        }) else {
-            return;
-        };
-
-        if generation != result_generation {
+        if !self
+            .cache
+            .decoded_generation_matches(&url, result_generation)
+        {
             return;
         }
 
-        let last_used = lru::next_tick(&mut self.tick);
+        let last_used = self.cache.next_tick();
         match result {
             Ok(image) => {
                 let Some(picker) = self.picker.as_ref() else {
-                    self.entries
+                    self.cache
+                        .entries
                         .insert(url, EmojiImageEntry::Failed { last_used });
                     return;
                 };
                 let Some(protocol) = emoji_protocol(picker, image.clone()) else {
-                    self.entries
+                    self.cache
+                        .entries
                         .insert(url, EmojiImageEntry::Failed { last_used });
                     return;
                 };
-                self.entries.insert(
+                self.cache.entries.insert(
                     url,
                     EmojiImageEntry::Ready {
                         image,
                         protocol,
-                        protocol_generation: self.protocol_generation,
+                        protocol_generation: self.cache.protocol_generation,
                         last_used,
                     },
                 );
             }
             Err(_) => {
-                self.entries
+                self.cache
+                    .entries
                     .insert(url, EmojiImageEntry::Failed { last_used });
             }
         }
     }
 
     fn store_failed(&mut self, url: &str) {
-        if self.entries.contains_key(url) {
-            let last_used = lru::next_tick(&mut self.tick);
-            self.entries
-                .insert(url.to_owned(), EmojiImageEntry::Failed { last_used });
-        }
+        self.cache
+            .store_failed_if_present(url.to_owned(), |last_used| EmojiImageEntry::Failed {
+                last_used,
+            });
     }
 }

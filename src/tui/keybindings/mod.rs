@@ -654,128 +654,11 @@ fn parse_action_shortcut_key(value: &str) -> std::result::Result<KeyChord, Strin
 }
 
 impl UiAction {
-    pub(in crate::tui) fn from_name(name: &str) -> Option<Self> {
-        all_ui_actions()
-            .iter()
-            .copied()
-            .find(|action| action.name() == name)
-    }
-
     fn from_keymap_name(name: &str) -> Option<Self> {
         match name {
             "ScrollMessageViewportDown" => Some(Self::ScrollViewportDown),
             "ScrollMessageViewportUp" => Some(Self::ScrollViewportUp),
             _ => Self::from_name(name),
-        }
-    }
-
-    pub(in crate::tui) fn name(self) -> &'static str {
-        match self {
-            UiAction::StartComposer => "StartComposer",
-            UiAction::OpenPaneFilter => "OpenPaneFilter",
-            UiAction::ClosePopup => "ClosePopup",
-            UiAction::FocusGuildPane => "FocusGuildPane",
-            UiAction::FocusChannelPane => "FocusChannelPane",
-            UiAction::FocusMessagePane => "FocusMessagePane",
-            UiAction::FocusMemberPane => "FocusMemberPane",
-            UiAction::SelectNext => "SelectNext",
-            UiAction::SelectPrevious => "SelectPrevious",
-            UiAction::CycleFocusNext => "CycleFocusNext",
-            UiAction::CycleFocusPrevious => "CycleFocusPrevious",
-            UiAction::HalfPageDown => "HalfPageDown",
-            UiAction::HalfPageUp => "HalfPageUp",
-            UiAction::ScrollViewportDown => "ScrollViewportDown",
-            UiAction::ScrollViewportUp => "ScrollViewportUp",
-            UiAction::JumpTop => "JumpTop",
-            UiAction::JumpBottom => "JumpBottom",
-            UiAction::ScrollHorizontalLeft => "ScrollHorizontalLeft",
-            UiAction::ScrollHorizontalRight => "ScrollHorizontalRight",
-            UiAction::ResizePaneLeft => "ResizePaneLeft",
-            UiAction::ResizePaneRight => "ResizePaneRight",
-            UiAction::Quit => "Quit",
-            UiAction::CopyMessage => "CopyMessage",
-            UiAction::ReactMessage => "ReactMessage",
-            UiAction::ReplyMessage => "ReplyMessage",
-            UiAction::DeleteMessage => "DeleteMessage",
-            UiAction::EditMessage => "EditMessage",
-            UiAction::OpenMessageUrl => "OpenMessageUrl",
-            UiAction::PlayMedia => "PlayMedia",
-            UiAction::ViewMessageAttachment => "ViewMessageAttachment",
-            UiAction::ShowMessageProfile => "ShowMessageProfile",
-            UiAction::PinMessage => "PinMessage",
-            UiAction::OpenThread => "OpenThread",
-            UiAction::ShowReactionUsers => "ShowReactionUsers",
-            UiAction::OpenPollVotePicker => "OpenPollVotePicker",
-            UiAction::GoToReferencedMessage => "GoToReferencedMessage",
-            UiAction::ToggleGuildPane => "ToggleGuildPane",
-            UiAction::ToggleChannelPane => "ToggleChannelPane",
-            UiAction::ToggleMemberPane => "ToggleMemberPane",
-            UiAction::OpenFocusedPaneAction => "OpenFocusedPaneAction",
-            UiAction::OpenCurrentUserProfile => "OpenCurrentUserProfile",
-            UiAction::OpenOptions => "OpenOptions",
-            UiAction::ChannelSwitcher => "ChannelSwitcher",
-            UiAction::OpenDisplayOptions => "OpenDisplayOptions",
-            UiAction::OpenComposerOptions => "OpenComposerOptions",
-            UiAction::OpenNotificationOptions => "OpenNotificationOptions",
-            UiAction::OpenVoiceOptions => "OpenVoiceOptions",
-            UiAction::VoiceDeafen => "VoiceDeafen",
-            UiAction::VoiceMute => "VoiceMute",
-            UiAction::VoiceLeave => "VoiceLeave",
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            UiAction::StartComposer => "start composer",
-            UiAction::OpenPaneFilter => "filter/search pane",
-            UiAction::ClosePopup => "close popup",
-            UiAction::FocusGuildPane => "focus Servers",
-            UiAction::FocusChannelPane => "focus Channels",
-            UiAction::FocusMessagePane => "focus Messages",
-            UiAction::FocusMemberPane => "focus Members",
-            UiAction::SelectNext => "select next",
-            UiAction::SelectPrevious => "select previous",
-            UiAction::CycleFocusNext => "focus next",
-            UiAction::CycleFocusPrevious => "focus previous",
-            UiAction::HalfPageDown => "half page down",
-            UiAction::HalfPageUp => "half page up",
-            UiAction::ScrollViewportDown => "scroll viewport down",
-            UiAction::ScrollViewportUp => "scroll viewport up",
-            UiAction::JumpTop => "jump top",
-            UiAction::JumpBottom => "jump bottom",
-            UiAction::ScrollHorizontalLeft => "scroll left",
-            UiAction::ScrollHorizontalRight => "scroll right",
-            UiAction::ResizePaneLeft => "resize pane left",
-            UiAction::ResizePaneRight => "resize pane right",
-            UiAction::Quit => "quit",
-            UiAction::CopyMessage => "copy message",
-            UiAction::ReactMessage => "react",
-            UiAction::ReplyMessage => "reply",
-            UiAction::DeleteMessage => "delete message",
-            UiAction::EditMessage => "edit message",
-            UiAction::OpenMessageUrl => "open URL",
-            UiAction::PlayMedia => "play media",
-            UiAction::ViewMessageAttachment => "view attachment",
-            UiAction::ShowMessageProfile => "show message sender profile",
-            UiAction::PinMessage => "pin message",
-            UiAction::OpenThread => "open thread",
-            UiAction::ShowReactionUsers => "show reacted users",
-            UiAction::OpenPollVotePicker => "choose poll votes",
-            UiAction::GoToReferencedMessage => "go to referenced message",
-            UiAction::ToggleGuildPane => "toggle Servers",
-            UiAction::ToggleChannelPane => "toggle Channels",
-            UiAction::ToggleMemberPane => "toggle Members",
-            UiAction::OpenFocusedPaneAction => "Actions",
-            UiAction::OpenCurrentUserProfile => "My profile",
-            UiAction::OpenOptions => "Options",
-            UiAction::ChannelSwitcher => "Switch channels",
-            UiAction::OpenDisplayOptions => "Display options",
-            UiAction::OpenComposerOptions => "Composer options",
-            UiAction::OpenNotificationOptions => "Notification options",
-            UiAction::OpenVoiceOptions => "Voice options",
-            UiAction::VoiceDeafen => "deafen voice",
-            UiAction::VoiceMute => "mute voice",
-            UiAction::VoiceLeave => "leave voice",
         }
     }
 }
@@ -838,102 +721,6 @@ impl MemberActionKind {
             Self::ShowProfile => "ShowProfile",
         }
     }
-}
-
-impl MessageActionKind {
-    fn from_keymap_name(name: &str) -> Option<Self> {
-        match name {
-            "CopyMessage" => Some(Self::CopyContent),
-            "ReactMessage" => Some(Self::OpenReactionPicker),
-            "ReplyMessage" => Some(Self::Reply),
-            "DeleteMessage" => Some(Self::OpenDeleteConfirmation),
-            "EditMessage" => Some(Self::Edit),
-            "OpenMessageUrl" => Some(Self::OpenUrl),
-            "PlayMedia" => Some(Self::PlayMedia),
-            "ViewMessageAttachment" => Some(Self::ViewAttachment),
-            "ShowMessageProfile" => Some(Self::ShowProfile),
-            "PinMessage" => Some(Self::OpenPinConfirmation),
-            "OpenThread" => Some(Self::OpenThread),
-            "ShowReactionUsers" => Some(Self::ShowReactionUsers),
-            "OpenPollVotePicker" => Some(Self::OpenPollVotePicker),
-            "GoToReferencedMessage" => Some(Self::GoToReferencedMessage),
-            _ => None,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::CopyContent => "CopyMessage",
-            Self::OpenReactionPicker => "ReactMessage",
-            Self::Reply => "ReplyMessage",
-            Self::OpenDeleteConfirmation => "DeleteMessage",
-            Self::Edit => "EditMessage",
-            Self::OpenUrl => "OpenMessageUrl",
-            Self::PlayMedia => "PlayMedia",
-            Self::ViewAttachment => "ViewMessageAttachment",
-            Self::ShowProfile => "ShowMessageProfile",
-            Self::OpenPinConfirmation => "PinMessage",
-            Self::OpenThread => "OpenThread",
-            Self::ShowReactionUsers => "ShowReactionUsers",
-            Self::OpenPollVotePicker => "OpenPollVotePicker",
-            Self::GoToReferencedMessage => "GoToReferencedMessage",
-        }
-    }
-}
-
-fn all_ui_actions() -> &'static [UiAction] {
-    &[
-        UiAction::StartComposer,
-        UiAction::OpenPaneFilter,
-        UiAction::ClosePopup,
-        UiAction::FocusGuildPane,
-        UiAction::FocusChannelPane,
-        UiAction::FocusMessagePane,
-        UiAction::FocusMemberPane,
-        UiAction::SelectNext,
-        UiAction::SelectPrevious,
-        UiAction::CycleFocusNext,
-        UiAction::CycleFocusPrevious,
-        UiAction::HalfPageDown,
-        UiAction::HalfPageUp,
-        UiAction::ScrollViewportDown,
-        UiAction::ScrollViewportUp,
-        UiAction::JumpTop,
-        UiAction::JumpBottom,
-        UiAction::ScrollHorizontalLeft,
-        UiAction::ScrollHorizontalRight,
-        UiAction::ResizePaneLeft,
-        UiAction::ResizePaneRight,
-        UiAction::Quit,
-        UiAction::CopyMessage,
-        UiAction::ReactMessage,
-        UiAction::ReplyMessage,
-        UiAction::DeleteMessage,
-        UiAction::EditMessage,
-        UiAction::OpenMessageUrl,
-        UiAction::PlayMedia,
-        UiAction::ViewMessageAttachment,
-        UiAction::ShowMessageProfile,
-        UiAction::PinMessage,
-        UiAction::OpenThread,
-        UiAction::ShowReactionUsers,
-        UiAction::OpenPollVotePicker,
-        UiAction::GoToReferencedMessage,
-        UiAction::ToggleGuildPane,
-        UiAction::ToggleChannelPane,
-        UiAction::ToggleMemberPane,
-        UiAction::OpenFocusedPaneAction,
-        UiAction::OpenCurrentUserProfile,
-        UiAction::OpenOptions,
-        UiAction::ChannelSwitcher,
-        UiAction::OpenDisplayOptions,
-        UiAction::OpenComposerOptions,
-        UiAction::OpenNotificationOptions,
-        UiAction::OpenVoiceOptions,
-        UiAction::VoiceDeafen,
-        UiAction::VoiceMute,
-        UiAction::VoiceLeave,
-    ]
 }
 
 fn is_reserved_keymap_chord(chord: KeyChord) -> bool {
@@ -1414,6 +1201,14 @@ mod tests {
         );
         assert_eq!(UiAction::from_name("Quit"), Some(UiAction::Quit));
         assert_eq!(UiAction::from_name("OpenVoiceActions"), None);
+    }
+
+    #[test]
+    fn all_ui_action_names_round_trip() {
+        for action in UiAction::ALL {
+            assert_eq!(UiAction::from_name(action.name()), Some(*action));
+            assert!(!action.label().is_empty());
+        }
     }
 
     #[test]
@@ -2433,50 +2228,21 @@ mod tests {
     #[test]
     fn keymap_maps_message_shortcuts_to_message_actions() {
         let key_bindings = KeyBindings::default();
-        let cases = [
-            (UiAction::CopyMessage, MessageActionKind::CopyContent),
-            (
-                UiAction::ReactMessage,
-                MessageActionKind::OpenReactionPicker,
-            ),
-            (UiAction::ReplyMessage, MessageActionKind::Reply),
-            (
-                UiAction::DeleteMessage,
-                MessageActionKind::OpenDeleteConfirmation,
-            ),
-            (UiAction::EditMessage, MessageActionKind::Edit),
-            (UiAction::OpenMessageUrl, MessageActionKind::OpenUrl),
-            (UiAction::PlayMedia, MessageActionKind::PlayMedia),
-            (
-                UiAction::ViewMessageAttachment,
-                MessageActionKind::ViewAttachment,
-            ),
-            (UiAction::ShowMessageProfile, MessageActionKind::ShowProfile),
-            (UiAction::PinMessage, MessageActionKind::OpenPinConfirmation),
-            (UiAction::OpenThread, MessageActionKind::OpenThread),
-            (
-                UiAction::ShowReactionUsers,
-                MessageActionKind::ShowReactionUsers,
-            ),
-            (
-                UiAction::OpenPollVotePicker,
-                MessageActionKind::OpenPollVotePicker,
-            ),
-            (
-                UiAction::GoToReferencedMessage,
-                MessageActionKind::GoToReferencedMessage,
-            ),
-        ];
 
-        for (ui_action, message_action) in cases {
+        for binding in MessageActionKind::KEYMAP_BINDINGS {
             assert_eq!(
-                key_bindings.dashboard_action_for_ui_action(ui_action, FocusPane::Messages),
-                Some(DashboardAction::MessageShortcut(message_action))
+                key_bindings.dashboard_action_for_ui_action(binding.ui_action, FocusPane::Messages),
+                Some(DashboardAction::MessageShortcut(binding.message_action))
             );
             assert_eq!(
-                key_bindings.dashboard_action_for_ui_action(ui_action, FocusPane::Channels),
+                key_bindings.dashboard_action_for_ui_action(binding.ui_action, FocusPane::Channels),
                 None
             );
+            assert_eq!(
+                MessageActionKind::from_keymap_name(binding.keymap_name),
+                Some(binding.message_action)
+            );
+            assert_eq!(binding.message_action.name(), binding.keymap_name);
         }
     }
 

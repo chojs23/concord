@@ -6,9 +6,7 @@ use crate::discord::{GuildFolder, GuildState, MuteDuration};
 use super::{ActiveGuildScope, DashboardState, FolderKey};
 use super::{
     model::{FocusPane, GuildBranch, GuildPaneEntry},
-    scroll::{
-        clamp_list_viewport, clamp_selected_index, pane_content_height, toggle_collapsed_key,
-    },
+    scroll::{clamp_selected_index, toggle_collapsed_key},
 };
 use crate::discord::AppCommand;
 use crate::tui::fuzzy::{FuzzyMatchQuality, FuzzyScore, best_fuzzy_name_match_score};
@@ -198,7 +196,7 @@ impl DashboardState {
         };
         if let Some(scope) = action {
             self.activate_guild(scope);
-            self.navigation.guild_keep_selection_visible = true;
+            self.navigation.guilds.keep_selection_visible();
             return true;
         }
         false
@@ -206,20 +204,20 @@ impl DashboardState {
 
     pub fn selected_guild(&self) -> usize {
         clamp_selected_index(
-            self.navigation.selected_guild,
+            self.navigation.guilds.selected,
             self.guild_pane_filtered_entries().len(),
         )
     }
 
     pub fn guild_scroll(&self) -> usize {
-        self.navigation.guild_scroll
+        self.navigation.guilds.scroll
     }
 
     pub fn visible_guild_pane_entries(&self) -> Vec<GuildPaneEntry<'_>> {
         self.guild_pane_filtered_entries()
             .into_iter()
-            .skip(self.navigation.guild_scroll)
-            .take(pane_content_height(self.navigation.guild_view_height))
+            .skip(self.navigation.guilds.scroll)
+            .take(self.navigation.guilds.content_height())
             .collect()
     }
 
@@ -229,10 +227,10 @@ impl DashboardState {
         {
             let selected = self.selected_guild();
             let visible_len = self.visible_guild_pane_entries().len();
-            if selected >= self.navigation.guild_scroll
-                && selected < self.navigation.guild_scroll + visible_len
+            if selected >= self.navigation.guilds.scroll
+                && selected < self.navigation.guilds.scroll + visible_len
             {
-                Some(selected - self.navigation.guild_scroll)
+                Some(selected - self.navigation.guilds.scroll)
             } else {
                 None
             }
@@ -242,16 +240,11 @@ impl DashboardState {
     }
 
     pub fn set_guild_view_height(&mut self, height: usize) {
-        self.navigation.guild_view_height = height;
-        let height = pane_content_height(self.navigation.guild_view_height);
         let len = self.guild_pane_filtered_entries().len();
-        clamp_list_viewport(
-            self.navigation.selected_guild,
-            &mut self.navigation.guild_scroll,
-            height,
-            len,
-            self.navigation.guild_keep_selection_visible,
-        );
+        let selected = self.navigation.guilds.selected;
+        self.navigation
+            .guilds
+            .set_view_height_and_clamp(height, selected, len);
     }
 
     pub fn selected_guild_id(&self) -> Option<Id<GuildMarker>> {
@@ -309,9 +302,7 @@ impl DashboardState {
 
     pub(super) fn activate_guild(&mut self, scope: ActiveGuildScope) {
         self.navigation.active_guild = scope;
-        self.navigation.selected_channel = 0;
-        self.navigation.channel_scroll = 0;
-        self.navigation.channel_keep_selection_visible = true;
+        self.navigation.channels.reset_selection_and_scroll();
         self.navigation.active_channel_id = None;
         self.messages.pinned_message_view_channel_id = None;
         self.messages.pinned_message_view_return_target = None;
@@ -321,9 +312,7 @@ impl DashboardState {
         self.messages.message_keep_selection_visible = true;
         self.messages.message_auto_follow = true;
         self.clear_new_messages_marker();
-        self.navigation.selected_member = 0;
-        self.navigation.member_scroll = 0;
-        self.navigation.member_keep_selection_visible = true;
+        self.navigation.members.reset_selection_and_scroll();
 
         self.refresh_composer_emoji_candidates_for_current_query();
     }

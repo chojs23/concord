@@ -89,11 +89,11 @@ impl DashboardState {
         if self.popups.member_leader_action().is_none() {
             return Vec::new();
         }
-        vec![MemberActionItem {
-            kind: MemberActionKind::ShowProfile,
-            label: "Show profile".to_owned(),
-            enabled: true,
-        }]
+        vec![MemberActionItem::new(
+            MemberActionKind::ShowProfile,
+            "Show profile",
+            true,
+        )]
     }
 
     pub fn select_member_action_row(&mut self, row: usize) -> bool {

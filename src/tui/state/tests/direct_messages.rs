@@ -78,7 +78,7 @@ fn restoring_discord_snapshot_recovers_missed_guilds_and_direct_messages() {
     assert_eq!(state.selected_guild_id(), Some(guild_id));
     assert_eq!(channel_entry_names(&state), vec!["general"]);
 
-    state.navigation.selected_guild = 0;
+    state.navigation.guilds.selected = 0;
     state.confirm_selected_guild();
     assert_eq!(channel_entry_names(&state), vec!["alice"]);
 }

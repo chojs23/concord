@@ -121,9 +121,9 @@ impl DashboardState {
 
         self.clamp_active_selection();
         self.restore_channel_cursor(channel_cursor_id);
-        self.navigation.selected_guild = self.selected_guild();
-        self.navigation.selected_channel = self.selected_channel();
-        self.navigation.selected_member = self.selected_member();
+        self.navigation.guilds.selected = self.selected_guild();
+        self.navigation.channels.selected = self.selected_channel();
+        self.navigation.members.selected = self.selected_member();
         self.clamp_guild_viewport();
         self.clamp_channel_viewport();
         self.clamp_member_viewport();

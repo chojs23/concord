@@ -227,6 +227,16 @@ pub struct ChannelActionItem {
     pub enabled: bool,
 }
 
+impl ChannelActionItem {
+    pub(crate) fn new(kind: ChannelActionKind, label: impl Into<String>, enabled: bool) -> Self {
+        Self {
+            kind,
+            label: label.into(),
+            enabled,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum GuildActionKind {
     NoActionsYet,
@@ -240,6 +250,16 @@ pub struct GuildActionItem {
     pub kind: GuildActionKind,
     pub label: String,
     pub enabled: bool,
+}
+
+impl GuildActionItem {
+    pub(crate) fn new(kind: GuildActionKind, label: impl Into<String>, enabled: bool) -> Self {
+        Self {
+            kind,
+            label: label.into(),
+            enabled,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -285,6 +305,16 @@ pub struct MemberActionItem {
     pub kind: MemberActionKind,
     pub label: String,
     pub enabled: bool,
+}
+
+impl MemberActionItem {
+    pub(crate) fn new(kind: MemberActionKind, label: impl Into<String>, enabled: bool) -> Self {
+        Self {
+            kind,
+            label: label.into(),
+            enabled,
+        }
+    }
 }
 
 pub const FORUM_POST_CARD_HEIGHT: usize = 5;

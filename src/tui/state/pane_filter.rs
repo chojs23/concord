@@ -150,8 +150,8 @@ impl DashboardState {
     fn reset_pane_filter_view(&mut self, pane: FocusPane) {
         self.reset_pane_filter_selection(pane);
         match pane {
-            FocusPane::Guilds => self.navigation.guild_keep_selection_visible = true,
-            FocusPane::Channels => self.navigation.channel_keep_selection_visible = true,
+            FocusPane::Guilds => self.navigation.guilds.keep_selection_visible(),
+            FocusPane::Channels => self.navigation.channels.keep_selection_visible(),
             FocusPane::Messages | FocusPane::Members => {}
         }
     }
@@ -159,12 +159,10 @@ impl DashboardState {
     fn reset_pane_filter_selection(&mut self, pane: FocusPane) {
         match pane {
             FocusPane::Guilds => {
-                self.navigation.selected_guild = 0;
-                self.navigation.guild_scroll = 0;
+                self.navigation.guilds.reset_selection_and_scroll();
             }
             FocusPane::Channels => {
-                self.navigation.selected_channel = 0;
-                self.navigation.channel_scroll = 0;
+                self.navigation.channels.reset_selection_and_scroll();
             }
             FocusPane::Messages | FocusPane::Members => {}
         }

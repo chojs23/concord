@@ -99,6 +99,12 @@ impl KeyBindings {
         action: UiAction,
         focus: FocusPane,
     ) -> Option<DashboardAction> {
+        if focus == FocusPane::Messages
+            && let Some(message_action) = action.message_action_kind()
+        {
+            return Some(DashboardAction::MessageShortcut(message_action));
+        }
+
         match action {
             UiAction::StartComposer => Some(DashboardAction::StartComposer),
             UiAction::OpenPaneFilter => Some(DashboardAction::OpenFocusedPaneFilter),
@@ -121,48 +127,6 @@ impl KeyBindings {
             UiAction::ResizePaneLeft => Some(DashboardAction::ResizePaneLeft),
             UiAction::ResizePaneRight => Some(DashboardAction::ResizePaneRight),
             UiAction::Quit => Some(DashboardAction::Quit),
-            UiAction::CopyMessage if focus == FocusPane::Messages => Some(
-                DashboardAction::MessageShortcut(MessageActionKind::CopyContent),
-            ),
-            UiAction::ReactMessage if focus == FocusPane::Messages => Some(
-                DashboardAction::MessageShortcut(MessageActionKind::OpenReactionPicker),
-            ),
-            UiAction::ReplyMessage if focus == FocusPane::Messages => {
-                Some(DashboardAction::MessageShortcut(MessageActionKind::Reply))
-            }
-            UiAction::DeleteMessage if focus == FocusPane::Messages => Some(
-                DashboardAction::MessageShortcut(MessageActionKind::OpenDeleteConfirmation),
-            ),
-            UiAction::EditMessage if focus == FocusPane::Messages => {
-                Some(DashboardAction::MessageShortcut(MessageActionKind::Edit))
-            }
-            UiAction::OpenMessageUrl if focus == FocusPane::Messages => {
-                Some(DashboardAction::MessageShortcut(MessageActionKind::OpenUrl))
-            }
-            UiAction::PlayMedia if focus == FocusPane::Messages => Some(
-                DashboardAction::MessageShortcut(MessageActionKind::PlayMedia),
-            ),
-            UiAction::ViewMessageAttachment if focus == FocusPane::Messages => Some(
-                DashboardAction::MessageShortcut(MessageActionKind::ViewAttachment),
-            ),
-            UiAction::ShowMessageProfile if focus == FocusPane::Messages => Some(
-                DashboardAction::MessageShortcut(MessageActionKind::ShowProfile),
-            ),
-            UiAction::PinMessage if focus == FocusPane::Messages => Some(
-                DashboardAction::MessageShortcut(MessageActionKind::OpenPinConfirmation),
-            ),
-            UiAction::OpenThread if focus == FocusPane::Messages => Some(
-                DashboardAction::MessageShortcut(MessageActionKind::OpenThread),
-            ),
-            UiAction::ShowReactionUsers if focus == FocusPane::Messages => Some(
-                DashboardAction::MessageShortcut(MessageActionKind::ShowReactionUsers),
-            ),
-            UiAction::OpenPollVotePicker if focus == FocusPane::Messages => Some(
-                DashboardAction::MessageShortcut(MessageActionKind::OpenPollVotePicker),
-            ),
-            UiAction::GoToReferencedMessage if focus == FocusPane::Messages => Some(
-                DashboardAction::MessageShortcut(MessageActionKind::GoToReferencedMessage),
-            ),
             _ => None,
         }
     }

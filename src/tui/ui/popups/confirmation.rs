@@ -19,14 +19,8 @@ pub(in crate::tui::ui) fn render_message_delete_confirmation(
         56,
         state.key_bindings(),
     );
-    let popup = centered_rect(area, 60, (lines.len() as u16).saturating_add(2));
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("Delete message?", true))
-            .wrap(Wrap { trim: false }),
-        popup,
-    );
+    let popup = clear_centered_popup_area(frame, area, 60, (lines.len() as u16).saturating_add(2));
+    render_modal_paragraph(frame, popup, "Delete message?", lines);
 }
 
 pub(in crate::tui::ui) fn render_message_pin_confirmation(
@@ -54,14 +48,8 @@ pub(in crate::tui::ui) fn render_message_pin_confirmation(
     } else {
         "Unpin message?"
     };
-    let popup = centered_rect(area, 60, (lines.len() as u16).saturating_add(2));
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block(title, true))
-            .wrap(Wrap { trim: false }),
-        popup,
-    );
+    let popup = clear_centered_popup_area(frame, area, 60, (lines.len() as u16).saturating_add(2));
+    render_modal_paragraph(frame, popup, title, lines);
 }
 
 pub(in crate::tui::ui) fn render_quit_confirmation(
@@ -74,14 +62,8 @@ pub(in crate::tui::ui) fn render_quit_confirmation(
     }
 
     let lines = quit_confirmation_lines_with_key_bindings(state.key_bindings());
-    let popup = centered_rect(area, 44, (lines.len() as u16).saturating_add(2));
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("Quit", true))
-            .wrap(Wrap { trim: false }),
-        popup,
-    );
+    let popup = clear_centered_popup_area(frame, area, 44, (lines.len() as u16).saturating_add(2));
+    render_modal_paragraph(frame, popup, "Quit", lines);
 }
 
 pub(in crate::tui::ui) fn render_guild_leave_confirmation(
@@ -98,14 +80,8 @@ pub(in crate::tui::ui) fn render_guild_leave_confirmation(
     };
 
     let lines = guild_leave_confirmation_lines_with_key_bindings(&name, 56, state.key_bindings());
-    let popup = centered_rect(area, 60, (lines.len() as u16).saturating_add(2));
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("Leave server?", true))
-            .wrap(Wrap { trim: false }),
-        popup,
-    );
+    let popup = clear_centered_popup_area(frame, area, 60, (lines.len() as u16).saturating_add(2));
+    render_modal_paragraph(frame, popup, "Leave server?", lines);
 }
 
 #[cfg(test)]

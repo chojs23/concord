@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Cursor};
+use std::io::Cursor;
 
 use crate::discord::ids::{Id, marker::MessageMarker};
 use crate::discord::test_builders::{
@@ -36,31 +36,22 @@ fn layout(list_height: usize) -> ImagePreviewLayout {
 fn image_preview_cache_without_picker() -> ImagePreviewCache {
     ImagePreviewCache {
         picker: None,
-        entries: HashMap::new(),
-        tick: 0,
-        decode_generation: 0,
-        protocol_generation: 0,
+        cache: super::cache::MediaImageCacheCore::new(),
     }
 }
 
 fn avatar_cache_without_picker() -> AvatarImageCache {
     AvatarImageCache {
         picker: None,
-        entries: HashMap::new(),
+        cache: super::cache::MediaImageCacheCore::new(),
         active_popup_avatar_url: None,
-        tick: 0,
-        decode_generation: 0,
-        protocol_generation: 0,
     }
 }
 
 fn emoji_cache_without_picker() -> EmojiImageCache {
     EmojiImageCache {
         picker: None,
-        entries: HashMap::new(),
-        tick: 0,
-        decode_generation: 0,
-        protocol_generation: 0,
+        cache: super::cache::MediaImageCacheCore::new(),
     }
 }
 
@@ -714,15 +705,15 @@ fn avatar_image_cache_evicts_least_recently_used_when_over_capacity() {
             AVATAR_PREVIEW_WIDTH,
             AVATAR_PREVIEW_HEIGHT,
         );
-        cache.entries.insert(
+        cache.cache.entries.insert(
             url,
             AvatarImageEntry::Failed {
                 last_used: id as u64,
             },
         );
     }
-    cache.tick = MAX_AVATAR_IMAGE_CACHE_ENTRIES as u64;
-    cache.entries.insert(
+    cache.cache.tick = MAX_AVATAR_IMAGE_CACHE_ENTRIES as u64;
+    cache.cache.entries.insert(
         "https://cdn.discordapp.com/avatars/oldest.png".to_owned(),
         AvatarImageEntry::Failed { last_used: 0 },
     );
@@ -738,10 +729,11 @@ fn avatar_image_cache_evicts_least_recently_used_when_over_capacity() {
     }];
     cache.prune_to_limit(&targets);
 
-    assert_eq!(cache.entries.len(), MAX_AVATAR_IMAGE_CACHE_ENTRIES);
-    assert!(cache.entries.contains_key(&visible_cache_url));
+    assert_eq!(cache.cache.entries.len(), MAX_AVATAR_IMAGE_CACHE_ENTRIES);
+    assert!(cache.cache.entries.contains_key(&visible_cache_url));
     assert!(
         !cache
+            .cache
             .entries
             .contains_key("https://cdn.discordapp.com/avatars/oldest.png")
     );
@@ -779,7 +771,7 @@ fn avatar_protocol_key_tracks_render_clipping() {
 fn avatar_popup_request_prunes_cache_to_limit() {
     let mut cache = avatar_cache_without_picker();
     for id in 0..MAX_AVATAR_IMAGE_CACHE_ENTRIES {
-        cache.entries.insert(
+        cache.cache.entries.insert(
             format!("https://cdn.discordapp.com/avatars/{id}.png"),
             AvatarImageEntry::Failed {
                 last_used: id as u64,
@@ -795,9 +787,10 @@ fn avatar_popup_request_prunes_cache_to_limit() {
             url: "https://cdn.discordapp.com/avatars/new.png?size=128".to_owned(),
         })
     );
-    assert_eq!(cache.entries.len(), MAX_AVATAR_IMAGE_CACHE_ENTRIES);
+    assert_eq!(cache.cache.entries.len(), MAX_AVATAR_IMAGE_CACHE_ENTRIES);
     assert!(
         cache
+            .cache
             .entries
             .contains_key("https://cdn.discordapp.com/avatars/new.png?size=128")
     );
@@ -817,7 +810,7 @@ fn avatar_popup_upload_request_uses_local_preview_command() {
             upload,
         })
     );
-    assert!(cache.entries.contains_key("pending-avatar"));
+    assert!(cache.cache.entries.contains_key("pending-avatar"));
 }
 
 #[test]
@@ -833,14 +826,14 @@ fn avatar_cache_pruning_preserves_active_popup_avatar() {
             AVATAR_PREVIEW_WIDTH,
             AVATAR_PREVIEW_HEIGHT,
         );
-        cache.entries.insert(
+        cache.cache.entries.insert(
             url,
             AvatarImageEntry::Failed {
                 last_used: id as u64,
             },
         );
     }
-    cache.entries.insert(
+    cache.cache.entries.insert(
         popup_url.to_owned(),
         AvatarImageEntry::Failed { last_used: 0 },
     );
@@ -856,15 +849,18 @@ fn avatar_cache_pruning_preserves_active_popup_avatar() {
 
     cache.prune_to_limit(&targets);
 
-    assert_eq!(cache.entries.len(), MAX_AVATAR_IMAGE_CACHE_ENTRIES + 1);
-    assert!(cache.entries.contains_key(popup_url));
+    assert_eq!(
+        cache.cache.entries.len(),
+        MAX_AVATAR_IMAGE_CACHE_ENTRIES + 1
+    );
+    assert!(cache.cache.entries.contains_key(popup_url));
 }
 
 #[test]
 fn avatar_store_decoded_records_decode_failure() {
     let key = "https://cdn.discordapp.com/avatars/failed.png?size=64".to_owned();
     let mut cache = avatar_cache_without_picker();
-    cache.entries.insert(
+    cache.cache.entries.insert(
         key.clone(),
         AvatarImageEntry::Decoding {
             generation: 1,
@@ -879,7 +875,7 @@ fn avatar_store_decoded_records_decode_failure() {
     );
 
     assert!(matches!(
-        cache.entries.get(&key),
+        cache.cache.entries.get(&key),
         Some(AvatarImageEntry::Failed { .. })
     ));
 }
@@ -888,7 +884,7 @@ fn avatar_store_decoded_records_decode_failure() {
 fn avatar_store_decoded_ignores_replaced_decoding_generation() {
     let key = "https://cdn.discordapp.com/avatars/newer.png?size=64".to_owned();
     let mut cache = avatar_cache_without_picker();
-    cache.entries.insert(
+    cache.cache.entries.insert(
         key.clone(),
         AvatarImageEntry::Decoding {
             generation: 2,
@@ -903,7 +899,7 @@ fn avatar_store_decoded_ignores_replaced_decoding_generation() {
     );
 
     assert!(matches!(
-        cache.entries.get(&key),
+        cache.cache.entries.get(&key),
         Some(AvatarImageEntry::Decoding { generation, .. }) if *generation == 2
     ));
 }
@@ -1167,9 +1163,9 @@ fn image_preview_request_is_created_for_draw_target() {
     let mut cache = image_preview_cache_without_picker();
     let target = image_preview_target(1);
 
-    assert!(cache.entries.is_empty());
+    assert!(cache.cache.entries.is_empty());
     assert_eq!(cache.render_state(std::slice::from_ref(&target)).len(), 1);
-    assert!(cache.entries.is_empty());
+    assert!(cache.cache.entries.is_empty());
 
     let requests = cache.next_requests(std::slice::from_ref(&target));
 
@@ -1179,7 +1175,7 @@ fn image_preview_request_is_created_for_draw_target() {
             url: target.url.clone()
         }]
     );
-    assert_eq!(cache.entries.len(), 1);
+    assert_eq!(cache.cache.entries.len(), 1);
 }
 
 #[test]
@@ -1192,9 +1188,9 @@ fn image_surface_refresh_protocols_advances_generation() {
     avatars.refresh_protocols();
     emojis.refresh_protocols();
 
-    assert_eq!(previews.protocol_generation, 1);
-    assert_eq!(avatars.protocol_generation, 1);
-    assert_eq!(emojis.protocol_generation, 1);
+    assert_eq!(previews.cache.protocol_generation, 1);
+    assert_eq!(avatars.cache.protocol_generation, 1);
+    assert_eq!(emojis.cache.protocol_generation, 1);
 }
 
 #[test]
@@ -1207,7 +1203,7 @@ fn image_preview_render_state_preserves_target_order() {
         preview_x_offset_columns: 8,
         ..image_preview_target(2)
     };
-    cache.entries.insert(
+    cache.cache.entries.insert(
         second.key(),
         ImagePreviewEntry::Loading {
             filename: second.filename.clone(),
@@ -1215,7 +1211,7 @@ fn image_preview_render_state_preserves_target_order() {
             last_used: 1,
         },
     );
-    cache.entries.insert(
+    cache.cache.entries.insert(
         first.key(),
         ImagePreviewEntry::Loading {
             filename: first.filename.clone(),
@@ -1251,7 +1247,7 @@ fn image_preview_cache_keeps_duplicate_urls_as_separate_preview_instances() {
     let requests = cache.next_requests(&[first, second]);
 
     assert_eq!(requests.len(), 1);
-    assert_eq!(cache.entries.len(), 2);
+    assert_eq!(cache.cache.entries.len(), 2);
     let previews = cache.render_state(&[
         image_preview_target(1),
         ImagePreviewTarget {
@@ -1280,7 +1276,7 @@ fn image_preview_cache_deduplicates_url_already_loading_from_previous_frame() {
     let requests = cache.next_requests(std::slice::from_ref(&second));
 
     assert!(requests.is_empty());
-    assert_eq!(cache.entries.len(), 2);
+    assert_eq!(cache.cache.entries.len(), 2);
 }
 
 #[test]
@@ -1300,9 +1296,9 @@ fn image_preview_cache_keeps_viewer_and_inline_entries_separate() {
 
     assert_eq!(inline_requests.len(), 1);
     assert!(viewer_requests.is_empty());
-    assert_eq!(cache.entries.len(), 2);
-    assert!(cache.entries.contains_key(&inline.key()));
-    assert!(cache.entries.contains_key(&viewer.key()));
+    assert_eq!(cache.cache.entries.len(), 2);
+    assert!(cache.cache.entries.contains_key(&inline.key()));
+    assert!(cache.cache.entries.contains_key(&viewer.key()));
 }
 
 #[test]
@@ -1317,10 +1313,10 @@ fn image_preview_cache_evicts_least_recently_used_entries() {
     let new_target = image_preview_target(999);
     cache.next_requests(std::slice::from_ref(&new_target));
 
-    assert_eq!(cache.entries.len(), MAX_IMAGE_PREVIEW_CACHE_ENTRIES);
-    assert!(cache.entries.contains_key(&existing_targets[0].key()));
-    assert!(!cache.entries.contains_key(&existing_targets[1].key()));
-    assert!(cache.entries.contains_key(&new_target.key()));
+    assert_eq!(cache.cache.entries.len(), MAX_IMAGE_PREVIEW_CACHE_ENTRIES);
+    assert!(cache.cache.entries.contains_key(&existing_targets[0].key()));
+    assert!(!cache.cache.entries.contains_key(&existing_targets[1].key()));
+    assert!(cache.cache.entries.contains_key(&new_target.key()));
 }
 
 #[test]
@@ -1332,11 +1328,12 @@ fn image_preview_cache_limits_visible_requests() {
 
     let requests = cache.next_requests(&targets);
 
-    assert_eq!(cache.entries.len(), MAX_IMAGE_PREVIEW_CACHE_ENTRIES);
+    assert_eq!(cache.cache.entries.len(), MAX_IMAGE_PREVIEW_CACHE_ENTRIES);
     assert_eq!(requests.len(), MAX_IMAGE_PREVIEW_CACHE_ENTRIES);
-    assert!(cache.entries.contains_key(&targets[0].key()));
+    assert!(cache.cache.entries.contains_key(&targets[0].key()));
     assert!(
         !cache
+            .cache
             .entries
             .contains_key(&targets[MAX_IMAGE_PREVIEW_CACHE_ENTRIES].key())
     );
@@ -1351,7 +1348,7 @@ fn image_preview_store_loaded_preserves_existing_non_loading_entries() {
         ..image_preview_target(1)
     }
     .key();
-    cache.entries.insert(
+    cache.cache.entries.insert(
         existing.clone(),
         ImagePreviewEntry::Failed {
             filename: "existing.png".to_owned(),
@@ -1359,7 +1356,7 @@ fn image_preview_store_loaded_preserves_existing_non_loading_entries() {
             last_used: 1,
         },
     );
-    cache.entries.insert(
+    cache.cache.entries.insert(
         loading.clone(),
         ImagePreviewEntry::Loading {
             filename: "loading.png".to_owned(),
@@ -1371,11 +1368,11 @@ fn image_preview_store_loaded_preserves_existing_non_loading_entries() {
     cache.store_loaded(&existing.url, &[]);
 
     assert!(matches!(
-        cache.entries.get(&existing),
+        cache.cache.entries.get(&existing),
         Some(ImagePreviewEntry::Failed { message, .. }) if message == "existing failure"
     ));
     assert!(matches!(
-        cache.entries.get(&loading),
+        cache.cache.entries.get(&loading),
         Some(ImagePreviewEntry::Failed { message, .. })
             if message == "inline preview unavailable in this terminal"
     ));
@@ -1387,7 +1384,7 @@ fn image_preview_loaded_bytes_start_decode_jobs_for_loading_entries() {
     let target = image_preview_target(1);
     let key = target.key();
     let render_info = target.preview_render_info();
-    cache.entries.insert(
+    cache.cache.entries.insert(
         key.clone(),
         ImagePreviewEntry::Loading {
             filename: "loading.png".to_owned(),
@@ -1403,7 +1400,7 @@ fn image_preview_loaded_bytes_start_decode_jobs_for_loading_entries() {
     assert_eq!(jobs[0].generation, 1);
     assert_eq!(jobs[0].bytes.as_ref(), b"image bytes");
     assert!(matches!(
-        cache.entries.get(&key),
+        cache.cache.entries.get(&key),
         Some(ImagePreviewEntry::Decoding { filename, generation, .. })
             if filename == "loading.png" && *generation == 1
     ));
@@ -1415,7 +1412,7 @@ fn image_preview_store_decoded_records_decode_failure() {
     let target = image_preview_target(1);
     let key = target.key();
     let render_info = target.preview_render_info();
-    cache.entries.insert(
+    cache.cache.entries.insert(
         key.clone(),
         ImagePreviewEntry::Decoding {
             filename: "loading.png".to_owned(),
@@ -1432,7 +1429,7 @@ fn image_preview_store_decoded_records_decode_failure() {
     );
 
     assert!(matches!(
-        cache.entries.get(&key),
+        cache.cache.entries.get(&key),
         Some(ImagePreviewEntry::Failed { filename, message, .. })
             if filename == "loading.png" && message == "decode failed: invalid image"
     ));
@@ -1442,7 +1439,7 @@ fn image_preview_store_decoded_records_decode_failure() {
 fn image_preview_store_decoded_ignores_stale_results() {
     let mut cache = image_preview_cache_without_picker();
     let key = image_preview_target(1).key();
-    cache.entries.insert(
+    cache.cache.entries.insert(
         key.clone(),
         ImagePreviewEntry::Failed {
             filename: "existing.png".to_owned(),
@@ -1454,7 +1451,7 @@ fn image_preview_store_decoded_ignores_stale_results() {
     cache.store_decoded(key.clone(), 1, Err("decode failed: stale".to_owned()));
 
     assert!(matches!(
-        cache.entries.get(&key),
+        cache.cache.entries.get(&key),
         Some(ImagePreviewEntry::Failed { filename, message, .. })
             if filename == "existing.png" && message == "existing failure"
     ));
@@ -1466,7 +1463,7 @@ fn image_preview_store_decoded_ignores_replaced_decoding_generation() {
     let target = image_preview_target(1);
     let key = target.key();
     let render_info = target.preview_render_info();
-    cache.entries.insert(
+    cache.cache.entries.insert(
         key.clone(),
         ImagePreviewEntry::Decoding {
             filename: "newer.png".to_owned(),
@@ -1483,7 +1480,7 @@ fn image_preview_store_decoded_ignores_replaced_decoding_generation() {
     );
 
     assert!(matches!(
-        cache.entries.get(&key),
+        cache.cache.entries.get(&key),
         Some(ImagePreviewEntry::Decoding { filename, generation, .. })
             if filename == "newer.png" && *generation == 2
     ));
@@ -1522,7 +1519,7 @@ fn image_preview_store_failed_preserves_existing_non_loading_entries() {
         ..image_preview_target(1)
     }
     .key();
-    cache.entries.insert(
+    cache.cache.entries.insert(
         existing.clone(),
         ImagePreviewEntry::Failed {
             filename: "existing.png".to_owned(),
@@ -1530,7 +1527,7 @@ fn image_preview_store_failed_preserves_existing_non_loading_entries() {
             last_used: 1,
         },
     );
-    cache.entries.insert(
+    cache.cache.entries.insert(
         loading.clone(),
         ImagePreviewEntry::Loading {
             filename: "loading.png".to_owned(),
@@ -1542,11 +1539,11 @@ fn image_preview_store_failed_preserves_existing_non_loading_entries() {
     cache.store_failed(&existing.url, "new failure".to_owned());
 
     assert!(matches!(
-        cache.entries.get(&existing),
+        cache.cache.entries.get(&existing),
         Some(ImagePreviewEntry::Failed { message, .. }) if message == "existing failure"
     ));
     assert!(matches!(
-        cache.entries.get(&loading),
+        cache.cache.entries.get(&loading),
         Some(ImagePreviewEntry::Failed { message, .. }) if message == "new failure"
     ));
 }
@@ -1808,7 +1805,7 @@ fn emoji_image_request_is_created_for_visible_target() {
             url: target.url.clone(),
         }]
     );
-    assert_eq!(cache.entries.len(), 1);
+    assert_eq!(cache.cache.entries.len(), 1);
 }
 
 #[test]
@@ -1821,14 +1818,14 @@ fn emoji_image_cache_skips_requests_without_image_protocol() {
     let requests = cache.next_requests(std::slice::from_ref(&target));
 
     assert!(requests.is_empty());
-    assert!(cache.entries.is_empty());
+    assert!(cache.cache.entries.is_empty());
 }
 
 #[test]
 fn emoji_store_decoded_records_decode_failure() {
     let url = "https://cdn.discordapp.com/emojis/failed.png".to_owned();
     let mut cache = emoji_cache_without_picker();
-    cache.entries.insert(
+    cache.cache.entries.insert(
         url.clone(),
         EmojiImageEntry::Decoding {
             generation: 1,
@@ -1843,7 +1840,7 @@ fn emoji_store_decoded_records_decode_failure() {
     );
 
     assert!(matches!(
-        cache.entries.get(&url),
+        cache.cache.entries.get(&url),
         Some(EmojiImageEntry::Failed { .. })
     ));
 }
@@ -1852,7 +1849,7 @@ fn emoji_store_decoded_records_decode_failure() {
 fn emoji_store_decoded_ignores_replaced_decoding_generation() {
     let url = "https://cdn.discordapp.com/emojis/newer.png".to_owned();
     let mut cache = emoji_cache_without_picker();
-    cache.entries.insert(
+    cache.cache.entries.insert(
         url.clone(),
         EmojiImageEntry::Decoding {
             generation: 2,
@@ -1867,7 +1864,7 @@ fn emoji_store_decoded_ignores_replaced_decoding_generation() {
     );
 
     assert!(matches!(
-        cache.entries.get(&url),
+        cache.cache.entries.get(&url),
         Some(EmojiImageEntry::Decoding { generation, .. }) if *generation == 2
     ));
 }
@@ -1876,15 +1873,15 @@ fn emoji_store_decoded_ignores_replaced_decoding_generation() {
 fn emoji_image_cache_evicts_least_recently_used_when_over_capacity() {
     let mut cache = emoji_cache_without_picker();
     for id in 0..MAX_EMOJI_IMAGE_CACHE_ENTRIES {
-        cache.entries.insert(
+        cache.cache.entries.insert(
             format!("https://cdn.discordapp.com/emojis/{id}.png"),
             EmojiImageEntry::Failed {
                 last_used: id as u64,
             },
         );
     }
-    cache.tick = MAX_EMOJI_IMAGE_CACHE_ENTRIES as u64;
-    cache.entries.insert(
+    cache.cache.tick = MAX_EMOJI_IMAGE_CACHE_ENTRIES as u64;
+    cache.cache.entries.insert(
         "https://cdn.discordapp.com/emojis/oldest.png".to_owned(),
         EmojiImageEntry::Failed { last_used: 0 },
     );
@@ -1895,8 +1892,8 @@ fn emoji_image_cache_evicts_least_recently_used_when_over_capacity() {
     }];
     cache.prune_to_limit(&targets);
 
-    assert_eq!(cache.entries.len(), MAX_EMOJI_IMAGE_CACHE_ENTRIES);
-    assert!(cache.entries.contains_key(&visible_url));
+    assert_eq!(cache.cache.entries.len(), MAX_EMOJI_IMAGE_CACHE_ENTRIES);
+    assert!(cache.cache.entries.contains_key(&visible_url));
 }
 
 #[test]

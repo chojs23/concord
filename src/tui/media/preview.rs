@@ -13,9 +13,10 @@ use crate::{
 };
 
 use super::{
-    ImagePreviewRenderInfo, ImagePreviewTarget, clipped_preview_image,
+    ImagePreviewRenderInfo, ImagePreviewTarget,
+    cache::{MediaImageCacheCore, MediaImageCacheEntry},
+    clipped_preview_image,
     decode::{MediaImageDecodeJob, MediaImageDecodeKey},
-    lru::{self, TrackedCacheEntry},
     query_image_picker,
 };
 
@@ -31,10 +32,7 @@ pub(in crate::tui) struct ImagePreviewKey {
 
 pub(in crate::tui) struct ImagePreviewCache {
     pub(super) picker: Option<Picker>,
-    pub(super) entries: HashMap<ImagePreviewKey, ImagePreviewEntry>,
-    pub(super) tick: u64,
-    pub(super) decode_generation: u64,
-    pub(super) protocol_generation: u64,
+    pub(super) cache: MediaImageCacheCore<ImagePreviewKey, ImagePreviewEntry>,
 }
 
 pub(super) enum ImagePreviewEntry {
@@ -68,10 +66,7 @@ impl ImagePreviewCache {
     pub(in crate::tui) fn new() -> Self {
         Self {
             picker: query_image_picker("preview", "inline image picker unavailable"),
-            entries: HashMap::new(),
-            tick: 0,
-            decode_generation: 0,
-            protocol_generation: 0,
+            cache: MediaImageCacheCore::new(),
         }
     }
 
@@ -80,7 +75,7 @@ impl ImagePreviewCache {
     }
 
     pub(in crate::tui) fn refresh_protocols(&mut self) {
-        self.protocol_generation = self.protocol_generation.saturating_add(1);
+        self.cache.refresh_protocols();
     }
 
     pub(in crate::tui) fn render_state(
@@ -97,12 +92,15 @@ impl ImagePreviewCache {
         let mut rendered_keys = HashSet::new();
         let mut previews = Vec::new();
 
-        for (key, entry) in &mut self.entries {
+        let mut tick = self.cache.tick;
+        let current_protocol_generation = self.cache.protocol_generation;
+        for (key, entry) in &mut self.cache.entries {
             let Some((order, render_info)) = target_by_key.get(key).copied() else {
                 continue;
             };
             rendered_keys.insert(key.clone());
-            lru::touch_entry(entry, &mut self.tick);
+            tick = tick.saturating_add(1);
+            entry.touch(tick);
             let state = match entry {
                 ImagePreviewEntry::Loading { filename, .. }
                 | ImagePreviewEntry::Decoding { filename, .. } => ImagePreviewState::Loading {
@@ -116,14 +114,14 @@ impl ImagePreviewCache {
                     ..
                 } => {
                     if (*protocol_render_info != render_info
-                        || *protocol_generation != self.protocol_generation)
+                        || *protocol_generation != current_protocol_generation)
                         && let Some(picker) = picker.as_ref()
                         && let Some(updated_protocol) =
                             clipped_preview_stateful_protocol(picker, image, render_info)
                     {
                         *protocol = updated_protocol;
                         *protocol_render_info = render_info;
-                        *protocol_generation = self.protocol_generation;
+                        *protocol_generation = current_protocol_generation;
                     }
                     ImagePreviewState::Ready {
                         protocol: protocol.as_mut(),
@@ -151,6 +149,7 @@ impl ImagePreviewCache {
                 },
             ));
         }
+        self.cache.tick = tick;
 
         for (order, target) in targets.iter().enumerate() {
             if !rendered_keys.contains(&target.key()) {
@@ -183,6 +182,7 @@ impl ImagePreviewCache {
     ) -> Vec<AppCommand> {
         let mut intents = Vec::new();
         let mut requested_urls = self
+            .cache
             .entries
             .iter()
             .filter(|(_, entry)| matches!(entry, ImagePreviewEntry::Loading { .. }))
@@ -190,13 +190,13 @@ impl ImagePreviewCache {
             .collect::<HashSet<_>>();
         for target in targets.iter().take(MAX_IMAGE_PREVIEW_CACHE_ENTRIES) {
             let key = target.key();
-            if self.entries.contains_key(&key) {
+            if self.cache.entries.contains_key(&key) {
                 continue;
             }
 
             let url = target.url.clone();
-            let last_used = lru::next_tick(&mut self.tick);
-            self.entries.insert(
+            let last_used = self.cache.next_tick();
+            self.cache.entries.insert(
                 key,
                 ImagePreviewEntry::Loading {
                     filename: target.filename.clone(),
@@ -232,8 +232,8 @@ impl ImagePreviewCache {
         let Some(_) = self.picker.as_ref() else {
             for key in keys {
                 let filename = self.filename_for_key(&key);
-                let last_used = lru::next_tick(&mut self.tick);
-                self.entries.insert(
+                let last_used = self.cache.next_tick();
+                self.cache.entries.insert(
                     key,
                     ImagePreviewEntry::Failed {
                         filename,
@@ -258,8 +258,8 @@ impl ImagePreviewCache {
         for key in keys {
             let filename = self.filename_for_key(&key);
             let Some(render_info) = self.render_info_for_key(&key) else {
-                let last_used = lru::next_tick(&mut self.tick);
-                self.entries.insert(
+                let last_used = self.cache.next_tick();
+                self.cache.entries.insert(
                     key,
                     ImagePreviewEntry::Failed {
                         filename,
@@ -269,9 +269,9 @@ impl ImagePreviewCache {
                 );
                 continue;
             };
-            let last_used = lru::next_tick(&mut self.tick);
-            let generation = lru::next_generation(&mut self.decode_generation);
-            self.entries.insert(
+            let last_used = self.cache.next_tick();
+            let generation = self.cache.next_decode_generation();
+            self.cache.entries.insert(
                 key.clone(),
                 ImagePreviewEntry::Decoding {
                     filename,
@@ -295,15 +295,14 @@ impl ImagePreviewCache {
         result_generation: u64,
         result: std::result::Result<DynamicImage, String>,
     ) {
-        let Some((filename, generation, render_info)) = self.entries.get(&key).and_then(|entry| {
+        let Some((filename, render_info)) = self.cache.entries.get(&key).and_then(|entry| {
             if let ImagePreviewEntry::Decoding {
                 filename,
-                generation,
                 render_info,
                 ..
             } = entry
             {
-                Some((filename.clone(), *generation, *render_info))
+                Some((filename.clone(), *render_info))
             } else {
                 None
             }
@@ -311,15 +310,18 @@ impl ImagePreviewCache {
             return;
         };
 
-        if generation != result_generation {
+        if !self
+            .cache
+            .decoded_generation_matches(&key, result_generation)
+        {
             return;
         }
 
-        let last_used = lru::next_tick(&mut self.tick);
+        let last_used = self.cache.next_tick();
         match result {
             Ok(image) => {
                 let Some(picker) = self.picker.as_ref() else {
-                    self.entries.insert(
+                    self.cache.entries.insert(
                         key,
                         ImagePreviewEntry::Failed {
                             filename,
@@ -331,7 +333,7 @@ impl ImagePreviewCache {
                 };
                 let Some(protocol) = clipped_preview_stateful_protocol(picker, &image, render_info)
                 else {
-                    self.entries.insert(
+                    self.cache.entries.insert(
                         key,
                         ImagePreviewEntry::Failed {
                             filename,
@@ -341,20 +343,20 @@ impl ImagePreviewCache {
                     );
                     return;
                 };
-                self.entries.insert(
+                self.cache.entries.insert(
                     key,
                     ImagePreviewEntry::Ready {
                         filename,
                         image,
                         protocol_render_info: render_info,
-                        protocol_generation: self.protocol_generation,
+                        protocol_generation: self.cache.protocol_generation,
                         protocol,
                         last_used,
                     },
                 );
             }
             Err(message) => {
-                self.entries.insert(
+                self.cache.entries.insert(
                     key,
                     ImagePreviewEntry::Failed {
                         filename,
@@ -367,7 +369,7 @@ impl ImagePreviewCache {
     }
 
     fn render_info_for_key(&self, key: &ImagePreviewKey) -> Option<ImagePreviewRenderInfo> {
-        match self.entries.get(key)? {
+        match self.cache.entries.get(key)? {
             ImagePreviewEntry::Loading { render_info, .. }
             | ImagePreviewEntry::Decoding { render_info, .. } => Some(*render_info),
             ImagePreviewEntry::Ready { .. } | ImagePreviewEntry::Failed { .. } => None,
@@ -380,19 +382,17 @@ impl ImagePreviewCache {
             .take(MAX_IMAGE_PREVIEW_CACHE_ENTRIES)
             .map(ImagePreviewTarget::key)
             .collect::<HashSet<_>>();
-        lru::prune_to_limit(
-            &mut self.entries,
-            MAX_IMAGE_PREVIEW_CACHE_ENTRIES,
-            |key| protected.contains(key),
-            TrackedCacheEntry::last_used,
-        );
+        self.cache
+            .prune_to_limit(MAX_IMAGE_PREVIEW_CACHE_ENTRIES, |key| {
+                protected.contains(key)
+            });
     }
 
     pub(super) fn store_failed(&mut self, url: &str, message: String) {
         for key in self.loading_keys_for_url(url) {
             let filename = self.filename_for_key(&key);
-            let last_used = lru::next_tick(&mut self.tick);
-            self.entries.insert(
+            let last_used = self.cache.next_tick();
+            self.cache.entries.insert(
                 key,
                 ImagePreviewEntry::Failed {
                     filename,
@@ -404,7 +404,8 @@ impl ImagePreviewCache {
     }
 
     fn loading_keys_for_url(&self, url: &str) -> Vec<ImagePreviewKey> {
-        self.entries
+        self.cache
+            .entries
             .iter()
             .filter(|(key, entry)| {
                 key.url == url && matches!(entry, ImagePreviewEntry::Loading { .. })
@@ -414,7 +415,8 @@ impl ImagePreviewCache {
     }
 
     fn filename_for_key(&self, key: &ImagePreviewKey) -> String {
-        self.entries
+        self.cache
+            .entries
             .get(key)
             .map(ImagePreviewEntry::filename)
             .unwrap_or("image")
@@ -470,7 +472,7 @@ impl ImagePreviewEntry {
     }
 }
 
-impl TrackedCacheEntry for ImagePreviewEntry {
+impl MediaImageCacheEntry for ImagePreviewEntry {
     fn last_used(&self) -> u64 {
         match self {
             Self::Loading { last_used, .. }
@@ -486,6 +488,19 @@ impl TrackedCacheEntry for ImagePreviewEntry {
             | ImagePreviewEntry::Decoding { last_used, .. }
             | ImagePreviewEntry::Ready { last_used, .. }
             | ImagePreviewEntry::Failed { last_used, .. } => *last_used = tick,
+        }
+    }
+
+    fn is_loading(&self) -> bool {
+        matches!(self, ImagePreviewEntry::Loading { .. })
+    }
+
+    fn decoding_generation(&self) -> Option<u64> {
+        match self {
+            ImagePreviewEntry::Decoding { generation, .. } => Some(*generation),
+            ImagePreviewEntry::Loading { .. }
+            | ImagePreviewEntry::Ready { .. }
+            | ImagePreviewEntry::Failed { .. } => None,
         }
     }
 }
