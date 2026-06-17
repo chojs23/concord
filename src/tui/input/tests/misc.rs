@@ -177,10 +177,13 @@ fn profile_activity_edit_enter_dispatches_presence_update() {
         user: "neo".to_owned(),
         user_id: Some(user_id),
     });
-    state.push_event(AppEvent::UserPresenceUpdate {
-        user_id,
-        status: PresenceStatus::Online,
-        activities: Vec::new(),
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        },
     });
     state.open_current_user_profile_popup();
     handle_key(&mut state, char_key('j'));

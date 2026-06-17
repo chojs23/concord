@@ -64,7 +64,7 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
             items
                 .iter()
                 .filter_map(parse_presence_entry)
-                .map(|(user_id, status, _activities)| (user_id, status))
+                .map(|presence| (presence.user_id, presence.status))
                 .collect()
         })
         .unwrap_or_default();

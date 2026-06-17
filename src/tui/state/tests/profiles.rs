@@ -136,10 +136,13 @@ fn user_profile_popup_status_uses_cached_presence_without_guild() {
     let user_id: Id<UserMarker> = Id::new(10);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::UserPresenceUpdate {
-        user_id,
-        status: PresenceStatus::Idle,
-        activities: Vec::new(),
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Idle,
+            activities: Vec::new(),
+        },
     });
     state.open_user_profile_popup(user_id, None);
 
@@ -151,10 +154,13 @@ fn user_profile_popup_status_prefers_cached_presence_over_unknown_recipient() {
     let user_id: Id<UserMarker> = Id::new(10);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::UserPresenceUpdate {
-        user_id,
-        status: PresenceStatus::Idle,
-        activities: Vec::new(),
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Idle,
+            activities: Vec::new(),
+        },
     });
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         recipients: Some(vec![ChannelRecipientInfo {
@@ -348,10 +354,13 @@ fn profile_settings_status_picker_dispatches_presence_update() {
         user: "neo".to_owned(),
         user_id: Some(user_id),
     });
-    state.push_event(AppEvent::UserPresenceUpdate {
-        user_id,
-        status: PresenceStatus::Online,
-        activities: vec![ActivityInfo::playing("Concord")],
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::playing("Concord")],
+        },
     });
     state.open_current_user_profile_popup();
     state.next_user_profile_settings_field();
@@ -390,10 +399,13 @@ fn profile_settings_activity_edit_dispatches_presence_update() {
         user: "neo".to_owned(),
         user_id: Some(user_id),
     });
-    state.push_event(AppEvent::UserPresenceUpdate {
-        user_id,
-        status: PresenceStatus::Online,
-        activities: Vec::new(),
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        },
     });
     state.open_current_user_profile_popup();
     state.next_user_profile_settings_field();

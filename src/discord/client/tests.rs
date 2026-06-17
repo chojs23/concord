@@ -268,10 +268,13 @@ async fn current_user_activities_returns_cached_presence_activity() {
         })
         .await;
     client
-        .publish_event(AppEvent::UserPresenceUpdate {
-            user_id,
-            status: crate::discord::PresenceStatus::Online,
-            activities: vec![activity.clone()],
+        .publish_event(AppEvent::PresenceUpdate {
+            guild_id: None,
+            presence: crate::discord::PresenceEventFields {
+                user_id,
+                status: crate::discord::PresenceStatus::Online,
+                activities: vec![activity.clone()],
+            },
         })
         .await;
 

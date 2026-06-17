@@ -1,8 +1,8 @@
 use serde_json::Value;
 
 use crate::discord::{
-    ActivityEmoji, ActivityInfo, ActivityKind, PresenceStatus,
-    events::AppEvent,
+    ActivityEmoji, ActivityInfo, ActivityKind,
+    events::{AppEvent, PresenceEventFields},
     ids::{
         Id,
         marker::{ChannelMarker, EmojiMarker, GuildMarker, UserMarker},
@@ -12,21 +12,18 @@ use crate::discord::{
 use super::shared::{display_name_from_parts, parse_id, parse_status};
 
 pub(super) fn parse_presence_update(data: &Value) -> Vec<AppEvent> {
-    let Some((user_id, status, activities)) = parse_presence_entry(data) else {
+    let Some(presence) = parse_presence_entry(data) else {
         return Vec::new();
     };
     if let Some(guild_id) = data.get("guild_id").and_then(parse_id::<GuildMarker>) {
         vec![AppEvent::PresenceUpdate {
-            guild_id,
-            user_id,
-            status,
-            activities,
+            guild_id: Some(guild_id),
+            presence,
         }]
     } else {
-        vec![AppEvent::UserPresenceUpdate {
-            user_id,
-            status,
-            activities,
+        vec![AppEvent::PresenceUpdate {
+            guild_id: None,
+            presence,
         }]
     }
 }
@@ -66,16 +63,18 @@ fn typing_member_display_name(member: &Value) -> Option<String> {
     display_name_from_parts(nick, global_name, username).map(str::to_owned)
 }
 
-pub(super) fn parse_presence_entry(
-    value: &Value,
-) -> Option<(Id<UserMarker>, PresenceStatus, Vec<ActivityInfo>)> {
+pub(super) fn parse_presence_entry(value: &Value) -> Option<PresenceEventFields> {
     let user_id = presence_user_id(value)?;
     let status = value
         .get("status")
         .and_then(Value::as_str)
         .map(parse_status)?;
     let activities = parse_activities(value);
-    Some((user_id, status, activities))
+    Some(PresenceEventFields {
+        user_id,
+        status,
+        activities,
+    })
 }
 
 pub(super) fn parse_activities(value: &Value) -> Vec<ActivityInfo> {

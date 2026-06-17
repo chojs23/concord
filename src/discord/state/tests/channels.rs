@@ -241,10 +241,13 @@ fn channel_upsert_uses_cached_user_presence_when_status_is_omitted() {
     let user_id: Id<UserMarker> = Id::new(20);
     let mut state = DiscordState::default();
 
-    state.apply_event(&AppEvent::UserPresenceUpdate {
-        user_id,
-        status: PresenceStatus::Idle,
-        activities: Vec::new(),
+    state.apply_event(&AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Idle,
+            activities: Vec::new(),
+        },
     });
     state.apply_event(&AppEvent::ChannelUpsert(dm_channel_with_recipients(
         channel_id,
@@ -270,10 +273,13 @@ fn user_presence_update_updates_channel_recipients() {
         vec![ChannelRecipientInfo::test(Id::new(20), "alice")],
     )));
 
-    state.apply_event(&AppEvent::UserPresenceUpdate {
-        user_id: Id::new(20),
-        status: PresenceStatus::DoNotDisturb,
-        activities: Vec::new(),
+    state.apply_event(&AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id: Id::new(20),
+            status: PresenceStatus::DoNotDisturb,
+            activities: Vec::new(),
+        },
     });
 
     let channel = state.channel(channel_id).expect("channel should be stored");
@@ -287,10 +293,12 @@ fn presence_update_caches_user_activities() {
     let activity = ActivityInfo::test(ActivityKind::Playing, "Concord");
 
     state.apply_event(&AppEvent::PresenceUpdate {
-        guild_id: Id::new(1),
-        user_id,
-        status: PresenceStatus::Online,
-        activities: vec![activity.clone()],
+        guild_id: Some(Id::new(1)),
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![activity.clone()],
+        },
     });
 
     assert_eq!(
@@ -300,10 +308,12 @@ fn presence_update_caches_user_activities() {
 
     // Empty activities array clears the cached entry.
     state.apply_event(&AppEvent::PresenceUpdate {
-        guild_id: Id::new(1),
-        user_id,
-        status: PresenceStatus::Online,
-        activities: Vec::new(),
+        guild_id: Some(Id::new(1)),
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        },
     });
     assert!(state.user_activities(user_id).is_empty());
 }
@@ -318,16 +328,20 @@ fn guild_presence_activities_are_scoped_by_guild() {
     let activity_b = ActivityInfo::test(ActivityKind::Listening, "Guild B");
 
     state.apply_event(&AppEvent::PresenceUpdate {
-        guild_id: guild_a,
-        user_id,
-        status: PresenceStatus::Online,
-        activities: vec![activity_a.clone()],
+        guild_id: Some(guild_a),
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![activity_a.clone()],
+        },
     });
     state.apply_event(&AppEvent::PresenceUpdate {
-        guild_id: guild_b,
-        user_id,
-        status: PresenceStatus::Idle,
-        activities: vec![activity_b.clone()],
+        guild_id: Some(guild_b),
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Idle,
+            activities: vec![activity_b.clone()],
+        },
     });
 
     assert_eq!(
@@ -347,10 +361,12 @@ fn guild_presence_activities_are_scoped_by_guild() {
         std::slice::from_ref(&activity_b)
     );
     state.apply_event(&AppEvent::PresenceUpdate {
-        guild_id: guild_a,
-        user_id,
-        status: PresenceStatus::DoNotDisturb,
-        activities: Vec::new(),
+        guild_id: Some(guild_a),
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::DoNotDisturb,
+            activities: Vec::new(),
+        },
     });
 
     assert!(
@@ -378,21 +394,28 @@ fn current_user_activity_updates_profile_and_guild_views() {
         user_id: Some(user_id),
     });
     state.apply_event(&AppEvent::PresenceUpdate {
-        guild_id: stale_guild_id,
-        user_id,
-        status: PresenceStatus::Online,
-        activities: vec![old_activity],
-    });
-    state.apply_event(&AppEvent::UserPresenceUpdate {
-        user_id,
-        status: PresenceStatus::Online,
-        activities: vec![activity.clone()],
+        guild_id: Some(stale_guild_id),
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![old_activity],
+        },
     });
     state.apply_event(&AppEvent::PresenceUpdate {
-        guild_id: empty_guild_id,
-        user_id,
-        status: PresenceStatus::Online,
-        activities: Vec::new(),
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![activity.clone()],
+        },
+    });
+    state.apply_event(&AppEvent::PresenceUpdate {
+        guild_id: Some(empty_guild_id),
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        },
     });
 
     assert_eq!(
@@ -422,15 +445,20 @@ fn non_current_user_presence_update_preserves_guild_activity() {
         user_id: Some(Id::new(10)),
     });
     state.apply_event(&AppEvent::PresenceUpdate {
-        guild_id,
-        user_id,
-        status: PresenceStatus::Online,
-        activities: vec![guild_activity.clone()],
+        guild_id: Some(guild_id),
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![guild_activity.clone()],
+        },
     });
-    state.apply_event(&AppEvent::UserPresenceUpdate {
-        user_id,
-        status: PresenceStatus::Online,
-        activities: vec![global_activity.clone()],
+    state.apply_event(&AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![global_activity.clone()],
+        },
     });
 
     assert_eq!(
@@ -456,10 +484,12 @@ fn guild_presence_update_updates_matching_channel_recipients() {
     )));
 
     state.apply_event(&AppEvent::PresenceUpdate {
-        guild_id: Id::new(1),
-        user_id: Id::new(20),
-        status: PresenceStatus::Idle,
-        activities: Vec::new(),
+        guild_id: Some(Id::new(1)),
+        presence: crate::discord::PresenceEventFields {
+            user_id: Id::new(20),
+            status: PresenceStatus::Idle,
+            activities: Vec::new(),
+        },
     });
 
     let channel = state.channel(channel_id).expect("channel should be stored");

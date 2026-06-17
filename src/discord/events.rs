@@ -49,6 +49,13 @@ impl Default for MessageUpdateEventFields {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PresenceEventFields {
+    pub user_id: Id<UserMarker>,
+    pub status: PresenceStatus,
+    pub activities: Vec<ActivityInfo>,
+}
+
 #[derive(Clone, Debug)]
 pub enum AppEvent {
     Ready {
@@ -221,15 +228,8 @@ pub enum AppEvent {
         user_id: Id<UserMarker>,
     },
     PresenceUpdate {
-        guild_id: Id<GuildMarker>,
-        user_id: Id<UserMarker>,
-        status: PresenceStatus,
-        activities: Vec<ActivityInfo>,
-    },
-    UserPresenceUpdate {
-        user_id: Id<UserMarker>,
-        status: PresenceStatus,
-        activities: Vec<ActivityInfo>,
+        guild_id: Option<Id<GuildMarker>>,
+        presence: PresenceEventFields,
     },
     VoiceStateUpdate {
         state: VoiceStateInfo,
@@ -476,7 +476,6 @@ define_app_event_kinds! {
     GuildMemberAdd: AppEvent::GuildMemberAdd { .. },
     GuildMemberRemove: AppEvent::GuildMemberRemove { .. },
     PresenceUpdate: AppEvent::PresenceUpdate { .. },
-    UserPresenceUpdate: AppEvent::UserPresenceUpdate { .. },
     VoiceStateUpdate: AppEvent::VoiceStateUpdate { .. },
     VoiceSpeakingUpdate: AppEvent::VoiceSpeakingUpdate { .. },
     VoiceServerUpdate: AppEvent::VoiceServerUpdate { .. },
@@ -741,7 +740,6 @@ impl AppEventKind {
             | AppEventKind::GuildMemberListCounts
             | AppEventKind::GuildMemberRemove
             | AppEventKind::PresenceUpdate
-            | AppEventKind::UserPresenceUpdate
             | AppEventKind::VoiceStateUpdate
             | AppEventKind::VoiceSpeakingUpdate
             | AppEventKind::TypingStart

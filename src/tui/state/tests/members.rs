@@ -483,10 +483,12 @@ fn member_navigation_skips_over_activity_subrows() {
     state.set_member_view_height(20);
 
     state.push_event(AppEvent::PresenceUpdate {
-        guild_id: Id::new(1),
-        user_id: Id::new(2),
-        status: PresenceStatus::Online,
-        activities: vec![ActivityInfo::test(ActivityKind::Playing, "Concord")],
+        guild_id: Some(Id::new(1)),
+        presence: crate::discord::PresenceEventFields {
+            user_id: Id::new(2),
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(ActivityKind::Playing, "Concord")],
+        },
     });
 
     // Lines: 0 group header, 1 member 1, 2 member 2, 3 activity, 4 member 3.

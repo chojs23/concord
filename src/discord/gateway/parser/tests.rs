@@ -52,10 +52,10 @@ fn raw_member_list_update_populates_members_and_presence() {
     )));
     assert!(events.iter().any(|event| matches!(
         event,
-        AppEvent::PresenceUpdate { guild_id, user_id, status, .. }
-            if *guild_id == Id::new(10)
-                && *user_id == Id::new(20)
-                && *status == PresenceStatus::Idle
+        AppEvent::PresenceUpdate { guild_id, presence }
+            if *guild_id == Some(Id::new(10))
+                && presence.user_id == Id::new(20)
+                && presence.status == PresenceStatus::Idle
     )));
 }
 
@@ -300,8 +300,8 @@ fn raw_member_list_update_processes_all_sync_ranges() {
     )));
     assert!(events.iter().any(|event| matches!(
         event,
-        AppEvent::PresenceUpdate { user_id, status, .. }
-            if *user_id == Id::new(21) && *status == PresenceStatus::Idle
+        AppEvent::PresenceUpdate { presence, .. }
+            if presence.user_id == Id::new(21) && presence.status == PresenceStatus::Idle
     )));
 }
 
@@ -347,17 +347,17 @@ fn raw_member_list_update_handles_insert_and_update_items() {
 
     assert!(events.iter().any(|event| matches!(
         event,
-        AppEvent::PresenceUpdate { guild_id, user_id, status, .. }
-            if *guild_id == Id::new(10)
-                && *user_id == Id::new(20)
-                && *status == PresenceStatus::Online
+        AppEvent::PresenceUpdate { guild_id, presence }
+            if *guild_id == Some(Id::new(10))
+                && presence.user_id == Id::new(20)
+                && presence.status == PresenceStatus::Online
     )));
     assert!(events.iter().any(|event| matches!(
         event,
-        AppEvent::PresenceUpdate { guild_id, user_id, status, .. }
-            if *guild_id == Id::new(10)
-                && *user_id == Id::new(30)
-                && *status == PresenceStatus::DoNotDisturb
+        AppEvent::PresenceUpdate { guild_id, presence }
+            if *guild_id == Some(Id::new(10))
+                && presence.user_id == Id::new(30)
+                && presence.status == PresenceStatus::DoNotDisturb
     )));
 }
 
@@ -515,8 +515,8 @@ fn raw_ready_parser_adds_current_user_to_group_dm_recipients() {
     assert_eq!(recipients[2].status, Some(PresenceStatus::Idle));
     assert!(events.iter().any(|event| matches!(
         event,
-        AppEvent::UserPresenceUpdate { user_id, status, .. }
-            if *user_id == Id::new(99) && *status == PresenceStatus::Idle
+        AppEvent::PresenceUpdate { guild_id: None, presence }
+            if presence.user_id == Id::new(99) && presence.status == PresenceStatus::Idle
     )));
 }
 
@@ -680,13 +680,13 @@ fn raw_ready_supplemental_updates_user_presences() {
     assert_eq!(events.len(), 2);
     assert!(events.iter().any(|event| matches!(
         event,
-        AppEvent::UserPresenceUpdate { user_id, status, .. }
-            if *user_id == Id::new(20) && *status == PresenceStatus::Online
+        AppEvent::PresenceUpdate { guild_id: None, presence }
+            if presence.user_id == Id::new(20) && presence.status == PresenceStatus::Online
     )));
     assert!(events.iter().any(|event| matches!(
         event,
-        AppEvent::UserPresenceUpdate { user_id, status, .. }
-            if *user_id == Id::new(30) && *status == PresenceStatus::Idle
+        AppEvent::PresenceUpdate { guild_id: None, presence }
+            if presence.user_id == Id::new(30) && presence.status == PresenceStatus::Idle
     )));
 }
 
@@ -722,14 +722,17 @@ fn raw_presence_update_extracts_activities() {
         .to_string(),
     );
 
-    let activities = events
+    let (guild_id, activities) = events
         .iter()
         .find_map(|event| match event {
-            AppEvent::PresenceUpdate { activities, .. } => Some(activities),
+            AppEvent::PresenceUpdate { guild_id, presence } => {
+                Some((*guild_id, &presence.activities))
+            }
             _ => None,
         })
         .expect("PRESENCE_UPDATE should produce a PresenceUpdate event");
 
+    assert_eq!(guild_id, Some(Id::new(10)));
     assert_eq!(activities.len(), 3);
     assert_eq!(activities[0].kind, ActivityKind::Custom);
     assert_eq!(activities[0].state.as_deref(), Some("Coding hard"));
@@ -764,10 +767,13 @@ fn raw_presence_update_without_guild_id_emits_user_event_with_activities() {
     let activities = events
         .iter()
         .find_map(|event| match event {
-            AppEvent::UserPresenceUpdate { activities, .. } => Some(activities),
+            AppEvent::PresenceUpdate {
+                guild_id: None,
+                presence,
+            } => Some(&presence.activities),
             _ => None,
         })
-        .expect("PRESENCE_UPDATE without guild_id should produce a UserPresenceUpdate");
+        .expect("PRESENCE_UPDATE without guild_id should produce a PresenceUpdate without guild");
 
     assert_eq!(activities.len(), 1);
     assert_eq!(activities[0].kind, ActivityKind::Streaming);
@@ -932,8 +938,8 @@ fn raw_ready_supplemental_accepts_bare_id_presence_entries() {
 
     assert!(matches!(
         events.as_slice(),
-        [AppEvent::UserPresenceUpdate { user_id, status, .. }]
-            if *user_id == Id::new(20) && *status == PresenceStatus::Online
+        [AppEvent::PresenceUpdate { guild_id: None, presence }]
+            if presence.user_id == Id::new(20) && presence.status == PresenceStatus::Online
     ));
 }
 
@@ -970,8 +976,8 @@ fn raw_presence_update_without_guild_updates_user_presence() {
 
     assert!(matches!(
         events.as_slice(),
-        [AppEvent::UserPresenceUpdate { user_id, status, .. }]
-            if *user_id == Id::new(20) && *status == PresenceStatus::DoNotDisturb
+        [AppEvent::PresenceUpdate { guild_id: None, presence }]
+            if presence.user_id == Id::new(20) && presence.status == PresenceStatus::DoNotDisturb
     ));
 }
 
@@ -990,8 +996,8 @@ fn raw_presence_update_accepts_user_id_field() {
 
     assert!(matches!(
         events.as_slice(),
-        [AppEvent::UserPresenceUpdate { user_id, status, .. }]
-            if *user_id == Id::new(20) && *status == PresenceStatus::Online
+        [AppEvent::PresenceUpdate { guild_id: None, presence }]
+            if presence.user_id == Id::new(20) && presence.status == PresenceStatus::Online
     ));
 }
 
@@ -1664,17 +1670,17 @@ fn raw_member_chunk_upserts_members_and_presences() {
     ));
     assert!(matches!(
         &events[2],
-        AppEvent::PresenceUpdate { guild_id, user_id, status, .. }
-            if *guild_id == Id::new(1)
-                && *user_id == Id::new(10)
-                && *status == PresenceStatus::Online
+        AppEvent::PresenceUpdate { guild_id, presence }
+            if *guild_id == Some(Id::new(1))
+                && presence.user_id == Id::new(10)
+                && presence.status == PresenceStatus::Online
     ));
     assert!(matches!(
         &events[3],
-        AppEvent::PresenceUpdate { guild_id, user_id, status, .. }
-            if *guild_id == Id::new(1)
-                && *user_id == Id::new(20)
-                && *status == PresenceStatus::Idle
+        AppEvent::PresenceUpdate { guild_id, presence }
+            if *guild_id == Some(Id::new(1))
+                && presence.user_id == Id::new(20)
+                && presence.status == PresenceStatus::Idle
     ));
 }
 

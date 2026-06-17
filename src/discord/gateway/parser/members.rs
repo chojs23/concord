@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::discord::{
     MemberInfo,
-    events::AppEvent,
+    events::{AppEvent, PresenceEventFields},
     ids::{
         Id,
         marker::{GuildMarker, RoleMarker, UserMarker},
@@ -63,14 +63,15 @@ pub(super) fn parse_member_chunk(data: &Value) -> Vec<AppEvent> {
         .unwrap_or_default();
 
     if let Some(presences) = data.get("presences").and_then(Value::as_array) {
-        events.extend(presences.iter().filter_map(parse_presence_entry).map(
-            |(user_id, status, activities)| AppEvent::PresenceUpdate {
-                guild_id,
-                user_id,
-                status,
-                activities,
-            },
-        ));
+        events.extend(
+            presences
+                .iter()
+                .filter_map(parse_presence_entry)
+                .map(|presence| AppEvent::PresenceUpdate {
+                    guild_id: Some(guild_id),
+                    presence,
+                }),
+        );
     }
 
     events
@@ -145,10 +146,12 @@ fn parse_member_list_item(guild_id: Id<GuildMarker>, item: &Value) -> Vec<AppEve
     }];
     if let Some(status) = status {
         events.push(AppEvent::PresenceUpdate {
-            guild_id,
-            user_id,
-            status,
-            activities,
+            guild_id: Some(guild_id),
+            presence: PresenceEventFields {
+                user_id,
+                status,
+                activities,
+            },
         });
     }
     events

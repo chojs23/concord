@@ -39,7 +39,6 @@ impl DashboardState {
             event,
             AppEvent::TypingStart { .. }
                 | AppEvent::PresenceUpdate { .. }
-                | AppEvent::UserPresenceUpdate { .. }
                 | AppEvent::GuildMemberListCounts { .. }
                 | AppEvent::GuildFoldersUpdate { .. }
                 | AppEvent::UserNoteLoaded { .. }

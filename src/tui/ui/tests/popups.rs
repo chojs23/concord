@@ -294,10 +294,13 @@ fn current_user_profile_settings_render_contract() {
         user: "neo".to_owned(),
         user_id: Some(Id::new(10)),
     });
-    state.push_event(AppEvent::UserPresenceUpdate {
-        user_id: Id::new(10),
-        status: PresenceStatus::DoNotDisturb,
-        activities: Vec::new(),
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id: Id::new(10),
+            status: PresenceStatus::DoNotDisturb,
+            activities: Vec::new(),
+        },
     });
     state.push_event(AppEvent::UserProfileLoaded {
         guild_id: None,

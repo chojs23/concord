@@ -28,10 +28,12 @@ fn tracks_members_and_presences() {
     assert_eq!(bob_state.status, PresenceStatus::Unknown);
 
     state.apply_event(&AppEvent::PresenceUpdate {
-        guild_id,
-        user_id: bob,
-        status: PresenceStatus::Idle,
-        activities: Vec::new(),
+        guild_id: Some(guild_id),
+        presence: crate::discord::PresenceEventFields {
+            user_id: bob,
+            status: PresenceStatus::Idle,
+            activities: Vec::new(),
+        },
     });
     assert_eq!(
         state
@@ -43,10 +45,13 @@ fn tracks_members_and_presences() {
         PresenceStatus::Idle,
     );
 
-    state.apply_event(&AppEvent::UserPresenceUpdate {
-        user_id: bob,
-        status: PresenceStatus::DoNotDisturb,
-        activities: Vec::new(),
+    state.apply_event(&AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id: bob,
+            status: PresenceStatus::DoNotDisturb,
+            activities: Vec::new(),
+        },
     });
     assert_eq!(
         state.user_presence_for_guild(Some(guild_id), bob),
@@ -297,10 +302,12 @@ fn presence_update_does_not_create_fallback_member() {
         owner_id: None,
     });
     state.apply_event(&AppEvent::PresenceUpdate {
-        guild_id,
-        user_id,
-        status: PresenceStatus::Idle,
-        activities: Vec::new(),
+        guild_id: Some(guild_id),
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Idle,
+            activities: Vec::new(),
+        },
     });
 
     assert!(state.members_for_guild(guild_id).is_empty());
@@ -625,10 +632,12 @@ fn chunk_style_member_upserts_populate_member_list() {
         });
     }
     state.apply_event(&AppEvent::PresenceUpdate {
-        guild_id,
-        user_id: alice,
-        status: PresenceStatus::Online,
-        activities: Vec::new(),
+        guild_id: Some(guild_id),
+        presence: crate::discord::PresenceEventFields {
+            user_id: alice,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        },
     });
 
     let members = state.members_for_guild(guild_id);
@@ -659,10 +668,12 @@ fn member_upsert_preserves_existing_status() {
         member: member_info(user, "alice"),
     });
     state.apply_event(&AppEvent::PresenceUpdate {
-        guild_id,
-        user_id: user,
-        status: PresenceStatus::Online,
-        activities: Vec::new(),
+        guild_id: Some(guild_id),
+        presence: crate::discord::PresenceEventFields {
+            user_id: user,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        },
     });
     state.apply_event(&AppEvent::GuildMemberUpsert {
         guild_id,

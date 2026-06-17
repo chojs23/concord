@@ -1,6 +1,6 @@
 use crate::{
     DiscordClient,
-    discord::{AppCommand, AppEvent},
+    discord::{AppCommand, AppEvent, PresenceEventFields},
 };
 
 use super::command_loop::log_app_error;
@@ -107,10 +107,13 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                 Ok(activities) => {
                     if let Some(user_id) = client.current_user_id() {
                         client
-                            .publish_event(AppEvent::UserPresenceUpdate {
-                                user_id,
-                                status,
-                                activities,
+                            .publish_event(AppEvent::PresenceUpdate {
+                                guild_id: None,
+                                presence: PresenceEventFields {
+                                    user_id,
+                                    status,
+                                    activities,
+                                },
                             })
                             .await;
                     }
@@ -135,10 +138,13 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                     .await;
             } else if let Some(user_id) = client.current_user_id() {
                 client
-                    .publish_event(AppEvent::UserPresenceUpdate {
-                        user_id,
-                        status,
-                        activities,
+                    .publish_event(AppEvent::PresenceUpdate {
+                        guild_id: None,
+                        presence: PresenceEventFields {
+                            user_id,
+                            status,
+                            activities,
+                        },
                     })
                     .await;
             }

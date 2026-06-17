@@ -827,38 +827,34 @@ impl DiscordState {
                 self.decrement_guild_member_count(*guild_id);
                 self.remove_voice_state(*guild_id, *user_id);
             }
-            AppEvent::PresenceUpdate {
-                guild_id,
-                user_id,
-                status,
-                activities,
-            } => {
-                self.presence
-                    .guild_user_presences
-                    .insert((*guild_id, *user_id), *status);
-                self.update_guild_user_activities(*guild_id, *user_id, activities);
-                self.presence.user_presences.insert(*user_id, *status);
-                if self.session.current_user_id != Some(*user_id) || !activities.is_empty() {
-                    self.update_user_activities(*user_id, activities);
+            AppEvent::PresenceUpdate { guild_id, presence } => {
+                let user_id = presence.user_id;
+                let status = presence.status;
+                if let Some(guild_id) = guild_id {
+                    self.presence
+                        .guild_user_presences
+                        .insert((*guild_id, user_id), status);
+                    self.update_guild_user_activities(*guild_id, user_id, &presence.activities);
+                    let entry = self.guild_details.members.entry(*guild_id).or_default();
+                    if let Some(member) = entry.get_mut(&user_id) {
+                        member.status = status;
+                    }
                 }
-                let entry = self.guild_details.members.entry(*guild_id).or_default();
-                if let Some(member) = entry.get_mut(user_id) {
-                    member.status = *status;
+                self.presence.user_presences.insert(user_id, status);
+                if guild_id.is_some()
+                    && (self.session.current_user_id != Some(user_id)
+                        || !presence.activities.is_empty())
+                {
+                    self.update_user_activities(user_id, &presence.activities);
                 }
-                self.update_channel_recipient_presence(*user_id, *status);
-            }
-            AppEvent::UserPresenceUpdate {
-                user_id,
-                status,
-                activities,
-            } => {
-                self.presence.user_presences.insert(*user_id, *status);
-                self.update_user_activities(*user_id, activities);
-                if self.session.current_user_id == Some(*user_id) {
-                    self.update_cached_guild_activities_for_user(*user_id, activities);
+                if guild_id.is_none() {
+                    self.update_user_activities(user_id, &presence.activities);
+                    if self.session.current_user_id == Some(user_id) {
+                        self.update_cached_guild_activities_for_user(user_id, &presence.activities);
+                    }
+                    self.update_cached_guild_presence_for_user(user_id, status);
                 }
-                self.update_cached_guild_presence_for_user(*user_id, *status);
-                self.update_channel_recipient_presence(*user_id, *status);
+                self.update_channel_recipient_presence(user_id, status);
             }
             AppEvent::VoiceStateUpdate { state } => {
                 if let Some(member) = state.member.as_ref() {

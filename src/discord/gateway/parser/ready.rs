@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use crate::discord::{
-    ActivityInfo, ChannelInfo, ChannelRecipientInfo, GuildFolder, PresenceStatus, ReadStateInfo,
+    ChannelInfo, ChannelRecipientInfo, GuildFolder, PresenceStatus, ReadStateInfo,
     RelationshipInfo, RoleInfo,
-    events::AppEvent,
+    events::{AppEvent, PresenceEventFields},
     ids::{
         Id,
         marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
@@ -73,7 +73,7 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
             presences
                 .iter()
                 .filter_map(parse_presence_entry)
-                .map(|(user_id, status, activities)| (user_id, (status, activities))),
+                .map(|presence| (presence.user_id, presence)),
         );
     }
 
@@ -111,10 +111,13 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
     }
 
     if let (Some(user_id), Some(status)) = (current_user_id, current_user_status) {
-        events.push(AppEvent::UserPresenceUpdate {
-            user_id,
-            status,
-            activities: Vec::new(),
+        events.push(AppEvent::PresenceUpdate {
+            guild_id: None,
+            presence: PresenceEventFields {
+                user_id,
+                status,
+                activities: Vec::new(),
+            },
         });
     }
 
@@ -172,13 +175,12 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
 pub(super) fn parse_ready_supplemental(data: &Value) -> Vec<AppEvent> {
     let mut events = parse_supplemental_guild_events(data);
     events.extend(parse_merged_member_events(data));
-    events.extend(parse_merged_presences(data).into_iter().map(
-        |(user_id, (status, activities))| AppEvent::UserPresenceUpdate {
-            user_id,
-            status,
-            activities,
-        },
-    ));
+    events.extend(parse_merged_presences(data).into_values().map(|presence| {
+        AppEvent::PresenceUpdate {
+            guild_id: None,
+            presence,
+        }
+    }));
     events
 }
 
@@ -247,14 +249,15 @@ fn parse_supplemental_guild_events(data: &Value) -> Vec<AppEvent> {
             events.push(AppEvent::GuildMemberUpsert { guild_id, member });
         }
         if let Some(presences) = guild.get("presences").and_then(Value::as_array) {
-            events.extend(presences.iter().filter_map(parse_presence_entry).map(
-                |(user_id, status, activities)| AppEvent::PresenceUpdate {
-                    guild_id,
-                    user_id,
-                    status,
-                    activities,
-                },
-            ));
+            events.extend(
+                presences
+                    .iter()
+                    .filter_map(parse_presence_entry)
+                    .map(|presence| AppEvent::PresenceUpdate {
+                        guild_id: Some(guild_id),
+                        presence,
+                    }),
+            );
         }
         events.extend(parse_guild_voice_states(guild));
     }
@@ -296,7 +299,7 @@ fn parse_guild_folder(value: &Value) -> Option<GuildFolder> {
     })
 }
 
-type MergedPresences = BTreeMap<Id<UserMarker>, (PresenceStatus, Vec<ActivityInfo>)>;
+type MergedPresences = BTreeMap<Id<UserMarker>, PresenceEventFields>;
 
 fn parse_merged_presences(data: &Value) -> MergedPresences {
     let mut presences = MergedPresences::new();
@@ -321,8 +324,8 @@ fn parse_current_user_session_status(data: &Value) -> Option<PresenceStatus> {
 }
 
 fn collect_presence_entries(value: &Value, presences: &mut MergedPresences) {
-    if let Some((user_id, status, activities)) = parse_presence_entry(value) {
-        presences.insert(user_id, (status, activities));
+    if let Some(presence) = parse_presence_entry(value) {
+        presences.insert(presence.user_id, presence);
         return;
     }
 
@@ -342,8 +345,8 @@ fn apply_recipient_presences(channel: &mut ChannelInfo, presences: &MergedPresen
         return;
     };
     for recipient in recipients {
-        if let Some((status, _)) = presences.get(&recipient.user_id) {
-            recipient.status = Some(*status);
+        if let Some(presence) = presences.get(&recipient.user_id) {
+            recipient.status = Some(presence.status);
         }
     }
 }
