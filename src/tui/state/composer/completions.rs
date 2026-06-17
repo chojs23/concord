@@ -613,6 +613,12 @@ pub(super) fn expand_composer_completions(
     buffer
 }
 
+struct CompletionReplacement {
+    byte_start: usize,
+    byte_end: usize,
+    replacement: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,10 +646,4 @@ mod tests {
                 .any(|entry| entry.target == MentionPickerTarget::Everyone(Id::new(1)))
         );
     }
-}
-
-struct CompletionReplacement {
-    byte_start: usize,
-    byte_end: usize,
-    replacement: String,
 }

@@ -30,6 +30,17 @@ pub(in crate::discord) enum MessageNotificationKind {
     Notify,
 }
 
+pub(in crate::discord) struct MessageNotificationInput<'a> {
+    pub(in crate::discord) guild_id: Option<Id<GuildMarker>>,
+    pub(in crate::discord) channel_id: Id<ChannelMarker>,
+    pub(in crate::discord) message_id: Id<MessageMarker>,
+    pub(in crate::discord) author_id: Id<UserMarker>,
+    pub(in crate::discord) mentions: &'a [MentionInfo],
+    pub(in crate::discord) mention_everyone: bool,
+    pub(in crate::discord) mention_roles: &'a [Id<RoleMarker>],
+    pub(in crate::discord) flags: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ChannelNotificationSettingsState {
     message_notifications: Option<NotificationLevel>,
@@ -216,32 +227,23 @@ impl DiscordState {
     }
 
     pub fn message_event_triggers_notification(&self, event: &AppEvent) -> bool {
-        let AppEvent::MessageCreate {
-            guild_id,
-            channel_id,
-            message_id,
-            author_id,
-            mentions,
-            mention_everyone,
-            mention_roles,
-            flags,
-            ..
-        } = event
-        else {
+        let AppEvent::MessageCreate { message } = event else {
             return false;
         };
 
-        let guild_id = guild_id.or_else(|| self.channel_guild_id(*channel_id));
-        self.message_create_notification_kind(
+        let guild_id = message
+            .guild_id
+            .or_else(|| self.channel_guild_id(message.channel_id));
+        self.message_create_notification_kind(MessageNotificationInput {
             guild_id,
-            *channel_id,
-            *message_id,
-            *author_id,
-            mentions,
-            *mention_everyone,
-            mention_roles,
-            *flags,
-        ) != MessageNotificationKind::None
+            channel_id: message.channel_id,
+            message_id: message.message_id,
+            author_id: message.author_id,
+            mentions: &message.mentions,
+            mention_everyone: message.mention_everyone,
+            mention_roles: &message.mention_roles,
+            flags: message.flags,
+        }) != MessageNotificationKind::None
     }
 
     pub(in crate::discord) fn upsert_notification_settings(
@@ -266,53 +268,46 @@ impl DiscordState {
     }
 
     fn message_state_notification_kind(&self, message: &MessageState) -> MessageNotificationKind {
-        self.message_create_notification_kind(
-            message.guild_id,
-            message.channel_id,
-            message.id,
-            message.author_id,
-            &message.mentions,
-            message.mention_everyone,
-            &message.mention_roles,
-            message.flags,
-        )
+        self.message_create_notification_kind(MessageNotificationInput {
+            guild_id: message.guild_id,
+            channel_id: message.channel_id,
+            message_id: message.id,
+            author_id: message.author_id,
+            mentions: &message.mentions,
+            mention_everyone: message.mention_everyone,
+            mention_roles: &message.mention_roles,
+            flags: message.flags,
+        })
     }
 
     pub(in crate::discord) fn message_create_notification_kind(
         &self,
-        guild_id: Option<Id<GuildMarker>>,
-        channel_id: Id<ChannelMarker>,
-        message_id: Id<MessageMarker>,
-        author_id: Id<UserMarker>,
-        mentions: &[MentionInfo],
-        mention_everyone: bool,
-        mention_roles: &[Id<RoleMarker>],
-        flags: u64,
+        message: MessageNotificationInput<'_>,
     ) -> MessageNotificationKind {
-        if self.session.current_user_id == Some(author_id) {
+        if self.session.current_user_id == Some(message.author_id) {
             return MessageNotificationKind::None;
         }
-        if flags & SUPPRESS_NOTIFICATIONS_FLAG != 0 {
+        if message.flags & SUPPRESS_NOTIFICATIONS_FLAG != 0 {
             return MessageNotificationKind::None;
         }
         if self
             .notifications
             .read_states
-            .get(&channel_id)
+            .get(&message.channel_id)
             .and_then(|state| state.last_acked_message_id)
-            .is_some_and(|acked| acked >= message_id)
+            .is_some_and(|acked| acked >= message.message_id)
         {
             return MessageNotificationKind::None;
         }
-        let Some(guild_id) = guild_id else {
-            return self.private_message_notification_kind(channel_id, mentions);
+        let Some(guild_id) = message.guild_id else {
+            return self.private_message_notification_kind(message.channel_id, message.mentions);
         };
         let mentions_current_user = |settings: &GuildNotificationSettingsState| {
             self.message_mentions_current_user(
                 guild_id,
-                mentions,
-                mention_everyone,
-                mention_roles,
+                message.mentions,
+                message.mention_everyone,
+                message.mention_roles,
                 settings.suppress_everyone,
                 settings.suppress_roles,
             )
@@ -320,9 +315,9 @@ impl DiscordState {
         let Some(settings) = self.notifications.notification_settings.get(&guild_id) else {
             return if self.message_mentions_current_user(
                 guild_id,
-                mentions,
-                mention_everyone,
-                mention_roles,
+                message.mentions,
+                message.mention_everyone,
+                message.mention_roles,
                 false,
                 false,
             ) {
@@ -332,12 +327,12 @@ impl DiscordState {
             };
         };
         if notification_setting_muted(settings.muted, settings.mute_end_time.as_deref())
-            || self.channel_notification_muted_in_settings(settings, channel_id)
+            || self.channel_notification_muted_in_settings(settings, message.channel_id)
         {
             return MessageNotificationKind::None;
         }
 
-        match self.channel_notification_level(settings, channel_id) {
+        match self.channel_notification_level(settings, message.channel_id) {
             NotificationLevel::AllMessages if mentions_current_user(settings) => {
                 MessageNotificationKind::Mention
             }

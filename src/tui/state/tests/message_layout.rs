@@ -51,16 +51,11 @@ fn message_row_content_metrics_cache_clears_on_discord_event() {
         guild_id: Some(Id::new(1)),
         channel_id: Id::new(2),
         message_id: Id::new(1),
-        poll: None,
-        content: Some("updated".to_owned()),
-        sticker_names: None,
-        mentions: None,
-        mention_everyone: None,
-        mention_roles: None,
-        flags: None,
-        attachments: AttachmentUpdate::Unchanged,
-        embeds: None,
-        edited_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),
+        fields: MessageUpdateEventFields {
+            content: Some("updated".to_owned()),
+            edited_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),
+            ..MessageUpdateEventFields::default()
+        },
     });
 
     assert_eq!(state.message_row_content_metrics_cache_len(), 0);

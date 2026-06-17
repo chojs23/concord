@@ -523,7 +523,7 @@ fn message_author_role_color_uses_live_author_roles_when_member_is_missing() {
         author: "test-user".to_owned(),
         author_role_ids: vec![role_id],
         content: Some("hello".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     assert_eq!(

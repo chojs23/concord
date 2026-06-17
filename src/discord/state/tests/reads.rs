@@ -61,7 +61,7 @@ fn current_user_message_create_keeps_channel_seen() {
         author_id: current_user_id,
         author: "me".to_owned(),
         content: Some("sent from this account".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Seen);

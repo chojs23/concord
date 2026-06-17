@@ -159,7 +159,7 @@ fn message_viewport_author_uses_resolved_role_color() {
         author: "fallback".to_owned(),
         author_is_bot: true,
         content: Some("hello".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     let messages = state.messages();

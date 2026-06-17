@@ -323,7 +323,7 @@ fn only_mentions_settings_use_resolved_mentions() {
             mention_everyone,
             mention_roles,
             flags,
-            ..MessageCreateFixture::default()
+            ..MessageCreateFixture::test_fixture_default()
         }));
         (
             state.channel_unread(channel_id),

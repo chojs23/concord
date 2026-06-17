@@ -127,12 +127,11 @@ async fn mentioned_message_create_advances_detail_revision() {
     drop(snapshots.borrow_and_update());
 
     let mut event = message_create_event(1);
-    if let AppEvent::MessageCreate {
-        content, mentions, ..
-    } = &mut event
-    {
-        *content = Some("hello <@42>".to_owned());
-        mentions.push(MentionInfo::test(Id::new(42), "neo".to_owned()));
+    if let AppEvent::MessageCreate { message } = &mut event {
+        message.content = Some("hello <@42>".to_owned());
+        message
+            .mentions
+            .push(MentionInfo::test(Id::new(42), "neo".to_owned()));
     }
     client.publish_event(event).await;
 

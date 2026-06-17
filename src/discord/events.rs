@@ -9,16 +9,45 @@ use super::commands::{
     MessageSearchPage, MessageSearchQuery, ReactionEmoji,
 };
 use super::{
-    ActivityInfo, AttachmentInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo,
-    GuildFolder, GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo,
-    MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PollInfo,
-    PresenceStatus, ReactionUsersInfo, ReadStateInfo, RelationshipInfo, ReplyInfo, RoleInfo,
-    SnapshotAreas, UserProfileInfo, VoiceConnectionStatus, VoiceServerInfo, VoiceSoundKind,
-    VoiceStateInfo, is_thread_kind,
+    ActivityInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildFolder,
+    GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, PollInfo, PresenceStatus,
+    ReactionUsersInfo, ReadStateInfo, RelationshipInfo, RoleInfo, SnapshotAreas, UserProfileInfo,
+    VoiceConnectionStatus, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo, is_thread_kind,
 };
 
 #[cfg(test)]
 use super::PollAnswerInfo;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageUpdateEventFields {
+    pub poll: Option<PollInfo>,
+    pub content: Option<String>,
+    pub sticker_names: Option<Vec<String>>,
+    pub mentions: Option<Vec<MentionInfo>>,
+    pub mention_everyone: Option<bool>,
+    pub mention_roles: Option<Vec<Id<RoleMarker>>>,
+    pub flags: Option<u64>,
+    pub attachments: AttachmentUpdate,
+    pub embeds: Option<Vec<EmbedInfo>>,
+    pub edited_timestamp: Option<String>,
+}
+
+impl Default for MessageUpdateEventFields {
+    fn default() -> Self {
+        Self {
+            poll: None,
+            content: None,
+            sticker_names: None,
+            mentions: None,
+            mention_everyone: None,
+            mention_roles: None,
+            flags: None,
+            attachments: AttachmentUpdate::Unchanged,
+            embeds: None,
+            edited_timestamp: None,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum AppEvent {
@@ -96,28 +125,7 @@ pub enum AppEvent {
         removed_user_ids: Vec<Id<UserMarker>>,
     },
     MessageCreate {
-        guild_id: Option<Id<GuildMarker>>,
-        channel_id: Id<ChannelMarker>,
-        message_id: Id<MessageMarker>,
-        author_id: Id<UserMarker>,
-        author: String,
-        author_avatar_url: Option<String>,
-        author_is_bot: bool,
-        author_role_ids: Vec<Id<RoleMarker>>,
-        message_kind: MessageKind,
-        interaction: Option<MessageInteractionInfo>,
-        reference: Option<MessageReferenceInfo>,
-        reply: Option<ReplyInfo>,
-        poll: Option<PollInfo>,
-        content: Option<String>,
-        sticker_names: Vec<String>,
-        mentions: Vec<MentionInfo>,
-        mention_everyone: bool,
-        mention_roles: Vec<Id<RoleMarker>>,
-        flags: u64,
-        attachments: Vec<AttachmentInfo>,
-        embeds: Vec<EmbedInfo>,
-        forwarded_snapshots: Vec<MessageSnapshotInfo>,
+        message: MessageInfo,
     },
     MessageHistoryLoaded {
         channel_id: Id<ChannelMarker>,
@@ -184,16 +192,7 @@ pub enum AppEvent {
         guild_id: Option<Id<GuildMarker>>,
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
-        poll: Option<PollInfo>,
-        content: Option<String>,
-        sticker_names: Option<Vec<String>>,
-        mentions: Option<Vec<MentionInfo>>,
-        mention_everyone: Option<bool>,
-        mention_roles: Option<Vec<Id<RoleMarker>>>,
-        flags: Option<u64>,
-        attachments: AttachmentUpdate,
-        embeds: Option<Vec<EmbedInfo>>,
-        edited_timestamp: Option<String>,
+        fields: MessageUpdateEventFields,
     },
     MessageDelete {
         guild_id: Option<Id<GuildMarker>>,
@@ -533,63 +532,24 @@ pub enum MessageHistoryLoadTarget {
 
 #[cfg(test)]
 pub(crate) mod test_builders {
+    use crate::discord::{AttachmentInfo, MessageKind, MessageReferenceInfo};
+
     use super::*;
 
-    pub(crate) struct MessageCreateFixture {
-        pub(crate) guild_id: Option<Id<GuildMarker>>,
-        pub(crate) channel_id: Id<ChannelMarker>,
-        pub(crate) message_id: Id<MessageMarker>,
-        pub(crate) author_id: Id<UserMarker>,
-        pub(crate) author: String,
-        pub(crate) author_avatar_url: Option<String>,
-        pub(crate) author_is_bot: bool,
-        pub(crate) author_role_ids: Vec<Id<RoleMarker>>,
-        pub(crate) message_kind: MessageKind,
-        pub(crate) interaction: Option<MessageInteractionInfo>,
-        pub(crate) reference: Option<MessageReferenceInfo>,
-        pub(crate) reply: Option<ReplyInfo>,
-        pub(crate) poll: Option<PollInfo>,
-        pub(crate) content: Option<String>,
-        pub(crate) sticker_names: Vec<String>,
-        pub(crate) mentions: Vec<MentionInfo>,
-        pub(crate) mention_everyone: bool,
-        pub(crate) mention_roles: Vec<Id<RoleMarker>>,
-        pub(crate) flags: u64,
-        pub(crate) attachments: Vec<AttachmentInfo>,
-        pub(crate) embeds: Vec<EmbedInfo>,
-        pub(crate) forwarded_snapshots: Vec<MessageSnapshotInfo>,
-    }
-
-    impl Default for MessageCreateFixture {
-        fn default() -> Self {
-            Self {
-                guild_id: None,
-                channel_id: Id::new(2),
-                message_id: Id::new(1),
-                author_id: Id::new(99),
-                author: "neo".to_owned(),
-                author_avatar_url: None,
-                author_is_bot: false,
-                author_role_ids: Vec::new(),
-                message_kind: MessageKind::regular(),
-                interaction: None,
-                reference: None,
-                reply: None,
-                poll: None,
-                content: Some("hello".to_owned()),
-                sticker_names: Vec::new(),
-                mentions: Vec::new(),
-                mention_everyone: false,
-                mention_roles: Vec::new(),
-                flags: 0,
-                attachments: Vec::new(),
-                embeds: Vec::new(),
-                forwarded_snapshots: Vec::new(),
-            }
-        }
-    }
+    pub(crate) type MessageCreateFixture = MessageInfo;
 
     impl MessageCreateFixture {
+        pub(crate) fn test_fixture_default() -> Self {
+            Self {
+                channel_id: Id::new(2),
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                message_kind: MessageKind::regular(),
+                content: Some("hello".to_owned()),
+                ..Self::default()
+            }
+        }
+
         pub(crate) fn direct_message(
             channel_id: Id<ChannelMarker>,
             message_id: Id<MessageMarker>,
@@ -597,7 +557,7 @@ pub(crate) mod test_builders {
             Self {
                 channel_id,
                 message_id,
-                ..Self::default()
+                ..Self::test_fixture_default()
             }
         }
 
@@ -610,7 +570,7 @@ pub(crate) mod test_builders {
                 guild_id: Some(guild_id),
                 channel_id,
                 message_id,
-                ..Self::default()
+                ..Self::test_fixture_default()
             }
         }
 
@@ -660,30 +620,7 @@ pub(crate) mod test_builders {
     }
 
     pub(crate) fn message_create_event(event: MessageCreateFixture) -> AppEvent {
-        AppEvent::MessageCreate {
-            guild_id: event.guild_id,
-            channel_id: event.channel_id,
-            message_id: event.message_id,
-            author_id: event.author_id,
-            author: event.author,
-            author_avatar_url: event.author_avatar_url,
-            author_is_bot: event.author_is_bot,
-            author_role_ids: event.author_role_ids,
-            message_kind: event.message_kind,
-            interaction: event.interaction,
-            reference: event.reference,
-            reply: event.reply,
-            poll: event.poll,
-            content: event.content,
-            sticker_names: event.sticker_names,
-            mentions: event.mentions,
-            mention_everyone: event.mention_everyone,
-            mention_roles: event.mention_roles,
-            flags: event.flags,
-            attachments: event.attachments,
-            embeds: event.embeds,
-            forwarded_snapshots: event.forwarded_snapshots,
-        }
+        AppEvent::MessageCreate { message: event }
     }
 }
 
@@ -933,6 +870,8 @@ pub(crate) fn avatar_hash_extension(hash: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use crate::discord::AttachmentInfo;
+
     use super::*;
 
     #[test]

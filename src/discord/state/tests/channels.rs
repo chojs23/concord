@@ -23,7 +23,7 @@ fn applies_guild_channels_and_messages() {
         message_id,
         author_id,
         content: Some("hello".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     assert_eq!(state.guilds().len(), 1);
@@ -139,7 +139,7 @@ fn relationships_without_user_fields_preserve_existing_dm_names() {
         author_id: user_id,
         author: "Alice Global".to_owned(),
         content: Some("hello".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     state.apply_event(&AppEvent::RelationshipsLoaded {
         relationships: vec![relationship_info(
@@ -480,7 +480,7 @@ fn live_messages_update_channel_last_message_id() {
         message_id: Id::new(30),
         author_id: Id::new(99),
         content: Some("new".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     state.apply_event(&message_create_event(MessageCreateFixture {
         guild_id: None,
@@ -488,7 +488,7 @@ fn live_messages_update_channel_last_message_id() {
         message_id: Id::new(10),
         author_id: Id::new(99),
         content: Some("old".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     assert_eq!(
@@ -517,7 +517,7 @@ fn live_thread_messages_increment_cached_counts_once() {
             message_id: Id::new(30),
             author_id: Id::new(99),
             content: Some("new".to_owned()),
-            ..MessageCreateFixture::default()
+            ..MessageCreateFixture::test_fixture_default()
         }));
     }
     state.apply_event(&AppEvent::MessageHistoryLoaded {

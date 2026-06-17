@@ -9,10 +9,10 @@ use crate::discord::{
     ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
     ChannelVisibilityStats, CurrentVoiceConnectionState, CustomEmojiInfo, DiscordState,
     FriendStatus, GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, MessageKind,
-    MessageReferenceInfo, MessageSnapshotInfo, MessageState, NotificationLevel,
-    PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus,
-    ReactionEmoji, ReactionInfo, ReadStateInfo, RelationshipInfo, ReplyInfo, RoleInfo,
-    UserProfileInfo, VoiceStateInfo,
+    MessageReferenceInfo, MessageSnapshotInfo, MessageState, MessageUpdateEventFields,
+    NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo,
+    PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo, RelationshipInfo, ReplyInfo,
+    RoleInfo, UserProfileInfo, VoiceStateInfo,
 };
 
 mod channels;
@@ -270,7 +270,7 @@ fn message_create(
         author_id,
         content: Some(content.to_owned()),
         mentions,
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     })
 }
 

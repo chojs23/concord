@@ -288,7 +288,7 @@ fn current_user_roles_handle_partial_and_complete_member_upserts() {
         author: "sender".to_owned(),
         content: Some(format!("hello <@&{}>", staff_role.get())),
         mention_roles: vec![staff_role],
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     assert_eq!(
         state.channel_unread(channel),
@@ -421,7 +421,7 @@ fn message_create_for_hidden_channel_does_not_promote_it() {
         author_id: owner,
         author: "owner".to_owned(),
         content: Some("hidden chatter".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     // The channel must remain hidden because no permission promotion happened.

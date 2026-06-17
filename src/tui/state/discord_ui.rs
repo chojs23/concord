@@ -187,21 +187,12 @@ impl DashboardState {
         &self,
         event: &AppEvent,
     ) -> Option<DesktopNotification> {
-        let AppEvent::MessageCreate {
-            guild_id,
-            channel_id,
-            author,
-            content,
-            sticker_names,
-            attachments,
-            embeds,
-            ..
-        } = event
-        else {
+        let AppEvent::MessageCreate { message } = event else {
             return None;
         };
         if !self.desktop_notifications_enabled()
-            || (self.terminal_focused() && self.navigation.active_channel_id == Some(*channel_id))
+            || (self.terminal_focused()
+                && self.navigation.active_channel_id == Some(message.channel_id))
         {
             return None;
         }
@@ -213,22 +204,24 @@ impl DashboardState {
             return None;
         }
 
-        let channel = self.discord.cache.channel(*channel_id);
-        let guild_id = guild_id.or_else(|| channel.and_then(|channel| channel.guild_id));
+        let channel = self.discord.cache.channel(message.channel_id);
+        let guild_id = message
+            .guild_id
+            .or_else(|| channel.and_then(|channel| channel.guild_id));
         let title = match guild_id.and_then(|guild_id| self.discord.cache.guild(guild_id)) {
             Some(guild) => {
                 let channel_name = channel
                     .map(|channel| channel.name.as_str())
                     .unwrap_or("unknown-channel");
-                format!("{author} in {} #{channel_name}", guild.name)
+                format!("{} in {} #{channel_name}", message.author, guild.name)
             }
-            None => author.clone(),
+            None => message.author.clone(),
         };
         let body = message_notification_body(
-            content.as_deref(),
-            sticker_names.len(),
-            attachments.len(),
-            embeds.len(),
+            message.content.as_deref(),
+            message.sticker_names.len(),
+            message.attachments.len(),
+            message.embeds.len(),
         );
         Some(DesktopNotification { title, body })
     }

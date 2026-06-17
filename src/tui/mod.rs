@@ -70,8 +70,9 @@ mod tests {
         MessageCreateFixture, guild_message_create_fixture, message_create_event,
     };
     use crate::discord::{
-        AppEvent, AttachmentDownloadId, AttachmentInfo, AttachmentUpdate, ChannelInfo,
-        DiscordClient, DownloadAttachmentSource, MemberInfo, ReadStateInfo, SequencedAppEvent,
+        AppEvent, AttachmentDownloadId, AttachmentInfo, ChannelInfo, DiscordClient,
+        DownloadAttachmentSource, MemberInfo, MessageUpdateEventFields, ReadStateInfo,
+        SequencedAppEvent,
     };
 
     use super::{
@@ -488,16 +489,11 @@ mod tests {
             guild_id: Some(Id::new(1)),
             channel_id: Id::new(2),
             message_id: Id::new(1),
-            poll: None,
-            content: Some("edited msg 1".to_owned()),
-            sticker_names: None,
-            mentions: None,
-            mention_everyone: None,
-            mention_roles: None,
-            flags: None,
-            attachments: AttachmentUpdate::Unchanged,
-            embeds: None,
-            edited_timestamp: Some("2026-05-19T00:00:00.000Z".to_owned()),
+            fields: MessageUpdateEventFields {
+                content: Some("edited msg 1".to_owned()),
+                edited_timestamp: Some("2026-05-19T00:00:00.000Z".to_owned()),
+                ..MessageUpdateEventFields::default()
+            },
         });
         let after = visible_dashboard_signature(&state);
 

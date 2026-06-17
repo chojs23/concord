@@ -59,7 +59,7 @@ fn message_author_uses_cached_member_display_name() {
         message_id: Id::new(3),
         author_id,
         content: Some("hello".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     let messages = state.messages_for_channel(channel_id);
@@ -88,7 +88,7 @@ fn dm_message_author_prefers_friend_nickname() {
         author_id,
         author: "Alice Global".to_owned(),
         content: Some("hello".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     let messages = state.messages_for_channel(channel_id);
@@ -117,7 +117,7 @@ fn relationship_nickname_update_refreshes_existing_dm_message_authors() {
         author_id,
         author: "Alice Global".to_owned(),
         content: Some("hello".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     state.apply_event(&AppEvent::RelationshipUpsert {
         relationship: relationship_info(author_id.get(), FriendStatus::Friend, None, None, None),
@@ -141,7 +141,7 @@ fn user_identity_update_refreshes_existing_dm_message_author() {
         author: "alice".to_owned(),
         author_avatar_url: Some("https://cdn.discordapp.com/avatars/4/old.png".to_owned()),
         content: Some("hello".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     state.apply_event(&AppEvent::UserIdentityUpdate {
         user_id: author_id,
@@ -172,7 +172,7 @@ fn member_update_refreshes_existing_message_author() {
         message_id: Id::new(3),
         author_id,
         content: Some("hello".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     state.apply_event(&AppEvent::GuildMemberUpsert {
         guild_id,

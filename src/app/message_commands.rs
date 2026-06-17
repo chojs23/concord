@@ -1,6 +1,9 @@
 use crate::{
     DiscordClient,
-    discord::{AppCommand, AppEvent, AttachmentUpdate, MessageInfo, ReactionUsersInfo},
+    discord::{
+        AppCommand, AppEvent, AttachmentUpdate, MessageInfo, MessageUpdateEventFields,
+        ReactionUsersInfo,
+    },
 };
 
 use super::command_loop::{log_app_error, publish_app_error};
@@ -208,30 +211,7 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
 }
 
 fn message_create_event(message: MessageInfo) -> AppEvent {
-    AppEvent::MessageCreate {
-        guild_id: message.guild_id,
-        channel_id: message.channel_id,
-        message_id: message.message_id,
-        author_id: message.author_id,
-        author: message.author,
-        author_avatar_url: message.author_avatar_url,
-        author_is_bot: message.author_is_bot,
-        author_role_ids: message.author_role_ids,
-        message_kind: message.message_kind,
-        interaction: message.interaction,
-        reference: message.reference,
-        reply: message.reply,
-        poll: message.poll,
-        content: message.content,
-        sticker_names: message.sticker_names,
-        mentions: message.mentions,
-        mention_everyone: message.mention_everyone,
-        mention_roles: message.mention_roles,
-        flags: message.flags,
-        attachments: message.attachments,
-        embeds: message.embeds,
-        forwarded_snapshots: message.forwarded_snapshots,
-    }
+    AppEvent::MessageCreate { message }
 }
 
 fn message_update_event(message: MessageInfo) -> AppEvent {
@@ -239,15 +219,17 @@ fn message_update_event(message: MessageInfo) -> AppEvent {
         guild_id: message.guild_id,
         channel_id: message.channel_id,
         message_id: message.message_id,
-        poll: message.poll,
-        content: message.content,
-        sticker_names: Some(message.sticker_names),
-        mentions: Some(message.mentions),
-        mention_everyone: Some(message.mention_everyone),
-        mention_roles: Some(message.mention_roles),
-        flags: Some(message.flags),
-        attachments: AttachmentUpdate::Replace(message.attachments),
-        embeds: Some(message.embeds),
-        edited_timestamp: message.edited_timestamp,
+        fields: MessageUpdateEventFields {
+            poll: message.poll,
+            content: message.content,
+            sticker_names: Some(message.sticker_names),
+            mentions: Some(message.mentions),
+            mention_everyone: Some(message.mention_everyone),
+            mention_roles: Some(message.mention_roles),
+            flags: Some(message.flags),
+            attachments: AttachmentUpdate::Replace(message.attachments),
+            embeds: Some(message.embeds),
+            edited_timestamp: message.edited_timestamp,
+        },
     }
 }

@@ -1014,7 +1014,7 @@ impl DiscordState {
         }
     }
 
-    fn message_state_from_info(
+    pub(in crate::discord) fn message_state_from_info(
         &self,
         channel_guild_id: Option<Id<GuildMarker>>,
         message: &MessageInfo,

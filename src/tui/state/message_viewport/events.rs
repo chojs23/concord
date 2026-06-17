@@ -11,12 +11,7 @@ impl DashboardState {
         &self,
         event: &AppEvent,
     ) -> Option<(Id<ChannelMarker>, Id<MessageMarker>)> {
-        let AppEvent::MessageCreate {
-            channel_id,
-            message_id,
-            ..
-        } = event
-        else {
+        let AppEvent::MessageCreate { message } = event else {
             let AppEvent::MessageHistoryCatchUpLoaded {
                 channel_id,
                 after,
@@ -34,23 +29,18 @@ impl DashboardState {
             return (Some(*channel_id) == self.navigation.active_channel_id)
                 .then_some((*channel_id, first_newer_message_id));
         };
-        (Some(*channel_id) == self.navigation.active_channel_id)
-            .then_some((*channel_id, *message_id))
+        (Some(message.channel_id) == self.navigation.active_channel_id)
+            .then_some((message.channel_id, message.message_id))
     }
 
     pub(in crate::tui::state) fn event_is_self_message_in_active_channel(
         &self,
         event: &AppEvent,
     ) -> bool {
-        let AppEvent::MessageCreate {
-            author_id,
-            channel_id,
-            ..
-        } = event
-        else {
+        let AppEvent::MessageCreate { message } = event else {
             return false;
         };
-        Some(*author_id) == self.discord.current_user_id
-            && Some(*channel_id) == self.navigation.active_channel_id
+        Some(message.author_id) == self.discord.current_user_id
+            && Some(message.channel_id) == self.navigation.active_channel_id
     }
 }

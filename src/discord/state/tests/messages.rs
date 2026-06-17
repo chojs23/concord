@@ -37,7 +37,7 @@ fn stores_message_kind_from_message_create() {
             ..MessageInteractionInfo::test("casey")
         }),
         content: Some(String::new()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     let messages = state.messages_for_channel(channel_id);
@@ -70,7 +70,7 @@ fn duplicate_message_create_refreshes_message_kind() {
         author_id,
         message_kind: MessageKind::new(19),
         content: None,
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     let messages = state.messages_for_channel(channel_id);
@@ -97,7 +97,7 @@ fn duplicate_message_create_adds_missing_mentions() {
         author_id,
         content: Some("hello <@10>".to_owned()),
         mentions: vec![mention_info(10, "alice")],
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     let messages = state.messages_for_channel(channel_id);
@@ -120,7 +120,7 @@ fn stores_reply_preview_from_message_create() {
             ..ReplyInfo::test("Alex")
         }),
         content: Some("asdf".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     let messages = state.messages_for_channel(channel_id);
@@ -157,7 +157,7 @@ fn duplicate_message_create_preserves_cached_reply_preview() {
             ..ReplyInfo::test("Alex")
         }),
         content: Some("asdf".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     let mut gateway_echo = MessageCreateFixture::direct_message(channel_id, message_id)
         .with_author_id(author_id)
@@ -187,7 +187,7 @@ fn stores_poll_payload_from_message_create() {
         author_id: Id::new(99),
         poll: Some(poll_info()),
         content: Some(String::new()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     let messages = state.messages_for_channel(channel_id);
@@ -237,7 +237,7 @@ fn message_update_refreshes_cached_poll_results() {
         author_id,
         poll: Some(poll_info()),
         content: Some(String::new()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     let mut updated_poll = poll_info();
     updated_poll.results_finalized = Some(true);
@@ -247,16 +247,10 @@ fn message_update_refreshes_cached_poll_results() {
         guild_id: None,
         channel_id,
         message_id,
-        poll: Some(updated_poll),
-        content: None,
-        sticker_names: None,
-        mentions: None,
-        mention_everyone: None,
-        mention_roles: None,
-        flags: None,
-        attachments: AttachmentUpdate::Unchanged,
-        embeds: None,
-        edited_timestamp: None,
+        fields: MessageUpdateEventFields {
+            poll: Some(updated_poll),
+            ..MessageUpdateEventFields::default()
+        },
     });
 
     let messages = state.messages_for_channel(channel_id);
@@ -280,7 +274,7 @@ fn current_user_poll_vote_update_refreshes_cached_poll_counts() {
         author_id,
         poll: Some(poll_info()),
         content: Some(String::new()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     state.apply_event(&AppEvent::CurrentUserPollVoteUpdate {
@@ -330,7 +324,7 @@ fn current_user_poll_vote_update_handles_missing_answer_counts() {
         author_id,
         poll: Some(poll),
         content: Some(String::new()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     state.apply_event(&AppEvent::CurrentUserPollVoteUpdate {
@@ -381,22 +375,17 @@ fn message_update_handles_mentions_tristate() {
             author_id: Id::new(99),
             content: Some("hello <@10>".to_owned()),
             mentions: initial_mentions,
-            ..MessageCreateFixture::default()
+            ..MessageCreateFixture::test_fixture_default()
         }));
         state.apply_event(&AppEvent::MessageUpdate {
             guild_id: None,
             channel_id,
             message_id,
-            poll: None,
-            content: Some("hello".to_owned()),
-            sticker_names: None,
-            mentions: update_mentions,
-            mention_everyone: None,
-            mention_roles: None,
-            flags: None,
-            attachments: AttachmentUpdate::Unchanged,
-            embeds: None,
-            edited_timestamp: None,
+            fields: MessageUpdateEventFields {
+                content: Some("hello".to_owned()),
+                mentions: update_mentions,
+                ..MessageUpdateEventFields::default()
+            },
         });
 
         assert_eq!(
@@ -470,7 +459,7 @@ fn keeps_known_content_when_gateway_echo_has_no_content() {
         message_id,
         author_id,
         content: Some("hello".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     state.apply_event(&message_create_event(MessageCreateFixture {
         guild_id: None,
@@ -478,22 +467,13 @@ fn keeps_known_content_when_gateway_echo_has_no_content() {
         message_id,
         author_id,
         content: None,
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     state.apply_event(&AppEvent::MessageUpdate {
         guild_id: None,
         channel_id,
         message_id,
-        poll: None,
-        content: None,
-        sticker_names: None,
-        mentions: None,
-        mention_everyone: None,
-        mention_roles: None,
-        flags: None,
-        attachments: AttachmentUpdate::Unchanged,
-        embeds: None,
-        edited_timestamp: None,
+        fields: MessageUpdateEventFields::default(),
     });
 
     let messages = state.messages_for_channel(channel_id);
@@ -512,7 +492,7 @@ fn merges_history_in_chronological_order() {
         message_id: Id::new(30),
         author_id: Id::new(99),
         content: Some("live".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     state.apply_event(&latest_history_loaded(
         channel_id,
@@ -565,7 +545,7 @@ fn history_dedupes_and_preserves_known_content() {
         message_id: Id::new(20),
         author_id: Id::new(99),
         content: Some("known".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     state.apply_event(&latest_history_loaded(
         channel_id,
@@ -834,7 +814,7 @@ fn history_merge_replaces_mentions_from_authoritative_history() {
         author_id: Id::new(99),
         content: Some("hello <@10>".to_owned()),
         mention_roles: vec![Id::new(30)],
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     state.apply_event(&latest_history_loaded(
         channel_id,
@@ -871,7 +851,7 @@ fn history_merge_preserves_richer_gateway_mention_display_name() {
         author_id: Id::new(99),
         content: Some("hello <@10>".to_owned()),
         mentions: vec![mention_info(10, "global alias")],
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     state.apply_event(&latest_history_loaded(
         channel_id,
@@ -930,7 +910,7 @@ fn stores_and_merges_message_attachments() {
         author_id: Id::new(99),
         content: Some(String::new()),
         attachments: vec![attachment_info(1, "cat.png", "image/png")],
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     state.apply_event(&latest_history_loaded(
         channel_id,
@@ -961,7 +941,7 @@ fn stores_forwarded_snapshots_from_message_create() {
         author_id: Id::new(99),
         content: Some(String::new()),
         forwarded_snapshots: vec![snapshot_info("forwarded text")],
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     let messages = state.messages_for_channel(channel_id);
@@ -985,7 +965,7 @@ fn history_merge_preserves_existing_forwarded_snapshots() {
         author_id: Id::new(99),
         content: Some(String::new()),
         forwarded_snapshots: vec![snapshot_info("live snapshot")],
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
     state.apply_event(&latest_history_loaded(
         channel_id,
@@ -1016,22 +996,16 @@ fn message_update_handles_attachment_update_tristate() {
             author_id: Id::new(99),
             content: Some(String::new()),
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
-            ..MessageCreateFixture::default()
+            ..MessageCreateFixture::test_fixture_default()
         }));
         state.apply_event(&AppEvent::MessageUpdate {
             guild_id: None,
             channel_id,
             message_id: Id::new(20),
-            poll: None,
-            content: None,
-            sticker_names: None,
-            mentions: None,
-            mention_everyone: None,
-            mention_roles: None,
-            flags: None,
-            attachments,
-            embeds: None,
-            edited_timestamp: None,
+            fields: MessageUpdateEventFields {
+                attachments,
+                ..MessageUpdateEventFields::default()
+            },
         });
 
         let messages = state.messages_for_channel(channel_id);
@@ -1155,7 +1129,7 @@ fn live_message_after_older_history_keeps_newer_window() {
         message_id: Id::new(13),
         author_id: Id::new(99),
         content: Some("newest".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     let messages = state.messages_for_channel(channel_id);
@@ -1253,7 +1227,7 @@ fn current_user_reaction_events_update_cached_reaction_summary() {
         message_id,
         author_id: Id::new(99),
         content: Some("hello".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     state.apply_event(&AppEvent::CurrentUserReactionAdd {
@@ -1290,7 +1264,7 @@ fn gateway_reaction_events_update_cached_reaction_summary() {
         message_id,
         author_id: Id::new(99),
         content: Some("hello".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     state.apply_event(&AppEvent::MessageReactionAdd {
@@ -1344,7 +1318,7 @@ fn current_user_gateway_reaction_events_reconcile_optimistic_updates() {
         message_id,
         author_id: Id::new(99),
         content: Some("hello".to_owned()),
-        ..MessageCreateFixture::default()
+        ..MessageCreateFixture::test_fixture_default()
     }));
 
     state.apply_event(&AppEvent::CurrentUserReactionAdd {

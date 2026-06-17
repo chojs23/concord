@@ -637,30 +637,7 @@ fn parse_attachment(value: &Value) -> Option<AttachmentInfo> {
 
 pub(super) fn parse_message_create(data: &Value) -> Option<AppEvent> {
     let message = parse_message_info(data)?;
-    Some(AppEvent::MessageCreate {
-        guild_id: message.guild_id,
-        channel_id: message.channel_id,
-        message_id: message.message_id,
-        author_id: message.author_id,
-        author: message.author,
-        author_avatar_url: message.author_avatar_url,
-        author_is_bot: message.author_is_bot,
-        author_role_ids: message.author_role_ids,
-        message_kind: message.message_kind,
-        interaction: message.interaction,
-        reference: message.reference,
-        reply: message.reply,
-        poll: message.poll,
-        content: message.content,
-        sticker_names: message.sticker_names,
-        mentions: message.mentions,
-        mention_everyone: message.mention_everyone,
-        mention_roles: message.mention_roles,
-        flags: message.flags,
-        attachments: message.attachments,
-        embeds: message.embeds,
-        forwarded_snapshots: message.forwarded_snapshots,
-    })
+    Some(AppEvent::MessageCreate { message })
 }
 
 pub(super) fn parse_message_update(data: &Value) -> Option<AppEvent> {
@@ -700,16 +677,18 @@ pub(super) fn parse_message_update(data: &Value) -> Option<AppEvent> {
         guild_id,
         channel_id,
         message_id,
-        poll,
-        content,
-        sticker_names,
-        mentions,
-        mention_everyone,
-        mention_roles,
-        flags,
-        attachments,
-        embeds,
-        edited_timestamp,
+        fields: crate::discord::MessageUpdateEventFields {
+            poll,
+            content,
+            sticker_names,
+            mentions,
+            mention_everyone,
+            mention_roles,
+            flags,
+            attachments,
+            embeds,
+            edited_timestamp,
+        },
     })
 }
 

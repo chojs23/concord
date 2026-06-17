@@ -16,7 +16,9 @@ use super::member::{role_map, role_state};
 use super::message::{MessageAuthorRoleIds, MessageHistoryGap, MessageUpdateFields};
 pub use super::message::{MessageCapabilities, MessageState};
 pub use super::notification::ChannelUnreadState;
-use super::notification::{GuildNotificationSettingsState, MessageNotificationKind};
+use super::notification::{
+    GuildNotificationSettingsState, MessageNotificationInput, MessageNotificationKind,
+};
 use super::profile::{ProfileRoleIds, UserProfileCacheKey};
 use super::read::ChannelReadState;
 pub use super::voice::{CurrentVoiceConnectionState, VoiceParticipantState};
@@ -718,31 +720,22 @@ impl DiscordState {
             AppEvent::MessageUpdate {
                 channel_id,
                 message_id,
-                poll,
-                content,
-                mentions,
-                mention_everyone,
-                mention_roles,
-                flags,
-                sticker_names,
-                attachments,
-                embeds,
-                edited_timestamp,
+                fields,
                 ..
             } => self.update_message(
                 *channel_id,
                 *message_id,
                 MessageUpdateFields {
-                    poll: poll.clone(),
-                    content: content.clone(),
-                    sticker_names: sticker_names.clone(),
-                    mentions: mentions.clone(),
-                    mention_everyone: *mention_everyone,
-                    mention_roles: mention_roles.clone(),
-                    flags: *flags,
-                    attachments: attachments.clone(),
-                    embeds: embeds.clone(),
-                    edited_timestamp: edited_timestamp.clone(),
+                    poll: fields.poll.clone(),
+                    content: fields.content.clone(),
+                    sticker_names: fields.sticker_names.clone(),
+                    mentions: fields.mentions.clone(),
+                    mention_everyone: fields.mention_everyone,
+                    mention_roles: fields.mention_roles.clone(),
+                    flags: fields.flags,
+                    attachments: fields.attachments.clone(),
+                    embeds: fields.embeds.clone(),
+                    edited_timestamp: fields.edited_timestamp.clone(),
                     pinned: None,
                     reactions: None,
                     retain_body: self.should_retain_message_update_body(*channel_id, *message_id),
@@ -1079,63 +1072,45 @@ impl DiscordState {
     }
 
     fn apply_message_create_event(&mut self, event: &AppEvent) {
-        let AppEvent::MessageCreate {
-            guild_id,
-            channel_id,
-            message_id,
-            author_id,
-            author,
-            author_avatar_url,
-            author_is_bot,
-            author_role_ids,
-            message_kind,
-            interaction,
-            reference,
-            reply,
-            poll,
-            content,
-            sticker_names,
-            mentions,
-            mention_everyone,
-            mention_roles,
-            flags,
-            attachments,
-            embeds,
-            forwarded_snapshots,
-            ..
-        } = event
-        else {
+        let AppEvent::MessageCreate { message } = event else {
             unreachable!("message create helper only handles message create events");
         };
 
-        let remove_typing_channel = if let Some(bucket) = self.presence.typing.get_mut(channel_id) {
-            bucket.remove(author_id);
-            bucket.is_empty()
-        } else {
-            false
-        };
+        let remove_typing_channel =
+            if let Some(bucket) = self.presence.typing.get_mut(&message.channel_id) {
+                bucket.remove(&message.author_id);
+                bucket.is_empty()
+            } else {
+                false
+            };
         if remove_typing_channel {
-            self.presence.typing.remove(channel_id);
+            self.presence.typing.remove(&message.channel_id);
         }
 
-        let guild_id = guild_id.or_else(|| self.channel_guild_id(*channel_id));
-        let is_current_user_message = self.session.current_user_id == Some(*author_id);
-        self.record_author_role_ids(*channel_id, *message_id, author_role_ids);
-        match self.message_create_notification_kind(
+        let guild_id = message
+            .guild_id
+            .or_else(|| self.channel_guild_id(message.channel_id));
+        let is_current_user_message = self.session.current_user_id == Some(message.author_id);
+        self.record_author_role_ids(
+            message.channel_id,
+            message.message_id,
+            &message.author_role_ids,
+        );
+        match self.message_create_notification_kind(MessageNotificationInput {
             guild_id,
-            *channel_id,
-            *message_id,
-            *author_id,
-            mentions,
-            *mention_everyone,
-            mention_roles,
-            *flags,
-        ) {
+            channel_id: message.channel_id,
+            message_id: message.message_id,
+            author_id: message.author_id,
+            mentions: &message.mentions,
+            mention_everyone: message.mention_everyone,
+            mention_roles: &message.mention_roles,
+            flags: message.flags,
+        }) {
             MessageNotificationKind::Mention => {
                 let entry = self
                     .notifications
                     .read_states
-                    .entry(*channel_id)
+                    .entry(message.channel_id)
                     .or_default();
                 entry.mention_count = entry.mention_count.saturating_add(1);
             }
@@ -1143,54 +1118,33 @@ impl DiscordState {
                 let entry = self
                     .notifications
                     .read_states
-                    .entry(*channel_id)
+                    .entry(message.channel_id)
                     .or_default();
                 entry.notification_count = entry.notification_count.saturating_add(1);
             }
             MessageNotificationKind::None => {}
         }
-        let mut message = MessageState {
-            id: *message_id,
-            guild_id,
-            channel_id: *channel_id,
-            author_id: *author_id,
-            author: self.message_author_display_name(guild_id, *author_id, author),
-            author_avatar_url: self.message_author_avatar_url(
-                guild_id,
-                *author_id,
-                author_avatar_url,
-            ),
-            author_is_bot: *author_is_bot,
-            message_kind: *message_kind,
-            interaction: interaction.clone(),
-            reference: reference.clone(),
-            reply: reply.clone(),
-            poll: poll.clone(),
-            pinned: false,
-            reactions: Vec::new(),
-            content: content.clone(),
-            sticker_names: sticker_names.clone(),
-            mentions: mentions.clone(),
-            mention_everyone: *mention_everyone,
-            mention_roles: mention_roles.clone(),
-            flags: *flags,
-            attachments: attachments.clone(),
-            embeds: embeds.clone(),
-            forwarded_snapshots: forwarded_snapshots.clone(),
-            edited_timestamp: None,
-        };
-        let retain_body = self.should_retain_live_message_body(*channel_id, *author_id, mentions);
+        let mut state = self.message_state_from_info(guild_id, message);
+        let retain_body = self.should_retain_live_message_body(
+            message.channel_id,
+            message.author_id,
+            &message.mentions,
+        );
         if !retain_body {
-            message.redact_body();
+            state.redact_body();
         }
-        if self.retained_live_message_warms_channel(*channel_id) {
-            self.message_cache.cold_message_channels.remove(channel_id);
+        if self.retained_live_message_warms_channel(message.channel_id) {
+            self.message_cache
+                .cold_message_channels
+                .remove(&message.channel_id);
         } else if !retain_body {
-            self.message_cache.cold_message_channels.insert(*channel_id);
+            self.message_cache
+                .cold_message_channels
+                .insert(message.channel_id);
         }
-        self.upsert_message(message);
+        self.upsert_message(state);
         if is_current_user_message {
-            self.mark_message_read_locally(*channel_id, *message_id);
+            self.mark_message_read_locally(message.channel_id, message.message_id);
         }
     }
 
