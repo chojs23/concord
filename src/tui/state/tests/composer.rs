@@ -429,6 +429,11 @@ fn slash_option_value_pickers_insert_id_markup() {
             "/target role:<@&30>",
         ),
         (
+            "/target role:@ev",
+            "/target role:@everyone ",
+            "/target role:<@&1>",
+        ),
+        (
             "/target channel:#ru",
             "/target channel:#rules ",
             "/target channel:<#3>",
@@ -796,6 +801,15 @@ fn role_mention_picker_avoids_duplicate_everyone_prefix() {
     assert_eq!(everyone.visible_text(), "@everyone");
     assert!(state.confirm_composer_mention());
     assert_eq!(state.composer_input(), "@everyone ");
+    assert_eq!(
+        state.submit_composer(),
+        Some(AppCommand::SendMessage {
+            channel_id: Id::new(2),
+            content: "@everyone".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+    );
 }
 
 #[test]

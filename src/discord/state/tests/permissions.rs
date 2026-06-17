@@ -287,6 +287,7 @@ fn current_user_roles_handle_partial_and_complete_member_upserts() {
         author_id: Id::new(99),
         author: "sender".to_owned(),
         content: Some(format!("hello <@&{}>", staff_role.get())),
+        mention_roles: vec![staff_role],
         ..MessageCreateFixture::default()
     }));
     assert_eq!(

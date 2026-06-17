@@ -47,6 +47,7 @@ impl MentionPickerEntry {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum MentionPickerTarget {
     User(Id<UserMarker>),
+    Everyone(Id<RoleMarker>),
     Role(Id<RoleMarker>),
     Channel(Id<ChannelMarker>),
 }
@@ -55,14 +56,22 @@ impl MentionPickerTarget {
     pub fn wire_format(self) -> String {
         match self {
             Self::User(id) => format!("<@{}>", id.get()),
+            Self::Everyone(_) => "@everyone".to_owned(),
             Self::Role(id) => format!("<@&{}>", id.get()),
             Self::Channel(id) => format!("<#{}>", id.get()),
         }
     }
 
+    pub fn command_wire_format(self) -> String {
+        match self {
+            Self::Everyone(id) => format!("<@&{}>", id.get()),
+            target => target.wire_format(),
+        }
+    }
+
     pub fn visible_prefix(self) -> &'static str {
         match self {
-            Self::User(_) | Self::Role(_) => "@",
+            Self::User(_) | Self::Everyone(_) | Self::Role(_) => "@",
             Self::Channel(_) => "#",
         }
     }
@@ -230,6 +239,7 @@ pub(super) fn build_mention_candidates(
     query: &str,
     entries: Vec<MemberEntry<'_>>,
     roles: Vec<&RoleState>,
+    everyone_role_id: Option<Id<RoleMarker>>,
 ) -> Vec<MentionPickerEntry> {
     let needle = query.to_lowercase();
     let mut scored: Vec<(u8, String, MentionPickerEntry)> = entries
@@ -284,7 +294,11 @@ pub(super) fn build_mention_candidates(
             rank.saturating_add(1),
             lowered_name,
             MentionPickerEntry {
-                target: MentionPickerTarget::Role(role.id),
+                target: if Some(role.id) == everyone_role_id {
+                    MentionPickerTarget::Everyone(role.id)
+                } else {
+                    MentionPickerTarget::Role(role.id)
+                },
                 display_name: role.name.clone(),
                 username: None,
                 status: PresenceStatus::Unknown,
@@ -539,6 +553,12 @@ pub(in crate::tui::state) struct MentionCompletion {
     pub(super) target: MentionPickerTarget,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui::state) enum MentionExpansionMode {
+    Message,
+    Command,
+}
+
 /// Rewrites recorded mention and custom emoji ranges in one back-to-front pass.
 /// Both completion kinds store byte ranges against the visible composer text, so
 /// applying them together prevents earlier replacements from shifting later
@@ -547,6 +567,7 @@ pub(super) fn expand_composer_completions(
     input: &str,
     mention_completions: &[MentionCompletion],
     emoji_completions: &[EmojiCompletion],
+    mention_mode: MentionExpansionMode,
 ) -> String {
     if mention_completions.is_empty() && emoji_completions.is_empty() {
         return input.to_owned();
@@ -558,7 +579,10 @@ pub(super) fn expand_composer_completions(
         .map(|completion| CompletionReplacement {
             byte_start: completion.byte_start,
             byte_end: completion.byte_end,
-            replacement: completion.target.wire_format(),
+            replacement: match mention_mode {
+                MentionExpansionMode::Message => completion.target.wire_format(),
+                MentionExpansionMode::Command => completion.target.command_wire_format(),
+            },
         })
         .collect();
 
@@ -587,6 +611,35 @@ pub(super) fn expand_composer_completions(
         );
     }
     buffer
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn role(id: u64, name: &str) -> RoleState {
+        RoleState {
+            id: Id::new(id),
+            name: name.to_owned(),
+            color: None,
+            position: 0,
+            hoist: false,
+            permissions: 0,
+        }
+    }
+
+    #[test]
+    fn everyone_role_detection_uses_id_not_name() {
+        let everyone = role(1, "renamed base role");
+        let candidates =
+            build_mention_candidates("", Vec::new(), vec![&everyone], Some(Id::new(1)));
+
+        assert!(
+            candidates
+                .iter()
+                .any(|entry| entry.target == MentionPickerTarget::Everyone(Id::new(1)))
+        );
+    }
 }
 
 struct CompletionReplacement {

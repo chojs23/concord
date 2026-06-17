@@ -279,45 +279,93 @@ fn explicit_channel_unmute_override_beats_muted_parent_category() {
 }
 
 #[test]
-fn only_mentions_settings_count_direct_mentions() {
+fn only_mentions_settings_use_resolved_mentions() {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
     let current_user_id = Id::new(10);
     let author_id = Id::new(20);
-    let mut state = DiscordState::default();
-
-    state.apply_event(&AppEvent::Ready {
-        user: "me".to_owned(),
-        user_id: Some(current_user_id),
-    });
-    state.apply_event(&guild_create_event(GuildCreateFixture {
-        guild_id,
-        channels: vec![ChannelInfo {
-            guild_id: Some(guild_id),
-            name: "general".to_owned(),
-            ..channel_info(channel_id, "GuildText", Vec::new())
-        }],
-        ..GuildCreateFixture::new(guild_id)
-    }));
-    state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![notification_settings(
+    let role_id = Id::new(40);
+    let suppress_notifications = 1 << 12;
+    let unread_for = |content: &str,
+                      mentions: Vec<MentionInfo>,
+                      mention_everyone: bool,
+                      mention_roles: Vec<Id<RoleMarker>>,
+                      flags: u64| {
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(current_user_id),
+        });
+        state.apply_event(&guild_create_event(GuildCreateFixture {
             guild_id,
-            NotificationLevel::OnlyMentions,
-        )],
-    });
-
-    state.apply_event(&message_create(
-        Some(guild_id),
-        channel_id,
-        Id::new(30),
-        author_id,
-        "hello @me",
-        vec![mention_info(current_user_id.get(), "me")],
-    ));
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                name: "general".to_owned(),
+                ..channel_info(channel_id, "GuildText", Vec::new())
+            }],
+            members: vec![member_with_roles(current_user_id, "me", vec![role_id])],
+            roles: vec![role_info(role_id, "notify", 0)],
+            ..GuildCreateFixture::new(guild_id)
+        }));
+        state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
+            settings: vec![notification_settings(
+                guild_id,
+                NotificationLevel::OnlyMentions,
+            )],
+        });
+        state.apply_event(&message_create_event(MessageCreateFixture {
+            guild_id: Some(guild_id),
+            channel_id,
+            message_id: Id::new(30),
+            author_id,
+            content: Some(content.to_owned()),
+            mentions,
+            mention_everyone,
+            mention_roles,
+            flags,
+            ..MessageCreateFixture::default()
+        }));
+        (
+            state.channel_unread(channel_id),
+            state.channel_unread_message_count(channel_id),
+        )
+    };
 
     assert_eq!(
-        state.channel_unread(channel_id),
-        ChannelUnreadState::Mentioned(1)
+        unread_for(
+            "hello @me",
+            vec![mention_info(current_user_id.get(), "me")],
+            false,
+            Vec::new(),
+            0,
+        ),
+        (ChannelUnreadState::Mentioned(1), 1)
+    );
+    assert_eq!(
+        unread_for("@everyone", Vec::new(), false, Vec::new(), 0),
+        (ChannelUnreadState::Unread, 0)
+    );
+    assert_eq!(
+        unread_for("@everyone", Vec::new(), true, Vec::new(), 0),
+        (ChannelUnreadState::Mentioned(1), 1)
+    );
+    assert_eq!(
+        unread_for("<@&40>", Vec::new(), false, Vec::new(), 0),
+        (ChannelUnreadState::Unread, 0)
+    );
+    assert_eq!(
+        unread_for("<@&40>", Vec::new(), false, vec![role_id], 0),
+        (ChannelUnreadState::Mentioned(1), 1)
+    );
+    assert_eq!(
+        unread_for(
+            "@everyone",
+            Vec::new(),
+            true,
+            Vec::new(),
+            suppress_notifications,
+        ),
+        (ChannelUnreadState::Unread, 0)
     );
 }
 

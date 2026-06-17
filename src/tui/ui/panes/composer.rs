@@ -317,7 +317,7 @@ fn mention_picker_lines(
             }
             let marker = match entry.target {
                 MentionPickerTarget::User(_) => presence_marker(entry.status).to_string(),
-                MentionPickerTarget::Role(_) => "@".to_owned(),
+                MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => "@".to_owned(),
                 MentionPickerTarget::Channel(_) => "#".to_owned(),
             };
             Line::from(vec![
@@ -333,7 +333,7 @@ fn mention_picker_lines(
 fn mention_picker_entry_style(entry: &MentionPickerEntry) -> Style {
     match entry.target {
         MentionPickerTarget::User(_) => Style::default().fg(presence_color(entry.status)),
-        MentionPickerTarget::Role(_) => {
+        MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => {
             Style::default().fg(discord_color(entry.role_color, Color::Magenta))
         }
         MentionPickerTarget::Channel(_) => Style::default().fg(Color::Cyan),

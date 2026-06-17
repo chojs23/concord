@@ -35,6 +35,9 @@ pub struct MessageState {
     pub content: Option<String>,
     pub sticker_names: Vec<String>,
     pub mentions: Vec<MentionInfo>,
+    pub mention_everyone: bool,
+    pub mention_roles: Vec<Id<RoleMarker>>,
+    pub flags: u64,
     pub attachments: Vec<AttachmentInfo>,
     pub embeds: Vec<EmbedInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
@@ -61,6 +64,9 @@ impl Default for MessageState {
             content: None,
             sticker_names: Vec::new(),
             mentions: Vec::new(),
+            mention_everyone: false,
+            mention_roles: Vec::new(),
+            flags: 0,
             attachments: Vec::new(),
             embeds: Vec::new(),
             forwarded_snapshots: Vec::new(),
@@ -186,6 +192,9 @@ pub(in crate::discord) struct MessageUpdateFields {
     pub(in crate::discord) content: Option<String>,
     pub(in crate::discord) sticker_names: Option<Vec<String>>,
     pub(in crate::discord) mentions: Option<Vec<MentionInfo>>,
+    pub(in crate::discord) mention_everyone: Option<bool>,
+    pub(in crate::discord) mention_roles: Option<Vec<Id<RoleMarker>>>,
+    pub(in crate::discord) flags: Option<u64>,
     pub(in crate::discord) attachments: AttachmentUpdate,
     pub(in crate::discord) embeds: Option<Vec<EmbedInfo>>,
     pub(in crate::discord) edited_timestamp: Option<String>,
@@ -1033,6 +1042,9 @@ impl DiscordState {
             content: message.content.clone(),
             sticker_names: message.sticker_names.clone(),
             mentions: message.mentions.clone(),
+            mention_everyone: message.mention_everyone,
+            mention_roles: message.mention_roles.clone(),
+            flags: message.flags,
             attachments: message.attachments.clone(),
             embeds: message.embeds.clone(),
             forwarded_snapshots: message.forwarded_snapshots.clone(),
@@ -1212,6 +1224,9 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
         existing.sticker_names = incoming.sticker_names.clone();
     }
     existing.mentions = merge_message_mentions(&existing.mentions, &incoming.mentions);
+    existing.mention_everyone = incoming.mention_everyone;
+    existing.mention_roles = incoming.mention_roles.clone();
+    existing.flags = incoming.flags;
     if !incoming.embeds.is_empty() || existing.embeds.is_empty() {
         existing.embeds = incoming.embeds.clone();
     }
@@ -1231,6 +1246,9 @@ fn merge_duplicate_message_create(existing: &mut MessageState, incoming: &Messag
     if !incoming.mentions.is_empty() || existing.mentions.is_empty() {
         existing.mentions = merge_message_mentions(&existing.mentions, &incoming.mentions);
     }
+    existing.mention_everyone = incoming.mention_everyone;
+    existing.mention_roles = incoming.mention_roles.clone();
+    existing.flags = incoming.flags;
 }
 
 fn merge_shared_message_fields(existing: &mut MessageState, incoming: &MessageState) {
@@ -1292,6 +1310,15 @@ fn update_message_in(
         }
         if let Some(mentions) = &update.mentions {
             existing.mentions = mentions.clone();
+        }
+        if let Some(mention_everyone) = update.mention_everyone {
+            existing.mention_everyone = mention_everyone;
+        }
+        if let Some(mention_roles) = &update.mention_roles {
+            existing.mention_roles = mention_roles.clone();
+        }
+        if let Some(flags) = update.flags {
+            existing.flags = flags;
         }
         if let Some(embeds) = &update.embeds {
             existing.embeds = embeds.clone();

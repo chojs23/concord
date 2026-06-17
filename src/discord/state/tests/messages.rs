@@ -251,6 +251,9 @@ fn message_update_refreshes_cached_poll_results() {
         content: None,
         sticker_names: None,
         mentions: None,
+        mention_everyone: None,
+        mention_roles: None,
+        flags: None,
         attachments: AttachmentUpdate::Unchanged,
         embeds: None,
         edited_timestamp: None,
@@ -388,6 +391,9 @@ fn message_update_handles_mentions_tristate() {
             content: Some("hello".to_owned()),
             sticker_names: None,
             mentions: update_mentions,
+            mention_everyone: None,
+            mention_roles: None,
+            flags: None,
             attachments: AttachmentUpdate::Unchanged,
             embeds: None,
             edited_timestamp: None,
@@ -482,6 +488,9 @@ fn keeps_known_content_when_gateway_echo_has_no_content() {
         content: None,
         sticker_names: None,
         mentions: None,
+        mention_everyone: None,
+        mention_roles: None,
+        flags: None,
         attachments: AttachmentUpdate::Unchanged,
         embeds: None,
         edited_timestamp: None,
@@ -824,18 +833,21 @@ fn history_merge_replaces_mentions_from_authoritative_history() {
         message_id: Id::new(20),
         author_id: Id::new(99),
         content: Some("hello <@10>".to_owned()),
+        mention_roles: vec![Id::new(30)],
         ..MessageCreateFixture::default()
     }));
     state.apply_event(&latest_history_loaded(
         channel_id,
         vec![MessageInfo {
             mentions: vec![mention_info(10, "alice")],
+            mention_roles: vec![Id::new(30)],
             ..message_info(channel_id, 20, "hello <@10>")
         }],
     ));
 
     let messages = state.messages_for_channel(channel_id);
     assert_eq!(messages[0].mentions, vec![mention_info(10, "alice")]);
+    assert_eq!(messages[0].mention_roles, vec![Id::new(30)]);
 
     state.apply_event(&latest_history_loaded(
         channel_id,
@@ -844,6 +856,7 @@ fn history_merge_replaces_mentions_from_authoritative_history() {
 
     let messages = state.messages_for_channel(channel_id);
     assert!(messages[0].mentions.is_empty());
+    assert!(messages[0].mention_roles.is_empty());
 }
 
 #[test]
@@ -1013,6 +1026,9 @@ fn message_update_handles_attachment_update_tristate() {
             content: None,
             sticker_names: None,
             mentions: None,
+            mention_everyone: None,
+            mention_roles: None,
+            flags: None,
             attachments,
             embeds: None,
             edited_timestamp: None,

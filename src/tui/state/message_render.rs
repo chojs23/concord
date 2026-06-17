@@ -1,18 +1,16 @@
 use super::super::format::{RenderedText, TextHighlight, TextHighlightKind};
 
-pub(super) fn add_literal_mention_highlights(rendered: &mut RenderedText, mention: &str) {
+pub(super) fn add_literal_mention_highlights(
+    rendered: &mut RenderedText,
+    mention: &str,
+    kind: TextHighlightKind,
+) {
     let mut cursor = 0usize;
     while let Some(relative_start) = rendered.text[cursor..].find(mention) {
         let start = cursor.saturating_add(relative_start);
         let end = start.saturating_add(mention.len());
         if is_literal_mention_boundary(&rendered.text, start, end) {
-            rendered.highlights.push(TextHighlight {
-                start,
-                end,
-                // `@everyone`/`@here` always notify the current user, so they
-                // share the self-mention background colour.
-                kind: TextHighlightKind::SelfMention,
-            });
+            rendered.highlights.push(TextHighlight { start, end, kind });
         }
         cursor = end;
     }

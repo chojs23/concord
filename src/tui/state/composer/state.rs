@@ -21,11 +21,11 @@ use super::super::{
 };
 use super::completions::{
     ComposerEmojiImageCompletion, EmojiCompletion, MAX_MENTION_PICKER_VISIBLE, MentionCompletion,
-    build_builtin_command_candidates, build_channel_mention_candidates, build_command_candidates,
-    build_command_choice_candidates, build_command_option_candidates, build_emoji_candidates,
-    build_mention_candidates, expand_composer_completions, expand_emoji_shortcodes,
-    is_command_query_char, is_emoji_query_char, is_mention_query_char, move_picker_selection,
-    should_start_completion_query,
+    MentionExpansionMode, build_builtin_command_candidates, build_channel_mention_candidates,
+    build_command_candidates, build_command_choice_candidates, build_command_option_candidates,
+    build_emoji_candidates, build_mention_candidates, expand_composer_completions,
+    expand_emoji_shortcodes, is_command_query_char, is_emoji_query_char, is_mention_query_char,
+    move_picker_selection, should_start_completion_query,
 };
 use crate::discord::AppCommand;
 use crate::tui::text_cursor::{
@@ -412,6 +412,7 @@ impl DashboardState {
             &self.composer.composer_input,
             &self.composer.composer_mention_completions,
             &self.composer.composer_emoji_completions,
+            MentionExpansionMode::Message,
         );
         let expanded = expand_emoji_shortcodes(&expanded);
         let content = expanded.trim().to_owned();
@@ -459,7 +460,8 @@ impl DashboardState {
                 }
                 BuiltinCommandSubmit::NotCommand => {}
             }
-            match self.application_command_submit_for_content(&content) {
+            let command_content = self.expanded_composer_command_content();
+            match self.application_command_submit_for_content(&command_content) {
                 ApplicationCommandSubmit::Ready(interaction) => {
                     self.clear_submitted_composer_text();
                     self.composer.reply_target_message_id = None;
@@ -492,6 +494,16 @@ impl DashboardState {
         self.composer.composer_input.clear();
         self.composer.composer_cursor_byte_index = 0;
         self.reset_mention_picker_state();
+    }
+
+    fn expanded_composer_command_content(&self) -> String {
+        let expanded = expand_composer_completions(
+            &self.composer.composer_input,
+            &self.composer.composer_mention_completions,
+            &self.composer.composer_emoji_completions,
+            MentionExpansionMode::Command,
+        );
+        expand_emoji_shortcodes(&expanded).trim().to_owned()
     }
 
     /// Returns the characters typed after the `@` if the picker is open.
@@ -539,6 +551,7 @@ impl DashboardState {
                 query,
                 self.flattened_members(),
                 self.composer_role_candidates(),
+                self.composer_everyone_role_id(),
             )
         }
     }
@@ -564,6 +577,11 @@ impl DashboardState {
         self.selected_composer_guild_id()
             .map(|guild_id| self.discord.cache.roles_for_guild(guild_id))
             .unwrap_or_default()
+    }
+
+    fn composer_everyone_role_id(&self) -> Option<Id<crate::discord::ids::marker::RoleMarker>> {
+        self.selected_composer_guild_id()
+            .map(|guild_id| Id::new(guild_id.get()))
     }
 
     fn composer_channel_candidates(&self) -> Vec<&crate::discord::ChannelState> {
@@ -658,6 +676,7 @@ impl DashboardState {
             &self.composer.composer_input,
             &self.composer.composer_mention_completions,
             &self.composer.composer_emoji_completions,
+            MentionExpansionMode::Command,
         );
         let expanded = expand_emoji_shortcodes(&expanded);
         matches!(
@@ -1150,11 +1169,14 @@ impl DashboardState {
         let query = value_query.trim_start_matches(['@', '#']);
         let mention_candidates = match option.kind {
             APPLICATION_COMMAND_USER_KIND => {
-                build_mention_candidates(query, self.flattened_members(), Vec::new())
+                build_mention_candidates(query, self.flattened_members(), Vec::new(), None)
             }
-            APPLICATION_COMMAND_ROLE_KIND => {
-                build_mention_candidates(query, Vec::new(), self.composer_role_candidates())
-            }
+            APPLICATION_COMMAND_ROLE_KIND => build_mention_candidates(
+                query,
+                Vec::new(),
+                self.composer_role_candidates(),
+                self.composer_everyone_role_id(),
+            ),
             APPLICATION_COMMAND_CHANNEL_KIND => {
                 build_channel_mention_candidates(query, self.composer_channel_candidates())
             }
@@ -1162,6 +1184,7 @@ impl DashboardState {
                 query,
                 self.flattened_members(),
                 self.composer_role_candidates(),
+                self.composer_everyone_role_id(),
             ),
             _ => return Vec::new(),
         };
@@ -1175,10 +1198,11 @@ impl DashboardState {
                         .username
                         .map(|username| format!("user @{username}"))
                         .unwrap_or_else(|| "user".to_owned()),
+                    super::completions::MentionPickerTarget::Everyone(_) => "everyone".to_owned(),
                     super::completions::MentionPickerTarget::Role(_) => "role".to_owned(),
                     super::completions::MentionPickerTarget::Channel(_) => "channel".to_owned(),
                 },
-                replacement: format!("{} ", entry.target.wire_format()),
+                replacement: format!("{} ", entry.target.command_wire_format()),
                 top_level: false,
                 command_identity: None,
             })

@@ -283,7 +283,7 @@ impl DiscordState {
         }
     }
 
-    pub(in crate::discord) fn current_user_role_ids_for_guild(
+    pub(crate) fn current_user_role_ids_for_guild(
         &self,
         guild_id: Id<GuildMarker>,
     ) -> Option<&[Id<RoleMarker>]> {

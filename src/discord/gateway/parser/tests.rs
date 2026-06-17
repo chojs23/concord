@@ -2301,6 +2301,9 @@ fn message_create_parser_keeps_mention_display_names() {
         "channel_id": "10",
         "author": { "id": "30", "username": "neo" },
         "content": "hello <@40> <@41> <@42>",
+        "mention_everyone": true,
+        "mention_roles": ["50", "51"],
+        "flags": 4096,
         "mentions": [
             {
                 "id": "40",
@@ -2322,9 +2325,19 @@ fn message_create_parser_keeps_mention_display_names() {
     }))
     .expect("message create should parse");
 
-    let AppEvent::MessageCreate { mentions, .. } = event else {
+    let AppEvent::MessageCreate {
+        mentions,
+        mention_everyone,
+        mention_roles,
+        flags,
+        ..
+    } = event
+    else {
         panic!("expected message create event");
     };
+    assert!(mention_everyone);
+    assert_eq!(mention_roles, vec![Id::new(50), Id::new(51)]);
+    assert_eq!(flags, 4096);
     assert_eq!(
         mentions,
         vec![

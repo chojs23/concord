@@ -954,12 +954,14 @@ fn message_content_highlights_markdown_link_urls() {
 
 #[test]
 fn message_content_highlights_everyone_mentions_for_current_user() {
-    let message = message_with_content(Some("ping @everyone".to_owned()));
+    let mut message = message_with_content(Some("ping @everyone".to_owned()));
+    message.mention_everyone = true;
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
         user: "neo".to_owned(),
         user_id: Some(Id::new(99)),
     });
+    let highlight_bg = mention_highlight_style(TextHighlightKind::SelfMention).bg;
 
     let lines = message_item_lines(
         message.author.clone(),
@@ -977,16 +979,14 @@ fn message_content_highlights_everyone_mentions_for_current_user() {
         vec!["  oooo  neo 00:00", "  oooo  ping @everyone", ""]
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@everyone");
-    assert_eq!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
-    );
+    assert_eq!(lines[1].spans[2].style.bg, highlight_bg);
 }
 
 #[test]
 fn message_content_highlights_mixed_everyone_and_direct_mentions_in_order() {
     let mut message = message_with_content(Some("@everyone hello <@10>".to_owned()));
     message.mentions = vec![mention_info(10, "neo")];
+    message.mention_everyone = true;
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
         user: "neo".to_owned(),
@@ -1022,7 +1022,8 @@ fn message_content_highlights_mixed_everyone_and_direct_mentions_in_order() {
 
 #[test]
 fn message_content_highlights_here_mentions_for_current_user() {
-    let message = message_with_content(Some("ping @here".to_owned()));
+    let mut message = message_with_content(Some("ping @here".to_owned()));
+    message.mention_everyone = true;
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
         user: "neo".to_owned(),
@@ -1075,6 +1076,52 @@ fn message_content_highlights_role_mentions_with_role_name() {
     assert_eq!(
         lines[1].spans[2].style.bg,
         mention_highlight_style(TextHighlightKind::OtherMention).bg
+    );
+}
+
+#[test]
+fn message_content_highlights_current_user_role_mentions_as_self_mentions() {
+    let role_id = Id::new(10);
+    let mut message = message_with_content(Some("hello <@&10>".to_owned()));
+    message.mention_roles = vec![role_id];
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(99)),
+    });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: Vec::new(),
+        members: vec![MemberInfo {
+            role_ids: vec![role_id],
+            ..MemberInfo::test(Id::new(99), "neo")
+        }],
+        presences: Vec::new(),
+        roles: vec![RoleInfo {
+            position: 1,
+            ..RoleInfo::test(role_id, "moderators")
+        }],
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+
+    let lines = message_item_lines(
+        message.author.clone(),
+        message_author_style(None),
+        "00:00".to_owned(),
+        format_message_content_lines(&message, &state, 200),
+        40,
+        0,
+        None,
+        0,
+    );
+
+    assert_eq!(lines[1].spans[2].content.as_ref(), "@moderators");
+    assert_eq!(
+        lines[1].spans[2].style.bg,
+        mention_highlight_style(TextHighlightKind::SelfMention).bg
     );
 }
 

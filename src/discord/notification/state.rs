@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+    marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
 use crate::discord::{
     AppEvent, ChannelNotificationOverrideInfo, GuildNotificationSettingsInfo, MentionInfo,
@@ -12,6 +12,8 @@ use crate::discord::{
 };
 
 use crate::discord::{MessageState, state::DiscordState};
+
+const SUPPRESS_NOTIFICATIONS_FLAG: u64 = 1 << 12;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChannelUnreadState {
@@ -219,8 +221,10 @@ impl DiscordState {
             channel_id,
             message_id,
             author_id,
-            content,
             mentions,
+            mention_everyone,
+            mention_roles,
+            flags,
             ..
         } = event
         else {
@@ -233,8 +237,10 @@ impl DiscordState {
             *channel_id,
             *message_id,
             *author_id,
-            content.as_deref(),
             mentions,
+            *mention_everyone,
+            mention_roles,
+            *flags,
         ) != MessageNotificationKind::None
     }
 
@@ -265,8 +271,10 @@ impl DiscordState {
             message.channel_id,
             message.id,
             message.author_id,
-            message.content.as_deref(),
             &message.mentions,
+            message.mention_everyone,
+            &message.mention_roles,
+            message.flags,
         )
     }
 
@@ -276,10 +284,15 @@ impl DiscordState {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
         author_id: Id<UserMarker>,
-        content: Option<&str>,
         mentions: &[MentionInfo],
+        mention_everyone: bool,
+        mention_roles: &[Id<RoleMarker>],
+        flags: u64,
     ) -> MessageNotificationKind {
         if self.session.current_user_id == Some(author_id) {
+            return MessageNotificationKind::None;
+        }
+        if flags & SUPPRESS_NOTIFICATIONS_FLAG != 0 {
             return MessageNotificationKind::None;
         }
         if self
@@ -297,15 +310,22 @@ impl DiscordState {
         let mentions_current_user = |settings: &GuildNotificationSettingsState| {
             self.message_mentions_current_user(
                 guild_id,
-                content,
                 mentions,
+                mention_everyone,
+                mention_roles,
                 settings.suppress_everyone,
                 settings.suppress_roles,
             )
         };
         let Some(settings) = self.notifications.notification_settings.get(&guild_id) else {
-            return if self.message_mentions_current_user(guild_id, content, mentions, false, false)
-            {
+            return if self.message_mentions_current_user(
+                guild_id,
+                mentions,
+                mention_everyone,
+                mention_roles,
+                false,
+                false,
+            ) {
                 MessageNotificationKind::Mention
             } else {
                 MessageNotificationKind::None
@@ -444,8 +464,9 @@ impl DiscordState {
     fn message_mentions_current_user(
         &self,
         guild_id: Id<GuildMarker>,
-        content: Option<&str>,
         mentions: &[MentionInfo],
+        mention_everyone: bool,
+        mention_roles: &[Id<RoleMarker>],
         suppress_everyone: bool,
         suppress_roles: bool,
     ) -> bool {
@@ -455,8 +476,7 @@ impl DiscordState {
         if mentions.iter().any(|mention| mention.user_id == self_id) {
             return true;
         }
-        let content = content.unwrap_or_default();
-        if !suppress_everyone && (content.contains("@everyone") || content.contains("@here")) {
+        if !suppress_everyone && mention_everyone {
             return true;
         }
         if suppress_roles {
@@ -466,7 +486,7 @@ impl DiscordState {
             .is_some_and(|role_ids| {
                 role_ids
                     .iter()
-                    .any(|role_id| content.contains(&format!("<@&{}>", role_id.get())))
+                    .any(|role_id| mention_roles.contains(role_id))
             })
     }
 }

@@ -347,13 +347,18 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
     {
         lines.push(line);
     } else if let Some(poll) = message.poll.as_ref() {
-        let content = display_text_with_stickers(
-            message.content.as_deref(),
-            &message.sticker_names,
-        )
-        .map(|value| {
-            state.render_user_mentions_with_highlights(message.guild_id, &message.mentions, &value)
-        });
+        let content =
+            display_text_with_stickers(message.content.as_deref(), &message.sticker_names).map(
+                |value| {
+                    state.render_user_mentions_with_highlights(
+                        message.guild_id,
+                        &message.mentions,
+                        message.mention_everyone,
+                        &message.mention_roles,
+                        &value,
+                    )
+                },
+            );
         lines.extend(format_poll_lines(
             poll,
             content,
@@ -370,8 +375,13 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
         .then(|| display_text_with_stickers(message.content.as_deref(), &message.sticker_names))
         .flatten();
     if let Some(value) = standalone_content {
-        let rendered =
-            state.render_user_mentions_with_highlights(message.guild_id, &message.mentions, &value);
+        let rendered = state.render_user_mentions_with_highlights(
+            message.guild_id,
+            &message.mentions,
+            message.mention_everyone,
+            &message.mention_roles,
+            &value,
+        );
         lines.extend(wrap_markdown_message_lines_with_loaded_custom_emoji_urls(
             state,
             rendered,
@@ -1741,7 +1751,8 @@ fn format_reply_line(
 ) -> MessageContentLine {
     let content = display_text_with_stickers(reply.content.as_deref(), &reply.sticker_names)
         .unwrap_or_else(|| "<empty message>".to_owned());
-    let content = state.render_user_mentions_with_highlights(guild_id, &reply.mentions, &content);
+    let content =
+        state.render_user_mentions_with_highlights(guild_id, &reply.mentions, false, &[], &content);
     let content = prepend_rendered_text(format!("╭─ {} : ", reply.author), content);
     rendered_text_line(
         truncate_rendered_text(content, width),
@@ -2144,6 +2155,8 @@ fn format_forwarded_snapshot(
         let content = state.render_user_mentions_with_highlights(
             state.forwarded_snapshot_mention_guild_id(snapshot),
             &snapshot.mentions,
+            false,
+            &[],
             &content,
         );
         lines.extend(

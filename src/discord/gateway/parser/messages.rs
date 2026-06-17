@@ -44,6 +44,12 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
     let interaction = parse_message_interaction_info(data);
     let sticker_names = parse_sticker_names(data.get("sticker_items"));
     let mentions = parse_mentions(data.get("mentions"));
+    let mention_everyone = data
+        .get("mention_everyone")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let mention_roles = parse_mention_roles(data.get("mention_roles"));
+    let flags = data.get("flags").and_then(Value::as_u64).unwrap_or(0);
     let attachments = parse_attachments(data.get("attachments"));
     let embeds = parse_embeds(data.get("embeds"));
     let reply = data.get("referenced_message").and_then(parse_reply_info);
@@ -82,6 +88,9 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         content,
         sticker_names,
         mentions,
+        mention_everyone,
+        mention_roles,
+        flags,
         attachments,
         embeds,
         forwarded_snapshots,
@@ -311,6 +320,13 @@ pub(super) fn parse_mentions(value: Option<&Value>) -> Vec<MentionInfo> {
     value
         .and_then(Value::as_array)
         .map(|mentions| mentions.iter().filter_map(parse_mention_info).collect())
+        .unwrap_or_default()
+}
+
+fn parse_mention_roles(value: Option<&Value>) -> Vec<Id<RoleMarker>> {
+    value
+        .and_then(Value::as_array)
+        .map(|roles| roles.iter().filter_map(parse_id::<RoleMarker>).collect())
         .unwrap_or_default()
 }
 
@@ -638,6 +654,9 @@ pub(super) fn parse_message_create(data: &Value) -> Option<AppEvent> {
         content: message.content,
         sticker_names: message.sticker_names,
         mentions: message.mentions,
+        mention_everyone: message.mention_everyone,
+        mention_roles: message.mention_roles,
+        flags: message.flags,
         attachments: message.attachments,
         embeds: message.embeds,
         forwarded_snapshots: message.forwarded_snapshots,
@@ -668,6 +687,11 @@ pub(super) fn parse_message_update(data: &Value) -> Option<AppEvent> {
     let mentions = data
         .get("mentions")
         .map(|value| parse_mentions(Some(value)));
+    let mention_everyone = data.get("mention_everyone").and_then(Value::as_bool);
+    let mention_roles = data
+        .get("mention_roles")
+        .map(|value| parse_mention_roles(Some(value)));
+    let flags = data.get("flags").and_then(Value::as_u64);
     let edited_timestamp = data
         .get("edited_timestamp")
         .and_then(Value::as_str)
@@ -680,6 +704,9 @@ pub(super) fn parse_message_update(data: &Value) -> Option<AppEvent> {
         content,
         sticker_names,
         mentions,
+        mention_everyone,
+        mention_roles,
+        flags,
         attachments,
         embeds,
         edited_timestamp,

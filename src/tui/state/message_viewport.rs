@@ -2,7 +2,7 @@ mod events;
 
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, MessageMarker},
+    marker::{ChannelMarker, MessageMarker, RoleMarker},
 };
 use crate::discord::{MessageState, is_thread_kind};
 use crate::tui::format;
@@ -1268,9 +1268,13 @@ impl DashboardState {
         &self,
         guild_id: Option<Id<GuildMarker>>,
         mentions: &[MentionInfo],
+        mention_everyone: bool,
+        mention_roles: &[Id<RoleMarker>],
         value: &str,
     ) -> RenderedText {
         let current_user_id = self.discord.current_user_id.map(|id| id.get());
+        let current_user_role_ids = guild_id
+            .and_then(|guild_id| self.discord.cache.current_user_role_ids_for_guild(guild_id));
         let mut rendered = render_user_mentions_with_highlights(
             value,
             |user_id| self.resolve_mention_display_name(guild_id, mentions, user_id),
@@ -1284,22 +1288,29 @@ impl DashboardState {
                         Some(TextHighlightKind::OtherMention)
                     }
                 }
-                // Discord notifies role members on a role mention, but
-                // computing the membership check here would require the
-                // current user's role list. For the highlight pass we treat
-                // every role mention as informational. The message-level
-                // mention notification still drives self-targeted styling
-                // through the literal `@everyone`/`@here` pass below when
-                // those are used.
-                MentionTarget::Role(_) => Some(TextHighlightKind::OtherMention),
+                MentionTarget::Role(role_id) => {
+                    let role_id = Id::new(role_id);
+                    if mention_roles.contains(&role_id)
+                        && current_user_role_ids.is_some_and(|role_ids| role_ids.contains(&role_id))
+                    {
+                        Some(TextHighlightKind::SelfMention)
+                    } else {
+                        Some(TextHighlightKind::OtherMention)
+                    }
+                }
                 // Channel mentions never notify, but we still highlight them
                 // like role mentions so `#channel-name` stays distinct.
                 MentionTarget::Channel(_) => Some(TextHighlightKind::OtherMention),
             },
         );
         if current_user_id.is_some() {
-            add_literal_mention_highlights(&mut rendered, "@everyone");
-            add_literal_mention_highlights(&mut rendered, "@here");
+            let everyone_kind = if mention_everyone {
+                TextHighlightKind::SelfMention
+            } else {
+                TextHighlightKind::OtherMention
+            };
+            add_literal_mention_highlights(&mut rendered, "@everyone", everyone_kind);
+            add_literal_mention_highlights(&mut rendered, "@here", everyone_kind);
         }
         normalize_text_highlights(&mut rendered.highlights);
         format::replace_custom_emoji_markup_in_rendered_with_images(
