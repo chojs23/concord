@@ -1,5 +1,5 @@
 # .github/labeler.yml
 enhancement:
-  - '/^feat/i'
+  - '/^feat:/i'
 bug:
-  - '/^bug/i'
+  - '/^bug:/i'
