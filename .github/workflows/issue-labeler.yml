@@ -16,6 +16,5 @@ jobs:
         with:
           configuration-path: .github/labeler.yml
           enable-versioned-regex: 0
-          sync-labels: 1
           include-title: 1
           repo-token: ${{ secrets.GITHUB_TOKEN }}
