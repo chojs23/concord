@@ -15,6 +15,7 @@ use crate::discord::{
 };
 
 pub(super) const PERM_ADD_REACTIONS: u64 = 0x0000_0000_0000_0040;
+pub(super) const PERM_MANAGE_CHANNELS: u64 = 0x0000_0000_0000_0010;
 pub(super) const PERM_VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
 pub(super) const PERM_SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
 pub(super) const PERM_SEND_TTS_MESSAGES: u64 = 0x0000_0000_0000_1000;

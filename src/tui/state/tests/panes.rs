@@ -188,15 +188,24 @@ fn half_page_scrolls_all_list_panes() {
 
 #[test]
 fn channel_tree_groups_category_children() {
-    let state = state_with_channel_tree();
+    let mut state = state_with_channel_tree();
+    state.push_event(AppEvent::ChannelUpsert(category_channel_info(
+        Id::new(1),
+        Id::new(13),
+        "Empty Category",
+        2,
+    )));
+
     let entries = state.channel_pane_entries();
 
+    assert_eq!(entries.len(), 3);
     assert!(matches!(
         &entries[0],
         ChannelPaneEntry::CategoryHeader {
+            state,
             collapsed: false,
             ..
-        }
+        } if state.id == Id::new(10)
     ));
     assert!(matches!(
         &entries[1],
@@ -211,6 +220,47 @@ fn channel_tree_groups_category_children() {
             branch: ChannelBranch::Last,
             ..
         }
+    ));
+}
+
+#[test]
+fn channel_tree_keeps_empty_categories_for_channel_managers() {
+    let current_user_id = Id::new(99);
+    let manager_role_id = Id::new(50);
+    let mut state = state_with_channel_tree();
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(current_user_id),
+    });
+    state.push_event(AppEvent::GuildRoleUpsert {
+        guild_id: Id::new(1),
+        role: role_info(
+            manager_role_id,
+            "Manager",
+            PERM_VIEW_CHANNEL | PERM_MANAGE_CHANNELS,
+        ),
+    });
+    state.push_event(AppEvent::GuildMemberUpsert {
+        guild_id: Id::new(1),
+        member: member_with_roles(current_user_id, "me", vec![manager_role_id]),
+    });
+    state.push_event(AppEvent::ChannelUpsert(category_channel_info(
+        Id::new(1),
+        Id::new(13),
+        "Empty Category",
+        2,
+    )));
+
+    let entries = state.channel_pane_entries();
+
+    assert_eq!(entries.len(), 4);
+    assert!(matches!(
+        &entries[3],
+        ChannelPaneEntry::CategoryHeader {
+            state,
+            collapsed: false,
+            ..
+        } if state.id == Id::new(13)
     ));
 }
 

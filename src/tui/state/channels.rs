@@ -462,6 +462,16 @@ impl DashboardState {
                 continue;
             }
 
+            let mut children = channel_tree::sorted_category_children(&channels, root.id);
+            if children.is_empty()
+                && !self
+                    .discord
+                    .cache
+                    .can_manage_channel_structure_in_channel(root)
+            {
+                continue;
+            }
+
             let collapsed = self
                 .navigation
                 .collapsed_channel_categories
@@ -471,7 +481,6 @@ impl DashboardState {
                 collapsed,
             });
 
-            let mut children = channel_tree::sorted_category_children(&channels, root.id);
             if collapsed {
                 children.retain(|child| self.collapsed_category_child_visible(child));
             }

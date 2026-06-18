@@ -3,6 +3,8 @@ use super::*;
 // Keep these literals separate from the implementation constants so the tests
 // verify Discord's documented bit values instead of reusing the code under test.
 const VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
+const MANAGE_CHANNELS: u64 = 0x0000_0000_0000_0010;
+const MANAGE_GUILD: u64 = 0x0000_0000_0000_0020;
 const SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
 const SEND_TTS_MESSAGES: u64 = 0x0000_0000_0000_1000;
 const MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
@@ -120,6 +122,52 @@ fn administrator_role_bypasses_channel_overwrites() {
     );
     let ch = state.channel(channel).expect("channel");
     assert!(state.can_view_channel(ch));
+}
+
+#[test]
+fn manage_channels_or_guild_can_manage_channel_structure() {
+    let me = Id::new(10);
+    let owner = Id::new(11);
+    let guild = Id::new(1);
+    let channel = Id::new(2);
+    let manager_role = Id::new(50);
+
+    for permissions in [MANAGE_CHANNELS, MANAGE_GUILD] {
+        let state = guild_with_permissions(
+            owner,
+            me,
+            guild,
+            channel,
+            vec![manager_role],
+            vec![
+                role_info(Id::new(guild.get()), "@everyone", VIEW_CHANNEL),
+                role_info(manager_role, "Manager", permissions),
+            ],
+            Vec::new(),
+        );
+        let ch = state.channel(channel).expect("channel");
+        assert!(state.can_manage_channel_structure_in_channel(ch));
+    }
+}
+
+#[test]
+fn plain_member_cannot_manage_channel_structure() {
+    let me = Id::new(10);
+    let owner = Id::new(11);
+    let guild = Id::new(1);
+    let channel = Id::new(2);
+    let state = guild_with_permissions(
+        owner,
+        me,
+        guild,
+        channel,
+        vec![],
+        vec![role_info(Id::new(guild.get()), "@everyone", VIEW_CHANNEL)],
+        Vec::new(),
+    );
+    let ch = state.channel(channel).expect("channel");
+
+    assert!(!state.can_manage_channel_structure_in_channel(ch));
 }
 
 #[test]

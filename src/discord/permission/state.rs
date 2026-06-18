@@ -10,6 +10,8 @@ use crate::discord::state::{ChannelState, DiscordState};
 /// Discord's permission bits, kept inline so the state crate
 /// does not need to depend on twilight's bitflags.
 const PERMISSION_VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
+const PERMISSION_MANAGE_CHANNELS: u64 = 0x0000_0000_0000_0010;
+const PERMISSION_MANAGE_GUILD: u64 = 0x0000_0000_0000_0020;
 const PERMISSION_SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
 const PERMISSION_SEND_TTS_MESSAGES: u64 = 0x0000_0000_0000_1000;
 const PERMISSION_MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
@@ -120,6 +122,22 @@ impl DiscordState {
         let permissions = self.effective_permissions_for_channel(channel);
         permission_set(permissions, PERMISSION_VIEW_CHANNEL)
             && permission_set(permissions, PERMISSION_CONNECT)
+    }
+
+    /// Whether the user can manage guild/channel structure around `channel`.
+    /// Empty categories are only useful to users who can configure the server
+    /// or channel tree, so this check is intentionally pessimistic while
+    /// permission state is still hydrating.
+    pub fn can_manage_channel_structure_in_channel(&self, channel: &ChannelState) -> bool {
+        if channel.guild_id.is_none() {
+            return false;
+        }
+        let permissions = self.effective_permissions_for_channel(channel);
+        if permissions == PERMISSIONS_UNKNOWN {
+            return false;
+        }
+        permission_set(permissions, PERMISSION_MANAGE_CHANNELS)
+            || permission_set(permissions, PERMISSION_MANAGE_GUILD)
     }
 
     /// Compute the effective Discord permission bitfield for the
