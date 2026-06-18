@@ -18,6 +18,10 @@ impl DiscordClient {
         self.rest.prime_connection_pool().await
     }
 
+    pub async fn validate_token_authentication(&self) -> Result<()> {
+        self.rest.validate_token_authentication().await
+    }
+
     pub async fn send_message(
         &self,
         channel_id: Id<ChannelMarker>,

@@ -15,6 +15,8 @@ pub enum AppError {
         #[source]
         source: reqwest::header::InvalidHeaderValue,
     },
+    #[error("Discord rejected the token")]
+    DiscordTokenRejected,
     #[error("message content must not be empty")]
     EmptyMessageContent,
     #[error("message content exceeds Discord's 2000 character limit: {len}")]

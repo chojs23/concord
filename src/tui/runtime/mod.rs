@@ -40,13 +40,19 @@ type ClipboardPasteResult = std::result::Result<
     tokio::task::JoinError,
 >;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DashboardExit {
+    Quit,
+    SignOut,
+}
+
 pub(super) async fn run_dashboard(
     terminal: &mut ratatui::DefaultTerminal,
     effects: &mut mpsc::Receiver<SequencedAppEvent>,
     snapshots: &mut watch::Receiver<SnapshotRevision>,
     commands: mpsc::Sender<AppCommand>,
     client: DiscordClient,
-) -> Result<()> {
+) -> Result<DashboardExit> {
     let options = match config::load_options() {
         Ok(options) => options,
         Err(error) => {
@@ -410,7 +416,11 @@ pub(super) async fn run_dashboard(
             .await;
     }
 
-    Ok(())
+    if state.should_sign_out() {
+        Ok(DashboardExit::SignOut)
+    } else {
+        Ok(DashboardExit::Quit)
+    }
 }
 
 fn schedule_background_redraw(

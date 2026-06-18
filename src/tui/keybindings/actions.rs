@@ -274,6 +274,7 @@ pub(in crate::tui) enum ProfilePopupAction {
     StartOrCommitEdit,
     PasteClipboard,
     Save,
+    SignOut,
     DeleteChar,
     DeletePreviousWord,
     MoveCursorLeft,

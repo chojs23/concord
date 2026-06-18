@@ -932,6 +932,7 @@ impl DiscordState {
                 self.upsert_notification_settings(settings);
             }
             AppEvent::GatewayError { .. }
+            | AppEvent::SignedOut
             | AppEvent::MediaPlaybackWindowReady { .. }
             | AppEvent::ApplicationCommandsLoaded { .. }
             | AppEvent::AttachmentDownloadStarted { .. }

@@ -23,6 +23,8 @@ use crate::{
     discord::{AppCommand, DiscordClient, SequencedAppEvent, SnapshotRevision},
 };
 
+pub use runtime::DashboardExit;
+
 pub fn validate_keymap_options(keymap_options: &KeymapOptions) -> Result<()> {
     keybindings::KeyBindings::try_from_options(keymap_options)
         .map(|_| ())
@@ -38,7 +40,7 @@ pub async fn run(
     mut snapshots: watch::Receiver<SnapshotRevision>,
     commands: mpsc::Sender<AppCommand>,
     client: DiscordClient,
-) -> Result<()> {
+) -> Result<DashboardExit> {
     let mut terminal = ratatui::init();
     let _restore_guard = match terminal::TerminalRestoreGuard::new() {
         Ok(guard) => guard,

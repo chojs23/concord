@@ -430,9 +430,14 @@ fn user_profile_settings_popup_text(
     if let Some(status) = status {
         push_wrapped_styled_popup_text(&mut lines, &status, width, Style::default().fg(ACCENT));
     }
+    lines.push(Line::from(Span::raw(String::new())));
+    lines.push(Line::from(Span::styled(
+        truncate_display_width("[o] Sign out", width),
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+    )));
     push_wrapped_styled_popup_text(
         &mut lines,
-        "Esc close/cancel · Enter select · s Save",
+        "Esc close/cancel · Enter select · s Save · o Sign out",
         width,
         Style::default().fg(DIM),
     );

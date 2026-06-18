@@ -170,6 +170,22 @@ fn profile_status_picker_routes_selection_keys_and_enter() {
 }
 
 #[test]
+fn o_key_signs_out_from_current_user_profile_popup() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.open_current_user_profile_popup();
+
+    assert_eq!(
+        handle_key(&mut state, char_key('o')),
+        Some(AppCommand::SignOut)
+    );
+    assert_eq!(state.user_profile_settings_status(), Some("Signing out..."));
+}
+
+#[test]
 fn profile_activity_edit_enter_dispatches_presence_update() {
     let mut state = DashboardState::new();
     let user_id = Id::new(10);

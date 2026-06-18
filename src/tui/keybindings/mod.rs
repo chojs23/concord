@@ -2493,6 +2493,13 @@ mod tests {
         );
         assert_eq!(
             key_bindings.profile_popup_action(
+                KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+                false,
+            ),
+            Some(ProfilePopupAction::SignOut)
+        );
+        assert_eq!(
+            key_bindings.profile_popup_action(
                 KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
                 false,
             ),

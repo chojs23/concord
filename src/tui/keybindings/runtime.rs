@@ -313,6 +313,7 @@ impl KeyBindings {
                 Some(ProfilePopupAction::SwitchTab(ProfilePopupTabAction::Guild))
             }
             KeyCode::Char('s') if is_shortcut_key(key) => Some(ProfilePopupAction::Save),
+            KeyCode::Char('o') if is_shortcut_key(key) => Some(ProfilePopupAction::SignOut),
             _ => self
                 .selection_action(key, SelectionKeySet::Navigation)
                 .map(|action| match action {

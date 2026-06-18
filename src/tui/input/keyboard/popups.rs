@@ -382,6 +382,7 @@ pub(super) fn handle_user_profile_popup_key(
             }
         }
         Some(ProfilePopupAction::Save) => return state.save_user_profile_settings_command(),
+        Some(ProfilePopupAction::SignOut) => return state.sign_out_command(),
         Some(ProfilePopupAction::DeleteChar) => state.pop_user_profile_edit_char(),
         Some(ProfilePopupAction::DeletePreviousWord) => {
             state.delete_previous_user_profile_edit_word()

@@ -640,6 +640,19 @@ impl DashboardState {
         Some(AppCommand::UpdateUserProfile { update })
     }
 
+    pub fn sign_out_command(&mut self) -> Option<AppCommand> {
+        if !self.is_current_user_profile_popup() {
+            return None;
+        }
+        if let Some(popup) = self.popups.user_profile_popup_mut() {
+            popup.settings.editing = None;
+            popup.settings.edit_input.clear();
+            popup.settings.status_picker = None;
+            popup.settings.status = Some("Signing out...".to_owned());
+        }
+        Some(AppCommand::SignOut)
+    }
+
     pub(in crate::tui) fn record_user_profile_update_succeeded(
         &mut self,
         user_id: Id<UserMarker>,
