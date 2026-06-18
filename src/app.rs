@@ -8,6 +8,7 @@ mod media_commands;
 mod message_commands;
 mod notification_commands;
 mod read_state_commands;
+mod session_commands;
 mod shutdown;
 mod user_commands;
 mod voice_commands;
@@ -31,55 +32,60 @@ impl App {
     }
 
     pub async fn run(self) -> Result<()> {
-        let resolved_token = resolve_token().await?;
-        let token = resolved_token.token;
-        let token_warnings = resolved_token.warnings;
-        let client = DiscordClient::new(token)?;
-        let effects = client.take_effects();
-        let snapshots = client.subscribe_snapshots();
-        let (commands_tx, commands_rx) = mpsc::channel(64);
-        let gateway_task = client.start_gateway();
-        let command_task = start_command_loop(client.clone(), commands_rx);
+        loop {
+            let resolved_token = resolve_token().await?;
+            let token = resolved_token.token;
+            let token_warnings = resolved_token.warnings;
+            let client = DiscordClient::new(token)?;
+            let effects = client.take_effects();
+            let snapshots = client.subscribe_snapshots();
+            let (commands_tx, commands_rx) = mpsc::channel(64);
+            let gateway_task = client.start_gateway();
+            let command_task = start_command_loop(client.clone(), commands_rx);
 
-        // Warm the REST pool before the first user-triggered request pays the
-        // TCP, TLS, and HTTP/2 setup cost.
-        let prime_client = client.clone();
-        tokio::spawn(async move {
-            if let Err(error) = prime_client.prime_rest_pool().await {
-                logging::error("app", format!("rest pool warmup failed: {error}"));
-            }
-        });
+            // Warm the REST pool before the first user-triggered request pays the
+            // TCP, TLS, and HTTP/2 setup cost.
+            let prime_client = client.clone();
+            tokio::spawn(async move {
+                if let Err(error) = prime_client.prime_rest_pool().await {
+                    logging::error("app", format!("rest pool warmup failed: {error}"));
+                }
+            });
 
-        let version_client = client.clone();
-        tokio::spawn(async move {
-            match version_check::check_latest_version().await {
-                Ok(Some(latest_version)) => {
-                    version_client
-                        .publish_event(AppEvent::UpdateAvailable { latest_version })
+            let version_client = client.clone();
+            tokio::spawn(async move {
+                match version_check::check_latest_version().await {
+                    Ok(Some(latest_version)) => {
+                        version_client
+                            .publish_event(AppEvent::UpdateAvailable { latest_version })
+                            .await;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        logging::debug("version", format!("latest version check failed: {error}"))
+                    }
+                }
+            });
+
+            let result = async {
+                for warning in token_warnings {
+                    logging::error("app", &warning);
+                    client
+                        .publish_event(AppEvent::GatewayError { message: warning })
                         .await;
                 }
-                Ok(None) => {}
-                Err(error) => {
-                    logging::debug("version", format!("latest version check failed: {error}"))
-                }
-            }
-        });
 
-        let result = async {
-            for warning in token_warnings {
-                logging::error("app", &warning);
-                client
-                    .publish_event(AppEvent::GatewayError { message: warning })
-                    .await;
+                tui::run(effects, snapshots, commands_tx, client.clone()).await
             }
+            .await;
 
-            tui::run(effects, snapshots, commands_tx, client.clone()).await
+            command_task.abort();
+            leave_current_voice_channel_on_shutdown(&client);
+            shutdown_gateway(&client, gateway_task).await;
+            match result? {
+                tui::DashboardExit::Quit => return Ok(()),
+                tui::DashboardExit::SignOut => {}
+            }
         }
-        .await;
-
-        command_task.abort();
-        leave_current_voice_channel_on_shutdown(&client);
-        shutdown_gateway(&client, gateway_task).await;
-        result
     }
 }

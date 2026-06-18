@@ -50,6 +50,7 @@ pub(super) struct RuntimeUiState {
     pub(super) next_attachment_download_id: u64,
     pub(super) next_media_playback_request_id: u64,
     pub(super) should_quit: bool,
+    pub(super) should_sign_out: bool,
     /// Inverted so the `Default` of `false` means "focused"; terminals that
     /// never report focus events keep the current notification behavior.
     pub(super) terminal_focus_lost: bool,
@@ -60,8 +61,16 @@ impl DashboardState {
         self.runtime.should_quit = true;
     }
 
+    pub(in crate::tui) fn sign_out(&mut self) {
+        self.runtime.should_sign_out = true;
+    }
+
     pub fn should_quit(&self) -> bool {
-        self.runtime.should_quit
+        self.runtime.should_quit || self.runtime.should_sign_out
+    }
+
+    pub(in crate::tui) fn should_sign_out(&self) -> bool {
+        self.runtime.should_sign_out
     }
 
     pub fn set_terminal_focused(&mut self, focused: bool) {

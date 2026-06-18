@@ -224,6 +224,35 @@ fn profile_settings_save_dispatches_dirty_global_fields() {
 }
 
 #[test]
+fn profile_settings_sign_out_dispatches_command_and_status() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.open_current_user_profile_popup();
+
+    let _ = state.start_or_commit_user_profile_edit();
+    state.push_user_profile_edit_char('x');
+
+    assert_eq!(state.sign_out_command(), Some(AppCommand::SignOut));
+    assert!(!state.is_user_profile_popup_editing());
+    assert_eq!(state.user_profile_settings_status(), Some("Signing out..."));
+}
+
+#[test]
+fn profile_settings_sign_out_ignores_other_profiles() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.open_user_profile_popup(Id::new(20), None);
+
+    assert_eq!(state.sign_out_command(), None);
+}
+
+#[test]
 fn profile_settings_text_editing_uses_cursor() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {

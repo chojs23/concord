@@ -62,6 +62,7 @@ pub enum AppEvent {
         user: String,
         user_id: Option<Id<UserMarker>>,
     },
+    SignedOut,
     CurrentUserCapabilities {
         has_nitro: bool,
     },
@@ -435,6 +436,7 @@ macro_rules! define_app_event_kinds {
 
 define_app_event_kinds! {
     Ready: AppEvent::Ready { .. },
+    SignedOut: AppEvent::SignedOut,
     CurrentUserCapabilities: AppEvent::CurrentUserCapabilities { .. },
     UserIdentityUpdate: AppEvent::UserIdentityUpdate { .. },
     ApplicationCommandsLoaded: AppEvent::ApplicationCommandsLoaded { .. },
@@ -748,6 +750,7 @@ impl AppEventKind {
             }
 
             AppEventKind::GatewayError
+            | AppEventKind::SignedOut
             | AppEventKind::MediaPlaybackWindowReady
             | AppEventKind::CurrentUserCapabilities
             | AppEventKind::ApplicationCommandsLoaded

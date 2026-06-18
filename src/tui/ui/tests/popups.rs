@@ -399,6 +399,37 @@ fn current_user_profile_settings_render_contract() {
 }
 
 #[test]
+fn current_user_profile_settings_show_sign_out_action() {
+    let profile = user_profile_info(10, "neo");
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.push_event(AppEvent::UserProfileLoaded {
+        guild_id: None,
+        profile: profile.clone(),
+    });
+    state.open_current_user_profile_popup();
+
+    let lines = user_profile_popup_lines(&profile, &state, 60, PresenceStatus::Online);
+    let texts = line_texts_from_ratatui(&lines);
+    let sign_out_index = texts
+        .iter()
+        .position(|line| line == "[o] Sign out")
+        .expect("sign-out action should render");
+
+    assert_eq!(lines[sign_out_index].spans[0].style.fg, Some(Color::Red));
+    assert!(
+        lines[sign_out_index].spans[0]
+            .style
+            .add_modifier
+            .contains(Modifier::BOLD)
+    );
+    assert!(texts.iter().any(|line| line.contains("o Sign out")));
+}
+
+#[test]
 fn user_profile_popup_does_not_show_dm_hint_without_dm_context() {
     for (profile_name, current_user_id) in [("neo", 10), ("alice", 99)] {
         let profile = user_profile_info(10, profile_name);

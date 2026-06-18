@@ -52,6 +52,27 @@ pub fn save_token(token: &str, store: CredentialStoreMode) -> Result<TokenSaveLo
     }
 }
 
+pub fn delete_token(store: CredentialStoreMode) -> Result<()> {
+    let account_id = selected_account_id();
+
+    match store {
+        CredentialStoreMode::Auto => {
+            let keychain_result = delete_keychain_token(&account_id)
+                .map_err(|source| AppError::CredentialKeychain { source });
+            let fallback_result = delete_fallback_token(&account_id);
+
+            fallback_result?;
+            keychain_result
+        }
+        CredentialStoreMode::Keychain => {
+            delete_keychain_token(&account_id)
+                .map_err(|source| AppError::CredentialKeychain { source })?;
+            Ok(())
+        }
+        CredentialStoreMode::Plain => delete_fallback_token(&account_id),
+    }
+}
+
 fn credential_path() -> Result<PathBuf> {
     paths::credential_file().ok_or_else(|| {
         std::io::Error::new(
@@ -121,6 +142,13 @@ impl CredentialFile {
             token,
         });
     }
+
+    fn remove_token(&mut self, account_id: &str) -> bool {
+        let before = self.accounts.len();
+        self.accounts
+            .retain(|account| normalized_account_id(&account.id).as_deref() != Some(account_id));
+        self.accounts.len() != before
+    }
 }
 
 fn selected_account_id() -> String {
@@ -144,6 +172,13 @@ fn save_keychain_token(account_id: &str, token: &str) -> std::result::Result<(),
     keychain_entry(account_id)?.set_password(token)
 }
 
+fn delete_keychain_token(account_id: &str) -> std::result::Result<(), KeyringError> {
+    match keychain_entry(account_id)?.delete_credential() {
+        Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
+        Err(source) => Err(source),
+    }
+}
+
 fn keychain_entry(account_id: &str) -> std::result::Result<Entry, KeyringError> {
     Entry::new(KEYCHAIN_SERVICE, &keychain_account(account_id))
 }
@@ -160,6 +195,28 @@ fn save_fallback_token(account_id: &str, token: &str) -> Result<()> {
     let mut credentials = read_credential_file()?.unwrap_or_default();
     credentials.upsert_token(account_id, token.to_owned());
     write_credential_file(&credentials)
+}
+
+fn delete_fallback_token(account_id: &str) -> Result<()> {
+    let Some(mut credentials) = read_credential_file()? else {
+        return Ok(());
+    };
+    if !credentials.remove_token(account_id) {
+        return Ok(());
+    }
+    if credentials.accounts.is_empty() {
+        return remove_credential_file();
+    }
+    write_credential_file(&credentials)
+}
+
+fn remove_credential_file() -> Result<()> {
+    let path = credential_path()?;
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn read_credential_file() -> Result<Option<CredentialFile>> {
@@ -271,6 +328,54 @@ mod tests {
         assert_eq!(
             credentials.token_for_account("personal").as_deref(),
             Some("updated-token")
+        );
+    }
+
+    #[test]
+    fn credential_file_removes_selected_account_token() {
+        let mut credentials = CredentialFile {
+            selected_account: "personal".to_owned(),
+            accounts: vec![
+                StoredAccount {
+                    id: "default".to_owned(),
+                    label: None,
+                    token: "default-token".to_owned(),
+                },
+                StoredAccount {
+                    id: "personal".to_owned(),
+                    label: Some("Personal".to_owned()),
+                    token: "personal-token".to_owned(),
+                },
+            ],
+        };
+
+        assert!(credentials.remove_token("personal"));
+
+        assert_eq!(credentials.selected_account_id(), "personal");
+        assert_eq!(credentials.token_for_account("personal"), None);
+        assert_eq!(
+            credentials.token_for_account("default").as_deref(),
+            Some("default-token")
+        );
+    }
+
+    #[test]
+    fn credential_file_keeps_accounts_when_removing_missing_token() {
+        let mut credentials = CredentialFile {
+            selected_account: "personal".to_owned(),
+            accounts: vec![StoredAccount {
+                id: "personal".to_owned(),
+                label: Some("Personal".to_owned()),
+                token: "personal-token".to_owned(),
+            }],
+        };
+
+        assert!(!credentials.remove_token("work"));
+
+        assert_eq!(credentials.selected_account_id(), "personal");
+        assert_eq!(
+            credentials.token_for_account("personal").as_deref(),
+            Some("personal-token")
         );
     }
 }

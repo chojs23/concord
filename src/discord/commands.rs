@@ -404,6 +404,7 @@ impl MessageHistoryAfterMode {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppCommand {
+    SignOut,
     LoadMessageHistory {
         channel_id: Id<ChannelMarker>,
         before: Option<Id<MessageMarker>>,

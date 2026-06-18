@@ -74,6 +74,7 @@ pub(in crate::tui) fn effect_forces_redraw(event: &AppEvent) -> bool {
             | AppEvent::MediaPlaybackWindowReady { .. }
             | AppEvent::GatewayResumed
             | AppEvent::GatewayReidentified
+            | AppEvent::SignedOut
             | AppEvent::GatewayClosed
     )
 }
@@ -143,6 +144,10 @@ fn record_media_event(event: &AppEvent, ctx: &mut EffectContext<'_>) {
 fn push_dashboard_effect(event: AppEvent, ctx: &mut EffectContext<'_>) {
     if matches!(event, AppEvent::GatewayClosed) {
         handle_gateway_closed(ctx.state);
+        return;
+    }
+    if matches!(event, AppEvent::SignedOut) {
+        ctx.state.sign_out();
         return;
     }
     if matches!(
@@ -522,6 +527,17 @@ mod tests {
                 }]
             );
         }
+    }
+
+    #[test]
+    fn signed_out_effect_marks_dashboard_for_sign_out() {
+        let mut state = DashboardState::new();
+
+        process_effect_in_default_context(&mut state, AppEvent::SignedOut);
+
+        assert!(state.should_quit());
+        assert!(state.should_sign_out());
+        assert!(effect_forces_redraw(&AppEvent::SignedOut));
     }
 
     fn push_guild_with_channel(

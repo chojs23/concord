@@ -126,22 +126,22 @@ Navigation and app actions:
 
 Message actions:
 
-| Action name             | Default config | Action                                          |
-| ----------------------- | -------------- | ----------------------------------------------- |
-| `CopyMessage`           | `"y"`          | Copy selected message content.                  |
-| `ReactMessage`          | `"r"`          | Add or remove a reaction.                       |
-| `ReplyMessage`          | `"R"`          | Start a reply.                                  |
-| `DeleteMessage`         | `"d"`          | Open delete confirmation.                       |
-| `EditMessage`           | `"e"`          | Start editing the selected message.             |
-| `OpenMessageUrl`        | `"o"`          | Open the selected message URL.                  |
+| Action name             | Default config | Action                                           |
+| ----------------------- | -------------- | ------------------------------------------------ |
+| `CopyMessage`           | `"y"`          | Copy selected message content.                   |
+| `ReactMessage`          | `"r"`          | Add or remove a reaction.                        |
+| `ReplyMessage`          | `"R"`          | Start a reply.                                   |
+| `DeleteMessage`         | `"d"`          | Open delete confirmation.                        |
+| `EditMessage`           | `"e"`          | Start editing the selected message.              |
+| `OpenMessageUrl`        | `"o"`          | Open the selected message URL.                   |
 | `PlayMedia`             | `"x"`          | Play selected video media in an external player. |
-| `ViewMessageAttachment` | `"v"`          | Open the selected message attachment viewer.    |
-| `GoToReferencedMessage` | none           | Go to the replied or forwarded message.         |
-| `ShowMessageProfile`    | none           | Open the selected message author's profile.     |
-| `PinMessage`            | none           | Open pin or unpin confirmation.                 |
-| `OpenThread`            | none           | Open the selected message's thread.             |
-| `ShowReactionUsers`     | none           | Show users who reacted to the selected message. |
-| `OpenPollVotePicker`    | none           | Choose poll votes for the selected message.     |
+| `ViewMessageAttachment` | `"v"`          | Open the selected message attachment viewer.     |
+| `GoToReferencedMessage` | none           | Go to the replied or forwarded message.          |
+| `ShowMessageProfile`    | none           | Open the selected message author's profile.      |
+| `PinMessage`            | none           | Open pin or unpin confirmation.                  |
+| `OpenThread`            | none           | Open the selected message's thread.              |
+| `ShowReactionUsers`     | none           | Show users who reacted to the selected message.  |
+| `OpenPollVotePicker`    | none           | Choose poll votes for the selected message.      |
 
 Pane, options, and voice actions:
 
@@ -161,6 +161,13 @@ Pane, options, and voice actions:
 | `VoiceDeafen`             | `"<leader>vd"`                     | Toggle voice deafen.                         |
 | `VoiceMute`               | `"<leader>vm"`                     | Toggle voice mute.                           |
 | `VoiceLeave`              | `"<leader>vl"`                     | Leave the current Concord voice channel.     |
+
+Profile popup shortcuts are fixed once `OpenCurrentUserProfile` opens your
+profile settings popup:
+
+| Shortcut | Action                              |
+| -------- | ----------------------------------- |
+| `o`      | Sign out, delete saved credentials. |
 
 ## Composer actions
 
@@ -262,22 +269,22 @@ ShowReactionUsers = "u"
 OpenPollVotePicker = "c"
 ```
 
-| Scoped action           | Default | Action                                          |
-| ----------------------- | ------- | ----------------------------------------------- |
-| `CopyMessage`           | `y`     | Copy selected message content.                  |
-| `ReactMessage`          | `r`     | Add or remove a reaction.                       |
-| `ReplyMessage`          | `R`     | Start a reply.                                  |
-| `DeleteMessage`         | `d`     | Open delete confirmation.                       |
-| `EditMessage`           | `e`     | Start editing the selected message.             |
-| `OpenMessageUrl`        | `o`     | Open the selected message URL.                  |
+| Scoped action           | Default | Action                                           |
+| ----------------------- | ------- | ------------------------------------------------ |
+| `CopyMessage`           | `y`     | Copy selected message content.                   |
+| `ReactMessage`          | `r`     | Add or remove a reaction.                        |
+| `ReplyMessage`          | `R`     | Start a reply.                                   |
+| `DeleteMessage`         | `d`     | Open delete confirmation.                        |
+| `EditMessage`           | `e`     | Start editing the selected message.              |
+| `OpenMessageUrl`        | `o`     | Open the selected message URL.                   |
 | `PlayMedia`             | `x`     | Play selected video media in an external player. |
-| `ViewMessageAttachment` | `v`     | Open the selected message attachment viewer.    |
-| `GoToReferencedMessage` | `g`     | Go to the replied or forwarded message.         |
-| `ShowMessageProfile`    | `p`     | Open the selected message author's profile.     |
-| `PinMessage`            | `P`     | Open pin or unpin confirmation.                 |
-| `OpenThread`            | `t`     | Open the selected message's thread.             |
-| `ShowReactionUsers`     | `u`     | Show users who reacted to the selected message. |
-| `OpenPollVotePicker`    | `c`     | Choose poll votes for the selected message.     |
+| `ViewMessageAttachment` | `v`     | Open the selected message attachment viewer.     |
+| `GoToReferencedMessage` | `g`     | Go to the replied or forwarded message.          |
+| `ShowMessageProfile`    | `p`     | Open the selected message author's profile.      |
+| `PinMessage`            | `P`     | Open pin or unpin confirmation.                  |
+| `OpenThread`            | `t`     | Open the selected message's thread.              |
+| `ShowReactionUsers`     | `u`     | Show users who reacted to the selected message.  |
+| `OpenPollVotePicker`    | `c`     | Choose poll votes for the selected message.      |
 
 Direct `[keymap]` message action bindings are separate. For example,
 `GoToReferencedMessage = "gd"` under `[keymap]` makes `gd` work directly from the

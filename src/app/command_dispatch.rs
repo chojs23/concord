@@ -6,7 +6,7 @@ use crate::{DiscordClient, discord::AppCommand};
 
 use super::{
     gateway_commands, history_commands, media_commands, message_commands, notification_commands,
-    read_state_commands, user_commands, voice_commands,
+    read_state_commands, session_commands, user_commands, voice_commands,
 };
 
 const MAX_CONCURRENT_ATTACHMENT_PREVIEWS: usize = 4;
@@ -116,6 +116,9 @@ impl CommandDispatcher {
             }
             command @ (AppCommand::SetGuildMuted { .. } | AppCommand::SetChannelMuted { .. }) => {
                 notification_commands::handle(self.client.clone(), command).await;
+            }
+            command @ AppCommand::SignOut => {
+                session_commands::handle(self.client.clone(), command).await;
             }
         }
     }
