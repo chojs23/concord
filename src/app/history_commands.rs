@@ -5,7 +5,7 @@ use crate::discord::ids::{
 
 use crate::{
     DiscordClient,
-    discord::{AppCommand, AppEvent, MessageHistoryLoadTarget},
+    discord::{AppCommand, AppEvent, MessageHistoryAfterMode, MessageHistoryLoadTarget},
     logging,
 };
 
@@ -94,10 +94,23 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                 }
             }
         }
-        AppCommand::LoadMessageHistoryAfter { channel_id, after } => {
-            if !client.begin_newer_message_history_request(channel_id, after) {
+        AppCommand::LoadMessageHistoryAfter {
+            channel_id,
+            after,
+            mode,
+        } => {
+            if !client.begin_message_history_after_request(channel_id, after, mode) {
                 return;
             }
+            let (operation, failure_prefix) = match mode {
+                MessageHistoryAfterMode::GapFill => {
+                    ("load_message_history_after", "load message history failed")
+                }
+                MessageHistoryAfterMode::CatchUp => (
+                    "catch_up_message_history_after",
+                    "catch up message history failed",
+                ),
+            };
             let endpoint = format_message_history_anchor_endpoint(
                 channel_id,
                 "after",
@@ -116,63 +129,17 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                             after,
                             messages,
                             has_more,
+                            mode,
                         })
                         .await;
                 }
                 Err(error) => {
-                    let message = format!("load message history failed: {error}");
+                    let message = format!("{failure_prefix}: {error}");
                     let detail = error.log_detail();
                     logging::error(
                         "history",
                         format!(
-                            "op=load_message_history_after channel_id={} after={} limit={} endpoint=\"{endpoint}\" {message}; detail={detail}",
-                            channel_id.get(),
-                            after.get(),
-                            MESSAGE_HISTORY_LIMIT,
-                        ),
-                    );
-                    publish_message_history_load_failed(
-                        &client,
-                        channel_id,
-                        MessageHistoryLoadTarget::Newer { after },
-                        message,
-                    )
-                    .await;
-                }
-            }
-        }
-        AppCommand::CatchUpMessageHistoryAfter { channel_id, after } => {
-            if !client.begin_catch_up_message_history_request(channel_id, after) {
-                return;
-            }
-            let endpoint = format_message_history_anchor_endpoint(
-                channel_id,
-                "after",
-                after,
-                MESSAGE_HISTORY_LIMIT,
-            );
-            match client
-                .load_message_history_after(channel_id, after, MESSAGE_HISTORY_LIMIT)
-                .await
-            {
-                Ok(messages) => {
-                    let has_more = messages.len() >= usize::from(MESSAGE_HISTORY_LIMIT);
-                    client
-                        .publish_event(AppEvent::MessageHistoryCatchUpLoaded {
-                            channel_id,
-                            after,
-                            messages,
-                            has_more,
-                        })
-                        .await;
-                }
-                Err(error) => {
-                    let message = format!("catch up message history failed: {error}");
-                    let detail = error.log_detail();
-                    logging::error(
-                        "history",
-                        format!(
-                            "op=catch_up_message_history_after channel_id={} after={} limit={} endpoint=\"{endpoint}\" {message}; detail={detail}",
+                            "op={operation} channel_id={} after={} limit={} endpoint=\"{endpoint}\" {message}; detail={detail}",
                             channel_id.get(),
                             after.get(),
                             MESSAGE_HISTORY_LIMIT,

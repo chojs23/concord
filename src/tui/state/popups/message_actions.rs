@@ -532,12 +532,12 @@ impl DashboardState {
             return;
         }
         self.popups.modal = Some(ModalPopup::MessageDeleteConfirmation(
-            popups::MessageDeleteConfirmationState {
-                channel_id: message.channel_id,
-                message_id: message.id,
-                author: message.author.clone(),
-                content: message.content.clone(),
-            },
+            popups::MessageConfirmationState::delete(
+                message.channel_id,
+                message.id,
+                message.author.clone(),
+                message.content.clone(),
+            ),
         ));
     }
 
@@ -568,13 +568,13 @@ impl DashboardState {
             return;
         }
         self.popups.modal = Some(ModalPopup::MessagePinConfirmation(
-            popups::MessagePinConfirmationState {
-                channel_id: message.channel_id,
-                message_id: message.id,
+            popups::MessageConfirmationState::pin(
+                message.channel_id,
+                message.id,
                 pinned,
-                author: message.author.clone(),
-                content: message.content.clone(),
-            },
+                message.author.clone(),
+                message.content.clone(),
+            ),
         ));
     }
 
@@ -586,17 +586,19 @@ impl DashboardState {
 
     pub fn confirm_message_pin(&mut self) -> Option<AppCommand> {
         let confirmation = self.popups.take_message_pin_confirmation()?;
+        let pinned = confirmation.pinned()?;
         Some(AppCommand::SetMessagePinned {
             channel_id: confirmation.channel_id,
             message_id: confirmation.message_id,
-            pinned: confirmation.pinned,
+            pinned,
         })
     }
 
     pub fn message_pin_confirmation_lines(&self) -> Option<(bool, String, Option<String>)> {
         let confirmation = self.popups.message_pin_confirmation()?;
+        let pinned = confirmation.pinned()?;
         Some((
-            confirmation.pinned,
+            pinned,
             confirmation.author.clone(),
             confirmation.content.clone(),
         ))

@@ -240,8 +240,7 @@ impl DashboardState {
             AppEvent::MessageSearchLoaded { .. } | AppEvent::MessageSearchLoadFailed { .. } => {
                 self.record_search_event(event);
             }
-            AppEvent::MessageHistoryLoaded { .. }
-            | AppEvent::MessageHistoryCatchUpLoaded { .. } => {}
+            AppEvent::MessageHistoryLoaded { .. } | AppEvent::MessageHistoryAfterLoaded { .. } => {}
             AppEvent::MessageHistoryRefreshed { channel_id, .. } => {
                 self.record_message_history_refreshed(*channel_id);
             }

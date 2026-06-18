@@ -10,7 +10,9 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
-use crate::discord::{AppEvent, ForumPostArchiveState, MessageHistoryLoadTarget};
+use crate::discord::{
+    AppEvent, ForumPostArchiveState, MessageHistoryAfterMode, MessageHistoryLoadTarget,
+};
 
 #[derive(Debug, Default)]
 pub(super) struct HistoryRequests {
@@ -149,22 +151,13 @@ impl RequestLifecycle {
         self.older_history.begin_request(channel_id, before)
     }
 
-    pub(crate) fn begin_newer_history_request(
+    pub(crate) fn begin_history_after_request(
         &mut self,
         channel_id: Id<ChannelMarker>,
         after: Id<MessageMarker>,
+        mode: MessageHistoryAfterMode,
     ) -> bool {
-        self.newer_history
-            .begin_request(channel_id, after, NewerHistoryRequestMode::GapFill)
-    }
-
-    pub(crate) fn begin_catch_up_history_request(
-        &mut self,
-        channel_id: Id<ChannelMarker>,
-        after: Id<MessageMarker>,
-    ) -> bool {
-        self.newer_history
-            .begin_request(channel_id, after, NewerHistoryRequestMode::CatchUp)
+        self.newer_history.begin_request(channel_id, after, mode)
     }
 
     pub(crate) fn next_forum_post_request(
@@ -636,12 +629,6 @@ impl NewerHistoryRequests {
                 after: response_after,
                 messages,
                 ..
-            }
-            | AppEvent::MessageHistoryCatchUpLoaded {
-                channel_id,
-                after: response_after,
-                messages,
-                ..
             } => self.record_loaded(*channel_id, *response_after, messages.is_empty()),
             AppEvent::MessageHistoryLoadFailed {
                 channel_id,
@@ -658,7 +645,7 @@ impl NewerHistoryRequests {
         &mut self,
         channel_id: Id<ChannelMarker>,
         after: Id<MessageMarker>,
-        mode: NewerHistoryRequestMode,
+        mode: MessageHistoryAfterMode,
     ) -> bool {
         match self.requests.get(&channel_id) {
             Some(NewerHistoryRequestState::Requested { .. }) => false,
@@ -988,23 +975,11 @@ enum OlderHistoryRequestState {
 enum NewerHistoryRequestState {
     Requested {
         after: Id<MessageMarker>,
-        mode: NewerHistoryRequestMode,
+        mode: MessageHistoryAfterMode,
     },
     Exhausted {
         after: Id<MessageMarker>,
     },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NewerHistoryRequestMode {
-    GapFill,
-    CatchUp,
-}
-
-impl NewerHistoryRequestMode {
-    fn exhausts_on_empty(self) -> bool {
-        matches!(self, Self::GapFill)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1253,8 +1228,8 @@ mod tests {
     use crate::discord::ids::Id;
 
     use crate::discord::{
-        AppEvent, ChannelInfo, ForumPostArchiveState, MemberInfo, MessageHistoryLoadTarget,
-        UserProfileInfo,
+        AppEvent, ChannelInfo, ForumPostArchiveState, MemberInfo, MessageHistoryAfterMode,
+        MessageHistoryLoadTarget, UserProfileInfo,
     };
 
     use super::{
@@ -1815,8 +1790,16 @@ mod tests {
         let channel_id = Id::new(10);
         let after = Id::new(30);
 
-        assert!(requests.begin_newer_history_request(channel_id, after));
-        assert!(!requests.begin_newer_history_request(channel_id, after));
+        assert!(requests.begin_history_after_request(
+            channel_id,
+            after,
+            MessageHistoryAfterMode::GapFill
+        ));
+        assert!(!requests.begin_history_after_request(
+            channel_id,
+            after,
+            MessageHistoryAfterMode::GapFill
+        ));
 
         requests.record_event(&AppEvent::MessageHistoryLoadFailed {
             channel_id,
@@ -1825,30 +1808,51 @@ mod tests {
             },
             message: "unrelated older failure".to_owned(),
         });
-        assert!(!requests.begin_newer_history_request(channel_id, after));
+        assert!(!requests.begin_history_after_request(
+            channel_id,
+            after,
+            MessageHistoryAfterMode::GapFill
+        ));
 
         requests.record_event(&AppEvent::MessageHistoryLoadFailed {
             channel_id,
             target: MessageHistoryLoadTarget::Newer { after: Id::new(31) },
             message: "stale newer failure".to_owned(),
         });
-        assert!(!requests.begin_newer_history_request(channel_id, after));
+        assert!(!requests.begin_history_after_request(
+            channel_id,
+            after,
+            MessageHistoryAfterMode::GapFill
+        ));
 
         requests.record_event(&AppEvent::MessageHistoryLoadFailed {
             channel_id,
             target: MessageHistoryLoadTarget::Newer { after },
             message: "temporary failure".to_owned(),
         });
-        assert!(requests.begin_newer_history_request(channel_id, after));
+        assert!(requests.begin_history_after_request(
+            channel_id,
+            after,
+            MessageHistoryAfterMode::GapFill
+        ));
 
         requests.record_event(&AppEvent::MessageHistoryAfterLoaded {
             channel_id,
             after,
             messages: Vec::new(),
             has_more: false,
+            mode: MessageHistoryAfterMode::GapFill,
         });
-        assert!(!requests.begin_newer_history_request(channel_id, after));
-        assert!(requests.begin_newer_history_request(channel_id, Id::new(31)));
+        assert!(!requests.begin_history_after_request(
+            channel_id,
+            after,
+            MessageHistoryAfterMode::GapFill
+        ));
+        assert!(requests.begin_history_after_request(
+            channel_id,
+            Id::new(31),
+            MessageHistoryAfterMode::GapFill
+        ));
     }
 
     #[test]
@@ -1857,17 +1861,30 @@ mod tests {
         let channel_id = Id::new(10);
         let after = Id::new(30);
 
-        assert!(requests.begin_catch_up_history_request(channel_id, after));
-        assert!(!requests.begin_catch_up_history_request(channel_id, after));
+        assert!(requests.begin_history_after_request(
+            channel_id,
+            after,
+            MessageHistoryAfterMode::CatchUp
+        ));
+        assert!(!requests.begin_history_after_request(
+            channel_id,
+            after,
+            MessageHistoryAfterMode::CatchUp
+        ));
 
-        requests.record_event(&AppEvent::MessageHistoryCatchUpLoaded {
+        requests.record_event(&AppEvent::MessageHistoryAfterLoaded {
             channel_id,
             after,
             messages: Vec::new(),
             has_more: false,
+            mode: MessageHistoryAfterMode::CatchUp,
         });
 
-        assert!(requests.begin_catch_up_history_request(channel_id, after));
+        assert!(requests.begin_history_after_request(
+            channel_id,
+            after,
+            MessageHistoryAfterMode::CatchUp
+        ));
     }
 
     #[test]

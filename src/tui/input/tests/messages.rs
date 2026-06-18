@@ -1,5 +1,5 @@
 use super::*;
-use crate::discord::{MediaPlaybackSource, MediaPlaybackTarget};
+use crate::discord::{MediaPlaybackSource, MediaPlaybackTarget, MessageHistoryAfterMode};
 
 #[test]
 fn enter_on_direct_message_kinds_subscribes_channel() {
@@ -577,6 +577,7 @@ fn goto_referenced_message_shortcut_merges_target_window_into_normal_messages() 
         Some(AppCommand::LoadMessageHistoryAfter {
             channel_id: Id::new(2),
             after: Id::new(6),
+            mode: MessageHistoryAfterMode::GapFill,
         })
     );
     assert_eq!(state.messages()[state.selected_message()].id, Id::new(6));
@@ -595,6 +596,7 @@ fn goto_referenced_message_shortcut_merges_target_window_into_normal_messages() 
             MessageInfo::test(Id::new(2), Id::new(9)),
         ],
         has_more: false,
+        mode: MessageHistoryAfterMode::GapFill,
     });
 
     state.push_event(message_create_event(MessageCreateFixture {

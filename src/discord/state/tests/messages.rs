@@ -1,5 +1,5 @@
 use super::*;
-use crate::discord::MessageInteractionInfo;
+use crate::discord::{MessageHistoryAfterMode, MessageInteractionInfo};
 
 #[test]
 fn bounds_messages_per_channel() {
@@ -1178,6 +1178,7 @@ fn newer_history_gap_is_recorded_shrunk_and_closed() {
             message_info(channel_id, 16, "gap 16"),
         ],
         has_more: true,
+        mode: MessageHistoryAfterMode::GapFill,
     });
     let messages = state.messages_for_channel(channel_id);
     assert_eq!(
@@ -1200,6 +1201,7 @@ fn newer_history_gap_is_recorded_shrunk_and_closed() {
             message_info(channel_id, 100, "upper 100"),
         ],
         has_more: false,
+        mode: MessageHistoryAfterMode::GapFill,
     });
 
     let messages = state.messages_for_channel(channel_id);

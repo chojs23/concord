@@ -4,7 +4,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, MessageMarker, RoleMarker},
 };
-use crate::discord::{MessageState, is_thread_kind};
+use crate::discord::{MessageHistoryAfterMode, MessageState, is_thread_kind};
 use crate::tui::format;
 use crate::tui::format::{
     MentionTarget, RenderedText, TextHighlightKind, render_user_mentions,
@@ -544,7 +544,11 @@ impl DashboardState {
     pub(in crate::tui) fn selected_message_history_catch_up_command(&self) -> Option<AppCommand> {
         let channel_id = self.selected_message_history_channel_id()?;
         let after = self.messages().iter().map(|message| message.id).max()?;
-        Some(AppCommand::CatchUpMessageHistoryAfter { channel_id, after })
+        Some(AppCommand::LoadMessageHistoryAfter {
+            channel_id,
+            after,
+            mode: MessageHistoryAfterMode::CatchUp,
+        })
     }
 
     pub fn next_newer_history_command_for_half_page_down(&self) -> Option<AppCommand> {
@@ -582,6 +586,7 @@ impl DashboardState {
                 return Some(AppCommand::LoadMessageHistoryAfter {
                     channel_id,
                     after: lower_id,
+                    mode: MessageHistoryAfterMode::GapFill,
                 });
             }
         }

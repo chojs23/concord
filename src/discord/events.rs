@@ -6,7 +6,7 @@ use crate::discord::ids::{
 use super::ApplicationCommandInfo;
 use super::commands::{
     AttachmentDownloadId, DownloadAttachmentSource, ForumPostArchiveState, MediaPlaybackRequestId,
-    MessageSearchPage, MessageSearchQuery, ReactionEmoji,
+    MessageHistoryAfterMode, MessageSearchPage, MessageSearchQuery, ReactionEmoji,
 };
 use super::{
     ActivityInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildFolder,
@@ -148,12 +148,7 @@ pub enum AppEvent {
         after: Id<MessageMarker>,
         messages: Vec<MessageInfo>,
         has_more: bool,
-    },
-    MessageHistoryCatchUpLoaded {
-        channel_id: Id<ChannelMarker>,
-        after: Id<MessageMarker>,
-        messages: Vec<MessageInfo>,
-        has_more: bool,
+        mode: MessageHistoryAfterMode,
     },
     MessageHistoryAroundLoaded {
         channel_id: Id<ChannelMarker>,
@@ -459,7 +454,6 @@ define_app_event_kinds! {
     MessageHistoryLoaded: AppEvent::MessageHistoryLoaded { .. },
     MessageHistoryRefreshed: AppEvent::MessageHistoryRefreshed { .. },
     MessageHistoryAfterLoaded: AppEvent::MessageHistoryAfterLoaded { .. },
-    MessageHistoryCatchUpLoaded: AppEvent::MessageHistoryCatchUpLoaded { .. },
     MessageHistoryAroundLoaded: AppEvent::MessageHistoryAroundLoaded { .. },
     ThreadPreviewLoaded: AppEvent::ThreadPreviewLoaded { .. },
     ThreadPreviewLoadFailed: AppEvent::ThreadPreviewLoadFailed { .. },
@@ -692,7 +686,6 @@ impl AppEventKind {
             AppEventKind::MessageHistoryLoaded
             | AppEventKind::MessageHistoryRefreshed
             | AppEventKind::MessageHistoryAfterLoaded
-            | AppEventKind::MessageHistoryCatchUpLoaded
             | AppEventKind::MessageHistoryAroundLoaded
             | AppEventKind::MessageSearchLoaded
             | AppEventKind::ThreadPreviewLoaded

@@ -100,7 +100,6 @@ fn member_hydration_messages_for_event(event: &AppEvent) -> Option<Vec<MessageIn
         AppEvent::MessageHistoryLoaded { messages, .. }
         | AppEvent::MessageHistoryRefreshed { messages, .. }
         | AppEvent::MessageHistoryAfterLoaded { messages, .. }
-        | AppEvent::MessageHistoryCatchUpLoaded { messages, .. }
         | AppEvent::MessageHistoryAroundLoaded { messages, .. }
         | AppEvent::MessageSearchLoaded {
             page: crate::discord::MessageSearchPage { messages, .. },
@@ -371,7 +370,8 @@ mod tests {
 
     use crate::discord::ids::Id;
     use crate::discord::{
-        AppCommand, AppEvent, ChannelInfo, ForumPostArchiveState, MemberInfo, MessageInfo, RoleInfo,
+        AppCommand, AppEvent, ChannelInfo, ForumPostArchiveState, MemberInfo,
+        MessageHistoryAfterMode, MessageInfo, RoleInfo,
     };
 
     use super::*;
@@ -515,9 +515,10 @@ mod tests {
 
             assert_eq!(
                 state.drain_pending_commands(),
-                vec![AppCommand::CatchUpMessageHistoryAfter {
+                vec![AppCommand::LoadMessageHistoryAfter {
                     channel_id,
                     after: Id::new(20),
+                    mode: MessageHistoryAfterMode::CatchUp,
                 }]
             );
         }

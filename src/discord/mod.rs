@@ -48,8 +48,8 @@ pub(crate) use client::validate_token_header;
 pub use commands::{
     AppCommand, AttachmentDownloadId, DownloadAttachmentSource, ForumPostArchiveState,
     GlobalUserProfileUpdate, GuildUserProfileUpdate, MediaPlaybackRequestId, MediaPlaybackSource,
-    MediaPlaybackTarget, MessageSearchAuthorType, MessageSearchHas, MessageSearchPage,
-    MessageSearchQuery, MuteDuration, ProfileAvatarUpload, UserProfileUpdate,
+    MediaPlaybackTarget, MessageHistoryAfterMode, MessageSearchAuthorType, MessageSearchHas,
+    MessageSearchPage, MessageSearchQuery, MuteDuration, ProfileAvatarUpload, UserProfileUpdate,
 };
 pub use commands::{
     MAX_PROFILE_AVATAR_BYTES, MAX_UPLOAD_ATTACHMENT_COUNT, MAX_UPLOAD_FILE_BYTES,

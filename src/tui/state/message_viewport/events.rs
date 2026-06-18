@@ -12,15 +12,19 @@ impl DashboardState {
         event: &AppEvent,
     ) -> Option<(Id<ChannelMarker>, Id<MessageMarker>)> {
         let AppEvent::MessageCreate { message } = event else {
-            let AppEvent::MessageHistoryCatchUpLoaded {
+            let AppEvent::MessageHistoryAfterLoaded {
                 channel_id,
                 after,
                 messages,
+                mode,
                 ..
             } = event
             else {
                 return None;
             };
+            if !mode.is_catch_up() {
+                return None;
+            }
             let first_newer_message_id = messages
                 .iter()
                 .filter(|message| message.channel_id == *channel_id && message.message_id > *after)

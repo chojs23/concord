@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::discord::{AppCommand, MessageHistoryLoadTarget};
+use crate::discord::{AppCommand, MessageHistoryAfterMode, MessageHistoryLoadTarget};
 
 #[test]
 fn message_creation_keeps_viewport_on_latest() {
@@ -250,11 +250,12 @@ fn catch_up_messages_while_scrolled_away_set_new_messages_marker() {
     state.set_message_view_height(3);
     state.jump_top();
 
-    state.push_event(AppEvent::MessageHistoryCatchUpLoaded {
+    state.push_event(AppEvent::MessageHistoryAfterLoaded {
         channel_id: Id::new(2),
         after: Id::new(5),
         messages: vec![message_info(Id::new(2), 7), message_info(Id::new(2), 6)],
         has_more: false,
+        mode: MessageHistoryAfterMode::CatchUp,
     });
 
     assert_eq!(state.new_messages_marker_message_id(), Some(Id::new(6)));

@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use super::{DiscordClient, DueMemberListSubscription, MemberListSubscriptionRequest};
 use crate::discord::{
-    commands::{AppCommand, ForumPostArchiveState},
+    commands::{AppCommand, ForumPostArchiveState, MessageHistoryAfterMode},
     events::AppEvent,
     ids::{
         Id,
@@ -53,26 +53,16 @@ impl DiscordClient {
             .begin_older_history_request(channel_id, before)
     }
 
-    pub(crate) fn begin_newer_message_history_request(
+    pub(crate) fn begin_message_history_after_request(
         &self,
         channel_id: Id<ChannelMarker>,
         after: Id<MessageMarker>,
+        mode: MessageHistoryAfterMode,
     ) -> bool {
         self.request_lifecycle
             .lock()
             .expect("request lifecycle lock is not poisoned")
-            .begin_newer_history_request(channel_id, after)
-    }
-
-    pub(crate) fn begin_catch_up_message_history_request(
-        &self,
-        channel_id: Id<ChannelMarker>,
-        after: Id<MessageMarker>,
-    ) -> bool {
-        self.request_lifecycle
-            .lock()
-            .expect("request lifecycle lock is not poisoned")
-            .begin_catch_up_history_request(channel_id, after)
+            .begin_history_after_request(channel_id, after, mode)
     }
 
     pub(crate) fn next_forum_post_request(

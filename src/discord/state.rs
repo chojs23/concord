@@ -678,14 +678,7 @@ impl DiscordState {
                 after,
                 messages,
                 has_more,
-            } => {
-                self.merge_message_history_after(*channel_id, *after, messages, *has_more);
-            }
-            AppEvent::MessageHistoryCatchUpLoaded {
-                channel_id,
-                after,
-                messages,
-                has_more,
+                ..
             } => {
                 self.merge_message_history_after(*channel_id, *after, messages, *has_more);
             }
@@ -726,16 +719,7 @@ impl DiscordState {
                 *channel_id,
                 *message_id,
                 MessageUpdateFields {
-                    poll: fields.poll.clone(),
-                    content: fields.content.clone(),
-                    sticker_names: fields.sticker_names.clone(),
-                    mentions: fields.mentions.clone(),
-                    mention_everyone: fields.mention_everyone,
-                    mention_roles: fields.mention_roles.clone(),
-                    flags: fields.flags,
-                    attachments: fields.attachments.clone(),
-                    embeds: fields.embeds.clone(),
-                    edited_timestamp: fields.edited_timestamp.clone(),
+                    body: fields.clone(),
                     pinned: None,
                     reactions: None,
                     retain_body: self.should_retain_message_update_body(*channel_id, *message_id),

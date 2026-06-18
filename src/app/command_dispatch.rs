@@ -52,7 +52,6 @@ impl CommandDispatcher {
             command @ (AppCommand::LoadMessageHistory { .. }
             | AppCommand::RefreshMessageHistory { .. }
             | AppCommand::LoadMessageHistoryAfter { .. }
-            | AppCommand::CatchUpMessageHistoryAfter { .. }
             | AppCommand::LoadMessageHistoryAround { .. }
             | AppCommand::LoadThreadPreview { .. }
             | AppCommand::LoadForumPosts { .. }

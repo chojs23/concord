@@ -386,6 +386,22 @@ fn percent_encode_path_segment(value: &str) -> String {
     encoded
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessageHistoryAfterMode {
+    GapFill,
+    CatchUp,
+}
+
+impl MessageHistoryAfterMode {
+    pub(crate) fn exhausts_on_empty(self) -> bool {
+        matches!(self, Self::GapFill)
+    }
+
+    pub(crate) fn is_catch_up(self) -> bool {
+        matches!(self, Self::CatchUp)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppCommand {
     LoadMessageHistory {
@@ -398,10 +414,7 @@ pub enum AppCommand {
     LoadMessageHistoryAfter {
         channel_id: Id<ChannelMarker>,
         after: Id<MessageMarker>,
-    },
-    CatchUpMessageHistoryAfter {
-        channel_id: Id<ChannelMarker>,
-        after: Id<MessageMarker>,
+        mode: MessageHistoryAfterMode,
     },
     LoadMessageHistoryAround {
         channel_id: Id<ChannelMarker>,

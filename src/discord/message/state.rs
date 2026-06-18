@@ -5,9 +5,9 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
 use crate::discord::{
-    AttachmentInfo, AttachmentUpdate, EmbedInfo, InlinePreviewInfo, MemberInfo, MentionInfo,
-    MessageInfo, MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    PollInfo, ReactionEmoji, ReactionInfo, ReplyInfo,
+    AttachmentInfo, EmbedInfo, InlinePreviewInfo, MemberInfo, MentionInfo, MessageInfo,
+    MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+    MessageUpdateEventFields, PollInfo, ReactionEmoji, ReactionInfo, ReplyInfo,
 };
 
 use crate::discord::{
@@ -188,16 +188,7 @@ enum MessageHistoryTrimPolicy {
 }
 
 pub(in crate::discord) struct MessageUpdateFields {
-    pub(in crate::discord) poll: Option<PollInfo>,
-    pub(in crate::discord) content: Option<String>,
-    pub(in crate::discord) sticker_names: Option<Vec<String>>,
-    pub(in crate::discord) mentions: Option<Vec<MentionInfo>>,
-    pub(in crate::discord) mention_everyone: Option<bool>,
-    pub(in crate::discord) mention_roles: Option<Vec<Id<RoleMarker>>>,
-    pub(in crate::discord) flags: Option<u64>,
-    pub(in crate::discord) attachments: AttachmentUpdate,
-    pub(in crate::discord) embeds: Option<Vec<EmbedInfo>>,
-    pub(in crate::discord) edited_timestamp: Option<String>,
+    pub(in crate::discord) body: MessageUpdateEventFields,
     pub(in crate::discord) pinned: Option<bool>,
     pub(in crate::discord) reactions: Option<Vec<ReactionInfo>>,
     pub(in crate::discord) retain_body: bool,
@@ -1292,7 +1283,7 @@ fn update_message_in(
     let Some(existing) = messages.iter_mut().find(|item| item.id == message_id) else {
         return;
     };
-    if let Some(poll) = &update.poll {
+    if let Some(poll) = &update.body.poll {
         existing.poll = Some(poll.clone());
     }
     if let Some(pinned) = update.pinned {
@@ -1302,31 +1293,31 @@ fn update_message_in(
         existing.reactions = reactions.clone();
     }
     if update.retain_body {
-        if let Some(content) = &update.content {
+        if let Some(content) = &update.body.content {
             existing.content = Some(content.clone());
         }
-        if let Some(sticker_names) = &update.sticker_names {
+        if let Some(sticker_names) = &update.body.sticker_names {
             existing.sticker_names = sticker_names.clone();
         }
-        if let Some(mentions) = &update.mentions {
+        if let Some(mentions) = &update.body.mentions {
             existing.mentions = mentions.clone();
         }
-        if let Some(mention_everyone) = update.mention_everyone {
+        if let Some(mention_everyone) = update.body.mention_everyone {
             existing.mention_everyone = mention_everyone;
         }
-        if let Some(mention_roles) = &update.mention_roles {
+        if let Some(mention_roles) = &update.body.mention_roles {
             existing.mention_roles = mention_roles.clone();
         }
-        if let Some(flags) = update.flags {
+        if let Some(flags) = update.body.flags {
             existing.flags = flags;
         }
-        if let Some(embeds) = &update.embeds {
+        if let Some(embeds) = &update.body.embeds {
             existing.embeds = embeds.clone();
         }
-        if let Some(edited_timestamp) = &update.edited_timestamp {
+        if let Some(edited_timestamp) = &update.body.edited_timestamp {
             existing.edited_timestamp = Some(edited_timestamp.clone());
         }
-        if let Some(attachments) = update.attachments.replacement() {
+        if let Some(attachments) = update.body.attachments.replacement() {
             existing.attachments = attachments.to_vec();
         }
     }

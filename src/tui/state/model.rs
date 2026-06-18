@@ -81,23 +81,30 @@ pub enum MessageActionKind {
     GoToReferencedMessage,
 }
 
-// Message action will be removed.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MessageActionItem {
-    pub kind: MessageActionKind,
+pub struct ActionItem<K> {
+    pub kind: K,
     pub label: String,
     pub enabled: bool,
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
-impl MessageActionItem {
-    pub(crate) fn test(kind: MessageActionKind) -> Self {
+impl<K> ActionItem<K> {
+    pub(crate) fn new(kind: K, label: impl Into<String>, enabled: bool) -> Self {
         Self {
             kind,
-            label: String::new(),
-            enabled: true,
+            label: label.into(),
+            enabled,
         }
+    }
+}
+
+pub type MessageActionItem = ActionItem<MessageActionKind>;
+
+#[cfg(test)]
+#[allow(dead_code)]
+impl ActionItem<MessageActionKind> {
+    pub(crate) fn test(kind: MessageActionKind) -> Self {
+        Self::new(kind, String::new(), true)
     }
 }
 
@@ -220,22 +227,7 @@ pub enum ChannelActionKind {
     ToggleMute,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChannelActionItem {
-    pub kind: ChannelActionKind,
-    pub label: String,
-    pub enabled: bool,
-}
-
-impl ChannelActionItem {
-    pub(crate) fn new(kind: ChannelActionKind, label: impl Into<String>, enabled: bool) -> Self {
-        Self {
-            kind,
-            label: label.into(),
-            enabled,
-        }
-    }
-}
+pub type ChannelActionItem = ActionItem<ChannelActionKind>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum GuildActionKind {
@@ -245,22 +237,7 @@ pub enum GuildActionKind {
     LeaveServer,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GuildActionItem {
-    pub kind: GuildActionKind,
-    pub label: String,
-    pub enabled: bool,
-}
-
-impl GuildActionItem {
-    pub(crate) fn new(kind: GuildActionKind, label: impl Into<String>, enabled: bool) -> Self {
-        Self {
-            kind,
-            label: label.into(),
-            enabled,
-        }
-    }
-}
+pub type GuildActionItem = ActionItem<GuildActionKind>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MuteActionDurationItem {
@@ -300,22 +277,7 @@ pub enum MemberActionKind {
     ShowProfile,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MemberActionItem {
-    pub kind: MemberActionKind,
-    pub label: String,
-    pub enabled: bool,
-}
-
-impl MemberActionItem {
-    pub(crate) fn new(kind: MemberActionKind, label: impl Into<String>, enabled: bool) -> Self {
-        Self {
-            kind,
-            label: label.into(),
-            enabled,
-        }
-    }
-}
+pub type MemberActionItem = ActionItem<MemberActionKind>;
 
 pub const FORUM_POST_CARD_HEIGHT: usize = 5;
 
