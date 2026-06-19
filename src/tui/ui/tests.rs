@@ -1,4 +1,7 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::BTreeMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use crate::discord::ids::{Id, marker::MessageMarker};
 use crate::discord::test_builders::{
@@ -48,12 +51,13 @@ use crate::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, ApplicationCommandInfo,
         ApplicationCommandOptionInfo, AttachmentDownloadId, AttachmentInfo, ChannelInfo,
         ChannelNotificationOverrideInfo, ChannelRecipientState, ChannelState, ChannelUnreadState,
-        ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, GuildMemberState,
-        GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageAttachmentUpload,
-        MessageInfo, MessageInteractionInfo, MessageKind, MessageSearchPage, MessageSearchQuery,
-        MessageSnapshotInfo, MessageState, MutualGuildInfo, NotificationLevel, PollAnswerInfo,
-        PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
-        ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo, VoiceConnectionStatus, VoiceStateInfo,
+        ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, GuildMemberListUpdateInfo,
+        GuildMemberState, GuildNotificationSettingsInfo, MemberInfo, MentionInfo,
+        MessageAttachmentUpload, MessageInfo, MessageInteractionInfo, MessageKind,
+        MessageSearchPage, MessageSearchQuery, MessageSnapshotInfo, MessageState, MutualGuildInfo,
+        NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
+        ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo,
+        UserGuildSettingsInfo, UserProfileInfo, VoiceConnectionStatus, VoiceStateInfo,
     },
     tui::{
         format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
@@ -79,6 +83,37 @@ mod messages;
 mod misc;
 mod panes;
 mod popups;
+
+fn user_guild_settings_init(settings: Vec<GuildNotificationSettingsInfo>) -> AppEvent {
+    AppEvent::UserGuildSettingsInit {
+        settings: settings
+            .into_iter()
+            .map(|notification_settings| UserGuildSettingsInfo {
+                notification_settings,
+                extra_fields: BTreeMap::new(),
+            })
+            .collect(),
+    }
+}
+
+fn guild_member_list_counts_event(
+    guild_id: Id<crate::discord::ids::marker::GuildMarker>,
+    online: u32,
+) -> AppEvent {
+    AppEvent::GuildMemberListUpdate {
+        update: GuildMemberListUpdateInfo {
+            guild_id,
+            list_id: None,
+            member_count: None,
+            online_count: Some(online),
+            members: Vec::new(),
+            presences: Vec::new(),
+            groups: Vec::new(),
+            ops: Vec::new(),
+            extra_fields: BTreeMap::new(),
+        },
+    }
+}
 
 fn find_cell(buffer: &Buffer, text: &str) -> Option<(u16, u16)> {
     for row in 0..buffer.area.height {

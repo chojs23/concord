@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
+
 use crate::{
     DiscordClient,
     discord::{
-        AppCommand, AppEvent, AttachmentUpdate, MessageInfo, MessageUpdateEventFields,
-        ReactionUsersInfo,
+        AppCommand, AppEvent, AttachmentUpdate, MessageInfo, MessageUpdateDispatchInfo,
+        MessageUpdateEventFields, ReactionUsersInfo,
     },
 };
 
@@ -215,21 +217,24 @@ fn message_create_event(message: MessageInfo) -> AppEvent {
 }
 
 fn message_update_event(message: MessageInfo) -> AppEvent {
-    AppEvent::MessageUpdate {
-        guild_id: message.guild_id,
-        channel_id: message.channel_id,
-        message_id: message.message_id,
-        fields: MessageUpdateEventFields {
-            poll: message.poll,
-            content: message.content,
-            sticker_names: Some(message.sticker_names),
-            mentions: Some(message.mentions),
-            mention_everyone: Some(message.mention_everyone),
-            mention_roles: Some(message.mention_roles),
-            flags: Some(message.flags),
-            attachments: AttachmentUpdate::Replace(message.attachments),
-            embeds: Some(message.embeds),
-            edited_timestamp: message.edited_timestamp,
+    AppEvent::MessageUpdateDispatch {
+        update: MessageUpdateDispatchInfo {
+            guild_id: message.guild_id,
+            channel_id: message.channel_id,
+            message_id: message.message_id,
+            fields: MessageUpdateEventFields {
+                poll: message.poll,
+                content: message.content,
+                sticker_names: Some(message.sticker_names),
+                mentions: Some(message.mentions),
+                mention_everyone: Some(message.mention_everyone),
+                mention_roles: Some(message.mention_roles),
+                flags: Some(message.flags),
+                attachments: AttachmentUpdate::Replace(message.attachments),
+                embeds: Some(message.embeds),
+                edited_timestamp: message.edited_timestamp,
+            },
+            extra_fields: BTreeMap::new(),
         },
     }
 }

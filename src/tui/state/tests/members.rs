@@ -248,10 +248,7 @@ fn member_panel_title_shows_online_and_total_when_counts_available() {
     });
     state.confirm_selected_guild();
 
-    state.push_event(AppEvent::GuildMemberListCounts {
-        guild_id,
-        online: 25,
-    });
+    state.push_event(guild_member_list_counts_event(guild_id, 25));
 
     let title = state.member_panel_title();
     let rendered: String = title.spans.iter().map(|s| s.content.as_ref()).collect();

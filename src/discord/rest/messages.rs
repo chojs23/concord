@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-use super::DiscordRest;
+use super::{DiscordRest, clone_array, extra_fields};
 
 impl DiscordRest {
     pub async fn send_message(
@@ -58,9 +58,7 @@ impl DiscordRest {
         };
 
         let raw: Value = self.send_json(request, "send message").await?;
-        parse_message_info(&raw).ok_or_else(|| {
-            AppError::DiscordRequest("send message response was missing required fields".to_owned())
-        })
+        parse_message_response(raw, "send message response").map(|response| response.message)
     }
 
     pub async fn edit_message(
@@ -82,9 +80,7 @@ impl DiscordRest {
                 "edit message",
             )
             .await?;
-        parse_message_info(&raw).ok_or_else(|| {
-            AppError::DiscordRequest("edit message response was missing required fields".to_owned())
-        })
+        parse_message_response(raw, "edit message response").map(|response| response.message)
     }
 
     pub async fn delete_message(
@@ -120,7 +116,8 @@ impl DiscordRest {
             request = request.query(&[("before", message_id.to_string())]);
         }
         let raw_messages: Vec<Value> = self.send_json(request, "message history").await?;
-        parse_message_list(raw_messages.iter(), "history message response")
+        parse_message_list_response(raw_messages, "history message response")
+            .map(|response| response.messages)
     }
 
     pub async fn load_message_history_around(
@@ -159,7 +156,8 @@ impl DiscordRest {
             .query(&[("limit", limit.to_string())])
             .query(&[(anchor_name, message_id.to_string())]);
         let raw_messages: Vec<Value> = self.send_json(request, "message history").await?;
-        parse_message_list(raw_messages.iter(), "history message response")
+        parse_message_list_response(raw_messages, "history message response")
+            .map(|response| response.messages)
     }
 
     pub async fn load_pinned_messages(
@@ -177,28 +175,7 @@ impl DiscordRest {
                 "pins",
             )
             .await?;
-        let messages: Vec<&Value> = match &raw {
-            Value::Array(items) => items.iter().collect(),
-            Value::Object(object) => object
-                .get("items")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.get("message"))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        };
-        messages
-            .into_iter()
-            .map(|raw| {
-                parse_message_info(raw).ok_or_else(|| {
-                    AppError::DiscordRequest("pin message was missing required fields".to_owned())
-                })
-            })
-            .collect()
+        parse_pinned_messages_response(&raw).map(|response| response.messages)
     }
 
     pub async fn set_message_pinned(
@@ -224,18 +201,84 @@ impl DiscordRest {
     }
 }
 
-fn parse_message_list<'a>(
-    raw_messages: impl IntoIterator<Item = &'a Value>,
-    label: &str,
-) -> Result<Vec<MessageInfo>> {
-    raw_messages
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct PinnedMessagesResponse {
+    pub(super) messages: Vec<MessageInfo>,
+    pub(super) raw_items: Vec<Value>,
+    pub(super) extra_fields: std::collections::BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct MessageResponse {
+    pub(super) message: MessageInfo,
+    pub(super) raw_message: Value,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct MessageListResponse {
+    pub(super) messages: Vec<MessageInfo>,
+    pub(super) raw_messages: Vec<Value>,
+}
+
+pub(super) fn parse_pinned_messages_response(raw: &Value) -> Result<PinnedMessagesResponse> {
+    let messages: Vec<&Value> = match raw {
+        Value::Array(items) => items.iter().collect(),
+        Value::Object(object) => object
+            .get("items")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.get("message"))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let messages = messages
         .into_iter()
+        .map(|raw| {
+            parse_message_info(raw).ok_or_else(|| {
+                AppError::DiscordRequest("pin message was missing required fields".to_owned())
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(PinnedMessagesResponse {
+        messages,
+        raw_items: match raw {
+            Value::Array(_) => clone_array(Some(raw)),
+            Value::Object(_) => clone_array(raw.get("items")),
+            _ => Vec::new(),
+        },
+        extra_fields: extra_fields(raw, &["items"]),
+    })
+}
+
+pub(super) fn parse_message_response(raw_message: Value, label: &str) -> Result<MessageResponse> {
+    let message = parse_message_info(&raw_message)
+        .ok_or_else(|| AppError::DiscordRequest(format!("{label} was missing required fields")))?;
+    Ok(MessageResponse {
+        message,
+        raw_message,
+    })
+}
+
+fn parse_message_list_response(
+    raw_messages: Vec<Value>,
+    label: &str,
+) -> Result<MessageListResponse> {
+    let messages = raw_messages
+        .iter()
         .map(|raw| {
             parse_message_info(raw).ok_or_else(|| {
                 AppError::DiscordRequest(format!("{label} was missing required fields"))
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    Ok(MessageListResponse {
+        messages,
+        raw_messages,
+    })
 }
 
 pub(super) fn message_request_body(

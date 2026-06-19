@@ -539,14 +539,17 @@ fn leader_channel_actions_offer_mute_duration_and_submit_command() {
 #[test]
 fn leader_channel_actions_unmute_when_already_muted() {
     let mut state = state_with_channel_tree();
-    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![GuildNotificationSettingsInfo {
-            message_notifications: Some(NotificationLevel::OnlyMentions),
-            channel_overrides: vec![ChannelNotificationOverrideInfo {
-                muted: true,
-                ..ChannelNotificationOverrideInfo::test(Id::new(11))
-            }],
-            ..GuildNotificationSettingsInfo::test(Some(Id::new(1)))
+    state.push_event(AppEvent::UserGuildSettingsInit {
+        settings: vec![UserGuildSettingsInfo {
+            notification_settings: GuildNotificationSettingsInfo {
+                message_notifications: Some(NotificationLevel::OnlyMentions),
+                channel_overrides: vec![ChannelNotificationOverrideInfo {
+                    muted: true,
+                    ..ChannelNotificationOverrideInfo::test(Id::new(11))
+                }],
+                ..GuildNotificationSettingsInfo::test(Some(Id::new(1)))
+            },
+            extra_fields: BTreeMap::new(),
         }],
     });
     state.focus_pane(FocusPane::Channels);
@@ -594,11 +597,14 @@ fn leader_category_actions_offer_mute_duration_and_submit_command() {
 #[test]
 fn leader_server_actions_unmute_when_already_muted() {
     let mut state = state_with_channel_tree();
-    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![GuildNotificationSettingsInfo {
-            message_notifications: Some(NotificationLevel::OnlyMentions),
-            muted: true,
-            ..GuildNotificationSettingsInfo::test(Some(Id::new(1)))
+    state.push_event(AppEvent::UserGuildSettingsInit {
+        settings: vec![UserGuildSettingsInfo {
+            notification_settings: GuildNotificationSettingsInfo {
+                message_notifications: Some(NotificationLevel::OnlyMentions),
+                muted: true,
+                ..GuildNotificationSettingsInfo::test(Some(Id::new(1)))
+            },
+            extra_fields: BTreeMap::new(),
         }],
     });
     state.focus_pane(FocusPane::Guilds);

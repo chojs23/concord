@@ -59,8 +59,10 @@ pub use commands::{
 #[cfg(test)]
 pub(crate) use events::test_builders;
 pub use events::{
-    AppEvent, MessageHistoryLoadTarget, MessageUpdateEventFields, PresenceEventFields,
-    SequencedAppEvent,
+    AppEvent, GatewayDispatchInfo, GuildMemberListUpdateInfo, GuildMembersChunkInfo,
+    MessageHistoryLoadTarget, MessageUpdateDispatchInfo, MessageUpdateEventFields,
+    PresenceEventFields, SequencedAppEvent, ThreadListSyncInfo, ThreadMemberUpdateInfo,
+    ThreadMembersUpdateInfo, UserGuildSettingsInfo,
 };
 pub use guild::{CustomEmojiInfo, GuildFolder};
 pub use ids::{Id, marker};

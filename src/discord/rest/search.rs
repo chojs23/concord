@@ -7,7 +7,7 @@ use crate::{
     discord::{MessageInfo, MessageSearchPage, MessageSearchQuery, gateway::parse_message_info},
 };
 
-use super::DiscordRest;
+use super::{DiscordRest, clone_array, extra_fields};
 
 const MESSAGE_SEARCH_PAGE_LIMIT: u16 = 25;
 const MESSAGE_SEARCH_MAX_OFFSET: usize = 9_975;
@@ -62,23 +62,41 @@ impl DiscordRest {
             )));
         }
 
-        let total_results = raw
-            .get("total_results")
-            .and_then(Value::as_u64)
-            .map(|value| usize::try_from(value).unwrap_or(usize::MAX));
-        let messages = parse_message_search_messages(&raw)?;
+        let response = parse_message_search_response(&raw)?;
         let next_offset = query
             .offset
             .saturating_add(MESSAGE_SEARCH_PAGE_LIMIT as usize);
-        let has_more = total_results.is_some_and(|total| next_offset < total)
+        let has_more = response
+            .total_results
+            .is_some_and(|total| next_offset < total)
             && next_offset <= MESSAGE_SEARCH_MAX_OFFSET;
         Ok(MessageSearchPage {
             query,
-            messages,
-            total_results,
+            messages: response.messages,
+            total_results: response.total_results,
             has_more,
         })
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct MessageSearchResponse {
+    pub(super) total_results: Option<usize>,
+    pub(super) messages: Vec<MessageInfo>,
+    pub(super) message_groups: Vec<Value>,
+    pub(super) extra_fields: std::collections::BTreeMap<String, Value>,
+}
+
+pub(super) fn parse_message_search_response(raw: &Value) -> Result<MessageSearchResponse> {
+    Ok(MessageSearchResponse {
+        total_results: raw
+            .get("total_results")
+            .and_then(Value::as_u64)
+            .map(|value| usize::try_from(value).unwrap_or(usize::MAX)),
+        messages: parse_message_search_messages(raw)?,
+        message_groups: clone_array(raw.get("messages")),
+        extra_fields: extra_fields(raw, &["total_results", "messages"]),
+    })
 }
 
 pub(super) fn message_search_query_params(

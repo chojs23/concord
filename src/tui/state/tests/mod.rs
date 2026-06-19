@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use fixtures::*;
 use ratatui::text::Line;
 
@@ -20,12 +22,14 @@ use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo, ChannelInfo,
     ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
     ChannelVisibilityStats, CustomEmojiInfo, DiscordState, DownloadAttachmentSource,
-    EmbedFieldInfo, EmbedInfo, ForumPostArchiveState, GuildFolder, GuildNotificationSettingsInfo,
-    MessageAttachmentUpload, MessageInfo, MessageKind, MessageReferenceInfo, MessageSearchPage,
-    MessageSnapshotInfo, MessageState, MessageUpdateEventFields, NotificationLevel,
+    EmbedFieldInfo, EmbedInfo, ForumPostArchiveState, GuildFolder, GuildMemberListUpdateInfo,
+    GuildNotificationSettingsInfo, MessageAttachmentUpload, MessageInfo, MessageKind,
+    MessageReferenceInfo, MessageSearchPage, MessageSnapshotInfo, MessageState,
+    MessageUpdateDispatchInfo, MessageUpdateEventFields, NotificationLevel,
     PermissionOverwriteInfo, PermissionOverwriteKind, PresenceStatus, ReactionEmoji, ReactionInfo,
-    ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo, SnapshotRevision, UserProfileInfo,
-    UserSettingsInfo, VoiceConnectionStatus, VoiceStateInfo,
+    ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo, SnapshotRevision,
+    ThreadMembersUpdateInfo, UserGuildSettingsInfo, UserProfileInfo, UserSettingsInfo,
+    VoiceConnectionStatus, VoiceStateInfo,
 };
 
 mod channel_switcher;
@@ -88,6 +92,77 @@ fn direct_message_create_event(channel_id: Id<ChannelMarker>, message_id: u64) -
         content: Some("hello from dm".to_owned()),
         ..guild_message_create_fixture()
     })
+}
+
+fn user_settings_update(folders: Vec<GuildFolder>) -> AppEvent {
+    AppEvent::UserSettingsUpdate {
+        settings: UserSettingsInfo {
+            guild_folders: Some(folders),
+            ..UserSettingsInfo::default()
+        },
+    }
+}
+
+fn user_guild_settings_init(settings: Vec<GuildNotificationSettingsInfo>) -> AppEvent {
+    AppEvent::UserGuildSettingsInit {
+        settings: settings
+            .into_iter()
+            .map(|notification_settings| UserGuildSettingsInfo {
+                notification_settings,
+                extra_fields: BTreeMap::new(),
+            })
+            .collect(),
+    }
+}
+
+fn message_update_event(
+    channel_id: Id<ChannelMarker>,
+    message_id: Id<MessageMarker>,
+    fields: MessageUpdateEventFields,
+) -> AppEvent {
+    AppEvent::MessageUpdateDispatch {
+        update: MessageUpdateDispatchInfo {
+            guild_id: None,
+            channel_id,
+            message_id,
+            fields,
+            extra_fields: BTreeMap::new(),
+        },
+    }
+}
+
+fn guild_member_list_counts_event(guild_id: Id<GuildMarker>, online: u32) -> AppEvent {
+    AppEvent::GuildMemberListUpdate {
+        update: GuildMemberListUpdateInfo {
+            guild_id,
+            list_id: None,
+            member_count: None,
+            online_count: Some(online),
+            members: Vec::new(),
+            presences: Vec::new(),
+            groups: Vec::new(),
+            ops: Vec::new(),
+            extra_fields: BTreeMap::new(),
+        },
+    }
+}
+
+fn thread_members_update_event(
+    channel_id: Id<ChannelMarker>,
+    added_user_ids: Vec<Id<UserMarker>>,
+    removed_user_ids: Vec<Id<UserMarker>>,
+) -> AppEvent {
+    AppEvent::ThreadMembersUpdateDispatch {
+        update: ThreadMembersUpdateInfo {
+            guild_id: None,
+            channel_id,
+            member_count: None,
+            added_members: Vec::new(),
+            added_user_ids,
+            removed_user_ids,
+            extra_fields: BTreeMap::new(),
+        },
+    }
 }
 
 fn drain_debounced_read_ack(state: &mut DashboardState) -> Vec<AppCommand> {

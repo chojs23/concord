@@ -3,13 +3,47 @@ use serde_json::json;
 
 use super::{
     parse_channel_info, parse_guild_create, parse_guild_emojis_update, parse_guild_update,
-    parse_message_create, parse_message_info, parse_message_update, parse_user_account_event,
+    parse_message_create, parse_message_info, parse_message_update, parse_user_account_dispatch,
+    parse_user_account_event,
 };
 use crate::discord::{
     ActivityKind, AppEvent, AttachmentUpdate, ChannelVisibilityStats, DiscordState, FriendStatus,
     MentionInfo, MessageKind, NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus,
     ReactionEmoji, ReplyInfo,
 };
+
+#[test]
+fn raw_dispatch_parser_keeps_original_payload_for_future_fields() {
+    let parsed = parse_user_account_dispatch(
+        &json!({
+            "t": "MESSAGE_CREATE",
+            "d": {
+                "id": "101",
+                "channel_id": "20",
+                "author": { "id": "30", "username": "neo" },
+                "type": 0,
+                "pinned": false,
+                "content": "hello",
+                "mentions": [],
+                "attachments": [],
+                "embeds": [],
+                "future_discord_field": { "value": true }
+            }
+        })
+        .to_string(),
+    )
+    .expect("dispatch should parse");
+
+    assert_eq!(parsed.dispatch.event_type, "MESSAGE_CREATE");
+    assert_eq!(
+        parsed.dispatch.payload["future_discord_field"]["value"],
+        true
+    );
+    assert!(matches!(
+        parsed.events.as_slice(),
+        [AppEvent::MessageCreate { .. }]
+    ));
+}
 
 #[test]
 fn raw_member_list_update_populates_members_and_presence() {
@@ -41,22 +75,21 @@ fn raw_member_list_update_populates_members_and_presence() {
         .to_string(),
     );
 
-    assert!(events.iter().any(|event| matches!(
-        event,
-        AppEvent::GuildMemberUpsert { guild_id, member }
-            if *guild_id == Id::new(10)
-                && member.user_id == Id::new(20)
-                && member.display_name == "Alice Nick"
-                && member.avatar_url.as_deref() == Some("https://cdn.discordapp.com/guilds/10/users/20/avatars/guild_hash.png")
-                && member.role_ids == vec![Id::new(30)]
-    )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        AppEvent::PresenceUpdate { guild_id, presence }
-            if *guild_id == Some(Id::new(10))
-                && presence.user_id == Id::new(20)
-                && presence.status == PresenceStatus::Idle
-    )));
+    match events.as_slice() {
+        [AppEvent::GuildMemberListUpdate { update }] => {
+            assert_eq!(update.guild_id, Id::new(10));
+            assert_eq!(update.members[0].user_id, Id::new(20));
+            assert_eq!(update.members[0].display_name, "Alice Nick");
+            assert_eq!(
+                update.members[0].avatar_url.as_deref(),
+                Some("https://cdn.discordapp.com/guilds/10/users/20/avatars/guild_hash.png")
+            );
+            assert_eq!(update.members[0].role_ids, vec![Id::new(30)]);
+            assert_eq!(update.presences[0].user_id, Id::new(20));
+            assert_eq!(update.presences[0].status, PresenceStatus::Idle);
+        }
+        other => panic!("expected one GuildMemberListUpdate, got {other:?}"),
+    }
 }
 
 #[test]
@@ -288,21 +321,27 @@ fn raw_member_list_update_processes_all_sync_ranges() {
         .to_string(),
     );
 
-    assert!(events.iter().any(|event| matches!(
-        event,
-        AppEvent::GuildMemberUpsert { guild_id, member }
-            if *guild_id == Id::new(10) && member.user_id == Id::new(20)
-    )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        AppEvent::GuildMemberUpsert { guild_id, member }
-            if *guild_id == Id::new(10) && member.user_id == Id::new(21)
-    )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        AppEvent::PresenceUpdate { presence, .. }
-            if presence.user_id == Id::new(21) && presence.status == PresenceStatus::Idle
-    )));
+    match events.as_slice() {
+        [AppEvent::GuildMemberListUpdate { update }] => {
+            assert_eq!(update.guild_id, Id::new(10));
+            assert!(
+                update
+                    .members
+                    .iter()
+                    .any(|member| member.user_id == Id::new(20))
+            );
+            assert!(
+                update
+                    .members
+                    .iter()
+                    .any(|member| member.user_id == Id::new(21))
+            );
+            assert!(update.presences.iter().any(|presence| {
+                presence.user_id == Id::new(21) && presence.status == PresenceStatus::Idle
+            }));
+        }
+        other => panic!("expected one GuildMemberListUpdate, got {other:?}"),
+    }
 }
 
 #[test]
@@ -345,20 +384,17 @@ fn raw_member_list_update_handles_insert_and_update_items() {
         .to_string(),
     );
 
-    assert!(events.iter().any(|event| matches!(
-        event,
-        AppEvent::PresenceUpdate { guild_id, presence }
-            if *guild_id == Some(Id::new(10))
-                && presence.user_id == Id::new(20)
-                && presence.status == PresenceStatus::Online
-    )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        AppEvent::PresenceUpdate { guild_id, presence }
-            if *guild_id == Some(Id::new(10))
-                && presence.user_id == Id::new(30)
-                && presence.status == PresenceStatus::DoNotDisturb
-    )));
+    match events.as_slice() {
+        [AppEvent::GuildMemberListUpdate { update }] => {
+            assert!(update.presences.iter().any(|presence| {
+                presence.user_id == Id::new(20) && presence.status == PresenceStatus::Online
+            }));
+            assert!(update.presences.iter().any(|presence| {
+                presence.user_id == Id::new(30) && presence.status == PresenceStatus::DoNotDisturb
+            }));
+        }
+        other => panic!("expected one GuildMemberListUpdate, got {other:?}"),
+    }
 }
 
 #[test]
@@ -1071,17 +1107,18 @@ fn raw_thread_members_update_carries_member_delta_ids() {
 
     assert!(matches!(
         joined.as_slice(),
-        [AppEvent::ThreadMembersUpdate { channel_id, added_user_ids, removed_user_ids }]
-            if *channel_id == Id::new(10)
-                && added_user_ids == &vec![Id::new(99)]
-                && removed_user_ids.is_empty()
+        [AppEvent::ThreadMembersUpdateDispatch { update }]
+            if update.channel_id == Id::new(10)
+                && update.guild_id == Some(Id::new(1))
+                && update.added_user_ids == vec![Id::new(99)]
+                && update.removed_user_ids.is_empty()
     ));
     assert!(matches!(
         left.as_slice(),
-        [AppEvent::ThreadMembersUpdate { channel_id, added_user_ids, removed_user_ids }]
-            if *channel_id == Id::new(10)
-                && added_user_ids.is_empty()
-                && removed_user_ids == &vec![Id::new(99)]
+        [AppEvent::ThreadMembersUpdateDispatch { update }]
+            if update.channel_id == Id::new(10)
+                && update.added_user_ids.is_empty()
+                && update.removed_user_ids == vec![Id::new(99)]
     ));
 }
 
@@ -1169,17 +1206,18 @@ fn raw_thread_list_sync_upserts_all_threads() {
         .to_string(),
     );
 
-    assert_eq!(events.len(), 2);
-    assert!(matches!(
-        &events[0],
-        AppEvent::ChannelUpsert(channel)
-            if channel.channel_id == Id::new(10) && channel.name == "release notes"
-    ));
-    assert!(matches!(
-        &events[1],
-        AppEvent::ChannelUpsert(channel)
-            if channel.channel_id == Id::new(11) && channel.name == "bug reports"
-    ));
+    match events.as_slice() {
+        [AppEvent::ThreadListSync { sync }] => {
+            assert_eq!(sync.guild_id, Some(Id::new(1)));
+            assert_eq!(sync.channel_ids, vec![Id::new(2)]);
+            assert_eq!(sync.threads.len(), 2);
+            assert_eq!(sync.threads[0].channel_id, Id::new(10));
+            assert_eq!(sync.threads[0].name, "release notes");
+            assert_eq!(sync.threads[1].channel_id, Id::new(11));
+            assert_eq!(sync.threads[1].name, "bug reports");
+        }
+        other => panic!("expected one ThreadListSync, got {other:?}"),
+    }
 }
 
 #[test]
@@ -1206,15 +1244,18 @@ fn message_update_parser_distinguishes_absent_and_empty_attachments() {
 
     for (payload, clears_attachments) in cases {
         let event = parse_message_update(&payload).expect("message update should parse");
-        let AppEvent::MessageUpdate { fields, .. } = event else {
+        let AppEvent::MessageUpdateDispatch { update } = event else {
             panic!("expected message update event");
         };
         if clears_attachments {
             assert!(
-                matches!(fields.attachments, AttachmentUpdate::Replace(values) if values.is_empty())
+                matches!(update.fields.attachments, AttachmentUpdate::Replace(values) if values.is_empty())
             );
         } else {
-            assert!(matches!(fields.attachments, AttachmentUpdate::Unchanged));
+            assert!(matches!(
+                update.fields.attachments,
+                AttachmentUpdate::Unchanged
+            ));
         }
     }
 }
@@ -1650,38 +1691,24 @@ fn raw_member_chunk_upserts_members_and_presences() {
         .to_string(),
     );
 
-    assert_eq!(events.len(), 4);
-    assert!(matches!(
-        &events[0],
-        AppEvent::GuildMemberUpsert { guild_id, member }
-            if *guild_id == Id::new(1)
-                && member.user_id == Id::new(10)
-                && member.display_name == "Alice Nick"
-                && member.role_ids == vec![Id::new(30), Id::new(31)]
-                && !member.is_bot
-    ));
-    assert!(matches!(
-        &events[1],
-        AppEvent::GuildMemberUpsert { guild_id, member }
-            if *guild_id == Id::new(1)
-                && member.user_id == Id::new(20)
-                && member.display_name == "bob"
-                && member.is_bot
-    ));
-    assert!(matches!(
-        &events[2],
-        AppEvent::PresenceUpdate { guild_id, presence }
-            if *guild_id == Some(Id::new(1))
-                && presence.user_id == Id::new(10)
-                && presence.status == PresenceStatus::Online
-    ));
-    assert!(matches!(
-        &events[3],
-        AppEvent::PresenceUpdate { guild_id, presence }
-            if *guild_id == Some(Id::new(1))
-                && presence.user_id == Id::new(20)
-                && presence.status == PresenceStatus::Idle
-    ));
+    match events.as_slice() {
+        [AppEvent::GuildMembersChunk { chunk }] => {
+            assert_eq!(chunk.guild_id, Id::new(1));
+            assert_eq!(chunk.members.len(), 2);
+            assert_eq!(chunk.members[0].user_id, Id::new(10));
+            assert_eq!(chunk.members[0].display_name, "Alice Nick");
+            assert_eq!(chunk.members[0].role_ids, vec![Id::new(30), Id::new(31)]);
+            assert!(!chunk.members[0].is_bot);
+            assert_eq!(chunk.members[1].user_id, Id::new(20));
+            assert_eq!(chunk.members[1].display_name, "bob");
+            assert!(chunk.members[1].is_bot);
+            assert_eq!(chunk.presences[0].user_id, Id::new(10));
+            assert_eq!(chunk.presences[0].status, PresenceStatus::Online);
+            assert_eq!(chunk.presences[1].user_id, Id::new(20));
+            assert_eq!(chunk.presences[1].status, PresenceStatus::Idle);
+        }
+        other => panic!("expected one GuildMembersChunk, got {other:?}"),
+    }
 }
 
 #[test]
@@ -1839,10 +1866,13 @@ fn message_update_parser_keeps_mentions_when_present() {
     }))
     .expect("message update should parse");
 
-    let AppEvent::MessageUpdate { fields, .. } = event else {
+    let AppEvent::MessageUpdateDispatch { update } = event else {
         panic!("expected message update event");
     };
-    assert_eq!(fields.mentions, Some(vec![mention_info(40, "alice")]));
+    assert_eq!(
+        update.fields.mentions,
+        Some(vec![mention_info(40, "alice")])
+    );
 }
 
 #[test]
@@ -1867,10 +1897,10 @@ fn message_update_parser_keeps_poll_results() {
     }))
     .expect("message update should parse");
 
-    let AppEvent::MessageUpdate { fields, .. } = event else {
+    let AppEvent::MessageUpdateDispatch { update } = event else {
         panic!("expected message update event");
     };
-    let poll = fields.poll.expect("poll payload should be kept");
+    let poll = update.fields.poll.expect("poll payload should be kept");
     assert_eq!(poll.results_finalized, Some(true));
     assert_eq!(poll.answers[0].vote_count, Some(5));
     assert!(poll.answers[0].me_voted);
@@ -3041,25 +3071,29 @@ fn ready_payload_emits_user_guild_notification_settings() {
     let settings = events
         .iter()
         .find_map(|event| match event {
-            AppEvent::UserGuildNotificationSettingsInit { settings } => Some(settings),
+            AppEvent::UserGuildSettingsInit { settings } => Some(settings),
             _ => None,
         })
-        .expect("READY should emit user guild notification settings");
+        .expect("READY should emit user guild settings");
     assert_eq!(settings.len(), 1);
-    assert_eq!(settings[0].guild_id, Some(Id::new(10)));
+    let notification_settings = &settings[0].notification_settings;
+    assert_eq!(notification_settings.guild_id, Some(Id::new(10)));
     assert_eq!(
-        settings[0].message_notifications,
+        notification_settings.message_notifications,
         Some(NotificationLevel::OnlyMentions)
     );
-    assert!(settings[0].suppress_everyone);
-    assert!(settings[0].suppress_roles);
-    assert_eq!(settings[0].channel_overrides.len(), 1);
-    assert_eq!(settings[0].channel_overrides[0].channel_id, Id::new(20));
+    assert!(notification_settings.suppress_everyone);
+    assert!(notification_settings.suppress_roles);
+    assert_eq!(notification_settings.channel_overrides.len(), 1);
     assert_eq!(
-        settings[0].channel_overrides[0].message_notifications,
+        notification_settings.channel_overrides[0].channel_id,
+        Id::new(20)
+    );
+    assert_eq!(
+        notification_settings.channel_overrides[0].message_notifications,
         Some(NotificationLevel::AllMessages)
     );
-    assert!(settings[0].channel_overrides[0].muted);
+    assert!(notification_settings.channel_overrides[0].muted);
 }
 
 #[test]
@@ -3079,15 +3113,16 @@ fn user_guild_settings_update_emits_single_update_event() {
     );
 
     match events.as_slice() {
-        [AppEvent::UserGuildNotificationSettingsUpdate { settings }] => {
-            assert_eq!(settings.guild_id, Some(Id::new(10)));
+        [AppEvent::UserGuildSettingsUpdate { settings }] => {
+            let notification_settings = &settings.notification_settings;
+            assert_eq!(notification_settings.guild_id, Some(Id::new(10)));
             assert_eq!(
-                settings.message_notifications,
+                notification_settings.message_notifications,
                 Some(NotificationLevel::NoMessages)
             );
-            assert!(settings.muted);
+            assert!(notification_settings.muted);
         }
-        other => panic!("expected one UserGuildNotificationSettingsUpdate, got {other:?}"),
+        other => panic!("expected one UserGuildSettingsUpdate, got {other:?}"),
     }
 }
 
@@ -3207,23 +3242,27 @@ fn ready_payload_parses_private_channel_notification_settings() {
     let settings = events
         .iter()
         .find_map(|event| match event {
-            AppEvent::UserGuildNotificationSettingsInit { settings } => Some(settings),
+            AppEvent::UserGuildSettingsInit { settings } => Some(settings),
             _ => None,
         })
-        .expect("READY should emit private channel notification settings");
+        .expect("READY should emit private channel guild settings");
     assert_eq!(settings.len(), 1);
-    assert_eq!(settings[0].guild_id, None);
+    let notification_settings = &settings[0].notification_settings;
+    assert_eq!(notification_settings.guild_id, None);
     assert_eq!(
-        settings[0].message_notifications,
+        notification_settings.message_notifications,
         Some(NotificationLevel::OnlyMentions)
     );
-    assert_eq!(settings[0].channel_overrides.len(), 1);
-    assert_eq!(settings[0].channel_overrides[0].channel_id, Id::new(20));
+    assert_eq!(notification_settings.channel_overrides.len(), 1);
     assert_eq!(
-        settings[0].channel_overrides[0].message_notifications,
+        notification_settings.channel_overrides[0].channel_id,
+        Id::new(20)
+    );
+    assert_eq!(
+        notification_settings.channel_overrides[0].message_notifications,
         Some(NotificationLevel::NoMessages)
     );
-    assert!(settings[0].channel_overrides[0].muted);
+    assert!(notification_settings.channel_overrides[0].muted);
 }
 
 #[test]

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 
 use crate::discord::ids::{
@@ -8,7 +10,7 @@ use crate::{
     DiscordClient,
     discord::{
         AppCommand, AppEvent, ChannelNotificationOverrideInfo, GuildNotificationSettingsInfo,
-        MuteDuration,
+        MuteDuration, UserGuildSettingsInfo,
     },
 };
 
@@ -30,13 +32,16 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
             {
                 Ok(()) => {
                     client
-                        .publish_event(AppEvent::UserGuildNotificationSettingsUpdate {
-                            settings: guild_notification_settings_update(
-                                &client,
-                                Some(guild_id),
-                                Some((muted, mute_end_time)),
-                                None,
-                            ),
+                        .publish_event(AppEvent::UserGuildSettingsUpdate {
+                            settings: UserGuildSettingsInfo {
+                                notification_settings: guild_notification_settings_update(
+                                    &client,
+                                    Some(guild_id),
+                                    Some((muted, mute_end_time)),
+                                    None,
+                                ),
+                                extra_fields: BTreeMap::new(),
+                            },
                         })
                         .await;
                 }
@@ -64,13 +69,16 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
             {
                 Ok(()) => {
                     client
-                        .publish_event(AppEvent::UserGuildNotificationSettingsUpdate {
-                            settings: guild_notification_settings_update(
-                                &client,
-                                guild_id,
-                                None,
-                                Some((channel_id, muted, mute_end_time)),
-                            ),
+                        .publish_event(AppEvent::UserGuildSettingsUpdate {
+                            settings: UserGuildSettingsInfo {
+                                notification_settings: guild_notification_settings_update(
+                                    &client,
+                                    guild_id,
+                                    None,
+                                    Some((channel_id, muted, mute_end_time)),
+                                ),
+                                extra_fields: BTreeMap::new(),
+                            },
                         })
                         .await;
                 }

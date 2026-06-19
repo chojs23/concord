@@ -199,7 +199,7 @@ async fn verify_mfa(
         .map_err(|error| format!("read Discord MFA response failed: {error}"))?;
 
     if status.is_success() {
-        token_from_body(&body).ok_or_else(|| "Discord MFA response did not include a token".into())
+        mfa_token_from_body(&body)
     } else {
         Err(format_login_error(status, &body))
     }
@@ -257,12 +257,17 @@ fn parse_login_success(body: &str) -> Result<LoginOutcome, String> {
     Err("Discord password login response did not include a token".into())
 }
 
-fn token_from_body(body: &str) -> Option<String> {
-    serde_json::from_str::<Value>(body)
-        .ok()?
-        .get("token")?
-        .as_str()
-        .map(str::to_string)
+fn mfa_token_from_body(body: &str) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct MfaVerifyResponse {
+        token: Option<String>,
+    }
+
+    let response: MfaVerifyResponse = serde_json::from_str(body)
+        .map_err(|error| format!("decode Discord MFA response failed: {error}"))?;
+    response
+        .token
+        .ok_or_else(|| "Discord MFA response did not include a token".to_owned())
 }
 
 fn format_login_error(status: reqwest::StatusCode, body: &str) -> String {

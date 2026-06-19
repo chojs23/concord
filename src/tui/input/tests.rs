@@ -24,7 +24,7 @@ use crate::{
         CustomEmojiInfo, DownloadAttachmentSource, GuildFolder, GuildNotificationSettingsInfo,
         MemberInfo, MessageInfo, MessageReferenceInfo, MessageSnapshotInfo, NotificationLevel,
         PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionUserInfo,
-        ReactionUsersInfo, VoiceConnectionStatus,
+        ReactionUsersInfo, UserGuildSettingsInfo, UserSettingsInfo, VoiceConnectionStatus,
     },
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };
@@ -144,13 +144,16 @@ fn state_with_folder() -> DashboardState {
             owner_id: None,
         });
     }
-    state.push_event(AppEvent::GuildFoldersUpdate {
-        folders: vec![GuildFolder {
-            id: Some(42),
-            name: Some("folder".to_owned()),
-            color: None,
-            guild_ids: vec![first_guild, second_guild],
-        }],
+    state.push_event(AppEvent::UserSettingsUpdate {
+        settings: UserSettingsInfo {
+            guild_folders: Some(vec![GuildFolder {
+                id: Some(42),
+                name: Some("folder".to_owned()),
+                color: None,
+                guild_ids: vec![first_guild, second_guild],
+            }]),
+            ..UserSettingsInfo::default()
+        },
     });
     state
 }

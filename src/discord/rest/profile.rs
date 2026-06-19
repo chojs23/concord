@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use super::DiscordRest;
+use super::{DiscordRest, clone_array, extra_fields};
 
 impl DiscordRest {
     pub async fn load_user_profile(
@@ -67,11 +67,7 @@ impl DiscordRest {
         let body: Value = response.json().await.map_err(|error| {
             AppError::DiscordRequest(format!("user note decode failed: {error}"))
         })?;
-        Ok(body
-            .get("note")
-            .and_then(Value::as_str)
-            .filter(|note| !note.is_empty())
-            .map(str::to_owned))
+        Ok(UserNoteResponse::parse(body).note)
     }
 
     pub async fn update_user_profile(&self, update: &UserProfileUpdate) -> Result<()> {
@@ -172,89 +168,141 @@ pub(super) fn parse_user_profile_response(
     body: &Value,
     note: Option<String>,
 ) -> UserProfileInfo {
-    let user = body.get("user");
-    let username = user
-        .and_then(|user| user.get("username"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let global_name = user
-        .and_then(|user| user.get("global_name"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
-    let avatar_url = user.and_then(profile_avatar_url);
-    let user_profile = body.get("user_profile");
-    let bio = user_profile
-        .and_then(|profile| profile.get("bio"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
-    let pronouns = user_profile
-        .and_then(|profile| profile.get("pronouns"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
-    let guild_pronouns = body
-        .get("guild_member_profile")
-        .and_then(|profile| profile.get("pronouns"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
-    let mutual_guilds = body
-        .get("mutual_guilds")
-        .and_then(Value::as_array)
-        .map(|array| {
-            array
-                .iter()
-                .filter_map(|entry| {
-                    let guild_id = entry
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .and_then(|raw| raw.parse::<u64>().ok())
-                        .and_then(Id::<GuildMarker>::new_checked)?;
-                    let nick = entry
-                        .get("nick")
-                        .and_then(Value::as_str)
-                        .filter(|value| !value.is_empty())
-                        .map(str::to_owned);
-                    Some(MutualGuildInfo { guild_id, nick })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let mutual_friends_count = body
-        .get("mutual_friends_count")
-        .and_then(Value::as_u64)
-        .map(|value| u32::try_from(value).unwrap_or(u32::MAX))
-        .unwrap_or(0);
-    let guild_nick = body
-        .get("guild_member")
-        .and_then(|member| member.get("nick"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
-    let role_ids = body
-        .get("guild_member")
-        .and_then(|member| member.get("roles"))
-        .and_then(Value::as_array)
-        .map(|roles| roles.iter().filter_map(parse_profile_role_id).collect())
-        .unwrap_or_default();
+    UserProfileResponse::parse(user_id, body, note).profile
+}
 
-    UserProfileInfo {
-        user_id,
-        username,
-        global_name,
-        guild_nick,
-        role_ids,
-        avatar_url,
-        bio,
-        pronouns,
-        guild_pronouns,
-        mutual_guilds,
-        mutual_friends_count,
-        friend_status: FriendStatus::None,
-        note,
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct UserProfileResponse {
+    pub(super) profile: UserProfileInfo,
+    pub(super) user: Option<Value>,
+    pub(super) user_profile: Option<Value>,
+    pub(super) guild_member: Option<Value>,
+    pub(super) guild_member_profile: Option<Value>,
+    pub(super) mutual_guilds: Vec<Value>,
+    pub(super) extra_fields: std::collections::BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct UserNoteResponse {
+    pub(super) note: Option<String>,
+    pub(super) raw: Value,
+}
+
+impl UserNoteResponse {
+    fn parse(raw: Value) -> Self {
+        let note = raw
+            .get("note")
+            .and_then(Value::as_str)
+            .filter(|note| !note.is_empty())
+            .map(str::to_owned);
+        Self { note, raw }
+    }
+}
+
+impl UserProfileResponse {
+    pub(super) fn parse(user_id: Id<UserMarker>, body: &Value, note: Option<String>) -> Self {
+        let user = body.get("user");
+        let username = user
+            .and_then(|user| user.get("username"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let global_name = user
+            .and_then(|user| user.get("global_name"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let avatar_url = user.and_then(profile_avatar_url);
+        let user_profile = body.get("user_profile");
+        let bio = user_profile
+            .and_then(|profile| profile.get("bio"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let pronouns = user_profile
+            .and_then(|profile| profile.get("pronouns"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let guild_pronouns = body
+            .get("guild_member_profile")
+            .and_then(|profile| profile.get("pronouns"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let mutual_guilds = body
+            .get("mutual_guilds")
+            .and_then(Value::as_array)
+            .map(|array| {
+                array
+                    .iter()
+                    .filter_map(|entry| {
+                        let guild_id = entry
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .and_then(|raw| raw.parse::<u64>().ok())
+                            .and_then(Id::<GuildMarker>::new_checked)?;
+                        let nick = entry
+                            .get("nick")
+                            .and_then(Value::as_str)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_owned);
+                        Some(MutualGuildInfo { guild_id, nick })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mutual_friends_count = body
+            .get("mutual_friends_count")
+            .and_then(Value::as_u64)
+            .map(|value| u32::try_from(value).unwrap_or(u32::MAX))
+            .unwrap_or(0);
+        let guild_nick = body
+            .get("guild_member")
+            .and_then(|member| member.get("nick"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let role_ids = body
+            .get("guild_member")
+            .and_then(|member| member.get("roles"))
+            .and_then(Value::as_array)
+            .map(|roles| roles.iter().filter_map(parse_profile_role_id).collect())
+            .unwrap_or_default();
+
+        Self {
+            profile: UserProfileInfo {
+                user_id,
+                username,
+                global_name,
+                guild_nick,
+                role_ids,
+                avatar_url,
+                bio,
+                pronouns,
+                guild_pronouns,
+                mutual_guilds,
+                mutual_friends_count,
+                friend_status: FriendStatus::None,
+                note,
+            },
+            user: body.get("user").cloned(),
+            user_profile: body.get("user_profile").cloned(),
+            guild_member: body.get("guild_member").cloned(),
+            guild_member_profile: body.get("guild_member_profile").cloned(),
+            mutual_guilds: clone_array(body.get("mutual_guilds")),
+            extra_fields: extra_fields(
+                body,
+                &[
+                    "user",
+                    "user_profile",
+                    "guild_member",
+                    "guild_member_profile",
+                    "mutual_guilds",
+                    "mutual_friends_count",
+                ],
+            ),
+        }
     }
 }
 

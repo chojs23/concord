@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::discord::events::AppEvent;
+use crate::discord::events::{AppEvent, GatewayDispatchInfo};
 
 mod channels;
 mod guilds;
@@ -37,21 +37,34 @@ use relationships::{parse_relationship_add, parse_relationship_remove, parse_rel
 use user_settings::parse_user_settings_update;
 use voice::{parse_guild_voice_states, parse_voice_server_update, parse_voice_state_update};
 
-/// Best-effort fallback that rebuilds the dashboard's domain events directly
-/// from the raw gateway payload. We only extract the fields the UI consumes,
-/// and skip anything we can't model. Returns an iterable so a single payload
-/// (e.g. `GUILD_CREATE`) can produce multiple downstream events.
-pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
-    let Ok(value) = serde_json::from_str::<Value>(raw) else {
-        return Vec::new();
-    };
-    let Some(event_type) = value.get("t").and_then(Value::as_str) else {
-        return Vec::new();
-    };
-    let Some(data) = value.get("d") else {
-        return Vec::new();
-    };
+#[derive(Clone, Debug)]
+pub(super) struct ParsedGatewayDispatch {
+    pub dispatch: GatewayDispatchInfo,
+    pub events: Vec<AppEvent>,
+}
 
+pub(super) fn parse_user_account_dispatch(raw: &str) -> Option<ParsedGatewayDispatch> {
+    let value = serde_json::from_str::<Value>(raw).ok()?;
+    let event_type = value.get("t").and_then(Value::as_str)?.to_owned();
+    let data = value.get("d")?;
+    let events = parse_user_account_event_data(&event_type, data);
+    Some(ParsedGatewayDispatch {
+        dispatch: GatewayDispatchInfo {
+            event_type,
+            payload: data.clone(),
+        },
+        events,
+    })
+}
+
+#[cfg(test)]
+pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
+    parse_user_account_dispatch(raw)
+        .map(|dispatch| dispatch.events)
+        .unwrap_or_default()
+}
+
+fn parse_user_account_event_data(event_type: &str, data: &Value) -> Vec<AppEvent> {
     match event_type {
         "READY" => parse_ready(data),
         "READY_SUPPLEMENTAL" => parse_ready_supplemental(data),

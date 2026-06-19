@@ -22,12 +22,10 @@ fn all_message_notification_settings_show_numeric_badge() {
         ..GuildCreateFixture::new(guild_id)
     }));
     state.apply_event(&AppEvent::SelectedMessageChannelChanged { channel_id: None });
-    state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![notification_settings(
-            guild_id,
-            NotificationLevel::AllMessages,
-        )],
-    });
+    state.apply_event(&user_guild_settings_init(vec![notification_settings(
+        guild_id,
+        NotificationLevel::AllMessages,
+    )]));
 
     state.apply_event(&message_create(
         Some(guild_id),
@@ -75,12 +73,10 @@ fn loaded_guild_messages_use_notification_numeric_badge() {
     state.apply_event(&AppEvent::ReadStateInit {
         entries: vec![read_state_info(channel_id, Some(Id::new(29)), 0)],
     });
-    state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![notification_settings(
-            guild_id,
-            NotificationLevel::AllMessages,
-        )],
-    });
+    state.apply_event(&user_guild_settings_init(vec![notification_settings(
+        guild_id,
+        NotificationLevel::AllMessages,
+    )]));
     state.apply_event(&latest_history_loaded(
         channel_id,
         vec![MessageInfo {
@@ -133,9 +129,7 @@ fn muted_channel_does_not_add_numeric_notification_badge() {
         }],
         ..GuildCreateFixture::new(guild_id)
     }));
-    state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![settings],
-    });
+    state.apply_event(&user_guild_settings_init(vec![settings]));
 
     state.apply_event(&message_create(
         Some(guild_id),
@@ -190,9 +184,7 @@ fn muted_parent_category_does_not_add_server_sidebar_unread() {
         ],
         ..GuildCreateFixture::new(guild_id)
     }));
-    state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![settings],
-    });
+    state.apply_event(&user_guild_settings_init(vec![settings]));
 
     state.apply_event(&message_create(
         Some(guild_id),
@@ -253,9 +245,7 @@ fn explicit_channel_unmute_override_beats_muted_parent_category() {
         ],
         ..GuildCreateFixture::new(guild_id)
     }));
-    state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![settings],
-    });
+    state.apply_event(&user_guild_settings_init(vec![settings]));
 
     state.apply_event(&message_create(
         Some(guild_id),
@@ -307,12 +297,10 @@ fn only_mentions_settings_use_resolved_mentions() {
             roles: vec![role_info(role_id, "notify", 0)],
             ..GuildCreateFixture::new(guild_id)
         }));
-        state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
-            settings: vec![notification_settings(
-                guild_id,
-                NotificationLevel::OnlyMentions,
-            )],
-        });
+        state.apply_event(&user_guild_settings_init(vec![notification_settings(
+            guild_id,
+            NotificationLevel::OnlyMentions,
+        )]));
         state.apply_event(&message_create_event(MessageCreateFixture {
             guild_id: Some(guild_id),
             channel_id,
@@ -381,11 +369,9 @@ fn private_all_messages_settings_show_numeric_badge() {
         user_id: Some(current_user_id),
     });
     state.apply_event(&AppEvent::ChannelUpsert(dm_channel(channel_id, "dm")));
-    state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![private_notification_settings(
-            NotificationLevel::AllMessages,
-        )],
-    });
+    state.apply_event(&user_guild_settings_init(vec![
+        private_notification_settings(NotificationLevel::AllMessages),
+    ]));
 
     state.apply_event(&message_create(
         None,
@@ -422,9 +408,7 @@ fn private_channel_override_no_messages_suppresses_numeric_badge() {
         user_id: Some(current_user_id),
     });
     state.apply_event(&AppEvent::ChannelUpsert(dm_channel(channel_id, "dm")));
-    state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![settings],
-    });
+    state.apply_event(&user_guild_settings_init(vec![settings]));
 
     state.apply_event(&message_create(
         None,
@@ -459,9 +443,7 @@ fn muted_private_channel_override_suppresses_numeric_badge() {
         user_id: Some(current_user_id),
     });
     state.apply_event(&AppEvent::ChannelUpsert(dm_channel(channel_id, "dm")));
-    state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![settings],
-    });
+    state.apply_event(&user_guild_settings_init(vec![settings]));
 
     state.apply_event(&message_create(
         None,
@@ -507,9 +489,9 @@ fn notification_settings_init_replaces_private_settings() {
         private_channel_id,
         "dm",
     )));
-    state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![private_notification_settings(NotificationLevel::NoMessages)],
-    });
+    state.apply_event(&user_guild_settings_init(vec![
+        private_notification_settings(NotificationLevel::NoMessages),
+    ]));
 
     state.apply_event(&message_create(
         None,
@@ -524,12 +506,10 @@ fn notification_settings_init_replaces_private_settings() {
         ChannelUnreadState::Unread
     );
 
-    state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![notification_settings(
-            guild_id,
-            NotificationLevel::OnlyMentions,
-        )],
-    });
+    state.apply_event(&user_guild_settings_init(vec![notification_settings(
+        guild_id,
+        NotificationLevel::OnlyMentions,
+    )]));
 
     assert_eq!(
         state.channel_unread(private_channel_id),

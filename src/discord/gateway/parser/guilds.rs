@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::discord::{
     ChannelInfo, ChannelNotificationOverrideInfo, CustomEmojiInfo, GuildNotificationSettingsInfo,
-    NotificationLevel, RoleInfo,
+    NotificationLevel, RoleInfo, UserGuildSettingsInfo,
     events::AppEvent,
     ids::{
         Id,
@@ -224,21 +224,28 @@ pub(super) fn parse_guild_delete(data: &Value) -> Option<AppEvent> {
 }
 
 pub(super) fn parse_user_guild_settings_update(data: &Value) -> Option<AppEvent> {
-    parse_user_guild_notification_settings(data)
-        .map(|settings| AppEvent::UserGuildNotificationSettingsUpdate { settings })
+    parse_user_guild_settings_info(data)
+        .map(|settings| AppEvent::UserGuildSettingsUpdate { settings })
 }
 
 pub(super) fn parse_user_guild_settings_entries(
     value: Option<&Value>,
-) -> Option<Vec<GuildNotificationSettingsInfo>> {
+) -> Option<Vec<UserGuildSettingsInfo>> {
     let entries = value
         .and_then(|node| node.get("entries").or(Some(node)))
         .and_then(Value::as_array)?;
-    let settings: Vec<GuildNotificationSettingsInfo> = entries
+    let settings: Vec<UserGuildSettingsInfo> = entries
         .iter()
-        .filter_map(parse_user_guild_notification_settings)
+        .filter_map(parse_user_guild_settings_info)
         .collect();
     (!settings.is_empty()).then_some(settings)
+}
+
+fn parse_user_guild_settings_info(value: &Value) -> Option<UserGuildSettingsInfo> {
+    Some(UserGuildSettingsInfo {
+        notification_settings: parse_user_guild_notification_settings(value)?,
+        extra_fields: parse_extra_user_guild_settings_fields(value),
+    })
 }
 
 fn parse_user_guild_notification_settings(value: &Value) -> Option<GuildNotificationSettingsInfo> {
@@ -332,4 +339,30 @@ fn guild_field<'a>(data: &'a Value, key: &str) -> Option<&'a Value> {
         data.get("properties")
             .and_then(|properties| properties.get(key))
     })
+}
+
+fn parse_extra_user_guild_settings_fields(
+    value: &Value,
+) -> std::collections::BTreeMap<String, Value> {
+    let Some(settings) = value.as_object() else {
+        return std::collections::BTreeMap::new();
+    };
+    settings
+        .iter()
+        .filter(|(field, _)| !is_known_user_guild_settings_field(field))
+        .map(|(field, value)| (field.clone(), value.clone()))
+        .collect()
+}
+
+fn is_known_user_guild_settings_field(field: &str) -> bool {
+    matches!(
+        field,
+        "guild_id"
+            | "message_notifications"
+            | "muted"
+            | "mute_config"
+            | "suppress_everyone"
+            | "suppress_roles"
+            | "channel_overrides"
+    )
 }

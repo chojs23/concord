@@ -39,11 +39,11 @@ impl DashboardState {
             event,
             AppEvent::TypingStart { .. }
                 | AppEvent::PresenceUpdate { .. }
-                | AppEvent::GuildMemberListCounts { .. }
-                | AppEvent::GuildFoldersUpdate { .. }
+                | AppEvent::GuildMemberListUpdate { .. }
+                | AppEvent::UserSettingsUpdate { .. }
                 | AppEvent::UserNoteLoaded { .. }
-                | AppEvent::UserGuildNotificationSettingsInit { .. }
-                | AppEvent::UserGuildNotificationSettingsUpdate { .. }
+                | AppEvent::UserGuildSettingsInit { .. }
+                | AppEvent::UserGuildSettingsUpdate { .. }
                 | AppEvent::RelationshipsLoaded { .. }
                 | AppEvent::RelationshipUpsert { .. }
                 | AppEvent::RelationshipRemove { .. }

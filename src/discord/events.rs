@@ -1,3 +1,7 @@
+use std::collections::BTreeMap;
+
+use serde_json::Value;
+
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
@@ -9,7 +13,7 @@ use super::commands::{
     MessageHistoryAfterMode, MessageSearchPage, MessageSearchQuery, ReactionEmoji,
 };
 use super::{
-    ActivityInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildFolder,
+    ActivityInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo,
     GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, PollInfo, PresenceStatus,
     ReactionUsersInfo, ReadStateInfo, RelationshipInfo, RoleInfo, SnapshotAreas, UserProfileInfo,
     UserSettingsInfo, VoiceConnectionStatus, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo,
@@ -18,6 +22,12 @@ use super::{
 
 #[cfg(test)]
 use super::PollAnswerInfo;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GatewayDispatchInfo {
+    pub event_type: String,
+    pub payload: Value,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageUpdateEventFields {
@@ -31,6 +41,15 @@ pub struct MessageUpdateEventFields {
     pub attachments: AttachmentUpdate,
     pub embeds: Option<Vec<EmbedInfo>>,
     pub edited_timestamp: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MessageUpdateDispatchInfo {
+    pub guild_id: Option<Id<GuildMarker>>,
+    pub channel_id: Id<ChannelMarker>,
+    pub message_id: Id<MessageMarker>,
+    pub fields: MessageUpdateEventFields,
+    pub extra_fields: BTreeMap<String, Value>,
 }
 
 impl Default for MessageUpdateEventFields {
@@ -57,8 +76,68 @@ pub struct PresenceEventFields {
     pub activities: Vec<ActivityInfo>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserGuildSettingsInfo {
+    pub notification_settings: GuildNotificationSettingsInfo,
+    pub extra_fields: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThreadListSyncInfo {
+    pub guild_id: Option<Id<GuildMarker>>,
+    pub channel_ids: Vec<Id<ChannelMarker>>,
+    pub threads: Vec<ChannelInfo>,
+    pub thread_members: Vec<Value>,
+    pub extra_fields: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThreadMemberUpdateInfo {
+    pub user_id: Id<UserMarker>,
+    pub extra_fields: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThreadMembersUpdateInfo {
+    pub guild_id: Option<Id<GuildMarker>>,
+    pub channel_id: Id<ChannelMarker>,
+    pub member_count: Option<u64>,
+    pub added_members: Vec<ThreadMemberUpdateInfo>,
+    pub added_user_ids: Vec<Id<UserMarker>>,
+    pub removed_user_ids: Vec<Id<UserMarker>>,
+    pub extra_fields: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GuildMemberListUpdateInfo {
+    pub guild_id: Id<GuildMarker>,
+    pub list_id: Option<String>,
+    pub member_count: Option<u64>,
+    pub online_count: Option<u32>,
+    pub members: Vec<MemberInfo>,
+    pub presences: Vec<PresenceEventFields>,
+    pub groups: Vec<Value>,
+    pub ops: Vec<Value>,
+    pub extra_fields: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GuildMembersChunkInfo {
+    pub guild_id: Id<GuildMarker>,
+    pub members: Vec<MemberInfo>,
+    pub presences: Vec<PresenceEventFields>,
+    pub chunk_index: Option<u64>,
+    pub chunk_count: Option<u64>,
+    pub nonce: Option<String>,
+    pub not_found: Vec<Id<UserMarker>>,
+    pub extra_fields: BTreeMap<String, Value>,
+}
+
 #[derive(Clone, Debug)]
 pub enum AppEvent {
+    GatewayDispatchReceived {
+        dispatch: GatewayDispatchInfo,
+    },
     Ready {
         user: String,
         user_id: Option<Id<UserMarker>>,
@@ -128,10 +207,11 @@ pub enum AppEvent {
         guild_id: Option<Id<GuildMarker>>,
         channel_id: Id<ChannelMarker>,
     },
-    ThreadMembersUpdate {
-        channel_id: Id<ChannelMarker>,
-        added_user_ids: Vec<Id<UserMarker>>,
-        removed_user_ids: Vec<Id<UserMarker>>,
+    ThreadListSync {
+        sync: ThreadListSyncInfo,
+    },
+    ThreadMembersUpdateDispatch {
+        update: ThreadMembersUpdateInfo,
     },
     MessageCreate {
         message: MessageInfo,
@@ -192,11 +272,8 @@ pub enum AppEvent {
         target: MessageHistoryLoadTarget,
         message: String,
     },
-    MessageUpdate {
-        guild_id: Option<Id<GuildMarker>>,
-        channel_id: Id<ChannelMarker>,
-        message_id: Id<MessageMarker>,
-        fields: MessageUpdateEventFields,
+    MessageUpdateDispatch {
+        update: MessageUpdateDispatchInfo,
     },
     MessageDelete {
         guild_id: Option<Id<GuildMarker>>,
@@ -208,9 +285,11 @@ pub enum AppEvent {
         channel_id: Id<ChannelMarker>,
         message_ids: Vec<Id<MessageMarker>>,
     },
-    GuildMemberListCounts {
-        guild_id: Id<GuildMarker>,
-        online: u32,
+    GuildMemberListUpdate {
+        update: GuildMemberListUpdateInfo,
+    },
+    GuildMembersChunk {
+        chunk: GuildMembersChunkInfo,
     },
     GuildMemberUpsert {
         guild_id: Id<GuildMarker>,
@@ -320,17 +399,14 @@ pub enum AppEvent {
         message_id: Id<MessageMarker>,
         reactions: Vec<ReactionUsersInfo>,
     },
-    GuildFoldersUpdate {
-        folders: Vec<GuildFolder>,
-    },
     UserSettingsUpdate {
         settings: UserSettingsInfo,
     },
-    UserGuildNotificationSettingsInit {
-        settings: Vec<GuildNotificationSettingsInfo>,
+    UserGuildSettingsInit {
+        settings: Vec<UserGuildSettingsInfo>,
     },
-    UserGuildNotificationSettingsUpdate {
-        settings: GuildNotificationSettingsInfo,
+    UserGuildSettingsUpdate {
+        settings: UserGuildSettingsInfo,
     },
     GatewayError {
         message: String,
@@ -439,6 +515,7 @@ macro_rules! define_app_event_kinds {
 }
 
 define_app_event_kinds! {
+    GatewayDispatchReceived: AppEvent::GatewayDispatchReceived { .. },
     Ready: AppEvent::Ready { .. },
     SignedOut: AppEvent::SignedOut,
     CurrentUserCapabilities: AppEvent::CurrentUserCapabilities { .. },
@@ -455,7 +532,8 @@ define_app_event_kinds! {
     SelectedMessageChannelChanged: AppEvent::SelectedMessageChannelChanged { .. },
     ChannelUpsert: AppEvent::ChannelUpsert(_),
     ChannelDelete: AppEvent::ChannelDelete { .. },
-    ThreadMembersUpdate: AppEvent::ThreadMembersUpdate { .. },
+    ThreadListSync: AppEvent::ThreadListSync { .. },
+    ThreadMembersUpdateDispatch: AppEvent::ThreadMembersUpdateDispatch { .. },
     MessageCreate: AppEvent::MessageCreate { .. },
     MessageHistoryLoaded: AppEvent::MessageHistoryLoaded { .. },
     MessageHistoryRefreshed: AppEvent::MessageHistoryRefreshed { .. },
@@ -468,10 +546,11 @@ define_app_event_kinds! {
     MessageSearchLoaded: AppEvent::MessageSearchLoaded { .. },
     MessageSearchLoadFailed: AppEvent::MessageSearchLoadFailed { .. },
     MessageHistoryLoadFailed: AppEvent::MessageHistoryLoadFailed { .. },
-    MessageUpdate: AppEvent::MessageUpdate { .. },
+    MessageUpdateDispatch: AppEvent::MessageUpdateDispatch { .. },
     MessageDelete: AppEvent::MessageDelete { .. },
     MessageDeleteBulk: AppEvent::MessageDeleteBulk { .. },
-    GuildMemberListCounts: AppEvent::GuildMemberListCounts { .. },
+    GuildMemberListUpdate: AppEvent::GuildMemberListUpdate { .. },
+    GuildMembersChunk: AppEvent::GuildMembersChunk { .. },
     GuildMemberUpsert: AppEvent::GuildMemberUpsert { .. },
     GuildMemberAdd: AppEvent::GuildMemberAdd { .. },
     GuildMemberRemove: AppEvent::GuildMemberRemove { .. },
@@ -494,10 +573,9 @@ define_app_event_kinds! {
     PinnedMessagesLoadFailed: AppEvent::PinnedMessagesLoadFailed { .. },
     CurrentUserPollVoteUpdate: AppEvent::CurrentUserPollVoteUpdate { .. },
     ReactionUsersLoaded: AppEvent::ReactionUsersLoaded { .. },
-    GuildFoldersUpdate: AppEvent::GuildFoldersUpdate { .. },
     UserSettingsUpdate: AppEvent::UserSettingsUpdate { .. },
-    UserGuildNotificationSettingsInit: AppEvent::UserGuildNotificationSettingsInit { .. },
-    UserGuildNotificationSettingsUpdate: AppEvent::UserGuildNotificationSettingsUpdate { .. },
+    UserGuildSettingsInit: AppEvent::UserGuildSettingsInit { .. },
+    UserGuildSettingsUpdate: AppEvent::UserGuildSettingsUpdate { .. },
     GatewayError: AppEvent::GatewayError { .. },
     MediaPlaybackWindowReady: AppEvent::MediaPlaybackWindowReady { .. },
     AttachmentDownloadStarted: AppEvent::AttachmentDownloadStarted { .. },
@@ -677,7 +755,8 @@ impl AppEventKind {
             AppEventKind::GuildCreate
             | AppEventKind::GuildUpdate
             | AppEventKind::GuildDelete
-            | AppEventKind::ThreadMembersUpdate
+            | AppEventKind::ThreadListSync
+            | AppEventKind::ThreadMembersUpdateDispatch
             | AppEventKind::ChannelUpsert
             | AppEventKind::ChannelDelete
             | AppEventKind::Ready => AppEventMetadata::mutating(SnapshotAreas::all()),
@@ -700,7 +779,7 @@ impl AppEventKind {
                 AppEventMetadata::mutating_effect(SnapshotAreas::message())
             }
 
-            AppEventKind::MessageUpdate
+            AppEventKind::MessageUpdateDispatch
             | AppEventKind::CurrentUserReactionAdd
             | AppEventKind::CurrentUserReactionRemove
             | AppEventKind::MessageReactionAdd
@@ -737,17 +816,17 @@ impl AppEventKind {
             | AppEventKind::GuildRoleUpsert
             | AppEventKind::GuildRoleDelete
             | AppEventKind::GuildEmojisUpdate
-            | AppEventKind::GuildMemberListCounts
+            | AppEventKind::GuildMemberListUpdate
+            | AppEventKind::GuildMembersChunk
             | AppEventKind::GuildMemberRemove
             | AppEventKind::PresenceUpdate
             | AppEventKind::VoiceStateUpdate
             | AppEventKind::VoiceSpeakingUpdate
             | AppEventKind::TypingStart
-            | AppEventKind::GuildFoldersUpdate
             | AppEventKind::UserSettingsUpdate
             | AppEventKind::UserNoteLoaded
-            | AppEventKind::UserGuildNotificationSettingsInit
-            | AppEventKind::UserGuildNotificationSettingsUpdate => {
+            | AppEventKind::UserGuildSettingsInit
+            | AppEventKind::UserGuildSettingsUpdate => {
                 AppEventMetadata::mutating(SnapshotAreas::navigation())
             }
 
@@ -756,6 +835,7 @@ impl AppEventKind {
             }
 
             AppEventKind::GatewayError
+            | AppEventKind::GatewayDispatchReceived
             | AppEventKind::SignedOut
             | AppEventKind::MediaPlaybackWindowReady
             | AppEventKind::CurrentUserCapabilities

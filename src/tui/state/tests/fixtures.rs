@@ -414,14 +414,12 @@ pub(super) fn state_with_folder(folder_id: Option<u64>) -> DashboardState {
     for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
         state.push_event(guild_create_event(guild_id, name, Vec::new()));
     }
-    state.push_event(AppEvent::GuildFoldersUpdate {
-        folders: vec![GuildFolder {
-            id: folder_id,
-            name: Some("folder".to_owned()),
-            color: None,
-            guild_ids: vec![first_guild, second_guild],
-        }],
-    });
+    state.push_event(super::user_settings_update(vec![GuildFolder {
+        id: folder_id,
+        name: Some("folder".to_owned()),
+        color: None,
+        guild_ids: vec![first_guild, second_guild],
+    }]));
     state
 }
 
@@ -822,21 +820,19 @@ pub(super) fn state_with_two_guilds() -> DashboardState {
     for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
         state.push_event(guild_create_event(guild_id, name, Vec::new()));
     }
-    state.push_event(AppEvent::GuildFoldersUpdate {
-        folders: vec![
-            GuildFolder {
-                id: None,
-                name: None,
-                color: None,
-                guild_ids: vec![first_guild],
-            },
-            GuildFolder {
-                id: None,
-                name: None,
-                color: None,
-                guild_ids: vec![second_guild],
-            },
-        ],
-    });
+    state.push_event(super::user_settings_update(vec![
+        GuildFolder {
+            id: None,
+            name: None,
+            color: None,
+            guild_ids: vec![first_guild],
+        },
+        GuildFolder {
+            id: None,
+            name: None,
+            color: None,
+            guild_ids: vec![second_guild],
+        },
+    ]));
     state
 }

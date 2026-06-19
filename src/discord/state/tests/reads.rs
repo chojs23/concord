@@ -159,12 +159,10 @@ fn stale_message_ack_does_not_reopen_unread_state() {
     state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
         channel_id, 500,
     )));
-    state.apply_event(&AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![notification_settings(
-            guild_id,
-            NotificationLevel::AllMessages,
-        )],
-    });
+    state.apply_event(&user_guild_settings_init(vec![notification_settings(
+        guild_id,
+        NotificationLevel::AllMessages,
+    )]));
     state.apply_event(&latest_history_loaded(
         channel_id,
         (101..=105)

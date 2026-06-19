@@ -359,13 +359,13 @@ fn muted_server_name_is_dimmed() {
         emojis: Vec::new(),
         owner_id: None,
     });
-    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![GuildNotificationSettingsInfo {
+    state.push_event(user_guild_settings_init(vec![
+        GuildNotificationSettingsInfo {
             message_notifications: Some(NotificationLevel::OnlyMentions),
             muted: true,
             ..GuildNotificationSettingsInfo::test(Some(guild_id))
-        }],
-    });
+        },
+    ]));
     state.set_guild_view_height(20);
     let backend = TestBackend::new(40, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
@@ -720,10 +720,7 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
         owner_id: None,
     });
     state.confirm_selected_guild();
-    state.push_event(AppEvent::GuildMemberListCounts {
-        guild_id,
-        online: 1,
-    });
+    state.push_event(guild_member_list_counts_event(guild_id, 1));
     state.push_event(AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo::test(guild_id, Some(voice_id), alice),
     });
@@ -888,16 +885,16 @@ fn muted_category_and_channel_names_are_dimmed() {
         owner_id: None,
     });
     state.confirm_selected_guild();
-    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![GuildNotificationSettingsInfo {
+    state.push_event(user_guild_settings_init(vec![
+        GuildNotificationSettingsInfo {
             message_notifications: Some(NotificationLevel::OnlyMentions),
             channel_overrides: vec![ChannelNotificationOverrideInfo {
                 muted: true,
                 ..ChannelNotificationOverrideInfo::test(category_id)
             }],
             ..GuildNotificationSettingsInfo::test(Some(guild_id))
-        }],
-    });
+        },
+    ]));
     state.set_channel_view_height(20);
     let backend = TestBackend::new(40, 8);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");

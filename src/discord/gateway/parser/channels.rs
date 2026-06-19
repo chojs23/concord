@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::discord::{
     ChannelInfo, ChannelRecipientInfo, PermissionOverwriteInfo, PermissionOverwriteKind,
-    ThreadMetadataInfo,
+    ThreadListSyncInfo, ThreadMemberUpdateInfo, ThreadMembersUpdateInfo, ThreadMetadataInfo,
     events::AppEvent,
     ids::{
         Id,
@@ -11,8 +11,8 @@ use crate::discord::{
 };
 
 use super::shared::{
-    display_name_from_parts, display_name_from_parts_or_unknown, parse_id, parse_status,
-    raw_user_avatar_url,
+    display_name_from_parts, display_name_from_parts_or_unknown, extra_fields, parse_id,
+    parse_status, raw_user_avatar_url,
 };
 
 pub(crate) fn parse_channel_info(
@@ -236,16 +236,28 @@ pub(super) fn parse_channel_delete(data: &Value) -> Option<AppEvent> {
 
 pub(super) fn parse_thread_list_sync(data: &Value) -> Vec<AppEvent> {
     let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
-    data.get("threads")
+    let threads: Vec<ChannelInfo> = data
+        .get("threads")
         .and_then(Value::as_array)
         .map(|threads| {
             threads
                 .iter()
                 .filter_map(|thread| parse_channel_info(thread, guild_id))
-                .map(AppEvent::ChannelUpsert)
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if threads.is_empty() {
+        return Vec::new();
+    }
+    vec![AppEvent::ThreadListSync {
+        sync: ThreadListSyncInfo {
+            guild_id,
+            channel_ids: parse_id_array(data.get("channel_ids")),
+            threads,
+            thread_members: clone_array(data.get("members")),
+            extra_fields: extra_fields(data, &["guild_id", "channel_ids", "threads", "members"]),
+        },
+    }]
 }
 
 pub(super) fn parse_thread_members_update(data: &Value) -> Vec<AppEvent> {
@@ -253,13 +265,14 @@ pub(super) fn parse_thread_members_update(data: &Value) -> Vec<AppEvent> {
         return Vec::new();
     };
 
-    let added_user_ids: Vec<_> = data
+    let added_members: Vec<_> = data
         .get("added_members")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|member| member.get("user_id").and_then(parse_id::<UserMarker>))
+        .filter_map(parse_thread_member_update_info)
         .collect();
+    let added_user_ids = added_members.iter().map(|member| member.user_id).collect();
     let removed_user_ids: Vec<_> = data
         .get("removed_member_ids")
         .and_then(Value::as_array)
@@ -268,13 +281,45 @@ pub(super) fn parse_thread_members_update(data: &Value) -> Vec<AppEvent> {
         .filter_map(parse_id::<UserMarker>)
         .collect();
 
-    if added_user_ids.is_empty() && removed_user_ids.is_empty() {
-        Vec::new()
-    } else {
-        vec![AppEvent::ThreadMembersUpdate {
+    vec![AppEvent::ThreadMembersUpdateDispatch {
+        update: ThreadMembersUpdateInfo {
+            guild_id: data.get("guild_id").and_then(parse_id::<GuildMarker>),
             channel_id,
+            member_count: data.get("member_count").and_then(Value::as_u64),
+            added_members,
             added_user_ids,
             removed_user_ids,
-        }]
-    }
+            extra_fields: extra_fields(
+                data,
+                &[
+                    "id",
+                    "guild_id",
+                    "member_count",
+                    "added_members",
+                    "removed_member_ids",
+                ],
+            ),
+        },
+    }]
+}
+
+fn parse_thread_member_update_info(value: &Value) -> Option<ThreadMemberUpdateInfo> {
+    Some(ThreadMemberUpdateInfo {
+        user_id: value.get("user_id").and_then(parse_id::<UserMarker>)?,
+        extra_fields: extra_fields(value, &["user_id"]),
+    })
+}
+
+fn clone_array(value: Option<&Value>) -> Vec<Value> {
+    value
+        .and_then(Value::as_array)
+        .map(|values| values.to_vec())
+        .unwrap_or_default()
+}
+
+fn parse_id_array<T>(value: Option<&Value>) -> Vec<Id<T>> {
+    value
+        .and_then(Value::as_array)
+        .map(|values| values.iter().filter_map(parse_id::<T>).collect())
+        .unwrap_or_default()
 }

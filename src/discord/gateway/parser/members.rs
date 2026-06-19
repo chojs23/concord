@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::discord::{
-    MemberInfo,
+    GuildMemberListUpdateInfo, GuildMembersChunkInfo, MemberInfo,
     events::{AppEvent, PresenceEventFields},
     ids::{
         Id,
@@ -12,8 +12,8 @@ use crate::discord::{
 use super::{
     presence::{parse_activities, parse_presence_entry},
     shared::{
-        display_name_from_parts_or_unknown, parse_id, parse_status, raw_member_avatar_url,
-        raw_user_avatar_url,
+        display_name_from_parts_or_unknown, extra_fields, parse_id, parse_status,
+        raw_member_avatar_url, raw_user_avatar_url,
     },
 };
 
@@ -50,31 +50,46 @@ pub(super) fn parse_member_chunk(data: &Value) -> Vec<AppEvent> {
         return Vec::new();
     };
 
-    let mut events: Vec<AppEvent> = data
+    let members = data
         .get("members")
         .and_then(Value::as_array)
         .map(|members| {
             members
                 .iter()
                 .filter_map(|member| parse_member_info(member, Some(guild_id)))
-                .map(|member| AppEvent::GuildMemberUpsert { guild_id, member })
                 .collect()
         })
         .unwrap_or_default();
 
-    if let Some(presences) = data.get("presences").and_then(Value::as_array) {
-        events.extend(
-            presences
-                .iter()
-                .filter_map(parse_presence_entry)
-                .map(|presence| AppEvent::PresenceUpdate {
-                    guild_id: Some(guild_id),
-                    presence,
-                }),
-        );
-    }
+    let presences = data
+        .get("presences")
+        .and_then(Value::as_array)
+        .map(|presences| presences.iter().filter_map(parse_presence_entry).collect())
+        .unwrap_or_default();
 
-    events
+    vec![AppEvent::GuildMembersChunk {
+        chunk: GuildMembersChunkInfo {
+            guild_id,
+            members,
+            presences,
+            chunk_index: data.get("chunk_index").and_then(Value::as_u64),
+            chunk_count: data.get("chunk_count").and_then(Value::as_u64),
+            nonce: data.get("nonce").and_then(Value::as_str).map(str::to_owned),
+            not_found: parse_id_array(data.get("not_found")),
+            extra_fields: extra_fields(
+                data,
+                &[
+                    "guild_id",
+                    "members",
+                    "presences",
+                    "chunk_index",
+                    "chunk_count",
+                    "nonce",
+                    "not_found",
+                ],
+            ),
+        },
+    }]
 }
 
 pub(super) fn parse_member_list_update(data: &Value) -> Vec<AppEvent> {
@@ -85,16 +100,19 @@ pub(super) fn parse_member_list_update(data: &Value) -> Vec<AppEvent> {
         return Vec::new();
     };
 
-    let mut events = Vec::new();
+    let mut online_count = None;
+    let mut members = Vec::new();
+    let mut presences = Vec::new();
 
     if let Some(groups) = data.get("groups").and_then(Value::as_array) {
-        let online = groups
-            .iter()
-            .filter(|g| g.get("id").and_then(Value::as_str) != Some("offline"))
-            .filter_map(|g| g.get("count").and_then(Value::as_u64))
-            .map(|c| c as u32)
-            .sum();
-        events.push(AppEvent::GuildMemberListCounts { guild_id, online });
+        online_count = Some(
+            groups
+                .iter()
+                .filter(|g| g.get("id").and_then(Value::as_str) != Some("offline"))
+                .filter_map(|g| g.get("count").and_then(Value::as_u64))
+                .map(|c| c as u32)
+                .sum(),
+        );
     }
 
     // A single GUILD_MEMBER_LIST_UPDATE event can carry SYNC ops for several
@@ -106,32 +124,78 @@ pub(super) fn parse_member_list_update(data: &Value) -> Vec<AppEvent> {
             Some("SYNC") => {
                 if let Some(items) = op.get("items").and_then(Value::as_array) {
                     for item in items {
-                        events.extend(parse_member_list_item(guild_id, item));
+                        if let Some(item) = parse_member_list_item(guild_id, item) {
+                            members.push(item.member);
+                            if let Some(presence) = item.presence {
+                                presences.push(presence);
+                            }
+                        }
                     }
                 }
             }
             Some("INSERT" | "UPDATE") => {
                 if let Some(item) = op.get("item") {
-                    events.extend(parse_member_list_item(guild_id, item));
+                    if let Some(item) = parse_member_list_item(guild_id, item) {
+                        members.push(item.member);
+                        if let Some(presence) = item.presence {
+                            presences.push(presence);
+                        }
+                    }
                 }
             }
             _ => {}
         }
     }
 
-    events
+    vec![AppEvent::GuildMemberListUpdate {
+        update: GuildMemberListUpdateInfo {
+            guild_id,
+            list_id: data.get("id").and_then(Value::as_str).map(str::to_owned),
+            member_count: data.get("member_count").and_then(Value::as_u64),
+            online_count,
+            members,
+            presences,
+            groups: clone_array(data.get("groups")),
+            ops: ops.to_vec(),
+            extra_fields: extra_fields(
+                data,
+                &[
+                    "guild_id",
+                    "id",
+                    "member_count",
+                    "online_count",
+                    "groups",
+                    "ops",
+                ],
+            ),
+        },
+    }]
 }
 
-fn parse_member_list_item(guild_id: Id<GuildMarker>, item: &Value) -> Vec<AppEvent> {
-    let Some(member) = item
+fn clone_array(value: Option<&Value>) -> Vec<Value> {
+    value
+        .and_then(Value::as_array)
+        .map(|values| values.to_vec())
+        .unwrap_or_default()
+}
+
+fn parse_id_array<T>(value: Option<&Value>) -> Vec<Id<T>> {
+    value
+        .and_then(Value::as_array)
+        .map(|values| values.iter().filter_map(parse_id::<T>).collect())
+        .unwrap_or_default()
+}
+
+struct MemberListItemInfo {
+    member: MemberInfo,
+    presence: Option<PresenceEventFields>,
+}
+
+fn parse_member_list_item(guild_id: Id<GuildMarker>, item: &Value) -> Option<MemberListItemInfo> {
+    let member = item
         .get("member")
-        .or_else(|| item.get("user").map(|_| item))
-    else {
-        return Vec::new();
-    };
-    let Some(member_info) = parse_member_info(member, Some(guild_id)) else {
-        return Vec::new();
-    };
+        .or_else(|| item.get("user").map(|_| item))?;
+    let member_info = parse_member_info(member, Some(guild_id))?;
     let user_id = member_info.user_id;
     let presence = member.get("presence");
     let status = presence
@@ -140,21 +204,15 @@ fn parse_member_list_item(guild_id: Id<GuildMarker>, item: &Value) -> Vec<AppEve
         .map(parse_status);
     let activities = presence.map(parse_activities).unwrap_or_default();
 
-    let mut events = vec![AppEvent::GuildMemberUpsert {
-        guild_id,
+    let presence = status.map(|status| PresenceEventFields {
+        user_id,
+        status,
+        activities,
+    });
+    Some(MemberListItemInfo {
         member: member_info,
-    }];
-    if let Some(status) = status {
-        events.push(AppEvent::PresenceUpdate {
-            guild_id: Some(guild_id),
-            presence: PresenceEventFields {
-                user_id,
-                status,
-                activities,
-            },
-        });
-    }
-    events
+        presence,
+    })
 }
 
 pub(super) fn parse_member_remove(data: &Value) -> Option<AppEvent> {

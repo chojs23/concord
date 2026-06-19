@@ -318,11 +318,11 @@ fn channel_tree_removes_thread_after_current_user_leaves() {
         vec!["general", "joined thread", "random"]
     );
 
-    state.push_event(AppEvent::ThreadMembersUpdate {
-        channel_id: thread_id,
-        added_user_ids: Vec::new(),
-        removed_user_ids: vec![current_user_id],
-    });
+    state.push_event(thread_members_update_event(
+        thread_id,
+        Vec::new(),
+        vec![current_user_id],
+    ));
 
     assert_eq!(channel_entry_names(&state), vec!["general", "random"]);
 }

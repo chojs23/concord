@@ -611,18 +611,19 @@ impl DiscordState {
                 }
             }
             AppEvent::ChannelUpsert(channel) => self.upsert_channel(channel),
-            AppEvent::ThreadMembersUpdate {
-                channel_id,
-                added_user_ids,
-                removed_user_ids,
-            } => {
+            AppEvent::ThreadListSync { sync } => {
+                for thread in &sync.threads {
+                    self.upsert_channel(thread);
+                }
+            }
+            AppEvent::ThreadMembersUpdateDispatch { update } => {
                 let Some(current_user_id) = self.session.current_user_id else {
                     return;
                 };
-                if added_user_ids.contains(&current_user_id) {
-                    self.set_current_user_thread_membership(*channel_id, true);
-                } else if removed_user_ids.contains(&current_user_id) {
-                    self.set_current_user_thread_membership(*channel_id, false);
+                if update.added_user_ids.contains(&current_user_id) {
+                    self.set_current_user_thread_membership(update.channel_id, true);
+                } else if update.removed_user_ids.contains(&current_user_id) {
+                    self.set_current_user_thread_membership(update.channel_id, false);
                 }
             }
             AppEvent::ForumPostsLoaded {
@@ -710,19 +711,15 @@ impl DiscordState {
             }
             AppEvent::MessageHistoryLoadFailed { .. } => {}
             AppEvent::MessageSearchLoadFailed { .. } => {}
-            AppEvent::MessageUpdate {
-                channel_id,
-                message_id,
-                fields,
-                ..
-            } => self.update_message(
-                *channel_id,
-                *message_id,
+            AppEvent::MessageUpdateDispatch { update } => self.update_message(
+                update.channel_id,
+                update.message_id,
                 MessageUpdateFields {
-                    body: fields.clone(),
+                    body: update.fields.clone(),
                     pinned: None,
                     reactions: None,
-                    retain_body: self.should_retain_message_update_body(*channel_id, *message_id),
+                    retain_body: self
+                        .should_retain_message_update_body(update.channel_id, update.message_id),
                 },
             ),
             AppEvent::CurrentUserReactionAdd {
@@ -788,9 +785,33 @@ impl DiscordState {
                 message_ids,
                 ..
             } => self.delete_messages(*channel_id, message_ids),
-            AppEvent::GuildMemberListCounts { guild_id, online } => {
-                if let Some(guild) = self.navigation.guilds.get_mut(guild_id) {
-                    guild.online_count = Some(*online);
+            AppEvent::GuildMemberListUpdate { update } => {
+                if let Some(online) = update.online_count
+                    && let Some(guild) = self.navigation.guilds.get_mut(&update.guild_id)
+                {
+                    guild.online_count = Some(online);
+                }
+                for member in &update.members {
+                    self.upsert_guild_member(update.guild_id, member);
+                    self.refresh_message_author_display_name(update.guild_id, member);
+                }
+                for presence in &update.presences {
+                    self.apply_event(&AppEvent::PresenceUpdate {
+                        guild_id: Some(update.guild_id),
+                        presence: presence.clone(),
+                    });
+                }
+            }
+            AppEvent::GuildMembersChunk { chunk } => {
+                for member in &chunk.members {
+                    self.upsert_guild_member(chunk.guild_id, member);
+                    self.refresh_message_author_display_name(chunk.guild_id, member);
+                }
+                for presence in &chunk.presences {
+                    self.apply_event(&AppEvent::PresenceUpdate {
+                        guild_id: Some(chunk.guild_id),
+                        presence: presence.clone(),
+                    });
                 }
             }
             AppEvent::GuildMemberAdd { guild_id, member } => {
@@ -879,9 +900,6 @@ impl DiscordState {
                     self.presence.typing.remove(channel_id);
                 }
             }
-            AppEvent::GuildFoldersUpdate { folders } => {
-                self.navigation.guild_folders = folders.clone();
-            }
             AppEvent::UserSettingsUpdate { settings } => {
                 if let Some(folders) = &settings.guild_folders {
                     self.navigation.guild_folders = folders.clone();
@@ -926,17 +944,18 @@ impl DiscordState {
             AppEvent::CurrentUserCapabilities { .. } => {}
             AppEvent::ReadStateInit { .. } => self.apply_read_state_init_event(event),
             AppEvent::MessageAck { .. } => self.apply_message_ack_event(event),
-            AppEvent::UserGuildNotificationSettingsInit { settings } => {
+            AppEvent::UserGuildSettingsInit { settings } => {
                 self.notifications.notification_settings.clear();
                 self.notifications.private_notification_settings = None;
                 for setting in settings {
-                    self.upsert_notification_settings(setting);
+                    self.upsert_notification_settings(&setting.notification_settings);
                 }
             }
-            AppEvent::UserGuildNotificationSettingsUpdate { settings } => {
-                self.upsert_notification_settings(settings);
+            AppEvent::UserGuildSettingsUpdate { settings } => {
+                self.upsert_notification_settings(&settings.notification_settings);
             }
-            AppEvent::GatewayError { .. }
+            AppEvent::GatewayDispatchReceived { .. }
+            | AppEvent::GatewayError { .. }
             | AppEvent::SignedOut
             | AppEvent::MediaPlaybackWindowReady { .. }
             | AppEvent::ApplicationCommandsLoaded { .. }

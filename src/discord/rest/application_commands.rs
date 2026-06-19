@@ -9,7 +9,7 @@ use crate::{
     },
 };
 
-use super::DiscordRest;
+use super::{DiscordRest, clone_array, extra_fields};
 
 impl DiscordRest {
     pub async fn load_application_commands(
@@ -46,13 +46,32 @@ impl DiscordRest {
 }
 
 pub(super) fn parse_application_command_index(raw: &Value) -> Vec<ApplicationCommandInfo> {
+    parse_application_command_index_response(raw).commands
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ApplicationCommandIndexResponse {
+    pub(super) commands: Vec<ApplicationCommandInfo>,
+    pub(super) applications: Vec<Value>,
+    pub(super) extra_fields: std::collections::BTreeMap<String, Value>,
+}
+
+pub(super) fn parse_application_command_index_response(
+    raw: &Value,
+) -> ApplicationCommandIndexResponse {
     let applications = parse_application_command_applications(raw);
-    raw.get("application_commands")
+    let commands = raw
+        .get("application_commands")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(|command| parse_application_command_info(command, &applications))
-        .collect()
+        .collect();
+    ApplicationCommandIndexResponse {
+        commands,
+        applications: clone_array(raw.get("applications")),
+        extra_fields: extra_fields(raw, &["applications", "application_commands"]),
+    }
 }
 
 fn parse_application_command_applications(

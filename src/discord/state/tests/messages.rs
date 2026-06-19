@@ -243,15 +243,14 @@ fn message_update_refreshes_cached_poll_results() {
     updated_poll.results_finalized = Some(true);
     updated_poll.answers[0].vote_count = Some(5);
     updated_poll.answers[1].vote_count = Some(3);
-    state.apply_event(&AppEvent::MessageUpdate {
-        guild_id: None,
+    state.apply_event(&message_update_event(
         channel_id,
         message_id,
-        fields: MessageUpdateEventFields {
+        MessageUpdateEventFields {
             poll: Some(updated_poll),
             ..MessageUpdateEventFields::default()
         },
-    });
+    ));
 
     let messages = state.messages_for_channel(channel_id);
     let poll = messages[0].poll.as_ref().expect("poll should stay cached");
@@ -377,16 +376,15 @@ fn message_update_handles_mentions_tristate() {
             mentions: initial_mentions,
             ..MessageCreateFixture::test_fixture_default()
         }));
-        state.apply_event(&AppEvent::MessageUpdate {
-            guild_id: None,
+        state.apply_event(&message_update_event(
             channel_id,
             message_id,
-            fields: MessageUpdateEventFields {
+            MessageUpdateEventFields {
                 content: Some("hello".to_owned()),
                 mentions: update_mentions,
                 ..MessageUpdateEventFields::default()
             },
-        });
+        ));
 
         assert_eq!(
             state.messages_for_channel(channel_id)[0].mentions,
@@ -469,12 +467,11 @@ fn keeps_known_content_when_gateway_echo_has_no_content() {
         content: None,
         ..MessageCreateFixture::test_fixture_default()
     }));
-    state.apply_event(&AppEvent::MessageUpdate {
-        guild_id: None,
+    state.apply_event(&message_update_event(
         channel_id,
         message_id,
-        fields: MessageUpdateEventFields::default(),
-    });
+        MessageUpdateEventFields::default(),
+    ));
 
     let messages = state.messages_for_channel(channel_id);
     assert_eq!(messages.len(), 1);
@@ -998,15 +995,14 @@ fn message_update_handles_attachment_update_tristate() {
             attachments: vec![attachment_info(1, "cat.png", "image/png")],
             ..MessageCreateFixture::test_fixture_default()
         }));
-        state.apply_event(&AppEvent::MessageUpdate {
-            guild_id: None,
+        state.apply_event(&message_update_event(
             channel_id,
-            message_id: Id::new(20),
-            fields: MessageUpdateEventFields {
+            Id::new(20),
+            MessageUpdateEventFields {
                 attachments,
                 ..MessageUpdateEventFields::default()
             },
-        });
+        ));
 
         let messages = state.messages_for_channel(channel_id);
         assert_eq!(messages[0].attachments.len(), expected_len);

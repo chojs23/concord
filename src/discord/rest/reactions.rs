@@ -78,18 +78,15 @@ impl DiscordRest {
                 request = request.query(&[("after", user_id.to_string())]);
             }
 
-            let page: Vec<Value> = self.send_json(request, "reaction users").await?;
-            let parsed_page: Vec<ReactionUserInfo> = page
-                .iter()
-                .filter_map(reaction_user_info_from_raw)
-                .collect();
+            let raw_users: Vec<Value> = self.send_json(request, "reaction users").await?;
+            let response = parse_reaction_users_response(raw_users);
             pages_loaded = pages_loaded.saturating_add(1);
             let next_after = next_reaction_users_after(
-                parsed_page.len(),
-                parsed_page.last().map(|user| user.user_id),
+                response.users.len(),
+                response.users.last().map(|user| user.user_id),
                 pages_loaded,
             );
-            users.extend(parsed_page);
+            users.extend(response.users);
 
             let Some(user_id) = next_after else {
                 break;
@@ -99,6 +96,20 @@ impl DiscordRest {
 
         Ok(users)
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ReactionUsersResponse {
+    pub(super) users: Vec<ReactionUserInfo>,
+    pub(super) raw_users: Vec<Value>,
+}
+
+fn parse_reaction_users_response(raw_users: Vec<Value>) -> ReactionUsersResponse {
+    let users = raw_users
+        .iter()
+        .filter_map(reaction_user_info_from_raw)
+        .collect();
+    ReactionUsersResponse { users, raw_users }
 }
 
 fn reaction_user_info_from_raw(value: &Value) -> Option<ReactionUserInfo> {

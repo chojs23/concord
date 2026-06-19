@@ -77,12 +77,12 @@ fn active_channel_read_state_coalesces_when_new_messages_arrive_at_latest() {
 
     {
         let mut state = state_with_writable_channel();
-        state.push_event(AppEvent::UserGuildNotificationSettingsInit {
-            settings: vec![GuildNotificationSettingsInfo {
+        state.push_event(user_guild_settings_init(vec![
+            GuildNotificationSettingsInfo {
                 message_notifications: Some(NotificationLevel::AllMessages),
                 ..GuildNotificationSettingsInfo::test(Some(Id::new(1)))
-            }],
-        });
+            },
+        ]));
 
         state.push_event(notification_message_event(Id::new(2), "hello"));
         let scheduled = drain_debounced_read_ack(&mut state);

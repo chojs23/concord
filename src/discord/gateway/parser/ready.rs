@@ -151,7 +151,7 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
     }
 
     if let Some(settings) = parse_user_guild_settings_entries(data.get("user_guild_settings")) {
-        events.push(AppEvent::UserGuildNotificationSettingsInit { settings });
+        events.push(AppEvent::UserGuildSettingsInit { settings });
     }
 
     // Guild folder ordering and grouping live in the legacy `user_settings`

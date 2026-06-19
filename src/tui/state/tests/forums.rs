@@ -726,12 +726,12 @@ fn forum_sidebar_unread_aggregates_child_notification_count() {
         "guild",
         vec![forum_channel_info(guild_id, forum_id), thread],
     ));
-    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![GuildNotificationSettingsInfo {
+    state.push_event(user_guild_settings_init(vec![
+        GuildNotificationSettingsInfo {
             message_notifications: Some(NotificationLevel::AllMessages),
             ..GuildNotificationSettingsInfo::test(Some(guild_id))
-        }],
-    });
+        },
+    ]));
     state.push_event(AppEvent::ReadStateInit {
         entries: vec![read_state_info(thread_id, Some(Id::new(299)), 0)],
     });

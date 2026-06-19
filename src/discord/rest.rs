@@ -1,8 +1,11 @@
+use std::collections::BTreeMap;
+
 use crate::discord::fingerprint::discord_rest_client;
 use crate::{AppError, Result};
 
 use reqwest::{RequestBuilder, header::AUTHORIZATION};
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 mod application_commands;
 mod connection;
@@ -62,6 +65,24 @@ impl DiscordRest {
             .await
             .map_err(|error| AppError::DiscordRequest(format!("{label} decode failed: {error}")))
     }
+}
+
+fn extra_fields(value: &Value, known_fields: &[&str]) -> BTreeMap<String, Value> {
+    let Some(object) = value.as_object() else {
+        return BTreeMap::new();
+    };
+    object
+        .iter()
+        .filter(|(field, _)| !known_fields.contains(&field.as_str()))
+        .map(|(field, value)| (field.clone(), value.clone()))
+        .collect()
+}
+
+fn clone_array(value: Option<&Value>) -> Vec<Value> {
+    value
+        .and_then(Value::as_array)
+        .map(|values| values.to_vec())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

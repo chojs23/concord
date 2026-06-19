@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
@@ -9,10 +11,10 @@ use crate::discord::{
     ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
     ChannelVisibilityStats, CurrentVoiceConnectionState, CustomEmojiInfo, DiscordState,
     FriendStatus, GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, MessageKind,
-    MessageReferenceInfo, MessageSnapshotInfo, MessageState, MessageUpdateEventFields,
-    NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo,
-    PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo, RelationshipInfo, ReplyInfo,
-    RoleInfo, UserProfileInfo, VoiceStateInfo,
+    MessageReferenceInfo, MessageSnapshotInfo, MessageState, MessageUpdateDispatchInfo,
+    MessageUpdateEventFields, NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind,
+    PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo,
+    RelationshipInfo, ReplyInfo, RoleInfo, UserGuildSettingsInfo, UserProfileInfo, VoiceStateInfo,
 };
 
 mod channels;
@@ -252,6 +254,34 @@ fn private_notification_settings(level: NotificationLevel) -> GuildNotificationS
     GuildNotificationSettingsInfo {
         message_notifications: Some(level),
         ..GuildNotificationSettingsInfo::test(None)
+    }
+}
+
+fn user_guild_settings_init(settings: Vec<GuildNotificationSettingsInfo>) -> AppEvent {
+    AppEvent::UserGuildSettingsInit {
+        settings: settings
+            .into_iter()
+            .map(|notification_settings| UserGuildSettingsInfo {
+                notification_settings,
+                extra_fields: BTreeMap::new(),
+            })
+            .collect(),
+    }
+}
+
+fn message_update_event(
+    channel_id: Id<ChannelMarker>,
+    message_id: Id<MessageMarker>,
+    fields: MessageUpdateEventFields,
+) -> AppEvent {
+    AppEvent::MessageUpdateDispatch {
+        update: MessageUpdateDispatchInfo {
+            guild_id: None,
+            channel_id,
+            message_id,
+            fields,
+            extra_fields: BTreeMap::new(),
+        },
     }
 }
 

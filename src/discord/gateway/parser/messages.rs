@@ -4,7 +4,8 @@ use crate::{
     discord::{
         AttachmentInfo, AttachmentUpdate, EmbedFieldInfo, EmbedInfo, MentionInfo, MessageInfo,
         MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-        PollAnswerInfo, PollInfo, ReactionEmoji, ReactionInfo, ReplyInfo,
+        MessageUpdateDispatchInfo, PollAnswerInfo, PollInfo, ReactionEmoji, ReactionInfo,
+        ReplyInfo,
         events::AppEvent,
         ids::{
             Id,
@@ -18,7 +19,8 @@ use crate::{
 };
 
 use super::shared::{
-    display_name_from_parts, display_name_from_parts_or_unknown, parse_id, raw_user_avatar_url,
+    display_name_from_parts, display_name_from_parts_or_unknown, extra_fields, parse_id,
+    raw_user_avatar_url,
 };
 
 pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
@@ -673,21 +675,41 @@ pub(super) fn parse_message_update(data: &Value) -> Option<AppEvent> {
         .get("edited_timestamp")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    Some(AppEvent::MessageUpdate {
-        guild_id,
-        channel_id,
-        message_id,
-        fields: crate::discord::MessageUpdateEventFields {
-            poll,
-            content,
-            sticker_names,
-            mentions,
-            mention_everyone,
-            mention_roles,
-            flags,
-            attachments,
-            embeds,
-            edited_timestamp,
+    Some(AppEvent::MessageUpdateDispatch {
+        update: MessageUpdateDispatchInfo {
+            guild_id,
+            channel_id,
+            message_id,
+            fields: crate::discord::MessageUpdateEventFields {
+                poll,
+                content,
+                sticker_names,
+                mentions,
+                mention_everyone,
+                mention_roles,
+                flags,
+                attachments,
+                embeds,
+                edited_timestamp,
+            },
+            extra_fields: extra_fields(
+                data,
+                &[
+                    "id",
+                    "guild_id",
+                    "channel_id",
+                    "poll",
+                    "content",
+                    "sticker_items",
+                    "mentions",
+                    "mention_everyone",
+                    "mention_roles",
+                    "flags",
+                    "attachments",
+                    "embeds",
+                    "edited_timestamp",
+                ],
+            ),
         },
     })
 }

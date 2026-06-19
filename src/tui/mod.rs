@@ -62,7 +62,7 @@ pub async fn run(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::collections::{BTreeMap, VecDeque};
 
     use crate::discord::ids::{
         Id,
@@ -73,8 +73,8 @@ mod tests {
     };
     use crate::discord::{
         AppEvent, AttachmentDownloadId, AttachmentInfo, ChannelInfo, DiscordClient,
-        DownloadAttachmentSource, MemberInfo, MessageUpdateEventFields, ReadStateInfo,
-        SequencedAppEvent,
+        DownloadAttachmentSource, MemberInfo, MessageUpdateDispatchInfo, MessageUpdateEventFields,
+        ReadStateInfo, SequencedAppEvent,
     };
 
     use super::{
@@ -487,14 +487,17 @@ mod tests {
         state.set_message_view_height(8);
         let before = visible_dashboard_signature(&state);
 
-        state.push_event(AppEvent::MessageUpdate {
-            guild_id: Some(Id::new(1)),
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            fields: MessageUpdateEventFields {
-                content: Some("edited msg 1".to_owned()),
-                edited_timestamp: Some("2026-05-19T00:00:00.000Z".to_owned()),
-                ..MessageUpdateEventFields::default()
+        state.push_event(AppEvent::MessageUpdateDispatch {
+            update: MessageUpdateDispatchInfo {
+                guild_id: Some(Id::new(1)),
+                channel_id: Id::new(2),
+                message_id: Id::new(1),
+                fields: MessageUpdateEventFields {
+                    content: Some("edited msg 1".to_owned()),
+                    edited_timestamp: Some("2026-05-19T00:00:00.000Z".to_owned()),
+                    ..MessageUpdateEventFields::default()
+                },
+                extra_fields: BTreeMap::new(),
             },
         });
         let after = visible_dashboard_signature(&state);

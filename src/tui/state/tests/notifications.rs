@@ -15,12 +15,12 @@ fn tracks_current_user_from_ready() {
 fn desktop_notification_for_event_formats_eligible_guild_message() {
     let mut state = state_with_hidden_and_visible_channels();
     let channel_id = Id::new(3);
-    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![GuildNotificationSettingsInfo {
+    state.push_event(user_guild_settings_init(vec![
+        GuildNotificationSettingsInfo {
             message_notifications: Some(NotificationLevel::AllMessages),
             ..GuildNotificationSettingsInfo::test(Some(Id::new(1)))
-        }],
-    });
+        },
+    ]));
     let event = notification_message_event(channel_id, "hello from concord");
 
     let notification = state
@@ -35,8 +35,8 @@ fn desktop_notification_for_event_formats_eligible_guild_message() {
 fn desktop_notification_for_event_suppresses_muted_channel() {
     let mut state = state_with_hidden_and_visible_channels();
     let channel_id = Id::new(3);
-    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![GuildNotificationSettingsInfo {
+    state.push_event(user_guild_settings_init(vec![
+        GuildNotificationSettingsInfo {
             message_notifications: Some(NotificationLevel::AllMessages),
             channel_overrides: vec![ChannelNotificationOverrideInfo {
                 message_notifications: Some(NotificationLevel::AllMessages),
@@ -44,8 +44,8 @@ fn desktop_notification_for_event_suppresses_muted_channel() {
                 ..ChannelNotificationOverrideInfo::test(channel_id)
             }],
             ..GuildNotificationSettingsInfo::test(Some(Id::new(1)))
-        }],
-    });
+        },
+    ]));
     let event = notification_message_event(channel_id, "hello");
 
     assert!(state.desktop_notification_for_event(&event).is_none());
@@ -55,12 +55,12 @@ fn desktop_notification_for_event_suppresses_muted_channel() {
 fn desktop_notification_for_event_suppresses_active_channel() {
     let mut state = state_with_writable_channel();
     let channel_id = Id::new(2);
-    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![GuildNotificationSettingsInfo {
+    state.push_event(user_guild_settings_init(vec![
+        GuildNotificationSettingsInfo {
             message_notifications: Some(NotificationLevel::AllMessages),
             ..GuildNotificationSettingsInfo::test(Some(Id::new(1)))
-        }],
-    });
+        },
+    ]));
     let event = notification_message_event(channel_id, "hello");
 
     assert!(state.desktop_notification_for_event(&event).is_none());
@@ -92,12 +92,12 @@ fn desktop_notification_for_event_respects_notification_opt_out() {
         roles: Vec::new(),
         emojis: Vec::new(),
     });
-    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![GuildNotificationSettingsInfo {
+    state.push_event(user_guild_settings_init(vec![
+        GuildNotificationSettingsInfo {
             message_notifications: Some(NotificationLevel::AllMessages),
             ..GuildNotificationSettingsInfo::test(Some(guild_id))
-        }],
-    });
+        },
+    ]));
     let event = notification_message_event(channel_id, "hello");
 
     assert!(state.desktop_notification_for_event(&event).is_none());

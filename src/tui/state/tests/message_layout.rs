@@ -47,16 +47,15 @@ fn message_row_content_metrics_cache_clears_on_discord_event() {
     let _ = state.message_row_metrics_at_with_selected_bottom(0, message, 5, 16, 3, true);
     assert_eq!(state.message_row_content_metrics_cache_len(), 1);
 
-    state.push_event(AppEvent::MessageUpdate {
-        guild_id: Some(Id::new(1)),
-        channel_id: Id::new(2),
-        message_id: Id::new(1),
-        fields: MessageUpdateEventFields {
+    state.push_event(message_update_event(
+        Id::new(2),
+        Id::new(1),
+        MessageUpdateEventFields {
             content: Some("updated".to_owned()),
             edited_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),
             ..MessageUpdateEventFields::default()
         },
-    });
+    ));
 
     assert_eq!(state.message_row_content_metrics_cache_len(), 0);
 

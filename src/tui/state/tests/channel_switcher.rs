@@ -175,14 +175,12 @@ fn pane_filters_prioritize_prefix_matches() {
     let mut state = DashboardState::new();
     state.push_event(guild_create_event(Id::new(1), "Alpha One", Vec::new()));
     state.push_event(guild_create_event(Id::new(2), "Alpha Two", Vec::new()));
-    state.push_event(AppEvent::GuildFoldersUpdate {
-        folders: vec![GuildFolder {
-            id: Some(42),
-            name: Some("folder".to_owned()),
-            color: None,
-            guild_ids: vec![Id::new(2), Id::new(1)],
-        }],
-    });
+    state.push_event(user_settings_update(vec![GuildFolder {
+        id: Some(42),
+        name: Some("folder".to_owned()),
+        color: None,
+        guild_ids: vec![Id::new(2), Id::new(1)],
+    }]));
 
     state.open_guild_pane_filter();
     for ch in "al".chars() {

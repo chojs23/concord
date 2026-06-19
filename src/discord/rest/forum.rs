@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use super::DiscordRest;
+use super::{DiscordRest, clone_array, extra_fields};
 
 const FORUM_POST_SEARCH_PAGE_LIMIT: u16 = 25;
 // Discord returns 202 ACCEPTED while it warms the per-forum search index.
@@ -157,18 +157,45 @@ impl DiscordRest {
                 AppError::DiscordRequest(format!("forum post search decode failed: {error}"))
             })?;
 
-        let threads = parse_forum_threads(&raw, Some(guild_id), channel_id, true);
-        let first_messages = parse_forum_first_messages(&raw, &threads);
+        let response = parse_forum_thread_search_response(&raw, Some(guild_id), channel_id, true);
 
         Ok(ForumPostPage {
-            next_offset: offset.saturating_add(threads.len()),
-            threads,
-            first_messages,
-            has_more: raw
-                .get("has_more")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
+            next_offset: offset.saturating_add(response.threads.len()),
+            threads: response.threads,
+            first_messages: response.first_messages,
+            has_more: response.has_more,
         })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ForumThreadSearchResponse {
+    pub(super) threads: Vec<ChannelInfo>,
+    pub(super) first_messages: Vec<MessageInfo>,
+    pub(super) has_more: bool,
+    pub(super) raw_threads: Vec<Value>,
+    pub(super) raw_first_messages: Vec<Value>,
+    pub(super) extra_fields: std::collections::BTreeMap<String, Value>,
+}
+
+pub(super) fn parse_forum_thread_search_response(
+    raw: &Value,
+    guild_id: Option<Id<GuildMarker>>,
+    parent_channel_id: Id<ChannelMarker>,
+    fill_missing_parent: bool,
+) -> ForumThreadSearchResponse {
+    let threads = parse_forum_threads(raw, guild_id, parent_channel_id, fill_missing_parent);
+    let first_messages = parse_forum_first_messages(raw, &threads);
+    ForumThreadSearchResponse {
+        threads,
+        first_messages,
+        has_more: raw
+            .get("has_more")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        raw_threads: clone_array(raw.get("threads")),
+        raw_first_messages: clone_array(raw.get("first_messages")),
+        extra_fields: extra_fields(raw, &["threads", "first_messages", "has_more"]),
     }
 }
 

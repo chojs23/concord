@@ -36,7 +36,7 @@ use crate::logging;
 
 mod parser;
 
-use parser::parse_user_account_event;
+use parser::parse_user_account_dispatch;
 pub(crate) use parser::{parse_channel_info, parse_message_info};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -594,9 +594,17 @@ async fn handle_frame(
             } else if dispatch_type == "RESUMED" {
                 publish_gateway_event(context.publish, AppEvent::GatewayResumed).await;
             }
-            let events = parse_user_account_event(raw);
-            for app_event in events {
-                publish_gateway_event(context.publish, app_event).await;
+            if let Some(parsed) = parse_user_account_dispatch(raw) {
+                publish_gateway_event(
+                    context.publish,
+                    AppEvent::GatewayDispatchReceived {
+                        dispatch: parsed.dispatch,
+                    },
+                )
+                .await;
+                for app_event in parsed.events {
+                    publish_gateway_event(context.publish, app_event).await;
+                }
             }
             if publish_reidentified {
                 publish_gateway_event(context.publish, AppEvent::GatewayReidentified).await;
