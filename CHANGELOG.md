@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.4] - 2026-06-20
+
+### Bug Fixes
+
+- Hide empty channel categories if user doesn't have permission (#203) in [#203](https://github.com/chojs23/concord/pull/203) by @chojs23
+- Update guild folders and order by UserSettingsUpdate by @chojs23
+
+### Features
+
+- Rename folder by @chojs23
+- Add suppress embeds (#205) in [#205](https://github.com/chojs23/concord/pull/205) by @chojs23
+
+### Refactor
+
+- Preserve boundary payloads consistently by @chojs23
+
+### New Contributors
+
+- @fuguesoft made their first contribution in [#200](https://github.com/chojs23/concord/pull/200)
+
 ## [2.2.3] - 2026-06-18
 
 ### Bug Fixes
