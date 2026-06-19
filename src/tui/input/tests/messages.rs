@@ -250,9 +250,8 @@ fn message_action_shortcuts_edit_and_delete_own_message() {
     assert_eq!(command, None);
     assert!(!delete_state.is_message_action_context_active());
     assert!(
-        delete_state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        delete_state
+            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 
     let command = handle_key(&mut delete_state, key(KeyCode::Enter));
@@ -265,9 +264,8 @@ fn message_action_shortcuts_edit_and_delete_own_message() {
         })
     );
     assert!(
-        !delete_state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        !delete_state
+            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 
@@ -326,8 +324,42 @@ fn message_pane_default_shortcuts_work_from_message_pane() {
     assert_eq!(command, None);
     assert!(
         pin_state
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
+}
+
+#[test]
+fn message_action_menu_d_shortcut_removes_embeds() {
+    let mut state = state_with_own_message();
+    state.push_event(AppEvent::MessageHistoryLoaded {
+        channel_id: Id::new(2),
+        before: None,
+        messages: vec![MessageInfo {
+            author_id: Id::new(99),
+            embeds: vec![EmbedInfo::test()],
+            ..MessageInfo::test(Id::new(2), Id::new(1))
+        }],
+    });
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    let command = handle_key(&mut state, char_key('D'));
+
+    assert_eq!(command, None);
+    assert!(
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
+    );
+
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::RemoveMessageEmbeds {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+        })
+    );
+    assert!(!state.is_message_action_context_active());
 }
 
 #[test]
@@ -459,16 +491,12 @@ fn message_pane_delete_shortcut_requires_confirmation() {
 
     assert_eq!(command, None);
     assert!(
-        state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 
     handle_key(&mut state, key(KeyCode::Esc));
     assert!(
-        !state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 
     handle_key(&mut state, char_key('d'));
@@ -482,9 +510,7 @@ fn message_pane_delete_shortcut_requires_confirmation() {
         })
     );
     assert!(
-        !state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 
@@ -686,14 +712,12 @@ fn message_pane_pin_shortcut_requires_confirmation() {
 
     assert_eq!(command, None);
     assert!(
-        state
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 
     handle_key(&mut state, key(KeyCode::Esc));
     assert!(
-        !state
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 
     handle_key(&mut state, key(KeyCode::Enter));
@@ -709,8 +733,7 @@ fn message_pane_pin_shortcut_requires_confirmation() {
         })
     );
     assert!(
-        !state
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 

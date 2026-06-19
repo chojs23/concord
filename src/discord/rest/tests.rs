@@ -26,8 +26,9 @@ use super::{
         parse_forum_first_messages, parse_forum_threads,
     },
     messages::{
-        message_multipart_form, message_request_body, message_request_body_with_tts,
-        upload_content_type, validate_message_content, validate_message_payload,
+        MessageEditRequest, edit_message_request_body, message_multipart_form,
+        message_request_body, message_request_body_with_tts, upload_content_type,
+        validate_message_content, validate_message_payload,
     },
     notification_settings::mute_request_body,
     polls::poll_vote_request_body,
@@ -67,6 +68,20 @@ fn validates_attachment_only_message_payload() {
 fn message_request_body_sets_tts_only_when_requested() {
     let tts = message_request_body_with_tts("hello", None, &[], true);
     assert_eq!(tts["tts"], true);
+}
+
+#[test]
+fn edit_message_request_body_sets_only_requested_fields() {
+    let (content_body, content_action) =
+        edit_message_request_body(MessageEditRequest::Content("hello"))
+            .expect("content edit body should build");
+    let (flags_body, flags_action) = edit_message_request_body(MessageEditRequest::Flags(4_100))
+        .expect("flags edit body should build");
+
+    assert_eq!(content_body, serde_json::json!({ "content": "hello" }));
+    assert_eq!(content_action, "edit message");
+    assert_eq!(flags_body, serde_json::json!({ "flags": 4_100 }));
+    assert_eq!(flags_action, "update message flags");
 }
 
 #[test]

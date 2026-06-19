@@ -72,6 +72,15 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
             }
             Err(error) => publish_app_error(&client, "delete message failed", &error).await,
         },
+        AppCommand::RemoveMessageEmbeds {
+            channel_id,
+            message_id,
+        } => match client.remove_message_embeds(channel_id, message_id).await {
+            Ok(message) => {
+                client.publish_event(message_update_event(message)).await;
+            }
+            Err(error) => publish_app_error(&client, "remove message embeds failed", &error).await,
+        },
         AppCommand::LeaveGuild { guild_id, label } => match client.leave_guild(guild_id).await {
             Ok(()) => {
                 client

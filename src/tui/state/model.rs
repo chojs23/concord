@@ -71,6 +71,7 @@ pub enum MessageActionKind {
     OpenDeleteConfirmation,
     Edit,
     OpenUrl,
+    RemoveEmbeds,
     PlayMedia,
     ViewAttachment,
     ShowProfile,

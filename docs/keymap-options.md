@@ -134,6 +134,7 @@ Message actions:
 | `DeleteMessage`         | `"d"`          | Open delete confirmation.                        |
 | `EditMessage`           | `"e"`          | Start editing the selected message.              |
 | `OpenMessageUrl`        | `"o"`          | Open the selected message URL.                   |
+| `RemoveMessageEmbeds`   | none           | Remove embeds from the selected message.         |
 | `PlayMedia`             | `"x"`          | Play selected video media in an external player. |
 | `ViewMessageAttachment` | `"v"`          | Open the selected message attachment viewer.     |
 | `GoToReferencedMessage` | none           | Go to the replied or forwarded message.          |
@@ -261,6 +262,7 @@ ReplyMessage = "R"
 DeleteMessage = "d"
 EditMessage = "e"
 OpenMessageUrl = "o"
+RemoveMessageEmbeds = "D"
 PlayMedia = "x"
 ViewMessageAttachment = "v"
 GoToReferencedMessage = "g"
@@ -279,6 +281,7 @@ OpenPollVotePicker = "c"
 | `DeleteMessage`         | `d`     | Open delete confirmation.                        |
 | `EditMessage`           | `e`     | Start editing the selected message.              |
 | `OpenMessageUrl`        | `o`     | Open the selected message URL.                   |
+| `RemoveMessageEmbeds`   | `D`     | Remove embeds from the selected message.         |
 | `PlayMedia`             | `x`     | Play selected video media in an external player. |
 | `ViewMessageAttachment` | `v`     | Open the selected message attachment viewer.     |
 | `GoToReferencedMessage` | `g`     | Go to the replied or forwarded message.          |

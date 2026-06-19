@@ -42,12 +42,7 @@ pub(super) fn handle_popup_key(
         ActiveModalPopupKind::QuitConfirmation => handle_quit_confirmation_key(state, key),
         ActiveModalPopupKind::Options => handle_options_popup_key(state, key),
         ActiveModalPopupKind::ReactionUsers => handle_reaction_users_popup_key(state, key),
-        ActiveModalPopupKind::MessageDeleteConfirmation => {
-            handle_message_delete_confirmation_key(state, key)
-        }
-        ActiveModalPopupKind::MessagePinConfirmation => {
-            handle_message_pin_confirmation_key(state, key)
-        }
+        ActiveModalPopupKind::MessageConfirmation => handle_message_confirmation_key(state, key),
         ActiveModalPopupKind::GuildLeaveConfirmation => {
             handle_guild_leave_confirmation_key(state, key)
         }
@@ -70,8 +65,7 @@ fn popup_key_phase(kind: ActiveModalPopupKind) -> PopupKeyPhase {
         | ActiveModalPopupKind::QuitConfirmation
         | ActiveModalPopupKind::Options
         | ActiveModalPopupKind::ReactionUsers
-        | ActiveModalPopupKind::MessageDeleteConfirmation
-        | ActiveModalPopupKind::MessagePinConfirmation
+        | ActiveModalPopupKind::MessageConfirmation
         | ActiveModalPopupKind::GuildLeaveConfirmation
         | ActiveModalPopupKind::PollVotePicker
         | ActiveModalPopupKind::EmojiReactionPicker => PopupKeyPhase::Priority,
@@ -240,15 +234,15 @@ fn handle_popup_list_key(
     None
 }
 
-pub(super) fn handle_message_delete_confirmation_key(
+pub(super) fn handle_message_confirmation_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
     handle_confirmation_key(
         state,
         key,
-        DashboardState::confirm_message_delete,
-        DashboardState::close_message_delete_confirmation,
+        DashboardState::confirm_message_confirmation,
+        DashboardState::close_message_confirmation,
     )
 }
 
@@ -264,18 +258,6 @@ pub(super) fn handle_quit_confirmation_key(
             None
         },
         DashboardState::close_quit_confirmation,
-    )
-}
-
-pub(super) fn handle_message_pin_confirmation_key(
-    state: &mut DashboardState,
-    key: KeyEvent,
-) -> Option<AppCommand> {
-    handle_confirmation_key(
-        state,
-        key,
-        DashboardState::confirm_message_pin,
-        DashboardState::close_message_pin_confirmation,
     )
 }
 

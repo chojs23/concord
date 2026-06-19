@@ -15,6 +15,11 @@ use crate::{
 
 use super::{DiscordRest, clone_array, extra_fields};
 
+pub(in crate::discord) enum MessageEditRequest<'a> {
+    Content(&'a str),
+    Flags(u64),
+}
+
 impl DiscordRest {
     pub async fn send_message(
         &self,
@@ -65,9 +70,9 @@ impl DiscordRest {
         &self,
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
-        content: &str,
+        request: MessageEditRequest<'_>,
     ) -> Result<MessageInfo> {
-        validate_message_content(content)?;
+        let (body, action) = edit_message_request_body(request)?;
         let raw: Value = self
             .send_json(
                 self.raw_http
@@ -76,11 +81,11 @@ impl DiscordRest {
                         channel_id.get(),
                         message_id.get()
                     ))
-                    .json(&json!({ "content": content })),
-                "edit message",
+                    .json(&body),
+                action,
             )
             .await?;
-        parse_message_response(raw, "edit message response").map(|response| response.message)
+        parse_message_response(raw, &format!("{action} response")).map(|response| response.message)
     }
 
     pub async fn delete_message(
@@ -317,6 +322,18 @@ pub(super) fn message_request_body_with_tts(
         );
     }
     body
+}
+
+pub(super) fn edit_message_request_body(
+    request: MessageEditRequest<'_>,
+) -> Result<(Value, &'static str)> {
+    match request {
+        MessageEditRequest::Content(content) => {
+            validate_message_content(content)?;
+            Ok((json!({ "content": content }), "edit message"))
+        }
+        MessageEditRequest::Flags(flags) => Ok((json!({ "flags": flags }), "update message flags")),
+    }
 }
 
 pub(super) async fn message_multipart_form(

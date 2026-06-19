@@ -22,6 +22,7 @@ mod search;
 mod user_settings;
 
 pub use forum::ForumPostPage;
+pub(in crate::discord) use messages::MessageEditRequest;
 
 #[derive(Clone, Debug)]
 pub struct DiscordRest {

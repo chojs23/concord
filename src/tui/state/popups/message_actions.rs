@@ -3,14 +3,15 @@ use crate::discord::ids::{
     marker::{ChannelMarker, MessageMarker},
 };
 use crate::discord::{
-    AppCommand, EmbedInfo, MediaPlaybackSource, MediaPlaybackTarget, MessageState, ReactionEmoji,
+    AppCommand, EmbedInfo, MESSAGE_FLAG_SUPPRESS_EMBEDS, MediaPlaybackSource, MediaPlaybackTarget,
+    MessageState, ReactionEmoji,
 };
 use crate::tui::format::detected_urls;
 use crate::tui::keybindings::KeyChord;
 
 use super::super::{
     ActiveGuildScope, DashboardState, FocusPane, MessageActionItem, MessageActionKind,
-    MessageActionMenuState, MessageUrlItem, MessageUrlPickerState, popups,
+    MessageActionMenuState, MessageConfirmationKind, MessageUrlItem, MessageUrlPickerState, popups,
 };
 use crate::tui::state::popups::{ActiveModalPopupKind, LeaderActionState, ModalPopup};
 
@@ -114,6 +115,11 @@ impl DashboardState {
                 kind: MessageActionKind::OpenUrl,
                 label: "open URL".to_owned(),
                 enabled: !message_url_items(message).is_empty(),
+            },
+            MessageActionItem {
+                kind: MessageActionKind::RemoveEmbeds,
+                label: "remove embeds".to_owned(),
+                enabled: self.can_remove_message_embeds(message),
             },
             MessageActionItem {
                 kind: MessageActionKind::PlayMedia,
@@ -283,6 +289,19 @@ impl DashboardState {
             && message.content.is_some()
     }
 
+    fn can_remove_message_embeds(&self, message: &MessageState) -> bool {
+        if message.embeds.is_empty() || message.flags & MESSAGE_FLAG_SUPPRESS_EMBEDS != 0 {
+            return false;
+        }
+        if Some(message.author_id) == self.discord.current_user_id {
+            return true;
+        }
+        let Some(channel) = self.discord.cache.channel(message.channel_id) else {
+            return true;
+        };
+        self.discord.cache.can_manage_messages_in_channel(channel)
+    }
+
     fn can_pin_messages_for_message(&self, message: &MessageState) -> bool {
         let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
@@ -356,6 +375,10 @@ impl DashboardState {
                 None
             }
             MessageActionKind::OpenUrl => self.direct_open_selected_message_url(),
+            MessageActionKind::RemoveEmbeds => {
+                self.direct_open_selected_message_remove_embeds_confirmation();
+                None
+            }
             MessageActionKind::PlayMedia => self.direct_play_selected_message_media(),
             MessageActionKind::ViewAttachment => {
                 self.direct_open_selected_message_attachment_viewer();
@@ -480,6 +503,21 @@ impl DashboardState {
         }
     }
 
+    pub fn direct_open_selected_message_remove_embeds_confirmation(&mut self) {
+        let Some(message) = self.selected_message_state() else {
+            return;
+        };
+        if !self.can_remove_message_embeds(message) {
+            return;
+        }
+        self.open_message_confirmation(popups::MessageConfirmationState::remove_embeds(
+            message.channel_id,
+            message.id,
+            message.author.clone(),
+            message.content.clone(),
+        ));
+    }
+
     pub fn direct_play_selected_message_media(&mut self) -> Option<AppCommand> {
         let message = self.selected_message_state()?;
         message_media_playback_items(message)
@@ -531,33 +569,12 @@ impl DashboardState {
         if !self.can_delete_message(message) {
             return;
         }
-        self.popups.modal = Some(ModalPopup::MessageDeleteConfirmation(
-            popups::MessageConfirmationState::delete(
-                message.channel_id,
-                message.id,
-                message.author.clone(),
-                message.content.clone(),
-            ),
+        self.open_message_confirmation(popups::MessageConfirmationState::delete(
+            message.channel_id,
+            message.id,
+            message.author.clone(),
+            message.content.clone(),
         ));
-    }
-
-    pub fn close_message_delete_confirmation(&mut self) {
-        if self.is_active_modal_popup(ActiveModalPopupKind::MessageDeleteConfirmation) {
-            self.popups.clear_modal();
-        }
-    }
-
-    pub fn confirm_message_delete(&mut self) -> Option<AppCommand> {
-        let confirmation = self.popups.take_message_delete_confirmation()?;
-        Some(AppCommand::DeleteMessage {
-            channel_id: confirmation.channel_id,
-            message_id: confirmation.message_id,
-        })
-    }
-
-    pub fn message_delete_confirmation_lines(&self) -> Option<(String, Option<String>)> {
-        let confirmation = self.popups.message_delete_confirmation()?;
-        Some((confirmation.author.clone(), confirmation.content.clone()))
     }
 
     pub fn open_selected_message_pin_confirmation(&mut self, pinned: bool) {
@@ -567,41 +584,53 @@ impl DashboardState {
         if !self.can_pin_messages_for_message(message) {
             return;
         }
-        self.popups.modal = Some(ModalPopup::MessagePinConfirmation(
-            popups::MessageConfirmationState::pin(
-                message.channel_id,
-                message.id,
-                pinned,
-                message.author.clone(),
-                message.content.clone(),
-            ),
+        self.open_message_confirmation(popups::MessageConfirmationState::pin(
+            message.channel_id,
+            message.id,
+            pinned,
+            message.author.clone(),
+            message.content.clone(),
         ));
     }
 
-    pub fn close_message_pin_confirmation(&mut self) {
-        if self.is_active_modal_popup(ActiveModalPopupKind::MessagePinConfirmation) {
+    pub fn close_message_confirmation(&mut self) {
+        if self.is_active_modal_popup(ActiveModalPopupKind::MessageConfirmation) {
             self.popups.clear_modal();
         }
     }
 
-    pub fn confirm_message_pin(&mut self) -> Option<AppCommand> {
-        let confirmation = self.popups.take_message_pin_confirmation()?;
-        let pinned = confirmation.pinned()?;
-        Some(AppCommand::SetMessagePinned {
-            channel_id: confirmation.channel_id,
-            message_id: confirmation.message_id,
-            pinned,
-        })
+    pub fn confirm_message_confirmation(&mut self) -> Option<AppCommand> {
+        let confirmation = self.popups.take_message_confirmation()?;
+        match confirmation.kind {
+            MessageConfirmationKind::Delete => Some(AppCommand::DeleteMessage {
+                channel_id: confirmation.channel_id,
+                message_id: confirmation.message_id,
+            }),
+            MessageConfirmationKind::RemoveEmbeds => Some(AppCommand::RemoveMessageEmbeds {
+                channel_id: confirmation.channel_id,
+                message_id: confirmation.message_id,
+            }),
+            MessageConfirmationKind::Pin { pinned } => Some(AppCommand::SetMessagePinned {
+                channel_id: confirmation.channel_id,
+                message_id: confirmation.message_id,
+                pinned,
+            }),
+        }
     }
 
-    pub fn message_pin_confirmation_lines(&self) -> Option<(bool, String, Option<String>)> {
-        let confirmation = self.popups.message_pin_confirmation()?;
-        let pinned = confirmation.pinned()?;
+    pub fn message_confirmation_lines(
+        &self,
+    ) -> Option<(MessageConfirmationKind, String, Option<String>)> {
+        let confirmation = self.popups.message_confirmation()?;
         Some((
-            pinned,
+            confirmation.kind,
             confirmation.author.clone(),
             confirmation.content.clone(),
         ))
+    }
+
+    fn open_message_confirmation(&mut self, confirmation: popups::MessageConfirmationState) {
+        self.popups.modal = Some(ModalPopup::MessageConfirmation(confirmation));
     }
 }
 

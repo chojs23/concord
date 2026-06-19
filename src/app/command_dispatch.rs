@@ -93,6 +93,7 @@ impl CommandDispatcher {
             | AppCommand::RunApplicationCommand { .. }
             | AppCommand::EditMessage { .. }
             | AppCommand::DeleteMessage { .. }
+            | AppCommand::RemoveMessageEmbeds { .. }
             | AppCommand::LeaveGuild { .. }
             | AppCommand::AddReaction { .. }
             | AppCommand::RemoveReaction { .. }

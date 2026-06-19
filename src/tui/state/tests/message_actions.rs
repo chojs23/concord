@@ -1,5 +1,8 @@
 use super::*;
-use crate::discord::{AppCommand, AttachmentDownloadId, MediaPlaybackSource, MediaPlaybackTarget};
+use crate::discord::{
+    AppCommand, AttachmentDownloadId, MESSAGE_FLAG_SUPPRESS_EMBEDS, MediaPlaybackSource,
+    MediaPlaybackTarget,
+};
 
 fn message_action(actions: &[MessageActionItem], kind: MessageActionKind) -> &MessageActionItem {
     actions
@@ -31,6 +34,7 @@ fn message_action_items_reflect_selected_message_capabilities() {
             MessageActionKind::OpenDeleteConfirmation,
             MessageActionKind::Edit,
             MessageActionKind::OpenUrl,
+            MessageActionKind::RemoveEmbeds,
             MessageActionKind::PlayMedia,
             MessageActionKind::ViewAttachment,
             MessageActionKind::GoToReferencedMessage,
@@ -49,10 +53,65 @@ fn message_action_items_reflect_selected_message_capabilities() {
     );
     assert!(message_action(&actions, MessageActionKind::ShowProfile).enabled);
     assert!(!message_action(&actions, MessageActionKind::GoToReferencedMessage).enabled);
+    assert!(!message_action(&actions, MessageActionKind::RemoveEmbeds).enabled);
     assert!(!message_action(&actions, MessageActionKind::PlayMedia).enabled);
     assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
     assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
     assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
+}
+
+#[test]
+fn remove_embeds_message_action_emits_command_for_unsuppressed_embeds() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(99)),
+    });
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![MessageInfo {
+            embeds: vec![youtube_embed()],
+            ..message_info(Id::new(2), 1)
+        }],
+    ));
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+    assert!(message_action(&actions, MessageActionKind::RemoveEmbeds).enabled);
+
+    assert_eq!(
+        state.activate_message_action_kind(MessageActionKind::RemoveEmbeds),
+        None
+    );
+    assert!(
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
+    );
+
+    assert_eq!(
+        state.confirm_message_confirmation(),
+        Some(AppCommand::RemoveMessageEmbeds {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+        })
+    );
+}
+
+#[test]
+fn remove_embeds_message_action_is_disabled_after_suppression() {
+    let mut state = state_with_messages(1);
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![MessageInfo {
+            embeds: vec![youtube_embed()],
+            flags: MESSAGE_FLAG_SUPPRESS_EMBEDS,
+            ..message_info(Id::new(2), 1)
+        }],
+    ));
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+
+    assert!(!message_action(&actions, MessageActionKind::RemoveEmbeds).enabled);
 }
 
 #[test]
@@ -368,9 +427,7 @@ fn unhydrated_guild_permissions_keep_other_user_delete_available() {
     state.open_selected_message_delete_confirmation();
 
     assert!(
-        state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 
@@ -388,12 +445,10 @@ fn other_user_message_actions_include_delete_with_manage_messages() {
     state.open_selected_message_delete_confirmation();
 
     assert!(
-        state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
     assert_eq!(
-        state.confirm_message_delete(),
+        state.confirm_message_confirmation(),
         Some(AppCommand::DeleteMessage {
             channel_id: Id::new(2),
             message_id: Id::new(1),
@@ -412,9 +467,7 @@ fn other_user_delete_requires_manage_messages() {
     state.open_selected_message_delete_confirmation();
 
     assert!(
-        !state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 
@@ -455,12 +508,10 @@ fn direct_delete_message_submits_delete_command_for_own_message() {
     state.open_selected_message_delete_confirmation();
 
     assert!(
-        state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
     assert_eq!(
-        state.confirm_message_delete(),
+        state.confirm_message_confirmation(),
         Some(AppCommand::DeleteMessage {
             channel_id: Id::new(2),
             message_id: Id::new(1),
@@ -492,12 +543,10 @@ fn own_attachment_only_message_can_be_deleted_but_not_edited() {
     state.open_selected_message_delete_confirmation();
 
     assert!(
-        state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
     assert_eq!(
-        state.confirm_message_delete(),
+        state.confirm_message_confirmation(),
         Some(AppCommand::DeleteMessage {
             channel_id: Id::new(2),
             message_id: Id::new(1),
@@ -517,7 +566,7 @@ fn direct_pin_message_requires_pin_messages_permission() {
 
     assert!(
         !without_pin
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 
     let mut with_pin = state_with_other_user_message_permissions(
@@ -530,7 +579,7 @@ fn direct_pin_message_requires_pin_messages_permission() {
 
     assert!(
         with_pin
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 

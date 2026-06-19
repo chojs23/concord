@@ -21,10 +21,11 @@ use crate::{
     discord::{
         ActivityInfo, AppEvent, ApplicationCommandInfo, ApplicationCommandOptionInfo,
         AttachmentDownloadId, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
-        CustomEmojiInfo, DownloadAttachmentSource, GuildFolder, GuildNotificationSettingsInfo,
-        MemberInfo, MessageInfo, MessageReferenceInfo, MessageSnapshotInfo, NotificationLevel,
-        PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionUserInfo,
-        ReactionUsersInfo, UserGuildSettingsInfo, UserSettingsInfo, VoiceConnectionStatus,
+        CustomEmojiInfo, DownloadAttachmentSource, EmbedInfo, GuildFolder,
+        GuildNotificationSettingsInfo, MemberInfo, MessageInfo, MessageReferenceInfo,
+        MessageSnapshotInfo, NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus,
+        ReactionEmoji, ReactionUserInfo, ReactionUsersInfo, UserGuildSettingsInfo,
+        UserSettingsInfo, VoiceConnectionStatus,
     },
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };

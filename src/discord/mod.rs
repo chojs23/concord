@@ -68,9 +68,10 @@ pub use guild::{CustomEmojiInfo, GuildFolder};
 pub use ids::{Id, marker};
 pub use member::{MemberInfo, RoleInfo};
 pub use message::{
-    AttachmentInfo, AttachmentUpdate, EmbedFieldInfo, EmbedInfo, InlinePreviewInfo, MentionInfo,
-    MessageInfo, MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    PollAnswerInfo, PollInfo, ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo,
+    AttachmentInfo, AttachmentUpdate, EmbedFieldInfo, EmbedInfo, InlinePreviewInfo,
+    MESSAGE_FLAG_SUPPRESS_EMBEDS, MentionInfo, MessageInfo, MessageInteractionInfo, MessageKind,
+    MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo, ReactionInfo,
+    ReactionUserInfo, ReactionUsersInfo, ReplyInfo,
 };
 pub use notification::{
     ChannelNotificationOverrideInfo, GuildNotificationSettingsInfo, NotificationLevel,

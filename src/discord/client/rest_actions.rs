@@ -2,14 +2,14 @@ use chrono::{DateTime, Utc};
 
 use super::DiscordClient;
 use crate::discord::{
-    GuildFolder, MessageAttachmentUpload, MessageInfo, ReactionEmoji, ReactionUserInfo,
-    UserProfileInfo, UserProfileUpdate,
+    GuildFolder, MESSAGE_FLAG_SUPPRESS_EMBEDS, MessageAttachmentUpload, MessageInfo, ReactionEmoji,
+    ReactionUserInfo, UserProfileInfo, UserProfileUpdate,
     commands::ForumPostArchiveState,
     ids::{
         Id,
         marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
     },
-    rest::ForumPostPage,
+    rest::{ForumPostPage, MessageEditRequest},
 };
 use crate::{AppError, Result};
 
@@ -92,7 +92,36 @@ impl DiscordClient {
         content: &str,
     ) -> Result<MessageInfo> {
         self.rest
-            .edit_message(channel_id, message_id, content)
+            .edit_message(channel_id, message_id, MessageEditRequest::Content(content))
+            .await
+    }
+
+    pub async fn remove_message_embeds(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    ) -> Result<MessageInfo> {
+        let flags = {
+            let state = self
+                .state
+                .read()
+                .expect("discord state lock is not poisoned");
+            state
+                .messages_for_channel(channel_id)
+                .into_iter()
+                .find(|message| message.id == message_id)
+                .map(|message| message.flags)
+                .ok_or_else(|| {
+                    AppError::DiscordRequest(format!(
+                        "message {} was not found in channel {}",
+                        message_id.get(),
+                        channel_id.get()
+                    ))
+                })?
+                | MESSAGE_FLAG_SUPPRESS_EMBEDS
+        };
+        self.rest
+            .edit_message(channel_id, message_id, MessageEditRequest::Flags(flags))
             .await
     }
 

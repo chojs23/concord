@@ -146,9 +146,7 @@ fn keymap_configured_d_prefix_overrides_message_delete_default() {
     assert!(state.is_leader_active());
     assert_eq!(state.leader_keymap_title(), "d");
     assert!(
-        !state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 
     handle_key(&mut state, char_key('d'));
@@ -156,9 +154,7 @@ fn keymap_configured_d_prefix_overrides_message_delete_default() {
     assert!(!state.is_leader_active());
     assert!(state.voice_options().self_deaf);
     assert!(
-        !state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 

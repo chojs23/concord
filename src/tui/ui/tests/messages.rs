@@ -197,8 +197,7 @@ fn pinned_message_remains_selectable_for_unpin_action() {
     state.direct_open_selected_message_pin_confirmation();
 
     assert!(
-        state
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 

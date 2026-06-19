@@ -5,6 +5,8 @@ use crate::discord::ids::{
 
 use crate::discord::commands::ReactionEmoji;
 
+pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MentionInfo {
     pub user_id: Id<UserMarker>,

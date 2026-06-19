@@ -336,6 +336,7 @@ Message action menu shortcuts:
 | `d`      | Delete                      | Open a delete confirmation before deleting the message      |
 | `e`      | Edit                        | Start editing the selected message when editing is allowed  |
 | `o`      | Open URL                    | Open the selected message URL, or choose from multiple URLs |
+| `D`      | Remove embeds               | Remove embeds from the selected message                     |
 | `x`      | Play media                  | Play selected video media in an external player             |
 | `v`      | View attachment             | Open the selected message's attachment viewer               |
 | `g`      | Go to referenced message    | Go to the replied or forwarded message                      |
@@ -582,6 +583,7 @@ ReplyMessage = "R"
 DeleteMessage = "d"
 EditMessage = "e"
 OpenMessageUrl = "o"
+RemoveMessageEmbeds = "D"
 PlayMedia = "x"
 ViewMessageAttachment = "v"
 GoToReferencedMessage = "g"

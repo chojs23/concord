@@ -54,8 +54,7 @@ pub(in crate::tui) struct ActionShortcutActivation {
 pub(super) enum ModalPopup {
     MessageActionMenu(MessageActionMenuState),
     MessageUrlPicker(MessageUrlPickerState),
-    MessageDeleteConfirmation(MessageConfirmationState),
-    MessagePinConfirmation(MessageConfirmationState),
+    MessageConfirmation(MessageConfirmationState),
     QuitConfirmation,
     GuildLeaveConfirmation(GuildLeaveConfirmationState),
     Options(OptionsPopupState),
@@ -75,8 +74,7 @@ pub(super) enum ModalPopup {
 pub(in crate::tui) enum ActiveModalPopupKind {
     MessageActionMenu,
     MessageUrlPicker,
-    MessageDeleteConfirmation,
-    MessagePinConfirmation,
+    MessageConfirmation,
     QuitConfirmation,
     GuildLeaveConfirmation,
     Options,
@@ -97,8 +95,7 @@ impl ModalPopup {
         match self {
             Self::MessageActionMenu(_) => ActiveModalPopupKind::MessageActionMenu,
             Self::MessageUrlPicker(_) => ActiveModalPopupKind::MessageUrlPicker,
-            Self::MessageDeleteConfirmation(_) => ActiveModalPopupKind::MessageDeleteConfirmation,
-            Self::MessagePinConfirmation(_) => ActiveModalPopupKind::MessagePinConfirmation,
+            Self::MessageConfirmation(_) => ActiveModalPopupKind::MessageConfirmation,
             Self::QuitConfirmation => ActiveModalPopupKind::QuitConfirmation,
             Self::GuildLeaveConfirmation(_) => ActiveModalPopupKind::GuildLeaveConfirmation,
             Self::Options(_) => ActiveModalPopupKind::Options,
@@ -246,9 +243,10 @@ pub struct MessageUrlPickerState {
     pub(super) items: Vec<MessageUrlItem>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum MessageConfirmationKind {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) enum MessageConfirmationKind {
     Delete,
+    RemoveEmbeds,
     Pin { pinned: bool },
 }
 
@@ -293,10 +291,47 @@ impl MessageConfirmationState {
         }
     }
 
-    pub(super) fn pinned(&self) -> Option<bool> {
-        match self.kind {
-            MessageConfirmationKind::Pin { pinned } => Some(pinned),
-            MessageConfirmationKind::Delete => None,
+    pub(super) fn remove_embeds(
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        author: String,
+        content: Option<String>,
+    ) -> Self {
+        Self {
+            kind: MessageConfirmationKind::RemoveEmbeds,
+            channel_id,
+            message_id,
+            author,
+            content,
+        }
+    }
+}
+
+impl MessageConfirmationKind {
+    pub(in crate::tui) fn title(self) -> &'static str {
+        match self {
+            Self::Delete => "Delete message?",
+            Self::RemoveEmbeds => "Remove embeds?",
+            Self::Pin { pinned: true } => "Pin message?",
+            Self::Pin { pinned: false } => "Unpin message?",
+        }
+    }
+
+    pub(in crate::tui) fn prompt(self) -> String {
+        match self {
+            Self::Delete => "Delete this message?".to_owned(),
+            Self::RemoveEmbeds => "Remove embeds from this message?".to_owned(),
+            Self::Pin { pinned: true } => "Pin this message?".to_owned(),
+            Self::Pin { pinned: false } => "Unpin this message?".to_owned(),
+        }
+    }
+
+    pub(in crate::tui) fn action_label(self) -> String {
+        match self {
+            Self::Delete => "delete".to_owned(),
+            Self::RemoveEmbeds => "Remove embeds".to_owned(),
+            Self::Pin { pinned: true } => "Pin message".to_owned(),
+            Self::Pin { pinned: false } => "Unpin message".to_owned(),
         }
     }
 }
@@ -693,33 +728,16 @@ impl PopupUiState {
         picker
     );
 
-    pub(super) fn message_delete_confirmation(&self) -> Option<&MessageConfirmationState> {
+    pub(super) fn message_confirmation(&self) -> Option<&MessageConfirmationState> {
         match &self.modal {
-            Some(ModalPopup::MessageDeleteConfirmation(confirmation)) => Some(confirmation),
+            Some(ModalPopup::MessageConfirmation(confirmation)) => Some(confirmation),
             _ => None,
         }
     }
 
-    pub(super) fn take_message_delete_confirmation(&mut self) -> Option<MessageConfirmationState> {
+    pub(super) fn take_message_confirmation(&mut self) -> Option<MessageConfirmationState> {
         match self.modal.take() {
-            Some(ModalPopup::MessageDeleteConfirmation(confirmation)) => Some(confirmation),
-            other => {
-                self.modal = other;
-                None
-            }
-        }
-    }
-
-    pub(super) fn message_pin_confirmation(&self) -> Option<&MessageConfirmationState> {
-        match &self.modal {
-            Some(ModalPopup::MessagePinConfirmation(confirmation)) => Some(confirmation),
-            _ => None,
-        }
-    }
-
-    pub(super) fn take_message_pin_confirmation(&mut self) -> Option<MessageConfirmationState> {
-        match self.modal.take() {
-            Some(ModalPopup::MessagePinConfirmation(confirmation)) => Some(confirmation),
+            Some(ModalPopup::MessageConfirmation(confirmation)) => Some(confirmation),
             other => {
                 self.modal = other;
                 None
@@ -1045,8 +1063,7 @@ impl DashboardState {
                 }
                 true
             }
-            Some(ActiveModalPopupKind::MessageDeleteConfirmation)
-            | Some(ActiveModalPopupKind::MessagePinConfirmation)
+            Some(ActiveModalPopupKind::MessageConfirmation)
             | Some(ActiveModalPopupKind::QuitConfirmation)
             | Some(ActiveModalPopupKind::GuildLeaveConfirmation)
             | Some(ActiveModalPopupKind::AttachmentViewer)

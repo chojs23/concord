@@ -1,55 +1,28 @@
 use super::*;
+use crate::tui::state::MessageConfirmationKind;
 
-pub(in crate::tui::ui) fn render_message_delete_confirmation(
+pub(in crate::tui::ui) fn render_message_confirmation(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
 ) {
-    if !state.is_active_modal_popup(ActiveModalPopupKind::MessageDeleteConfirmation) {
+    if !state.is_active_modal_popup(ActiveModalPopupKind::MessageConfirmation) {
         return;
     }
 
-    let Some((author, content)) = state.message_delete_confirmation_lines() else {
+    let Some((kind, author, content)) = state.message_confirmation_lines() else {
         return;
     };
 
-    let lines = message_delete_confirmation_lines_with_key_bindings(
+    let lines = message_confirmation_lines_with_key_bindings(
+        kind,
         &author,
         content.as_deref(),
         56,
         state.key_bindings(),
     );
     let popup = clear_centered_popup_area(frame, area, 60, (lines.len() as u16).saturating_add(2));
-    render_modal_paragraph(frame, popup, "Delete message?", lines);
-}
-
-pub(in crate::tui::ui) fn render_message_pin_confirmation(
-    frame: &mut Frame,
-    area: Rect,
-    state: &DashboardState,
-) {
-    if !state.is_active_modal_popup(ActiveModalPopupKind::MessagePinConfirmation) {
-        return;
-    }
-
-    let Some((pinned, author, content)) = state.message_pin_confirmation_lines() else {
-        return;
-    };
-
-    let lines = message_pin_confirmation_lines_with_key_bindings(
-        pinned,
-        &author,
-        content.as_deref(),
-        56,
-        state.key_bindings(),
-    );
-    let title = if pinned {
-        "Pin message?"
-    } else {
-        "Unpin message?"
-    };
-    let popup = clear_centered_popup_area(frame, area, 60, (lines.len() as u16).saturating_add(2));
-    render_modal_paragraph(frame, popup, title, lines);
+    render_modal_paragraph(frame, popup, kind.title(), lines);
 }
 
 pub(in crate::tui::ui) fn render_quit_confirmation(
@@ -90,27 +63,12 @@ pub(in crate::tui::ui) fn message_delete_confirmation_lines(
     content: Option<&str>,
     width: usize,
 ) -> Vec<Line<'static>> {
-    message_delete_confirmation_lines_with_key_bindings(
+    message_confirmation_lines_with_key_bindings(
+        MessageConfirmationKind::Delete,
         author,
         content,
         width,
         &crate::tui::keybindings::KeyBindings::default(),
-    )
-}
-
-fn message_delete_confirmation_lines_with_key_bindings(
-    author: &str,
-    content: Option<&str>,
-    width: usize,
-    key_bindings: &crate::tui::keybindings::KeyBindings,
-) -> Vec<Line<'static>> {
-    confirmation_lines(
-        "Delete this message?".to_owned(),
-        author,
-        content,
-        width,
-        "delete".to_owned(),
-        key_bindings,
     )
 }
 
@@ -121,8 +79,8 @@ pub(in crate::tui::ui) fn message_pin_confirmation_lines(
     content: Option<&str>,
     width: usize,
 ) -> Vec<Line<'static>> {
-    message_pin_confirmation_lines_with_key_bindings(
-        pinned,
+    message_confirmation_lines_with_key_bindings(
+        MessageConfirmationKind::Pin { pinned },
         author,
         content,
         width,
@@ -133,6 +91,21 @@ pub(in crate::tui::ui) fn message_pin_confirmation_lines(
 #[cfg(test)]
 pub(in crate::tui::ui) fn quit_confirmation_lines() -> Vec<Line<'static>> {
     quit_confirmation_lines_with_key_bindings(&crate::tui::keybindings::KeyBindings::default())
+}
+
+#[cfg(test)]
+pub(in crate::tui::ui) fn message_remove_embeds_confirmation_lines(
+    author: &str,
+    content: Option<&str>,
+    width: usize,
+) -> Vec<Line<'static>> {
+    message_confirmation_lines_with_key_bindings(
+        MessageConfirmationKind::RemoveEmbeds,
+        author,
+        content,
+        width,
+        &crate::tui::keybindings::KeyBindings::default(),
+    )
 }
 
 fn quit_confirmation_lines_with_key_bindings(
@@ -184,20 +157,19 @@ fn guild_leave_confirmation_lines_with_key_bindings(
     ]
 }
 
-fn message_pin_confirmation_lines_with_key_bindings(
-    pinned: bool,
+fn message_confirmation_lines_with_key_bindings(
+    kind: MessageConfirmationKind,
     author: &str,
     content: Option<&str>,
     width: usize,
     key_bindings: &crate::tui::keybindings::KeyBindings,
 ) -> Vec<Line<'static>> {
-    let action = if pinned { "Pin" } else { "Unpin" };
     confirmation_lines(
-        format!("{action} this message?"),
+        kind.prompt(),
         author,
         content,
         width,
-        format!("{action} message"),
+        kind.action_label(),
         key_bindings,
     )
 }

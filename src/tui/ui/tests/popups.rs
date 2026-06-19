@@ -62,6 +62,14 @@ fn message_pin_confirmation_lines_show_action_and_excerpt() {
     let unpin_lines = message_pin_confirmation_lines(false, "neo", Some("unpin this"), 80);
     assert_eq!(unpin_lines[0].spans[0].content, "Unpin this message?");
     assert!(unpin_lines[4].spans[1].content.contains("Unpin message"));
+
+    let remove_lines =
+        message_remove_embeds_confirmation_lines("neo", Some("remove embeds from this"), 80);
+    assert_eq!(
+        remove_lines[0].spans[0].content,
+        "Remove embeds from this message?"
+    );
+    assert!(remove_lines[4].spans[1].content.contains("Remove embeds"));
 }
 
 #[test]

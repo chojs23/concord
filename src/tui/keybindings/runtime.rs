@@ -874,6 +874,7 @@ impl KeyBindings {
             MessageActionKind::OpenDeleteConfirmation => 'd',
             MessageActionKind::Edit => 'e',
             MessageActionKind::OpenUrl => 'o',
+            MessageActionKind::RemoveEmbeds => 'D',
             MessageActionKind::PlayMedia => 'x',
             MessageActionKind::ViewAttachment => 'v',
             MessageActionKind::GoToReferencedMessage => 'g',

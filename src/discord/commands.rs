@@ -530,6 +530,10 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
     },
+    RemoveMessageEmbeds {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    },
     OpenUrl {
         url: String,
     },

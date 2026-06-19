@@ -33,11 +33,11 @@ pub(super) use channel_switcher::{
 };
 #[cfg(test)]
 pub(super) use confirmation::{
-    message_delete_confirmation_lines, message_pin_confirmation_lines, quit_confirmation_lines,
+    message_delete_confirmation_lines, message_pin_confirmation_lines,
+    message_remove_embeds_confirmation_lines, quit_confirmation_lines,
 };
 pub(super) use confirmation::{
-    render_guild_leave_confirmation, render_message_delete_confirmation,
-    render_message_pin_confirmation, render_quit_confirmation,
+    render_guild_leave_confirmation, render_message_confirmation, render_quit_confirmation,
 };
 #[cfg(test)]
 pub(super) use debug_log::debug_log_popup_lines;

@@ -67,7 +67,7 @@ pub use model::{
 };
 pub use model::{ChannelActionKind, GuildActionKind, MemberActionKind, MessageUrlItem};
 pub use options::DisplayOptionItem;
-pub(in crate::tui) use popups::ActiveModalPopupKind;
+pub(in crate::tui) use popups::{ActiveModalPopupKind, MessageConfirmationKind};
 pub use popups::{
     AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,
     PollVotePickerState, ReactionUsersPopupState, UserProfileSettingsField, UserProfileSettingsTab,
