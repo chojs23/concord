@@ -66,7 +66,7 @@ pub(in crate::tui::ui) fn search_popup_lines(
         format!("{} result(s)", total)
     } else {
         match view.mode {
-            SearchPopupMode::Message => "Enter filters, then press Enter".to_owned(),
+            SearchPopupMode::Message => "Enter filters, then [Enter] search".to_owned(),
             SearchPopupMode::Member => "Type to filter members".to_owned(),
         }
     };
@@ -119,7 +119,7 @@ pub(in crate::tui::ui) fn search_popup_lines(
     if view.has_more {
         push_wrapped_styled_popup_text(
             &mut lines,
-            "More results: press Down or PageDown at the end",
+            "More results: [Down/PageDown] load more at the end",
             width,
             Style::default().fg(DIM),
         );

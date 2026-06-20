@@ -356,7 +356,7 @@ Server actions:
 | `m`      | Mark server as read | Mark all unread viewable channels in this server read |
 | `u`      | Mute / unmute       | Toggle server notification mute                       |
 | `l`      | Leave server        | Open a confirmation before leaving this server        |
-| `r`      | Rename folder       | Rename the selected server folder                     |
+| `r`      | Folder settings     | Edit the selected server folder name and color        |
 
 Channel actions:
 
@@ -566,7 +566,7 @@ VoiceLeave = "<leader>vl"
 MarkAsRead = "m"
 MuteServer = "u"
 LeaveServer = "l"
-RenameFolder = "r"
+FolderSettings = "r"
 
 [keymap.channel_actions]
 JoinVoice = "j"

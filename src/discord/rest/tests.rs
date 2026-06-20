@@ -1,5 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{TimeZone, Utc};
 
 use crate::discord::ids::{
@@ -11,8 +12,8 @@ use crate::{
     AppError,
     discord::{
         ApplicationCommandInfo, ApplicationCommandInteraction, ApplicationCommandInteractionOption,
-        ChannelInfo, MAX_UPLOAD_FILE_BYTES, MessageAttachmentUpload, MessageSearchAuthorType,
-        MessageSearchHas, MessageSearchQuery, ReactionEmoji,
+        ChannelInfo, GuildFolder, MAX_UPLOAD_FILE_BYTES, MessageAttachmentUpload,
+        MessageSearchAuthorType, MessageSearchHas, MessageSearchQuery, ReactionEmoji,
     },
 };
 
@@ -35,6 +36,7 @@ use super::{
     profile::parse_user_profile_response,
     reactions::{REACTION_USERS_MAX_PAGES, next_reaction_users_after, reaction_route_component},
     search::{message_search_date_snowflake_bounds, message_search_query_params},
+    user_settings::settings_proto_request_body,
 };
 
 #[test]
@@ -62,6 +64,29 @@ fn validates_attachment_only_message_payload() {
     assert_eq!(body["message_reference"]["message_id"], "44");
     assert_eq!(body["attachments"][0]["id"], 0);
     assert_eq!(body["attachments"][0]["filename"], "cat.png");
+}
+
+#[test]
+fn guild_folder_settings_proto_includes_name_and_color() {
+    let body = settings_proto_request_body(&[GuildFolder {
+        id: Some(42),
+        name: Some("work".to_owned()),
+        color: Some(0x00aaff),
+        guild_ids: vec![Id::new(1), Id::new(2)],
+    }]);
+    let settings = body["settings"]
+        .as_str()
+        .expect("settings body should be base64");
+    let decoded = BASE64_STANDARD
+        .decode(settings)
+        .expect("settings body should decode");
+
+    assert!(decoded.windows(b"work".len()).any(|bytes| bytes == b"work"));
+    assert!(
+        decoded
+            .windows(4)
+            .any(|bytes| bytes == [0x08, 0xff, 0xd5, 0x02])
+    );
 }
 
 #[test]

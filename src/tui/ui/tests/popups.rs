@@ -49,8 +49,8 @@ fn message_delete_confirmation_lines_show_controls_and_excerpt() {
     assert_eq!(lines[0].spans[0].content, "Delete this message?");
     assert_eq!(lines[1].spans[0].content, "From: neo");
     assert!(lines[2].spans[0].content.contains("important message"));
-    assert!(lines[4].spans[0].content.contains("Enter/y"));
-    assert!(lines[4].spans[2].content.contains("Esc/n"));
+    assert!(lines[4].spans[0].content.contains("[Enter/y]"));
+    assert!(lines[4].spans[2].content.contains("[Esc/n]"));
 }
 
 #[test]
@@ -78,8 +78,8 @@ fn quit_confirmation_lines_show_controls() {
 
     assert_eq!(lines[0].spans[0].content, "Quit Concord?");
     assert_eq!(lines[1].spans[0].content, "");
-    assert!(lines[2].spans[0].content.contains("Enter/y"));
-    assert!(lines[2].spans[2].content.contains("Esc/n"));
+    assert!(lines[2].spans[0].content.contains("[Enter/y]"));
+    assert!(lines[2].spans[2].content.contains("[Esc/n]"));
 }
 
 #[test]
@@ -370,9 +370,13 @@ fn current_user_profile_settings_render_contract() {
     assert!(
         dirty_texts
             .iter()
-            .any(|line| line == "Unsaved changes. Press s to save.")
+            .any(|line| line == "Unsaved changes. [s] save.")
     );
-    assert!(dirty_texts.iter().any(|line| line.contains("Enter select")));
+    assert!(
+        dirty_texts
+            .iter()
+            .any(|line| line.contains("[Enter] select"))
+    );
     assert!(dirty_texts.iter().any(|line| line.contains(" · ")));
     assert!(
         !dirty_texts
@@ -384,13 +388,13 @@ fn current_user_profile_settings_render_contract() {
     let narrow_texts = line_texts_from_ratatui(&narrow_lines);
     let hint_start = narrow_texts
         .iter()
-        .position(|line| line.contains("Esc close/cancel"))
-        .expect("wrapped helper hint should start with Esc close/cancel");
+        .position(|line| line.contains("[Esc] close/cancel"))
+        .expect("wrapped helper hint should start with [Esc] close/cancel");
     let wrapped_hint = narrow_texts[hint_start..].join(" ");
-    assert!(wrapped_hint.contains("Esc close/cancel"));
+    assert!(wrapped_hint.contains("[Esc] close/cancel"));
     assert!(wrapped_hint.contains(" · "));
-    assert!(wrapped_hint.contains("Enter select"));
-    assert!(wrapped_hint.contains("s Save"));
+    assert!(wrapped_hint.contains("[Enter] select"));
+    assert!(wrapped_hint.contains("[s] save"));
     assert!(!wrapped_hint.contains("select/edit/commit"));
 
     state.next_user_profile_settings_field();
@@ -434,7 +438,9 @@ fn current_user_profile_settings_show_sign_out_action() {
             .add_modifier
             .contains(Modifier::BOLD)
     );
-    assert!(texts.iter().any(|line| line.contains("o Sign out")));
+    let rendered = texts.join(" ");
+    assert!(rendered.contains("[o]"));
+    assert!(rendered.contains("sign out"));
 }
 
 #[test]
@@ -1278,6 +1284,23 @@ fn leader_action_popup_from_guilds_uses_server_action_title() {
 
     assert!(rendered.contains("Server Actions"), "{rendered}");
     assert!(rendered.contains("Mark server as read"), "{rendered}");
+}
+
+#[test]
+fn folder_settings_popup_renders_name_and_color_inputs() {
+    let mut state = state_with_folder_settings();
+
+    let dump = render_dashboard_dump(120, 20, &mut state);
+    let rendered = dump.join("\n");
+
+    assert!(rendered.contains("Folder Settings"), "{rendered}");
+    assert!(rendered.contains("Name:"), "{rendered}");
+    assert!(rendered.contains("folder"), "{rendered}");
+    assert!(rendered.contains("Color code:"), "{rendered}");
+    assert!(rendered.contains("#00AAFF"), "{rendered}");
+    assert!(rendered.contains("[Enter] select"), "{rendered}");
+    assert!(rendered.contains("[Esc] close/cancel"), "{rendered}");
+    assert!(!rendered.contains("[j/k] move"), "{rendered}");
 }
 
 #[test]

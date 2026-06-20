@@ -11,6 +11,7 @@ mod channel_switcher;
 mod confirmation;
 mod debug_log;
 mod downloads;
+mod folder_settings;
 mod keymap;
 mod options;
 mod polls;
@@ -45,6 +46,7 @@ pub(super) use debug_log::render_debug_log_popup;
 pub(super) use downloads::render_downloads_popup;
 #[cfg(test)]
 pub(super) use downloads::{downloads_popup_area, downloads_popup_lines};
+pub(super) use folder_settings::render_folder_settings_popup;
 #[cfg(test)]
 pub(super) use keymap::keymap_help_popup_lines;
 pub(super) use keymap::{
@@ -95,6 +97,14 @@ fn render_modal_paragraph(
             .wrap(Wrap { trim: false }),
         popup,
     );
+}
+
+fn popup_shortcut_help_text(items: &[(&str, &str)]) -> String {
+    items
+        .iter()
+        .map(|(shortcut, description)| format!("[{shortcut}] {description}"))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 fn truncate_line_to_display_width(line: Line<'static>, max_width: usize) -> Line<'static> {

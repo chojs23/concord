@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use crate::discord::ids::{Id, marker::GuildMarker};
 use crate::discord::{GuildFolder, GuildState, MuteDuration};
 
-use super::{ActiveGuildScope, DashboardState, FolderKey, FolderRenameState};
+use super::navigation::FolderSettingsField;
+use super::{ActiveGuildScope, DashboardState, FolderKey, FolderSettingsState};
 use super::{
     model::{FocusPane, GuildBranch, GuildPaneEntry},
     scroll::{clamp_selected_index, toggle_collapsed_key},
@@ -302,106 +303,220 @@ impl DashboardState {
         }
     }
 
-    pub fn start_selected_folder_rename(&mut self) -> bool {
-        let Some((folder_id, name)) = self.selected_renamable_folder() else {
+    pub fn open_selected_folder_settings(&mut self) -> bool {
+        let Some((folder_id, name, color)) = self.selected_configurable_folder() else {
             return false;
         };
-        let mut input = crate::tui::text_input::TextInputState::default();
-        input.set_value(name.unwrap_or_default());
-        self.navigation.guilds.folder_rename = Some(FolderRenameState { folder_id, input });
+        let mut name_input = crate::tui::text_input::TextInputState::default();
+        name_input.set_value(name.unwrap_or_default());
+        let mut color_input = crate::tui::text_input::TextInputState::default();
+        color_input.set_value(format_folder_color_code(color));
+        self.navigation.guilds.folder_settings = Some(FolderSettingsState {
+            folder_id,
+            active_field: Default::default(),
+            editing_field: None,
+            edit_input: Default::default(),
+            name_input,
+            color_input,
+            color_error: None,
+        });
         true
     }
 
-    pub fn cancel_folder_rename(&mut self) {
-        self.navigation.guilds.folder_rename = None;
+    pub fn close_folder_settings(&mut self) {
+        self.navigation.guilds.folder_settings = None;
     }
 
-    pub fn is_renaming_folder(&self) -> bool {
-        self.navigation.guilds.folder_rename.is_some()
+    pub fn is_folder_settings_open(&self) -> bool {
+        self.navigation.guilds.folder_settings.is_some()
     }
 
-    pub(in crate::tui) fn folder_rename_target_id(&self) -> Option<u64> {
+    pub(in crate::tui) fn folder_settings_name_value(&self) -> Option<&str> {
+        let settings = self.navigation.guilds.folder_settings.as_ref()?;
+        Some(
+            if settings.editing_field == Some(FolderSettingsField::Name) {
+                settings.edit_input.value()
+            } else {
+                settings.name_input.value()
+            },
+        )
+    }
+
+    pub(in crate::tui) fn folder_settings_color_value(&self) -> Option<&str> {
+        let settings = self.navigation.guilds.folder_settings.as_ref()?;
+        Some(
+            if settings.editing_field == Some(FolderSettingsField::Color) {
+                settings.edit_input.value()
+            } else {
+                settings.color_input.value()
+            },
+        )
+    }
+
+    pub(in crate::tui) fn folder_settings_name_active(&self) -> bool {
         self.navigation
             .guilds
-            .folder_rename
+            .folder_settings
             .as_ref()
-            .map(|rename| rename.folder_id)
+            .is_some_and(|settings| matches!(settings.active_field, FolderSettingsField::Name))
     }
 
-    pub(in crate::tui) fn folder_rename_value(&self) -> Option<&str> {
+    pub(in crate::tui) fn folder_settings_color_active(&self) -> bool {
         self.navigation
             .guilds
-            .folder_rename
+            .folder_settings
             .as_ref()
-            .map(|rename| rename.input.value())
+            .is_some_and(|settings| matches!(settings.active_field, FolderSettingsField::Color))
     }
 
-    pub(in crate::tui) fn folder_rename_cursor_byte_index(&self) -> Option<usize> {
+    pub(in crate::tui) fn is_folder_settings_editing(&self) -> bool {
         self.navigation
             .guilds
-            .folder_rename
+            .folder_settings
             .as_ref()
-            .map(|rename| rename.input.cursor_byte_index())
+            .is_some_and(|settings| settings.editing_field.is_some())
     }
 
-    pub fn push_folder_rename_char(&mut self, value: char) {
-        if let Some(rename) = self.navigation.guilds.folder_rename.as_mut() {
-            rename.input.insert_char(value);
+    pub(in crate::tui) fn folder_settings_color_error(&self) -> Option<&str> {
+        self.navigation
+            .guilds
+            .folder_settings
+            .as_ref()
+            .and_then(|settings| settings.color_error.as_deref())
+    }
+
+    pub(in crate::tui) fn folder_settings_cursor_byte_index(&self) -> Option<usize> {
+        let settings = self.navigation.guilds.folder_settings.as_ref()?;
+        settings.editing_field?;
+        Some(settings.edit_input.cursor_byte_index())
+    }
+
+    pub fn next_folder_settings_field(&mut self) {
+        if let Some(settings) = self.navigation.guilds.folder_settings.as_mut() {
+            if settings.editing_field.is_some() {
+                return;
+            }
+            settings.active_field = match settings.active_field {
+                FolderSettingsField::Name => FolderSettingsField::Color,
+                FolderSettingsField::Color => FolderSettingsField::Name,
+            };
         }
     }
 
-    pub fn pop_folder_rename_char(&mut self) {
-        if let Some(rename) = self.navigation.guilds.folder_rename.as_mut() {
-            rename.input.delete_previous_grapheme();
+    pub fn previous_folder_settings_field(&mut self) {
+        self.next_folder_settings_field();
+    }
+
+    pub fn start_or_commit_folder_settings_edit(&mut self) {
+        if let Some(settings) = self.navigation.guilds.folder_settings.as_mut() {
+            if settings.editing_field == Some(settings.active_field) {
+                let value = settings.edit_input.value().to_owned();
+                match settings.active_field {
+                    FolderSettingsField::Name => settings.name_input.set_value(value),
+                    FolderSettingsField::Color => settings.color_input.set_value(value),
+                }
+                settings.editing_field = None;
+                settings.edit_input.clear();
+            } else {
+                let value = match settings.active_field {
+                    FolderSettingsField::Name => settings.name_input.value().to_owned(),
+                    FolderSettingsField::Color => settings.color_input.value().to_owned(),
+                };
+                settings.editing_field = Some(settings.active_field);
+                settings.edit_input.set_value(value);
+            }
         }
     }
 
-    pub fn delete_previous_folder_rename_word(&mut self) {
-        if let Some(rename) = self.navigation.guilds.folder_rename.as_mut() {
-            rename.input.delete_previous_word();
+    pub fn cancel_folder_settings_edit(&mut self) -> bool {
+        if let Some(settings) = self.navigation.guilds.folder_settings.as_mut()
+            && settings.editing_field.take().is_some()
+        {
+            settings.edit_input.clear();
+            return true;
+        }
+        false
+    }
+
+    pub fn push_folder_settings_char(&mut self, value: char) {
+        self.update_active_folder_settings_input(|input| input.insert_char(value));
+        self.clear_folder_settings_color_error_if_editing_color();
+    }
+
+    pub fn pop_folder_settings_char(&mut self) {
+        self.update_active_folder_settings_input(|input| {
+            input.delete_previous_grapheme();
+        });
+        self.clear_folder_settings_color_error_if_editing_color();
+    }
+
+    pub fn delete_previous_folder_settings_word(&mut self) {
+        self.update_active_folder_settings_input(|input| {
+            input.delete_previous_word();
+        });
+        self.clear_folder_settings_color_error_if_editing_color();
+    }
+
+    fn clear_folder_settings_color_error_if_editing_color(&mut self) {
+        if let Some(settings) = self.navigation.guilds.folder_settings.as_mut()
+            && matches!(settings.active_field, FolderSettingsField::Color)
+        {
+            settings.color_error = None;
         }
     }
 
-    pub fn move_folder_rename_cursor_left(&mut self) {
-        self.move_folder_rename_cursor_with(|input| input.move_left());
+    pub fn move_folder_settings_cursor_left(&mut self) {
+        self.update_active_folder_settings_input(|input| input.move_left());
     }
 
-    pub fn move_folder_rename_cursor_right(&mut self) {
-        self.move_folder_rename_cursor_with(|input| input.move_right());
+    pub fn move_folder_settings_cursor_right(&mut self) {
+        self.update_active_folder_settings_input(|input| input.move_right());
     }
 
-    pub fn move_folder_rename_cursor_word_left(&mut self) {
-        self.move_folder_rename_cursor_with(|input| input.move_word_left());
+    pub fn move_folder_settings_cursor_word_left(&mut self) {
+        self.update_active_folder_settings_input(|input| input.move_word_left());
     }
 
-    pub fn move_folder_rename_cursor_word_right(&mut self) {
-        self.move_folder_rename_cursor_with(|input| input.move_word_right());
+    pub fn move_folder_settings_cursor_word_right(&mut self) {
+        self.update_active_folder_settings_input(|input| input.move_word_right());
     }
 
-    pub fn move_folder_rename_cursor_home(&mut self) {
-        self.move_folder_rename_cursor_with(|input| input.move_home());
+    pub fn move_folder_settings_cursor_home(&mut self) {
+        self.update_active_folder_settings_input(|input| input.move_home());
     }
 
-    pub fn move_folder_rename_cursor_end(&mut self) {
-        self.move_folder_rename_cursor_with(|input| input.move_end());
+    pub fn move_folder_settings_cursor_end(&mut self) {
+        self.update_active_folder_settings_input(|input| input.move_end());
     }
 
-    fn move_folder_rename_cursor_with(
+    fn update_active_folder_settings_input(
         &mut self,
         update: impl FnOnce(&mut crate::tui::text_input::TextInputState),
     ) {
-        if let Some(rename) = self.navigation.guilds.folder_rename.as_mut() {
-            update(&mut rename.input);
+        if let Some(settings) = self.navigation.guilds.folder_settings.as_mut() {
+            if settings.editing_field != Some(settings.active_field) {
+                return;
+            }
+            update(&mut settings.edit_input);
         }
     }
 
-    pub fn commit_folder_rename_command(&mut self) -> Option<AppCommand> {
-        let rename = self.navigation.guilds.folder_rename.take()?;
-        let name = rename.input.value().trim().to_owned();
+    pub fn commit_folder_settings_command(&mut self) -> Option<AppCommand> {
+        let settings = self.navigation.guilds.folder_settings.as_ref()?;
+        let Some(color) = parse_folder_color_code(settings.color_input.value()) else {
+            if let Some(settings) = self.navigation.guilds.folder_settings.as_mut() {
+                settings.color_error = Some("Use #RRGGBB or leave blank".to_owned());
+            }
+            return None;
+        };
+        let folder_id = settings.folder_id;
+        let name = settings.name_input.value().trim().to_owned();
         let name = (!name.is_empty()).then_some(name);
-        Some(AppCommand::RenameGuildFolder {
-            folder_id: rename.folder_id,
+        self.navigation.guilds.folder_settings = None;
+        Some(AppCommand::UpdateGuildFolderSettings {
+            folder_id,
             name,
+            color,
         })
     }
 
@@ -439,10 +554,10 @@ impl DashboardState {
         }
     }
 
-    fn selected_renamable_folder(&self) -> Option<(u64, Option<String>)> {
+    fn selected_configurable_folder(&self) -> Option<(u64, Option<String>, Option<u32>)> {
         match self.guild_pane_entries().get(self.selected_guild()) {
             Some(GuildPaneEntry::FolderHeader { folder, .. }) => {
-                folder.id.map(|id| (id, folder.name.clone()))
+                folder.id.map(|id| (id, folder.name.clone(), folder.color))
             }
             _ => None,
         }
@@ -457,6 +572,24 @@ impl DashboardState {
             None
         }
     }
+}
+
+fn format_folder_color_code(color: Option<u32>) -> String {
+    color
+        .map(|color| format!("#{:06X}", color & 0x00ff_ffff))
+        .unwrap_or_default()
+}
+
+fn parse_folder_color_code(value: &str) -> Option<Option<u32>> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Some(None);
+    }
+    let value = value.strip_prefix('#').unwrap_or(value);
+    if value.len() != 6 || !value.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(value, 16).ok().map(Some)
 }
 
 impl DashboardState {

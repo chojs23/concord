@@ -128,8 +128,15 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                 }
             }
         }
-        AppCommand::RenameGuildFolder { folder_id, name } => {
-            match client.rename_guild_folder(folder_id, name).await {
+        AppCommand::UpdateGuildFolderSettings {
+            folder_id,
+            name,
+            color,
+        } => {
+            match client
+                .update_guild_folder_settings(folder_id, name, color)
+                .await
+            {
                 Ok(folders) => {
                     client
                         .publish_event(AppEvent::UserSettingsUpdate {
@@ -141,7 +148,7 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                         .await;
                 }
                 Err(error) => {
-                    log_app_error("rename guild folder failed", &error);
+                    log_app_error("update guild folder settings failed", &error);
                     client
                         .publish_event(AppEvent::GatewayError {
                             message: error.to_string(),

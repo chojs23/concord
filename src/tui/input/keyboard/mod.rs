@@ -1,6 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::tui::keybindings::{GlobalAction, KeyMapLookup, PaneFilterAction, SelectionAction};
+use crate::tui::keybindings::{
+    GlobalAction, KeyMapLookup, PaneFilterAction, SelectionAction, SelectionKeySet,
+};
 
 use super::super::state::{DashboardState, FocusPane};
 use crate::discord::AppCommand;
@@ -59,8 +61,8 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         }
     }
 
-    if state.is_renaming_folder() {
-        return handle_folder_rename_key(state, key);
+    if state.is_folder_settings_open() {
+        return handle_folder_settings_key(state, key);
     }
 
     if is_keymap_help_key(key) {
@@ -90,37 +92,80 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     None
 }
 
-fn handle_folder_rename_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+fn handle_folder_settings_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    if state.is_folder_settings_editing() {
+        return handle_folder_settings_edit_key(state, key);
+    }
+
+    if let Some(action) = state
+        .key_bindings()
+        .selection_action(key, SelectionKeySet::Navigation)
+    {
+        match action {
+            SelectionAction::Next => state.next_folder_settings_field(),
+            SelectionAction::Previous => state.previous_folder_settings_field(),
+        }
+        return None;
+    }
+
     match key.code {
-        KeyCode::Esc => state.cancel_folder_rename(),
-        KeyCode::Enter => return state.commit_folder_rename_command(),
+        KeyCode::Esc => state.close_folder_settings(),
+        KeyCode::Enter => state.start_or_commit_folder_settings_edit(),
+        KeyCode::Char('s')
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            return state.commit_folder_settings_command();
+        }
+        KeyCode::Tab => {
+            state.next_folder_settings_field();
+        }
+        KeyCode::BackTab => {
+            state.previous_folder_settings_field();
+        }
+        _ => {}
+    }
+    None
+}
+
+fn handle_folder_settings_edit_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc => {
+            state.cancel_folder_settings_edit();
+        }
+        KeyCode::Enter => state.start_or_commit_folder_settings_edit(),
+        KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down => {}
         KeyCode::Backspace
             if key
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
         {
-            state.delete_previous_folder_rename_word();
+            state.delete_previous_folder_settings_word();
         }
-        KeyCode::Backspace => state.pop_folder_rename_char(),
+        KeyCode::Backspace => state.pop_folder_settings_char(),
         KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.move_folder_rename_cursor_word_left();
+            state.move_folder_settings_cursor_word_left();
         }
         KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.move_folder_rename_cursor_word_right();
+            state.move_folder_settings_cursor_word_right();
         }
-        KeyCode::Left => state.move_folder_rename_cursor_left(),
-        KeyCode::Right => state.move_folder_rename_cursor_right(),
-        KeyCode::Home => state.move_folder_rename_cursor_home(),
-        KeyCode::End => state.move_folder_rename_cursor_end(),
+        KeyCode::Left => state.move_folder_settings_cursor_left(),
+        KeyCode::Right => state.move_folder_settings_cursor_right(),
+        KeyCode::Home => state.move_folder_settings_cursor_home(),
+        KeyCode::End => state.move_folder_settings_cursor_end(),
         KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.delete_previous_folder_rename_word();
+            state.delete_previous_folder_settings_word();
         }
         KeyCode::Char(value)
             if !key
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
         {
-            state.push_folder_rename_char(value);
+            state.push_folder_settings_char(value);
         }
         _ => {}
     }

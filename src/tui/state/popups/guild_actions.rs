@@ -94,8 +94,8 @@ impl DashboardState {
                 false,
             )],
             Some(GuildPaneEntry::FolderHeader { folder, .. }) => vec![GuildActionItem::new(
-                GuildActionKind::RenameFolder,
-                "Rename folder",
+                GuildActionKind::FolderSettings,
+                "Folder settings",
                 folder.id.is_some(),
             )],
             None => Vec::new(),
@@ -159,9 +159,9 @@ impl DashboardState {
                         self.open_current_guild_leave_confirmation();
                         None
                     }
-                    GuildActionKind::RenameFolder => {
+                    GuildActionKind::FolderSettings => {
                         self.close_guild_leader_action();
-                        self.start_selected_folder_rename();
+                        self.open_selected_folder_settings();
                         None
                     }
                     GuildActionKind::NoActionsYet => None,

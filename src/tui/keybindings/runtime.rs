@@ -677,11 +677,11 @@ impl KeyBindings {
     }
 
     pub fn message_confirmation_confirm_label(&self) -> &'static str {
-        "Enter/y"
+        "[Enter/y]"
     }
 
     pub fn message_confirmation_cancel_label(&self) -> &'static str {
-        "Esc/n"
+        "[Esc/n]"
     }
 
     pub fn attachment_viewer_download_hint(&self) -> &'static str {
@@ -821,7 +821,7 @@ impl KeyBindings {
             GuildActionKind::MarkAsRead => vec![char_chord('m')],
             GuildActionKind::ToggleMute => vec![char_chord('u')],
             GuildActionKind::LeaveServer => vec![char_chord('l')],
-            GuildActionKind::RenameFolder => vec![char_chord('r')],
+            GuildActionKind::FolderSettings => vec![char_chord('r')],
             GuildActionKind::NoActionsYet => Vec::new(),
         }
     }

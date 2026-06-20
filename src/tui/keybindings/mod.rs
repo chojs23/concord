@@ -669,7 +669,7 @@ impl GuildActionKind {
             "MarkAsRead" => Some(Self::MarkAsRead),
             "MuteServer" | "ToggleMute" => Some(Self::ToggleMute),
             "LeaveServer" => Some(Self::LeaveServer),
-            "RenameFolder" => Some(Self::RenameFolder),
+            "FolderSettings" => Some(Self::FolderSettings),
             _ => None,
         }
     }
@@ -680,7 +680,7 @@ impl GuildActionKind {
             Self::MarkAsRead => "MarkAsRead",
             Self::ToggleMute => "ToggleMute",
             Self::LeaveServer => "LeaveServer",
-            Self::RenameFolder => "RenameFolder",
+            Self::FolderSettings => "FolderSettings",
         }
     }
 }

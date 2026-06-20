@@ -236,7 +236,7 @@ pub enum GuildActionKind {
     MarkAsRead,
     ToggleMute,
     LeaveServer,
-    RenameFolder,
+    FolderSettings,
 }
 
 pub type GuildActionItem = ActionItem<GuildActionKind>;

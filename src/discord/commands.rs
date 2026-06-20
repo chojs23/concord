@@ -588,9 +588,10 @@ pub enum AppCommand {
     UpdateCurrentUserStatus {
         status: PresenceStatus,
     },
-    RenameGuildFolder {
+    UpdateGuildFolderSettings {
         folder_id: u64,
         name: Option<String>,
+        color: Option<u32>,
     },
     UpdateCurrentUserActivity {
         status: PresenceStatus,

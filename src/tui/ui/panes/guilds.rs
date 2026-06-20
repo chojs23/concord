@@ -15,10 +15,6 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
     let max_width = list_area.width.saturating_sub(6) as usize;
     let horizontal_scroll = state.guild_horizontal_scroll();
     let selected = state.focused_guild_selection();
-    let rename_target = state.folder_rename_target_id();
-    let rename_value = state.folder_rename_value();
-    let rename_cursor = state.folder_rename_cursor_byte_index();
-    let mut rename_cursor_position = None;
     let items: Vec<ListItem> = entries
         .iter()
         .enumerate()
@@ -61,34 +57,13 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
                         let arrow = if *collapsed { "▶ " } else { "▼ " };
                         let icon = if *collapsed { "📁" } else { "📂" };
                         let color = folder_color(folder.color);
-                        let is_renaming = folder.id.is_some() && folder.id == rename_target;
-                        let label = if is_renaming {
-                            rename_value.unwrap_or_default()
-                        } else {
-                            folder.name.as_deref().unwrap_or_default()
-                        };
-                        let title = if is_renaming {
-                            format!("{icon} {label}")
-                        } else if label.is_empty() {
+                        let label = folder.name.as_deref().unwrap_or_default();
+                        let title = if label.is_empty() {
                             icon.to_owned()
                         } else {
                             format!("{icon} {label}")
                         };
                         let label_width = max_width.saturating_sub(arrow.width());
-                        if focused && is_renaming {
-                            let cursor = rename_cursor.unwrap_or(label.len()).min(label.len());
-                            let title_before_cursor = format!("{icon} {}", &label[..cursor]);
-                            let title_cursor_col = title_before_cursor
-                                .width()
-                                .saturating_sub(horizontal_scroll)
-                                .min(label_width);
-                            let cursor_col = selection_marker(false)
-                                .content
-                                .width()
-                                .saturating_add(arrow.width())
-                                .saturating_add(title_cursor_col);
-                            rename_cursor_position = Some((index as u16, cursor_col as u16));
-                        }
                         ListItem::new(Line::from(vec![
                             selection_marker(is_selected),
                             Span::styled(arrow, Style::default().fg(color)),
@@ -147,16 +122,6 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
 
     let list = List::new(items).highlight_style(highlight_style());
     frame.render_widget(list, list_area);
-    if let Some((row, col)) = rename_cursor_position {
-        frame.set_cursor_position(Position {
-            x: list_area
-                .x
-                .saturating_add(col.min(list_area.width.saturating_sub(1))),
-            y: list_area
-                .y
-                .saturating_add(row.min(list_area.height.saturating_sub(1))),
-        });
-    }
 
     render_pane_filter_bar_with_cursor(
         frame,

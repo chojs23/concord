@@ -210,7 +210,7 @@ Server pane actions:
 MarkAsRead = { keys = ["m"], description = "mark server as read" }
 MuteServer = { keys = ["u"], description = "mute server" }
 LeaveServer = { keys = ["l"], description = "leave server" }
-RenameFolder = { keys = ["r"], description = "rename folder" }
+FolderSettings = { keys = ["r"], description = "folder settings" }
 ```
 
 | Scoped action  | Default | Action                                                                     |
@@ -218,7 +218,7 @@ RenameFolder = { keys = ["r"], description = "rename folder" }
 | `MarkAsRead`   | `m`     | Mark all unread viewable channels in the selected server read.             |
 | `MuteServer`   | `u`     | Mute or unmute the selected server. Also accepts `ToggleMute` as an alias. |
 | `LeaveServer`  | `l`     | Open confirmation to leave the selected server.                            |
-| `RenameFolder` | `r`     | Rename the selected server folder.                                         |
+| `FolderSettings` | `r`   | Edit the selected server folder name and color.                            |
 
 Channel pane actions:
 

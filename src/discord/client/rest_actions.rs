@@ -157,10 +157,11 @@ impl DiscordClient {
             .await
     }
 
-    pub async fn rename_guild_folder(
+    pub async fn update_guild_folder_settings(
         &self,
         folder_id: u64,
         name: Option<String>,
+        color: Option<u32>,
     ) -> Result<Vec<GuildFolder>> {
         let mut folders = self
             .state
@@ -177,6 +178,7 @@ impl DiscordClient {
             )));
         };
         folder.name = name;
+        folder.color = color;
         self.rest.update_guild_folders(&folders).await?;
         Ok(folders)
     }

@@ -140,6 +140,24 @@ fn guild_leader_action_lists_disabled_mark_server_read_when_guild_is_read() {
 }
 
 #[test]
+fn folder_leader_action_opens_settings() {
+    let mut state = state_with_folder(Some(42));
+    state.focus_pane(FocusPane::Guilds);
+    state.open_selected_guild_actions();
+
+    let actions = state.selected_guild_action_items();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].kind, GuildActionKind::FolderSettings);
+    assert_eq!(actions[0].label, "Folder settings");
+    assert!(actions[0].enabled);
+
+    assert_eq!(state.activate_selected_guild_action(), None);
+    assert!(state.is_folder_settings_open());
+    assert_eq!(state.folder_settings_name_value(), Some("folder"));
+    assert_eq!(state.folder_settings_color_value(), Some(""));
+}
+
+#[test]
 fn channel_leader_action_toggle_mute_opens_duration_then_dispatches_command() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);

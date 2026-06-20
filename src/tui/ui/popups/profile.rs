@@ -425,7 +425,7 @@ fn user_profile_settings_popup_text(
         Some(status.to_owned())
     } else {
         let dirty_count = state.user_profile_settings_dirty_count();
-        (dirty_count > 0).then(|| "Unsaved changes. Press s to save.".to_owned())
+        (dirty_count > 0).then(|| "Unsaved changes. [s] save.".to_owned())
     };
     if let Some(status) = status {
         push_wrapped_styled_popup_text(&mut lines, &status, width, Style::default().fg(ACCENT));
@@ -437,7 +437,12 @@ fn user_profile_settings_popup_text(
     )));
     push_wrapped_styled_popup_text(
         &mut lines,
-        "Esc close/cancel · Enter select · s Save · o Sign out",
+        &popup_shortcut_help_text(&[
+            ("Esc", "close/cancel"),
+            ("Enter", "select"),
+            ("s", "save"),
+            ("o", "sign out"),
+        ]),
         width,
         Style::default().fg(DIM),
     );

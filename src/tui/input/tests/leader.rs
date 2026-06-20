@@ -1018,6 +1018,111 @@ fn leader_a_opens_server_actions_from_guild_pane() {
 }
 
 #[test]
+fn folder_settings_edits_name_and_color() {
+    let mut state = state_with_folder();
+    state.focus_pane(FocusPane::Guilds);
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+    handle_key(&mut state, char_key('r'));
+    assert!(state.is_folder_settings_open());
+
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, ctrl_key('w'));
+    for ch in "work".chars() {
+        handle_key(&mut state, char_key(ch));
+    }
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, char_key('x'));
+    assert_eq!(state.folder_settings_color_value(), Some(""));
+    handle_key(&mut state, char_key('k'));
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Up));
+    handle_key(&mut state, ctrl_key('n'));
+    handle_key(&mut state, ctrl_key('p'));
+    handle_key(&mut state, ctrl_key('n'));
+
+    handle_key(&mut state, key(KeyCode::Enter));
+    for ch in "#00AAFF".chars() {
+        handle_key(&mut state, char_key(ch));
+    }
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    let command = handle_key(&mut state, char_key('s'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::UpdateGuildFolderSettings {
+            folder_id: 42,
+            name: Some("work".to_owned()),
+            color: Some(0x00aaff),
+        })
+    );
+    assert!(!state.is_folder_settings_open());
+}
+
+#[test]
+fn folder_settings_keeps_overlay_open_for_invalid_color() {
+    let mut state = state_with_folder();
+    state.focus_pane(FocusPane::Guilds);
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+    handle_key(&mut state, char_key('r'));
+    handle_key(&mut state, ctrl_key('n'));
+    handle_key(&mut state, char_key('b'));
+    assert_eq!(state.folder_settings_color_value(), Some(""));
+
+    handle_key(&mut state, key(KeyCode::Enter));
+    for ch in "blue".chars() {
+        handle_key(&mut state, char_key(ch));
+    }
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    let command = handle_key(&mut state, char_key('s'));
+
+    assert_eq!(command, None);
+    assert!(state.is_folder_settings_open());
+    assert_eq!(
+        state.folder_settings_color_error(),
+        Some("Use #RRGGBB or leave blank")
+    );
+}
+
+#[test]
+fn folder_settings_esc_cancels_current_field_edit() {
+    let mut state = state_with_folder();
+    state.focus_pane(FocusPane::Guilds);
+
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+    handle_key(&mut state, char_key('r'));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, ctrl_key('w'));
+    for ch in "draft".chars() {
+        handle_key(&mut state, char_key(ch));
+    }
+    assert_eq!(state.folder_settings_name_value(), Some("draft"));
+
+    handle_key(&mut state, key(KeyCode::Esc));
+
+    assert!(state.is_folder_settings_open());
+    assert!(!state.is_folder_settings_editing());
+    assert_eq!(state.folder_settings_name_value(), Some("folder"));
+
+    let command = handle_key(&mut state, char_key('s'));
+    assert_eq!(
+        command,
+        Some(AppCommand::UpdateGuildFolderSettings {
+            folder_id: 42,
+            name: Some("folder".to_owned()),
+            color: None,
+        })
+    );
+}
+
+#[test]
 fn leader_a_opens_member_actions_from_member_pane() {
     let mut state = state_with_members(1);
     state.focus_pane(FocusPane::Members);

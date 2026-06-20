@@ -59,7 +59,7 @@ pub(super) struct GuildPaneNavigationState {
     /// Folder IDs the user has collapsed in the guild pane. Single-guild
     /// "folders" (id = None) are never collapsible since they have no header.
     pub(super) collapsed_folders: HashSet<FolderKey>,
-    pub(super) folder_rename: Option<FolderRenameState>,
+    pub(super) folder_settings: Option<FolderSettingsState>,
 }
 
 #[derive(Debug)]
@@ -81,9 +81,21 @@ pub(super) struct MemberPaneNavigationState {
 }
 
 #[derive(Debug)]
-pub(super) struct FolderRenameState {
+pub(super) struct FolderSettingsState {
     pub(super) folder_id: u64,
-    pub(super) input: TextInputState,
+    pub(super) active_field: FolderSettingsField,
+    pub(super) editing_field: Option<FolderSettingsField>,
+    pub(super) edit_input: TextInputState,
+    pub(super) name_input: TextInputState,
+    pub(super) color_input: TextInputState,
+    pub(super) color_error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum FolderSettingsField {
+    #[default]
+    Name,
+    Color,
 }
 
 #[derive(Debug)]
@@ -218,7 +230,7 @@ impl Default for GuildPaneNavigationState {
             visible: true,
             width: DEFAULT_SERVER_WIDTH,
             collapsed_folders: HashSet::new(),
-            folder_rename: None,
+            folder_settings: None,
         }
     }
 }

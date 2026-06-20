@@ -51,13 +51,14 @@ use crate::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, ApplicationCommandInfo,
         ApplicationCommandOptionInfo, AttachmentDownloadId, AttachmentInfo, ChannelInfo,
         ChannelNotificationOverrideInfo, ChannelRecipientState, ChannelState, ChannelUnreadState,
-        ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, GuildMemberListUpdateInfo,
+        ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, GuildFolder, GuildMemberListUpdateInfo,
         GuildMemberState, GuildNotificationSettingsInfo, MemberInfo, MentionInfo,
         MessageAttachmentUpload, MessageInfo, MessageInteractionInfo, MessageKind,
         MessageSearchPage, MessageSearchQuery, MessageSnapshotInfo, MessageState, MutualGuildInfo,
         NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
         ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo,
-        UserGuildSettingsInfo, UserProfileInfo, VoiceConnectionStatus, VoiceStateInfo,
+        UserGuildSettingsInfo, UserProfileInfo, UserSettingsInfo, VoiceConnectionStatus,
+        VoiceStateInfo,
     },
     tui::{
         format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
@@ -312,6 +313,40 @@ fn state_with_message_id(message_id: Id<MessageMarker>, content: &str) -> Dashbo
         content: Some(content.to_owned()),
         ..guild_message_create_fixture()
     }));
+    state
+}
+
+fn state_with_folder_settings() -> DashboardState {
+    let first_guild = Id::new(1);
+    let second_guild = Id::new(2);
+    let mut state = DashboardState::new();
+
+    for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
+        state.push_event(AppEvent::GuildCreate {
+            guild_id,
+            name: name.to_owned(),
+            member_count: None,
+            channels: Vec::new(),
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+    }
+    state.push_event(AppEvent::UserSettingsUpdate {
+        settings: UserSettingsInfo {
+            guild_folders: Some(vec![GuildFolder {
+                id: Some(42),
+                name: Some("folder".to_owned()),
+                color: Some(0x00aaff),
+                guild_ids: vec![first_guild, second_guild],
+            }]),
+            ..UserSettingsInfo::default()
+        },
+    });
+    state.focus_pane(FocusPane::Guilds);
+    state.open_selected_folder_settings();
     state
 }
 
