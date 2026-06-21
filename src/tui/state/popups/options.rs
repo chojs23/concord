@@ -303,6 +303,7 @@ impl DashboardState {
 
         let mut update_current_voice_state = false;
         let mut update_current_voice_capture_permission = false;
+        let images_visible_before = self.show_images();
 
         match (category, selected) {
             (OptionsCategory::Display, 0) => {
@@ -350,6 +351,9 @@ impl DashboardState {
                 update_current_voice_capture_permission = true;
             }
             _ => return,
+        }
+        if images_visible_before != self.show_images() {
+            self.refresh_composer_attachment_previews();
         }
         self.after_display_option_changed(
             update_current_voice_state,

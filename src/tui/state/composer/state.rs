@@ -14,10 +14,14 @@ use crate::discord::{
     parse_builtin_slash_command, parsed_application_command_option_names,
 };
 
+use super::super::local_upload_preview::{
+    LocalUploadPreviewState, LocalUploadPreviewStatus, local_upload_preview_candidate,
+    local_upload_preview_view,
+};
 use super::super::scroll::clamp_list_scroll;
 use super::super::{
     ActiveModalPopupKind, CommandPickerEntry, DashboardState, EmojiPickerEntry, FocusPane,
-    MentionPickerEntry,
+    LocalUploadPreviewView, MentionPickerEntry,
 };
 use super::completions::{
     ComposerEmojiImageCompletion, EmojiCompletion, MAX_MENTION_PICKER_VISIBLE, MentionCompletion,
@@ -38,6 +42,8 @@ pub(in crate::tui::state) struct ComposerUiState {
     pub(in crate::tui::state) composer_input: String,
     pub(in crate::tui::state) composer_cursor_byte_index: usize,
     pub(in crate::tui::state) pending_composer_attachments: Vec<MessageAttachmentUpload>,
+    pub(in crate::tui::state) pending_composer_attachment_previews: Vec<LocalUploadPreviewState>,
+    pub(in crate::tui::state) pending_composer_attachment_preview_generation: u64,
     pub(in crate::tui::state) composer_active: bool,
     pub(in crate::tui::state) reply_target_message_id: Option<Id<MessageMarker>>,
     pub(in crate::tui::state) edit_target_message: Option<(Id<ChannelMarker>, Id<MessageMarker>)>,
@@ -141,6 +147,7 @@ impl DashboardState {
         self.composer.composer_input.clear();
         self.composer.composer_cursor_byte_index = 0;
         self.composer.pending_composer_attachments.clear();
+        self.composer.pending_composer_attachment_previews.clear();
         self.runtime.clipboard_paste_pending = false;
         self.composer.reply_target_message_id = Some(message_id);
         self.composer.edit_target_message = None;
@@ -166,6 +173,7 @@ impl DashboardState {
         self.composer.composer_input = content;
         self.composer.composer_cursor_byte_index = self.composer.composer_input.len();
         self.composer.pending_composer_attachments.clear();
+        self.composer.pending_composer_attachment_previews.clear();
         self.runtime.clipboard_paste_pending = false;
         self.composer.reply_target_message_id = None;
         self.composer.edit_target_message = Some((channel_id, message_id));
@@ -189,6 +197,18 @@ impl DashboardState {
         &self.composer.pending_composer_attachments
     }
 
+    pub fn composer_attachment_previews(&self) -> Vec<LocalUploadPreviewView<'_>> {
+        self.composer
+            .pending_composer_attachment_previews
+            .iter()
+            .map(local_upload_preview_view)
+            .collect()
+    }
+
+    pub fn pending_composer_preview_attachment_count(&self) -> usize {
+        self.composer.pending_composer_attachment_previews.len()
+    }
+
     pub fn composer_title(&self) -> String {
         if self.composer.edit_target_message.is_some() {
             " Edit Message ".to_owned()
@@ -208,10 +228,104 @@ impl DashboardState {
         self.composer
             .pending_composer_attachments
             .extend(attachments.into_iter().take(available));
+        self.refresh_composer_attachment_previews();
     }
 
     pub fn pop_pending_composer_attachment(&mut self) {
         self.composer.pending_composer_attachments.pop();
+        self.refresh_composer_attachment_previews();
+    }
+
+    pub(in crate::tui::state) fn refresh_composer_attachment_previews(&mut self) {
+        if !self.show_images() {
+            self.composer.pending_composer_attachment_previews.clear();
+            return;
+        }
+        let mut previous = std::mem::take(&mut self.composer.pending_composer_attachment_previews);
+        let mut previews = Vec::new();
+        for (index, attachment) in self
+            .composer
+            .pending_composer_attachments
+            .iter()
+            .enumerate()
+            .filter(|(_, attachment)| local_upload_preview_candidate(attachment))
+        {
+            if let Some(previous_index) = previous.iter().position(|preview| {
+                preview.attachment_index == index && preview.filename == attachment.filename
+            }) {
+                previews.push(previous.remove(previous_index));
+                continue;
+            }
+            self.composer.pending_composer_attachment_preview_generation = self
+                .composer
+                .pending_composer_attachment_preview_generation
+                .saturating_add(1);
+            previews.push(LocalUploadPreviewState {
+                attachment_index: index,
+                generation: self.composer.pending_composer_attachment_preview_generation,
+                filename: attachment.filename.clone(),
+                state: LocalUploadPreviewStatus::Pending,
+            });
+        }
+        self.composer.pending_composer_attachment_previews = previews;
+    }
+
+    pub(in crate::tui) fn composer_attachment_preview_has_image_surface(&self) -> bool {
+        self.show_images()
+            && self
+                .composer
+                .pending_composer_attachment_previews
+                .iter()
+                .any(|preview| matches!(preview.state, LocalUploadPreviewStatus::Ready(_)))
+    }
+
+    pub(in crate::tui) fn take_pending_composer_attachment_preview(
+        &mut self,
+    ) -> Option<(usize, u64, String, MessageAttachmentUpload)> {
+        if !self.show_images() {
+            return None;
+        }
+        let preview = self
+            .composer
+            .pending_composer_attachment_previews
+            .iter_mut()
+            .find(|preview| matches!(preview.state, LocalUploadPreviewStatus::Pending))?;
+        let attachment = self
+            .composer
+            .pending_composer_attachments
+            .get(preview.attachment_index)?
+            .clone();
+        preview.state = LocalUploadPreviewStatus::Loading;
+        Some((
+            preview.attachment_index,
+            preview.generation,
+            preview.filename.clone(),
+            attachment,
+        ))
+    }
+
+    pub(in crate::tui) fn store_composer_attachment_preview_result(
+        &mut self,
+        attachment_index: usize,
+        generation: u64,
+        filename: String,
+        result: std::result::Result<ratatui_image::protocol::Protocol, String>,
+    ) {
+        let Some(preview) = self
+            .composer
+            .pending_composer_attachment_previews
+            .iter_mut()
+            .find(|preview| {
+                preview.attachment_index == attachment_index && preview.generation == generation
+            })
+        else {
+            return;
+        };
+        preview.filename = filename;
+        preview.state = match result {
+            Ok(protocol) => LocalUploadPreviewStatus::Ready(protocol),
+            Err(message) => LocalUploadPreviewStatus::Failed(message),
+        };
     }
 
     pub fn composer_accepts_attachments(&self) -> bool {
@@ -293,6 +407,7 @@ impl DashboardState {
         self.composer.composer_input.clear();
         self.composer.composer_cursor_byte_index = 0;
         self.composer.pending_composer_attachments.clear();
+        self.composer.pending_composer_attachment_previews.clear();
         self.runtime.clipboard_paste_pending = false;
         self.composer.reply_target_message_id = None;
         self.composer.edit_target_message = None;
@@ -315,6 +430,7 @@ impl DashboardState {
         self.composer.composer_input.clear();
         self.composer.composer_cursor_byte_index = 0;
         self.composer.pending_composer_attachments.clear();
+        self.composer.pending_composer_attachment_previews.clear();
         self.runtime.clipboard_paste_pending = false;
         self.reset_mention_picker_state();
     }
@@ -465,6 +581,7 @@ impl DashboardState {
                     self.clear_submitted_composer_text();
                     self.composer.reply_target_message_id = None;
                     self.composer.pending_composer_attachments.clear();
+                    self.composer.pending_composer_attachment_previews.clear();
                     return Some(command);
                 }
                 BuiltinCommandSubmit::Incomplete => return None,
@@ -480,6 +597,7 @@ impl DashboardState {
                     self.clear_submitted_composer_text();
                     self.composer.reply_target_message_id = None;
                     self.composer.pending_composer_attachments.clear();
+                    self.composer.pending_composer_attachment_previews.clear();
                     return Some(AppCommand::RunApplicationCommand {
                         invocation: interaction,
                     });
@@ -492,6 +610,7 @@ impl DashboardState {
         self.clear_submitted_composer_text();
         let reply_to = self.composer.reply_target_message_id.take();
         let attachments = std::mem::take(&mut self.composer.pending_composer_attachments);
+        self.composer.pending_composer_attachment_previews.clear();
         // Stay in insert mode so the user can send several messages in a
         // row without re-pressing `i`. The composer closes only when the
         // user explicitly bails with Esc or the channel revokes

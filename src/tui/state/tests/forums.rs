@@ -98,6 +98,53 @@ fn forum_posts_loaded_event_populates_selected_forum_items() {
 }
 
 #[test]
+fn forum_post_items_resolve_applied_tag_names() {
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let mut state = DashboardState::new();
+    let mut forum = forum_channel_info(guild_id, forum_id);
+    forum.available_tags = vec![
+        ForumTagInfo {
+            id: Id::new(101),
+            name: "question".to_owned(),
+            moderated: false,
+            emoji_id: None,
+            emoji_name: None,
+        },
+        ForumTagInfo {
+            id: Id::new(102),
+            name: "rust".to_owned(),
+            moderated: false,
+            emoji_id: None,
+            emoji_name: None,
+        },
+    ];
+
+    state.push_event(guild_create_event(guild_id, "guild", vec![forum]));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    let mut thread = forum_thread_info(guild_id, forum_id, 30, "welcome", None, false);
+    thread.applied_tags = vec![Id::new(102), Id::new(101)];
+
+    state.push_event(AppEvent::ForumPostsLoaded {
+        channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
+        offset: 0,
+        next_offset: 1,
+        threads: vec![thread],
+        first_messages: Vec::new(),
+        has_more: false,
+    });
+
+    let post = state
+        .selected_forum_post_items()
+        .into_iter()
+        .next()
+        .expect("forum post should be visible");
+    assert_eq!(post.applied_tags, vec!["rust", "question"]);
+}
+
+#[test]
 fn forum_post_preview_ignores_latest_message_when_starter_is_missing() {
     let guild_id = Id::new(1);
     let forum_id = Id::new(20);
@@ -991,14 +1038,14 @@ fn forum_post_bottom_scroll_uses_last_full_page() {
     state.jump_bottom();
 
     assert_eq!(state.selected_forum_post(), 9);
-    assert_eq!(state.message_scroll(), 8);
+    assert_eq!(state.message_scroll(), 9);
     assert_eq!(
         state
             .visible_forum_post_items()
             .iter()
             .map(|post| post.label.as_str())
             .collect::<Vec<_>>(),
-        vec!["post 2", "post 1"]
+        vec!["post 1"]
     );
 }
 

@@ -136,10 +136,21 @@ fn composer_lines_show_pending_upload_rows_above_input() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["upload: cat.png (2.0 KiB)", "> "]
+        vec![
+            "upload: cat.png (2.0 KiB)",
+            "────────────────────────────────────────────────────────────────────────────────",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "────────────────────────────────────────────────────────────────────────────────",
+            "> ",
+        ]
     );
     assert_eq!(lines[0].spans[0].style.fg, Some(ACCENT));
-    assert_eq!(composer_content_line_count(&state, 80), 2);
+    assert_eq!(composer_content_line_count(&state, 80), 10);
 
     let mut processing = state_with_message();
     processing.start_composer();
@@ -216,8 +227,8 @@ fn composer_cursor_position_accounts_for_upload_and_reply_rows() {
     }
 
     assert_eq!(
-        composer_cursor_position(Rect::new(10, 20, 20, 6), &state),
-        Some(Position { x: 15, y: 23 })
+        composer_cursor_position(Rect::new(10, 20, 20, 14), &state),
+        Some(Position { x: 15, y: 31 })
     );
 }
 

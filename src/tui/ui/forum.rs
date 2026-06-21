@@ -80,6 +80,12 @@ fn forum_post_card_lines(
         ),
         forum_post_inner_line(
             "  ",
+            forum_post_tag_spans(post, inner_width),
+            inner_width,
+            selected,
+        ),
+        forum_post_inner_line(
+            "  ",
             forum_post_metadata_spans(post, inner_width, show_custom_emoji),
             inner_width,
             selected,
@@ -124,6 +130,29 @@ fn forum_post_title_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<S
         ),
         Span::styled(badge, Style::default().fg(Color::Yellow).bold()),
     ]
+}
+
+fn forum_post_tag_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Span<'static>> {
+    let muted_style = Style::default().fg(DIM);
+    if post.applied_tags.is_empty() {
+        return vec![Span::styled("No tags", muted_style)];
+    }
+    let mut spans = Vec::new();
+    let mut used_width = 0usize;
+    for tag in &post.applied_tags {
+        push_forum_metadata_part(
+            &mut spans,
+            &mut used_width,
+            inner_width,
+            format!("# {tag}"),
+            Style::default().fg(ACCENT),
+        );
+    }
+    if spans.is_empty() {
+        vec![Span::styled("No tags", muted_style)]
+    } else {
+        spans
+    }
 }
 
 fn forum_post_preview_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Span<'static>> {
@@ -376,22 +405,11 @@ pub(super) fn render_forum_post_reaction_emojis(
     let list_left = list.x as isize;
     let list_right = list_left + list.width as isize;
     let content_start = 4isize;
-    let card_width = width.saturating_sub(2).max(4);
-    let inner_width = card_width.saturating_sub(4).max(1);
+    let inner_width = forum_post_inner_width_for_reactions(width);
 
-    let mut rendered_row = 0usize;
-    for post in posts {
-        if post.section_label.is_some() {
-            rendered_row = rendered_row.saturating_add(1);
-        }
-        let row = rendered_row.saturating_add(3);
-        if row >= list.height as usize {
-            break;
-        }
-        let Some((reaction_start_col, layout)) = forum_post_reaction_layout(post, inner_width)
-        else {
-            continue;
-        };
+    for (row, reaction_start_col, layout) in
+        forum_post_reaction_render_layouts(posts, width, usize::from(list.height))
+    {
         for slot in layout.slots.into_iter().filter(|slot| slot.line == 0) {
             let slot_col = reaction_start_col.saturating_add(slot.col as usize);
             if slot_col >= inner_width {
@@ -422,8 +440,48 @@ pub(super) fn render_forum_post_reaction_emojis(
                 },
             );
         }
+    }
+}
+
+fn forum_post_inner_width_for_reactions(width: usize) -> usize {
+    let card_width = width.saturating_sub(2).max(4);
+    card_width.saturating_sub(4).max(1)
+}
+
+fn forum_post_reaction_render_layouts(
+    posts: &[ChannelThreadItem],
+    width: usize,
+    list_height: usize,
+) -> Vec<(usize, usize, ReactionLayout)> {
+    let inner_width = forum_post_inner_width_for_reactions(width);
+    let mut rendered_row = 0usize;
+    let mut layouts = Vec::new();
+    for post in posts {
+        if post.section_label.is_some() {
+            rendered_row = rendered_row.saturating_add(1);
+        }
+        let row = rendered_row.saturating_add(4);
+        if row >= list_height {
+            break;
+        }
+        if let Some((reaction_start_col, layout)) = forum_post_reaction_layout(post, inner_width) {
+            layouts.push((row, reaction_start_col, layout));
+        }
         rendered_row = rendered_row.saturating_add(FORUM_POST_CARD_HEIGHT);
     }
+    layouts
+}
+
+#[cfg(test)]
+pub(super) fn forum_post_reaction_rows_for_test(
+    posts: &[ChannelThreadItem],
+    width: usize,
+    list_height: usize,
+) -> Vec<usize> {
+    forum_post_reaction_render_layouts(posts, width, list_height)
+        .into_iter()
+        .map(|(row, _, _)| row)
+        .collect()
 }
 
 fn forum_post_inner_line(

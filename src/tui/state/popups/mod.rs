@@ -10,7 +10,6 @@ use crate::discord::ids::{
 };
 use crate::discord::{AppCommand, MessageAttachmentUpload, ReactionEmoji};
 use crate::discord::{PresenceStatus, ProfileAvatarUpload};
-use ratatui_image::protocol::Protocol;
 
 use crate::discord::ReactionUsersInfo;
 use crate::tui::keybindings::{KeyBindings, KeyChord, LeaderShortcutItem, SelectionAction};
@@ -138,35 +137,9 @@ pub(super) struct ForumPostComposerState {
     pub(super) selected_tag_index: usize,
     pub(super) selected_tag_ids: Vec<Id<ForumTagMarker>>,
     pub(super) attachments: Vec<MessageAttachmentUpload>,
-    pub(super) attachment_preview: Option<ForumPostAttachmentPreviewState>,
+    pub(super) attachment_preview: Option<super::local_upload_preview::LocalUploadPreviewState>,
     pub(super) attachment_preview_generation: u64,
     pub(super) status: Option<String>,
-}
-
-#[derive(Debug)]
-pub(super) struct ForumPostAttachmentPreviewState {
-    pub(super) attachment_index: usize,
-    pub(super) generation: u64,
-    pub(super) filename: String,
-    pub(super) state: ForumPostAttachmentPreviewStatus,
-}
-
-pub(super) enum ForumPostAttachmentPreviewStatus {
-    Pending,
-    Loading,
-    Ready(Protocol),
-    Failed(String),
-}
-
-impl std::fmt::Debug for ForumPostAttachmentPreviewStatus {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => formatter.write_str("Pending"),
-            Self::Loading => formatter.write_str("Loading"),
-            Self::Ready(_) => formatter.write_str("Ready(<protocol>)"),
-            Self::Failed(message) => formatter.debug_tuple("Failed").field(message).finish(),
-        }
-    }
 }
 
 impl ForumPostComposerState {

@@ -17,13 +17,20 @@ use crate::{
         },
         message::layout::MessageViewportPlan,
         state::DashboardState,
-        ui::{self, FORUM_UPLOAD_PREVIEW_HEIGHT, FORUM_UPLOAD_PREVIEW_WIDTH, ImagePreviewLayout},
+        ui::{self, ImagePreviewLayout, LOCAL_UPLOAD_PREVIEW_HEIGHT, LOCAL_UPLOAD_PREVIEW_WIDTH},
     },
 };
 
 use super::{effects as effect_helpers, redraw::image_surfaces_visible};
 
-pub(super) struct ForumPostAttachmentPreviewResult {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LocalUploadPreviewOwner {
+    Composer,
+    ForumPost,
+}
+
+pub(super) struct LocalUploadPreviewResult {
+    pub(super) owner: LocalUploadPreviewOwner,
     pub(super) attachment_index: usize,
     pub(super) generation: u64,
     pub(super) filename: String,
@@ -34,7 +41,7 @@ pub(super) struct DashboardMediaRuntime {
     image_previews: ImagePreviewCache,
     avatar_images: AvatarImageCache,
     emoji_images: EmojiImageCache,
-    forum_post_attachment_picker: Option<Picker>,
+    local_upload_preview_picker: Option<Picker>,
     image_targets: Vec<ImagePreviewTarget>,
     avatar_targets: Vec<AvatarTarget>,
     emoji_targets: Vec<EmojiImageTarget>,
@@ -46,9 +53,9 @@ impl DashboardMediaRuntime {
             image_previews: ImagePreviewCache::new(),
             avatar_images: AvatarImageCache::new(),
             emoji_images: EmojiImageCache::new(),
-            forum_post_attachment_picker: query_image_picker(
-                "forum upload",
-                "forum upload image picker unavailable",
+            local_upload_preview_picker: query_image_picker(
+                "local upload",
+                "local upload image picker unavailable",
             ),
             image_targets: Vec::new(),
             avatar_targets: Vec::new(),
@@ -71,18 +78,43 @@ impl DashboardMediaRuntime {
         )
     }
 
-    pub(super) fn schedule_forum_post_attachment_preview(
+    pub(super) fn schedule_local_upload_previews(
         &mut self,
         state: &mut DashboardState,
-        tx: &mpsc::UnboundedSender<ForumPostAttachmentPreviewResult>,
+        tx: &mpsc::UnboundedSender<LocalUploadPreviewResult>,
     ) -> bool {
-        let Some((attachment_index, generation, filename, upload)) =
-            state.take_pending_forum_post_attachment_preview()
-        else {
-            return false;
-        };
-        let Some(picker) = self.forum_post_attachment_picker.clone() else {
-            state.store_forum_post_attachment_preview_result(
+        let mut dirty = false;
+        if let Some(work) = state.take_pending_forum_post_attachment_preview() {
+            dirty |= self.schedule_local_upload_preview(
+                state,
+                tx,
+                LocalUploadPreviewOwner::ForumPost,
+                work,
+            );
+        }
+        if let Some(work) = state.take_pending_composer_attachment_preview() {
+            dirty |= self.schedule_local_upload_preview(
+                state,
+                tx,
+                LocalUploadPreviewOwner::Composer,
+                work,
+            );
+        }
+        dirty
+    }
+
+    fn schedule_local_upload_preview(
+        &self,
+        state: &mut DashboardState,
+        tx: &mpsc::UnboundedSender<LocalUploadPreviewResult>,
+        owner: LocalUploadPreviewOwner,
+        work: (usize, u64, String, MessageAttachmentUpload),
+    ) -> bool {
+        let (attachment_index, generation, filename, upload) = work;
+        let Some(picker) = self.local_upload_preview_picker.clone() else {
+            store_local_upload_preview_result(
+                state,
+                owner,
                 attachment_index,
                 generation,
                 filename,
@@ -92,8 +124,9 @@ impl DashboardMediaRuntime {
         };
         let tx = tx.clone();
         tokio::task::spawn_blocking(move || {
-            let result = build_forum_post_attachment_preview_protocol(&picker, &upload);
-            let _ = tx.send(ForumPostAttachmentPreviewResult {
+            let result = build_local_upload_preview_protocol(&picker, &upload);
+            let _ = tx.send(LocalUploadPreviewResult {
+                owner,
                 attachment_index,
                 generation,
                 filename,
@@ -171,21 +204,21 @@ impl DashboardMediaRuntime {
     }
 }
 
-fn build_forum_post_attachment_preview_protocol(
+fn build_local_upload_preview_protocol(
     picker: &Picker,
     attachment: &MessageAttachmentUpload,
 ) -> std::result::Result<Protocol, String> {
-    let bytes = forum_post_attachment_preview_bytes(attachment)?;
+    let bytes = local_upload_preview_bytes(attachment)?;
     let image = decode_image_bytes(&bytes)?;
     clipped_preview_protocol(
         picker,
         &image,
-        fixed_image_preview_render_info(FORUM_UPLOAD_PREVIEW_WIDTH, FORUM_UPLOAD_PREVIEW_HEIGHT),
+        fixed_image_preview_render_info(LOCAL_UPLOAD_PREVIEW_WIDTH, LOCAL_UPLOAD_PREVIEW_HEIGHT),
     )
     .ok_or_else(|| "preview dimensions unavailable".to_owned())
 }
 
-fn forum_post_attachment_preview_bytes(
+fn local_upload_preview_bytes(
     attachment: &MessageAttachmentUpload,
 ) -> std::result::Result<Vec<u8>, String> {
     if let Some(bytes) = attachment.bytes() {
@@ -226,6 +259,30 @@ fn forum_post_attachment_preview_bytes(
         ));
     }
     Ok(bytes)
+}
+
+pub(super) fn store_local_upload_preview_result(
+    state: &mut DashboardState,
+    owner: LocalUploadPreviewOwner,
+    attachment_index: usize,
+    generation: u64,
+    filename: String,
+    result: std::result::Result<Protocol, String>,
+) {
+    match owner {
+        LocalUploadPreviewOwner::Composer => state.store_composer_attachment_preview_result(
+            attachment_index,
+            generation,
+            filename,
+            result,
+        ),
+        LocalUploadPreviewOwner::ForumPost => state.store_forum_post_attachment_preview_result(
+            attachment_index,
+            generation,
+            filename,
+            result,
+        ),
+    }
 }
 
 pub(super) fn clear_image_surfaces_frame(
@@ -298,11 +355,10 @@ pub(super) async fn schedule_media_loads_after_draw(
     state: &mut DashboardState,
     media_runtime: &mut DashboardMediaRuntime,
     commands: &mpsc::Sender<AppCommand>,
-    forum_post_attachment_preview_tx: &mpsc::UnboundedSender<ForumPostAttachmentPreviewResult>,
+    local_upload_preview_tx: &mpsc::UnboundedSender<LocalUploadPreviewResult>,
 ) -> bool {
     let mut dirty = false;
-    dirty |= media_runtime
-        .schedule_forum_post_attachment_preview(state, forum_post_attachment_preview_tx);
+    dirty |= media_runtime.schedule_local_upload_previews(state, local_upload_preview_tx);
     send_media_request_commands(
         state,
         commands,

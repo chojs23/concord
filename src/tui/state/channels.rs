@@ -271,6 +271,7 @@ impl DashboardState {
             .parent_id
             .and_then(|parent_id| self.discord.cache.channel(parent_id))
             .is_some_and(|parent| parent.is_forum());
+        let applied_tags = self.forum_thread_tag_labels(channel);
         let preview = if is_forum_post {
             messages
                 .into_iter()
@@ -329,6 +330,7 @@ impl DashboardState {
                 .or_else(|| {
                     deleted_starter_author_id.map(|_| "original message deleted".to_owned())
                 }),
+            applied_tags,
             preview_reactions: preview
                 .map(|message| message.reactions.clone())
                 .unwrap_or_default(),
@@ -338,6 +340,26 @@ impl DashboardState {
                 .last_message_id
                 .or_else(|| preview.map(|message| message.id)),
         }
+    }
+
+    fn forum_thread_tag_labels(&self, channel: &ChannelState) -> Vec<String> {
+        let Some(parent) = channel
+            .parent_id
+            .and_then(|parent_id| self.discord.cache.channel(parent_id))
+        else {
+            return Vec::new();
+        };
+        channel
+            .applied_tags
+            .iter()
+            .filter_map(|tag_id| {
+                parent
+                    .available_tags
+                    .iter()
+                    .find(|tag| tag.id == *tag_id)
+                    .map(|tag| tag.name.clone())
+            })
+            .collect()
     }
 
     fn forum_thread_new_message_count(&self, channel_id: Id<ChannelMarker>) -> usize {

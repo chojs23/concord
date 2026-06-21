@@ -232,11 +232,13 @@ pub struct ForumPostComposerView {
     pub status: Option<String>,
 }
 
-pub enum ForumPostAttachmentPreviewView<'a> {
+pub enum LocalUploadPreviewView<'a> {
     Loading { filename: String },
     Ready { protocol: &'a Protocol },
     Failed { filename: String, message: String },
 }
+
+pub type ForumPostAttachmentPreviewView<'a> = LocalUploadPreviewView<'a>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttachmentViewerItem {
@@ -328,7 +330,7 @@ pub enum MemberActionKind {
 
 pub type MemberActionItem = ActionItem<MemberActionKind>;
 
-pub const FORUM_POST_CARD_HEIGHT: usize = 5;
+pub const FORUM_POST_CARD_HEIGHT: usize = 6;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelThreadItem {
@@ -342,6 +344,7 @@ pub struct ChannelThreadItem {
     pub preview_author: Option<String>,
     pub preview_author_color: Option<u32>,
     pub preview_content: Option<String>,
+    pub applied_tags: Vec<String>,
     pub preview_reactions: Vec<ReactionInfo>,
     pub comment_count: Option<u64>,
     pub new_message_count: usize,
@@ -369,6 +372,7 @@ impl ChannelThreadItem {
             preview_author: None,
             preview_author_color: None,
             preview_content: None,
+            applied_tags: Vec::new(),
             preview_reactions: Vec::new(),
             comment_count: None,
             new_message_count: 0,

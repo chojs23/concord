@@ -47,8 +47,8 @@ const READ_DIM: Color = Color::Rgb(130, 130, 130);
 /// monospace fonts can't apply to CJK glyphs.
 const UNREAD_BRIGHT: Color = Color::Reset;
 
-pub(in crate::tui) const FORUM_UPLOAD_PREVIEW_HEIGHT: u16 = 6;
-pub(in crate::tui) const FORUM_UPLOAD_PREVIEW_WIDTH: u16 = 32;
+pub(in crate::tui) const LOCAL_UPLOAD_PREVIEW_HEIGHT: u16 = 6;
+pub(in crate::tui) const LOCAL_UPLOAD_PREVIEW_WIDTH: u16 = 32;
 
 mod activity;
 mod forum;
@@ -99,7 +99,8 @@ pub(crate) use self::types::{MouseTarget, PopupListTarget};
 #[cfg(test)]
 use self::{
     forum::{
-        forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
+        forum_post_reaction_rows_for_test, forum_post_reaction_summary,
+        forum_post_scrollbar_visible_count, forum_post_viewport_lines,
     },
     message::list::{
         date_separator_line, format_message_sent_time, inline_image_preview_row,

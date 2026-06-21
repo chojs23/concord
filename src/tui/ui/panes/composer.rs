@@ -31,6 +31,7 @@ pub(in crate::tui::ui) fn render_composer(
     if state.show_custom_emoji() {
         render_composer_custom_emoji_images(frame, area, state, emoji_images);
     }
+    render_composer_attachment_previews(frame, area, state);
     if let Some(position) =
         composer_cursor_position_with_loaded_custom_emoji_urls(area, state, &ready_urls)
     {
@@ -75,10 +76,7 @@ fn composer_cursor_position_with_loaded_custom_emoji_urls(
         prompt_column = 0;
     }
 
-    let mut content_row = state.pending_composer_upload_line_count();
-    if state.reply_target_message_state().is_some() {
-        content_row = content_row.saturating_add(1);
-    }
+    let mut content_row = composer_rows_before_input(state);
     content_row = content_row.saturating_add(prompt_row);
 
     let x = area
@@ -512,6 +510,7 @@ pub(in crate::tui::ui) fn composer_lines_with_loaded_custom_emoji_urls(
         || state.clipboard_paste_pending()
     {
         let mut lines = pending_upload_lines(state, width);
+        append_composer_upload_preview_lines(&mut lines, state, width);
         let display_input = composer_display_input(state, loaded_custom_emoji_urls);
         if state.is_composing()
             && let Some(message) = state.reply_target_message_state()
@@ -640,10 +639,7 @@ fn render_composer_custom_emoji_images(
     let display_input = composer_display_input(state, &ready_urls);
     let input = display_input.input.as_str();
     let inner_width = composer_inner_width(area.width) as usize;
-    let mut content_row = state.pending_composer_upload_line_count();
-    if state.reply_target_message_state().is_some() {
-        content_row = content_row.saturating_add(1);
-    }
+    let content_row = composer_rows_before_input(state);
 
     for completion in state.composer_emoji_image_completions() {
         let Some(image) = emoji_images
@@ -710,6 +706,83 @@ fn composer_custom_emoji_image_position(
     ))
 }
 
+fn render_composer_attachment_previews(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    let previews = state.composer_attachment_previews();
+    if previews.is_empty() || composer_upload_preview_line_count(state) == 0 {
+        return;
+    }
+    let Some(preview_row) = composer_upload_preview_start_row(state) else {
+        return;
+    };
+    let inner = area.inner(ratatui::layout::Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let y = inner.y.saturating_add(preview_row);
+    if y >= inner.y.saturating_add(inner.height) {
+        return;
+    }
+    let height = LOCAL_UPLOAD_PREVIEW_HEIGHT.min(inner.y.saturating_add(inner.height) - y);
+    if height == 0 {
+        return;
+    }
+    let tile_width = LOCAL_UPLOAD_PREVIEW_WIDTH.min(inner.width);
+    if tile_width == 0 {
+        return;
+    }
+    for (index, preview) in previews.into_iter().enumerate() {
+        let x_offset = u16::try_from(index)
+            .unwrap_or(u16::MAX)
+            .saturating_mul(tile_width.saturating_add(1));
+        let x = inner.x.saturating_add(x_offset);
+        if x >= inner.x.saturating_add(inner.width) {
+            break;
+        }
+        let preview_area = Rect {
+            x,
+            y,
+            width: tile_width.min(inner.x.saturating_add(inner.width) - x),
+            height,
+        };
+        render_composer_attachment_preview(frame, preview_area, preview);
+    }
+}
+
+fn composer_upload_preview_start_row(state: &DashboardState) -> Option<u16> {
+    (composer_upload_preview_line_count(state) > 0).then(|| {
+        u16::try_from(state.pending_composer_upload_line_count())
+            .unwrap_or(u16::MAX)
+            .saturating_add(1)
+    })
+}
+
+fn render_composer_attachment_preview(
+    frame: &mut Frame,
+    area: Rect,
+    preview: LocalUploadPreviewView<'_>,
+) {
+    match preview {
+        LocalUploadPreviewView::Loading { filename } => frame.render_widget(
+            Paragraph::new(format!("loading {filename}..."))
+                .style(Style::default().fg(DIM))
+                .wrap(Wrap { trim: false }),
+            area,
+        ),
+        LocalUploadPreviewView::Failed { filename, message } => frame.render_widget(
+            Paragraph::new(format!("{filename}: {message}"))
+                .style(Style::default().fg(Color::Yellow))
+                .wrap(Wrap { trim: false }),
+            area,
+        ),
+        LocalUploadPreviewView::Ready { protocol } => {
+            frame.render_widget(RatatuiImage::new(protocol), area);
+        }
+    }
+}
+
 fn pending_upload_lines(state: &DashboardState, width: u16) -> Vec<Line<'static>> {
     pending_upload_texts(state, width)
         .into_iter()
@@ -740,9 +813,46 @@ fn pending_upload_texts(state: &DashboardState, width: u16) -> Vec<String> {
     lines
 }
 
+fn append_composer_upload_preview_lines(
+    lines: &mut Vec<Line<'static>>,
+    state: &DashboardState,
+    width: u16,
+) {
+    append_composer_upload_preview_rows(lines, state, width, |text| {
+        Line::from(Span::styled(text, Style::default().fg(DIM)))
+    });
+}
+
+fn append_composer_upload_preview_texts(
+    lines: &mut Vec<String>,
+    state: &DashboardState,
+    width: u16,
+) {
+    append_composer_upload_preview_rows(lines, state, width, |text| text);
+}
+
+fn append_composer_upload_preview_rows<T>(
+    lines: &mut Vec<T>,
+    state: &DashboardState,
+    width: u16,
+    build_line: impl Fn(String) -> T,
+) {
+    if composer_upload_preview_line_count(state) == 0 {
+        return;
+    }
+    let max_width = usize::from(width).max(1);
+    let separator = truncate_display_width(&"─".repeat(max_width), max_width);
+    lines.push(build_line(separator.clone()));
+    for _ in 0..LOCAL_UPLOAD_PREVIEW_HEIGHT {
+        lines.push(build_line(String::new()));
+    }
+    lines.push(build_line(separator));
+}
+
 pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> String {
     if state.is_composing() {
         let mut lines = pending_upload_texts(state, width);
+        append_composer_upload_preview_texts(&mut lines, state, width);
         let input = prefixed_composer_input(state.composer_input());
         if let Some(message) = state.reply_target_message_state() {
             lines.push(reply_target_hint(message, state, width));
@@ -756,6 +866,7 @@ pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> S
         || state.clipboard_paste_pending()
     {
         let mut lines = pending_upload_texts(state, width);
+        append_composer_upload_preview_texts(&mut lines, state, width);
         lines.push(prefixed_composer_input(state.composer_input()));
         return lines.join("\n");
     }

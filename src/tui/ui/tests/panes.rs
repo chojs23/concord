@@ -954,6 +954,7 @@ fn forum_post_lines_render_title_author_and_preview() {
         preview_author: Some("neo".to_owned()),
         preview_author_color: Some(0x3366CC),
         preview_content: Some("This crate solves a small but annoying problem".to_owned()),
+        applied_tags: vec!["question".to_owned(), "rust".to_owned()],
         preview_reactions: vec![ReactionInfo {
             count: 2,
             me: true,
@@ -968,7 +969,7 @@ fn forum_post_lines_render_title_author_and_preview() {
     let lines = forum_post_viewport_lines(&[post], Some(0), 80, false);
     let texts = line_texts_from_ratatui(&lines);
 
-    assert_eq!(texts.len(), 6);
+    assert_eq!(texts.len(), 7);
     assert_eq!(texts[0].trim_end(), "Active posts");
     assert!(texts[1].starts_with("› ╭"));
     assert!(!texts[1].contains("Active posts"));
@@ -976,12 +977,14 @@ fn forum_post_lines_render_title_author_and_preview() {
     assert!(texts[2].contains("A useful Rust crate"));
     assert!(texts[2].contains("PINNED"));
     assert!(texts[3].contains("neo: This crate solves"));
-    assert!(texts[4].contains("4 comments"));
-    assert!(texts[4].contains("3 new messages"));
-    assert!(texts[4].contains("[👍 2]"));
-    assert!(!texts[4].contains("pinned"));
-    assert!(texts[4].contains("locked"));
-    assert!(texts[5].starts_with("  ╰"));
+    assert!(texts[4].contains("# question"));
+    assert!(texts[4].contains("# rust"));
+    assert!(texts[5].contains("4 comments"));
+    assert!(texts[5].contains("3 new messages"));
+    assert!(texts[5].contains("[👍 2]"));
+    assert!(!texts[5].contains("pinned"));
+    assert!(texts[5].contains("locked"));
+    assert!(texts[6].starts_with("  ╰"));
     assert_eq!(lines[2].spans[2].style.fg, Some(Color::White));
     assert_eq!(lines[2].spans[3].style.fg, Some(Color::Yellow));
     assert_eq!(
@@ -989,10 +992,10 @@ fn forum_post_lines_render_title_author_and_preview() {
         Some(Color::Rgb(0x33, 0x66, 0xCC))
     );
     assert_eq!(lines[3].spans[4].style.fg, Some(Color::White));
-    assert_eq!(lines[4].spans[2].style.fg, Some(Color::White));
-    assert_eq!(lines[4].spans[4].style.fg, Some(Color::Yellow));
-    assert_eq!(lines[4].spans[6].style.fg, Some(Color::Yellow));
-    assert_eq!(lines[4].spans[8].style.fg, Some(Color::White));
+    assert_eq!(lines[5].spans[2].style.fg, Some(Color::White));
+    assert_eq!(lines[5].spans[4].style.fg, Some(Color::Yellow));
+    assert_eq!(lines[5].spans[6].style.fg, Some(Color::Yellow));
+    assert_eq!(lines[5].spans[8].style.fg, Some(Color::White));
     assert_eq!(lines[1].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
     assert_eq!(lines[2].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
     assert!(
@@ -1032,8 +1035,30 @@ fn forum_post_lines_can_reserve_scrollbar_column() {
     assert!(texts[0].starts_with("› ╭"));
     assert!(texts[0].ends_with("╮"));
     assert!(texts[1].ends_with("│"));
-    assert!(texts[4].ends_with("╯"));
+    assert!(texts[5].ends_with("╯"));
     assert!(texts.iter().all(|text| text.width() == 79));
+}
+
+#[test]
+fn forum_post_reaction_overlay_rows_skip_no_reaction_cards() {
+    let first = ChannelThreadItem {
+        label: "No reactions".to_owned(),
+        ..ChannelThreadItem::test(Id::new(30))
+    };
+    let second = ChannelThreadItem {
+        label: "Custom reaction".to_owned(),
+        preview_reactions: vec![ReactionInfo::test(ReactionEmoji::Custom {
+            id: Id::new(42),
+            name: Some("party".to_owned()),
+            animated: false,
+        })],
+        ..ChannelThreadItem::test(Id::new(31))
+    };
+
+    assert_eq!(
+        forum_post_reaction_rows_for_test(&[first, second], 80, 20),
+        vec![10]
+    );
 }
 
 #[test]

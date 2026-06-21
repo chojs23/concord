@@ -2,7 +2,7 @@ use super::*;
 use crate::tui::state::{
     ForumPostAttachmentPreviewView, ForumPostComposerField, ForumPostComposerView,
 };
-use crate::tui::ui::{FORUM_UPLOAD_PREVIEW_HEIGHT, FORUM_UPLOAD_PREVIEW_WIDTH};
+use crate::tui::ui::{LOCAL_UPLOAD_PREVIEW_HEIGHT, LOCAL_UPLOAD_PREVIEW_WIDTH};
 
 const FORUM_POST_POPUP_WIDTH: u16 = 78;
 const FORUM_POST_POPUP_HEIGHT: u16 = 24;
@@ -119,7 +119,7 @@ fn forum_post_composer_lines(view: &ForumPostComposerView, width: usize) -> Vec<
                     truncate_display_width("    preview:", width),
                     Style::default().fg(DIM),
                 )));
-                for _ in 0..FORUM_UPLOAD_PREVIEW_HEIGHT {
+                for _ in 0..LOCAL_UPLOAD_PREVIEW_HEIGHT {
                     lines.push(Line::from(""));
                 }
             }
@@ -165,9 +165,9 @@ fn forum_post_composer_lines(view: &ForumPostComposerView, width: usize) -> Vec<
     let status = view.status.clone().unwrap_or_else(|| {
         popup_shortcut_help_text(&[
             ("Tab", "fields"),
-            ("Enter", "edit/select/remove/toggle"),
-            ("Ctrl+v", "paste in body"),
-            ("Delete", "remove attachment"),
+            ("Enter", "open/toggle"),
+            ("Ctrl+v", "paste"),
+            ("Del/Bksp", "remove"),
             ("s", "create"),
             ("Esc", "close/cancel"),
         ])
@@ -215,7 +215,7 @@ fn forum_post_upload_preview_area(view: &ForumPostComposerView, inner: Rect) -> 
     if y >= inner.y.saturating_add(inner.height) {
         return None;
     }
-    let height = FORUM_UPLOAD_PREVIEW_HEIGHT.min(inner.y.saturating_add(inner.height) - y);
+    let height = LOCAL_UPLOAD_PREVIEW_HEIGHT.min(inner.y.saturating_add(inner.height) - y);
     if height == 0 {
         return None;
     }
@@ -226,7 +226,7 @@ fn forum_post_upload_preview_area(view: &ForumPostComposerView, inner: Rect) -> 
     Some(Rect {
         x,
         y,
-        width: FORUM_UPLOAD_PREVIEW_WIDTH.min(inner.x.saturating_add(inner.width) - x),
+        width: LOCAL_UPLOAD_PREVIEW_WIDTH.min(inner.x.saturating_add(inner.width) - x),
         height,
     })
 }

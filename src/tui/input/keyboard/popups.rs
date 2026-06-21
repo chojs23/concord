@@ -161,14 +161,15 @@ fn handle_forum_post_attachment_picker_key(
     }
 
     match state.key_bindings().composer_action(key) {
-        ComposerAction::Submit => return state.activate_forum_post_composer(),
+        ComposerAction::Submit => {}
         ComposerAction::Close => state.close_or_cancel_forum_post_composer(),
-        ComposerAction::RemoveLastAttachment => state.pop_pending_forum_post_attachment(),
+        ComposerAction::RemoveLastAttachment | ComposerAction::DeletePreviousChar => {
+            state.pop_pending_forum_post_attachment()
+        }
         ComposerAction::ClearInput => state.clear_forum_post_active_field(),
+        ComposerAction::PasteClipboard => state.request_paste_clipboard(),
         ComposerAction::OpenInEditor
-        | ComposerAction::PasteClipboard
         | ComposerAction::InsertNewline
-        | ComposerAction::DeletePreviousChar
         | ComposerAction::DeletePreviousWord
         | ComposerAction::MoveCursorUp
         | ComposerAction::MoveCursorDown

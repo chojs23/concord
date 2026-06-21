@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 use ratatui_image::Image as RatatuiImage;
 use unicode_width::UnicodeWidthStr;
@@ -22,17 +22,18 @@ use super::super::{
     message::format::{EMOJI_REACTION_IMAGE_WIDTH, format_attachment_summary, wrap_text_lines},
     state::{
         ChannelPaneEntry, CommandPickerEntry, DashboardState, EmojiPickerEntry, FocusPane,
-        GuildPaneEntry, MAX_MENTION_PICKER_VISIBLE, MemberEntry, MemberGroup, MentionPickerEntry,
-        MentionPickerTarget, discord_color, folder_color, presence_color, presence_marker,
+        GuildPaneEntry, LocalUploadPreviewView, MAX_MENTION_PICKER_VISIBLE, MemberEntry,
+        MemberGroup, MentionPickerEntry, MentionPickerTarget, discord_color, folder_color,
+        presence_color, presence_marker,
     },
 };
 use super::{
-    active_text_style,
+    LOCAL_UPLOAD_PREVIEW_HEIGHT, LOCAL_UPLOAD_PREVIEW_WIDTH, active_text_style,
     activity::{ActivityLeading, ActivityRender, build_activity_render},
     channel_prefix, channel_unread_decoration, dm_presence_dot_span, highlight_style,
     layout::{
-        composer_inner_width, panel_scrollbar_area, prefixed_composer_input,
-        vertical_scrollbar_visible,
+        composer_inner_width, composer_rows_before_input, composer_upload_preview_line_count,
+        panel_scrollbar_area, prefixed_composer_input, vertical_scrollbar_visible,
     },
     panel_block, panel_block_line, render_vertical_scrollbar, selection_marker, styled_list_item,
     types::{ACCENT, DIM, EmojiImage, MessageAreas},

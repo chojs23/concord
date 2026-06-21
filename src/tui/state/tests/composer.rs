@@ -5,6 +5,7 @@ use crate::discord::{
 };
 use crate::tui::state::{
     ActiveModalPopupKind, ForumPostAttachmentPreviewView, ForumPostComposerField,
+    LocalUploadPreviewView,
 };
 use serde_json::json;
 
@@ -1001,6 +1002,7 @@ fn cancel_composer_clears_pending_upload_state() {
     attachments.cancel_composer();
 
     assert_eq!(attachments.pending_composer_attachments(), &[]);
+    assert!(attachments.composer_attachment_previews().is_empty());
 
     let mut processing = state_with_messages(1);
     processing.start_composer();
@@ -1009,6 +1011,68 @@ fn cancel_composer_clears_pending_upload_state() {
     processing.cancel_composer();
 
     assert!(!processing.clipboard_paste_pending());
+}
+
+#[test]
+fn composer_attachment_preview_waits_for_runtime_result() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    state.confirm_selected_channel();
+    state.start_composer();
+    state.add_pending_composer_attachments(vec![MessageAttachmentUpload::from_bytes(
+        "screenshot.png".to_owned(),
+        b"not an image".to_vec(),
+    )]);
+
+    assert!(matches!(
+        state.composer_attachment_previews().first(),
+        Some(LocalUploadPreviewView::Loading { filename }) if filename == "screenshot.png"
+    ));
+    let (attachment_index, generation, filename, upload) = state
+        .take_pending_composer_attachment_preview()
+        .expect("runtime should be able to take pending composer preview work");
+    assert_eq!(attachment_index, 0);
+    assert_eq!(filename, "screenshot.png");
+    assert_eq!(upload.filename, "screenshot.png");
+
+    state.store_composer_attachment_preview_result(
+        attachment_index,
+        generation,
+        filename,
+        Err("decode failed".to_owned()),
+    );
+    assert!(matches!(
+        state.composer_attachment_previews().first(),
+        Some(LocalUploadPreviewView::Failed { filename, message })
+            if filename == "screenshot.png" && message == "decode failed"
+    ));
+}
+
+#[test]
+fn composer_attachment_preview_refreshes_when_images_are_enabled() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    state.confirm_selected_channel();
+    state.start_composer();
+
+    state.open_options_popup();
+    state.toggle_selected_display_option();
+    assert!(!state.show_images());
+
+    state.add_pending_composer_attachments(vec![MessageAttachmentUpload::from_path(
+        "/tmp/cat.png".into(),
+        "cat.png".to_owned(),
+        2_048,
+    )]);
+    assert!(state.composer_attachment_previews().is_empty());
+
+    state.toggle_selected_display_option();
+
+    assert!(state.show_images());
+    assert!(matches!(
+        state.composer_attachment_previews().first(),
+        Some(LocalUploadPreviewView::Loading { filename }) if filename == "cat.png"
+    ));
 }
 
 #[test]

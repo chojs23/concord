@@ -26,8 +26,9 @@ mod scheduler;
 
 use effects as effect_helpers;
 use media_runtime::{
-    DashboardMediaRuntime, ForumPostAttachmentPreviewResult, clear_image_surfaces_frame,
+    DashboardMediaRuntime, LocalUploadPreviewResult, clear_image_surfaces_frame,
     drain_pending_commands_after_draw, draw_dashboard_frame, schedule_media_loads_after_draw,
+    store_local_upload_preview_result,
 };
 use redraw::{
     should_redraw_after_visible_signature_change,
@@ -92,8 +93,8 @@ pub(super) async fn run_dashboard(
     let mut terminal_events = EventStream::new();
     let mut mouse_clicks = input::MouseClickTracker::default();
     let (media_decode_tx, mut media_decode_rx) = mpsc::unbounded_channel();
-    let (forum_post_attachment_preview_tx, mut forum_post_attachment_preview_rx) =
-        mpsc::unbounded_channel::<ForumPostAttachmentPreviewResult>();
+    let (local_upload_preview_tx, mut local_upload_preview_rx) =
+        mpsc::unbounded_channel::<LocalUploadPreviewResult>();
     let (clipboard_paste_tx, mut clipboard_paste_rx) = mpsc::unbounded_channel();
     let (clipboard_paste_indicator_tx, mut clipboard_paste_indicator_rx) =
         mpsc::unbounded_channel();
@@ -134,7 +135,7 @@ pub(super) async fn run_dashboard(
                 &mut state,
                 &mut media_runtime,
                 &commands,
-                &forum_post_attachment_preview_tx,
+                &local_upload_preview_tx,
             )
             .await;
         }
@@ -151,6 +152,8 @@ pub(super) async fn run_dashboard(
                         let before_signature = visible_dashboard_signature(&state);
                         let image_surfaces_visible_before_event =
                             media_runtime.image_surfaces_visible(&state);
+                        let composer_preview_surface_visible_before_event =
+                            state.composer_attachment_preview_has_image_surface();
                         let outcome = events::handle_terminal_event(
                             &mut state,
                             event,
@@ -224,6 +227,13 @@ pub(super) async fn run_dashboard(
                             clear_image_surfaces_before_next_draw = true;
                             dirty = true;
                         }
+                        if should_clear_composer_preview_surface(
+                            composer_preview_surface_visible_before_event,
+                            state.composer_attachment_preview_has_image_surface(),
+                        ) {
+                            clear_image_surfaces_before_next_draw = true;
+                            dirty = true;
+                        }
                         if outcome.dirty {
                             dirty = true;
                         }
@@ -239,8 +249,10 @@ pub(super) async fn run_dashboard(
                 media_runtime.store_media_decode(result);
                 schedule_background_redraw(&mut pending_redraw_deadline, BACKGROUND_REDRAW_DEBOUNCE);
             }
-            Some(result) = forum_post_attachment_preview_rx.recv() => {
-                state.store_forum_post_attachment_preview_result(
+            Some(result) = local_upload_preview_rx.recv() => {
+                store_local_upload_preview_result(
+                    &mut state,
+                    result.owner,
                     result.attachment_index,
                     result.generation,
                     result.filename,
@@ -448,6 +460,10 @@ fn schedule_background_redraw(
     }
 }
 
+fn should_clear_composer_preview_surface(visible_before: bool, visible_after: bool) -> bool {
+    visible_before && !visible_after
+}
+
 fn apply_clipboard_paste_result(state: &mut DashboardState, result: ClipboardPasteResult) {
     match result {
         Ok(Ok(data)) => {
@@ -581,4 +597,17 @@ fn open_composer_in_editor(
         state.replace_composer_input_from_editor(content);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_clear_composer_preview_surface;
+
+    #[test]
+    fn clears_composer_preview_surface_when_it_disappears() {
+        assert!(should_clear_composer_preview_surface(true, false));
+        assert!(!should_clear_composer_preview_surface(false, false));
+        assert!(!should_clear_composer_preview_surface(false, true));
+        assert!(!should_clear_composer_preview_surface(true, true));
+    }
 }

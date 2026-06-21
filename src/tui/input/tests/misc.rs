@@ -68,7 +68,7 @@ fn forum_blank_bottom_rows_do_not_select_hidden_posts() {
     });
     state.focus_pane(FocusPane::Messages);
     state.set_message_view_height(14);
-    let (column, row) = message_row_point(11);
+    let (column, row) = message_row_point(13);
 
     assert!(handle_mouse(
         &mut state,

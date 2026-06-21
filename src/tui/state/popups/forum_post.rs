@@ -4,13 +4,15 @@ use crate::discord::{
 };
 use ratatui_image::protocol::Protocol;
 
+use super::super::local_upload_preview::{
+    LocalUploadPreviewState, LocalUploadPreviewStatus, local_upload_preview_view,
+};
 use super::super::{
     DashboardState, FocusPane, ForumPostAttachmentPreviewView, ForumPostComposerAttachmentView,
     ForumPostComposerField, ForumPostComposerTagView, ForumPostComposerView,
 };
 use super::{
-    ActiveModalPopupKind, ForumPostAttachmentPreviewState, ForumPostAttachmentPreviewStatus,
-    ForumPostComposerFieldState, ForumPostComposerState, ModalPopup,
+    ActiveModalPopupKind, ForumPostComposerFieldState, ForumPostComposerState, ModalPopup,
 };
 
 impl DashboardState {
@@ -267,7 +269,8 @@ impl DashboardState {
             }
             Some(ForumPostComposerFieldState::Tags) if tag_count > 0 => {
                 if let Some(popup) = self.popups.forum_post_composer_mut() {
-                    popup.selected_tag_index = (popup.selected_tag_index + 1).min(tag_count - 1);
+                    popup.selected_tag_index =
+                        (popup.selected_tag_index + 1).min(tag_count.saturating_sub(1));
                 }
             }
             Some(_) => {}
@@ -341,8 +344,10 @@ impl DashboardState {
         let Some(popup) = self.popups.forum_post_composer() else {
             return false;
         };
-        popup.editing == Some(ForumPostComposerFieldState::Body)
-            && self.forum_post_composer_accepts_attachments()
+        matches!(
+            popup.editing,
+            Some(ForumPostComposerFieldState::Body | ForumPostComposerFieldState::Attachments)
+        ) && self.forum_post_composer_accepts_attachments()
     }
 
     pub fn add_pending_forum_post_attachments(
@@ -411,15 +416,17 @@ impl DashboardState {
             .popups
             .forum_post_composer()
             .map(|popup| (popup.active_field, popup.editing))?;
-        if editing == Some(active_field) {
-            if active_field == ForumPostComposerFieldState::Attachments {
-                self.pop_pending_forum_post_attachment();
-                return None;
-            }
-            if active_field == ForumPostComposerFieldState::Tags {
-                self.toggle_selected_forum_post_tag();
-                return None;
-            }
+        if editing == Some(ForumPostComposerFieldState::Tags)
+            && active_field == ForumPostComposerFieldState::Tags
+        {
+            self.toggle_selected_forum_post_tag();
+            return None;
+        }
+        if matches!(
+            editing,
+            Some(ForumPostComposerFieldState::Title | ForumPostComposerFieldState::Body)
+        ) && editing == Some(active_field)
+        {
             self.commit_forum_post_edit();
             return None;
         }
@@ -478,23 +485,7 @@ impl DashboardState {
         {
             return None;
         }
-        match &preview.state {
-            ForumPostAttachmentPreviewStatus::Pending
-            | ForumPostAttachmentPreviewStatus::Loading => {
-                Some(ForumPostAttachmentPreviewView::Loading {
-                    filename: preview.filename.clone(),
-                })
-            }
-            ForumPostAttachmentPreviewStatus::Ready(protocol) => {
-                Some(ForumPostAttachmentPreviewView::Ready { protocol })
-            }
-            ForumPostAttachmentPreviewStatus::Failed(message) => {
-                Some(ForumPostAttachmentPreviewView::Failed {
-                    filename: preview.filename.clone(),
-                    message: message.clone(),
-                })
-            }
-        }
+        Some(local_upload_preview_view(preview))
     }
 
     pub(in crate::tui) fn forum_post_attachment_preview_has_image_surface(&self) -> bool {
@@ -506,7 +497,7 @@ impl DashboardState {
         };
         popup.editing == Some(ForumPostComposerFieldState::Attachments)
             && preview.attachment_index == popup.selected_attachment_index
-            && matches!(preview.state, ForumPostAttachmentPreviewStatus::Ready(_))
+            && matches!(preview.state, LocalUploadPreviewStatus::Ready(_))
     }
 
     pub(in crate::tui) fn take_pending_forum_post_attachment_preview(
@@ -517,11 +508,11 @@ impl DashboardState {
             return None;
         }
         let preview = popup.attachment_preview.as_mut()?;
-        if !matches!(preview.state, ForumPostAttachmentPreviewStatus::Pending) {
+        if !matches!(preview.state, LocalUploadPreviewStatus::Pending) {
             return None;
         }
         let attachment = popup.attachments.get(preview.attachment_index)?.clone();
-        preview.state = ForumPostAttachmentPreviewStatus::Loading;
+        preview.state = LocalUploadPreviewStatus::Loading;
         Some((
             preview.attachment_index,
             preview.generation,
@@ -548,8 +539,8 @@ impl DashboardState {
         }
         preview.filename = filename;
         preview.state = match result {
-            Ok(protocol) => ForumPostAttachmentPreviewStatus::Ready(protocol),
-            Err(message) => ForumPostAttachmentPreviewStatus::Failed(message),
+            Ok(protocol) => LocalUploadPreviewStatus::Ready(protocol),
+            Err(message) => LocalUploadPreviewStatus::Failed(message),
         };
     }
 
@@ -646,7 +637,7 @@ impl DashboardState {
             .min(popup.attachments.len().saturating_sub(1));
         if popup.attachment_preview.as_ref().is_some_and(|preview| {
             preview.attachment_index == index
-                && !matches!(preview.state, ForumPostAttachmentPreviewStatus::Failed(_))
+                && !matches!(preview.state, LocalUploadPreviewStatus::Failed(_))
         }) {
             return;
         }
@@ -655,11 +646,11 @@ impl DashboardState {
             return;
         };
         popup.attachment_preview_generation = popup.attachment_preview_generation.saturating_add(1);
-        popup.attachment_preview = Some(ForumPostAttachmentPreviewState {
+        popup.attachment_preview = Some(LocalUploadPreviewState {
             attachment_index: index,
             generation: popup.attachment_preview_generation,
             filename: attachment.filename.clone(),
-            state: ForumPostAttachmentPreviewStatus::Pending,
+            state: LocalUploadPreviewStatus::Pending,
         });
     }
 

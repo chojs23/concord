@@ -8,6 +8,7 @@ use super::super::{
     message::format::wrap_text_lines,
     state::{AttachmentViewerZoom, DashboardState, FocusPane},
 };
+use super::LOCAL_UPLOAD_PREVIEW_HEIGHT;
 use super::types::{
     DashboardAreas, EMBED_PREVIEW_GUTTER_PREFIX, IMAGE_PREVIEW_HEIGHT, IMAGE_PREVIEW_WIDTH,
     MAX_REACTION_USERS_VISIBLE_LINES, MESSAGE_AVATAR_OFFSET, MIN_MESSAGE_INPUT_HEIGHT,
@@ -233,10 +234,28 @@ pub(super) fn composer_inner_width(width: u16) -> u16 {
 pub(super) fn composer_content_line_count(state: &DashboardState, width: u16) -> u16 {
     let mut line_count = composer_prompt_line_count(state.composer_input(), width);
     line_count = line_count.saturating_add(state.pending_composer_upload_line_count() as u16);
+    line_count = line_count.saturating_add(composer_upload_preview_line_count(state));
     if state.is_composing() && state.reply_target_message_state().is_some() {
         line_count = line_count.saturating_add(1);
     }
     line_count
+}
+
+pub(super) fn composer_rows_before_input(state: &DashboardState) -> usize {
+    let mut rows = state.pending_composer_upload_line_count();
+    rows = rows.saturating_add(usize::from(composer_upload_preview_line_count(state)));
+    if state.reply_target_message_state().is_some() {
+        rows = rows.saturating_add(1);
+    }
+    rows
+}
+
+pub(super) fn composer_upload_preview_line_count(state: &DashboardState) -> u16 {
+    if state.show_images() && state.pending_composer_preview_attachment_count() > 0 {
+        LOCAL_UPLOAD_PREVIEW_HEIGHT.saturating_add(2)
+    } else {
+        0
+    }
 }
 
 pub(super) fn composer_prompt_line_count(input: &str, width: u16) -> u16 {

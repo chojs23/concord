@@ -742,6 +742,7 @@ pub(super) fn image_surfaces_visible(
     image_targets_visible
         || avatar_targets_visible
         || emoji_targets_visible
+        || state.composer_attachment_preview_has_image_surface()
         || state.forum_post_attachment_preview_has_image_surface()
         || (state.show_avatars() && state.user_profile_popup_has_avatar_preview())
 }
