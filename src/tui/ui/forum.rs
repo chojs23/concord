@@ -397,6 +397,7 @@ pub(super) fn render_forum_post_reaction_emojis(
     posts: &[ChannelThreadItem],
     width: usize,
     emoji_images: &[EmojiImage<'_>],
+    occlusion_areas: &[Rect],
 ) {
     if emoji_images.is_empty() || list.height == 0 || list.width == 0 {
         return;
@@ -430,17 +431,33 @@ pub(super) fn render_forum_post_reaction_emojis(
             if image_width == 0 {
                 continue;
             }
-            frame.render_widget(
-                TrackedImage::new(image.protocol, image.content_hash),
-                Rect {
-                    x: absolute_col as u16,
-                    y: list.y.saturating_add(row as u16),
-                    width: image_width,
-                    height: 1,
-                },
-            );
+            let image_area = Rect {
+                x: absolute_col as u16,
+                y: list.y.saturating_add(row as u16),
+                width: image_width,
+                height: 1,
+            };
+            if intersects_any(image_area, occlusion_areas) {
+                continue;
+            }
+            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
         }
     }
+}
+
+fn intersects_any(area: Rect, occlusion_areas: &[Rect]) -> bool {
+    occlusion_areas
+        .iter()
+        .any(|occlusion| rects_intersect(area, *occlusion))
+}
+
+fn rects_intersect(a: Rect, b: Rect) -> bool {
+    !a.is_empty()
+        && !b.is_empty()
+        && a.x < b.x.saturating_add(b.width)
+        && b.x < a.x.saturating_add(a.width)
+        && a.y < b.y.saturating_add(b.height)
+        && b.y < a.y.saturating_add(a.height)
 }
 
 fn forum_post_inner_width_for_reactions(width: usize) -> usize {

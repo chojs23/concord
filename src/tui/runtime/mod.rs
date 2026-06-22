@@ -19,18 +19,17 @@ use super::{
 
 pub(super) mod effects;
 pub(super) mod events;
-pub(in crate::tui) mod image_layer;
 mod media_runtime;
 pub(super) mod notification_audio;
-pub(super) mod redraw;
+mod redraw_gate;
 mod scheduler;
 
 use effects as effect_helpers;
 use media_runtime::{
-    DashboardMediaRuntime, LocalUploadPreviewResult, drain_pending_commands_after_draw,
-    draw_dashboard_frame, schedule_media_loads_after_draw, store_local_upload_preview_result,
+    DashboardMediaRuntime, LocalUploadPreviewResult, clear_image_surfaces_frame,
+    drain_pending_commands_after_draw, draw_dashboard_frame, schedule_media_loads_after_draw,
+    store_local_upload_preview_result,
 };
-use redraw::visible_dashboard_signature;
 use scheduler::DashboardCommandScheduler;
 
 type ClipboardPasteResult = std::result::Result<
@@ -108,19 +107,35 @@ pub(super) async fn run_dashboard(
     const BACKGROUND_REDRAW_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
     let mut clipboard_paste_in_flight = false;
-    // Owns the cross-frame image emission state. It is installed into a
-    // thread-local only for the duration of each synchronous draw, so its state
-    // survives even if this task migrates between Tokio worker threads.
-    let mut image_tracker = image_layer::ImageEmissionTracker::default();
+    // Fingerprint of the last drawn frame's background-visible state. Background
+    // events only schedule a redraw when this moves (see `redraw_gate`).
+    let mut last_view_signature = redraw_gate::view_signature(&state);
+    // Tracks where images sit on screen. When it changes between draws an image
+    // has moved or been covered/uncovered, and terminal graphics are a pixel
+    // layer the cell diff cannot erase on its own, so we paint one image-free
+    // frame first to overwrite the stale pixels before redrawing (see
+    // `image_layout_signature`). Plain typing/idle never changes it, so they
+    // draw a single frame and never blink.
+    let mut last_image_layout = u64::MAX;
 
     while !state.should_quit() {
         if dirty {
-            image_layer::install(std::mem::take(&mut image_tracker));
+            let size = terminal.size()?;
+            let image_layout = redraw_gate::image_layout_signature(
+                &state,
+                Rect::new(0, 0, size.width, size.height),
+            );
+            if image_layout != last_image_layout {
+                terminal.draw(|frame| {
+                    last_frame_area = clear_image_surfaces_frame(frame, &mut state);
+                })?;
+                last_image_layout = image_layout;
+            }
             terminal.draw(|frame| {
                 last_frame_area = draw_dashboard_frame(frame, &mut state, &mut media_runtime);
             })?;
-            image_tracker = image_layer::uninstall();
             dirty = false;
+            last_view_signature = redraw_gate::view_signature(&state);
 
             dirty |= drain_pending_commands_after_draw(&mut state, &commands).await;
             dirty |= schedule_media_loads_after_draw(
@@ -151,9 +166,6 @@ pub(super) async fn run_dashboard(
                             if let Err(error) = open_composer_in_editor(terminal, &mut state) {
                                 logging::error("tui", format!("editor failed: {error}"));
                             }
-                            // The external editor takes over the terminal, so any
-                            // image on screen is gone. Force a full re-emit.
-                            image_tracker.invalidate();
                         }
                         if state.take_paste_clipboard_request()
                             && state.accepts_clipboard_paste()
@@ -251,9 +263,8 @@ pub(super) async fn run_dashboard(
                 }
             }
             snapshot_changed = snapshots.changed() => {
-                let should_redraw_for_snapshot = match snapshot_changed {
+                match snapshot_changed {
                     Ok(()) => {
-                        let before_signature = visible_dashboard_signature(&state);
                         drop(snapshots.borrow_and_update());
                         let snapshot = client.current_discord_snapshot();
                         let previous_snapshot_area_revision = current_snapshot_area_revision;
@@ -273,26 +284,28 @@ pub(super) async fn run_dashboard(
                             &mut deferred_effects,
                             &mut ctx,
                         );
-                        let after_signature = visible_dashboard_signature(&state);
-                        deferred_outcome.force_redraw || before_signature != after_signature
+                        // Only redraw (coalesced) when the snapshot actually moved
+                        // something on screen, or for media completions the view
+                        // signature cannot see.
+                        if deferred_outcome.force_redraw
+                            || redraw_gate::view_signature(&state) != last_view_signature
+                        {
+                            schedule_background_redraw(
+                                &mut pending_redraw_deadline,
+                                BACKGROUND_REDRAW_DEBOUNCE,
+                            );
+                        }
                     }
                     Err(_) => {
                         logging::error("tui", "snapshot stream closed");
                         state.quit();
-                        true
+                        dirty = true;
                     }
-                };
-                if should_redraw_for_snapshot {
-                    schedule_background_redraw(
-                        &mut pending_redraw_deadline,
-                        BACKGROUND_REDRAW_DEBOUNCE,
-                    );
                 }
             }
             maybe_effect = effects.recv() => {
                 match maybe_effect {
                     Some(effect) => {
-                        let before_signature = visible_dashboard_signature(&state);
                         let mut effect_outcome = effect_helpers::EffectProcessingOutcome::default();
                         let mut ctx = media_runtime.effect_context(
                             &mut state,
@@ -323,11 +336,13 @@ pub(super) async fn run_dashboard(
                                 }
                             }
                         }
-                        let after_signature = visible_dashboard_signature(&state);
-                        let should_redraw_for_effects = effect_outcome.processed_event
+                        // Redraw (coalesced) only when a processed event changed
+                        // the visible signature, or forces a redraw for media
+                        // completions the signature cannot see.
+                        if effect_outcome.processed_event
                             && (effect_outcome.force_redraw
-                                || before_signature != after_signature);
-                        if should_redraw_for_effects {
+                                || redraw_gate::view_signature(&state) != last_view_signature)
+                        {
                             schedule_background_redraw(
                                 &mut pending_redraw_deadline,
                                 BACKGROUND_REDRAW_DEBOUNCE,

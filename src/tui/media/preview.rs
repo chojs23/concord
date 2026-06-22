@@ -28,6 +28,9 @@ pub(in crate::tui) struct ImagePreviewKey {
     viewer: bool,
     message_id: Id<MessageMarker>,
     preview_index: usize,
+    preview_y_offset_rows: usize,
+    visible_preview_height: u16,
+    top_clip_rows: u16,
     pub(super) url: String,
 }
 
@@ -146,11 +149,8 @@ impl ImagePreviewCache {
                     preview_y_offset_rows: render_info.preview_y_offset_rows,
                     preview_width: render_info.preview_width,
                     preview_height: render_info.preview_height,
+                    visible_preview_height: render_info.visible_preview_height,
                     accent_color: render_info.accent_color,
-                    content_hash: crate::tui::runtime::image_layer::content_hash(&(
-                        &key.url,
-                        render_info,
-                    )),
                     state,
                 },
             ));
@@ -168,9 +168,8 @@ impl ImagePreviewCache {
                         preview_y_offset_rows: target.preview_y_offset_rows,
                         preview_width: target.preview_width,
                         preview_height: target.preview_height,
+                        visible_preview_height: target.visible_preview_height,
                         accent_color: target.accent_color,
-                        // Placeholder renders as text, so its fingerprint is unused.
-                        content_hash: 0,
                         state: ImagePreviewState::Loading {
                             filename: target.filename.clone(),
                         },
@@ -445,6 +444,9 @@ impl ImagePreviewTarget {
             viewer: self.viewer,
             message_id: self.message_id,
             preview_index: self.preview_index,
+            preview_y_offset_rows: self.preview_y_offset_rows,
+            visible_preview_height: self.visible_preview_height,
+            top_clip_rows: self.top_clip_rows,
             url: self.url.clone(),
         }
     }

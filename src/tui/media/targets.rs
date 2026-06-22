@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::{
     config::ImagePreviewQualityPreset,
     discord::{
-        InlinePreviewInfo,
+        ActivityInfo, InlinePreviewInfo,
         ids::{Id, marker::MessageMarker},
     },
 };
@@ -48,21 +48,22 @@ enum YoutubeThumbnailSize {
     High,
 }
 
+#[derive(Clone)]
 pub(in crate::tui) struct ImagePreviewTarget {
-    pub(super) viewer: bool,
-    pub(super) message_index: usize,
-    pub(super) preview_index: usize,
-    pub(super) preview_x_offset_columns: u16,
-    pub(super) preview_y_offset_rows: usize,
-    pub(super) preview_width: u16,
-    pub(super) preview_height: u16,
-    pub(super) visible_preview_height: u16,
-    pub(super) top_clip_rows: u16,
-    pub(super) accent_color: Option<u32>,
-    pub(super) show_play_marker: bool,
-    pub(super) message_id: Id<MessageMarker>,
-    pub(super) url: String,
-    pub(super) filename: String,
+    pub(in crate::tui) viewer: bool,
+    pub(in crate::tui) message_index: usize,
+    pub(in crate::tui) preview_index: usize,
+    pub(in crate::tui) preview_x_offset_columns: u16,
+    pub(in crate::tui) preview_y_offset_rows: usize,
+    pub(in crate::tui) preview_width: u16,
+    pub(in crate::tui) preview_height: u16,
+    pub(in crate::tui) visible_preview_height: u16,
+    pub(in crate::tui) top_clip_rows: u16,
+    pub(in crate::tui) accent_color: Option<u32>,
+    pub(in crate::tui) show_play_marker: bool,
+    pub(in crate::tui) message_id: Id<MessageMarker>,
+    pub(in crate::tui) url: String,
+    pub(in crate::tui) filename: String,
 }
 
 #[derive(Clone)]
@@ -615,6 +616,14 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
         }
     }
 
+    if state.is_active_modal_popup(ActiveModalPopupKind::UserProfile) {
+        push_activity_emoji_targets(
+            state.user_profile_popup_activities().iter(),
+            &mut seen,
+            &mut targets,
+        );
+    }
+
     if state.is_active_modal_popup(ActiveModalPopupKind::EmojiReactionPicker) {
         let reactions = state.filtered_emoji_reaction_items_slice().unwrap_or(&[]);
         if !reactions.is_empty() {
@@ -679,16 +688,28 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
     }
 
     for member in state.flattened_members() {
-        for activity in state.user_activities(member.user_id()) {
-            if let Some(url) = activity.emoji.as_ref().and_then(|emoji| emoji.image_url())
-                && seen.insert(url.clone())
-            {
-                targets.push(EmojiImageTarget { url });
-            }
-        }
+        push_activity_emoji_targets(
+            state.user_activities(member.user_id()).iter(),
+            &mut seen,
+            &mut targets,
+        );
     }
 
     targets
+}
+
+fn push_activity_emoji_targets<'a>(
+    activities: impl IntoIterator<Item = &'a ActivityInfo>,
+    seen: &mut HashSet<String>,
+    targets: &mut Vec<EmojiImageTarget>,
+) {
+    for activity in activities {
+        if let Some(url) = activity.emoji.as_ref().and_then(|emoji| emoji.image_url())
+            && seen.insert(url.clone())
+        {
+            targets.push(EmojiImageTarget { url });
+        }
+    }
 }
 
 pub(in crate::tui) fn image_preview_album_layout(

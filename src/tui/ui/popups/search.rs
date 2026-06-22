@@ -29,13 +29,21 @@ pub(in crate::tui::ui) fn render_search_popup(
     }
 }
 
-fn search_popup_area(area: Rect, view: &SearchPopupView) -> Rect {
+pub(in crate::tui::ui) fn search_popup_area(area: Rect, view: &SearchPopupView) -> Rect {
     let field_rows = view.fields.len() as u16;
     let height = area
         .height
         .saturating_sub(2)
         .clamp(field_rows.saturating_add(8), 24);
     centered_rect(area, SEARCH_POPUP_WIDTH, height)
+}
+
+pub(in crate::tui::ui) fn search_popup_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Option<Rect> {
+    let view = state.search_popup_view()?;
+    Some(search_popup_area(area, &view))
 }
 
 fn search_popup_result_capacity(popup: Rect, view: &SearchPopupView) -> usize {

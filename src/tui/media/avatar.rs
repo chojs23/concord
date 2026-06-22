@@ -219,10 +219,6 @@ impl AvatarImageCache {
                 protocols.get(&key).map(|entry| AvatarImage {
                     row: target.row,
                     visible_height: target.visible_height,
-                    content_hash: crate::tui::runtime::image_layer::content_hash(&(
-                        url.as_str(),
-                        key,
-                    )),
                     protocol: &entry.protocol,
                 })
             })
@@ -235,7 +231,6 @@ impl AvatarImageCache {
             protocols.get(&key).map(|entry| AvatarImage {
                 row: 0,
                 visible_height: PROFILE_POPUP_AVATAR_HEIGHT,
-                content_hash: crate::tui::runtime::image_layer::content_hash(&(url.as_str(), key)),
                 protocol: &entry.protocol,
             })
         });

@@ -16,7 +16,8 @@ pub(in crate::tui::ui) fn render_folder_settings_popup(
     let color_active = state.folder_settings_color_active();
     let editing = state.is_folder_settings_editing();
     let color_error = state.folder_settings_color_error();
-    let popup = clear_centered_popup_area(frame, area, 52, 9);
+    let popup = folder_settings_popup_area(area);
+    frame.render_widget(Clear, popup);
     let inner_width = popup.width.saturating_sub(2) as usize;
     let lines = truncate_popup_lines(
         vec![
@@ -68,6 +69,10 @@ pub(in crate::tui::ui) fn render_folder_settings_popup(
         x: cursor_x,
         y: popup.y.saturating_add(active_row),
     });
+}
+
+pub(in crate::tui::ui) fn folder_settings_popup_area(area: Rect) -> Rect {
+    centered_rect(area, 52, 9)
 }
 
 fn folder_settings_input_line(label: &'static str, value: &str, active: bool) -> Line<'static> {

@@ -17,14 +17,18 @@ pub(in crate::tui::ui) fn render_poll_vote_picker(
     }
 
     let selected = state.selected_poll_vote_picker_index().unwrap_or(0);
-    let popup =
-        clear_centered_popup_area(frame, area, 58, (answers.len() as u16).saturating_add(2));
+    let popup = poll_vote_picker_popup_area(area, answers.len());
+    frame.render_widget(Clear, popup);
     render_modal_paragraph(
         frame,
         popup,
         "Choose poll votes",
         poll_vote_picker_lines_with_key_bindings(answers, selected, state.key_bindings()),
     );
+}
+
+pub(in crate::tui::ui) fn poll_vote_picker_popup_area(area: Rect, answer_count: usize) -> Rect {
+    centered_rect(area, 58, (answer_count as u16).saturating_add(2))
 }
 
 #[cfg(test)]

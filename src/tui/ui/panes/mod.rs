@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 
-use crate::tui::runtime::image_layer::TrackedImage;
 use ratatui::{
     Frame,
     layout::{Position, Rect},
@@ -8,6 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
+use ratatui_image::Image as RatatuiImage;
 use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{
@@ -47,14 +47,14 @@ mod members;
 mod shared;
 
 pub(super) use channels::render_channels;
+pub(super) use composer::{
+    active_composer_picker_area, render_composer, render_composer_command_picker,
+    render_composer_emoji_picker, render_composer_mention_picker,
+};
 #[cfg(test)]
 pub(super) use composer::{
     composer_cursor_position, composer_lines, composer_lines_with_loaded_custom_emoji_urls,
     composer_text, emoji_picker_lines,
-};
-pub(super) use composer::{
-    render_composer, render_composer_command_picker, render_composer_emoji_picker,
-    render_composer_mention_picker,
 };
 pub(super) use guilds::render_guilds;
 pub(super) use header::render_header;

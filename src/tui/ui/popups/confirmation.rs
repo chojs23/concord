@@ -15,7 +15,8 @@ pub(in crate::tui::ui) fn render_message_confirmation(
     };
 
     let lines = message_confirmation_lines(kind, &author, content.as_deref(), 56);
-    let popup = clear_centered_popup_area(frame, area, 60, (lines.len() as u16).saturating_add(2));
+    let popup = message_confirmation_popup_area(area, lines.len());
+    frame.render_widget(Clear, popup);
     render_modal_paragraph(frame, popup, kind.title(), lines);
 }
 
@@ -29,7 +30,8 @@ pub(in crate::tui::ui) fn render_quit_confirmation(
     }
 
     let lines = quit_confirmation_popup_lines();
-    let popup = clear_centered_popup_area(frame, area, 44, (lines.len() as u16).saturating_add(2));
+    let popup = quit_confirmation_popup_area(area);
+    frame.render_widget(Clear, popup);
     render_modal_paragraph(frame, popup, "Quit", lines);
 }
 
@@ -47,8 +49,46 @@ pub(in crate::tui::ui) fn render_guild_leave_confirmation(
     };
 
     let lines = guild_leave_confirmation_lines(&name, 56);
-    let popup = clear_centered_popup_area(frame, area, 60, (lines.len() as u16).saturating_add(2));
+    let popup = guild_leave_confirmation_popup_area(area, lines.len());
+    frame.render_widget(Clear, popup);
     render_modal_paragraph(frame, popup, "Leave server?", lines);
+}
+
+pub(in crate::tui::ui) fn message_confirmation_popup_area(area: Rect, line_count: usize) -> Rect {
+    centered_rect(area, 60, (line_count as u16).saturating_add(2))
+}
+
+pub(in crate::tui::ui) fn message_confirmation_popup_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Option<Rect> {
+    let (kind, author, content) = state.message_confirmation_lines()?;
+    let lines = message_confirmation_lines(kind, &author, content.as_deref(), 56);
+    Some(message_confirmation_popup_area(area, lines.len()))
+}
+
+pub(in crate::tui::ui) fn quit_confirmation_popup_area(area: Rect) -> Rect {
+    centered_rect(
+        area,
+        44,
+        (quit_confirmation_popup_lines().len() as u16).saturating_add(2),
+    )
+}
+
+pub(in crate::tui::ui) fn guild_leave_confirmation_popup_area(
+    area: Rect,
+    line_count: usize,
+) -> Rect {
+    centered_rect(area, 60, (line_count as u16).saturating_add(2))
+}
+
+pub(in crate::tui::ui) fn guild_leave_confirmation_popup_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Option<Rect> {
+    let name = state.guild_leave_confirmation_name()?;
+    let lines = guild_leave_confirmation_lines(&name, 56);
+    Some(guild_leave_confirmation_popup_area(area, lines.len()))
 }
 
 #[cfg(test)]

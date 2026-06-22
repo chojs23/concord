@@ -106,7 +106,6 @@ impl EmojiImageCache {
                     return None;
                 };
                 Some(EmojiImage {
-                    content_hash: crate::tui::runtime::image_layer::content_hash(&target.url),
                     url: target.url.clone(),
                     protocol,
                 })

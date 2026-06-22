@@ -58,10 +58,11 @@ impl EffectProcessingOutcome {
     }
 }
 
+/// Some redraws are needed for state that the dashboard view signature does not
+/// cover, mainly the media caches (an inline preview, avatar, or emoji finishing
+/// or failing to load) and connection-lifecycle events. Force a redraw for those
+/// regardless of whether the visible signature changed.
 pub(in crate::tui) fn effect_forces_redraw(event: &AppEvent) -> bool {
-    // Attachment preview events are the shared media-completion path for
-    // inline previews, avatars, emoji images, and profile-popup avatars. They
-    // must redraw even when the visible dashboard signature is unchanged.
     matches!(
         event,
         AppEvent::AttachmentPreviewLoaded { .. }
@@ -549,7 +550,6 @@ mod tests {
 
         assert!(state.should_quit());
         assert!(state.should_sign_out());
-        assert!(effect_forces_redraw(&AppEvent::SignedOut));
     }
 
     fn push_guild_with_channel(

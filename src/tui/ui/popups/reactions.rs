@@ -22,17 +22,8 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
     let selected = state
         .selected_emoji_reaction_index_for_len(reactions.len())
         .unwrap_or(0);
-    let desired_visible_items = reactions
-        .len()
-        .clamp(1, selection::MAX_EMOJI_REACTION_VISIBLE_ITEMS);
-    let extra_lines = u16::from(filter.is_some());
-    let popup = centered_rect(
-        area,
-        42,
-        (desired_visible_items as u16)
-            .saturating_add(extra_lines)
-            .saturating_add(2),
-    );
+    let desired_visible_items = emoji_reaction_picker_visible_items(reactions.len());
+    let popup = emoji_reaction_picker_popup_area(area, reactions.len(), filter.is_some());
     let ready_urls = emoji_images
         .iter()
         .map(|image| image.url.clone())
@@ -102,8 +93,9 @@ pub(in crate::tui::ui) fn render_reaction_users_popup(
     // every line to fit. Without this, ratatui's `Wrap` would split a long
     // username across rows and the wrap continuation overlaps neighbouring
     // lines, producing the trailing-fragment artefact reported by users.
-    const POPUP_TARGET_WIDTH: u16 = 58;
-    let popup_width = POPUP_TARGET_WIDTH.min(area.width.saturating_sub(2)).max(1);
+    let popup_width = REACTION_USERS_POPUP_TARGET_WIDTH
+        .min(area.width.saturating_sub(2))
+        .max(1);
     let inner_width = usize::from(popup_width.saturating_sub(2));
 
     let max_visible_lines = reaction_users_visible_line_count(area);
@@ -114,11 +106,7 @@ pub(in crate::tui::ui) fn render_reaction_users_popup(
         inner_width,
         state.show_custom_emoji(),
     );
-    let popup = centered_rect(
-        area,
-        POPUP_TARGET_WIDTH,
-        (lines.len() as u16).saturating_add(2),
-    );
+    let popup = reaction_users_popup_area(area, lines.len());
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(lines).block(panel_block("Reacted users", true)),
@@ -134,6 +122,71 @@ pub(in crate::tui::ui) fn render_reaction_users_popup(
         max_visible_lines,
         popup_state.data_line_count(),
     );
+}
+
+pub(in crate::tui::ui) fn emoji_reaction_picker_popup_area(
+    area: Rect,
+    reaction_count: usize,
+    has_filter: bool,
+) -> Rect {
+    let desired_visible_items = emoji_reaction_picker_visible_items(reaction_count);
+    let extra_lines = u16::from(has_filter);
+    centered_rect(
+        area,
+        42,
+        (desired_visible_items as u16)
+            .saturating_add(extra_lines)
+            .saturating_add(2),
+    )
+}
+
+pub(in crate::tui::ui) fn emoji_reaction_picker_popup_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Option<Rect> {
+    let reactions = state.filtered_emoji_reaction_items_slice().unwrap_or(&[]);
+    if reactions.is_empty() && !state.is_filtering_emoji_reactions() {
+        return None;
+    }
+    Some(emoji_reaction_picker_popup_area(
+        area,
+        reactions.len(),
+        state.emoji_reaction_filter().is_some(),
+    ))
+}
+
+fn emoji_reaction_picker_visible_items(reaction_count: usize) -> usize {
+    reaction_count.clamp(1, selection::MAX_EMOJI_REACTION_VISIBLE_ITEMS)
+}
+
+const REACTION_USERS_POPUP_TARGET_WIDTH: u16 = 58;
+
+pub(in crate::tui::ui) fn reaction_users_popup_area(area: Rect, line_count: usize) -> Rect {
+    centered_rect(
+        area,
+        REACTION_USERS_POPUP_TARGET_WIDTH,
+        (line_count as u16).saturating_add(2),
+    )
+}
+
+pub(in crate::tui::ui) fn reaction_users_popup_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Option<Rect> {
+    let popup_state = state.reaction_users_popup()?;
+    let popup_width = REACTION_USERS_POPUP_TARGET_WIDTH
+        .min(area.width.saturating_sub(2))
+        .max(1);
+    let inner_width = usize::from(popup_width.saturating_sub(2));
+    let max_visible_lines = reaction_users_visible_line_count(area);
+    let lines = reaction_users_popup_lines_with_custom_emoji_images(
+        popup_state.reactions(),
+        popup_state.scroll(),
+        max_visible_lines,
+        inner_width,
+        state.show_custom_emoji(),
+    );
+    Some(reaction_users_popup_area(area, lines.len()))
 }
 
 #[cfg(test)]
@@ -460,10 +513,7 @@ fn render_emoji_reaction_images(
                 .min(area.width.saturating_sub(emoji_reaction_image_x_offset())),
             1,
         );
-        frame.render_widget(
-            TrackedImage::new(image.protocol, image.content_hash),
-            image_area,
-        );
+        frame.render_widget(RatatuiImage::new(image.protocol), image_area);
     }
 }
 

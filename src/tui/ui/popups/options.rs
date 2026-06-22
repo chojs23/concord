@@ -11,17 +11,7 @@ pub(in crate::tui::ui) fn render_options_popup(
 
     let items = state.display_option_items();
     let selected = state.selected_option_index().unwrap_or(0);
-    let detail_lines = items
-        .iter()
-        .filter(|item| item.gauge_percent.is_some())
-        .count() as u16;
-    let popup = centered_rect(
-        area,
-        66,
-        (items.len() as u16)
-            .saturating_add(detail_lines)
-            .saturating_add(2),
-    );
+    let popup = options_popup_area(area, state);
     let block = panel_block(state.options_popup_title(), true);
     let inner = block.inner(popup);
     let visible_items = usize::from(inner.height).max(1);
@@ -38,6 +28,21 @@ pub(in crate::tui::ui) fn render_options_popup(
         popup,
     );
     render_option_gauges(frame, inner, &items, selected, visible_items);
+}
+
+pub(in crate::tui::ui) fn options_popup_area(area: Rect, state: &DashboardState) -> Rect {
+    let items = state.display_option_items();
+    let detail_lines = items
+        .iter()
+        .filter(|item| item.gauge_percent.is_some())
+        .count() as u16;
+    centered_rect(
+        area,
+        66,
+        (items.len() as u16)
+            .saturating_add(detail_lines)
+            .saturating_add(2),
+    )
 }
 
 pub(in crate::tui::ui) fn options_popup_lines(

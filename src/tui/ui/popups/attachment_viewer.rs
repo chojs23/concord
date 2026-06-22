@@ -44,12 +44,7 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
             image_preview.preview_width,
             image_preview.preview_height,
         );
-        render_image_preview(
-            frame,
-            preview_area,
-            image_preview.content_hash,
-            image_preview.state,
-        );
+        render_image_preview(frame, preview_area, image_preview.state);
     } else if can_preview && state.show_images() {
         frame.render_widget(
             Paragraph::new(format!("loading {}...", item.filename))

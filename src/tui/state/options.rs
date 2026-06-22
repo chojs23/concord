@@ -71,6 +71,7 @@ impl DashboardState {
         state
     }
 
+    #[cfg(test)]
     pub fn display_options(&self) -> DisplayOptions {
         self.options.display_options
     }
@@ -123,6 +124,7 @@ impl DashboardState {
         self.options.notification_options.clone()
     }
 
+    #[cfg(test)]
     pub fn voice_options(&self) -> VoiceOptions {
         self.options.voice_options
     }

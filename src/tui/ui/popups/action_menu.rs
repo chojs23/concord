@@ -28,7 +28,7 @@ pub(in crate::tui::ui) fn render_leader_popup(
     );
 }
 
-fn leader_popup_area(area: Rect, lines: &[Line<'_>]) -> Rect {
+pub(in crate::tui::ui) fn leader_popup_area(area: Rect, lines: &[Line<'_>]) -> Rect {
     let content_width = lines.iter().map(leader_line_width).max().unwrap_or(0);
     let desired_width = content_width.saturating_add(2).min(u16::MAX as usize) as u16;
     let width = LEADER_POPUP_MIN_WIDTH
@@ -43,6 +43,11 @@ fn leader_popup_area(area: Rect, lines: &[Line<'_>]) -> Rect {
         width,
         height,
     }
+}
+
+pub(in crate::tui::ui) fn leader_popup_area_for_state(area: Rect, state: &DashboardState) -> Rect {
+    let lines = leader_popup_lines(state, area.height.saturating_sub(2) as usize);
+    leader_popup_area(area, &lines)
 }
 
 fn leader_popup_title(state: &DashboardState) -> String {
@@ -344,7 +349,7 @@ pub(in crate::tui::ui) fn render_message_action_menu(
     let lines =
         message_action_menu_lines_with_key_bindings(&actions, selected, state.key_bindings());
 
-    let popup = centered_rect(area, 54, (actions.len() as u16).saturating_add(2));
+    let popup = message_action_menu_area(area, actions.len());
     let lines = truncate_action_menu_lines(lines, popup.width.saturating_sub(2) as usize);
     frame.render_widget(Clear, popup);
     frame.render_widget(
@@ -353,6 +358,10 @@ pub(in crate::tui::ui) fn render_message_action_menu(
             .wrap(Wrap { trim: false }),
         popup,
     );
+}
+
+pub(in crate::tui::ui) fn message_action_menu_area(area: Rect, action_count: usize) -> Rect {
+    centered_rect(area, 54, (action_count as u16).saturating_add(2))
 }
 
 #[cfg(test)]

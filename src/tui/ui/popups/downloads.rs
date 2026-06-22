@@ -28,7 +28,7 @@ pub(in crate::tui::ui) fn render_downloads_popup(
     );
 }
 
-fn downloads_popup_line_count(download_count: usize) -> usize {
+pub(in crate::tui::ui) fn downloads_popup_line_count(download_count: usize) -> usize {
     download_count.min(MAX_VISIBLE_DOWNLOADS) + usize::from(download_count > MAX_VISIBLE_DOWNLOADS)
 }
 

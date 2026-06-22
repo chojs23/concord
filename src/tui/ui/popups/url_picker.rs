@@ -14,7 +14,7 @@ pub(in crate::tui::ui) fn render_message_url_picker(
         return;
     }
     let selected = state.selected_message_url_index().unwrap_or(0);
-    let popup = centered_rect(area, 54, (urls.len() as u16).saturating_add(2));
+    let popup = message_url_picker_popup_area(area, urls.len());
     let lines = truncate_message_url_picker_lines(
         message_url_picker_lines(&urls, selected),
         popup.width.saturating_sub(2) as usize,
@@ -26,6 +26,10 @@ pub(in crate::tui::ui) fn render_message_url_picker(
             .wrap(Wrap { trim: false }),
         popup,
     );
+}
+
+pub(in crate::tui::ui) fn message_url_picker_popup_area(area: Rect, url_count: usize) -> Rect {
+    centered_rect(area, 54, (url_count as u16).saturating_add(2))
 }
 
 pub(in crate::tui::ui) fn message_url_picker_lines(

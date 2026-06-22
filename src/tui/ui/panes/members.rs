@@ -152,7 +152,7 @@ pub(in crate::tui::ui) fn render_members(
             }
             let y = content_area.y.saturating_add(visible_offset as u16);
             frame.render_widget(
-                TrackedImage::new(image.protocol, image.content_hash),
+                ratatui_image::Image::new(image.protocol),
                 Rect::new(content_area.x.saturating_add(3), y, 2, 1),
             );
         }

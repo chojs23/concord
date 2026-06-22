@@ -25,23 +25,19 @@ pub struct ImagePreview<'a> {
     pub preview_y_offset_rows: usize,
     pub preview_width: u16,
     pub preview_height: u16,
+    pub visible_preview_height: u16,
     pub accent_color: Option<u32>,
-    /// Fingerprint of the surface's visual content, used by the image emission
-    /// tracker to decide whether this preview must be re-emitted this frame.
-    pub content_hash: u64,
     pub state: ImagePreviewState<'a>,
 }
 
 pub struct AvatarImage<'a> {
     pub row: isize,
     pub visible_height: u16,
-    pub content_hash: u64,
     pub protocol: &'a Protocol,
 }
 
 pub struct EmojiImage<'a> {
     pub url: String,
-    pub content_hash: u64,
     pub protocol: &'a Protocol,
 }
 

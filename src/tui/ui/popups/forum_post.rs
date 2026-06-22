@@ -19,15 +19,7 @@ pub(in crate::tui::ui) fn render_forum_post_composer(
     let Some(view) = state.forum_post_composer_view() else {
         return;
     };
-    let popup = centered_rect(
-        area,
-        FORUM_POST_POPUP_WIDTH
-            .min(area.width.saturating_sub(2))
-            .max(12),
-        FORUM_POST_POPUP_HEIGHT
-            .min(area.height.saturating_sub(2))
-            .max(10),
-    );
+    let popup = forum_post_composer_popup_area(area);
     frame.render_widget(Clear, popup);
     let inner = panel_block("Create Forum Post", true).inner(popup);
     frame.render_widget(
@@ -54,6 +46,18 @@ pub(in crate::tui::ui) fn render_forum_post_composer(
             .min(inner.y.saturating_add(inner.height.saturating_sub(1)));
         frame.set_cursor_position(Position::new(x, y));
     }
+}
+
+pub(in crate::tui::ui) fn forum_post_composer_popup_area(area: Rect) -> Rect {
+    centered_rect(
+        area,
+        FORUM_POST_POPUP_WIDTH
+            .min(area.width.saturating_sub(2))
+            .max(12),
+        FORUM_POST_POPUP_HEIGHT
+            .min(area.height.saturating_sub(2))
+            .max(10),
+    )
 }
 
 fn forum_post_composer_lines(view: &ForumPostComposerView, width: usize) -> Vec<Line<'static>> {
@@ -203,11 +207,8 @@ fn render_forum_post_upload_preview(
                 .wrap(Wrap { trim: false }),
             area,
         ),
-        ForumPostAttachmentPreviewView::Ready {
-            protocol,
-            content_hash,
-        } => {
-            frame.render_widget(TrackedImage::new(protocol, content_hash), area);
+        ForumPostAttachmentPreviewView::Ready { protocol } => {
+            frame.render_widget(RatatuiImage::new(protocol), area);
         }
     }
 }

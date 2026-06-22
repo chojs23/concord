@@ -72,7 +72,7 @@ pub(in crate::tui::ui) fn render_user_profile_popup(
             }
             let y = text_area.y.saturating_add(visible_offset as u16);
             frame.render_widget(
-                TrackedImage::new(image.protocol, image.content_hash),
+                ratatui_image::Image::new(image.protocol),
                 Rect::new(text_area.x, y, 2, 1),
             );
         }
@@ -85,10 +85,7 @@ pub(in crate::tui::ui) fn render_user_profile_popup(
             width: PROFILE_POPUP_AVATAR_WIDTH.min(inner.width),
             height: PROFILE_POPUP_AVATAR_HEIGHT.min(inner.height),
         };
-        frame.render_widget(
-            TrackedImage::new(avatar.protocol, avatar.content_hash),
-            avatar_area,
-        );
+        frame.render_widget(RatatuiImage::new(avatar.protocol), avatar_area);
     }
 }
 

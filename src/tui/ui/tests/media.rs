@@ -240,3 +240,89 @@ fn inline_image_preview_area_returns_none_when_preview_ends_above_list() {
 
     assert_eq!(inline_image_preview_area(area, -5, 0, 77, 4, None), None);
 }
+
+#[test]
+fn modal_overlay_registry_occludes_different_popup_kinds() {
+    let frame_area = Rect::new(0, 0, 120, 50);
+    let messages_area = Rect::new(10, 5, 100, 40);
+    let mut options_state = DashboardState::new();
+    options_state.open_options_popup();
+    let mut keymap_state = DashboardState::new();
+    keymap_state.open_keymap_help_popup();
+    let mut search_state = state_with_message();
+    search_state.open_search_popup_for_focus(FocusPane::Messages);
+
+    for state in [&options_state, &keymap_state, &search_state] {
+        let areas = background_media_occlusion_areas(messages_area, frame_area, state);
+
+        assert_eq!(areas.len(), 1, "{areas:?}");
+        assert!(!areas[0].is_empty(), "{areas:?}");
+    }
+}
+
+#[test]
+fn non_modal_overlay_registry_occludes_folder_settings() {
+    let frame_area = Rect::new(0, 0, 120, 50);
+    let messages_area = Rect::new(10, 5, 100, 40);
+    let state = state_with_folder_settings();
+
+    let areas = background_media_occlusion_areas(messages_area, frame_area, &state);
+
+    assert_eq!(areas.len(), 1, "{areas:?}");
+    assert!(!areas[0].is_empty(), "{areas:?}");
+}
+
+#[test]
+fn inline_image_preview_renders_when_not_occluded() {
+    let mut state = state_with_message();
+    let preview = loading_image_preview_at_message_offset(1);
+
+    let rendered =
+        render_dashboard_dump_with_previews(120, 30, &mut state, vec![preview]).join("\n");
+
+    assert!(rendered.contains("loading cat.png"), "{rendered}");
+}
+
+#[test]
+fn inline_image_preview_skips_rendering_when_overlay_occludes_it() {
+    let mut state = state_with_message();
+    state.open_keymap_help_popup();
+    let preview = loading_image_preview_at_message_offset(13);
+
+    let rendered =
+        render_dashboard_dump_with_previews(120, 30, &mut state, vec![preview]).join("\n");
+
+    assert!(!rendered.contains("loading cat.png"), "{rendered}");
+}
+
+#[test]
+fn inline_image_preview_skips_rendering_when_composer_picker_occludes_it() {
+    let mut state = state_with_message();
+    state.start_composer();
+    for ch in ":heart".chars() {
+        state.push_composer_char(ch);
+    }
+    let preview = loading_image_preview_at_message_offset(16);
+
+    let rendered =
+        render_dashboard_dump_with_previews(120, 30, &mut state, vec![preview]).join("\n");
+
+    assert!(rendered.contains(" emoji "), "{rendered}");
+    assert!(!rendered.contains("loading cat.png"), "{rendered}");
+}
+
+fn loading_image_preview_at_message_offset(preview_y_offset_rows: usize) -> ImagePreview<'static> {
+    ImagePreview {
+        viewer: false,
+        message_index: 0,
+        preview_x_offset_columns: 0,
+        preview_y_offset_rows,
+        preview_width: 72,
+        preview_height: 4,
+        visible_preview_height: 4,
+        accent_color: None,
+        state: ImagePreviewState::Loading {
+            filename: "cat.png".to_owned(),
+        },
+    }
+}

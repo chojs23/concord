@@ -260,6 +260,31 @@ fn render_composer_picker_scrollbar(
 /// Picks a rectangle directly above the composer for the picker. Returns
 /// `None` when there isn't enough room (very short terminal) so the caller
 /// can silently skip drawing.
+pub(in crate::tui::ui) fn active_composer_picker_area(
+    message_areas: MessageAreas,
+    state: &DashboardState,
+) -> Option<Rect> {
+    if state.composer_command_query().is_some() {
+        let candidates = state.composer_command_candidates();
+        if !candidates.is_empty() {
+            return composer_picker_area(message_areas, candidates.len());
+        }
+    }
+    if state.composer_mention_query().is_some() {
+        let candidates = state.composer_mention_candidates();
+        if !candidates.is_empty() {
+            return composer_picker_area(message_areas, candidates.len());
+        }
+    }
+    if state.composer_emoji_query().is_some() {
+        let candidates = state.composer_emoji_candidates();
+        if !candidates.is_empty() {
+            return composer_picker_area(message_areas, candidates.len());
+        }
+    }
+    None
+}
+
 fn composer_picker_area(message_areas: MessageAreas, candidate_count: usize) -> Option<Rect> {
     let composer = message_areas.composer;
     let messages = message_areas.list;
@@ -489,10 +514,7 @@ fn render_composer_emoji_picker_images(
             1,
         );
         if image_area.width > 0 {
-            frame.render_widget(
-                TrackedImage::new(image.protocol, image.content_hash),
-                image_area,
-            );
+            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
         }
     }
 }
@@ -679,10 +701,7 @@ fn render_composer_custom_emoji_images(
             1,
         );
         if image_area.width > 0 {
-            frame.render_widget(
-                TrackedImage::new(image.protocol, image.content_hash),
-                image_area,
-            );
+            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
         }
     }
 }
@@ -783,11 +802,8 @@ fn render_composer_attachment_preview(
                 .wrap(Wrap { trim: false }),
             area,
         ),
-        LocalUploadPreviewView::Ready {
-            protocol,
-            content_hash,
-        } => {
-            frame.render_widget(TrackedImage::new(protocol, content_hash), area);
+        LocalUploadPreviewView::Ready { protocol } => {
+            frame.render_widget(RatatuiImage::new(protocol), area);
         }
     }
 }
